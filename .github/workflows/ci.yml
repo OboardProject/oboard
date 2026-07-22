@@ -11,47 +11,27 @@ permissions:
 
 jobs:
   verify:
-    name: Test Controller, Agent, kernel and Web
+    name: Test Controller and Web
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          repository: OboardProject/oboard-agent
-          path: oboard-agent
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25.11'
-          cache-dependency-path: |
-            go.sum
-            oboard-agent/go.sum
-            oboard-agent/kernel/oboard-sb/go.sum
+          cache-dependency-path: go.sum
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Verify release inputs
-        env:
-          OBOARD_AGENT_DIR: oboard-agent
+      - name: Verify Controller release inputs
         run: ./scripts/verify-release.sh
-      - name: Verify Go modules and vet
+      - name: Verify Go module and vet
         run: |
           go mod verify
           go vet ./...
-          (cd oboard-agent && go mod verify && go vet ./...)
-          (cd oboard-agent/kernel/oboard-sb && go mod verify && go vet ./...)
       - name: Run Go race tests
-        run: |
-          go test -race -shuffle=on ./...
-          (cd oboard-agent && go test -race -shuffle=on ./...)
-          (cd oboard-agent/kernel/oboard-sb && go test -race -shuffle=on ./...)
-      - name: Build Web
-        working-directory: web
-        run: |
-          npm ci
-          npm audit --audit-level=high
-          npm run build
+        run: go test -race -shuffle=on ./...
       - name: Install pinned security scanners
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
@@ -60,11 +40,5 @@ jobs:
       - name: Scan Go code
         run: |
           govulncheck ./...
-          (cd oboard-agent && govulncheck ./...)
-          (cd oboard-agent/kernel/oboard-sb && govulncheck ./...)
           gosec -exclude-generated ./...
-          (cd oboard-agent && gosec -exclude-generated ./...)
-          (cd oboard-agent/kernel/oboard-sb && gosec -exclude-generated ./...)
           staticcheck -checks=all,-ST1000,-ST1005 ./...
-          (cd oboard-agent && staticcheck -checks=all,-ST1000,-ST1005 ./...)
-          (cd oboard-agent/kernel/oboard-sb && staticcheck -checks=all,-ST1000,-ST1005 ./...)

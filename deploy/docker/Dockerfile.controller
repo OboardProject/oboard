@@ -5,12 +5,18 @@ ARG BUILD=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 ARG RELEASE_PUBLIC_KEY=
+ARG AGENT_VERSION=0.1.0-dev
+ARG AGENT_BUILD=dev
+ARG AGENT_COMMIT=unknown
+ARG AGENT_DATE=unknown
+ARG KERNEL_VERSION=0.1.0-dev
+ARG KERNEL_BUILD=dev
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath \
-    -ldflags="-s -w -X github.com/OboardProject/oboard/internal/version.Version=${VERSION} -X github.com/OboardProject/oboard/internal/version.Build=${BUILD} -X github.com/OboardProject/oboard/internal/version.Commit=${COMMIT} -X github.com/OboardProject/oboard/internal/version.Date=${BUILD_DATE} -X github.com/OboardProject/oboard/internal/version.ReleasePublicKey=${RELEASE_PUBLIC_KEY}" \
+    -ldflags="-s -w -X github.com/OboardProject/oboard/internal/version.Version=${VERSION} -X github.com/OboardProject/oboard/internal/version.Build=${BUILD} -X github.com/OboardProject/oboard/internal/version.Commit=${COMMIT} -X github.com/OboardProject/oboard/internal/version.Date=${BUILD_DATE} -X github.com/OboardProject/oboard/internal/version.ReleasePublicKey=${RELEASE_PUBLIC_KEY} -X github.com/OboardProject/oboard/internal/version.AgentVersion=${AGENT_VERSION} -X github.com/OboardProject/oboard/internal/version.AgentBuild=${AGENT_BUILD} -X github.com/OboardProject/oboard/internal/version.AgentCommit=${AGENT_COMMIT} -X github.com/OboardProject/oboard/internal/version.AgentDate=${AGENT_DATE} -X github.com/OboardProject/oboard/internal/version.KernelVersion=${KERNEL_VERSION} -X github.com/OboardProject/oboard/internal/version.KernelBuild=${KERNEL_BUILD}" \
     -o /out/oboard-controller ./cmd/controller
 
 FROM node:22-alpine AS web

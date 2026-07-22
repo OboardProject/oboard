@@ -16,29 +16,17 @@ if [ -z "$TAG" ]; then
   esac
 fi
 
-if [ -z "${OBOARD_RELEASE_SIGNING_KEY:-}" ] && [[ "$VERSION_VALUE" == *dev* ]]; then
-  key_file="$ROOT/.tmp/oboard-dev-release-signing-key"
-  mkdir -p "$(dirname "$key_file")"
-  if [ ! -s "$key_file" ]; then
-    python3 - <<'PY' > "$key_file"
-import base64, os
-print(base64.b64encode(os.urandom(32)).decode())
-PY
-    chmod 0600 "$key_file"
-  fi
-  export OBOARD_RELEASE_SIGNING_KEY
-  OBOARD_RELEASE_SIGNING_KEY=$(cat "$key_file")
-fi
-
 export VERSION="$VERSION_VALUE" BUILD="$BUILD_VALUE" COMMIT="$COMMIT_VALUE" DATE="$DATE_VALUE"
 "$ROOT/scripts/build-release.sh"
 "$ROOT/scripts/prepare-docker-downloads.sh"
 
-AGENT_DIR=${OBOARD_AGENT_DIR:-}
-if [ -z "$AGENT_DIR" ]; then
-  if [ -f "$ROOT/oboard-agent/go.mod" ]; then AGENT_DIR="$ROOT/oboard-agent"; else AGENT_DIR="$ROOT/../oboard-agent"; fi
-fi
-RELEASE_PUBLIC_KEY=$(OBOARD_RELEASE_SIGNING_KEY="$OBOARD_RELEASE_SIGNING_KEY" go -C "$AGENT_DIR" run ./scripts/print_release_public_key.go)
+read -r AGENT_VERSION AGENT_BUILD AGENT_COMMIT AGENT_DATE < <(python3 - "$ROOT/dist/release/agent-release/release-metadata.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+print(m["version"], m["build"], m["commit"], m["date"])
+PY
+)
+RELEASE_PUBLIC_KEY=${OBOARD_RELEASE_PUBLIC_KEY:?OBOARD_RELEASE_PUBLIC_KEY must contain the Agent release Ed25519 public key}
 
 docker build \
   --file "$ROOT/deploy/docker/Dockerfile.controller" \
@@ -48,6 +36,12 @@ docker build \
   --build-arg COMMIT="$COMMIT_VALUE" \
   --build-arg BUILD_DATE="$DATE_VALUE" \
   --build-arg RELEASE_PUBLIC_KEY="$RELEASE_PUBLIC_KEY" \
+  --build-arg AGENT_VERSION="$AGENT_VERSION" \
+  --build-arg AGENT_BUILD="$AGENT_BUILD" \
+  --build-arg AGENT_COMMIT="$AGENT_COMMIT" \
+  --build-arg AGENT_DATE="$AGENT_DATE" \
+  --build-arg KERNEL_VERSION="$AGENT_VERSION" \
+  --build-arg KERNEL_BUILD="$AGENT_BUILD" \
   "$ROOT"
 
 echo "Docker image built: $IMAGE:$TAG"

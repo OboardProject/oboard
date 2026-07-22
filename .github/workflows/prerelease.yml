@@ -1,14 +1,12 @@
 name: Prerelease
 
 on:
-  push:
-    branches: [main, master]
-    paths:
-      - VERSION
-      - .github/workflows/prerelease.yml
-      - scripts/build-release.sh
-      - deploy/docker/**
   workflow_dispatch:
+    inputs:
+      version:
+        description: Prerelease version matching VERSION, for example 0.2.0-rc.1
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -22,84 +20,72 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
-      - name: Read and validate prerelease version
+      - uses: actions/create-github-app-token@7bfa3a4717ef143a604ee0a99d859b8886a96d00 # v1.9.3
+        id: agent-token
+        with:
+          app-id: ${{ vars.OBOARD_RELEASE_APP_ID }}
+          private-key: ${{ secrets.OBOARD_RELEASE_APP_PRIVATE_KEY }}
+          owner: OboardProject
+          repositories: oboard-agent
+      - name: Validate prerelease version and compute metadata
         id: meta
         shell: bash
         run: |
           version=$(tr -d '[:space:]' < VERSION)
+          if [ "$version" != "${{ inputs.version }}" ]; then
+            echo "VERSION file is $version but workflow input is ${{ inputs.version }}" >&2
+            exit 1
+          fi
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+$ ]]; then
-            echo "VERSION=$version is not a prerelease version; skipping."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "Prereleases require VERSION=x.y.z-(alpha|beta|rc).n" >&2
+            exit 1
           fi
           {
             echo "version=$version"
             echo "build=$(date -u +%Y%m%d%H%M%S)"
             echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "image=ghcr.io/${GITHUB_REPOSITORY,,}"
-            echo "publish=true"
           } >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        if: steps.meta.outputs.publish == 'true'
-        with:
-          repository: OboardProject/oboard-agent
-          ref: v${{ steps.meta.outputs.version }}
-          path: oboard-agent
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        if: steps.meta.outputs.publish == 'true'
         with:
           go-version: '1.25.11'
-          cache-dependency-path: |
-            go.sum
-            oboard-agent/go.sum
-            oboard-agent/kernel/oboard-sb/go.sum
+          cache-dependency-path: go.sum
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        if: steps.meta.outputs.publish == 'true'
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
-        if: steps.meta.outputs.publish == 'true'
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-        if: steps.meta.outputs.publish == 'true'
-      - name: Verify release inputs
-        if: steps.meta.outputs.publish == 'true'
-        env:
-          OBOARD_AGENT_DIR: oboard-agent
+      - name: Verify Controller release inputs
         run: ./scripts/verify-release.sh
-      - name: Require Agent release signing key
-        if: steps.meta.outputs.publish == 'true'
+      - name: Build Controller with matching immutable Agent release
         env:
-          SIGNING_KEY: ${{ secrets.OBOARD_RELEASE_SIGNING_KEY }}
-        run: test -n "$SIGNING_KEY" || { echo "Configure OBOARD_RELEASE_SIGNING_KEY repository secret" >&2; exit 1; }
-      - name: Build release packages
-        if: steps.meta.outputs.publish == 'true'
-        env:
-          OBOARD_RELEASE_SIGNING_KEY: ${{ secrets.OBOARD_RELEASE_SIGNING_KEY }}
-          OBOARD_AGENT_DIR: oboard-agent
+          GH_TOKEN: ${{ steps.agent-token.outputs.token }}
+          OBOARD_RELEASE_PUBLIC_KEY: ${{ vars.OBOARD_RELEASE_PUBLIC_KEY }}
+          OBOARD_AGENT_CHANNEL: release
           VERSION: ${{ steps.meta.outputs.version }}
           BUILD: ${{ steps.meta.outputs.build }}
           COMMIT: ${{ github.sha }}
           DATE: ${{ steps.meta.outputs.date }}
         run: ./scripts/build-release.sh
       - name: Prepare Docker payload
-        if: steps.meta.outputs.publish == 'true'
         run: ./scripts/prepare-docker-downloads.sh
-      - name: Read release public key
-        if: steps.meta.outputs.publish == 'true'
-        id: key
-        env:
-          OBOARD_RELEASE_SIGNING_KEY: ${{ secrets.OBOARD_RELEASE_SIGNING_KEY }}
-        run: echo "value=$(go run oboard-agent/scripts/print_release_public_key.go)" >> "$GITHUB_OUTPUT"
+      - name: Read bundled Agent metadata
+        id: agent
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          metadata = json.load(open("dist/release/agent-release/release-metadata.json"))
+          for key in ("version", "build", "commit", "date"):
+              print(f"{key}={metadata[key]}")
+          PY
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        if: steps.meta.outputs.publish == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        if: steps.meta.outputs.publish == 'true'
         with:
           context: .
           file: deploy/docker/Dockerfile.controller
@@ -113,25 +99,27 @@ jobs:
             BUILD=${{ steps.meta.outputs.build }}
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ steps.meta.outputs.date }}
-            RELEASE_PUBLIC_KEY=${{ steps.key.outputs.value }}
+            RELEASE_PUBLIC_KEY=${{ vars.OBOARD_RELEASE_PUBLIC_KEY }}
+            AGENT_VERSION=${{ steps.agent.outputs.version }}
+            AGENT_BUILD=${{ steps.agent.outputs.build }}
+            AGENT_COMMIT=${{ steps.agent.outputs.commit }}
+            AGENT_DATE=${{ steps.agent.outputs.date }}
+            KERNEL_VERSION=${{ steps.agent.outputs.version }}
+            KERNEL_BUILD=${{ steps.agent.outputs.build }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Create or update git tag
-        if: steps.meta.outputs.publish == 'true'
-        run: |
-          git config user.name OboardProject
-          git config user.email OboardProject@users.noreply.github.com
-          git tag -f "v${{ steps.meta.outputs.version }}" "$GITHUB_SHA"
-          git push origin "refs/tags/v${{ steps.meta.outputs.version }}" --force
-      - name: Publish GitHub prerelease
-        if: steps.meta.outputs.publish == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Create immutable git tag
         run: |
           tag="v${{ steps.meta.outputs.version }}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/release/*.tar.gz dist/release/sha256sums.txt --clobber
-            gh release edit "$tag" --title "OBoard $tag" --prerelease --target "$GITHUB_SHA"
-          else
-            gh release create "$tag" dist/release/*.tar.gz dist/release/sha256sums.txt --title "OBoard $tag" --prerelease --generate-notes --target "$GITHUB_SHA"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "Tag $tag already exists and releases are immutable" >&2
+            exit 1
           fi
+          git config user.name OboardProject
+          git config user.email OboardProject@users.noreply.github.com
+          git tag -a "$tag" -m "OBoard $tag" "$GITHUB_SHA"
+          git push origin "refs/tags/$tag"
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v${{ steps.meta.outputs.version }}" dist/release/*.tar.gz dist/release/sha256sums.txt --title "OBoard v${{ steps.meta.outputs.version }}" --prerelease --generate-notes

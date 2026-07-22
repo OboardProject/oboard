@@ -3,18 +3,6 @@ set -euo pipefail
 
 CONTROLLER_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 WORKSPACE_DIR=$(CDPATH= cd -- "$CONTROLLER_DIR/.." && pwd)
-AGENT_DIR=${OBOARD_AGENT_DIR:-}
-if [ -z "$AGENT_DIR" ]; then
-  if [ -f "$CONTROLLER_DIR/oboard-agent/go.mod" ]; then
-    AGENT_DIR="$CONTROLLER_DIR/oboard-agent"
-  else
-    AGENT_DIR="$WORKSPACE_DIR/oboard-agent"
-  fi
-fi
-if [ ! -f "$AGENT_DIR/go.mod" ]; then
-  echo "oboard-agent source not found. Set OBOARD_AGENT_DIR or check out OboardProject/oboard-agent beside/inside this repository." >&2
-  exit 1
-fi
 VERSION_VALUE=${VERSION:-$(tr -d '[:space:]' < "$CONTROLLER_DIR/VERSION")}
 COMMIT_VALUE=${COMMIT:-$(git -C "$CONTROLLER_DIR" rev-parse --short HEAD 2>/dev/null || git -C "$WORKSPACE_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)}
 DATE_VALUE=${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
@@ -22,17 +10,20 @@ BUILD_VALUE=${BUILD:-${BUILD_NUMBER:-$(date -u +%Y%m%d%H%M%S)}}
 OUT_DIR=${OUT_DIR:-$CONTROLLER_DIR/dist/release}
 PLATFORMS=${OBOARD_PLATFORMS:-"linux/amd64 linux/arm64"}
 
-RELEASE_PUBLIC_KEY=""
-if [ -n "${OBOARD_RELEASE_SIGNING_KEY:-}" ]; then
-  RELEASE_PUBLIC_KEY=$(go -C "$AGENT_DIR" run ./scripts/print_release_public_key.go)
-fi
-CONTROLLER_LDFLAGS="-s -w -X github.com/OboardProject/oboard/internal/version.Version=$VERSION_VALUE -X github.com/OboardProject/oboard/internal/version.Build=$BUILD_VALUE -X github.com/OboardProject/oboard/internal/version.Commit=$COMMIT_VALUE -X github.com/OboardProject/oboard/internal/version.Date=$DATE_VALUE -X github.com/OboardProject/oboard/internal/version.ReleasePublicKey=$RELEASE_PUBLIC_KEY"
-
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-echo "==> Building signed Agent artifacts"
-OUT_DIR="$OUT_DIR/agent-release" OBOARD_PLATFORMS="$PLATFORMS" VERSION="$VERSION_VALUE" BUILD="$BUILD_VALUE" COMMIT="$COMMIT_VALUE" DATE="$DATE_VALUE" "$AGENT_DIR/scripts/build-release.sh"
+echo "==> Fetching signed Agent release assets"
+OBOARD_AGENT_RELEASE_TARGET="$OUT_DIR/agent-release" VERSION="$VERSION_VALUE" "$CONTROLLER_DIR/scripts/fetch-agent-release.sh"
+
+read -r AGENT_VERSION AGENT_BUILD AGENT_COMMIT AGENT_DATE < <(python3 - "$OUT_DIR/agent-release/release-metadata.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+print(m["version"], m["build"], m["commit"], m["date"])
+PY
+)
+RELEASE_PUBLIC_KEY=${OBOARD_RELEASE_PUBLIC_KEY:?OBOARD_RELEASE_PUBLIC_KEY must contain the Agent release Ed25519 public key}
+CONTROLLER_LDFLAGS="-s -w -X github.com/OboardProject/oboard/internal/version.Version=$VERSION_VALUE -X github.com/OboardProject/oboard/internal/version.Build=$BUILD_VALUE -X github.com/OboardProject/oboard/internal/version.Commit=$COMMIT_VALUE -X github.com/OboardProject/oboard/internal/version.Date=$DATE_VALUE -X github.com/OboardProject/oboard/internal/version.ReleasePublicKey=$RELEASE_PUBLIC_KEY -X github.com/OboardProject/oboard/internal/version.AgentVersion=$AGENT_VERSION -X github.com/OboardProject/oboard/internal/version.AgentBuild=$AGENT_BUILD -X github.com/OboardProject/oboard/internal/version.AgentCommit=$AGENT_COMMIT -X github.com/OboardProject/oboard/internal/version.AgentDate=$AGENT_DATE -X github.com/OboardProject/oboard/internal/version.KernelVersion=$AGENT_VERSION -X github.com/OboardProject/oboard/internal/version.KernelBuild=$AGENT_BUILD"
 
 echo "==> Building web assets"
 cd "$CONTROLLER_DIR/web"

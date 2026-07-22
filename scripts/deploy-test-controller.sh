@@ -21,9 +21,8 @@ Environment:
   OBOARD_BASE_PATH=/abc Optional path prefix for every Controller endpoint.
   SSH_PORT=22           SSH port; overridden by third argument.
   OBOARD_FORCE_BUILD=1  Rebuild matching release artifact before upload.
-  OBOARD_RELEASE_SIGNING_KEY=...  Ed25519 seed/private key for Agent release signing.
-                  If omitted for test deploy builds, a persistent local dev key
-                  is generated under .tmp/oboard-dev-release-signing-key.
+  OBOARD_AGENT_RELEASE_DIR=...    Directory containing a signed Agent release.
+  OBOARD_RELEASE_PUBLIC_KEY=...   Matching Ed25519 public key for that release.
 
 Example:
   HTTP_PORT=2787 PUBLIC_PORT=80 $0 root@203.0.113.10 ~/.ssh/oboard_test 22
@@ -148,20 +147,6 @@ esac
 artifact="$CONTROLLER_DIR/dist/release/oboard_controller_${VERSION_VALUE}_linux_${arch}.tar.gz"
 if [ "${OBOARD_FORCE_BUILD:-0}" = "1" ] || [ ! -f "$artifact" ]; then
   echo "==> Building controller artifact for linux/$arch"
-  if [ -z "${OBOARD_RELEASE_SIGNING_KEY:-}" ]; then
-    dev_key_file="$WORKSPACE_DIR/.tmp/oboard-dev-release-signing-key"
-    mkdir -p "$(dirname "$dev_key_file")"
-    if [ ! -s "$dev_key_file" ]; then
-      python3 - <<'PY' > "$dev_key_file"
-import base64, os
-print(base64.b64encode(os.urandom(32)).decode().rstrip('='))
-PY
-      chmod 0600 "$dev_key_file"
-    fi
-    export OBOARD_RELEASE_SIGNING_KEY
-    OBOARD_RELEASE_SIGNING_KEY=$(cat "$dev_key_file")
-    echo "==> Using persistent local dev Agent release signing key: $dev_key_file"
-  fi
   OBOARD_PLATFORMS="linux/$arch" "$CONTROLLER_DIR/scripts/build-release.sh"
 fi
 if [ ! -f "$artifact" ]; then

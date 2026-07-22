@@ -8,6 +8,14 @@ var (
 	Commit           = "unknown"
 	Date             = "unknown"
 	ReleasePublicKey = ""
+	// Agent release metadata is injected from the signed manifest bundled by
+	// the Controller build. It intentionally does not mirror Controller data.
+	AgentVersion  = "0.1.0-dev"
+	AgentBuild    = "dev"
+	AgentCommit   = "unknown"
+	AgentDate     = "unknown"
+	KernelVersion = "0.1.0-dev"
+	KernelBuild   = "dev"
 )
 
 func String() string {
