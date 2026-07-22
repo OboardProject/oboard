@@ -1,28 +1,28 @@
 # oboard
 
-**English** | [中文](README.zh-CN.md)
+**中文** | [English](README.en.md)
 
-OBoard control-plane Controller for the panel, REST/WebSocket APIs, subscription rendering, and signed Agent/kernel distribution. Agent and kernel code live in the separate `OboardProject/oboard-agent` repository.
+OBoard 控制面主控（Controller），提供面板、REST/WebSocket API、订阅渲染，以及已签名的 Agent / 内核分发。Agent 与内核代码位于独立仓库 `OboardProject/oboard-agent`。
 
-## Features
+## 特点
 
-- **Panel and API**: Web UI, REST `/api/v1`, Agent WebSocket/callbacks, subscriptions, install scripts, and release downloads
-- **Config generation**: controller-side validation, proxy-path topology, and subscription rendering without linking sing-box
-- **Flexible install**: binary or Docker; default port `2787`; optional hidden path via `OBOARD_BASE_PATH`
-- **Certificates**: panel-managed or manual DNS-01 (including wildcards) and Agent-side HTTP-01 through `acme.sh`
-- **Signed distribution**: release script packages only signed Agent/kernel artifacts from the sibling `oboard-agent` repo
+- **面板与 API**：Web 界面、REST `/api/v1`、Agent WebSocket/回调、订阅、安装脚本与发布包下载
+- **配置生成**：主控侧校验、代理路径拓扑与订阅渲染，不链接 sing-box
+- **灵活安装**：二进制或 Docker；默认端口 `2787`；可通过 `OBOARD_BASE_PATH` 启用隐藏路径
+- **证书管理**：面板托管或手动 DNS-01（含通配符），以及 Agent 侧 HTTP-01，基于 `acme.sh`
+- **签名分发**：发布脚本仅打包同级 `oboard-agent` 仓库中已签名的 Agent / 内核产物
 
-## Repository layout
+## 仓库结构
 
-| Path | Description |
-|------|-------------|
-| `cmd/controller` | Controller entrypoint |
-| `internal/controller` | REST API, WebSocket, install/update scripts, static and download serving |
-| `internal/core` | Config generation, validation, and subscription rendering |
-| `web` | Web panel |
-| `deploy` | Service units and deployment assets |
+| 路径 | 说明 |
+|------|------|
+| `cmd/controller` | Controller 程序入口 |
+| `internal/controller` | REST API、WebSocket、安装/更新脚本，以及静态资源与下载分发 |
+| `internal/core` | 配置生成、校验与订阅渲染 |
+| `web` | Web 面板 |
+| `deploy` | 服务单元与部署资产 |
 
-## Build
+## 构建
 
 ```bash
 go test ./...
@@ -30,85 +30,84 @@ cd web && npm run build
 cd .. && go build -o ../dist/controller/oboard-controller ./cmd/controller
 ```
 
-> For local development, write build outputs under the parent workspace `dist/` directory so this repository tree stays clean.
+> 本地开发时，建议将编译产物输出至工作区上级目录的 `dist/`，以避免污染本仓库目录。
 
-The Controller release script locates the sibling `../oboard-agent` repository, invokes its release build, and packages only signed Agent/kernel artifacts for panel downloads.
+Controller 发布脚本会定位同级的 `../oboard-agent` 仓库，调用其发布构建，并仅打包已签名的 Agent / 内核产物供面板下载。
 
-## Install and manage
+## 安装与管理
 
-Default Controller port is `2787`.
+默认端口为 `2787`。
 
-### Binary install
+### 二进制安装
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo bash
 ```
 
-### Docker install (recommended)
+### Docker 安装（推荐）
 
-Latest stable image:
+最新稳定镜像：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install-docker.sh | sudo sh
 ```
 
-The image listens on container port `2787` by default.
+镜像默认监听容器端口 `2787`
 
-### First administrator
+### 首位管理员
 
-When `OBOARD_ADMIN_PASSWORD` is unset, installers create the first administrator with a random one-time password. Docker prints it at install time; binary installs print it once in the controller service log on first boot. Change it immediately after login.
+未设置 `OBOARD_ADMIN_PASSWORD` 时，安装器会为首位管理员生成一次性随机密码。Docker 在安装时打印；二进制安装在首次启动时于 controller 服务日志中打印一次。登录后请立即修改。
 
-### Hidden path (base path)
+### 隐藏路径
 
-Set `OBOARD_BASE_PATH` to place every Controller surface behind one URL path:
+设置 `OBOARD_BASE_PATH`，可将主控所有对外入口统一挂到同一 URL 路径下：
 
 ```bash
 OBOARD_BASE_PATH=/your-private-path oboard-controller
 ```
 
-The equivalent flag is `-base-path /your-private-path`. The prefix applies to the panel and its assets, `/api/v1`, Agent WebSocket/callbacks, subscriptions, `/install`, `/downloads`, and `/healthz`. With the example above, `http://127.0.0.1:2787/your-private-path` is the panel URL and unprefixed paths return `404`.
+等价命令行参数为 `-base-path /your-private-path`。此前缀作用于面板及其静态资源、`/api/v1`、Agent WebSocket/回调、订阅、`/install`、`/downloads` 与 `/healthz`。以上例为例，面板地址为 `http://127.0.0.1:2787/your-private-path`，未带前缀的路径返回 `404`。
 
-| Purpose | Example |
-|---------|---------|
-| Panel URL | `https://panel.example.com/hidden` |
-| Docker install with prefix | `sudo env OBOARD_BASE_PATH=/hidden sh` (via install-docker.sh) |
-| Binary env file | `/etc/oboard/controller.env` |
+| 用途 | 示例 |
+|------|------|
+| 面板地址 | `https://panel.example.com/hidden` |
+| 带前缀的 Docker 安装 | `sudo env OBOARD_BASE_PATH=/hidden sh`（配合 install-docker.sh） |
+| 二进制环境文件 | `/etc/oboard/controller.env` |
 
-For Docker:
+Docker 安装示例：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install-docker.sh \
   | sudo env OBOARD_BASE_PATH=/your-private-path sh
 ```
 
-For binary install, pass the same environment variable to the installer or set it in `/etc/oboard/controller.env`. The environment value initializes a new database; the persisted Controller setting is authoritative afterward.
+二进制安装时，可将同一环境变量传给安装脚本，或写入 `/etc/oboard/controller.env`。环境变量仅用于初始化新数据库；之后以数据库中持久化的主控设置为准。
 
-Administrators can later change the prefix from **Settings > Basic settings**. Controller immediately accepts both old and new paths, queues one `update_agent_config` task per enrolled Agent, and shows per-Agent progress. The old path is removed only after every target Agent reports success through the new address. Failed or offline Agents can be retried without an automatic retry loop; an in-progress migration survives a Controller restart. Use an ASCII URL-safe value beginning with `/`; a long random value reduces opportunistic scanning but does not replace HTTPS, authentication, firewall rules, or a trusted reverse proxy.
+管理员可在 **设置 > 基础设置** 中后续修改前缀。主控会立即同时接受新旧路径，并为每台已注册 Agent 入队一条 `update_agent_config` 任务，展示各 Agent 进度。仅当全部目标 Agent 通过新地址回报成功后，才移除旧路径。失败或离线 Agent 可手动重试，不会自动重试循环；进行中的迁移可在主控重启后继续。前缀须为以 `/` 开头的 ASCII URL 安全值；较长的随机值可降低被扫到的概率，但不能替代 HTTPS、鉴权、防火墙或可信反向代理。
 
-### Same-host Agent
+### 同机部署 Agent
 
-Controller and Agent are separate applications. The same server may run both: install Controller first, add the local server from the panel, then run the Agent install command generated by the panel.
+Controller 与 Agent 是独立应用。同一台机器可同时运行两者：先装 Controller，在面板中添加本机服务器，再执行面板生成的 Agent 安装命令。
 
-### Certificates
+### 证书
 
-Certificate management uses `acme.sh`. Controller supports panel-managed or manual DNS-01, including wildcard certificates, through Cloudflare, AliDNS, Tencent DNSPod, Tencent ESA, and Huawei Cloud. HTTP-01 runs on the selected Agent and requires inbound TCP port 80. Private keys remain encrypted on Controller; each Agent can fetch only revisions bound to its own enabled inbounds and stores them under `state_dir` with private permissions.
+证书管理使用 `acme.sh`。Controller 支持面板托管或手动 DNS-01（含通配符证书），对接 Cloudflare、阿里云 DNS、腾讯 DNSPod、腾讯 ESA 与华为云。HTTP-01 在选定 Agent 上执行，需要入站 TCP 80 端口。私钥在 Controller 侧加密保存；每台 Agent 仅可拉取绑定到其已启用入口的证书版本，并以私有权限存放在 `state_dir` 下。
 
-### Releases
+### 发布
 
-GitHub Actions builds binary packages and Docker images from the same Controller and Agent revisions. Development images use `dev`, stable images use `latest`, and exact version tags remain available for pinned installations. Every publish path runs Controller, Agent, and kernel tests plus the Web build before uploading artifacts.
+GitHub Actions 以同一组 Controller 与 Agent 修订构建二进制包与 Docker 镜像。开发镜像标签为 `dev`，稳定镜像为 `latest`，并保留精确版本标签以便锁定安装。每次发布前都会跑 Controller、Agent、内核测试以及 Web 构建。
 
-## Security boundary
+## 安全边界
 
-OBoard Controller is a privileged control plane. Administrators and Operators who can enqueue configuration, forwarding, tunnel, service, or update tasks must be treated as root-equivalent identities for enrolled Agent hosts. Use HTTPS, restrict panel access, protect session and release-signing secrets, and rotate Agent credentials after suspected compromise.
+OBoard Controller 是特权控制面。能入队配置、转发、隧道、服务或更新任务的管理员与操作员，对已注册 Agent 主机应视为 root 等价身份。请使用 HTTPS、限制面板访问、保护会话与发布签名密钥，并在疑似泄露后轮换 Agent 凭据。
 
-## Agent protocol
+## Agent 协议
 
-During monorepo development, the Controller/Agent JSON wire contract is documented in the workspace file [`../docs/AGENT_PROTOCOL.md`](../docs/AGENT_PROTOCOL.md). Keep user-facing UI copy separate from that developer document. Engineering norms for this repository live in [`../ai-controller.md`](../ai-controller.md).
+单体开发阶段，Controller / Agent 的 JSON 线协议约定见工作区文档 [`../docs/AGENT_PROTOCOL.md`](../docs/AGENT_PROTOCOL.md)。面向用户的 UI 文案请与该开发文档分开维护。本仓库工程规范见 [`../ai-controller.md`](../ai-controller.md)。
 
-## License
+## 许可证
 
 Copyright 2026 OBoard contributors.
 
-`oboard` (Controller and Web) is released under the
-[GNU GPL v3](LICENSE).  
-You may use, modify, and redistribute this software under the terms of that license.
+`oboard`（Controller 与 Web）以 [GNU GPL v3](LICENSE) 发布。  
+可在该许可证允许的范围内使用、修改与再分发本软件。
