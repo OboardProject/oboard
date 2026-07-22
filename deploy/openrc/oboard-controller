@@ -1,0 +1,32 @@
+#!/sbin/openrc-run
+
+description="OBoard Controller"
+command="/usr/local/bin/oboard-controller"
+command_background=true
+command_user="oboard:oboard"
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/${RC_SVCNAME}.log"
+error_log="/var/log/${RC_SVCNAME}.log"
+
+depend() {
+	need net
+	after firewall
+}
+
+start_pre() {
+	checkpath -d -m 0750 -o oboard:oboard /var/lib/oboard /opt/oboard/web /opt/oboard/downloads /etc/oboard
+	if [ -f /etc/oboard/controller.env ]; then
+		set -a
+		. /etc/oboard/controller.env
+		set +a
+	fi
+	: ${OBOARD_ADDR:=:2787}
+	: ${OBOARD_BASE_PATH:=}
+	: ${OBOARD_DB:=/var/lib/oboard/oboard.sqlite}
+	: ${OBOARD_LOG_FILE:=/var/lib/oboard/logs/controller.log}
+	: ${OBOARD_LOG_MAX_MB:=32}
+	: ${OBOARD_LOG_BACKUPS:=5}
+	: ${OBOARD_STATIC:=/opt/oboard/web/dist}
+	: ${OBOARD_DOWNLOADS:=/opt/oboard/downloads}
+	export OBOARD_ADDR OBOARD_BASE_PATH OBOARD_DB OBOARD_STATIC OBOARD_DOWNLOADS OBOARD_SESSION_SECRET OBOARD_LOG_FILE OBOARD_LOG_MAX_MB OBOARD_LOG_BACKUPS
+}

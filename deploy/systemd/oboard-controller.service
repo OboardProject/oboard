@@ -1,0 +1,35 @@
+[Unit]
+Description=OBoard Controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=OBOARD_ADDR=:2787
+Environment=OBOARD_DB=/var/lib/oboard/oboard.sqlite
+Environment=OBOARD_LOG_FILE=/var/lib/oboard/logs/controller.log
+Environment=OBOARD_LOG_MAX_MB=32
+Environment=OBOARD_LOG_BACKUPS=5
+Environment=OBOARD_STATIC=/opt/oboard/web/dist
+Environment=OBOARD_DOWNLOADS=/opt/oboard/downloads
+EnvironmentFile=-/etc/oboard/controller.env
+WorkingDirectory=/var/lib/oboard
+ExecStart=/usr/local/bin/oboard-controller
+Restart=always
+RestartSec=5
+DynamicUser=false
+User=oboard
+Group=oboard
+StateDirectory=oboard
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/oboard /etc/oboard /opt/oboard
+LockPersonality=true
+MemoryDenyWriteExecute=true
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

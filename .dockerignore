@@ -1,0 +1,12 @@
+.git
+.github
+.tmp
+backups
+web/node_modules
+web/dist
+oboard-agent
+dist/*
+!dist/docker-downloads
+!dist/docker-downloads/**
+*.sqlite
+*.log

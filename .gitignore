@@ -1,0 +1,92 @@
+# --- OS / editor ---
+# macOS Finder metadata (any depth)
+.DS_Store
+**/.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# --- Secrets / local env ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!*.key.example
+secrets/
+*.secret
+
+# --- Logs ---
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Temporary ---
+tmp/
+temp/
+.tmp/
+.cache/
+.temp/
+
+# --- Local data / runtime ---
+/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# --- Go build / test ---
+/bin/
+/dist/
+/build/
+/out/
+/controller
+/oboard-controller
+*.exe
+*.test
+*.out
+*.prof
+*.pprof
+coverage.out
+coverage.html
+cover.out
+cover.html
+cpu.out
+mem.out
+block.out
+mutex.out
+*.race
+vendor/
+
+# --- Node / Web ---
+web/node_modules/
+web/dist/
+web/.vite/
+web/.turbo/
+web/.parcel-cache/
+web/.eslintcache
+web/tsconfig.tsbuildinfo
+web/*.tsbuildinfo
+web/coverage/
+web/playwright-report/
+web/test-results/
+web/.nyc_output/
+
+# --- Package manager noise ---
+web/npm-debug.log*
+web/yarn-error.log*
+web/pnpm-lock.yaml.bak

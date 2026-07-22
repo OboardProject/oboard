@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable version matching VERSION, for example 0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    name: Build and publish stable release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: OboardProject/oboard-agent
+          ref: v${{ inputs.version }}
+          path: oboard-agent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25.11'
+          cache-dependency-path: |
+            go.sum
+            oboard-agent/go.sum
+            oboard-agent/kernel/oboard-sb/go.sum
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Verify release inputs
+        env:
+          OBOARD_AGENT_DIR: oboard-agent
+        run: ./scripts/verify-release.sh
+      - name: Validate stable version and compute metadata
+        id: meta
+        shell: bash
+        run: |
+          version=$(tr -d '[:space:]' < VERSION)
+          if [ "$version" != "${{ inputs.version }}" ]; then
+            echo "VERSION file is $version but workflow input is ${{ inputs.version }}" >&2
+            exit 1
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Stable releases require VERSION=x.y.z" >&2
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "build=$(date -u +%Y%m%d%H%M%S)"
+            echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "image=ghcr.io/${GITHUB_REPOSITORY,,}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Require Agent release signing key
+        env:
+          SIGNING_KEY: ${{ secrets.OBOARD_RELEASE_SIGNING_KEY }}
+        run: test -n "$SIGNING_KEY" || { echo "Configure OBOARD_RELEASE_SIGNING_KEY repository secret" >&2; exit 1; }
+      - name: Build release packages
+        env:
+          OBOARD_RELEASE_SIGNING_KEY: ${{ secrets.OBOARD_RELEASE_SIGNING_KEY }}
+          OBOARD_AGENT_DIR: oboard-agent
+          VERSION: ${{ steps.meta.outputs.version }}
+          BUILD: ${{ steps.meta.outputs.build }}
+          COMMIT: ${{ github.sha }}
+          DATE: ${{ steps.meta.outputs.date }}
+        run: ./scripts/build-release.sh
+      - name: Prepare Docker payload
+        run: ./scripts/prepare-docker-downloads.sh
+      - name: Read release public key
+        id: key
+        env:
+          OBOARD_RELEASE_SIGNING_KEY: ${{ secrets.OBOARD_RELEASE_SIGNING_KEY }}
+        run: echo "value=$(go run oboard-agent/scripts/print_release_public_key.go)" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.controller
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:latest
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            BUILD=${{ steps.meta.outputs.build }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.meta.outputs.date }}
+            RELEASE_PUBLIC_KEY=${{ steps.key.outputs.value }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Create or update git tag
+        run: |
+          git config user.name OboardProject
+          git config user.email OboardProject@users.noreply.github.com
+          git tag -f "v${{ steps.meta.outputs.version }}" "$GITHUB_SHA"
+          git push origin "refs/tags/v${{ steps.meta.outputs.version }}" --force
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ steps.meta.outputs.version }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/release/*.tar.gz dist/release/sha256sums.txt --clobber
+            gh release edit "$tag" --title "OBoard $tag" --latest --target "$GITHUB_SHA"
+          else
+            gh release create "$tag" dist/release/*.tar.gz dist/release/sha256sums.txt --title "OBoard $tag" --latest --generate-notes --target "$GITHUB_SHA"
+          fi

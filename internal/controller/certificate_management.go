@@ -1,0 +1,663 @@
+package controller
+
+import (
+	"bytes"
+	"context"
+	"crypto"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
+)
+
+type certificateRequest struct {
+	Name             string   `json:"name"`
+	Domains          []string `json:"domains"`
+	ChallengeType    string   `json:"challenge_type"`
+	DNSCredentialID  *int64   `json:"dns_credential_id"`
+	IssuanceServerID *int64   `json:"issuance_server_id"`
+	ACMECA           string   `json:"acme_ca"`
+	AccountEmail     string   `json:"account_email"`
+	AutoRenew        *bool    `json:"auto_renew"`
+}
+
+func (s *Server) certificates(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		items, err := s.store.ListCertificates(r.Context())
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		write(w, 200, map[string]any{"certificates": items})
+	case http.MethodPost:
+		var req certificateRequest
+		if !decode(w, r, &req) {
+			return
+		}
+		certificate, err := s.buildCertificate(req, nil)
+		if err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if err := s.validateCertificateReferences(r.Context(), *certificate); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if err := s.store.CreateCertificate(r.Context(), certificate); err != nil {
+			fail(w, err, 500)
+			return
+		}
+		auditReq(s, r, "create", "certificate", strconv.FormatInt(certificate.ID, 10))
+		write(w, 201, map[string]any{"certificate": certificate})
+	default:
+		method(w)
+	}
+}
+
+func (s *Server) certificateSubroutes(w http.ResponseWriter, r *http.Request) {
+	parts := pathParts(r.URL.Path, "/api/v1/certificates/")
+	if len(parts) == 1 && parts[0] == "import" {
+		s.importCertificate(w, r)
+		return
+	}
+	if len(parts) == 0 {
+		fail(w, errors.New("missing certificate id"), 400)
+		return
+	}
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || id <= 0 {
+		fail(w, errors.New("invalid certificate id"), 400)
+		return
+	}
+	if len(parts) == 2 {
+		switch parts[1] {
+		case "issue":
+			s.issueCertificate(w, r, id, false)
+			return
+		case "renew":
+			s.issueCertificate(w, r, id, true)
+			return
+		case "confirm-dns":
+			s.confirmCertificateDNS(w, r, id)
+			return
+		}
+	}
+	if len(parts) != 1 {
+		fail(w, errors.New("unknown certificate route"), 404)
+		return
+	}
+	current, err := s.store.GetCertificate(r.Context(), id)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		write(w, 200, map[string]any{"certificate": current})
+	case http.MethodPatch:
+		var req certificateRequest
+		if !decode(w, r, &req) {
+			return
+		}
+		certificate, err := s.buildCertificate(req, current)
+		if err != nil {
+			fail(w, err, 400)
+			return
+		}
+		certificate.ID = id
+		if err := s.validateCertificateReferences(r.Context(), *certificate); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if err := s.store.UpdateCertificate(r.Context(), certificate); err != nil {
+			fail(w, err, 500)
+			return
+		}
+		auditReq(s, r, "update", "certificate", strconv.FormatInt(id, 10))
+		write(w, 200, map[string]any{"certificate": certificate})
+	case http.MethodDelete:
+		if err := s.ensureCertificateUnused(r.Context(), id); err != nil {
+			fail(w, err, http.StatusConflict)
+			return
+		}
+		if err := s.store.DeleteCertificate(r.Context(), id); err != nil {
+			fail(w, err, 500)
+			return
+		}
+		auditReq(s, r, "delete", "certificate", strconv.FormatInt(id, 10))
+		write(w, 200, map[string]any{"deleted": true})
+	default:
+		method(w)
+	}
+}
+
+func (s *Server) buildCertificate(req certificateRequest, current *model.Certificate) (*model.Certificate, error) {
+	certificate := &model.Certificate{Status: model.CertificateStatusPending, ACMECA: "letsencrypt", AutoRenew: true}
+	if current != nil {
+		*certificate = *current
+	}
+	if strings.TrimSpace(req.Name) != "" || current == nil {
+		certificate.Name = strings.TrimSpace(req.Name)
+	}
+	if req.Domains != nil {
+		domains, err := normalizeCertificateDomains(req.Domains)
+		if err != nil {
+			return nil, err
+		}
+		certificate.Domains = domains
+	}
+	if req.ChallengeType != "" || current == nil {
+		certificate.ChallengeType = strings.ToLower(strings.TrimSpace(req.ChallengeType))
+	}
+	if req.DNSCredentialID != nil || current == nil {
+		certificate.DNSCredentialID = req.DNSCredentialID
+	}
+	if req.IssuanceServerID != nil || current == nil {
+		certificate.IssuanceServerID = req.IssuanceServerID
+	}
+	if strings.TrimSpace(req.ACMECA) != "" {
+		certificate.ACMECA = strings.ToLower(strings.TrimSpace(req.ACMECA))
+	}
+	if req.AccountEmail != "" || current == nil {
+		certificate.AccountEmail = strings.TrimSpace(req.AccountEmail)
+	}
+	if req.AutoRenew != nil {
+		certificate.AutoRenew = *req.AutoRenew
+	}
+	if certificate.Name == "" {
+		return nil, errors.New("name required")
+	}
+	if len(certificate.Domains) == 0 {
+		return nil, errors.New("at least one certificate domain is required")
+	}
+	certificate.PrimaryDomain = certificate.Domains[0]
+	if strings.TrimSpace(certificate.AccountEmail) == "" {
+		certificate.AccountEmail = defaultCertificateAccountEmail(certificate.PrimaryDomain)
+	}
+	certificate.Wildcard = false
+	for _, domain := range certificate.Domains {
+		certificate.Wildcard = certificate.Wildcard || strings.HasPrefix(domain, "*.")
+	}
+	switch certificate.ChallengeType {
+	case model.CertificateChallengeHTTP:
+		if certificate.Wildcard {
+			return nil, errors.New("HTTP-01 cannot issue wildcard certificates")
+		}
+		if certificate.IssuanceServerID == nil || *certificate.IssuanceServerID <= 0 {
+			return nil, errors.New("HTTP-01 requires issuance_server_id")
+		}
+	case model.CertificateChallengeDNS:
+		if certificate.DNSCredentialID == nil || *certificate.DNSCredentialID <= 0 {
+			return nil, errors.New("managed DNS-01 requires dns_credential_id")
+		}
+	case model.CertificateChallengeDNSManual:
+	default:
+		return nil, fmt.Errorf("invalid challenge_type %q", certificate.ChallengeType)
+	}
+	switch certificate.ACMECA {
+	case "letsencrypt", "zerossl", "buypass", "google":
+	default:
+		return nil, fmt.Errorf("unsupported ACME CA %q", certificate.ACMECA)
+	}
+	return certificate, nil
+}
+
+func defaultCertificateAccountEmail(domain string) string {
+	domain = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(domain)), "*.")
+	if domain == "" {
+		return ""
+	}
+	return "admin@" + domain
+}
+
+func normalizeCertificateDomains(domains []string) ([]string, error) {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(domains))
+	for _, raw := range domains {
+		domain := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(raw), "."))
+		check := strings.TrimPrefix(domain, "*.")
+		if !isDNSDomainName(check) || strings.Contains(check, "*") {
+			return nil, fmt.Errorf("invalid certificate domain %q", raw)
+		}
+		if !seen[domain] {
+			seen[domain] = true
+			out = append(out, domain)
+		}
+	}
+	return out, nil
+}
+
+func (s *Server) validateCertificateReferences(ctx context.Context, certificate model.Certificate) error {
+	if certificate.DNSCredentialID != nil {
+		credential, err := s.store.GetDNSCredential(ctx, *certificate.DNSCredentialID)
+		if err != nil || !credential.Enabled {
+			return errors.New("DNS credential is unavailable")
+		}
+		for _, domain := range certificate.Domains {
+			if _, err := selectDNSCredentialZone(*credential, domain, 0); err != nil {
+				return err
+			}
+		}
+	}
+	if certificate.IssuanceServerID != nil {
+		if _, err := s.store.GetServer(ctx, *certificate.IssuanceServerID); err != nil {
+			return errors.New("issuance server is unavailable")
+		}
+	}
+	return nil
+}
+
+func (s *Server) importCertificate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	var req struct {
+		Name           string `json:"name"`
+		CertificatePEM string `json:"certificate_pem"`
+		FullchainPEM   string `json:"fullchain_pem"`
+		PrivateKeyPEM  string `json:"private_key_pem"`
+		AutoRenew      bool   `json:"auto_renew"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	material, err := validateCertificateMaterial(req.CertificatePEM, req.FullchainPEM, req.PrivateKeyPEM, nil)
+	if err != nil {
+		fail(w, err, 400)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = material.Domains[0]
+	}
+	certificate := &model.Certificate{Name: name, PrimaryDomain: material.Domains[0], Domains: material.Domains, Wildcard: containsWildcard(material.Domains), ChallengeType: "imported", ACMECA: "imported", Status: model.CertificateStatusPending, AutoRenew: req.AutoRenew}
+	if err := s.store.CreateCertificate(r.Context(), certificate); err != nil {
+		fail(w, err, 500)
+		return
+	}
+	if err := s.storeCertificateMaterial(r.Context(), certificate, req.CertificatePEM, req.FullchainPEM, req.PrivateKeyPEM); err != nil {
+		_ = s.store.DeleteCertificate(r.Context(), certificate.ID)
+		fail(w, err, 500)
+		return
+	}
+	auditReq(s, r, "import", "certificate", strconv.FormatInt(certificate.ID, 10))
+	write(w, 201, map[string]any{"certificate": certificate})
+}
+
+type parsedCertificateMaterial struct {
+	Leaf    *x509.Certificate
+	Domains []string
+}
+
+func validateCertificateMaterial(certificatePEM, fullchainPEM, privateKeyPEM string, requestedDomains []string) (parsedCertificateMaterial, error) {
+	leafPEM := strings.TrimSpace(certificatePEM)
+	if leafPEM == "" {
+		leafPEM = strings.TrimSpace(fullchainPEM)
+	}
+	block, _ := pem.Decode([]byte(leafPEM))
+	if block == nil || block.Type != "CERTIFICATE" {
+		return parsedCertificateMaterial{}, errors.New("certificate_pem does not contain an X.509 certificate")
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return parsedCertificateMaterial{}, fmt.Errorf("parse certificate: %w", err)
+	}
+	privateKey, err := parsePrivateKey([]byte(privateKeyPEM))
+	if err != nil {
+		return parsedCertificateMaterial{}, err
+	}
+	publicFromKey, err := x509.MarshalPKIXPublicKey(privateKey.Public())
+	if err != nil {
+		return parsedCertificateMaterial{}, err
+	}
+	publicFromCert, err := x509.MarshalPKIXPublicKey(leaf.PublicKey)
+	if err != nil {
+		return parsedCertificateMaterial{}, err
+	}
+	if !bytes.Equal(publicFromKey, publicFromCert) {
+		return parsedCertificateMaterial{}, errors.New("private key does not match certificate")
+	}
+	domains, err := normalizeCertificateDomains(leaf.DNSNames)
+	if err != nil || len(domains) == 0 {
+		return parsedCertificateMaterial{}, errors.New("certificate has no valid DNS SAN")
+	}
+	for _, requested := range requestedDomains {
+		if err := leaf.VerifyHostname(strings.TrimPrefix(requested, "*.")); err != nil && !certificateDomainCovered(domains, requested) {
+			return parsedCertificateMaterial{}, fmt.Errorf("certificate does not cover %s", requested)
+		}
+	}
+	return parsedCertificateMaterial{Leaf: leaf, Domains: domains}, nil
+}
+
+func parsePrivateKey(data []byte) (crypto.Signer, error) {
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, errors.New("private_key_pem does not contain a PEM private key")
+	}
+	if key, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		if signer, ok := key.(crypto.Signer); ok {
+			return signer, nil
+		}
+	}
+	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+	if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+	return nil, errors.New("unsupported private key format")
+}
+
+func (s *Server) storeCertificateMaterial(ctx context.Context, certificate *model.Certificate, certificatePEM, fullchainPEM, privateKeyPEM string) error {
+	material, err := validateCertificateMaterial(certificatePEM, fullchainPEM, privateKeyPEM, certificate.Domains)
+	if err != nil {
+		return err
+	}
+	encrypted, err := security.EncryptSecret(s.sessionSecret, "certificate-private-key", privateKeyPEM)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(fullchainPEM) == "" {
+		fullchainPEM = certificatePEM
+	}
+	sum := sha256.Sum256([]byte(fullchainPEM + "\x00" + privateKeyPEM))
+	now := time.Now().UTC()
+	certificate.CertificatePEM = certificatePEM
+	certificate.FullchainPEM = fullchainPEM
+	certificate.PrivateKeyEncrypted = encrypted
+	certificate.Revision = hex.EncodeToString(sum[:])
+	certificate.NotBefore = &material.Leaf.NotBefore
+	certificate.NotAfter = &material.Leaf.NotAfter
+	certificate.Domains = material.Domains
+	certificate.PrimaryDomain = material.Domains[0]
+	certificate.Wildcard = containsWildcard(material.Domains)
+	certificate.Status = model.CertificateStatusReady
+	certificate.ValidationRecords = nil
+	certificate.LastError = ""
+	certificate.LastIssuedAt = &now
+	return s.store.UpdateCertificate(ctx, certificate)
+}
+
+func containsWildcard(domains []string) bool {
+	for _, domain := range domains {
+		if strings.HasPrefix(domain, "*.") {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) ensureCertificateUnused(ctx context.Context, id int64) error {
+	bindings, err := s.store.ListInboundCertificateBindings(ctx)
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		if binding.CertificateID != nil && *binding.CertificateID == id {
+			return fmt.Errorf("certificate is used by inbound %d", binding.InboundID)
+		}
+	}
+	return nil
+}
+
+func (s *Server) saveInboundCertificateBinding(ctx context.Context, inbound model.Inbound) error {
+	mode := strings.TrimSpace(inbound.CertificateMode)
+	if mode == "" {
+		mode = model.CertificateModeExternal
+	}
+	binding := &model.InboundCertificateBinding{InboundID: inbound.ID, CertificateID: inbound.CertificateID, Mode: mode, ServerName: normalizeDomainName(inbound.CertificateDomain)}
+	return s.store.UpsertInboundCertificateBinding(ctx, binding)
+}
+
+func (s *Server) validateInboundManagedReferences(ctx context.Context, inbound model.Inbound) error {
+	if inbound.DNSSyncEnabled && inbound.DNSCredentialID != nil {
+		credential, err := s.store.GetDNSCredential(ctx, *inbound.DNSCredentialID)
+		if err != nil || !credential.Enabled {
+			return errors.New("DNS credential is unavailable")
+		}
+		if inbound.DNSProxyEnabled && credential.Provider != model.DNSProviderCloudflare {
+			return errors.New("DNS proxy is only supported by Cloudflare")
+		}
+		if _, err := selectDNSCredentialZone(*credential, inbound.DNSDomain, inbound.ServerID); err != nil {
+			return err
+		}
+	}
+	if inbound.CertificateMode == model.CertificateModeExplicit && inbound.CertificateID != nil {
+		if _, err := s.store.GetCertificate(ctx, *inbound.CertificateID); err != nil {
+			return errors.New("certificate is unavailable")
+		}
+	}
+	return nil
+}
+
+func (s *Server) prepareCertificateInbounds(ctx context.Context, inbounds []model.Inbound, serverID int64) ([]model.Inbound, []model.ManagedAssetReference, error) {
+	settings, err := s.store.ListSettings(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	autoEnabled := !strings.EqualFold(strings.TrimSpace(settings["certificate_auto_match_enabled"]), "false")
+	preference := strings.ToLower(strings.TrimSpace(settings["certificate_default_preference"]))
+	if preference != "wildcard" {
+		preference = "subdomain"
+	}
+	certificates, err := s.store.ListCertificates(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := append([]model.Inbound(nil), inbounds...)
+	assetsByID := map[int64]model.ManagedAssetReference{}
+	for i := range out {
+		inbound := &out[i]
+		if inbound.ServerID != serverID || !inbound.Enabled || inbound.CertificateMode == "" || inbound.CertificateMode == model.CertificateModeExternal {
+			continue
+		}
+		domain := inboundCertificateDomain(*inbound)
+		if !isDNSDomainName(domain) {
+			return nil, nil, fmt.Errorf("inbound %d has no valid certificate domain", inbound.ID)
+		}
+		if inbound.CertificateMode == model.CertificateModeAuto && !autoEnabled {
+			return nil, nil, fmt.Errorf("automatic certificate matching is disabled for inbound %d", inbound.ID)
+		}
+		certificate, err := selectCertificate(certificates, inbound.CertificateMode, inbound.CertificateID, domain, preference, time.Now())
+		if err != nil {
+			return nil, nil, fmt.Errorf("inbound %d: %w", inbound.ID, err)
+		}
+		inbound.CertificateID = &certificate.ID
+		inbound.CertificateDomain = domain
+		inbound.ConfigJSON, err = injectManagedCertificate(inbound.ConfigJSON, certificate.ID, domain)
+		if err != nil {
+			return nil, nil, err
+		}
+		binding := &model.InboundCertificateBinding{InboundID: inbound.ID, CertificateID: &certificate.ID, Mode: inbound.CertificateMode, ServerName: domain}
+		if err := s.store.UpsertInboundCertificateBinding(ctx, binding); err != nil {
+			return nil, nil, err
+		}
+		assetsByID[certificate.ID] = model.ManagedAssetReference{Kind: "certificate", ID: certificate.ID, Revision: certificate.Revision}
+	}
+	assets := make([]model.ManagedAssetReference, 0, len(assetsByID))
+	for _, asset := range assetsByID {
+		assets = append(assets, asset)
+	}
+	sort.Slice(assets, func(i, j int) bool { return assets[i].ID < assets[j].ID })
+	return out, assets, nil
+}
+
+func selectCertificate(certificates []model.Certificate, mode string, explicitID *int64, domain, preference string, now time.Time) (model.Certificate, error) {
+	var exact, wildcard []model.Certificate
+	for _, certificate := range certificates {
+		if certificate.Status != model.CertificateStatusReady || certificate.Revision == "" || certificate.NotAfter == nil || !certificate.NotAfter.After(now) {
+			continue
+		}
+		if mode == model.CertificateModeExplicit && explicitID != nil && certificate.ID == *explicitID {
+			if !certificateDomainCovered(certificate.Domains, domain) {
+				return model.Certificate{}, fmt.Errorf("certificate %d does not cover %s", certificate.ID, domain)
+			}
+			return certificate, nil
+		}
+		for _, san := range certificate.Domains {
+			if strings.EqualFold(san, domain) {
+				exact = append(exact, certificate)
+				break
+			}
+			if wildcardDomainMatches(san, domain) {
+				wildcard = append(wildcard, certificate)
+				break
+			}
+		}
+	}
+	newest := func(items []model.Certificate) (model.Certificate, bool) {
+		if len(items) == 0 {
+			return model.Certificate{}, false
+		}
+		sort.Slice(items, func(i, j int) bool { return items[i].NotAfter.After(*items[j].NotAfter) })
+		return items[0], true
+	}
+	switch mode {
+	case model.CertificateModeExplicit:
+		return model.Certificate{}, errors.New("explicit certificate is not ready")
+	case model.CertificateModeExact:
+		if certificate, ok := newest(exact); ok {
+			return certificate, nil
+		}
+	case model.CertificateModeWildcard:
+		if certificate, ok := newest(wildcard); ok {
+			return certificate, nil
+		}
+	case model.CertificateModeAuto:
+		first, second := exact, wildcard
+		if preference == "wildcard" {
+			first, second = wildcard, exact
+		}
+		if certificate, ok := newest(first); ok {
+			return certificate, nil
+		}
+		if certificate, ok := newest(second); ok {
+			return certificate, nil
+		}
+	}
+	return model.Certificate{}, fmt.Errorf("no ready %s certificate covers %s", mode, domain)
+}
+
+func certificateDomainCovered(domains []string, domain string) bool {
+	for _, san := range domains {
+		if strings.EqualFold(san, domain) || wildcardDomainMatches(san, domain) {
+			return true
+		}
+	}
+	return false
+}
+
+func wildcardDomainMatches(pattern, domain string) bool {
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if !strings.HasPrefix(pattern, "*.") {
+		return false
+	}
+	suffix := strings.TrimPrefix(pattern, "*.")
+	if !strings.HasSuffix(domain, "."+suffix) {
+		return false
+	}
+	return !strings.Contains(strings.TrimSuffix(domain, "."+suffix), ".")
+}
+
+func inboundCertificateDomain(inbound model.Inbound) string {
+	if domain := normalizeDomainName(inbound.CertificateDomain); domain != "" {
+		return domain
+	}
+	if domain := normalizeDomainName(inbound.DNSDomain); domain != "" {
+		return domain
+	}
+	var config map[string]any
+	if json.Unmarshal([]byte(inbound.ConfigJSON), &config) == nil {
+		if tls, ok := config["tls"].(map[string]any); ok {
+			if serverName, ok := tls["server_name"].(string); ok {
+				return normalizeDomainName(serverName)
+			}
+		}
+	}
+	return ""
+}
+
+func injectManagedCertificate(configJSON string, certificateID int64, domain string) (string, error) {
+	config := map[string]any{}
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		return "", err
+	}
+	tls, _ := config["tls"].(map[string]any)
+	if tls == nil {
+		tls = map[string]any{}
+	}
+	tls["enabled"] = true
+	if _, exists := tls["server_name"]; !exists {
+		tls["server_name"] = domain
+	}
+	base := "oboard-asset://certificate/" + strconv.FormatInt(certificateID, 10) + "/"
+	tls["certificate_path"] = base + "fullchain.pem"
+	tls["key_path"] = base + "privkey.pem"
+	config["tls"] = tls
+	encoded, err := json.Marshal(config)
+	return string(encoded), err
+}
+
+func (s *Server) issueCertificate(w http.ResponseWriter, r *http.Request, id int64, renew bool) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	certificate, err := s.store.GetCertificate(r.Context(), id)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	if certificate.ChallengeType == "imported" {
+		fail(w, errors.New("imported certificates cannot be issued"), 400)
+		return
+	}
+	if err := s.startCertificateIssue(context.WithoutCancel(r.Context()), certificate, renew, false); err != nil {
+		fail(w, err, 409)
+		return
+	}
+	auditReq(s, r, "issue", "certificate", strconv.FormatInt(id, 10))
+	write(w, 202, map[string]any{"certificate": certificate, "accepted": true})
+}
+
+func (s *Server) confirmCertificateDNS(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	certificate, err := s.store.GetCertificate(r.Context(), id)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	if certificate.ChallengeType != model.CertificateChallengeDNSManual || certificate.Status != model.CertificateStatusAwaitingDNS {
+		fail(w, errors.New("certificate is not awaiting manual DNS confirmation"), 409)
+		return
+	}
+	if err := s.startCertificateIssue(context.WithoutCancel(r.Context()), certificate, false, true); err != nil {
+		fail(w, err, 409)
+		return
+	}
+	auditReq(s, r, "confirm_dns", "certificate", strconv.FormatInt(id, 10))
+	write(w, 202, map[string]any{"certificate": certificate, "accepted": true})
+}
+
+// startCertificateIssue is implemented in acme.go so matching and storage can
+// be tested without invoking an external ACME client.
+func (s *Server) startCertificateIssue(ctx context.Context, certificate *model.Certificate, renew, resumeManual bool) error {
+	return s.startACMECertificateIssue(ctx, certificate, renew, resumeManual)
+}

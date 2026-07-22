@@ -1,0 +1,27 @@
+services:
+  controller:
+    image: "${OBOARD_IMAGE:-ghcr.io/imnebula/oboard}:${OBOARD_TAG:-latest}"
+    container_name: oboard-controller
+    restart: unless-stopped
+    ports:
+      - "${OBOARD_PORT:-2787}:2787"
+    environment:
+      OBOARD_SESSION_SECRET: "${OBOARD_SESSION_SECRET:?set OBOARD_SESSION_SECRET in .env}"
+      OBOARD_BASE_PATH: "${OBOARD_BASE_PATH:-}"
+      OBOARD_ADMIN_USERNAME: "${OBOARD_ADMIN_USERNAME:-admin}"
+      OBOARD_ADMIN_PASSWORD: "${OBOARD_ADMIN_PASSWORD:?set OBOARD_ADMIN_PASSWORD in .env}"
+      OBOARD_AUTO_ADMIN: "true"
+      TZ: "${TZ:-Asia/Shanghai}"
+    volumes:
+      - ./data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
