@@ -50,9 +50,31 @@ else
   fi
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
-  gh release download "$tag" --repo "$REPO" --dir "$tmp" --clobber \
-    --pattern 'oboard-agent-linux-*' --pattern 'oboard-sb-linux-*' \
-    --pattern release-manifest.json --pattern release-manifest.json.sig
+  attempts=1
+  delay=0
+  if [ "$CHANNEL" = dev ]; then
+    attempts=${OBOARD_AGENT_RELEASE_WAIT_ATTEMPTS:-10}
+    delay=${OBOARD_AGENT_RELEASE_WAIT_SECONDS:-15}
+  fi
+  case "$attempts" in *[!0-9]*|0) echo "OBOARD_AGENT_RELEASE_WAIT_ATTEMPTS must be a positive integer" >&2; exit 2 ;; esac
+  case "$delay" in *[!0-9]*|"") echo "OBOARD_AGENT_RELEASE_WAIT_SECONDS must be a non-negative integer" >&2; exit 2 ;; esac
+  downloaded=false
+  for attempt in $(seq 1 "$attempts"); do
+    if gh release download "$tag" --repo "$REPO" --dir "$tmp" --clobber \
+      --pattern 'oboard-agent-linux-*' --pattern 'oboard-sb-linux-*' \
+      --pattern release-manifest.json --pattern release-manifest.json.sig; then
+      downloaded=true
+      break
+    fi
+    if [ "$attempt" -lt "$attempts" ]; then
+      echo "Agent $tag release is not available yet; retrying in ${delay}s ($attempt/$attempts)" >&2
+      sleep "$delay"
+    fi
+  done
+  if [ "$downloaded" != true ]; then
+    echo "Unable to download Agent release $tag from $REPO" >&2
+    exit 1
+  fi
   rm -rf "$TARGET"
   mkdir -p "$TARGET"
   cp "$tmp"/* "$TARGET"/

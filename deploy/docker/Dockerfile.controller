@@ -1,4 +1,4 @@
-FROM golang:1.25.11-alpine AS backend
+FROM golang:1.25.12-alpine AS backend
 WORKDIR /src
 ARG VERSION=0.1.0-dev
 ARG BUILD=dev
