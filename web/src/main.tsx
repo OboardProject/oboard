@@ -2975,11 +2975,10 @@ function Servers({ data, client, load, loading, notify }: any) {
   const role: Role = data.session?.role || 'viewer'
   const actions = (s: Server) => <ServerActionsDropdown server={s} role={role} onAction={handleServerAction} />
   const enrolledCount = servers.filter(s => String(s.agent_id || '').trim()).length
-  return <Panel title="服务器">
+  return <section className="panel">
+    <div className="panel-body">
     <div className="section-toolbar">
       <div>
-        <h3>服务器列表</h3>
-        <p className="muted">添加服务器通过弹窗完成；Agent 上线后会自动补全系统、资源和 sing-box 信息。</p>
         <div className={`live-refresh-status ${serverRefreshFailed ? 'is-error' : 'is-active'}`} title="服务器状态和资源数据每 5 秒更新">
           <span className="live-refresh-dot" aria-hidden="true" />
           <span>{serverRefreshFailed ? '自动刷新暂时失败' : serverRefreshing ? '正在更新服务器' : '服务器数据自动刷新'}</span>
@@ -3028,7 +3027,8 @@ function Servers({ data, client, load, loading, notify }: any) {
       onChanged={load}
       notify={notify}
     />}</AnimatePresence>
-  </Panel>
+    </div>
+  </section>
 }
 
 function appendLiveServerMetrics(current: ServerMetricSample[], servers: Server[]) {

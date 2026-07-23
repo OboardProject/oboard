@@ -3739,6 +3739,16 @@ body:has(.dialog-root) .topbar-actions {
   transition: transform 160ms ease;
 }
 
+:root[data-theme="dark"] .subscription-burn-toggle input:not(:checked) + .setting-switch {
+  border-color: #4a556b;
+  background: #252c3a;
+}
+
+:root[data-theme="dark"] .subscription-burn-toggle input:not(:checked) + .setting-switch span {
+  background: #d5dbe6;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.52);
+}
+
 .install-command-card {
   display: grid;
   gap: 10px;

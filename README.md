@@ -103,7 +103,7 @@ OBoard Controller 是特权控制面。能入队配置、转发、隧道、服�
 
 ## Agent 协议
 
-单体开发阶段，Controller / Agent 的 JSON 线协议约定见工作区文档 [`../docs/AGENT_PROTOCOL.md`](../docs/AGENT_PROTOCOL.md)。面向用户的 UI 文案请与该开发文档分开维护。本仓库工程规范见 [`../ai-controller.md`](../ai-controller.md)。
+单体开发阶段，Controller / Agent 的 JSON 线协议约定见工作区文档 [`../docs/AGENT_PROTOCOL.md`](../docs/AGENT_PROTOCOL.md)。面向用户的 UI 文案请与该开发文档分开维护。本仓库工程规范见 [`../AGENTS.md`](../AGENTS.md)。
 
 ## 许可证
 

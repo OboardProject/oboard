@@ -103,7 +103,7 @@ OBoard Controller is a privileged control plane. Administrators and Operators wh
 
 ## Agent protocol
 
-During monorepo development, the Controller/Agent JSON wire contract is documented in the workspace file [`../docs/AGENT_PROTOCOL.md`](../docs/AGENT_PROTOCOL.md). Keep user-facing UI copy separate from that developer document. Engineering norms for this repository live in [`../ai-controller.md`](../ai-controller.md).
+During monorepo development, the Controller/Agent JSON wire contract is documented in the workspace file [`../docs/AGENT_PROTOCOL.md`](../docs/AGENT_PROTOCOL.md). Keep user-facing UI copy separate from that developer document. Engineering norms for this repository live in [`../AGENTS.md`](../AGENTS.md).
 
 ## License
 
