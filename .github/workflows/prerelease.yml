@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
-      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: agent-token
         with:
           app-id: ${{ vars.OBOARD_RELEASE_APP_ID }}
@@ -92,19 +92,23 @@ jobs:
           BUILD: ${{ steps.meta.outputs.build }}
           COMMIT: ${{ github.sha }}
           DATE: ${{ steps.meta.outputs.date }}
-          OUT_DIR: ${{ github.workspace }}/../dist/controller/release
+          OUT_DIR: ${{ runner.temp }}/oboard/controller/release
         run: ./scripts/build-release.sh
       - name: Prepare Docker payload
         env:
-          OBOARD_AGENT_RELEASE_DIR: ${{ github.workspace }}/../dist/controller/release/agent-release
-          OBOARD_DOCKER_DOWNLOADS_DIR: ${{ github.workspace }}/../dist/controller/docker-downloads
+          OBOARD_AGENT_RELEASE_DIR: ${{ runner.temp }}/oboard/controller/release/agent-release
+          OBOARD_DOCKER_DOWNLOADS_DIR: ${{ runner.temp }}/oboard/controller/docker-downloads
         run: ./scripts/prepare-docker-downloads.sh
       - name: Read bundled Agent metadata
         id: agent
+        env:
+          CONTROLLER_RELEASE_DIR: ${{ runner.temp }}/oboard/controller/release
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
-          metadata = json.load(open("../dist/controller/release/agent-release/release-metadata.json"))
+          import os
+          metadata_path = os.path.join(os.environ["CONTROLLER_RELEASE_DIR"], "agent-release", "release-metadata.json")
+          metadata = json.load(open(metadata_path))
           for key in ("version", "build", "commit", "date"):
               print(f"{key}={metadata[key]}")
           PY
@@ -113,7 +117,7 @@ jobs:
           context: .
           file: deploy/docker/Dockerfile.controller
           build-contexts: |
-            agent-downloads=../dist/controller/docker-downloads
+            agent-downloads=${{ runner.temp }}/oboard/controller/docker-downloads
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
@@ -147,4 +151,5 @@ jobs:
       - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "v${{ steps.meta.outputs.version }}" ../dist/controller/release/*.tar.gz ../dist/controller/release/sha256sums.txt ../dist/controller/release/controller-release-manifest.json --title "OBoard v${{ steps.meta.outputs.version }}" --prerelease --generate-notes
+          CONTROLLER_RELEASE_DIR: ${{ runner.temp }}/oboard/controller/release
+        run: gh release create "v${{ steps.meta.outputs.version }}" "$CONTROLLER_RELEASE_DIR"/*.tar.gz "$CONTROLLER_RELEASE_DIR"/sha256sums.txt "$CONTROLLER_RELEASE_DIR"/controller-release-manifest.json --title "OBoard v${{ steps.meta.outputs.version }}" --prerelease --generate-notes
