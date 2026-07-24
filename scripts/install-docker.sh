@@ -131,32 +131,103 @@ ensure_base_tools() {
   fi
 }
 
+apt_package_available() {
+  pkg=$1
+  apt-cache show "$pkg" >/dev/null 2>&1
+}
+
+apt_install_first_available() {
+  for pkg in "$@"; do
+    if ! apt_package_available "$pkg"; then
+      continue
+    fi
+    if apt-get install -y --no-install-recommends "$pkg"; then
+      printf '%s\n' "$pkg"
+      return 0
+    fi
+  done
+  return 1
+}
+
+docker_compose_ready() {
+  command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1
+}
+
 install_docker_engine() {
-  if command -v docker >/dev/null 2>&1; then
+  if docker_compose_ready; then
     return
   fi
-  echo "未检测到 Docker，正在安装..."
+  if command -v docker >/dev/null 2>&1; then
+    echo "已检测到 Docker，但缺少 Compose v2（docker compose），正在补齐..."
+  else
+    echo "未检测到 Docker，正在安装..."
+  fi
   if command -v apt-get >/dev/null 2>&1; then
+    # Debian/Ubuntu package names differ:
+    # - engine: docker.io
+    # - compose v2: docker-compose (Debian Trixie+), docker-compose-v2 (Ubuntu 24.04+),
+    #   docker-compose-plugin (Docker CE / third-party repos)
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y --no-install-recommends docker.io docker-compose-plugin
+    if ! command -v docker >/dev/null 2>&1; then
+      apt-get install -y --no-install-recommends docker.io || {
+        echo "无法从当前 apt 源安装 docker.io，请检查包源后重试。" >&2
+        exit 1
+      }
+    fi
+    if ! docker_compose_ready; then
+      if ! apt_install_first_available docker-compose-plugin docker-compose-v2 docker-compose >/dev/null; then
+        echo "无法从当前 apt 源安装 Docker Compose v2 插件。" >&2
+        echo "请安装提供 docker compose 的包（Debian: docker-compose，Ubuntu 24.04+: docker-compose-v2）。" >&2
+        exit 1
+      fi
+    fi
   elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache docker docker-cli-compose
+    if ! command -v docker >/dev/null 2>&1; then
+      apk add --no-cache docker
+    fi
+    if ! docker_compose_ready; then
+      apk add --no-cache docker-cli-compose || apk add --no-cache docker-compose
+    fi
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y docker docker-compose-plugin || dnf install -y moby-engine docker-compose-plugin
+    if ! command -v docker >/dev/null 2>&1; then
+      dnf install -y docker || dnf install -y moby-engine
+    fi
+    if ! docker_compose_ready; then
+      dnf install -y docker-compose-plugin || dnf install -y docker-compose
+    fi
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y docker docker-compose-plugin || yum install -y moby-engine docker-compose-plugin
+    if ! command -v docker >/dev/null 2>&1; then
+      yum install -y docker || yum install -y moby-engine
+    fi
+    if ! docker_compose_ready; then
+      yum install -y docker-compose-plugin || yum install -y docker-compose
+    fi
   elif command -v zypper >/dev/null 2>&1; then
-    zypper --non-interactive install -y docker docker-compose
+    if ! command -v docker >/dev/null 2>&1; then
+      zypper --non-interactive install -y docker
+    fi
+    if ! docker_compose_ready; then
+      zypper --non-interactive install -y docker-compose
+    fi
   elif command -v pacman >/dev/null 2>&1; then
-    pacman -Sy --noconfirm docker docker-compose
+    if ! command -v docker >/dev/null 2>&1; then
+      pacman -Sy --noconfirm docker
+    fi
+    if ! docker_compose_ready; then
+      pacman -Sy --noconfirm docker-compose
+    fi
   else
-    echo "未找到支持的包管理器，请先安装 Docker Engine 和 Docker Compose。" >&2
+    echo "未找到支持的包管理器，请先安装 Docker Engine 和 Docker Compose v2。" >&2
     echo "支持：Debian/Ubuntu(apt)、Alpine(apk)、RHEL/CentOS(dnf/yum)、openSUSE(zypper)、Arch(pacman)。" >&2
     exit 1
   fi
   if ! command -v docker >/dev/null 2>&1; then
     echo "Docker 安装后仍不可用，请检查包源后重试。" >&2
+    exit 1
+  fi
+  if ! docker_compose_ready; then
+    echo "Docker Compose v2（docker compose）安装后仍不可用，请检查包源后重试。" >&2
     exit 1
   fi
 }
