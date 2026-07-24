@@ -164,16 +164,28 @@ install_docker_engine() {
   fi
   if command -v apt-get >/dev/null 2>&1; then
     # Debian/Ubuntu package names differ:
-    # - engine: docker.io
+    # - engine: docker.io (daemon only on Debian Trixie+)
+    # - CLI: docker-cli (provides /usr/bin/docker; docker.io only recommends it)
     # - compose v2: docker-compose (Debian Trixie+), docker-compose-v2 (Ubuntu 24.04+),
     #   docker-compose-plugin (Docker CE / third-party repos)
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
     if ! command -v docker >/dev/null 2>&1; then
-      apt-get install -y --no-install-recommends docker.io || {
-        echo "无法从当前 apt 源安装 docker.io，请检查包源后重试。" >&2
-        exit 1
+      # --no-install-recommends skips docker-cli on modern Debian, so install it explicitly.
+      apt-get install -y --no-install-recommends docker.io docker-cli || {
+        # Older Ubuntu/Debian may still ship the CLI inside docker.io only.
+        apt-get install -y --no-install-recommends docker.io || {
+          echo "无法从当前 apt 源安装 docker.io/docker-cli，请检查包源后重试。" >&2
+          exit 1
+        }
       }
+    fi
+    if ! command -v docker >/dev/null 2>&1; then
+      if ! apt_install_first_available docker-cli >/dev/null; then
+        echo "Docker 守护进程已安装，但缺少 /usr/bin/docker（docker-cli）。" >&2
+        echo "请安装 docker-cli 后重试。" >&2
+        exit 1
+      fi
     fi
     if ! docker_compose_ready; then
       if ! apt_install_first_available docker-compose-plugin docker-compose-v2 docker-compose >/dev/null; then
