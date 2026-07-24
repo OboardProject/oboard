@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/backup"
 	"github.com/OboardProject/oboard/internal/controller"
 	oboardlog "github.com/OboardProject/oboard/internal/logging"
 	"github.com/OboardProject/oboard/internal/model"
@@ -67,6 +68,11 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	backupDir := env("OBOARD_BACKUP_DIR", filepath.Join(filepath.Dir(*dbPath), "backups"))
+	acmeHome := env("OBOARD_ACME_HOME", filepath.Join(filepath.Dir(*dbPath), "acme"))
+	if err := backup.ApplyPendingRestore(backup.Config{Root: backupDir, DatabasePath: *dbPath, ACMEHome: acmeHome, MasterSecret: *secret}); err != nil {
+		log.Fatal(err)
+	}
 	db, err := store.Open(*dbPath)
 	if err != nil {
 		log.Fatal(err)
@@ -79,15 +85,18 @@ func main() {
 	}
 	app := controller.New(db, *secret, *staticDir, normalizedBasePath, logManager)
 	app.ConfigureControllerUpdates(*dbPath)
+	app.ConfigureControllerBackups(*dbPath)
 	if err := app.ApplyRuntimeSettings(context.Background()); err != nil {
 		log.Printf("apply runtime settings: %v", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	app.SetControllerBackupRestart(stop)
 	go app.StartMonitor(ctx)
 	go app.StartDNSDDNS(ctx)
 	go app.StartCertificateRenewal(ctx)
 	go app.StartControllerUpdates(ctx)
+	go app.StartControllerBackups(ctx)
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           app.Handler(),

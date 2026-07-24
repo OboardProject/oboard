@@ -4445,11 +4445,75 @@ body:has(.dialog-root) .topbar-actions {
 .controller-update-actions { justify-content: flex-end; }
 .controller-update-actions button { display: inline-flex; align-items: center; gap: 6px; }
 
+.controller-backup-card { gap: 18px; }
+.backup-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+.backup-enabled { grid-column: 1 / -1; align-items: flex-start; }
+.backup-enabled > span { display: grid; gap: 2px; }
+.backup-enabled small { color: var(--muted); }
+.backup-destination,
+.backup-import,
+.backup-records {
+  display: grid;
+  gap: 14px;
+  padding: 18px 0 0;
+  border-top: 1px solid var(--border);
+}
+.backup-destination-head,
+.backup-actions,
+.backup-import,
+.backup-record {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.backup-destination h3,
+.backup-import h3,
+.backup-actions strong { margin: 0 0 4px; color: var(--text-strong); font-size: 14px; }
+.backup-actions > div { display: grid; gap: 3px; }
+.backup-actions span { color: var(--muted); font-size: 12px; }
+.backup-actions button,
+.backup-import-actions button,
+.backup-record-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.backup-import { align-items: flex-start; }
+.backup-import-actions { display: flex; flex: 1 1 auto; justify-content: flex-end; gap: 8px; }
+.backup-import-actions input[type="file"] { display: none; }
+.backup-import-actions input[type="password"] { min-width: 190px; }
+.backup-records .settings-card-head { padding-bottom: 10px; }
+.backup-record-list { display: grid; gap: 8px; }
+.backup-record {
+  align-items: flex-start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.backup-record:last-child { border-bottom: 0; padding-bottom: 0; }
+.backup-record-main { min-width: 0; display: grid; gap: 3px; }
+.backup-record-main strong { color: var(--text-strong); }
+.backup-record-main span,
+.backup-record-main small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.backup-record-main small { color: var(--danger); }
+.backup-record-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.backup-empty { margin: 0; padding: 14px 0 2px; text-align: center; }
+
 @media (max-width: 640px) {
   .controller-update-versions { grid-template-columns: 1fr; }
   .controller-update-versions > svg { transform: rotate(90deg); justify-self: center; }
   .controller-update-meta span { grid-template-columns: 1fr; gap: 3px; }
   .controller-update-actions button { flex: 1 1 auto; }
+  .backup-policy-grid { grid-template-columns: 1fr; }
+  .backup-destination-head,
+  .backup-actions,
+  .backup-import,
+  .backup-record { align-items: stretch; flex-direction: column; }
+  .backup-import-actions { width: 100%; justify-content: stretch; flex-wrap: wrap; }
+  .backup-import-actions input[type="password"] { min-width: 0; flex: 1 1 180px; }
+  .backup-import-actions button { flex: 1 1 auto; justify-content: center; }
+  .backup-record-actions { justify-content: flex-end; }
 }
 
 .status-pill {

@@ -2,9 +2,10 @@
 
 description="OBoard Controller"
 command="/usr/local/bin/oboard-controller"
-command_background=true
 command_user="oboard:oboard"
 pidfile="/run/${RC_SVCNAME}.pid"
+supervisor="supervise-daemon"
+respawn_delay=5
 output_log="/var/log/${RC_SVCNAME}.log"
 error_log="/var/log/${RC_SVCNAME}.log"
 

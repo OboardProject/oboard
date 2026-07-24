@@ -34,6 +34,14 @@ const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_tok
 const userSelectSQL = `select u.id,u.username,u.nickname,u.password_hash,coalesce(u.session_version,0),u.role,u.status,u.proxy_uuid,u.proxy_password,u.speed_limit_mbps,u.traffic_limit_bytes,u.traffic_used_bytes,u.traffic_reset_mode,u.traffic_reset_day,coalesce(u.subscription_token,''),coalesce(p.burn_after_read,0),p.burned_at,coalesce(a.enabled,0),coalesce(a.public_key,''),u.created_at,u.updated_at from users u left join subscription_token_policies p on p.user_id=u.id left join subscription_age_keys a on a.user_id=u.id`
 
 func Open(path string) (*Store, error) {
+	return open(path, false)
+}
+
+func OpenForRestore(path string) (*Store, error) {
+	return open(path, true)
+}
+
+func open(path string, restore bool) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
@@ -48,7 +56,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db}
-	if err := s.Migrate(context.Background()); err != nil {
+	if err := s.migrate(context.Background(), restore); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -90,11 +98,25 @@ func secureSQLiteFile(path string) error {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) Migrate(ctx context.Context) error {
-	if err := s.resetLegacyDNSSchema(ctx); err != nil {
+	return s.migrate(ctx, false)
+}
+
+func (s *Store) migrate(ctx context.Context, restore bool) error {
+	legacy, err := s.legacyDNSSchemaPresent(ctx)
+	if err != nil {
 		return err
+	}
+	if legacy && restore {
+		return errors.New("backup uses a retired DNS schema and must be restored with a compatible Controller version first")
+	}
+	if legacy {
+		if err := s.resetLegacyDNSSchema(ctx); err != nil {
+			return err
+		}
 	}
 	schema := []string{
 		`create table if not exists app_settings (key text primary key, value text not null, updated_at text not null)`,
+		`create table if not exists controller_backups (id text primary key, name text not null, origin text not null, local_path text not null default '', local_status text not null default 'available', remote_key text not null default '', remote_target text not null default '', remote_status text not null default 'disabled', remote_error text not null default '', size_bytes integer not null default 0, source_version text not null default '', format_version integer not null default 1, protected integer not null default 0, created_at text not null, updated_at text not null)`,
 		`create table if not exists rate_limits (key_hash text primary key, window_start text not null, count integer not null, updated_at text not null)`,
 		`create table if not exists users (id integer primary key autoincrement, username text not null unique, nickname text not null default '', password_hash text not null, session_version integer not null default 0, role text not null, status text not null, proxy_uuid text not null, proxy_password text not null, speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_used_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, subscription_token text unique, created_at text not null, updated_at text not null)`,
 		`create table if not exists subscription_token_policies (user_id integer primary key references users(id) on delete cascade, burn_after_read integer not null default 0, burned_at text, updated_at text not null)`,
@@ -145,6 +167,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`create table if not exists subscription_profiles (id integer primary key autoincrement, name text not null unique, group_name text not null default 'default', description text not null default '', config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists subscription_assignments (id integer primary key autoincrement, profile_id integer not null references subscription_profiles(id) on delete cascade, user_id integer not null references users(id) on delete cascade, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, group_name text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create index if not exists idx_tasks_server_status on agent_tasks(server_id, status)`,
+		`create index if not exists idx_controller_backups_created on controller_backups(created_at desc)`,
 		`create index if not exists idx_traffic_server on traffic_stats(server_id, created_at)`,
 		`create index if not exists idx_traffic_reports_user_period on traffic_reports(user_id, period_key)`,
 		`create index if not exists idx_connection_audit_user_time on connection_audit_reports(user_id, ended_at desc)`,
@@ -187,6 +210,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.ensureColumn(ctx, "servers", "connection_audit_enabled", `alter table servers add column connection_audit_enabled integer not null default 0`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn(ctx, "controller_backups", "remote_target", `alter table controller_backups add column remote_target text not null default ''`); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `insert into dns_credential_zones(credential_id,zone_name,provider_zone_id,created_at,updated_at) select id,zone_name,zone_id,created_at,updated_at from dns_credentials where zone_name<>'' and not exists(select 1 from dns_credential_zones where credential_id=dns_credentials.id)`); err != nil {
 		return err
 	}
@@ -209,22 +235,11 @@ func (s *Store) ensureColumn(ctx context.Context, table, column, alterSQL string
 }
 
 func (s *Store) resetLegacyDNSSchema(ctx context.Context) error {
-	var profilesExists int
-	if err := s.db.QueryRowContext(ctx, `select count(*) from sqlite_master where type='table' and name='dns_profiles'`).Scan(&profilesExists); err != nil {
+	legacy, err := s.legacyDNSSchemaPresent(ctx)
+	if err != nil {
 		return err
 	}
-	legacyResults := false
-	var resultsExists int
-	if err := s.db.QueryRowContext(ctx, `select count(*) from sqlite_master where type='table' and name='dns_benchmark_results'`).Scan(&resultsExists); err != nil {
-		return err
-	}
-	if resultsExists > 0 {
-		var resultColumns int
-		if err := s.db.QueryRowContext(ctx, `select count(*) from pragma_table_info('dns_benchmark_results') where name='report_id'`).Scan(&resultColumns); err == nil {
-			legacyResults = resultColumns == 0
-		}
-	}
-	if profilesExists == 0 && !legacyResults {
+	if !legacy {
 		return nil
 	}
 	// DNS storage is intentionally destructive. The project has no supported
@@ -235,6 +250,25 @@ func (s *Store) resetLegacyDNSSchema(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (s *Store) legacyDNSSchemaPresent(ctx context.Context) (bool, error) {
+	var profilesExists int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from sqlite_master where type='table' and name='dns_profiles'`).Scan(&profilesExists); err != nil {
+		return false, err
+	}
+	legacyResults := false
+	var resultsExists int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from sqlite_master where type='table' and name='dns_benchmark_results'`).Scan(&resultsExists); err != nil {
+		return false, err
+	}
+	if resultsExists > 0 {
+		var resultColumns int
+		if err := s.db.QueryRowContext(ctx, `select count(*) from pragma_table_info('dns_benchmark_results') where name='report_id'`).Scan(&resultColumns); err == nil {
+			legacyResults = resultColumns == 0
+		}
+	}
+	return profilesExists != 0 || legacyResults, nil
 }
 
 func (s *Store) ensureDefaultDNSLists(ctx context.Context) error {
@@ -432,6 +466,25 @@ func (s *Store) Backup(ctx context.Context, destination string) error {
 		return fmt.Errorf("create SQLite backup: %w", err)
 	}
 	return os.Chmod(destination, 0o600)
+}
+
+func (s *Store) CheckIntegrity(ctx context.Context) error {
+	var integrity string
+	if err := s.db.QueryRowContext(ctx, `pragma integrity_check`).Scan(&integrity); err != nil {
+		return err
+	}
+	if integrity != "ok" {
+		return fmt.Errorf("SQLite integrity check failed: %s", integrity)
+	}
+	rows, err := s.db.QueryContext(ctx, `pragma foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		return errors.New("SQLite foreign key check failed")
+	}
+	return rows.Err()
 }
 
 func normalizeTrafficResetMode(mode string) string {

@@ -29,6 +29,7 @@ import (
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/OboardProject/oboard/internal/backup"
 	"github.com/OboardProject/oboard/internal/controllerupdate"
 	"github.com/OboardProject/oboard/internal/core"
 	oboardlog "github.com/OboardProject/oboard/internal/logging"
@@ -65,6 +66,10 @@ type Server struct {
 	controllerUpdateMu          sync.Mutex
 	controllerUpdateRunMu       sync.Mutex
 	controllerLastLoginCheck    time.Time
+	backupManager               *backup.Manager
+	backupConfigured            bool
+	backupMu                    sync.Mutex
+	backupRestart               func()
 }
 
 func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *oboardlog.Manager) *Server {
@@ -101,6 +106,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/controller-update", s.auth(s.controllerUpdate, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/check", s.auth(s.controllerUpdateCheck, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/install", s.auth(s.controllerUpdateInstall, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/backups", s.auth(s.controllerBackups, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/backups/settings", s.auth(s.controllerBackupSettings, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/backups/settings/test", s.auth(s.controllerBackupTestDestination, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/backups/upload", s.auth(s.controllerBackupUpload, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/backups/", s.auth(s.controllerBackupSubroutes, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/system-logs/download", s.auth(s.systemLogsDownload, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/system-logs", s.auth(s.systemLogs, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-credentials", s.auth(s.dnsCredentials, model.RoleAdmin))

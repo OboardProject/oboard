@@ -77,6 +77,10 @@ type ControllerUpdateStatus = {
   backup_path?: string
   manual_command?: string
 }
+type BackupDestination = { provider: 's3' | 'webdav' | ''; endpoint: string; bucket?: string; prefix?: string; region?: string; force_path_style?: boolean; enabled: boolean }
+type ControllerBackup = { id: string; name: string; origin: 'manual' | 'automatic' | 'uploaded' | 'pre_restore' | string; local_status: string; remote_status: string; remote_error?: string; remote_retrievable: boolean; size_bytes: number; source_version: string; format_version: number; protected: boolean; created_at: string }
+type ControllerBackupSettings = { enabled: boolean; schedule: 'daily' | 'weekly'; time: string; weekday: number; local_retention: number; remote_retention: number; destination: BackupDestination; password_configured: boolean; destination_configured: boolean; last_success_at?: string; last_error?: string }
+type ControllerBackupSnapshot = { settings: ControllerBackupSettings; backups: ControllerBackup[] }
 type Protocol = 'vless' | 'hy2' | 'anytls' | 'shadowsocks' | 'ssh'
 type ExternalProtocol = Exclude<Protocol, 'ssh'> | 'socks'
 type EntryIPMode = 'auto' | 'ipv4' | 'ipv6' | 'custom'
@@ -950,7 +954,13 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
     const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || 'oboard-logs.zip'
     return { blob: await res.blob(), filename }
   }
-  return { request, download }
+  async function upload<T = any>(path: string, body: FormData): Promise<T> {
+    const res = await fetch(appPath('/api/v1' + path), { method: 'POST', body, headers: token ? { authorization: `Bearer ${token}` } : {} })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(localizeErrorMessage(data.error || res.statusText))
+    return data
+  }
+  return { request, download, upload }
 }
 
 function App() {
@@ -1900,7 +1910,7 @@ function AccountPage({ data, client, load, notify }: any) {
 
 function SettingsPage({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'certificates' | 'subscriptions' | 'traffic' | 'updates' | 'logs'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'certificates' | 'subscriptions' | 'traffic' | 'backups' | 'updates' | 'logs'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -2010,6 +2020,7 @@ function SettingsPage({ data, client, load, notify }: any) {
       <button className={activeSection === 'certificates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'certificates'} onClick={() => setActiveSection('certificates')}><Lock size={15} />证书</button>
       <button className={activeSection === 'subscriptions' ? 'active' : ''} role="tab" aria-selected={activeSection === 'subscriptions'} onClick={() => setActiveSection('subscriptions')}><Shield size={15} />订阅安全</button>
       <button className={activeSection === 'traffic' ? 'active' : ''} role="tab" aria-selected={activeSection === 'traffic'} onClick={() => setActiveSection('traffic')}><Gauge size={15} />流量控制</button>
+      <button className={activeSection === 'backups' ? 'active' : ''} role="tab" aria-selected={activeSection === 'backups'} onClick={() => setActiveSection('backups')}><Database size={15} />数据备份</button>
       <button className={activeSection === 'updates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'updates'} onClick={() => setActiveSection('updates')}><Download size={15} />主控更新</button>
       <button className={activeSection === 'logs' ? 'active' : ''} role="tab" aria-selected={activeSection === 'logs'} onClick={() => setActiveSection('logs')}><FileText size={15} />运行日志</button>
     </nav>
@@ -2112,6 +2123,7 @@ function SettingsPage({ data, client, load, notify }: any) {
           <p className="muted">Agent 会保留本地可用额度；面板暂时不可达时，节点仍会按已下发额度暂停超量用户。</p>
         </div>
       </section>}
+      {activeSection === 'backups' && <ControllerBackupPanel client={client} notify={notify} dialogs={dialogs} />}
       {activeSection === 'updates' && <ControllerUpdatePanel data={data} client={client} load={load} notify={notify} dialogs={dialogs} />}
       {activeSection === 'logs' && <ControllerLogsPanel
         client={client}
@@ -2243,6 +2255,251 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
       <button type="button" className="ghost" onClick={() => void check()} disabled={Boolean(working) || snapshot.channel === 'pinned'}><RefreshCw size={14} className={working === 'check' ? 'spin' : ''} />{working === 'check' ? '检查中...' : '检查更新'}</button>
       <button type="button" onClick={() => void install()} disabled={Boolean(working) || snapshot.channel === 'pinned' || !snapshot.update_available}><Download size={14} />{working === 'install' ? '准备中...' : '备份并安装'}</button>
     </div>
+  </section>
+}
+
+function ControllerBackupPanel({ client, notify, dialogs }: any) {
+  const emptySettings: ControllerBackupSettings = {
+    enabled: false, schedule: 'daily', time: '03:00', weekday: 0, local_retention: 7, remote_retention: 30,
+    destination: { provider: '', endpoint: '', bucket: '', prefix: '', region: 'us-east-1', force_path_style: false, enabled: false },
+    password_configured: false, destination_configured: true,
+  }
+  const [snapshot, setSnapshot] = useState<ControllerBackupSnapshot>({ settings: emptySettings, backups: [] })
+  const [draft, setDraft] = useState<ControllerBackupSettings>(emptySettings)
+  const [recoveryPassword, setRecoveryPassword] = useState('')
+  const [recoveryPasswordConfirm, setRecoveryPasswordConfirm] = useState('')
+  const [s3AccessKey, setS3AccessKey] = useState('')
+  const [s3SecretKey, setS3SecretKey] = useState('')
+  const [webdavUsername, setWebdavUsername] = useState('')
+  const [webdavPassword, setWebdavPassword] = useState('')
+  const [uploadPassword, setUploadPassword] = useState('')
+  const [working, setWorking] = useState('')
+  const uploadRef = useRef<HTMLInputElement>(null)
+  const refresh = async (quiet = false) => {
+    if (!quiet) setWorking('load')
+    try {
+      const result = await client.request('/backups') as ControllerBackupSnapshot
+      setSnapshot(result)
+      setDraft(result.settings || emptySettings)
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      if (!quiet) setWorking('')
+    }
+  }
+  useEffect(() => { void refresh() }, [])
+  const saveSettings = async () => {
+    if (working) return
+    if (recoveryPassword && recoveryPassword !== recoveryPasswordConfirm) {
+      notify?.('两次输入的恢复密码不一致', 'error')
+      return
+    }
+    if (!draft.password_configured && !recoveryPassword) {
+      notify?.('请先设置恢复密码', 'error')
+      return
+    }
+    setWorking('save')
+    try {
+      const result = await client.request('/backups/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          enabled: draft.enabled,
+          schedule: draft.schedule,
+          time: draft.time,
+          weekday: draft.weekday,
+          local_retention: draft.local_retention,
+          remote_retention: draft.remote_retention,
+          destination: draft.destination,
+          recovery_password: recoveryPassword,
+          s3_access_key: s3AccessKey,
+          s3_secret_key: s3SecretKey,
+          webdav_username: webdavUsername,
+          webdav_password: webdavPassword,
+        }),
+      }) as { settings: ControllerBackupSettings }
+      setSnapshot(previous => ({ ...previous, settings: result.settings }))
+      setDraft(result.settings)
+      setRecoveryPassword('')
+      setRecoveryPasswordConfirm('')
+      setS3AccessKey('')
+      setS3SecretKey('')
+      setWebdavUsername('')
+      setWebdavPassword('')
+      notify?.('备份设置已保存', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const testDestination = async () => {
+    setWorking('test')
+    try {
+      await client.request('/backups/settings/test', {
+        method: 'POST',
+        body: JSON.stringify({
+          destination: draft.destination,
+          s3_access_key: s3AccessKey,
+          s3_secret_key: s3SecretKey,
+          webdav_username: webdavUsername,
+          webdav_password: webdavPassword,
+        }),
+      })
+      notify?.('第三方备份目标连接成功', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const createBackup = async () => {
+    if (working) return
+    setWorking('create')
+    try {
+      const result = await client.request('/backups', { method: 'POST', body: JSON.stringify({ upload_remote: true }) }) as { backup: ControllerBackup }
+      notify?.(result.backup?.remote_status === 'failed' ? '本地备份已创建，但第三方上传失败' : '备份已创建', result.backup?.remote_status === 'failed' ? 'error' : 'success')
+      await refresh(true)
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const downloadBackup = async (item: ControllerBackup) => {
+    setWorking(`download-${item.id}`)
+    try {
+      const file = await client.download(`/backups/${item.id}/download`)
+      const url = URL.createObjectURL(file.blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = file.filename
+      anchor.click()
+      URL.revokeObjectURL(url)
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const restoreBackup = async (item: ControllerBackup, password: string, alreadyConfirmed = false) => {
+    if (!password) {
+      notify?.('请输入该备份的恢复密码', 'error')
+      return
+    }
+    if (!alreadyConfirmed) {
+      const confirmed = await dialogs.confirm({
+        title: '恢复主控数据？',
+        message: '恢复前会创建保护备份。主控将重启，当前登录会话失效，并重新下发恢复后的节点配置。',
+        confirmText: '备份并恢复',
+        tone: 'danger',
+      })
+      if (!confirmed) return
+    }
+    setWorking(`restore-${item.id}`)
+    try {
+      await client.request(`/backups/${item.id}/restore`, { method: 'POST', body: JSON.stringify({ recovery_password: password }) })
+      notify?.('备份已验证，主控正在重启恢复数据', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+      setWorking('')
+    }
+  }
+  const removeBackup = async (item: ControllerBackup) => {
+    const remoteDeleteMessage = item.remote_status === 'available' && !item.remote_retrievable
+      ? '当前第三方目标与这条记录不一致。这里只会删除本地记录，远端文件需要到旧存储中手动删除。'
+      : item.remote_status === 'available' ? '本地副本和第三方副本都会删除。' : '本地副本和备份记录都会删除。'
+    const deleteMessage = item.protected ? `这是恢复前创建的保护备份。${remoteDeleteMessage}` : remoteDeleteMessage
+    const confirmed = await dialogs.confirm({ title: '删除备份？', message: deleteMessage, confirmText: '删除', tone: 'danger' })
+    if (!confirmed) return
+    setWorking(`delete-${item.id}`)
+    try {
+      const result = await client.request(`/backups/${item.id}`, { method: 'DELETE' }) as { message?: string }
+      notify?.(result.message || '备份已删除', 'success')
+      await refresh(true)
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const uploadBackup = async (file?: File) => {
+    if (!file) return
+    if (!uploadPassword) {
+      notify?.('请输入该备份的恢复密码', 'error')
+      return
+    }
+    setWorking('upload')
+    let restoreStarted = false
+    try {
+      const form = new FormData()
+      form.set('backup', file)
+      form.set('recovery_password', uploadPassword)
+      const result = await client.upload('/backups/upload', form) as { backup: ControllerBackup; inspection: { manifest: { source_version: string; created_at: string } } }
+      await refresh(true)
+      const confirmed = await dialogs.confirm({
+        title: '立即恢复上传的备份？',
+        message: `该备份来自 ${result.inspection?.manifest?.source_version || '未知版本'}。选择稍后恢复会保留文件，之后可从备份列表恢复。`,
+        confirmText: '立即恢复',
+        cancelText: '只保存',
+        tone: 'danger',
+      })
+      if (confirmed) {
+        restoreStarted = true
+        await restoreBackup(result.backup, uploadPassword, true)
+      } else {
+        notify?.('备份已保存，尚未恢复', 'success')
+      }
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      if (!restoreStarted) setWorking('')
+    }
+  }
+  const updateDestination = (patch: Partial<BackupDestination>) => setDraft(current => ({ ...current, destination: { ...current.destination, ...patch } }))
+  const destination = draft.destination || emptySettings.destination
+  const weekdayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+  const backupStatus = (item: ControllerBackup) => item.remote_status === 'failed'
+    ? (item.local_status === 'available' ? '本地可用，远端失败' : '副本不可用')
+    : item.local_status === 'available' && item.remote_status === 'available' ? '本地和远端可用'
+      : item.local_status === 'available' ? '本地可用'
+        : item.remote_retrievable ? '可从第三方取回'
+          : item.remote_status === 'available' ? '保留在旧目标' : '副本不可用'
+  return <section className="settings-card controller-backup-card">
+    <div className="settings-card-head">
+      <div><h3>主控数据备份</h3><p className="muted">备份数据库、证书续期状态和受保护配置；日志、下载缓存和程序文件不包含在内。</p></div>
+      <span className={`status-pill ${snapshot.settings?.last_error ? 'danger' : 'ok'}`}>{snapshot.settings?.last_error ? '需要处理' : '已就绪'}</span>
+    </div>
+    {snapshot.settings?.last_error && <div className="controller-update-error" role="alert">{snapshot.settings.last_error}</div>}
+    <div className="backup-policy-grid">
+      <label className="check-row backup-enabled"><input type="checkbox" checked={draft.enabled} onChange={event => setDraft(current => ({ ...current, enabled: event.target.checked }))} /><span><strong>自动备份</strong><small>按设定时间创建加密备份，并在启用第三方目标后自动上传。</small></span></label>
+      <FormField label="备份频率"><Select value={draft.schedule} onChange={event => setDraft(current => ({ ...current, schedule: event.target.value as 'daily' | 'weekly' }))}><option value="daily">每天</option><option value="weekly">每周</option></Select></FormField>
+      {draft.schedule === 'weekly' && <FormField label="每周日期"><Select value={draft.weekday} onChange={event => setDraft(current => ({ ...current, weekday: Number(event.target.value) }))}>{weekdayNames.map((label, index) => <option key={label} value={index}>{label}</option>)}</Select></FormField>}
+      <FormField label="执行时间" hint="使用流量控制中设置的时区"><input type="time" value={draft.time} onChange={event => setDraft(current => ({ ...current, time: event.target.value || '03:00' }))} /></FormField>
+      <FormField label="本地保留数量" hint="手动、自动和上传备份共用此数量"><input type="number" min={1} max={100} value={draft.local_retention} onChange={event => setDraft(current => ({ ...current, local_retention: Math.max(1, Math.min(100, Number(event.target.value) || 1)) }))} /></FormField>
+      <FormField label="远端保留数量" hint="远端副本独立滚动"><input type="number" min={1} max={365} value={draft.remote_retention} onChange={event => setDraft(current => ({ ...current, remote_retention: Math.max(1, Math.min(365, Number(event.target.value) || 1)) }))} /></FormField>
+      <FormField label={draft.password_configured ? '更换恢复密码' : '恢复密码'} hint={draft.password_configured ? '留空表示保持当前密码；旧备份仍使用创建时的原密码。' : '用于加密备份并在新主控恢复数据。至少 12 个字符。'}><input type="password" autoComplete="new-password" value={recoveryPassword} onChange={event => setRecoveryPassword(event.target.value)} /></FormField>
+      {(recoveryPassword || !draft.password_configured) && <FormField label="确认恢复密码"><input type="password" autoComplete="new-password" value={recoveryPasswordConfirm} onChange={event => setRecoveryPasswordConfirm(event.target.value)} /></FormField>}
+    </div>
+    <section className="backup-destination">
+      <div className="backup-destination-head"><div><h3>第三方备份目标</h3><p className="muted">一次可启用一个 S3 兼容存储或 WebDAV 目标。第三方副本同样使用恢复密码加密；更换目标后，旧目标中的文件不会被自动删除。</p></div><label className="check-row"><input type="checkbox" checked={destination.enabled} onChange={event => updateDestination({ enabled: event.target.checked })} /><span>启用</span></label></div>
+      <div className="backup-policy-grid">
+        <FormField label="类型"><Select value={destination.provider} onChange={event => updateDestination({ provider: event.target.value as BackupDestination['provider'] })} disabled={!destination.enabled}><option value="">选择目标</option><option value="s3">S3 兼容存储</option><option value="webdav">WebDAV</option></Select></FormField>
+        <FormField label={destination.provider === 'webdav' ? 'WebDAV 地址' : '终端地址'} hint="生产环境请使用 HTTPS。"><input value={destination.endpoint || ''} disabled={!destination.enabled} onChange={event => updateDestination({ endpoint: event.target.value })} placeholder={destination.provider === 'webdav' ? 'https://dav.example.com/oboard' : 'https://s3.example.com'} /></FormField>
+        <FormField label="目录前缀" hint="只会管理该前缀下由主控创建的备份。"><input value={destination.prefix || ''} disabled={!destination.enabled} onChange={event => updateDestination({ prefix: event.target.value })} placeholder="oboard-backups" /></FormField>
+        {destination.provider === 's3' && <><FormField label="存储桶"><input value={destination.bucket || ''} disabled={!destination.enabled} onChange={event => updateDestination({ bucket: event.target.value })} /></FormField><FormField label="区域"><input value={destination.region || ''} disabled={!destination.enabled} onChange={event => updateDestination({ region: event.target.value })} placeholder="us-east-1" /></FormField><label className="check-row"><input type="checkbox" checked={Boolean(destination.force_path_style)} disabled={!destination.enabled} onChange={event => updateDestination({ force_path_style: event.target.checked })} /><span>使用路径风格地址</span></label><FormField label="访问密钥"><input type="password" value={s3AccessKey} disabled={!destination.enabled} onChange={event => setS3AccessKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><FormField label="访问密钥密码"><input type="password" value={s3SecretKey} disabled={!destination.enabled} onChange={event => setS3SecretKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField></>}
+        {destination.provider === 'webdav' && <><FormField label="用户名"><input value={webdavUsername} disabled={!destination.enabled} onChange={event => setWebdavUsername(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><FormField label="密码"><input type="password" value={webdavPassword} disabled={!destination.enabled} onChange={event => setWebdavPassword(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField></>}
+      </div>
+      <div className="settings-actions"><button onClick={() => void saveSettings()} disabled={Boolean(working)}>{working === 'save' ? '保存中...' : '保存备份设置'}</button><button className="ghost" onClick={() => void testDestination()} disabled={Boolean(working) || !destination.enabled}>{working === 'test' ? '测试中...' : '测试连接'}</button></div>
+    </section>
+    <div className="backup-actions"><div><strong>立即备份</strong><span>本地备份完成后，会上传到已启用的第三方目标。</span></div><button onClick={() => void createBackup()} disabled={Boolean(working) || !draft.password_configured}><Database size={15} />{working === 'create' ? '备份中...' : '创建备份'}</button></div>
+    <section className="backup-import">
+      <div><h3>导入与恢复密码</h3><p className="muted">这里的密码也用于恢复列表中的备份。上传时会先验证密码和完整性。</p></div>
+      <div className="backup-import-actions"><input ref={uploadRef} type="file" accept=".obk,application/octet-stream" onChange={event => { void uploadBackup(event.target.files?.[0]); event.currentTarget.value = '' }} /><input type="password" value={uploadPassword} onChange={event => setUploadPassword(event.target.value)} placeholder="该备份的恢复密码" /><button className="ghost" onClick={() => uploadRef.current?.click()} disabled={Boolean(working)}><ArrowUp size={15} />{working === 'upload' ? '上传中...' : '上传备份'}</button></div>
+    </section>
+    <section className="backup-records">
+      <div className="settings-card-head"><div><h3>备份记录</h3><p className="muted">恢复会先创建保护备份。受保护备份不会被自动滚动删除。</p></div><button className="ghost icon-button" onClick={() => void refresh()} disabled={Boolean(working)} title="刷新备份记录" aria-label="刷新备份记录"><RefreshCw size={15} className={working === 'load' ? 'spin' : ''} /></button></div>
+      {snapshot.backups?.length ? <div className="backup-record-list">{snapshot.backups.map(item => <div className="backup-record" key={item.id}><div className="backup-record-main"><strong>{item.origin === 'automatic' ? '自动备份' : item.origin === 'uploaded' ? '上传备份' : item.origin === 'pre_restore' ? '恢复前保护备份' : '手动备份'}</strong><span>{formatDate(item.created_at)} · {formatBytes(Number(item.size_bytes || 0))} · 来源 {item.source_version || '-'}</span>{item.remote_error && <small>{item.remote_error}</small>}</div><span className={`status-pill ${item.remote_status === 'failed' || (item.local_status !== 'available' && !item.remote_retrievable) ? 'danger' : item.protected ? 'warning' : 'ok'}`}>{backupStatus(item)}</span><div className="backup-record-actions">{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost icon-button" title={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} aria-label={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} onClick={() => void downloadBackup(item)} disabled={Boolean(working)}><Download size={15} /></button>}{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost" onClick={() => void restoreBackup(item, uploadPassword)} disabled={Boolean(working)}>{item.local_status === 'available' ? '恢复' : '取回并恢复'}</button>}<button type="button" className="ghost icon-button danger-text" title="删除备份" aria-label="删除备份" onClick={() => void removeBackup(item)} disabled={Boolean(working)}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">尚未创建备份。</p>}
+    </section>
   </section>
 }
 

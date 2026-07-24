@@ -93,6 +93,14 @@ Controller and Agent are separate applications. The same server may run both: in
 
 Certificate management uses `acme.sh`. Controller supports panel-managed or manual DNS-01, including wildcard certificates, through Cloudflare, AliDNS, Tencent DNSPod, Tencent ESA, and Huawei Cloud. HTTP-01 runs on the selected Agent and requires inbound TCP port 80. Private keys remain encrypted on Controller; each Agent can fetch only revisions bound to its own enabled inbounds and stores them under `state_dir` with private permissions.
 
+### Data backup and recovery
+
+Administrators can create encrypted backups from **Settings > Data backup**, or schedule daily or weekly backups. A backup contains the Controller database, certificate renewal state, and protected recovery data. Rebuildable logs, download caches, and program files are not included.
+
+The recovery password encrypts every backup and is not shown again after it is saved. One S3-compatible destination (including AWS S3, Cloudflare R2, MinIO, and Backblaze B2) or one WebDAV destination can retain encrypted remote copies. Local and remote retention counts are configured separately, and the panel can retrieve an expired local copy from the current remote destination. Changing the destination does not delete files from the previous destination.
+
+When a backup is uploaded, the panel checks its recovery password, integrity, and version compatibility before asking whether to restore it immediately. Recovery creates a protected backup first, briefly restarts Controller, invalidates current sessions, and reapplies the recovered configuration to managed nodes. Restore a backup only on the same or a newer Controller version.
+
 ### Releases
 
 GitHub Actions builds binary packages and Docker images from the same Controller and Agent revisions. Development images use `dev`, stable images use `latest`, and exact version tags remain available for pinned installations. Every publish path runs Controller, Agent, and kernel tests plus the Web build before uploading artifacts.

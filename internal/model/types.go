@@ -196,6 +196,25 @@ type SubscriptionAssignment struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type ControllerBackup struct {
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Origin        string    `json:"origin"`
+	LocalPath     string    `json:"-"`
+	LocalStatus   string    `json:"local_status"`
+	RemoteKey     string    `json:"-"`
+	RemoteTarget  string    `json:"-"`
+	RemoteStatus  string    `json:"remote_status"`
+	RemoteError   string    `json:"remote_error,omitempty"`
+	RemoteReady   bool      `json:"remote_retrievable"`
+	SizeBytes     int64     `json:"size_bytes"`
+	SourceVersion string    `json:"source_version"`
+	FormatVersion int       `json:"format_version"`
+	Protected     bool      `json:"protected"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type Server struct {
 	ID                       int64          `json:"id"`
 	Name                     string         `json:"name"`
