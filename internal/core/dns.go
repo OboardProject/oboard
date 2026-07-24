@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -343,25 +342,6 @@ func defaultDNSPort(transport model.DNSTransport) int {
 	default:
 		return 53
 	}
-}
-
-func stripPort(host string) string {
-	if value, _, err := net.SplitHostPort(host); err == nil {
-		return value
-	}
-	return strings.Trim(host, "[]")
-}
-
-func portOrDefault(host string, fallback int) int {
-	_, port, err := net.SplitHostPort(host)
-	if err != nil {
-		return fallback
-	}
-	n, err := strconv.Atoi(port)
-	if err != nil || n <= 0 {
-		return fallback
-	}
-	return n
 }
 
 func hostNeedsResolver(host string) bool {

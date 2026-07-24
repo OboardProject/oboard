@@ -72,6 +72,7 @@ func marshalDeterministicOpenSSHPrivateKey(privateKey ed25519.PrivateKey, public
 }
 
 func appendSSHString(dst, value []byte) []byte {
+	// #nosec G115 -- callers pass fixed algorithm names and bounded Ed25519 key blocks.
 	dst = appendSSHUint32(dst, uint32(len(value)))
 	return append(dst, value...)
 }

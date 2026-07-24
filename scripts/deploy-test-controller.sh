@@ -4,6 +4,9 @@ set -euo pipefail
 CONTROLLER_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 WORKSPACE_DIR=$(CDPATH= cd -- "$CONTROLLER_DIR/.." && pwd)
 VERSION_VALUE=$(tr -d '[:space:]' < "$CONTROLLER_DIR/VERSION")
+CONTROLLER_RELEASE_DIR=${CONTROLLER_RELEASE_DIR:-$WORKSPACE_DIR/dist/controller/release}
+ARTIFACT_VERSION=$VERSION_VALUE
+case "$VERSION_VALUE" in *dev*) ARTIFACT_VERSION=dev ;; esac
 SSH_PORT=${SSH_PORT:-22}
 HTTP_PORT=${HTTP_PORT:-2787}
 PUBLIC_PORT=${PUBLIC_PORT:-}
@@ -144,10 +147,10 @@ case "$remote_arch" in
   *) echo "Unsupported remote architecture: $remote_arch" >&2; exit 1 ;;
 esac
 
-artifact="$CONTROLLER_DIR/dist/release/oboard_controller_${VERSION_VALUE}_linux_${arch}.tar.gz"
+artifact="$CONTROLLER_RELEASE_DIR/oboard_controller_${ARTIFACT_VERSION}_linux_${arch}.tar.gz"
 if [ "${OBOARD_FORCE_BUILD:-0}" = "1" ] || [ ! -f "$artifact" ]; then
   echo "==> Building controller artifact for linux/$arch"
-  OBOARD_PLATFORMS="linux/$arch" "$CONTROLLER_DIR/scripts/build-release.sh"
+  OUT_DIR="$CONTROLLER_RELEASE_DIR" OBOARD_PLATFORMS="linux/$arch" "$CONTROLLER_DIR/scripts/build-release.sh"
 fi
 if [ ! -f "$artifact" ]; then
   echo "Artifact not found after build: $artifact" >&2

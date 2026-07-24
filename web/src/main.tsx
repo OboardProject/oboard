@@ -64,6 +64,19 @@ function stripAppBasePath(pathname: string) {
 }
 
 type Role = 'admin' | 'operator' | 'viewer'
+type ControllerUpdateStatus = {
+  install_method: 'binary' | 'docker' | ''
+  channel: 'stable' | 'dev' | 'pinned' | ''
+  current: { version: string; build: string; commit: string; date: string }
+  available: { version: string; build: string; commit: string; date: string }
+  update_available: boolean
+  auto_update_enabled: boolean
+  status: string
+  last_checked_at?: string
+  last_error?: string
+  backup_path?: string
+  manual_command?: string
+}
 type Protocol = 'vless' | 'hy2' | 'anytls' | 'shadowsocks' | 'ssh'
 type ExternalProtocol = Exclude<Protocol, 'ssh'> | 'socks'
 type EntryIPMode = 'auto' | 'ipv4' | 'ipv6' | 'custom'
@@ -1887,7 +1900,7 @@ function AccountPage({ data, client, load, notify }: any) {
 
 function SettingsPage({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'certificates' | 'subscriptions' | 'traffic' | 'logs'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'certificates' | 'subscriptions' | 'traffic' | 'updates' | 'logs'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -1997,6 +2010,7 @@ function SettingsPage({ data, client, load, notify }: any) {
       <button className={activeSection === 'certificates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'certificates'} onClick={() => setActiveSection('certificates')}><Lock size={15} />证书</button>
       <button className={activeSection === 'subscriptions' ? 'active' : ''} role="tab" aria-selected={activeSection === 'subscriptions'} onClick={() => setActiveSection('subscriptions')}><Shield size={15} />订阅安全</button>
       <button className={activeSection === 'traffic' ? 'active' : ''} role="tab" aria-selected={activeSection === 'traffic'} onClick={() => setActiveSection('traffic')}><Gauge size={15} />流量控制</button>
+      <button className={activeSection === 'updates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'updates'} onClick={() => setActiveSection('updates')}><Download size={15} />主控更新</button>
       <button className={activeSection === 'logs' ? 'active' : ''} role="tab" aria-selected={activeSection === 'logs'} onClick={() => setActiveSection('logs')}><FileText size={15} />运行日志</button>
     </nav>
     <div className="settings-grid">
@@ -2098,6 +2112,7 @@ function SettingsPage({ data, client, load, notify }: any) {
           <p className="muted">Agent 会保留本地可用额度；面板暂时不可达时，节点仍会按已下发额度暂停超量用户。</p>
         </div>
       </section>}
+      {activeSection === 'updates' && <ControllerUpdatePanel data={data} client={client} load={load} notify={notify} dialogs={dialogs} />}
       {activeSection === 'logs' && <ControllerLogsPanel
         client={client}
         dialogs={dialogs}
@@ -2109,6 +2124,124 @@ function SettingsPage({ data, client, load, notify }: any) {
         saving={saving === 'controller-logs'}
         onSave={saveControllerLogs}
       />}
+    </div>
+  </section>
+}
+
+function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
+  const emptyStatus: ControllerUpdateStatus = {
+    install_method: '', channel: '', current: { version: data.version?.version || '', build: data.version?.build || '', commit: data.version?.commit || '', date: data.version?.built_at || '' },
+    available: { version: '', build: '', commit: '', date: '' }, update_available: false, auto_update_enabled: false, status: 'loading',
+  }
+  const [snapshot, setSnapshot] = useState<ControllerUpdateStatus>(emptyStatus)
+  const [working, setWorking] = useState('')
+  const refresh = async (quiet = false) => {
+    if (!quiet) setWorking('load')
+    try {
+      const result = await client.request('/controller-update') as ControllerUpdateStatus
+      setSnapshot(result)
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      if (!quiet) setWorking('')
+    }
+  }
+  useEffect(() => { void refresh() }, [])
+  useEffect(() => {
+    if (!['installing', 'checking'].includes(snapshot.status)) return
+    const timer = window.setInterval(() => { void refresh(true) }, 3000)
+    return () => window.clearInterval(timer)
+  }, [snapshot.status])
+  const check = async () => {
+    if (working) return
+    setWorking('check')
+    try {
+      const result = await client.request('/controller-update/check', { method: 'POST' }) as ControllerUpdateStatus
+      setSnapshot(result)
+      notify?.(result.update_available ? '发现主控更新' : '当前已是最新版本', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const install = async () => {
+    if (working || snapshot.channel === 'pinned' || !snapshot.update_available) return
+    const confirmed = await dialogs.confirm({
+      title: '安装主控更新？',
+      message: '更新前会备份数据库，主控重启时面板连接会短暂中断。',
+      confirmText: '备份并安装',
+    })
+    if (!confirmed) return
+    setWorking('install')
+    try {
+      const result = await client.request('/controller-update/install', { method: 'POST' }) as ControllerUpdateStatus
+      setSnapshot(result)
+      notify?.('更新已开始，主控将自动重启', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const setAutoUpdate = async (enabled: boolean) => {
+    if (working || snapshot.channel === 'pinned') return
+    if (enabled && snapshot.channel === 'dev') {
+      const confirmed = await dialogs.confirm({
+        title: '启用开发版自动更新？',
+        message: '开发版更新频繁，可能包含尚未稳定的功能。',
+        confirmText: '确认启用',
+      })
+      if (!confirmed) return
+    }
+    setWorking('auto')
+    try {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ controller_auto_update_enabled: enabled }) })
+      setSnapshot(previous => ({ ...previous, auto_update_enabled: enabled }))
+      await load('settings', { background: true })
+      notify?.(enabled ? '主控自动更新已开启' : '主控自动更新已关闭', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const copyManualCommand = async () => {
+    if (!snapshot.manual_command) return
+    await navigator.clipboard.writeText(snapshot.manual_command)
+    notify?.('切换命令已复制', 'success')
+  }
+  const labels: Record<string, string> = {
+    loading: '读取中', idle: '等待检查', checking: '检查中', current: '已是最新', available: '可更新', installing: '安装中', installed: '已安装', failed: '失败', unavailable: '更新器不可用', pinned: '固定版本',
+  }
+  const channelLabel = snapshot.channel === 'dev' ? '开发版' : snapshot.channel === 'stable' ? '正式版' : snapshot.channel === 'pinned' ? '固定版本' : '未知'
+  const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || snapshot.status === 'installing' ? 'warning' : 'ok'
+  return <section className="settings-card controller-update-card">
+    <div className="settings-card-head">
+      <div><h3>主控更新</h3><p className="muted">{snapshot.install_method === 'docker' ? 'Docker 安装' : snapshot.install_method === 'binary' ? '二进制安装' : '正在读取安装信息'} · {channelLabel}</p></div>
+      <span className={`status-pill ${statusTone}`}>{labels[snapshot.status] || snapshot.status}</span>
+    </div>
+    {snapshot.channel === 'dev' && <div className="controller-update-warning"><Info size={17} /><span><strong>开发版更新频繁</strong><small>可能包含尚未稳定的功能。</small></span></div>}
+    <div className="controller-update-versions">
+      <div><span>当前版本</span><strong>{snapshot.current?.version || '-'}</strong><small>{snapshot.current?.build ? `构建 ${snapshot.current.build}` : '暂无构建信息'}</small></div>
+      <ArrowLeftRight size={18} />
+      <div><span>最新版本</span><strong>{snapshot.available?.version || '尚未检查'}</strong><small>{snapshot.available?.build ? `构建 ${snapshot.available.build}` : '点击检查更新'}</small></div>
+    </div>
+    <div className="controller-update-meta">
+      <span>上次检查<strong>{snapshot.last_checked_at ? formatDate(snapshot.last_checked_at) : '尚未检查'}</strong></span>
+      {snapshot.backup_path && <span>最近备份<strong title={snapshot.backup_path}>{snapshot.backup_path}</strong></span>}
+    </div>
+    {snapshot.last_error && <div className="controller-update-error" role="alert">{snapshot.last_error}</div>}
+    {snapshot.channel === 'pinned' ? <div className="controller-update-pinned">
+      <span>当前版本保持锁定。切换到正式版通道后，才能在面板内更新。</span>
+      <div><code>{snapshot.manual_command}</code><button type="button" className="ghost icon-button" onClick={() => void copyManualCommand()} title="复制切换命令" aria-label="复制切换命令"><Copy size={15} /></button></div>
+    </div> : <label className="check-row controller-update-toggle">
+      <input type="checkbox" checked={snapshot.auto_update_enabled} disabled={Boolean(working) || snapshot.status === 'unavailable'} onChange={event => void setAutoUpdate(event.target.checked)} />
+      <span><strong>自动安装主控更新</strong><small>发现当前通道的新版本后，先备份数据库再安装。</small></span>
+    </label>}
+    <div className="settings-actions controller-update-actions">
+      <button type="button" className="ghost" onClick={() => void check()} disabled={Boolean(working) || snapshot.channel === 'pinned'}><RefreshCw size={14} className={working === 'check' ? 'spin' : ''} />{working === 'check' ? '检查中...' : '检查更新'}</button>
+      <button type="button" onClick={() => void install()} disabled={Boolean(working) || snapshot.channel === 'pinned' || !snapshot.update_available}><Download size={14} />{working === 'install' ? '准备中...' : '备份并安装'}</button>
     </div>
   </section>
 }

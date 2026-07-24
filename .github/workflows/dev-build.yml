@@ -6,8 +6,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
+
+concurrency:
+  group: controller-dev-release
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -50,19 +54,25 @@ jobs:
           GH_TOKEN: ${{ steps.agent-token.outputs.token }}
           OBOARD_RELEASE_PUBLIC_KEY: ${{ vars.OBOARD_RELEASE_PUBLIC_KEY }}
           OBOARD_AGENT_CHANNEL: dev
+          OBOARD_RELEASE_CHANNEL: dev
+          OBOARD_ARTIFACT_VERSION: dev
           VERSION: ${{ steps.meta.outputs.version }}
           BUILD: ${{ steps.meta.outputs.build }}
           COMMIT: ${{ github.sha }}
           DATE: ${{ steps.meta.outputs.date }}
+          OUT_DIR: ${{ github.workspace }}/../dist/controller/release
         run: ./scripts/build-release.sh
       - name: Prepare Docker payload
+        env:
+          OBOARD_AGENT_RELEASE_DIR: ${{ github.workspace }}/../dist/controller/release/agent-release
+          OBOARD_DOCKER_DOWNLOADS_DIR: ${{ github.workspace }}/../dist/controller/docker-downloads
         run: ./scripts/prepare-docker-downloads.sh
       - name: Read bundled Agent metadata
         id: agent
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
-          metadata = json.load(open("dist/release/agent-release/release-metadata.json"))
+          metadata = json.load(open("../dist/controller/release/agent-release/release-metadata.json"))
           for key in ("version", "build", "commit", "date"):
               print(f"{key}={metadata[key]}")
           PY
@@ -75,6 +85,8 @@ jobs:
         with:
           context: .
           file: deploy/docker/Dockerfile.controller
+          build-contexts: |
+            agent-downloads=../dist/controller/docker-downloads
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
@@ -97,5 +109,21 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: oboard-dev-${{ steps.meta.outputs.version }}
-          path: dist/release/*
+          path: ../dist/controller/release/*
           retention-days: 14
+      - name: Publish mutable development release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view dev >/dev/null 2>&1; then
+            gh release delete dev --yes --cleanup-tag
+          fi
+          git tag -f dev "$GITHUB_SHA"
+          git push --force origin refs/tags/dev
+          gh release create dev \
+            ../dist/controller/release/*.tar.gz \
+            ../dist/controller/release/sha256sums.txt \
+            ../dist/controller/release/controller-release-manifest.json \
+            --title "OBoard development build" \
+            --prerelease \
+            --notes "Mutable development build from $GITHUB_SHA."

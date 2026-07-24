@@ -9,6 +9,7 @@ case "$REPO" in
 esac
 VERSION_INPUT=${VERSION:-}
 VERSION_VALUE=${VERSION_INPUT:-latest}
+INSTALL_CHANNEL=stable
 COMPONENT=${COMPONENT:-${1:-controller}}
 INSTALL_DIR=${INSTALL_DIR:-/usr/local/bin}
 TMP_DIR=
@@ -459,7 +460,9 @@ verify_archive_paths() {
 verify_checksum() {
   local archive=$1 version=$2 name=$3
   local sums="$TMP_DIR/sha256sums.txt"
-  local sums_url="https://github.com/$REPO/releases/download/v$version/sha256sums.txt"
+  local release_tag="v$version"
+  [ "$version" = dev ] && release_tag=dev
+  local sums_url="https://github.com/$REPO/releases/download/$release_tag/sha256sums.txt"
   if ! curl --proto '=https' --tlsv1.2 -fsSL "$sums_url" -o "$sums"; then
     echo "sha256sums.txt not found for v$version; refusing unchecked install. Set OBOARD_SKIP_CHECKSUM=1 to override." >&2
     if [ "${OBOARD_SKIP_CHECKSUM:-0}" != "1" ]; then
@@ -496,11 +499,39 @@ start_controller_openrc() {
   echo "主控服务已启动。"
 }
 
+install_file_atomic() {
+  local source=$1 destination=$2 mode=${3:-0755}
+  install -m "$mode" "$source" "$destination.new"
+  mv -f "$destination.new" "$destination"
+}
+
+replace_tree_atomic() {
+  local source=$1 destination=$2 owner=${3:-}
+  rm -rf "$destination.new" "$destination.old"
+  cp -R "$source" "$destination.new"
+  if [ -n "$owner" ]; then
+    chown -R "$owner" "$destination.new"
+  fi
+  if [ -e "$destination" ]; then
+    mv "$destination" "$destination.old"
+  fi
+  if ! mv "$destination.new" "$destination"; then
+    [ ! -e "$destination.old" ] || mv "$destination.old" "$destination"
+    return 1
+  fi
+  rm -rf "$destination.old"
+}
+
 install_component() {
   local component=$1 os=$2 arch=$3 version=$4
   local service_manager=${5:-unknown}
-  local archive="oboard_${component}_${version}_${os}_${arch}.tar.gz"
-  local url="https://github.com/$REPO/releases/download/v$version/$archive"
+  local artifact_version=$version release_tag="v$version"
+  if [ "$version" = dev ]; then
+    artifact_version=dev
+    release_tag=dev
+  fi
+  local archive="oboard_${component}_${artifact_version}_${os}_${arch}.tar.gz"
+  local url="https://github.com/$REPO/releases/download/$release_tag/$archive"
   local work="$TMP_DIR/$component"
 
   echo ""
@@ -512,27 +543,33 @@ install_component() {
   verify_archive_paths "$TMP_DIR/$archive"
   tar -xzf "$TMP_DIR/$archive" -C "$work"
   echo "[3/4] 安装程序文件"
-  install -m 0755 "$work/bin/oboard-$component" "$INSTALL_DIR/oboard-$component"
+  install_file_atomic "$work/bin/oboard-$component" "$INSTALL_DIR/oboard-$component" 0755
+  if [ "$component" = controller ]; then
+    install_file_atomic "$work/bin/oboard-controller-updater" "$INSTALL_DIR/oboard-controller-updater" 0755
+  fi
 
   if [ "$os" = linux ] && [ "$service_manager" = systemd ] && [ -d "$work/deploy/systemd" ]; then
     case "$component" in
       controller)
         create_system_user oboard /var/lib/oboard
-        install -d -m 0750 -o oboard -g oboard /var/lib/oboard /opt/oboard/web /opt/oboard/downloads /etc/oboard
-        cp -R "$work/web/dist" /opt/oboard/web/
+        install -d -m 0750 -o oboard -g oboard /var/lib/oboard /var/lib/oboard/backups /opt/oboard/web /opt/oboard/downloads /etc/oboard
+        replace_tree_atomic "$work/web/dist" /opt/oboard/web/dist oboard:oboard
         if [ -d "$work/downloads" ]; then
-          rm -rf /opt/oboard/downloads/*
-          cp -R "$work/downloads"/. /opt/oboard/downloads/
-          chown -R oboard:oboard /opt/oboard/downloads
+          replace_tree_atomic "$work/downloads" /opt/oboard/downloads oboard:oboard
         fi
         if [ ! -f /etc/oboard/controller.env ]; then
           cp "$work/deploy/controller.env.example" /etc/oboard/controller.env
           chmod 0600 /etc/oboard/controller.env
         fi
         prepare_controller_env
+        set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"
+        set_controller_env_value OBOARD_INSTALL_METHOD binary
         configure_bootstrap_admin
         cp "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/
+        cp "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/
         systemctl daemon-reload
+        systemctl enable oboard-controller-updater
+        systemctl restart oboard-controller-updater
         systemctl enable oboard-controller
         start_controller_systemd
         ;;
@@ -552,21 +589,25 @@ install_component() {
     case "$component" in
       controller)
         create_system_user oboard /var/lib/oboard
-        install -d -m 0750 -o oboard -g oboard /var/lib/oboard /opt/oboard/web /opt/oboard/downloads /etc/oboard
-        cp -R "$work/web/dist" /opt/oboard/web/
+        install -d -m 0750 -o oboard -g oboard /var/lib/oboard /var/lib/oboard/backups /opt/oboard/web /opt/oboard/downloads /etc/oboard
+        replace_tree_atomic "$work/web/dist" /opt/oboard/web/dist oboard:oboard
         if [ -d "$work/downloads" ]; then
-          rm -rf /opt/oboard/downloads/*
-          cp -R "$work/downloads"/. /opt/oboard/downloads/
-          chown -R oboard:oboard /opt/oboard/downloads
+          replace_tree_atomic "$work/downloads" /opt/oboard/downloads oboard:oboard
         fi
         if [ ! -f /etc/oboard/controller.env ]; then
           cp "$work/deploy/controller.env.example" /etc/oboard/controller.env
           chmod 0600 /etc/oboard/controller.env
         fi
         prepare_controller_env
+        set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"
+        set_controller_env_value OBOARD_INSTALL_METHOD binary
         configure_bootstrap_admin
         cp "$work/deploy/openrc/oboard-controller" /etc/init.d/oboard-controller
+        cp "$work/deploy/openrc/oboard-controller-updater" /etc/init.d/oboard-controller-updater
         chmod 0755 /etc/init.d/oboard-controller
+        chmod 0755 /etc/init.d/oboard-controller-updater
+        rc-update add oboard-controller-updater default
+        rc-service oboard-controller-updater restart
         rc-update add oboard-controller default
         start_controller_openrc
         ;;
@@ -618,9 +659,11 @@ case "$COMPONENT" in
     ;;
 esac
 
-if [ "$VERSION_VALUE" = latest ]; then
-  VERSION_VALUE=$(latest_version)
-fi
+case "$VERSION_VALUE" in
+  latest|stable|"") VERSION_VALUE=$(latest_version); INSTALL_CHANNEL=stable ;;
+  dev|development|nightly) VERSION_VALUE=dev; INSTALL_CHANNEL=dev ;;
+  *) INSTALL_CHANNEL=pinned ;;
+esac
 if [ -z "$VERSION_VALUE" ]; then
   echo "无法获取主控 release 版本。" >&2
   exit 1

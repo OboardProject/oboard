@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -58,8 +59,7 @@ func replaceDNSCredentialZones(ctx context.Context, tx *sql.Tx, credentialID int
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
+			return errors.Join(err, rows.Close())
 		}
 		existing[id] = true
 	}

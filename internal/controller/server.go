@@ -29,6 +29,7 @@ import (
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/OboardProject/oboard/internal/controllerupdate"
 	"github.com/OboardProject/oboard/internal/core"
 	oboardlog "github.com/OboardProject/oboard/internal/logging"
 	"github.com/OboardProject/oboard/internal/model"
@@ -43,21 +44,27 @@ type Server struct {
 	staticDir     string
 	// basePath is the immutable startup fallback for direct test constructors.
 	// Runtime request handling reads basePaths instead.
-	basePath            string
-	basePaths           atomic.Pointer[basePathState]
-	basePathMigrationMu sync.Mutex
-	allowedOrigins      map[string]bool
-	dnsEndpoints        dnsProviderEndpoints
-	acmeCommand         string
-	acmeHome            string
-	logs                *oboardlog.Manager
-	upgrader            websocket.Upgrader
-	probeMu             sync.Mutex
-	activeProbes        map[int64]bool
-	notificationMu      sync.Mutex
-	notificationSender  func(context.Context, model.NotificationChannel, string, string) error
-	certificateIssueMu  sync.Mutex
-	certificateIssues   map[int64]bool
+	basePath                    string
+	basePaths                   atomic.Pointer[basePathState]
+	basePathMigrationMu         sync.Mutex
+	allowedOrigins              map[string]bool
+	dnsEndpoints                dnsProviderEndpoints
+	acmeCommand                 string
+	acmeHome                    string
+	logs                        *oboardlog.Manager
+	upgrader                    websocket.Upgrader
+	probeMu                     sync.Mutex
+	activeProbes                map[int64]bool
+	notificationMu              sync.Mutex
+	notificationSender          func(context.Context, model.NotificationChannel, string, string) error
+	certificateIssueMu          sync.Mutex
+	certificateIssues           map[int64]bool
+	controllerUpdater           *controllerupdate.Client
+	controllerBackupDir         string
+	controllerUpdatesConfigured bool
+	controllerUpdateMu          sync.Mutex
+	controllerUpdateRunMu       sync.Mutex
+	controllerLastLoginCheck    time.Time
 }
 
 func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *oboardlog.Manager) *Server {
@@ -69,7 +76,8 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	if acmeHome == "" {
 		acmeHome = "./data/acme"
 	}
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}}
+	socketPath := strings.TrimSpace(os.Getenv("OBOARD_CONTROLLER_UPDATER_SOCKET"))
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath)}
 	s.restoreBasePathState(context.Background(), basePath)
 	s.upgrader = websocket.Upgrader{CheckOrigin: s.checkOrigin, ReadBufferSize: 4096, WriteBufferSize: 4096}
 	return s
@@ -90,6 +98,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/dashboard/summary", s.auth(s.dashboard, model.RoleViewer))
 	mux.HandleFunc("/api/v1/settings/base-path/retry", s.auth(s.settingsBasePathRetry, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/settings", s.auth(s.settings, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/controller-update", s.auth(s.controllerUpdate, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/controller-update/check", s.auth(s.controllerUpdateCheck, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/controller-update/install", s.auth(s.controllerUpdateInstall, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/system-logs/download", s.auth(s.systemLogsDownload, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/system-logs", s.auth(s.systemLogs, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-credentials", s.auth(s.dnsCredentials, model.RoleAdmin))
@@ -369,6 +380,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			TrafficEnforcementMode *string `json:"traffic_enforcement_mode"`
 			ControllerLogMaxMB     *int    `json:"controller_log_max_mb"`
 			ControllerLogBackups   *int    `json:"controller_log_backups"`
+			ControllerAutoUpdate   *bool   `json:"controller_auto_update_enabled"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -496,6 +508,24 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if req.ControllerAutoUpdate != nil {
+			if *req.ControllerAutoUpdate {
+				status, err := s.controllerUpdater.Status(r.Context())
+				if err != nil {
+					fail(w, errors.New("主控更新器当前不可用，无法开启自动更新"), http.StatusServiceUnavailable)
+					return
+				}
+				if status.Channel == "pinned" {
+					fail(w, errors.New("固定版本不能开启自动更新，请先切换更新通道"), http.StatusConflict)
+					return
+				}
+			}
+			if err := s.store.SetSetting(r.Context(), controllerAutoUpdateSetting, strconv.FormatBool(*req.ControllerAutoUpdate)); err != nil {
+				fail(w, err, 500)
+				return
+			}
+			changed = append(changed, controllerAutoUpdateSetting)
+		}
 		if len(changed) > 0 {
 			auditReq(s, r, "update", "settings", strings.Join(changed, ","))
 		}
@@ -515,9 +545,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", "subscription_age_policy": "optional", "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5"}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", "subscription_age_policy": "optional", "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false}
 	for key, value := range items {
-		if strings.HasPrefix(key, "controller_base_path") {
+		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting {
 			continue
 		}
 		out[key] = value
@@ -1347,7 +1377,7 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 // loginDummyPasswordHash is a valid argon2id encoding used when the login
 // username is missing or inactive so VerifyPassword still runs for roughly the
 // same duration as a real check.
-const loginDummyPasswordHash = "argon2id$v=19$m=65536,t=1,p=4$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+const loginDummyPasswordHash = "argon2id$v=19$m=65536,t=1,p=4$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" // #nosec G101 -- deliberately invalid dummy verifier input, never an account credential.
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1391,6 +1421,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &u.ID, Action: "login", Target: "user", Detail: u.Username, IP: r.RemoteAddr})
+	if u.Role == model.RoleAdmin {
+		s.TriggerControllerUpdateCheck(r.Context())
+	}
 	write(w, 200, map[string]any{"token": token, "user": u})
 }
 
@@ -8982,6 +9015,7 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request, index string) {
+	// #nosec G304 -- the caller constructs index under staticDir and verifies path containment.
 	content, err := os.ReadFile(index)
 	if err != nil {
 		http.NotFound(w, r)

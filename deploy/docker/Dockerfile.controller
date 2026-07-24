@@ -26,6 +26,8 @@ RUN npm ci
 COPY web ./
 RUN npm run build
 
+FROM agent-downloads AS agent_downloads
+
 FROM alpine:3.22
 ARG VERSION=0.1.0-dev
 ARG COMMIT=unknown
@@ -40,7 +42,7 @@ RUN apk add --no-cache acme.sh ca-certificates curl openssl socat tzdata su-exec
 WORKDIR /app
 COPY --from=backend /out/oboard-controller /usr/local/bin/oboard-controller
 COPY --from=web /src/web/dist /app/web/dist
-COPY dist/docker-downloads /app/downloads
+COPY --from=agent_downloads / /app/downloads
 COPY deploy/docker/entrypoint.sh /usr/local/bin/oboard-entrypoint
 RUN chmod 0755 /usr/local/bin/oboard-entrypoint /usr/local/bin/oboard-controller \
     && mkdir -p /app/data /app/downloads \
@@ -54,6 +56,7 @@ ENV OBOARD_ADDR=:2787 \
     OBOARD_ACME_HOME=/app/data/acme \
     OBOARD_STATIC=/app/web/dist \
     OBOARD_DOWNLOADS=/app/downloads \
+    OBOARD_INSTALL_METHOD=docker \
     OBOARD_AUTO_ADMIN=true
 VOLUME ["/app/data"]
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 CMD wget -q -O /dev/null "http://127.0.0.1:2787${OBOARD_BASE_PATH}/healthz" || exit 1

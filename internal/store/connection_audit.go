@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/netip"
 	"sort"
 	"strconv"
@@ -71,8 +72,7 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int) (m
 		var item model.ConnectionAuditUserSummary
 		var lastSeen string
 		if err := rows.Scan(&item.UserID, &item.Username, &item.Nickname, &item.SourceIPCount, &item.ServerCount, &item.ConnectionCount, &item.ActivePeak, &item.ReportCount, &lastSeen); err != nil {
-			rows.Close()
-			return overview, err
+			return overview, errors.Join(err, rows.Close())
 		}
 		item.LastSeenAt = parseTime(lastSeen)
 		overview.Users = append(overview.Users, item)
@@ -95,8 +95,7 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int) (m
 		var userID int64
 		var sourceIP string
 		if err := ipRows.Scan(&userID, &sourceIP); err != nil {
-			ipRows.Close()
-			return overview, err
+			return overview, errors.Join(err, ipRows.Close())
 		}
 		firstUserID, seen := firstUserByIP[sourceIP]
 		if !seen {

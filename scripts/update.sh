@@ -20,7 +20,19 @@ if [ "${OBOARD_INSTALL_METHOD:-binary}" = docker ]; then
   curl -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install-docker.sh" | env OBOARD_ACTION=update VERSION="$VERSION_INPUT" sh
   exit $?
 fi
-VERSION=${VERSION_INPUT:-latest}
+if [ -n "$VERSION_INPUT" ]; then
+  VERSION=$VERSION_INPUT
+else
+  installed_channel=$(sed -n 's/^OBOARD_UPDATE_CHANNEL=//p' /etc/oboard/controller.env 2>/dev/null | tail -n1 | tr -d "'\"")
+  case "$installed_channel" in
+    dev) VERSION=dev ;;
+    pinned)
+      echo "当前主控固定在指定版本。请明确设置 VERSION=latest 或 VERSION=dev 后再更新。" >&2
+      exit 1
+      ;;
+    *) VERSION=latest ;;
+  esac
+fi
 export VERSION
 case "$COMPONENT" in
   agent|agent-sb|node|controller-agent|all) export OBOARD_AGENT_ACTION=update ;;

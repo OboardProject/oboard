@@ -1,7 +1,7 @@
 [Unit]
 Description=OBoard Controller
-After=network-online.target
-Wants=network-online.target
+After=network-online.target oboard-controller-updater.service
+Wants=network-online.target oboard-controller-updater.service
 
 [Service]
 Type=simple

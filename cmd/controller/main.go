@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -28,6 +29,7 @@ const defaultListenAddress = ":2787"
 
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
+	showVersionJSON := flag.Bool("version-json", false, "print machine-readable version and exit")
 	addr := flag.String("addr", env("OBOARD_ADDR", defaultListenAddress), "HTTP listen address")
 	dbPath := flag.String("db", env("OBOARD_DB", "./data/oboard.sqlite"), "SQLite database path")
 	staticDir := flag.String("static", env("OBOARD_STATIC", "./web/dist"), "web static directory")
@@ -37,6 +39,10 @@ func main() {
 	adminUsername := flag.String("admin-username", env("OBOARD_ADMIN_USERNAME", "admin"), "first admin username when auto-admin is enabled")
 	adminPassword := flag.String("admin-password", env("OBOARD_ADMIN_PASSWORD", ""), "first admin password; empty generates a random one-time password printed once")
 	flag.Parse()
+	if *showVersionJSON {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]string{"version": version.Version, "build": version.Build, "commit": version.Commit, "date": version.Date})
+		return
+	}
 	if *showVersion {
 		log.Println("OBoard Controller", version.String())
 		return
@@ -72,6 +78,7 @@ func main() {
 		}
 	}
 	app := controller.New(db, *secret, *staticDir, normalizedBasePath, logManager)
+	app.ConfigureControllerUpdates(*dbPath)
 	if err := app.ApplyRuntimeSettings(context.Background()); err != nil {
 		log.Printf("apply runtime settings: %v", err)
 	}
@@ -80,6 +87,7 @@ func main() {
 	go app.StartMonitor(ctx)
 	go app.StartDNSDDNS(ctx)
 	go app.StartCertificateRenewal(ctx)
+	go app.StartControllerUpdates(ctx)
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           app.Handler(),

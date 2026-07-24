@@ -53,6 +53,8 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"rhel",
 		"rocky",
 		"almalinux",
+		"OBOARD_UPDATE_CHANNEL",
+		"oboard-controller-updater",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("controller installer missing %q", want)

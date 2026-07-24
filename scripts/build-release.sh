@@ -7,8 +7,25 @@ VERSION_VALUE=${VERSION:-$(tr -d '[:space:]' < "$CONTROLLER_DIR/VERSION")}
 COMMIT_VALUE=${COMMIT:-$(git -C "$CONTROLLER_DIR" rev-parse --short HEAD 2>/dev/null || git -C "$WORKSPACE_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)}
 DATE_VALUE=${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
 BUILD_VALUE=${BUILD:-${BUILD_NUMBER:-$(date -u +%Y%m%d%H%M%S)}}
-OUT_DIR=${OUT_DIR:-$CONTROLLER_DIR/dist/release}
+OUT_DIR=${OUT_DIR:-$WORKSPACE_DIR/dist/controller/release}
+WEB_OUT_DIR=${WEB_OUT_DIR:-$WORKSPACE_DIR/dist/controller/web}
 PLATFORMS=${OBOARD_PLATFORMS:-"linux/amd64 linux/arm64"}
+if [ -n "${OBOARD_RELEASE_CHANNEL:-}" ]; then
+  RELEASE_CHANNEL=$OBOARD_RELEASE_CHANNEL
+elif [[ "$VERSION_VALUE" == *dev* ]]; then
+  RELEASE_CHANNEL=dev
+elif [[ "$VERSION_VALUE" == *-* ]]; then
+  RELEASE_CHANNEL=prerelease
+else
+  RELEASE_CHANNEL=stable
+fi
+if [ -n "${OBOARD_ARTIFACT_VERSION:-}" ]; then
+  ARTIFACT_VERSION=$OBOARD_ARTIFACT_VERSION
+elif [ "$RELEASE_CHANNEL" = dev ]; then
+  ARTIFACT_VERSION=dev
+else
+  ARTIFACT_VERSION=$VERSION_VALUE
+fi
 
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
@@ -30,7 +47,8 @@ cd "$CONTROLLER_DIR/web"
 if [ ! -d node_modules ]; then
   npm ci
 fi
-npm run build
+rm -rf "$WEB_OUT_DIR"
+npm run build -- --outDir "$WEB_OUT_DIR" --emptyOutDir
 
 package_controller() {
   local os=$1 arch=$2 source=$3
@@ -38,16 +56,17 @@ package_controller() {
   stage=$(mktemp -d)
   mkdir -p "$stage/bin" "$stage/deploy/systemd" "$stage/deploy/openrc" "$stage/docs"
   cp "$source" "$stage/bin/oboard-controller"
+  cp "$OUT_DIR/bin/$os-$arch/oboard-controller-updater" "$stage/bin/oboard-controller-updater"
   cp "$CONTROLLER_DIR/README.md" "$stage/README.md"
   cp "$CONTROLLER_DIR/LICENSE" "$stage/LICENSE"
-  cp "$CONTROLLER_DIR/VERSION" "$stage/VERSION"
+  printf '%s\n' "$VERSION_VALUE" > "$stage/VERSION"
   # Optional maintainer note lives in workspace docs/ (not inside the product repo).
   if [ -f "$CONTROLLER_DIR/../docs/RELEASE_GUIDE.md" ]; then
     cp "$CONTROLLER_DIR/../docs/RELEASE_GUIDE.md" "$stage/docs/RELEASE_GUIDE.md"
   fi
 
   mkdir -p "$stage/web"
-  cp -R "$CONTROLLER_DIR/web/dist" "$stage/web/dist"
+  cp -R "$WEB_OUT_DIR" "$stage/web/dist"
   mkdir -p "$stage/downloads"
   for f in "release-manifest.json" "release-manifest.json.sig"; do
     if [ -f "$OUT_DIR/agent-release/$f" ]; then cp "$OUT_DIR/agent-release/$f" "$stage/downloads/$f"; fi
@@ -56,7 +75,9 @@ package_controller() {
     if [ -f "$f" ]; then cp "$f" "$stage/downloads/"; fi
   done
   cp "$CONTROLLER_DIR/deploy/systemd/oboard-controller.service" "$stage/deploy/systemd/"
+  cp "$CONTROLLER_DIR/deploy/systemd/oboard-controller-updater.service" "$stage/deploy/systemd/"
   cp "$CONTROLLER_DIR/deploy/openrc/oboard-controller" "$stage/deploy/openrc/"
+  cp "$CONTROLLER_DIR/deploy/openrc/oboard-controller-updater" "$stage/deploy/openrc/"
   cp "$CONTROLLER_DIR/deploy/controller.env.example" "$stage/deploy/"
   mkdir -p "$stage/deploy/docker"
   cp "$CONTROLLER_DIR/deploy/docker-compose.yml" "$stage/deploy/"
@@ -66,7 +87,7 @@ package_controller() {
   cp "$CONTROLLER_DIR/scripts/install-docker.sh" "$stage/scripts/"
   cp "$CONTROLLER_DIR/scripts/update-docker.sh" "$stage/scripts/"
 
-  local archive="$OUT_DIR/oboard_controller_${VERSION_VALUE}_${os}_${arch}.tar.gz"
+  local archive="$OUT_DIR/oboard_controller_${ARTIFACT_VERSION}_${os}_${arch}.tar.gz"
   if tar --help 2>&1 | grep -q -- '--no-xattrs'; then
     COPYFILE_DISABLE=1 tar --no-xattrs -C "$stage" -czf "$archive" .
   else
@@ -83,6 +104,7 @@ for platform in $PLATFORMS; do
   echo "==> Building controller $os/$arch"
   mkdir -p "$OUT_DIR/bin/$os-$arch"
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-controller" ./cmd/controller
+  CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-controller-updater" ./cmd/controller-updater
   package_controller "$os" "$arch" "$OUT_DIR/bin/$os-$arch/oboard-controller" >/dev/null
 done
 
@@ -90,4 +112,5 @@ done
   cd "$OUT_DIR"
   find . -maxdepth 1 -name '*.tar.gz' -print0 | sort -z | xargs -0 shasum -a 256 | sed 's#  \./#  #'
 ) > "$OUT_DIR/sha256sums.txt"
+python3 "$CONTROLLER_DIR/scripts/generate-controller-manifest.py" "$OUT_DIR" "$RELEASE_CHANNEL" "$VERSION_VALUE" "$BUILD_VALUE" "$COMMIT_VALUE" "$DATE_VALUE"
 echo "==> Release artifacts written to $OUT_DIR"

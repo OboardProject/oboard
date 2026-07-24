@@ -6,7 +6,7 @@ REPO=${OBOARD_AGENT_REPO:-OboardProject/oboard-agent}
 CHANNEL=${OBOARD_AGENT_CHANNEL:-}
 VERSION_VALUE=${VERSION:-$(tr -d '[:space:]' < "$ROOT/VERSION")}
 SOURCE=${OBOARD_AGENT_RELEASE_DIR:-}
-TARGET=${OBOARD_AGENT_RELEASE_TARGET:-$ROOT/dist/release/agent-release}
+TARGET=${OBOARD_AGENT_RELEASE_TARGET:-$ROOT/../dist/controller/release/agent-release}
 PUBLIC_KEY=${OBOARD_RELEASE_PUBLIC_KEY:-}
 
 if [ -z "$CHANNEL" ]; then

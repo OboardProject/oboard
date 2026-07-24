@@ -1,6 +1,6 @@
 services:
   controller:
-    image: "${OBOARD_IMAGE:-ghcr.io/imnebula/oboard}:${OBOARD_TAG:-latest}"
+    image: "${OBOARD_IMAGE:-ghcr.io/oboardproject/oboard}:${OBOARD_TAG:-latest}"
     container_name: oboard-controller
     restart: unless-stopped
     ports:
@@ -11,9 +11,16 @@ services:
       OBOARD_ADMIN_USERNAME: "${OBOARD_ADMIN_USERNAME:-admin}"
       OBOARD_ADMIN_PASSWORD: "${OBOARD_ADMIN_PASSWORD:?set OBOARD_ADMIN_PASSWORD in .env}"
       OBOARD_AUTO_ADMIN: "true"
+      OBOARD_INSTALL_METHOD: "docker"
+      OBOARD_UPDATE_CHANNEL: "${OBOARD_TAG:-latest}"
+      OBOARD_BACKUP_DIR: "/app/data/backups"
+      OBOARD_CONTROLLER_UPDATER_SOCKET: "/run/oboard/controller-updater.sock"
       TZ: "${TZ:-Asia/Shanghai}"
+    group_add:
+      - "${OBOARD_UPDATER_GID:?set OBOARD_UPDATER_GID in .env}"
     volumes:
       - ./data:/app/data
+      - /run/oboard:/run/oboard:ro
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777

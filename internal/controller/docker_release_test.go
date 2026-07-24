@@ -17,12 +17,12 @@ func TestDockerInstallAndReleaseAssets(t *testing.T) {
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	checks := map[string][]string{
 		"deploy/docker/Dockerfile.controller": {"EXPOSE 2787", "OBOARD_ADDR=:2787", "OBOARD_DOWNLOADS=/app/downloads", "OBOARD_BASE_PATH", "HEALTHCHECK", "entrypoint.sh"},
-		"deploy/docker-compose.yml":           {"ghcr.io/imnebula/oboard", "${OBOARD_PORT:-2787}:2787", "OBOARD_BASE_PATH", "./data:/app/data", "read_only: true", "cap_drop:", "cap_add:", "CHOWN", "SETGID", "SETUID", "set OBOARD_ADMIN_PASSWORD"},
+		"deploy/docker-compose.yml":           {"ghcr.io/oboardproject/oboard", "${OBOARD_PORT:-2787}:2787", "OBOARD_BASE_PATH", "./data:/app/data", "controller-updater.sock", "OBOARD_UPDATER_GID", "read_only: true", "cap_drop:", "cap_add:", "CHOWN", "SETGID", "SETUID", "set OBOARD_ADMIN_PASSWORD"},
 		"scripts/install-docker.sh":           {"VERSION_VALUE", "OBOARD_TAG", "docker compose", "wait_for_health", "dev|development|nightly", "generate_admin_password", "configure_bootstrap_admin", "设置超级管理员", "自动加入“管理员组”", "不能在面板中删除", "Controller 和 Agent 相互独立，也可以安装在同一台服务器上", "OBOARD_PORT 必须是 1 到 65535", "OBOARD_BASE_PATH", "更新当前渠道", "2787"},
-		"scripts/verify-release.sh":           {"Testing Controller", "Building Web UI", "Building current-platform binaries"},
+		"scripts/verify-release.sh":           {"Testing Controller", "Building Web UI", "Building current-platform binaries", "cmd/controller-updater"},
 		"scripts/fetch-agent-release.sh":      {"OBOARD_RELEASE_PUBLIC_KEY", "gh release download", "release-manifest.json.sig", "OBOARD_AGENT_CHANNEL", "OBOARD_AGENT_RELEASE_WAIT_ATTEMPTS"},
 		".github/workflows/ci.yml":            {"verify-release.sh", "go-version: '1.25.12'", "node-version: '22'"},
-		".github/workflows/dev-build.yml":     {"packages: write", "linux/amd64,linux/arm64", ":dev", "create-github-app-token", "OBOARD_AGENT_CHANNEL: dev"},
+		".github/workflows/dev-build.yml":     {"packages: write", "linux/amd64,linux/arm64", ":dev", "create-github-app-token", "OBOARD_AGENT_CHANNEL: dev", "controller-release-manifest.json", "gh release create dev"},
 		".github/workflows/prerelease.yml":    {":prerelease", "build-push-action", "create-github-app-token", "OBOARD_AGENT_CHANNEL: release"},
 		".github/workflows/release.yml":       {":latest", "build-push-action", "create-github-app-token", "OBOARD_AGENT_CHANNEL: release"},
 	}

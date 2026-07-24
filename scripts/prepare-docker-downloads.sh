@@ -2,8 +2,9 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-SOURCE=${OBOARD_AGENT_RELEASE_DIR:-$ROOT/dist/release/agent-release}
-TARGET=${OBOARD_DOCKER_DOWNLOADS_DIR:-$ROOT/dist/docker-downloads}
+WORKSPACE=$(CDPATH= cd -- "$ROOT/.." && pwd)
+SOURCE=${OBOARD_AGENT_RELEASE_DIR:-$WORKSPACE/dist/controller/release/agent-release}
+TARGET=${OBOARD_DOCKER_DOWNLOADS_DIR:-$WORKSPACE/dist/controller/docker-downloads}
 
 rm -rf "$TARGET"
 mkdir -p "$TARGET"

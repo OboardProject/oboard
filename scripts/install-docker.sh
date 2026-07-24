@@ -23,7 +23,7 @@ env_value() {
 }
 
 IMAGE=${IMAGE_INPUT:-$(env_value OBOARD_IMAGE)}
-[ -n "$IMAGE" ] || IMAGE=ghcr.io/imnebula/oboard
+[ -n "$IMAGE" ] || IMAGE=ghcr.io/oboardproject/oboard
 VERSION_VALUE=${VERSION_INPUT:-$(env_value OBOARD_TAG)}
 [ -n "$VERSION_VALUE" ] || VERSION_VALUE=latest
 PORT=${PORT_INPUT:-$(env_value OBOARD_PORT)}
@@ -102,17 +102,23 @@ pkg_install() {
 ensure_base_tools() {
   need_curl=0
   need_ca=0
+  need_tar=0
+  need_sha=0
   command -v curl >/dev/null 2>&1 || need_curl=1
+  command -v tar >/dev/null 2>&1 || need_tar=1
+  command -v sha256sum >/dev/null 2>&1 || need_sha=1
   if [ ! -f /etc/ssl/certs/ca-certificates.crt ] && [ ! -f /etc/pki/tls/certs/ca-bundle.crt ] && [ ! -f /etc/ssl/cert.pem ]; then
     need_ca=1
   fi
-  if [ "$need_curl" = 0 ] && [ "$need_ca" = 0 ]; then
+  if [ "$need_curl" = 0 ] && [ "$need_ca" = 0 ] && [ "$need_tar" = 0 ] && [ "$need_sha" = 0 ]; then
     return 0
   fi
   echo "正在安装基础依赖（curl / CA 证书）..."
   packages=""
   [ "$need_curl" = 1 ] && packages="$packages curl"
   [ "$need_ca" = 1 ] && packages="$packages ca-certificates"
+  [ "$need_tar" = 1 ] && packages="$packages tar"
+  [ "$need_sha" = 1 ] && packages="$packages coreutils"
   # shellcheck disable=SC2086
   pkg_install $packages || {
     echo "基础依赖安装失败，请手动安装 curl 与 CA 证书后重试。" >&2
@@ -177,6 +183,77 @@ start_docker_engine() {
 
 compose() {
   docker compose --project-directory "$INSTALL_ROOT" --env-file "$INSTALL_ROOT/.env" -f "$INSTALL_ROOT/docker-compose.yml" "$@"
+}
+
+detect_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) echo amd64 ;;
+    aarch64|arm64) echo arm64 ;;
+    *) echo "当前架构没有主控更新器：$(uname -m)" >&2; exit 1 ;;
+  esac
+}
+
+latest_version() {
+  curl -fsSL "https://api.github.com/repos/OboardProject/oboard/releases/latest" \
+    | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -n1
+}
+
+ensure_oboard_group() {
+  group_entry=$(getent group oboard 2>/dev/null || sed -n '/^oboard:/p' /etc/group | head -n1)
+  if [ -z "$group_entry" ]; then
+    if command -v groupadd >/dev/null 2>&1; then
+      groupadd --system oboard
+    else
+      addgroup -S oboard
+    fi
+    group_entry=$(getent group oboard 2>/dev/null || sed -n '/^oboard:/p' /etc/group | head -n1)
+  fi
+  [ -n "$group_entry" ] || { echo "无法创建 oboard 系统组。" >&2; exit 1; }
+  printf '%s\n' "$group_entry" | cut -d: -f3
+}
+
+install_controller_updater() {
+  arch=$(detect_arch)
+  release_tag="v$TAG"
+  artifact_version=$TAG
+  case "$TAG" in
+    dev) release_tag=dev; artifact_version=dev ;;
+    latest|stable)
+      artifact_version=$(latest_version)
+      [ -n "$artifact_version" ] || { echo "无法获取最新正式版。" >&2; exit 1; }
+      release_tag="v$artifact_version"
+      ;;
+  esac
+  archive="oboard_controller_${artifact_version}_linux_${arch}.tar.gz"
+  updater_tmp=$(mktemp -d)
+  trap 'rm -rf "$updater_tmp"' EXIT INT TERM
+  curl -fL "https://github.com/OboardProject/oboard/releases/download/$release_tag/$archive" -o "$updater_tmp/$archive"
+  curl -fsSL "https://github.com/OboardProject/oboard/releases/download/$release_tag/sha256sums.txt" -o "$updater_tmp/sha256sums.txt"
+  awk -v name="$archive" '$2 == name { print $1 "  " name; found=1 } END { exit found ? 0 : 1 }' "$updater_tmp/sha256sums.txt" > "$updater_tmp/checksum"
+  (cd "$updater_tmp" && sha256sum -c checksum)
+  if tar -tzf "$updater_tmp/$archive" | grep -E '(^/|(^|/)\.\.(/|$))' >/dev/null; then
+    echo "主控安装包包含不安全路径。" >&2
+    exit 1
+  fi
+  tar -xzf "$updater_tmp/$archive" -C "$updater_tmp"
+  install -m 0755 "$updater_tmp/bin/oboard-controller-updater" /usr/local/bin/oboard-controller-updater.new
+  mv -f /usr/local/bin/oboard-controller-updater.new /usr/local/bin/oboard-controller-updater
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    cp "$updater_tmp/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/
+    systemctl daemon-reload
+    systemctl enable oboard-controller-updater
+    systemctl restart oboard-controller-updater
+  elif command -v rc-service >/dev/null 2>&1; then
+    cp "$updater_tmp/deploy/openrc/oboard-controller-updater" /etc/init.d/oboard-controller-updater
+    chmod 0755 /etc/init.d/oboard-controller-updater
+    rc-update add oboard-controller-updater default
+    rc-service oboard-controller-updater restart
+  else
+    echo "主控面板更新需要 systemd 或 OpenRC。" >&2
+    exit 1
+  fi
+  rm -rf "$updater_tmp"
+  trap - EXIT INT TERM
 }
 
 generate_secret() {
@@ -265,9 +342,16 @@ services:
       OBOARD_ADMIN_USERNAME: "${OBOARD_ADMIN_USERNAME}"
       OBOARD_ADMIN_PASSWORD: "${OBOARD_ADMIN_PASSWORD}"
       OBOARD_AUTO_ADMIN: "true"
+      OBOARD_INSTALL_METHOD: "docker"
+      OBOARD_UPDATE_CHANNEL: "${OBOARD_TAG}"
+      OBOARD_BACKUP_DIR: "/app/data/backups"
+      OBOARD_CONTROLLER_UPDATER_SOCKET: "/run/oboard/controller-updater.sock"
       TZ: "${TZ}"
+    group_add:
+      - "${OBOARD_UPDATER_GID}"
     volumes:
       - ./data:/app/data
+      - /run/oboard:/run/oboard:ro
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -294,6 +378,7 @@ OBOARD_BASE_PATH=$BASE_PATH
 OBOARD_SESSION_SECRET=$(generate_secret)
 OBOARD_ADMIN_USERNAME=$ADMIN_USERNAME
 OBOARD_ADMIN_PASSWORD=$ADMIN_PASSWORD
+OBOARD_UPDATER_GID=$UPDATER_GID
 TZ=$TIMEZONE
 EOF
     return
@@ -304,6 +389,7 @@ EOF
   cat "$tmp_env" > "$env_file"
   rm -f "$tmp_env"
   grep -q '^OBOARD_BASE_PATH=' "$env_file" || printf 'OBOARD_BASE_PATH=%s\n' "$BASE_PATH" >> "$env_file"
+  set_env_value OBOARD_UPDATER_GID "$UPDATER_GID"
   if [ "$FRESH_INSTALL" = 1 ]; then
     set_env_value OBOARD_ADMIN_USERNAME "$ADMIN_USERNAME"
     set_env_value OBOARD_ADMIN_PASSWORD "$ADMIN_PASSWORD"
@@ -387,9 +473,11 @@ case "$ACTION" in
 esac
 
 TAG=$(resolve_tag)
+UPDATER_GID=$(ensure_oboard_group)
 configure_bootstrap_admin
 write_compose
 write_env "$TAG"
+install_controller_updater
 cat > "$INSTALL_ROOT/update.sh" <<'SH'
 #!/bin/sh
 set -eu

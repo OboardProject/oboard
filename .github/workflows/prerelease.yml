@@ -12,6 +12,10 @@ permissions:
   contents: write
   packages: write
 
+concurrency:
+  group: controller-prerelease-${{ inputs.version }}
+  cancel-in-progress: false
+
 jobs:
   prerelease:
     name: Build and publish prerelease
@@ -46,6 +50,25 @@ jobs:
             echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "image=ghcr.io/${GITHUB_REPOSITORY,,}"
           } >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Enforce immutable release targets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ steps.meta.outputs.version }}"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:${{ steps.meta.outputs.version }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1 || gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag already exists and releases are immutable" >&2
+            exit 1
+          fi
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
+            echo "$image already exists and versioned images are immutable" >&2
+            exit 1
+          fi
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.25.12'
@@ -64,31 +87,33 @@ jobs:
           GH_TOKEN: ${{ steps.agent-token.outputs.token }}
           OBOARD_RELEASE_PUBLIC_KEY: ${{ vars.OBOARD_RELEASE_PUBLIC_KEY }}
           OBOARD_AGENT_CHANNEL: release
+          OBOARD_RELEASE_CHANNEL: prerelease
           VERSION: ${{ steps.meta.outputs.version }}
           BUILD: ${{ steps.meta.outputs.build }}
           COMMIT: ${{ github.sha }}
           DATE: ${{ steps.meta.outputs.date }}
+          OUT_DIR: ${{ github.workspace }}/../dist/controller/release
         run: ./scripts/build-release.sh
       - name: Prepare Docker payload
+        env:
+          OBOARD_AGENT_RELEASE_DIR: ${{ github.workspace }}/../dist/controller/release/agent-release
+          OBOARD_DOCKER_DOWNLOADS_DIR: ${{ github.workspace }}/../dist/controller/docker-downloads
         run: ./scripts/prepare-docker-downloads.sh
       - name: Read bundled Agent metadata
         id: agent
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
-          metadata = json.load(open("dist/release/agent-release/release-metadata.json"))
+          metadata = json.load(open("../dist/controller/release/agent-release/release-metadata.json"))
           for key in ("version", "build", "commit", "date"):
               print(f"{key}={metadata[key]}")
           PY
-      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: deploy/docker/Dockerfile.controller
+          build-contexts: |
+            agent-downloads=../dist/controller/docker-downloads
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
@@ -122,4 +147,4 @@ jobs:
       - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "v${{ steps.meta.outputs.version }}" dist/release/*.tar.gz dist/release/sha256sums.txt --title "OBoard v${{ steps.meta.outputs.version }}" --prerelease --generate-notes
+        run: gh release create "v${{ steps.meta.outputs.version }}" ../dist/controller/release/*.tar.gz ../dist/controller/release/sha256sums.txt ../dist/controller/release/controller-release-manifest.json --title "OBoard v${{ steps.meta.outputs.version }}" --prerelease --generate-notes

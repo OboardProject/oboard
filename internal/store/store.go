@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -197,8 +198,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 
 func (s *Store) ensureColumn(ctx context.Context, table, column, alterSQL string) error {
 	var count int
-	query := fmt.Sprintf("select count(*) from pragma_table_info('%s') where name=?", table)
-	if err := s.db.QueryRowContext(ctx, query, column).Scan(&count); err != nil {
+	if err := s.db.QueryRowContext(ctx, `select count(*) from pragma_table_info(?) where name=?`, table, column).Scan(&count); err != nil {
 		return err
 	}
 	if count > 0 {
@@ -412,6 +412,26 @@ func (s *Store) SetSettings(ctx context.Context, values map[string]string) error
 		}
 	}
 	return tx.Commit()
+}
+
+// Backup creates a transactionally consistent SQLite snapshot. VACUUM INTO
+// runs through the Store's single database connection, so the result includes
+// committed WAL data without copying live database sidecar files.
+func (s *Store) Backup(ctx context.Context, destination string) error {
+	destination = strings.TrimSpace(destination)
+	if destination == "" {
+		return errors.New("backup destination is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+		return err
+	}
+	if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `vacuum into ?`, destination); err != nil {
+		return fmt.Errorf("create SQLite backup: %w", err)
+	}
+	return os.Chmod(destination, 0o600)
 }
 
 func normalizeTrafficResetMode(mode string) string {

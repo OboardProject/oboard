@@ -12,10 +12,11 @@ echo "==> Building Web UI"
 (
   cd "$CONTROLLER_DIR/web"
   npm ci
-  npm run build
+  npm run build -- --outDir "$BUILD_DIR/web" --emptyOutDir
 )
 
 echo "==> Building current-platform binaries"
 go -C "$CONTROLLER_DIR" build -o "$BUILD_DIR/oboard-controller" ./cmd/controller
+go -C "$CONTROLLER_DIR" build -o "$BUILD_DIR/oboard-controller-updater" ./cmd/controller-updater
 
 echo "==> Release verification passed"
