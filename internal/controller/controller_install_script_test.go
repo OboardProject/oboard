@@ -73,3 +73,23 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		}
 	}
 }
+
+
+func TestControllerUpdaterUnitOptionalDockerPath(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to locate test file")
+	}
+	path := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "deploy", "systemd", "oboard-controller-updater.service"))
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(content)
+	if !strings.Contains(text, "-/opt/oboard-docker") {
+		t.Fatal("updater unit must mark /opt/oboard-docker as optional so binary installs can start without a Docker root")
+	}
+	if strings.Contains(text, "ReadWritePaths=/run/oboard /var/lib/oboard /opt/oboard /opt/oboard-docker ") {
+		t.Fatal("updater unit still requires a non-optional /opt/oboard-docker path")
+	}
+}

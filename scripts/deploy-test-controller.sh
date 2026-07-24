@@ -195,6 +195,9 @@ if ! id oboard >/dev/null 2>&1; then
 fi
 install -d -m 0750 -o oboard -g oboard /var/lib/oboard /opt/oboard/web /opt/oboard/downloads /etc/oboard
 install -m 0755 "$work/bin/oboard-controller" /usr/local/bin/oboard-controller
+if [ -f "$work/bin/oboard-controller-updater" ]; then
+  install -m 0755 "$work/bin/oboard-controller-updater" /usr/local/bin/oboard-controller-updater
+fi
 rm -rf /opt/oboard/web/dist.new
 cp -R "$work/web/dist" /opt/oboard/web/dist.new
 chown -R oboard:oboard /opt/oboard/web/dist.new
@@ -217,6 +220,10 @@ OBOARD_BASE_PATH=$OBOARD_BASE_PATH
 OBOARD_DB=/var/lib/oboard/oboard.sqlite
 OBOARD_STATIC=/opt/oboard/web/dist
 OBOARD_DOWNLOADS=/opt/oboard/downloads
+OBOARD_BACKUP_DIR=/var/lib/oboard/backups
+OBOARD_CONTROLLER_UPDATER_SOCKET=/run/oboard/controller-updater.sock
+OBOARD_UPDATE_CHANNEL=dev
+OBOARD_INSTALL_METHOD=binary
 OBOARD_CORS_ORIGINS=
 EOF
 else
@@ -247,8 +254,29 @@ else
   chmod 0600 /etc/oboard/controller.env
 fi
 
+if ! grep -q '^OBOARD_UPDATE_CHANNEL=' /etc/oboard/controller.env; then
+  printf 'OBOARD_UPDATE_CHANNEL=dev\n' >> /etc/oboard/controller.env
+fi
+if ! grep -q '^OBOARD_INSTALL_METHOD=' /etc/oboard/controller.env; then
+  printf 'OBOARD_INSTALL_METHOD=binary\n' >> /etc/oboard/controller.env
+fi
+if ! grep -q '^OBOARD_CONTROLLER_UPDATER_SOCKET=' /etc/oboard/controller.env; then
+  printf 'OBOARD_CONTROLLER_UPDATER_SOCKET=/run/oboard/controller-updater.sock\n' >> /etc/oboard/controller.env
+fi
+if ! grep -q '^OBOARD_BACKUP_DIR=' /etc/oboard/controller.env; then
+  printf 'OBOARD_BACKUP_DIR=/var/lib/oboard/backups\n' >> /etc/oboard/controller.env
+fi
+chmod 0600 /etc/oboard/controller.env
+
 cp "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/oboard-controller.service
+if [ -f "$work/deploy/systemd/oboard-controller-updater.service" ]; then
+  cp "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/oboard-controller-updater.service
+fi
 systemctl daemon-reload
+if [ -f /etc/systemd/system/oboard-controller-updater.service ]; then
+  systemctl enable oboard-controller-updater >/dev/null
+  systemctl restart oboard-controller-updater
+fi
 systemctl enable oboard-controller >/dev/null
 systemctl restart oboard-controller
 sleep 1

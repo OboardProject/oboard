@@ -207,16 +207,22 @@ generate_secret() {
 }
 
 controller_env_value() {
-  local key=$1
-  sed -n "s/^${key}=//p" /etc/oboard/controller.env 2>/dev/null | tail -n1
+  local key=$1 value
+  value=$(sed -n "s/^${key}=//p" /etc/oboard/controller.env 2>/dev/null | tail -n1)
+  value=${value#\"}
+  value=${value%\"}
+  value=${value#\'}
+  value=${value%\'}
+  printf '%s\n' "$value"
 }
 
 set_controller_env_value() {
   local key=$1 value=$2 env_file=/etc/oboard/controller.env tmp escaped
-  escaped=$(printf '%s' "$value" | sed "s/'/'\\\\''/g")
+  # systemd EnvironmentFile understands unquoted or double-quoted values; avoid single quotes.
+  escaped=$(printf '%s' "$value" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
   tmp=$(mktemp /etc/oboard/controller.env.XXXXXX)
   sed "/^${key}=/d" "$env_file" > "$tmp"
-  printf "%s='%s'\n" "$key" "$escaped" >> "$tmp"
+  printf '%s="%s"\n' "$key" "$escaped" >> "$tmp"
   chmod 0600 "$tmp"
   mv "$tmp" "$env_file"
 }

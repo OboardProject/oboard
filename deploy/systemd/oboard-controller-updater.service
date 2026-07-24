@@ -19,7 +19,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=/run/oboard /var/lib/oboard /opt/oboard /opt/oboard-docker /usr/local/bin /etc/oboard /etc/systemd/system
+ReadWritePaths=/run/oboard /var/lib/oboard /opt/oboard -/opt/oboard-docker /usr/local/bin /etc/oboard /etc/systemd/system
 LockPersonality=true
 MemoryDenyWriteExecute=true
 
