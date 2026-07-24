@@ -55,6 +55,9 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"almalinux",
 		"OBOARD_UPDATE_CHANNEL",
 		"oboard-controller-updater",
+		"harden_controller_updater_unit",
+		"prepare_controller_updater_runtime",
+		"wait_for_controller_updater",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("controller installer missing %q", want)
@@ -75,7 +78,7 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 }
 
 
-func TestControllerUpdaterUnitOptionalDockerPath(t *testing.T) {
+func TestControllerUpdaterUnitOptionalInstallPaths(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("unable to locate test file")
@@ -86,10 +89,20 @@ func TestControllerUpdaterUnitOptionalDockerPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(content)
-	if !strings.Contains(text, "-/opt/oboard-docker") {
-		t.Fatal("updater unit must mark /opt/oboard-docker as optional so binary installs can start without a Docker root")
+	for _, optional := range []string{"-/var/lib/oboard", "-/opt/oboard", "-/opt/oboard-docker", "-/etc/oboard"} {
+		if !strings.Contains(text, optional) {
+			t.Fatalf("updater unit must mark %s as optional so binary and Docker installs can start with only their own paths", optional)
+		}
 	}
-	if strings.Contains(text, "ReadWritePaths=/run/oboard /var/lib/oboard /opt/oboard /opt/oboard-docker ") {
-		t.Fatal("updater unit still requires a non-optional /opt/oboard-docker path")
+	for _, required := range []string{
+		"ReadWritePaths=/run/oboard /var/lib/oboard ",
+		"ReadWritePaths=/run/oboard /var/lib/oboard /opt/oboard /opt/oboard-docker ",
+		" /opt/oboard /opt/oboard-docker ",
+		" /etc/oboard /etc/systemd/system",
+	} {
+		if strings.Contains(text, required) {
+			t.Fatalf("updater unit still requires a non-optional install path fragment %q", required)
+		}
 	}
 }
+

@@ -487,6 +487,48 @@ verify_checksum() {
   fi
 }
 
+
+wait_for_controller_updater() {
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if [ -S /run/oboard/controller-updater.sock ]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "主控更新器未就绪：/run/oboard/controller-updater.sock 不存在。" >&2
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --no-pager --full status oboard-controller-updater >&2 || true
+    journalctl -u oboard-controller-updater -n 40 --no-pager >&2 || true
+  elif command -v rc-service >/dev/null 2>&1; then
+    rc-service oboard-controller-updater status >&2 || true
+    [ ! -f /var/log/oboard-controller-updater.log ] || tail -n 40 /var/log/oboard-controller-updater.log >&2 || true
+  fi
+  return 1
+}
+
+prepare_controller_updater_runtime() {
+  install -d -m 0750 -o root -g oboard /run/oboard
+  install -d -m 0750 -o root -g root /var/lib/oboard
+}
+
+harden_controller_updater_unit() {
+  local unit=/etc/systemd/system/oboard-controller-updater.service
+  local tmp
+  [ -f "$unit" ] || return 0
+  # Older packages required binary- or docker-only paths and failed NAMESPACE
+  # setup when the inactive install mode directories were absent.
+  tmp=$(mktemp)
+  sed \
+    -e 's#\([[:space:]]\)/var/lib/oboard\([[:space:]]\)#\1-/var/lib/oboard\2#g' \
+    -e 's#\([[:space:]]\)/opt/oboard\([[:space:]]\)#\1-/opt/oboard\2#g' \
+    -e 's#\([[:space:]]\)/opt/oboard-docker\([[:space:]]\)#\1-/opt/oboard-docker\2#g' \
+    -e 's#\([[:space:]]\)/etc/oboard\([[:space:]]\)#\1-/etc/oboard\2#g' \
+    "$unit" > "$tmp"
+  sed -e 's#--/#-/#g' "$tmp" > "$unit"
+  rm -f "$tmp"
+}
+
 start_controller_systemd() {
   if [ "${OBOARD_START_SERVICE:-1}" = "0" ]; then
     echo "已按 OBOARD_START_SERVICE=0 跳过主控启动。" >&2
@@ -573,9 +615,12 @@ install_component() {
         configure_bootstrap_admin
         cp "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/
         cp "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/
+        harden_controller_updater_unit
+        prepare_controller_updater_runtime
         systemctl daemon-reload
         systemctl enable oboard-controller-updater
         systemctl restart oboard-controller-updater
+        wait_for_controller_updater
         systemctl enable oboard-controller
         start_controller_systemd
         ;;
@@ -612,8 +657,10 @@ install_component() {
         cp "$work/deploy/openrc/oboard-controller-updater" /etc/init.d/oboard-controller-updater
         chmod 0755 /etc/init.d/oboard-controller
         chmod 0755 /etc/init.d/oboard-controller-updater
+        prepare_controller_updater_runtime
         rc-update add oboard-controller-updater default
         rc-service oboard-controller-updater restart
+        wait_for_controller_updater
         rc-update add oboard-controller default
         start_controller_openrc
         ;;

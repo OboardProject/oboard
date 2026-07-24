@@ -426,6 +426,30 @@ latest_version() {
     | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -n1
 }
 
+
+make_install_tmp() {
+  base=
+  candidate=
+  available_kb=
+  for base in "${OBOARD_TMPDIR:-}" /var/tmp /tmp /run; do
+    [ -n "$base" ] || continue
+    mkdir -p "$base" 2>/dev/null || continue
+    candidate=$(mktemp -d "$base/oboard-docker-install.XXXXXX" 2>/dev/null || true)
+    [ -n "$candidate" ] || continue
+    available_kb=$(df -Pk "$candidate" 2>/dev/null | awk 'NR==2 {print $4}')
+    # Controller archive is ~32MB; require enough headroom for extract.
+    if [ -z "$available_kb" ] || [ "$available_kb" -ge 131072 ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    rm -rf "$candidate"
+  done
+  echo "没有可用的安装临时目录，需要至少 128 MB 可用空间。" >&2
+  echo "可清理 /var/tmp、/tmp，或通过 OBOARD_TMPDIR 指定其他目录。" >&2
+  df -h / /var/tmp /tmp /run 2>/dev/null >&2 || true
+  return 1
+}
+
 ensure_oboard_group() {
   group_entry=$(getent group oboard 2>/dev/null || sed -n '/^oboard:/p' /etc/group | head -n1)
   if [ -z "$group_entry" ]; then
@@ -438,6 +462,48 @@ ensure_oboard_group() {
   fi
   [ -n "$group_entry" ] || { echo "无法创建 oboard 系统组。" >&2; exit 1; }
   printf '%s\n' "$group_entry" | cut -d: -f3
+}
+
+
+wait_for_controller_updater() {
+  i=1
+  while [ "$i" -le 10 ]; do
+    if [ -S /run/oboard/controller-updater.sock ]; then
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  echo "主控更新器未就绪：/run/oboard/controller-updater.sock 不存在。" >&2
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --no-pager --full status oboard-controller-updater >&2 || true
+    journalctl -u oboard-controller-updater -n 40 --no-pager >&2 || true
+  elif command -v rc-service >/dev/null 2>&1; then
+    rc-service oboard-controller-updater status >&2 || true
+  fi
+  return 1
+}
+
+harden_controller_updater_unit() {
+  unit=/etc/systemd/system/oboard-controller-updater.service
+  tmp=
+  [ -f "$unit" ] || return 0
+  # Older packages required binary- or docker-only paths and failed NAMESPACE
+  # setup when the inactive install mode directories were absent.
+  tmp=$(mktemp)
+  sed \
+    -e 's#\([[:space:]]\)/var/lib/oboard\([[:space:]]\)#\1-/var/lib/oboard\2#g' \
+    -e 's#\([[:space:]]\)/opt/oboard\([[:space:]]\)#\1-/opt/oboard\2#g' \
+    -e 's#\([[:space:]]\)/opt/oboard-docker\([[:space:]]\)#\1-/opt/oboard-docker\2#g' \
+    -e 's#\([[:space:]]\)/etc/oboard\([[:space:]]\)#\1-/etc/oboard\2#g' \
+    "$unit" > "$tmp"
+  sed -e 's#--/#-/#g' "$tmp" > "$unit"
+  rm -f "$tmp"
+}
+
+prepare_controller_updater_runtime() {
+  install -d -m 0750 -o root -g oboard /run/oboard
+  install -d -m 0750 -o root -g root /var/lib/oboard
 }
 
 install_controller_updater() {
@@ -453,7 +519,7 @@ install_controller_updater() {
       ;;
   esac
   archive="oboard_controller_${artifact_version}_linux_${arch}.tar.gz"
-  updater_tmp=$(mktemp -d)
+  updater_tmp=$(make_install_tmp)
   trap 'rm -rf "$updater_tmp"' EXIT INT TERM
   curl -fL "https://github.com/OboardProject/oboard/releases/download/$release_tag/$archive" -o "$updater_tmp/$archive"
   curl -fsSL "https://github.com/OboardProject/oboard/releases/download/$release_tag/sha256sums.txt" -o "$updater_tmp/sha256sums.txt"
@@ -466,8 +532,10 @@ install_controller_updater() {
   tar -xzf "$updater_tmp/$archive" -C "$updater_tmp"
   install -m 0755 "$updater_tmp/bin/oboard-controller-updater" /usr/local/bin/oboard-controller-updater.new
   mv -f /usr/local/bin/oboard-controller-updater.new /usr/local/bin/oboard-controller-updater
+  prepare_controller_updater_runtime
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     cp "$updater_tmp/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/
+    harden_controller_updater_unit
     systemctl daemon-reload
     systemctl enable oboard-controller-updater
     systemctl restart oboard-controller-updater
@@ -480,6 +548,7 @@ install_controller_updater() {
     echo "主控面板更新需要 systemd 或 OpenRC。" >&2
     exit 1
   fi
+  wait_for_controller_updater
   rm -rf "$updater_tmp"
   trap - EXIT INT TERM
 }
@@ -554,6 +623,41 @@ resolve_tag() {
   esac
 }
 
+
+write_controller_entrypoint() {
+  cat > "$INSTALL_ROOT/oboard-entrypoint" <<'SH'
+#!/bin/sh
+set -eu
+
+if [ "$(id -u)" -eq 0 ]; then
+  mkdir -p /app/data
+  # Best-effort ownership fix only. The container drops most capabilities, so
+  # recursive chown can fail on 0700 data files without CAP_DAC_OVERRIDE.
+  chown oboard:oboard /app/data 2>/dev/null || true
+  chown -R oboard:oboard /app/data 2>/dev/null || true
+  uid=$(id -u oboard)
+  gid=$(id -g oboard)
+  # Docker group_add alone is not enough: su-exec replaces supplementary groups.
+  # BusyBox setpriv also cannot keep them. Use the host updater GID as the
+  # process primary group so 0660 root:oboard sockets under /run/oboard work.
+  if [ -n "${OBOARD_UPDATER_GID:-}" ]; then
+    exec su-exec "$uid:$OBOARD_UPDATER_GID" "$@"
+  fi
+  sock=${OBOARD_CONTROLLER_UPDATER_SOCKET:-/run/oboard/controller-updater.sock}
+  if [ -S "$sock" ] && command -v stat >/dev/null 2>&1; then
+    sock_gid=$(stat -c %g "$sock" 2>/dev/null || stat -f %g "$sock" 2>/dev/null || true)
+    if [ -n "$sock_gid" ]; then
+      exec su-exec "$uid:$sock_gid" "$@"
+    fi
+  fi
+  exec su-exec "$uid:$gid" "$@"
+fi
+
+exec "$@"
+SH
+  chmod 0755 "$INSTALL_ROOT/oboard-entrypoint"
+}
+
 write_compose() {
   mkdir -p "$INSTALL_ROOT/data"
   cat > "$INSTALL_ROOT/docker-compose.yml" <<'YAML'
@@ -574,12 +678,14 @@ services:
       OBOARD_UPDATE_CHANNEL: "${OBOARD_TAG}"
       OBOARD_BACKUP_DIR: "/app/data/backups"
       OBOARD_CONTROLLER_UPDATER_SOCKET: "/run/oboard/controller-updater.sock"
+      OBOARD_UPDATER_GID: "${OBOARD_UPDATER_GID}"
       TZ: "${TZ}"
     group_add:
       - "${OBOARD_UPDATER_GID}"
     volumes:
       - ./data:/app/data
       - /run/oboard:/run/oboard:ro
+      - ./oboard-entrypoint:/usr/local/bin/oboard-entrypoint:ro
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -703,6 +809,7 @@ esac
 TAG=$(resolve_tag)
 UPDATER_GID=$(ensure_oboard_group)
 configure_bootstrap_admin
+write_controller_entrypoint
 write_compose
 write_env "$TAG"
 install_controller_updater
