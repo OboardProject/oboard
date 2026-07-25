@@ -687,6 +687,9 @@ install_component() {
     release_tag=dev
   fi
   local archive="oboard_${component}_${artifact_version}_${os}_${arch}.tar.gz"
+  if [ "$component" = controller ]; then
+    archive="oboard_controller_${artifact_version}_${os}_${arch}_install.tar.gz"
+  fi
   local url="https://github.com/$REPO/releases/download/$release_tag/$archive"
   local work="$TMP_DIR/$component"
 

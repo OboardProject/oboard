@@ -30,6 +30,16 @@ fi
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
+create_tar_archive() {
+  local stage=$1 archive=$2
+  shift 2
+  if tar --help 2>&1 | grep -q -- '--no-xattrs'; then
+    COPYFILE_DISABLE=1 tar --no-xattrs -C "$stage" -czf "$archive" "$@"
+  else
+    COPYFILE_DISABLE=1 tar -C "$stage" -czf "$archive" "$@"
+  fi
+}
+
 echo "==> Fetching signed Agent release assets"
 OBOARD_AGENT_RELEASE_TARGET="$OUT_DIR/agent-release" VERSION="$VERSION_VALUE" "$CONTROLLER_DIR/scripts/fetch-agent-release.sh"
 
@@ -88,11 +98,12 @@ package_controller() {
   cp "$CONTROLLER_DIR/scripts/update-docker.sh" "$stage/scripts/"
 
   local archive="$OUT_DIR/oboard_controller_${ARTIFACT_VERSION}_${os}_${arch}.tar.gz"
-  if tar --help 2>&1 | grep -q -- '--no-xattrs'; then
-    COPYFILE_DISABLE=1 tar --no-xattrs -C "$stage" -czf "$archive" .
-  else
-    COPYFILE_DISABLE=1 tar -C "$stage" -czf "$archive" .
-  fi
+  local install_archive="$OUT_DIR/oboard_controller_${ARTIFACT_VERSION}_${os}_${arch}_install.tar.gz"
+  # Keep the self-update payload compatible with the updater's extraction
+  # allowlist. Installation-only service files and scripts live in a separate
+  # archive and are never exposed to the privileged self-update extractor.
+  create_tar_archive "$stage" "$archive" bin web downloads
+  create_tar_archive "$stage" "$install_archive" .
   rm -rf "$stage"
   echo "$archive"
 }

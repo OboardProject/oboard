@@ -80,6 +80,68 @@ func TestExtractControllerArchiveRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestExtractControllerArchiveAcceptsSelfUpdatePayload(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "controller.tar.gz")
+	writeTestControllerArchive(t, archive, []archiveEntry{
+		{name: "bin/oboard-controller", content: "controller"},
+		{name: "bin/oboard-controller-updater", content: "updater"},
+		{name: "web/dist/index.html", content: "web"},
+		{name: "downloads/release-manifest.json", content: "{}"},
+	})
+	stage := t.TempDir()
+	if err := extractControllerArchive(archive, stage); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "web/dist/index.html", "downloads/release-manifest.json"} {
+		if info, err := os.Stat(filepath.Join(stage, filepath.FromSlash(name))); err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("self-update payload did not extract %s: %v", name, err)
+		}
+	}
+}
+
+func TestExtractControllerArchiveRejectsInstallerPayload(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "controller-install.tar.gz")
+	writeTestControllerArchive(t, archive, []archiveEntry{{
+		name:    "deploy/systemd/oboard-controller-updater.service",
+		content: "unit",
+	}})
+	if err := extractControllerArchive(archive, t.TempDir()); err == nil {
+		t.Fatal("privileged updater accepted an installation-only archive member")
+	}
+}
+
+type archiveEntry struct {
+	name    string
+	content string
+}
+
+func writeTestControllerArchive(t *testing.T, path string, entries []archiveEntry) {
+	t.Helper()
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(file)
+	tw := tar.NewWriter(gz)
+	for _, entry := range entries {
+		if err := tw.WriteHeader(&tar.Header{Name: entry.name, Mode: 0o600, Size: int64(len(entry.content)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(entry.content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDetectInstallation(t *testing.T) {
 	root := t.TempDir()
 	dockerRoot := filepath.Join(root, "docker")

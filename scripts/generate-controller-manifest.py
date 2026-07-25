@@ -2,7 +2,6 @@
 import hashlib
 import json
 import pathlib
-import re
 import sys
 
 
@@ -12,11 +11,11 @@ def main() -> None:
     output = pathlib.Path(sys.argv[1])
     channel, version, build, commit, date = sys.argv[2:]
     artifacts = []
-    pattern = re.compile(r"^oboard_controller_.+_linux_(amd64|arm64)\.tar\.gz$")
-    for path in sorted(output.glob("oboard_controller_*_linux_*.tar.gz")):
-        match = pattern.match(path.name)
-        if not match:
-            continue
+    artifact_version = "dev" if channel == "dev" else version
+    for arch in ("amd64", "arm64"):
+        path = output / f"oboard_controller_{artifact_version}_linux_{arch}.tar.gz"
+        if not path.is_file():
+            raise SystemExit(f"controller release is missing {path.name}")
         digest = hashlib.sha256()
         with path.open("rb") as source:
             for chunk in iter(lambda: source.read(1024 * 1024), b""):
@@ -24,12 +23,10 @@ def main() -> None:
         artifacts.append({
             "name": path.name,
             "os": "linux",
-            "arch": match.group(1),
+            "arch": arch,
             "sha256": digest.hexdigest(),
             "size": path.stat().st_size,
         })
-    if {item["arch"] for item in artifacts} != {"amd64", "arm64"}:
-        raise SystemExit("controller release requires linux/amd64 and linux/arm64 packages")
     manifest = {
         "schema": 1,
         "channel": channel,

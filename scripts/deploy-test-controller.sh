@@ -147,7 +147,7 @@ case "$remote_arch" in
   *) echo "Unsupported remote architecture: $remote_arch" >&2; exit 1 ;;
 esac
 
-artifact="$CONTROLLER_RELEASE_DIR/oboard_controller_${ARTIFACT_VERSION}_linux_${arch}.tar.gz"
+artifact="$CONTROLLER_RELEASE_DIR/oboard_controller_${ARTIFACT_VERSION}_linux_${arch}_install.tar.gz"
 if [ "${OBOARD_FORCE_BUILD:-0}" = "1" ] || [ ! -f "$artifact" ]; then
   echo "==> Building controller artifact for linux/$arch"
   OUT_DIR="$CONTROLLER_RELEASE_DIR" OBOARD_PLATFORMS="linux/$arch" "$CONTROLLER_DIR/scripts/build-release.sh"

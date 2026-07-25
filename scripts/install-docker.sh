@@ -549,7 +549,7 @@ install_controller_updater() {
       release_tag="v$artifact_version"
       ;;
   esac
-  archive="oboard_controller_${artifact_version}_linux_${arch}.tar.gz"
+  archive="oboard_controller_${artifact_version}_linux_${arch}_install.tar.gz"
   updater_tmp=$(make_install_tmp)
   trap 'rm -rf "$updater_tmp"' EXIT INT TERM
   curl -fL "https://github.com/OboardProject/oboard/releases/download/$release_tag/$archive" -o "$updater_tmp/$archive"
