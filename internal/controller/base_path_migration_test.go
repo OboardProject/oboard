@@ -51,6 +51,9 @@ func TestBasePathMigrationWaitsForAgentCallbackOnNewPath(t *testing.T) {
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.SetSetting(ctx, "controller_url", "http://localhost/old"); err != nil {
+		t.Fatal(err)
+	}
 
 	app := New(db, "test-secret", basePathTestStaticDir(t), "/old", nil)
 	handler := app.Handler()
@@ -107,6 +110,9 @@ func TestBasePathMigrationRestoresAndRetriesFailedAgents(t *testing.T) {
 		if err := db.CreateServer(ctx, server); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := db.SetSetting(ctx, "controller_url", "http://localhost"); err != nil {
+		t.Fatal(err)
 	}
 
 	staticDir := basePathTestStaticDir(t)
@@ -172,6 +178,9 @@ func TestBasePathMigrationToRootRetiresOldPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "http://localhost/old"); err != nil {
+		t.Fatal(err)
+	}
 	app := New(db, "test-secret", basePathTestStaticDir(t), "/old", nil)
 	if _, migrated, err := app.startBasePathMigration(context.Background(), httptest.NewRequest(http.MethodPost, "http://localhost/old/api/v1/settings", nil), ""); err != nil || !migrated {
 		t.Fatalf("migrate to root = %v, %v", migrated, err)

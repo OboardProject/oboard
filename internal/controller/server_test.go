@@ -228,6 +228,9 @@ func TestBasePathProtectsEveryControllerSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("OBOARD_DOWNLOADS", downloadDir)
+	if err := db.SetSetting(context.Background(), "controller_url", "http://example.com/hidden-panel"); err != nil {
+		t.Fatal(err)
+	}
 
 	h := New(db, "test-secret", staticDir, "/hidden-panel", nil).Handler()
 	for _, path := range []string{
@@ -519,8 +522,8 @@ func TestPublicBaseURLPrefersConfiguredControllerURL(t *testing.T) {
 	}
 	srv := newTestServer(db, "test-secret", "")
 	req := httptest.NewRequest(http.MethodGet, "http://attacker.example/install/agent.sh", nil)
-	if got := srv.publicBaseURL(req); got != "https://panel.example.com" {
-		t.Fatalf("publicBaseURL = %q, want configured controller URL", got)
+	if got, err := srv.publicBaseURL(context.Background()); err != nil || got != "https://panel.example.com" {
+		t.Fatalf("publicBaseURL = %q, err=%v; want configured controller URL", got, err)
 	}
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -535,12 +538,35 @@ func TestPublicBaseURLPrefersConfiguredControllerURL(t *testing.T) {
 	}
 }
 
+func TestAgentScriptsRequireConfiguredControllerURL(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	for _, path := range []string{"/install/agent.sh", "/install/agent-self-update.sh"} {
+		req := httptest.NewRequest(http.MethodGet, "http://attacker.example"+path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusPreconditionFailed {
+			t.Fatalf("%s status = %d, want %d", path, rec.Code, http.StatusPreconditionFailed)
+		}
+		if strings.Contains(rec.Body.String(), "attacker.example") {
+			t.Fatalf("%s reflected request Host: %s", path, rec.Body.String())
+		}
+	}
+}
+
 func TestAgentInstallScriptsUseLowSpaceTempFallback(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "http://example.com"); err != nil {
+		t.Fatal(err)
+	}
 	h := newTestServer(db, "test-secret", "").Handler()
 	for _, path := range []string{"/install/agent.sh", "/install/agent-self-update.sh"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -887,6 +913,9 @@ func TestAgentUpdateAllowedForSelfUpdateCapableOlderBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "http://localhost"); err != nil {
+		t.Fatal(err)
+	}
 	h := newTestServer(db, "test-secret", "").Handler()
 
 	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
@@ -944,6 +973,9 @@ func TestAgentSelfUpdateScriptSupportsPOSIXShellAndDeferredAckRestart(t *testing
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "http://localhost"); err != nil {
+		t.Fatal(err)
+	}
 	h := newTestServer(db, "test-secret", "").Handler()
 	req := httptest.NewRequest(http.MethodGet, "/install/agent-self-update.sh", nil)
 	rr := httptest.NewRecorder()
@@ -2008,6 +2040,9 @@ func TestAgentsUpdateAllCreatesTasks(t *testing.T) {
 	}
 	defer db.Close()
 	ctx := context.Background()
+	if err := db.SetSetting(ctx, "controller_url", "http://localhost"); err != nil {
+		t.Fatal(err)
+	}
 	h := newTestServer(db, "test-secret", "").Handler()
 	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)

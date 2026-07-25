@@ -35,7 +35,19 @@ type RemoteSecrets struct {
 	Password  string `json:"password,omitempty"`
 }
 
+type remoteResolver interface {
+	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
+}
+
+type remoteDialer interface {
+	DialContext(context.Context, string, string) (net.Conn, error)
+}
+
 func ValidateDestination(destination Destination) error {
+	return validateDestinationWithResolver(destination, net.DefaultResolver)
+}
+
+func validateDestinationWithResolver(destination Destination, resolver remoteResolver) error {
 	if !destination.Enabled {
 		return nil
 	}
@@ -50,8 +62,17 @@ func ValidateDestination(destination Destination) error {
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("备份目标地址不能包含凭据、查询参数或片段")
 	}
-	if !strings.EqualFold(u.Scheme, "https") && !(strings.EqualFold(u.Scheme, "http") && localHost(u.Hostname())) {
+	scheme := strings.ToLower(u.Scheme)
+	if scheme == "http" && !localHost(u.Hostname()) {
 		return errors.New("备份目标必须使用 HTTPS，本机测试地址除外")
+	}
+	if scheme != "http" && scheme != "https" {
+		return errors.New("备份目标必须使用 HTTPS，本机测试地址除外")
+	}
+	if scheme == "https" {
+		if err := validatePublicRemoteURL(context.Background(), u, resolver); err != nil {
+			return err
+		}
 	}
 	if provider == "s3" {
 		bucket := strings.TrimSpace(destination.Bucket)
@@ -98,7 +119,7 @@ func Upload(ctx context.Context, client *http.Client, destination Destination, s
 		return err
 	}
 	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Minute}
+		client = newRemoteHTTPClient(2*time.Minute, destination)
 	}
 	if strings.TrimSpace(objectKey) == "" {
 		return errors.New("备份远端文件名不能为空")
@@ -166,7 +187,7 @@ func Download(ctx context.Context, client *http.Client, destination Destination,
 		return 0, err
 	}
 	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Minute}
+		client = newRemoteHTTPClient(2*time.Minute, destination)
 	}
 	requestURL, err := destinationURL(destination, objectKey)
 	if err != nil {
@@ -213,7 +234,7 @@ func Delete(ctx context.Context, client *http.Client, destination Destination, s
 		return err
 	}
 	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Minute}
+		client = newRemoteHTTPClient(2*time.Minute, destination)
 	}
 	requestURL, err := destinationURL(destination, objectKey)
 	if err != nil {
@@ -250,7 +271,7 @@ func TestDestination(ctx context.Context, client *http.Client, destination Desti
 		return err
 	}
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+		client = newRemoteHTTPClient(30*time.Second, destination)
 	}
 	id, err := randomID()
 	if err != nil {
@@ -400,4 +421,134 @@ func localHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+func newRemoteHTTPClient(timeout time.Duration, destination Destination) *http.Client {
+	resolver := net.DefaultResolver
+	allowLocalHTTP := strings.EqualFold(destination.EndpointScheme(), "http") && localHost(destination.EndpointHost())
+	return &http.Client{
+		Transport:     newRemoteTransport(resolver, &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}, allowLocalHTTP),
+		Timeout:       timeout,
+		CheckRedirect: remoteRedirectPolicy(resolver, allowLocalHTTP),
+	}
+}
+
+func (d Destination) EndpointScheme() string {
+	u, err := url.Parse(strings.TrimSpace(d.Endpoint))
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Scheme)
+}
+
+func (d Destination) EndpointHost() string {
+	u, err := url.Parse(strings.TrimSpace(d.Endpoint))
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+func remoteRedirectPolicy(resolver remoteResolver, allowLocalHTTP bool) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 3 {
+			return errors.New("第三方备份目标重定向次数过多")
+		}
+		if strings.EqualFold(req.URL.Scheme, "http") && allowLocalHTTP && localHost(req.URL.Hostname()) {
+			return nil
+		}
+		return validatePublicRemoteURL(req.Context(), req.URL, resolver)
+	}
+}
+
+func newRemoteTransport(resolver remoteResolver, dialer remoteDialer, allowLocalHTTP bool) *http.Transport {
+	return &http.Transport{
+		Proxy:               nil,
+		DisableKeepAlives:   true,
+		ForceAttemptHTTP2:   true,
+		TLSHandshakeTimeout: 5 * time.Second,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, fmt.Errorf("invalid backup destination address: %w", err)
+			}
+			ips, err := resolveRemoteIPs(ctx, host, resolver, allowLocalHTTP && localHost(host))
+			if err != nil {
+				return nil, err
+			}
+			var lastErr error
+			for _, ip := range ips {
+				conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+				if err == nil {
+					return conn, nil
+				}
+				lastErr = err
+			}
+			if lastErr == nil {
+				lastErr = errors.New("第三方备份目标无法连接")
+			}
+			return nil, lastErr
+		},
+	}
+}
+
+func validatePublicRemoteURL(ctx context.Context, u *url.URL, resolver remoteResolver) error {
+	if u == nil || !strings.EqualFold(u.Scheme, "https") {
+		return errors.New("备份目标必须使用 HTTPS")
+	}
+	host := strings.Trim(strings.ToLower(u.Hostname()), "[]")
+	if host == "" {
+		return errors.New("备份目标地址无效")
+	}
+	if localHost(host) || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {
+		return errors.New("备份目标不能指向本机、私有或链路本地地址")
+	}
+	_, err := resolveRemoteIPs(ctx, host, resolver, false)
+	return err
+}
+
+func resolveRemoteIPs(ctx context.Context, host string, resolver remoteResolver, allowLoopback bool) ([]net.IP, error) {
+	host = strings.Trim(strings.ToLower(strings.TrimSpace(host)), "[]")
+	if ip := net.ParseIP(host); ip != nil {
+		if !allowedRemoteIP(ip, allowLoopback) {
+			return nil, errors.New("备份目标不能指向本机、私有或链路本地地址")
+		}
+		return []net.IP{ip}, nil
+	}
+	if resolver == nil {
+		return nil, errors.New("备份目标 DNS 解析器不可用")
+	}
+	addrs, err := resolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("备份目标域名无法解析: %w", err)
+	}
+	if len(addrs) == 0 {
+		return nil, errors.New("备份目标域名无法解析")
+	}
+	ips := make([]net.IP, 0, len(addrs))
+	for _, addr := range addrs {
+		if !allowedRemoteIP(addr.IP, allowLoopback) {
+			return nil, errors.New("备份目标不能解析到本机、私有或链路本地地址")
+		}
+		ips = append(ips, addr.IP)
+	}
+	return ips, nil
+}
+
+func allowedRemoteIP(ip net.IP, allowLoopback bool) bool {
+	if allowLoopback {
+		return ip != nil && ip.IsLoopback()
+	}
+	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		if ip4[0] == 169 && ip4[1] == 254 {
+			return false
+		}
+		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+			return false
+		}
+	}
+	return true
 }

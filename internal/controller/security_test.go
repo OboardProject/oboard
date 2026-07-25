@@ -52,6 +52,113 @@ func TestAuthRechecksUserStatusAndRole(t *testing.T) {
 	request(t, h, http.MethodGet, "/api/v1/dashboard/summary", opToken, nil, http.StatusUnauthorized)
 }
 
+func TestLogoutAndAdminSessionRevocationInvalidateTokens(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	adminToken := adminLogin["token"].(string)
+	created := request(t, h, http.MethodPost, "/api/v1/users", adminToken, map[string]any{"username": "member", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	memberID := int64(created["user"].(map[string]any)["id"].(float64))
+
+	firstLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "member", "password": "long-user-password"}, http.StatusOK)
+	firstToken := firstLogin["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/auth/logout", firstToken, map[string]any{}, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/me", firstToken, nil, http.StatusUnauthorized)
+
+	secondLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "member", "password": "long-user-password"}, http.StatusOK)
+	secondToken := secondLogin["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/users/"+itoa(memberID)+"/sessions/revoke", adminToken, map[string]any{}, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/me", secondToken, nil, http.StatusUnauthorized)
+}
+
+func TestCookieSessionsRequireCSRFForWrites(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin","password":"very-secure-password"}`))
+	loginRequest.Header.Set("Content-Type", "application/json")
+	loginResponse := httptest.NewRecorder()
+	h.ServeHTTP(loginResponse, loginRequest)
+	if loginResponse.Code != http.StatusOK {
+		t.Fatalf("cookie login status = %d body=%s", loginResponse.Code, loginResponse.Body.String())
+	}
+	var sessionCookie, csrfCookie *http.Cookie
+	for _, cookie := range loginResponse.Result().Cookies() {
+		switch cookie.Name {
+		case sessionCookieName:
+			sessionCookie = cookie
+		case csrfCookieName:
+			csrfCookie = cookie
+		}
+	}
+	if sessionCookie == nil || csrfCookie == nil || !sessionCookie.HttpOnly || sessionCookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("unexpected session cookies: %#v", loginResponse.Result().Cookies())
+	}
+
+	readRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	readRequest.AddCookie(sessionCookie)
+	readResponse := httptest.NewRecorder()
+	h.ServeHTTP(readResponse, readRequest)
+	if readResponse.Code != http.StatusOK {
+		t.Fatalf("cookie-authenticated read status = %d body=%s", readResponse.Code, readResponse.Body.String())
+	}
+
+	logoutRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	logoutRequest.AddCookie(sessionCookie)
+	logoutRequest.AddCookie(csrfCookie)
+	logoutResponse := httptest.NewRecorder()
+	h.ServeHTTP(logoutResponse, logoutRequest)
+	if logoutResponse.Code != http.StatusForbidden {
+		t.Fatalf("cookie-authenticated write without CSRF status = %d body=%s", logoutResponse.Code, logoutResponse.Body.String())
+	}
+
+	logoutRequest = httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	logoutRequest.AddCookie(sessionCookie)
+	logoutRequest.AddCookie(csrfCookie)
+	logoutRequest.Header.Set("X-OBoard-CSRF", csrfCookie.Value)
+	logoutResponse = httptest.NewRecorder()
+	h.ServeHTTP(logoutResponse, logoutRequest)
+	if logoutResponse.Code != http.StatusOK {
+		t.Fatalf("cookie-authenticated write with CSRF status = %d body=%s", logoutResponse.Code, logoutResponse.Body.String())
+	}
+}
+
+func TestUserDisableAndDirectRoleDemotionRevokeSessions(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	adminToken := adminLogin["token"].(string)
+	created := request(t, h, http.MethodPost, "/api/v1/users", adminToken, map[string]any{"username": "operator", "password": "long-user-password", "role": "operator", "status": "active"}, http.StatusCreated)
+	operatorID := int64(created["user"].(map[string]any)["id"].(float64))
+
+	operatorLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
+	operatorToken := operatorLogin["token"].(string)
+	request(t, h, http.MethodPatch, "/api/v1/users/"+itoa(operatorID), adminToken, map[string]any{"role": "viewer"}, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/servers", operatorToken, nil, http.StatusUnauthorized)
+
+	viewerLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
+	viewerToken := viewerLogin["token"].(string)
+	request(t, h, http.MethodPatch, "/api/v1/users/"+itoa(operatorID), adminToken, map[string]any{"status": "disabled"}, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/me", viewerToken, nil, http.StatusUnauthorized)
+}
+
 func TestSafeLogFieldRemovesControlCharacters(t *testing.T) {
 	got := safeLogField("GET\r\nforged\x00entry\x7f")
 	if got != "GET__forged_entry_" {

@@ -535,7 +535,7 @@ function sessionInitials(username?: string) {
 
 function storedSessionUser(): SessionUser | null {
   try {
-    const value = JSON.parse(localStorage.getItem('oboard.user') || 'null')
+    const value = JSON.parse(sessionStorage.getItem('oboard.user') || 'null')
     return value && value.username && value.role ? value as SessionUser : null
   } catch {
     return null
@@ -925,12 +925,17 @@ class SupersededAuthRequestError extends Error {
 }
 
 function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
+  const csrf = token === 'cookie' ? document.cookie.split('; ').find(value => value.startsWith('oboard_csrf='))?.slice('oboard_csrf='.length) : ''
+  const authHeaders: Record<string, string> = token && token !== 'cookie' ? { authorization: `Bearer ${token}` } : {}
+  const csrfHeaders: Record<string, string> = token === 'cookie' && csrf ? { 'x-oboard-csrf': csrf } : {}
   async function request<T = any>(path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetch(appPath('/api/v1' + path), {
       ...init,
+      credentials: 'same-origin',
       headers: {
         'content-type': 'application/json',
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...authHeaders,
+        ...csrfHeaders,
         ...(init.headers || {})
       }
     })
@@ -945,7 +950,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
     return data
   }
   async function download(path: string): Promise<{ blob: Blob; filename: string }> {
-    const res = await fetch(appPath('/api/v1' + path), { headers: token ? { authorization: `Bearer ${token}` } : {} })
+    const res = await fetch(appPath('/api/v1' + path), { credentials: 'same-origin', headers: authHeaders })
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
       throw new Error(localizeErrorMessage(data.error || res.statusText))
@@ -955,7 +960,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
     return { blob: await res.blob(), filename }
   }
   async function upload<T = any>(path: string, body: FormData): Promise<T> {
-    const res = await fetch(appPath('/api/v1' + path), { method: 'POST', body, headers: token ? { authorization: `Bearer ${token}` } : {} })
+    const res = await fetch(appPath('/api/v1' + path), { method: 'POST', body, credentials: 'same-origin', headers: { ...authHeaders, ...csrfHeaders } })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(localizeErrorMessage(data.error || res.statusText))
     return data
@@ -964,7 +969,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
 }
 
 function App() {
-  const [token, setToken] = useState(localStorage.getItem('oboard.token') || '')
+  const [token, setToken] = useState(sessionStorage.getItem('oboard.token') || '')
   const activeTokenRef = useRef(token)
   activeTokenRef.current = token
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(() => storedSessionUser())
@@ -985,8 +990,8 @@ function App() {
     if (failedToken !== activeTokenRef.current) return false
     activeTokenRef.current = ''
     loadSeq.current++
-    localStorage.removeItem('oboard.token')
-    localStorage.removeItem('oboard.user')
+    sessionStorage.removeItem('oboard.token')
+    sessionStorage.removeItem('oboard.user')
     setToken('')
     setSessionUser(null)
     setData({})
@@ -1061,7 +1066,7 @@ function App() {
       if (requestToken !== activeTokenRef.current) return
       if (next.current_user && seq === loadSeq.current) {
         setSessionUser(next.current_user)
-        localStorage.setItem('oboard.user', JSON.stringify(next.current_user))
+        sessionStorage.setItem('oboard.user', JSON.stringify(next.current_user))
       }
       const merged = { ...next, load_errors: [] as string[] }
       // Always warm the per-tab cache, even if the user has already navigated away.
@@ -1211,11 +1216,16 @@ function App() {
       tone: 'danger'
     })
     if (ok) {
+      try {
+        await client.request('/auth/logout', { method: 'POST', body: '{}' })
+      } catch (e: any) {
+        showToast(setToast, `未能撤销服务端会话：${localizeErrorMessage(e?.message || e)}`, 'warning')
+      }
       document.body.style.overflow = ""
       activeTokenRef.current = ''
       loadSeq.current++
-      localStorage.removeItem('oboard.token')
-      localStorage.removeItem('oboard.user')
+      sessionStorage.removeItem('oboard.token')
+      sessionStorage.removeItem('oboard.user')
       setToken('')
       setSessionUser(null)
       setData({})
@@ -1229,8 +1239,8 @@ function App() {
   if (!token) return <Login theme={theme} toggleTheme={(e) => toggleTheme(e)} onToken={(v, user) => {
     activeTokenRef.current = v
     loadSeq.current++
-    localStorage.setItem('oboard.token', v)
-    localStorage.setItem('oboard.user', JSON.stringify(user))
+    sessionStorage.setItem('oboard.token', v)
+    sessionStorage.setItem('oboard.user', JSON.stringify(user))
     setSessionUser(user)
     setData({})
     pageCacheRef.current = {}
@@ -1552,8 +1562,8 @@ function Login({ theme, toggleTheme, onToken }: { theme: string; toggleTheme: (e
     setIsLoading(true)
     setError('')
     try {
-      const res = await api('').request<{ token: string; user: SessionUser }>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
-      onToken(res.token, res.user)
+      const res = await api('').request<{ user: SessionUser }>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+      onToken('cookie', res.user)
     } catch (e: any) {
       setError(localizeErrorMessage(e?.message || '用户名或密码错误'))
     } finally {
@@ -7387,6 +7397,7 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPasswo
     { label: user.subscription_burn_after_read ? '关闭阅后即焚' : '开启阅后即焚', action: 'burn' },
     { label: '轮换订阅', action: 'rotate' },
     { label: '吊销订阅', action: 'revoke' },
+    { label: '注销所有会话', action: 'revoke-sessions', danger: true },
     ...(!user.protected ? [{ label: '删除用户', action: 'delete', danger: true }] : []),
   ];
 
@@ -7397,6 +7408,12 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPasswo
     else if (action === 'burn') await setSubscriptionBurnPolicy(client, user, !user.subscription_burn_after_read, load, dialogs);
     else if (action === 'rotate') await rotateSub(client, user, load, dialogs);
     else if (action === 'revoke') await revokeSub(client, user, load, dialogs);
+    else if (action === 'revoke-sessions') {
+      const ok = await dialogs.confirm({ title: '注销所有会话', message: `确认注销 ${user.username} 的所有登录会话？`, tone: 'danger', confirmText: '注销' })
+      if (!ok) return
+      await client.request(`/users/${user.id}/sessions/revoke`, { method: 'POST', body: '{}' })
+      await load()
+    }
     else if (action === 'delete') onDelete(user);
   };
 

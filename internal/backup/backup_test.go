@@ -2,7 +2,9 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +16,55 @@ import (
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 )
+
+type fixedRemoteResolver struct {
+	addrs []net.IPAddr
+	err   error
+}
+
+func (r fixedRemoteResolver) LookupIPAddr(context.Context, string) ([]net.IPAddr, error) {
+	return r.addrs, r.err
+}
+
+type recordingRemoteDialer struct {
+	called bool
+}
+
+func (d *recordingRemoteDialer) DialContext(context.Context, string, string) (net.Conn, error) {
+	d.called = true
+	return nil, errors.New("unexpected dial")
+}
+
+func TestBackupDestinationRejectsPrivateHTTPS(t *testing.T) {
+	for _, endpoint := range []string{
+		"https://127.0.0.1",
+		"https://169.254.169.254",
+		"https://10.0.0.1",
+		"https://[fd00::1]",
+	} {
+		destination := Destination{Provider: "webdav", Endpoint: endpoint, Enabled: true}
+		if err := ValidateDestination(destination); err == nil {
+			t.Fatalf("ValidateDestination(%q) accepted a private address", endpoint)
+		}
+	}
+	publicDestination := Destination{Provider: "webdav", Endpoint: "https://backup.example", Enabled: true}
+	resolver := fixedRemoteResolver{addrs: []net.IPAddr{{IP: net.ParseIP("1.1.1.1")}}}
+	if err := validateDestinationWithResolver(publicDestination, resolver); err != nil {
+		t.Fatalf("public destination rejected: %v", err)
+	}
+}
+
+func TestBackupTransportRevalidatesResolvedAddress(t *testing.T) {
+	dialer := &recordingRemoteDialer{}
+	resolver := fixedRemoteResolver{addrs: []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}}
+	transport := newRemoteTransport(resolver, dialer, false)
+	if _, err := transport.DialContext(context.Background(), "tcp", "backup.example:443"); err == nil {
+		t.Fatal("backup transport accepted a private resolved address")
+	}
+	if dialer.called {
+		t.Fatal("backup transport dialed a blocked address")
+	}
+}
 
 func TestEncryptedBackupRestoresDataAndRewrapsSecrets(t *testing.T) {
 	root := t.TempDir()

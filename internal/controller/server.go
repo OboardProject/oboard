@@ -94,6 +94,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/version", s.version)
 	mux.HandleFunc("/api/v1/auth/bootstrap", s.bootstrap)
 	mux.HandleFunc("/api/v1/auth/login", s.login)
+	mux.HandleFunc("/api/v1/auth/logout", s.auth(s.logout, model.RoleViewer))
 	mux.HandleFunc("/api/v1/auth/password", s.auth(s.changePassword, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me", s.auth(s.me, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/subscription-age", s.auth(s.selfSubscriptionAge, model.RoleViewer))
@@ -1389,6 +1390,9 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 // same duration as a real check.
 const loginDummyPasswordHash = "argon2id$v=19$m=65536,t=1,p=4$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" // #nosec G101 -- deliberately invalid dummy verifier input, never an account credential.
 
+const sessionCookieName = "oboard_session"
+const csrfCookieName = "oboard_csrf"
+
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		method(w)
@@ -1430,11 +1434,36 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	csrfToken, err := security.RandomToken(24)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	s.setSessionCookies(w, r, token, csrfToken)
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &u.ID, Action: "login", Target: "user", Detail: u.Username, IP: r.RemoteAddr})
 	if u.Role == model.RoleAdmin {
 		s.TriggerControllerUpdateCheck(r.Context())
 	}
 	write(w, 200, map[string]any{"token": token, "user": u})
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	user := currentUser(r)
+	if user == nil {
+		fail(w, errors.New("invalid session"), http.StatusUnauthorized)
+		return
+	}
+	if _, err := s.store.BumpSessionVersion(r.Context(), user.ID); err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	s.clearSessionCookies(w, r)
+	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &user.ID, Action: "logout", Target: "user", Detail: user.Username, IP: r.RemoteAddr})
+	write(w, http.StatusOK, map[string]any{"ok": true, "session_revoked": true})
 }
 
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
@@ -1591,7 +1620,21 @@ const userKey ctxKey = "user"
 
 func (s *Server) auth(next http.HandlerFunc, min model.Role) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		authorization := strings.TrimSpace(r.Header.Get("Authorization"))
+		token := ""
+		cookieSession := false
+		switch {
+		case authorization == "":
+			cookie, err := r.Cookie(sessionCookieName)
+			if err == nil {
+				token = cookie.Value
+				cookieSession = token != ""
+			}
+		case strings.HasPrefix(authorization, "Bearer "):
+			token = strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
+		default:
+			token = authorization
+		}
 		claims, err := security.VerifySession(s.sessionSecret, token)
 		if err != nil {
 			fail(w, err, 401)
@@ -1604,6 +1647,10 @@ func (s *Server) auth(next http.HandlerFunc, min model.Role) http.HandlerFunc {
 		}
 		if claims.SessionVersion != u.SessionVersion {
 			fail(w, errors.New("session revoked"), 401)
+			return
+		}
+		if cookieSession && csrfRequired(r.Method) && !validCSRFToken(r) {
+			fail(w, errors.New("invalid CSRF token"), http.StatusForbidden)
 			return
 		}
 		effectiveRole, err := s.store.EffectiveUserRole(r.Context(), *u)
@@ -1620,6 +1667,47 @@ func (s *Server) auth(next http.HandlerFunc, min model.Role) http.HandlerFunc {
 		ctx = context.WithValue(ctx, userKey, u)
 		next(w, r.WithContext(ctx))
 	}
+}
+
+func csrfRequired(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+func validCSRFToken(r *http.Request) bool {
+	cookie, err := r.Cookie(csrfCookieName)
+	if err != nil {
+		return false
+	}
+	token := strings.TrimSpace(r.Header.Get("X-OBoard-CSRF"))
+	return token != "" && hmac.Equal([]byte(token), []byte(cookie.Value))
+}
+
+func (s *Server) setSessionCookies(w http.ResponseWriter, r *http.Request, sessionToken, csrfToken string) {
+	secure := requestUsesHTTPS(r)
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: sessionToken, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: csrfCookieName, Value: csrfToken, Path: "/", Secure: secure, SameSite: http.SameSiteStrictMode})
+}
+
+func (s *Server) clearSessionCookies(w http.ResponseWriter, r *http.Request) {
+	secure := requestUsesHTTPS(r)
+	for _, name := range []string{sessionCookieName, csrfCookieName} {
+		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", HttpOnly: name == sessionCookieName, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	}
+}
+
+func requestUsesHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if security.EnvBool("OBOARD_TRUST_PROXY", false) {
+		return strings.EqualFold(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]), "https")
+	}
+	return false
 }
 
 func (s *Server) allowRate(w http.ResponseWriter, r *http.Request, key string, limit int, window time.Duration) bool {
@@ -2035,12 +2123,16 @@ func (s *Server) serverAgentUpdate(w http.ResponseWriter, r *http.Request, id in
 			return
 		}
 	}
+	if _, err := s.publicBaseURL(r.Context()); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
 	server, err := s.store.GetServer(r.Context(), id)
 	if err != nil {
 		fail(w, err, 404)
 		return
 	}
-	task, existing, err := s.enqueueAgentUpdate(r.Context(), r, server, req)
+	task, existing, err := s.enqueueAgentUpdate(r.Context(), server, req)
 	if err != nil {
 		status := 500
 		if strings.Contains(err.Error(), "not enrolled") {
@@ -2070,6 +2162,10 @@ func (s *Server) agentsUpdateAll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if _, err := s.publicBaseURL(r.Context()); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
 	servers, err := s.store.ListServers(r.Context())
 	if err != nil {
 		fail(w, err, 500)
@@ -2096,7 +2192,7 @@ func (s *Server) agentsUpdateAll(w http.ResponseWriter, r *http.Request) {
 		}
 		summary["total"]++
 		// Use shared version stamp so task center batches bulk updates together.
-		task, existing, err := s.enqueueAgentUpdateWithVersion(r.Context(), r, &server, req, versionStamp)
+		task, existing, err := s.enqueueAgentUpdateWithVersion(r.Context(), &server, req, versionStamp)
 		if err != nil {
 			summary["failed"]++
 			results = append(results, itemResult{ServerID: server.ID, ServerName: server.Name, Status: "failed", Error: err.Error()})
@@ -2137,11 +2233,11 @@ func taskResultMessage(task model.AgentTask) string {
 	return payload.Message
 }
 
-func (s *Server) enqueueAgentUpdate(ctx context.Context, r *http.Request, server *model.Server, req model.AgentUpdateRequest) (model.AgentTask, bool, error) {
-	return s.enqueueAgentUpdateWithVersion(ctx, r, server, req, time.Now().Unix())
+func (s *Server) enqueueAgentUpdate(ctx context.Context, server *model.Server, req model.AgentUpdateRequest) (model.AgentTask, bool, error) {
+	return s.enqueueAgentUpdateWithVersion(ctx, server, req, time.Now().Unix())
 }
 
-func (s *Server) enqueueAgentUpdateWithVersion(ctx context.Context, r *http.Request, server *model.Server, req model.AgentUpdateRequest, configVersion int64) (model.AgentTask, bool, error) {
+func (s *Server) enqueueAgentUpdateWithVersion(ctx context.Context, server *model.Server, req model.AgentUpdateRequest, configVersion int64) (model.AgentTask, bool, error) {
 	if server == nil {
 		return model.AgentTask{}, false, errors.New("server not found")
 	}
@@ -2168,8 +2264,12 @@ func (s *Server) enqueueAgentUpdateWithVersion(ctx context.Context, r *http.Requ
 	if configVersion == 0 {
 		configVersion = time.Now().Unix()
 	}
+	controllerURL, err := s.publicBaseURL(ctx)
+	if err != nil {
+		return model.AgentTask{}, false, err
+	}
 	task, err := s.queueAgentTask(ctx, server.ID, model.AgentTaskTypeUpdateAgent, model.UpdateAgentTaskPayload{
-		ControllerURL: s.publicBaseURL(r),
+		ControllerURL: controllerURL,
 		ExpectedBuild: version.Build,
 		Source:        source,
 		GitHubRepo:    repo,
@@ -6231,6 +6331,10 @@ func (s *Server) validateWARPProfile(ctx context.Context, v *model.WARPProfile) 
 func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/users/")
 	parts := pathParts(r.URL.Path, "/api/v1/users/")
+	if len(parts) == 3 && parts[1] == "sessions" && parts[2] == "revoke" {
+		s.revokeUserSessions(w, r, id)
+		return
+	}
 	if len(parts) == 3 && parts[1] == "subscription-token" {
 		s.userSubscriptionToken(w, r, id, parts[2])
 		return
@@ -6387,7 +6491,10 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		if req.Password != "" {
+		revokeSessions := req.Password != "" ||
+			(current.Status == "active" && u.Status != "active") ||
+			(current.Role != u.Role && roleAllows(current.Role, u.Role))
+		if revokeSessions {
 			if _, err := s.store.BumpSessionVersion(r.Context(), u.ID); err != nil {
 				fail(w, err, 500)
 				return
@@ -6460,6 +6567,28 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 	default:
 		method(w)
 	}
+}
+
+func (s *Server) revokeUserSessions(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	if id == 0 {
+		fail(w, errors.New("missing id"), http.StatusBadRequest)
+		return
+	}
+	user, err := s.store.GetUser(r.Context(), id)
+	if err != nil {
+		fail(w, err, http.StatusNotFound)
+		return
+	}
+	if _, err := s.store.BumpSessionVersion(r.Context(), user.ID); err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	auditReq(s, r, "revoke", "user-sessions", fmt.Sprint(user.ID))
+	write(w, http.StatusOK, map[string]any{"ok": true, "session_revoked": true})
 }
 
 func (s *Server) withTrafficStatus(ctx context.Context, users []model.User) []model.User {
@@ -9046,6 +9175,11 @@ func (s *Server) agentInstallScript(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
+	baseURL, err := s.publicBaseURL(r.Context())
+	if err != nil {
+		fail(w, err, http.StatusPreconditionFailed)
+		return
+	}
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method == http.MethodHead {
@@ -9715,7 +9849,7 @@ case "$ACTION" in
     ;;
 esac
 `
-	script = strings.ReplaceAll(script, "__BASE_URL__", shellSingleQuote(s.publicBaseURL(r)))
+	script = strings.ReplaceAll(script, "__BASE_URL__", shellSingleQuote(baseURL))
 	script = strings.ReplaceAll(script, "__RELEASE_PUBLIC_KEY__", shellSingleQuote(version.ReleasePublicKey))
 	_, _ = w.Write([]byte(script))
 }
@@ -9725,12 +9859,16 @@ func (s *Server) agentSelfUpdateScript(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
+	baseURL, err := s.publicBaseURL(r.Context())
+	if err != nil {
+		fail(w, err, http.StatusPreconditionFailed)
+		return
+	}
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method == http.MethodHead {
 		return
 	}
-	baseURL := s.publicBaseURL(r)
 	script := strings.ReplaceAll(`#!/bin/sh
 set -eu
 
@@ -10211,36 +10349,23 @@ print_management_help
 	_, _ = w.Write([]byte(script))
 }
 
-func (s *Server) publicOrigin(r *http.Request) string {
-	proto := "http"
-	if r.TLS != nil {
-		proto = "https"
+func (s *Server) publicBaseURL(ctx context.Context) (string, error) {
+	settings, err := s.store.ListSettings(ctx)
+	if err != nil {
+		return "", err
 	}
-	host := r.Host
-	// Only honor reverse-proxy headers when explicitly trusted. Otherwise a
-	// client can inject X-Forwarded-Host/Proto into install script base URLs.
-	if security.EnvBool("OBOARD_TRUST_PROXY", false) {
-		if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
-			proto = strings.TrimSpace(strings.Split(forwarded, ",")[0])
-		}
-		if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwarded != "" {
-			host = strings.TrimSpace(strings.Split(forwarded, ",")[0])
-		}
+	raw := strings.TrimSpace(settings["controller_url"])
+	if raw == "" {
+		return "", errors.New("请先在系统设置中配置主控公开地址（controller_url）")
 	}
-	return proto + "://" + host
-}
-
-func (s *Server) publicBaseURL(r *http.Request) string {
-	// Prefer the configured public Controller URL so install/self-update scripts
-	// and agent config tasks do not depend on a client-controlled Host header.
-	if settings, err := s.store.ListSettings(r.Context()); err == nil {
-		if raw := strings.TrimSpace(settings["controller_url"]); raw != "" {
-			if normalized, err := s.normalizeControllerURL(raw); err == nil && normalized != "" {
-				return normalized
-			}
+	normalized, err := s.normalizeControllerURL(raw)
+	if err != nil || normalized == "" {
+		if err != nil {
+			return "", err
 		}
+		return "", errors.New("controller_url 无效")
 	}
-	return s.publicOrigin(r) + s.currentBasePath()
+	return normalized, nil
 }
 
 func shellSingleQuote(value string) string {

@@ -207,10 +207,10 @@ func (s *Server) normalizeControllerURLForBasePath(raw, basePath string) (string
 	return target, nil
 }
 
-func (s *Server) controllerURLForBasePath(r *http.Request, settings map[string]string, basePath string) (string, error) {
+func (s *Server) controllerURLForBasePath(settings map[string]string, basePath string) (string, error) {
 	raw := strings.TrimSpace(settings["controller_url"])
 	if raw == "" {
-		raw = s.publicOrigin(r)
+		return "", errors.New("请先在系统设置中配置主控公开地址（controller_url）")
 	}
 	target, err := s.normalizeControllerURLForBasePath(raw, basePath)
 	if err != nil {
@@ -238,7 +238,7 @@ func (s *Server) startBasePathMigration(ctx context.Context, r *http.Request, ra
 	if err != nil {
 		return "", false, err
 	}
-	targetURL, err := s.controllerURLForBasePath(r, settings, nextPath)
+	targetURL, err := s.controllerURLForBasePath(settings, nextPath)
 	if err != nil {
 		return "", false, &basePathMigrationRequestError{status: http.StatusBadRequest, err: err}
 	}
