@@ -925,7 +925,7 @@ class SupersededAuthRequestError extends Error {
 }
 
 function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
-  const csrf = token === 'cookie' ? document.cookie.split('; ').find(value => value.startsWith('oboard_csrf='))?.slice('oboard_csrf='.length) : ''
+  const csrf = token === 'cookie' ? sessionStorage.getItem('oboard.csrf') || '' : ''
   const authHeaders: Record<string, string> = token && token !== 'cookie' ? { authorization: `Bearer ${token}` } : {}
   const csrfHeaders: Record<string, string> = token === 'cookie' && csrf ? { 'x-oboard-csrf': csrf } : {}
   async function request<T = any>(path: string, init: RequestInit = {}): Promise<T> {
@@ -992,6 +992,7 @@ function App() {
     loadSeq.current++
     sessionStorage.removeItem('oboard.token')
     sessionStorage.removeItem('oboard.user')
+    sessionStorage.removeItem('oboard.csrf')
     setToken('')
     setSessionUser(null)
     setData({})
@@ -1226,6 +1227,7 @@ function App() {
       loadSeq.current++
       sessionStorage.removeItem('oboard.token')
       sessionStorage.removeItem('oboard.user')
+      sessionStorage.removeItem('oboard.csrf')
       setToken('')
       setSessionUser(null)
       setData({})
@@ -1236,11 +1238,12 @@ function App() {
     }
   }
 
-  if (!token) return <Login theme={theme} toggleTheme={(e) => toggleTheme(e)} onToken={(v, user) => {
+  if (!token) return <Login theme={theme} toggleTheme={(e) => toggleTheme(e)} onToken={(v, user, csrfToken) => {
     activeTokenRef.current = v
     loadSeq.current++
     sessionStorage.setItem('oboard.token', v)
     sessionStorage.setItem('oboard.user', JSON.stringify(user))
+    sessionStorage.setItem('oboard.csrf', csrfToken)
     setSessionUser(user)
     setData({})
     pageCacheRef.current = {}
@@ -1550,7 +1553,7 @@ function App() {
   )
 }
 
-function Login({ theme, toggleTheme, onToken }: { theme: string; toggleTheme: (event?: React.MouseEvent<HTMLElement>) => void; onToken: (token: string, user: SessionUser) => void }) {
+function Login({ theme, toggleTheme, onToken }: { theme: string; toggleTheme: (event?: React.MouseEvent<HTMLElement>) => void; onToken: (token: string, user: SessionUser, csrfToken: string) => void }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -1562,8 +1565,8 @@ function Login({ theme, toggleTheme, onToken }: { theme: string; toggleTheme: (e
     setIsLoading(true)
     setError('')
     try {
-      const res = await api('').request<{ user: SessionUser }>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
-      onToken('cookie', res.user)
+      const res = await api('').request<{ csrf_token: string; user: SessionUser }>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+      onToken('cookie', res.user, res.csrf_token)
     } catch (e: any) {
       setError(localizeErrorMessage(e?.message || '用户名或密码错误'))
     } finally {

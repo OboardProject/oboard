@@ -11,7 +11,7 @@ go -C "$CONTROLLER_DIR" test ./...
 echo "==> Building Web UI"
 (
   cd "$CONTROLLER_DIR/web"
-  npm ci
+  npm ci --include=dev
   npm run build -- --outDir "$BUILD_DIR/web" --emptyOutDir
 )
 

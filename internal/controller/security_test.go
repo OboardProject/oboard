@@ -93,16 +93,19 @@ func TestCookieSessionsRequireCSRFForWrites(t *testing.T) {
 	if loginResponse.Code != http.StatusOK {
 		t.Fatalf("cookie login status = %d body=%s", loginResponse.Code, loginResponse.Body.String())
 	}
-	var sessionCookie, csrfCookie *http.Cookie
+	var loginPayload struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(loginResponse.Body.Bytes(), &loginPayload); err != nil || loginPayload.CSRFToken == "" {
+		t.Fatalf("cookie login CSRF token missing: payload=%#v err=%v", loginPayload, err)
+	}
+	var sessionCookie *http.Cookie
 	for _, cookie := range loginResponse.Result().Cookies() {
-		switch cookie.Name {
-		case sessionCookieName:
+		if cookie.Name == sessionCookieName {
 			sessionCookie = cookie
-		case csrfCookieName:
-			csrfCookie = cookie
 		}
 	}
-	if sessionCookie == nil || csrfCookie == nil || !sessionCookie.HttpOnly || sessionCookie.SameSite != http.SameSiteStrictMode {
+	if sessionCookie == nil || !sessionCookie.HttpOnly || sessionCookie.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("unexpected session cookies: %#v", loginResponse.Result().Cookies())
 	}
 
@@ -116,7 +119,6 @@ func TestCookieSessionsRequireCSRFForWrites(t *testing.T) {
 
 	logoutRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
 	logoutRequest.AddCookie(sessionCookie)
-	logoutRequest.AddCookie(csrfCookie)
 	logoutResponse := httptest.NewRecorder()
 	h.ServeHTTP(logoutResponse, logoutRequest)
 	if logoutResponse.Code != http.StatusForbidden {
@@ -125,13 +127,34 @@ func TestCookieSessionsRequireCSRFForWrites(t *testing.T) {
 
 	logoutRequest = httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
 	logoutRequest.AddCookie(sessionCookie)
-	logoutRequest.AddCookie(csrfCookie)
-	logoutRequest.Header.Set("X-OBoard-CSRF", csrfCookie.Value)
+	logoutRequest.Header.Set("X-OBoard-CSRF", loginPayload.CSRFToken)
 	logoutResponse = httptest.NewRecorder()
 	h.ServeHTTP(logoutResponse, logoutRequest)
 	if logoutResponse.Code != http.StatusOK {
 		t.Fatalf("cookie-authenticated write with CSRF status = %d body=%s", logoutResponse.Code, logoutResponse.Body.String())
 	}
+}
+
+func TestSessionCookieSecureAttributeFollowsTrustedTransport(t *testing.T) {
+	srv := &Server{}
+	assertSecure := func(name string, request *http.Request, want bool) {
+		t.Helper()
+		response := httptest.NewRecorder()
+		srv.setSessionCookie(response, request, "session-token")
+		cookies := response.Result().Cookies()
+		if len(cookies) != 1 || cookies[0].Secure != want || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
+			t.Fatalf("%s cookie = %#v, want secure=%v with HttpOnly and SameSite=Strict", name, cookies, want)
+		}
+	}
+
+	t.Setenv("OBOARD_TRUST_PROXY", "false")
+	assertSecure("direct HTTPS", httptest.NewRequest(http.MethodGet, "https://panel.example/", nil), true)
+	assertSecure("local HTTP", httptest.NewRequest(http.MethodGet, "http://localhost/", nil), false)
+
+	t.Setenv("OBOARD_TRUST_PROXY", "true")
+	proxied := httptest.NewRequest(http.MethodGet, "http://controller/", nil)
+	proxied.Header.Set("X-Forwarded-Proto", "https")
+	assertSecure("trusted HTTPS proxy", proxied, true)
 }
 
 func TestUserDisableAndDirectRoleDemotionRevokeSessions(t *testing.T) {

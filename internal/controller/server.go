@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -1391,7 +1392,6 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 const loginDummyPasswordHash = "argon2id$v=19$m=65536,t=1,p=4$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" // #nosec G101 -- deliberately invalid dummy verifier input, never an account credential.
 
 const sessionCookieName = "oboard_session"
-const csrfCookieName = "oboard_csrf"
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1434,17 +1434,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	csrfToken, err := security.RandomToken(24)
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
-	s.setSessionCookies(w, r, token, csrfToken)
+	csrfToken := s.csrfTokenForSession(token)
+	s.setSessionCookie(w, r, token)
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &u.ID, Action: "login", Target: "user", Detail: u.Username, IP: r.RemoteAddr})
 	if u.Role == model.RoleAdmin {
 		s.TriggerControllerUpdateCheck(r.Context())
 	}
-	write(w, 200, map[string]any{"token": token, "user": u})
+	write(w, 200, map[string]any{"token": token, "csrf_token": csrfToken, "user": u})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -1649,7 +1645,7 @@ func (s *Server) auth(next http.HandlerFunc, min model.Role) http.HandlerFunc {
 			fail(w, errors.New("session revoked"), 401)
 			return
 		}
-		if cookieSession && csrfRequired(r.Method) && !validCSRFToken(r) {
+		if cookieSession && csrfRequired(r.Method) && !s.validCSRFToken(r, token) {
 			fail(w, errors.New("invalid CSRF token"), http.StatusForbidden)
 			return
 		}
@@ -1678,26 +1674,26 @@ func csrfRequired(method string) bool {
 	}
 }
 
-func validCSRFToken(r *http.Request) bool {
-	cookie, err := r.Cookie(csrfCookieName)
-	if err != nil {
-		return false
-	}
+func (s *Server) validCSRFToken(r *http.Request, sessionToken string) bool {
 	token := strings.TrimSpace(r.Header.Get("X-OBoard-CSRF"))
-	return token != "" && hmac.Equal([]byte(token), []byte(cookie.Value))
+	return token != "" && hmac.Equal([]byte(token), []byte(s.csrfTokenForSession(sessionToken)))
 }
 
-func (s *Server) setSessionCookies(w http.ResponseWriter, r *http.Request, sessionToken, csrfToken string) {
+func (s *Server) csrfTokenForSession(sessionToken string) string {
+	mac := hmac.New(sha256.New, []byte(s.sessionSecret))
+	_, _ = io.WriteString(mac, "oboard-csrf\x00")
+	_, _ = io.WriteString(mac, sessionToken)
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, sessionToken string) {
 	secure := requestUsesHTTPS(r)
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: sessionToken, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
-	http.SetCookie(w, &http.Cookie{Name: csrfCookieName, Value: csrfToken, Path: "/", Secure: secure, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: sessionToken, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode}) // #nosec G124 -- Secure follows direct TLS or an explicitly trusted proxy; localhost HTTP remains supported for development.
 }
 
 func (s *Server) clearSessionCookies(w http.ResponseWriter, r *http.Request) {
 	secure := requestUsesHTTPS(r)
-	for _, name := range []string{sessionCookieName, csrfCookieName} {
-		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", HttpOnly: name == sessionCookieName, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
-	}
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: -1}) // #nosec G124 -- deletion must match the dynamically secured development or production cookie.
 }
 
 func requestUsesHTTPS(r *http.Request) bool {
