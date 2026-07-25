@@ -68,6 +68,10 @@ func TestEncryptedBackupRestoresDataAndRewrapsSecrets(t *testing.T) {
 	if err != nil || inspection.Manifest.ID != created.Manifest.ID {
 		t.Fatalf("inspection = %#v, err=%v", inspection, err)
 	}
+	manager.config.MasterSecret = ""
+	if _, err := manager.StageRestore(ctx, created.Path, "recovery-password", "1.2.3"); err == nil {
+		t.Fatal("restore accepted an empty target encryption secret")
+	}
 	manager.config.MasterSecret = targetSecret
 	staged, err := manager.StageRestore(ctx, created.Path, "recovery-password", "1.2.3")
 	if err != nil {
@@ -109,6 +113,39 @@ func TestEncryptedBackupRestoresDataAndRewrapsSecrets(t *testing.T) {
 	}
 }
 
+func TestManagerLocalFilesStayWithinRoot(t *testing.T) {
+	root := t.TempDir()
+	manager := &Manager{config: Config{Root: filepath.Join(root, "backups")}}
+	if err := os.MkdirAll(manager.config.Root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "outside.obk")
+	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if manager.ContainsLocal(outside) {
+		t.Fatal("outside file was accepted")
+	}
+	if _, err := manager.OpenLocal(outside); err == nil {
+		t.Fatal("outside file was opened")
+	}
+	if err := manager.RemoveLocal(outside); err == nil {
+		t.Fatal("outside file was removed")
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := manager.CreateLocal("../escape.obk"); err == nil {
+		t.Fatal("escaping file name was accepted")
+	}
+	link := filepath.Join(manager.config.Root, "outside-link.obk")
+	if err := os.Symlink(outside, link); err == nil {
+		if _, err := manager.OpenLocal(link); err == nil {
+			t.Fatal("escaping symbolic link was opened")
+		}
+	}
+}
+
 func TestWebDAVUploadAndDelete(t *testing.T) {
 	var put, downloaded, deleted bool
 	var stored []byte
@@ -145,11 +182,27 @@ func TestWebDAVUploadAndDelete(t *testing.T) {
 	if err := TestDestination(context.Background(), nil, destination, secrets); err != nil {
 		t.Fatal(err)
 	}
-	if err := Upload(context.Background(), nil, destination, secrets, "oboard/backup.obk", path); err != nil {
+	source, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Upload(context.Background(), nil, destination, secrets, "oboard/backup.obk", source); err != nil {
+		_ = source.Close()
+		t.Fatal(err)
+	}
+	if err := source.Close(); err != nil {
 		t.Fatal(err)
 	}
 	downloadedPath := filepath.Join(t.TempDir(), "downloaded.obk")
-	if _, err := Download(context.Background(), nil, destination, secrets, "oboard/backup.obk", downloadedPath); err != nil {
+	output, err := os.OpenFile(downloadedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Download(context.Background(), nil, destination, secrets, "oboard/backup.obk", output); err != nil {
+		_ = output.Close()
+		t.Fatal(err)
+	}
+	if err := output.Close(); err != nil {
 		t.Fatal(err)
 	}
 	contents, err := os.ReadFile(downloadedPath)
@@ -224,11 +277,27 @@ func TestS3CompatibleUploadDownloadAndDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := ObjectKey(destination, "source.obk")
-	if err := Upload(context.Background(), nil, destination, secrets, key, source); err != nil {
+	input, err := os.Open(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Upload(context.Background(), nil, destination, secrets, key, input); err != nil {
+		_ = input.Close()
+		t.Fatal(err)
+	}
+	if err := input.Close(); err != nil {
 		t.Fatal(err)
 	}
 	target := filepath.Join(t.TempDir(), "target.obk")
-	if _, err := Download(context.Background(), nil, destination, secrets, key, target); err != nil {
+	output, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Download(context.Background(), nil, destination, secrets, key, output); err != nil {
+		_ = output.Close()
+		t.Fatal(err)
+	}
+	if err := output.Close(); err != nil {
 		t.Fatal(err)
 	}
 	value, err := os.ReadFile(target)

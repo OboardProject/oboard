@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -94,7 +93,7 @@ func DestinationID(destination Destination) string {
 	return sha256Hex([]byte(value))
 }
 
-func Upload(ctx context.Context, client *http.Client, destination Destination, secrets RemoteSecrets, objectKey, localPath string) error {
+func Upload(ctx context.Context, client *http.Client, destination Destination, secrets RemoteSecrets, objectKey string, file *os.File) error {
 	if err := ValidateDestination(destination); err != nil {
 		return err
 	}
@@ -104,17 +103,25 @@ func Upload(ctx context.Context, client *http.Client, destination Destination, s
 	if strings.TrimSpace(objectKey) == "" {
 		return errors.New("备份远端文件名不能为空")
 	}
-	file, err := os.Open(localPath)
-	if err != nil {
-		return err
+	if file == nil {
+		return errors.New("本地备份文件不可用")
 	}
-	defer file.Close()
 	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return errors.New("本地备份文件不可用")
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	hash := sha256.New()
+	size, err := io.Copy(hash, file)
 	if err != nil {
 		return err
 	}
-	sha, _, err := fileSHA256(localPath)
-	if err != nil {
+	if size != info.Size() {
+		return errors.New("本地备份文件读取不完整")
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
 	if strings.ToLower(destination.Provider) == "webdav" {
@@ -122,7 +129,7 @@ func Upload(ctx context.Context, client *http.Client, destination Destination, s
 			return err
 		}
 	}
-	return putObject(ctx, client, destination, secrets, objectKey, file, info.Size(), sha)
+	return putObject(ctx, client, destination, secrets, objectKey, io.LimitReader(file, size), size, hex.EncodeToString(hash.Sum(nil)))
 }
 
 func putObject(ctx context.Context, client *http.Client, destination Destination, secrets RemoteSecrets, objectKey string, body io.Reader, size int64, payloadHash string) error {
@@ -154,7 +161,7 @@ func putObject(ctx context.Context, client *http.Client, destination Destination
 	return nil
 }
 
-func Download(ctx context.Context, client *http.Client, destination Destination, secrets RemoteSecrets, objectKey, destinationPath string) (int64, error) {
+func Download(ctx context.Context, client *http.Client, destination Destination, secrets RemoteSecrets, objectKey string, output *os.File) (int64, error) {
 	if err := ValidateDestination(destination); err != nil {
 		return 0, err
 	}
@@ -188,22 +195,13 @@ func Download(ctx context.Context, client *http.Client, destination Destination,
 	if response.ContentLength > maxArchiveBytes {
 		return 0, errors.New("第三方备份超过允许大小")
 	}
-	if err := os.MkdirAll(filepath.Dir(destinationPath), 0o700); err != nil {
-		return 0, err
-	}
-	output, err := os.OpenFile(destinationPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return 0, err
+	if output == nil {
+		return 0, errors.New("本地备份目录不可用")
 	}
 	written, copyErr := io.Copy(output, io.LimitReader(response.Body, maxArchiveBytes+1))
-	closeErr := output.Close()
-	if copyErr != nil || closeErr != nil || written > maxArchiveBytes {
-		_ = os.Remove(destinationPath)
+	if copyErr != nil || written > maxArchiveBytes {
 		if copyErr != nil {
 			return 0, copyErr
-		}
-		if closeErr != nil {
-			return 0, closeErr
 		}
 		return 0, errors.New("第三方备份超过允许大小")
 	}

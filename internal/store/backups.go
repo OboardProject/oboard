@@ -47,35 +47,16 @@ func (s *Store) ListControllerBackups(ctx context.Context) ([]model.ControllerBa
 }
 
 func (s *Store) GetControllerBackup(ctx context.Context, id string) (*model.ControllerBackup, error) {
-	items, err := s.listControllerBackups(ctx, ` where id=?`, id)
+	var v model.ControllerBackup
+	var protected int
+	var createdAt, updatedAt string
+	err := s.db.QueryRowContext(ctx, `select id,name,origin,local_path,local_status,remote_key,remote_target,remote_status,remote_error,size_bytes,source_version,format_version,protected,created_at,updated_at from controller_backups where id=?`, id).Scan(&v.ID, &v.Name, &v.Origin, &v.LocalPath, &v.LocalStatus, &v.RemoteKey, &v.RemoteTarget, &v.RemoteStatus, &v.RemoteError, &v.SizeBytes, &v.SourceVersion, &v.FormatVersion, &protected, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
-	if len(items) == 0 {
-		return nil, sql.ErrNoRows
-	}
-	return &items[0], nil
-}
-
-func (s *Store) listControllerBackups(ctx context.Context, suffix string, args ...any) ([]model.ControllerBackup, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,name,origin,local_path,local_status,remote_key,remote_target,remote_status,remote_error,size_bytes,source_version,format_version,protected,created_at,updated_at from controller_backups`+suffix, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []model.ControllerBackup{}
-	for rows.Next() {
-		var v model.ControllerBackup
-		var protected int
-		var createdAt, updatedAt string
-		if err := rows.Scan(&v.ID, &v.Name, &v.Origin, &v.LocalPath, &v.LocalStatus, &v.RemoteKey, &v.RemoteTarget, &v.RemoteStatus, &v.RemoteError, &v.SizeBytes, &v.SourceVersion, &v.FormatVersion, &protected, &createdAt, &updatedAt); err != nil {
-			return nil, err
-		}
-		v.Protected = protected == 1
-		v.CreatedAt, v.UpdatedAt = parseTime(createdAt), parseTime(updatedAt)
-		items = append(items, v)
-	}
-	return items, rows.Err()
+	v.Protected = protected == 1
+	v.CreatedAt, v.UpdatedAt = parseTime(createdAt), parseTime(updatedAt)
+	return &v, nil
 }
 
 func (s *Store) UpdateControllerBackupRemote(ctx context.Context, id, key, target, status, message string) error {

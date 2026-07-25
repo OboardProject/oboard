@@ -573,7 +573,7 @@ func (s *Server) controllerBackupDownload(w http.ResponseWriter, r *http.Request
 		fail(w, err, http.StatusBadGateway)
 		return
 	}
-	file, err := os.Open(item.LocalPath)
+	file, err := s.backupManager.OpenLocal(item.LocalPath)
 	if err != nil {
 		s.backupMu.Unlock()
 		fail(w, errors.New("本地备份文件不可用"), http.StatusNotFound)
@@ -613,8 +613,8 @@ func (s *Server) controllerBackupDelete(w http.ResponseWriter, r *http.Request, 
 		}
 		remoteDeleted = true
 	}
-	if item.LocalPath != "" && pathContained(s.backupManager.Root(), item.LocalPath) {
-		if err := os.Remove(item.LocalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if item.LocalPath != "" && s.backupManager.ContainsLocal(item.LocalPath) {
+		if err := s.backupManager.RemoveLocal(item.LocalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			fail(w, err, 500)
 			return
 		}
@@ -700,15 +700,23 @@ func (s *Server) createControllerDataBackupWithPassword(ctx context.Context, set
 	}
 	item := &model.ControllerBackup{ID: created.Manifest.ID, Name: filepath.Base(created.Path), Origin: origin, LocalPath: created.Path, LocalStatus: "available", RemoteStatus: "disabled", SizeBytes: created.Size, SourceVersion: created.Manifest.SourceVersion, FormatVersion: created.Manifest.FormatVersion, Protected: protected}
 	if err := s.store.CreateControllerBackup(ctx, item); err != nil {
-		_ = os.Remove(created.Path)
+		_ = s.backupManager.RemoveLocal(created.Path)
 		return nil, err
 	}
 	if uploadRemote && settings.Destination.Enabled {
 		key := backup.ObjectKey(settings.Destination, item.Name)
 		target := backup.DestinationID(settings.Destination)
 		item.RemoteKey, item.RemoteTarget = key, target
-		if err := backup.Upload(ctx, nil, settings.Destination, settings.Secrets.Remote, key, item.LocalPath); err != nil {
-			item.RemoteStatus, item.RemoteError = "failed", err.Error()
+		file, openErr := s.backupManager.OpenLocal(item.LocalPath)
+		uploadErr := openErr
+		if openErr == nil {
+			uploadErr = backup.Upload(ctx, nil, settings.Destination, settings.Secrets.Remote, key, file)
+			if closeErr := file.Close(); uploadErr == nil {
+				uploadErr = closeErr
+			}
+		}
+		if uploadErr != nil {
+			item.RemoteStatus, item.RemoteError = "failed", uploadErr.Error()
 			_ = s.store.UpdateControllerBackupRemote(ctx, item.ID, key, target, item.RemoteStatus, item.RemoteError)
 		} else {
 			item.RemoteStatus, item.RemoteReady = "available", true
@@ -735,8 +743,8 @@ func (s *Server) enforceControllerBackupRetention(ctx context.Context, settings 
 		if localKept <= settings.LocalRetention {
 			continue
 		}
-		if s.backupManager != nil && pathContained(s.backupManager.Root(), item.LocalPath) {
-			if err := os.Remove(item.LocalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if s.backupManager != nil && s.backupManager.ContainsLocal(item.LocalPath) {
+			if err := s.backupManager.RemoveLocal(item.LocalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 		}
@@ -770,30 +778,41 @@ func (s *Server) ensureControllerBackupLocal(ctx context.Context, settings contr
 	if s.backupManager == nil {
 		return errors.New("主控备份目录不可用")
 	}
-	if item.LocalPath != "" && pathContained(s.backupManager.Root(), item.LocalPath) {
-		if info, err := os.Stat(item.LocalPath); err == nil && info.Mode().IsRegular() {
+	if item.LocalPath != "" {
+		if info, err := s.backupManager.StatLocal(item.LocalPath); err == nil && info.Mode().IsRegular() {
 			return nil
 		}
 	}
 	if !controllerBackupRemoteReady(*item, settings) {
 		return errors.New("本地备份已不可用，且当前第三方目标无法取回该副本")
 	}
-	destination := filepath.Join(s.backupManager.Root(), "oboard-remote-"+item.ID+".obk")
-	_ = os.Remove(destination)
-	size, err := backup.Download(ctx, nil, settings.Destination, settings.Secrets.Remote, item.RemoteKey, destination)
+	destination, output, err := s.backupManager.CreateLocal("oboard-remote-" + item.ID + ".obk")
+	if errors.Is(err, os.ErrExist) {
+		_ = s.backupManager.RemoveLocal(filepath.Join(s.backupManager.Root(), "oboard-remote-"+item.ID+".obk"))
+		destination, output, err = s.backupManager.CreateLocal("oboard-remote-" + item.ID + ".obk")
+	}
 	if err != nil {
-		return fmt.Errorf("从第三方目标取回备份失败：%w", err)
+		return err
+	}
+	size, downloadErr := backup.Download(ctx, nil, settings.Destination, settings.Secrets.Remote, item.RemoteKey, output)
+	closeErr := output.Close()
+	if downloadErr != nil || closeErr != nil {
+		_ = s.backupManager.RemoveLocal(destination)
+		if downloadErr != nil {
+			return fmt.Errorf("从第三方目标取回备份失败：%w", downloadErr)
+		}
+		return fmt.Errorf("保存第三方备份失败：%w", closeErr)
 	}
 	manifest, err := s.backupManager.Verify(destination)
 	if err != nil || manifest.ID != item.ID {
-		_ = os.Remove(destination)
+		_ = s.backupManager.RemoveLocal(destination)
 		if err != nil {
 			return fmt.Errorf("第三方备份完整性校验失败：%w", err)
 		}
 		return errors.New("第三方备份与本地记录不匹配")
 	}
 	if err := s.store.UpdateControllerBackupLocal(ctx, item.ID, destination, "available", size); err != nil {
-		_ = os.Remove(destination)
+		_ = s.backupManager.RemoveLocal(destination)
 		return err
 	}
 	item.LocalPath, item.LocalStatus, item.SizeBytes = destination, "available", size
@@ -812,8 +831,8 @@ func (s *Server) reconcileControllerBackupFiles(ctx context.Context) {
 		if item.LocalPath == "" {
 			continue
 		}
-		info, statErr := os.Stat(item.LocalPath)
-		if !pathContained(s.backupManager.Root(), item.LocalPath) || statErr != nil || !info.Mode().IsRegular() {
+		info, statErr := s.backupManager.StatLocal(item.LocalPath)
+		if statErr != nil || !info.Mode().IsRegular() {
 			_ = s.store.ExpireControllerBackupLocal(ctx, item.ID)
 		}
 	}

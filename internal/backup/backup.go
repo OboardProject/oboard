@@ -88,13 +88,94 @@ func New(config Config) (*Manager, error) {
 	if err := os.MkdirAll(config.Root, 0o700); err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(config.Root, 0o700); err != nil {
+	root, err := os.OpenRoot(config.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	if err := root.Chmod(".", 0o700); err != nil {
 		return nil, err
 	}
 	return &Manager{config: config}, nil
 }
 
 func (m *Manager) Root() string { return m.config.Root }
+
+func (m *Manager) ContainsLocal(candidate string) bool {
+	_, err := m.localName(candidate)
+	return err == nil
+}
+
+func (m *Manager) localName(candidate string) (string, error) {
+	root, err := filepath.Abs(m.config.Root)
+	if err != nil {
+		return "", err
+	}
+	candidate, err = filepath.Abs(candidate)
+	if err != nil {
+		return "", err
+	}
+	name, err := filepath.Rel(root, candidate)
+	if err != nil || name == "." || name == ".." || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
+		return "", errors.New("备份文件路径无效")
+	}
+	return name, nil
+}
+
+func (m *Manager) OpenLocal(candidate string) (*os.File, error) {
+	name, err := m.localName(candidate)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(m.config.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.Open(name)
+}
+
+func (m *Manager) StatLocal(candidate string) (os.FileInfo, error) {
+	name, err := m.localName(candidate)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(m.config.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.Stat(name)
+}
+
+func (m *Manager) RemoveLocal(candidate string) error {
+	name, err := m.localName(candidate)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(m.config.Root)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.Remove(name)
+}
+
+func (m *Manager) CreateLocal(name string) (string, *os.File, error) {
+	if name == "" || name == "." || filepath.Base(name) != name {
+		return "", nil, errors.New("备份文件名无效")
+	}
+	root, err := os.OpenRoot(m.config.Root)
+	if err != nil {
+		return "", nil, err
+	}
+	defer root.Close()
+	file, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", nil, err
+	}
+	return filepath.Join(m.config.Root, name), file, nil
+}
 
 func (m *Manager) Create(ctx context.Context, password string) (Created, error) {
 	if strings.TrimSpace(password) == "" {
@@ -140,8 +221,7 @@ func (m *Manager) SaveUpload(input io.Reader) (string, int64, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	output := filepath.Join(m.config.Root, "oboard-upload-"+id+".obk")
-	file, err := os.OpenFile(output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	output, file, err := m.CreateLocal("oboard-upload-" + id + ".obk")
 	if err != nil {
 		return "", 0, err
 	}
@@ -214,7 +294,8 @@ func (m *Manager) StageRestore(ctx context.Context, archivePath, password, targe
 		_ = os.RemoveAll(stage)
 		return StagedRestore{}, fmt.Errorf("读取备份数据库失败：%w", err)
 	}
-	if err := restored.CheckIntegrity(ctx); err == nil {
+	err = restored.CheckIntegrity(ctx)
+	if err == nil {
 		err = restored.RewrapEncryptedSecrets(ctx, sourceSecret, m.config.MasterSecret)
 	}
 	if err == nil {
@@ -280,7 +361,7 @@ func ApplyPendingRestore(config Config) error {
 }
 
 func (m *Manager) writePayload(destination, database, password string) error {
-	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	output, err := createPath(destination, 0o600)
 	if err != nil {
 		return err
 	}
@@ -359,7 +440,7 @@ func writeEnvelope(destination string, manifest Manifest, payload string) error 
 }
 
 func readEnvelope(archivePath, payloadDestination string) (Manifest, int64, error) {
-	file, err := os.Open(archivePath)
+	file, err := openPath(archivePath)
 	if err != nil {
 		return Manifest{}, 0, err
 	}
@@ -370,7 +451,7 @@ func readEnvelope(archivePath, payloadDestination string) (Manifest, int64, erro
 	var payloadSize int64
 	var payloadWriter *os.File
 	if payloadDestination != "" {
-		payloadWriter, err = os.OpenFile(payloadDestination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		payloadWriter, err = createPath(payloadDestination, 0o600)
 		if err != nil {
 			return Manifest{}, 0, err
 		}
@@ -443,7 +524,7 @@ func extractArchive(archivePath, password, stage string) (Manifest, string, erro
 	if err != nil {
 		return Manifest{}, "", err
 	}
-	input, err := os.Open(payload)
+	input, err := openPath(payload)
 	if err != nil {
 		return Manifest{}, "", err
 	}
@@ -541,14 +622,14 @@ func addPayloadBytes(writer *tar.Writer, name string, value []byte) error {
 }
 
 func addPayloadFile(writer *tar.Writer, source, name string) error {
-	info, err := os.Stat(source)
+	info, err := statPath(source)
 	if err != nil {
 		return err
 	}
 	if !info.Mode().IsRegular() || info.Size() > maxPayloadBytes {
 		return errors.New("备份源文件无效")
 	}
-	input, err := os.Open(source)
+	input, err := openPath(source)
 	if err != nil {
 		return err
 	}
@@ -615,7 +696,7 @@ func writeTarFile(reader *tar.Reader, destination string, size int64) error {
 	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
 		return err
 	}
-	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	output, err := createPath(destination, 0o600)
 	if err != nil {
 		return err
 	}
@@ -634,7 +715,7 @@ func writeTarFile(reader *tar.Reader, destination string, size int64) error {
 }
 
 func fileSHA256(filePath string) (string, int64, error) {
-	input, err := os.Open(filePath)
+	input, err := openPath(filePath)
 	if err != nil {
 		return "", 0, err
 	}
@@ -877,12 +958,12 @@ func copyTree(source, destination string) error {
 }
 
 func copyRegularFile(source, destination string, mode os.FileMode) error {
-	input, err := os.Open(source)
+	input, err := openPath(source)
 	if err != nil {
 		return err
 	}
 	defer input.Close()
-	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	output, err := createPath(destination, mode)
 	if err != nil {
 		return err
 	}
@@ -892,4 +973,34 @@ func copyRegularFile(source, destination string, mode os.FileMode) error {
 		return copyErr
 	}
 	return closeErr
+}
+
+func openPath(filePath string) (*os.File, error) {
+	clean := filepath.Clean(filePath)
+	root, err := os.OpenRoot(filepath.Dir(clean))
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.Open(filepath.Base(clean))
+}
+
+func statPath(filePath string) (os.FileInfo, error) {
+	clean := filepath.Clean(filePath)
+	root, err := os.OpenRoot(filepath.Dir(clean))
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.Stat(filepath.Base(clean))
+}
+
+func createPath(filePath string, mode os.FileMode) (*os.File, error) {
+	clean := filepath.Clean(filePath)
+	root, err := os.OpenRoot(filepath.Dir(clean))
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.OpenFile(filepath.Base(clean), os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 }
