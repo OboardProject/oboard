@@ -8,7 +8,7 @@ OBoard control-plane Controller for the panel, REST/WebSocket APIs, subscription
 
 - **Panel and API**: Web UI, REST `/api/v1`, Agent WebSocket/callbacks, subscriptions, install scripts, and release downloads
 - **Config generation**: controller-side validation, proxy-path topology, and subscription rendering without linking sing-box
-- **Flexible install**: binary or Docker; default port `2787`; optional hidden path via `OBOARD_BASE_PATH`
+- **Binary install**: default port `2787`; optional hidden path via `OBOARD_BASE_PATH`
 - **Certificates**: panel-managed or manual DNS-01 (including wildcards) and Agent-side HTTP-01 through `acme.sh`
 - **Signed distribution**: release script packages only signed Agent/kernel artifacts from the sibling `oboard-agent` repo
 
@@ -44,19 +44,9 @@ Default Controller port is `2787`.
 curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo bash
 ```
 
-### Docker install (recommended)
-
-Latest stable image:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install-docker.sh | sudo sh
-```
-
-The image listens on container port `2787` by default.
-
 ### First administrator
 
-When `OBOARD_ADMIN_PASSWORD` is unset, installers create the first administrator with a random one-time password. Docker prints it at install time; binary installs print it once in the controller service log on first boot. Change it immediately after login.
+When `OBOARD_ADMIN_PASSWORD` is unset, the installer creates the first administrator with a random one-time password and prints it once in the controller service log on first boot. Change it immediately after login.
 
 ## License
 

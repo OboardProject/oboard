@@ -8,7 +8,7 @@ OBoard 控制面主控（Controller），提供面板、REST/WebSocket API、订
 
 - **面板与 API**：Web 界面、REST `/api/v1`、Agent WebSocket/回调、订阅、安装脚本与发布包下载
 - **配置生成**：主控侧校验、代理路径拓扑与订阅渲染，不链接 sing-box
-- **灵活安装**：二进制或 Docker；默认端口 `2787`；可通过 `OBOARD_BASE_PATH` 启用隐藏路径
+- **二进制安装**：默认端口 `2787`；可通过 `OBOARD_BASE_PATH` 启用隐藏路径
 - **证书管理**：面板托管或手动 DNS-01（含通配符），以及 Agent 侧 HTTP-01，基于 `acme.sh`
 - **签名分发**：发布脚本仅打包同级 `oboard-agent` 仓库中已签名的 Agent / 内核产物
 
@@ -44,19 +44,9 @@ Controller 发布脚本会定位同级的 `../oboard-agent` 仓库，调用其�
 curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo bash
 ```
 
-### Docker 安装（推荐）
-
-最新稳定镜像：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install-docker.sh | sudo sh
-```
-
-镜像默认监听容器端口 `2787`
-
 ### 首位管理员
 
-未设置 `OBOARD_ADMIN_PASSWORD` 时，安装器会为首位管理员生成一次性随机密码。Docker 在安装时打印；二进制安装在首次启动时于 controller 服务日志中打印一次。登录后请立即修改。
+未设置 `OBOARD_ADMIN_PASSWORD` 时，安装器会为首位管理员生成一次性随机密码，并在首次启动时于 controller 服务日志中打印一次。登录后请立即修改。
 
 
 ## 许可证
