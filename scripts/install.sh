@@ -491,12 +491,14 @@ verify_checksum() {
 wait_for_controller_updater() {
   local i
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    if [ -S /run/oboard/controller-updater.sock ]; then
+    if [ -S /run/oboard/controller-updater.sock ] &&
+      curl --unix-socket /run/oboard/controller-updater.sock --max-time 2 --fail --silent --show-error \
+        http://localhost/v1/status >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
   done
-  echo "主控更新器未就绪：/run/oboard/controller-updater.sock 不存在。" >&2
+  echo "主控更新器未就绪：无法通过 /run/oboard/controller-updater.sock 访问状态接口。" >&2
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --no-pager --full status oboard-controller-updater >&2 || true
     journalctl -u oboard-controller-updater -n 40 --no-pager >&2 || true
@@ -509,7 +511,19 @@ wait_for_controller_updater() {
 
 prepare_controller_updater_runtime() {
   install -d -m 0750 -o root -g oboard /run/oboard
-  install -d -m 0750 -o root -g root /var/lib/oboard
+  # Native installs own the parent as oboard; only the updater subtree is root-owned.
+  if [ -L /var/lib/oboard ]; then
+    echo "拒绝使用符号链接形式的更新器状态目录：/var/lib/oboard" >&2
+    return 1
+  fi
+  if [ -e /var/lib/oboard ] && [ ! -d /var/lib/oboard ]; then
+    echo "更新器状态路径不是目录：/var/lib/oboard" >&2
+    return 1
+  fi
+  if [ ! -d /var/lib/oboard ]; then
+    install -d -m 0750 -o root -g root /var/lib/oboard
+  fi
+  install -d -m 0700 -o root -g root /var/lib/oboard/controller-update
 }
 
 harden_controller_updater_unit() {
