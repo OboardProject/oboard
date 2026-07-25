@@ -19,7 +19,7 @@ func TestDockerInstallAndReleaseAssets(t *testing.T) {
 		"deploy/docker/Dockerfile.controller": {"EXPOSE 2787", "OBOARD_ADDR=:2787", "OBOARD_DOWNLOADS=/app/downloads", "OBOARD_BASE_PATH", "HEALTHCHECK", "entrypoint.sh"},
 		"deploy/docker/entrypoint.sh":         {"su-exec", "OBOARD_UPDATER_GID", "controller-updater.sock"},
 		"deploy/docker-compose.yml":           {"ghcr.io/oboardproject/oboard", "${OBOARD_PORT:-2787}:2787", "OBOARD_BASE_PATH", "./data:/app/data", "controller-updater.sock", "OBOARD_UPDATER_GID", "read_only: true", "cap_drop:", "cap_add:", "CHOWN", "SETGID", "SETUID", "set OBOARD_ADMIN_PASSWORD"},
-		"scripts/install-docker.sh":           {"VERSION_VALUE", "OBOARD_TAG", "OBOARD_INSTALL_METHOD=docker", "docker compose", "docker-cli", "docker-compose-v2", "docker_compose_ready", "install_compose_plugin_binary", "OBOARD_COMPOSE_VERSION", "checksums.txt", "wait_for_health", "dev|development|nightly", "generate_admin_password", "configure_bootstrap_admin", "设置超级管理员", "自动加入“管理员组”", "不能在面板中删除", "Controller 和 Agent 相互独立，也可以安装在同一台服务器上", "OBOARD_PORT 必须是 1 到 65535", "OBOARD_BASE_PATH", "更新当前渠道", "2787", "wait_for_controller_updater", "curl --unix-socket /run/oboard/controller-updater.sock", "harden_controller_updater_unit", "prepare_controller_updater_runtime", "/var/lib/oboard/controller-update", "make_install_tmp", "write_controller_entrypoint", "./oboard-entrypoint:/usr/local/bin/oboard-entrypoint:ro"},
+		"scripts/install-docker.sh":           {"VERSION_VALUE", "OBOARD_TAG", "OBOARD_INSTALL_METHOD=docker", "docker compose", "docker-cli", "docker-compose-v2", "docker_compose_ready", "install_compose_plugin_binary", "OBOARD_COMPOSE_VERSION", "checksums.txt", "wait_for_health", "dev|development|nightly", "generate_admin_password", "configure_bootstrap_admin", "设置超级管理员", "自动加入“管理员组”", "不能在面板中删除", "Controller 和 Agent 相互独立，也可以安装在同一台服务器上", "OBOARD_PORT 必须是 1 到 65535", "OBOARD_BASE_PATH", "OBOARD_LAN_IP", "OBOARD_PUBLIC_IP", "内网访问", "公网访问", "更新当前渠道", "2787", "wait_for_controller_updater", "curl --unix-socket /run/oboard/controller-updater.sock", "harden_controller_updater_unit", "prepare_controller_updater_runtime", "/var/lib/oboard/controller-update", "make_install_tmp", "write_controller_entrypoint", "./oboard-entrypoint:/usr/local/bin/oboard-entrypoint:ro"},
 		"scripts/verify-release.sh":           {"Testing Controller", "Building Web UI", "Building current-platform binaries", "cmd/controller-updater"},
 		"scripts/fetch-agent-release.sh":      {"OBOARD_RELEASE_PUBLIC_KEY", "gh release download", "release-manifest.json.sig", "OBOARD_AGENT_CHANNEL", "OBOARD_AGENT_RELEASE_WAIT_ATTEMPTS"},
 		".github/workflows/ci.yml":            {"verify-release.sh", "go-version: '1.25.12'", "node-version: '22'"},
@@ -69,6 +69,91 @@ func TestDockerInstallAndReleaseAssets(t *testing.T) {
 		path := filepath.Join(root, "scripts", "build-docker.sh")
 		if output, err := exec.Command(bash, "-n", path).CombinedOutput(); err != nil {
 			t.Fatalf("build-docker.sh syntax error: %v\n%s", err, output)
+		}
+	}
+}
+
+func TestDockerInstallerBuildsDetectedPanelURLs(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to locate repository")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	content, err := os.ReadFile(filepath.Join(root, "scripts", "install-docker.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := []byte("\nneed_root\nensure_base_tools")
+	index := strings.Index(string(content), string(marker))
+	if index < 0 {
+		t.Fatal("unable to isolate Docker installer functions")
+	}
+	harness := append([]byte(nil), content[:index]...)
+	harness = append(harness, []byte("\nprint_access_urls\n")...)
+	path := filepath.Join(t.TempDir(), "installer-network-test.sh")
+	if err := os.WriteFile(path, harness, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		lanIP    string
+		publicIP string
+		wants    []string
+	}{
+		{name: "IPv4", lanIP: "192.168.50.10", publicIP: "203.0.113.10", wants: []string{"内网访问：http://192.168.50.10:8443/panel", "公网访问：http://203.0.113.10:8443/panel"}},
+		{name: "IPv6", lanIP: "fd00::10", publicIP: "2001:db8::10", wants: []string{"内网访问：http://[fd00::10]:8443/panel", "公网访问：http://[2001:db8::10]:8443/panel"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := exec.Command("sh", path)
+			cmd.Env = testCommandEnv(
+				"OBOARD_ACTION=install",
+				"OBOARD_DOCKER_DIR="+filepath.Join(t.TempDir(), "install"),
+				"OBOARD_PORT=8443",
+				"OBOARD_BASE_PATH=/panel",
+				"OBOARD_LAN_IP="+test.lanIP,
+				"OBOARD_PUBLIC_IP="+test.publicIP,
+				"VERSION=latest",
+			)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("URL detection harness failed: %v\n%s", err, output)
+			}
+			for _, want := range test.wants {
+				if !strings.Contains(string(output), want) {
+					t.Errorf("installer output missing %q:\n%s", want, output)
+				}
+			}
+		})
+	}
+
+	binDir := t.TempDir()
+	fakeIP := "#!/bin/sh\ncase \"$*\" in\n  '-4 route get 1.1.1.1') echo '1.1.1.1 via 10.20.30.1 dev eth0 src 10.20.30.40 uid 0' ;;\n  '-o -4 addr show scope global') echo '2: eth0 inet 10.20.30.40/24 brd 10.20.30.255 scope global eth0' ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(binDir, "ip"), []byte(fakeIP), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "curl"), []byte("#!/bin/sh\necho 198.51.100.20\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", path)
+	cmd.Env = testCommandEnv(
+		"PATH="+binDir+":"+os.Getenv("PATH"),
+		"OBOARD_ACTION=install",
+		"OBOARD_DOCKER_DIR="+filepath.Join(t.TempDir(), "install"),
+		"OBOARD_PORT=2787",
+		"OBOARD_BASE_PATH=",
+		"OBOARD_LAN_IP=",
+		"OBOARD_PUBLIC_IP=",
+		"VERSION=latest",
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("automatic URL detection failed: %v\n%s", err, output)
+	}
+	for _, want := range []string{"内网访问：http://10.20.30.40:2787", "公网访问：http://198.51.100.20:2787"} {
+		if !strings.Contains(string(output), want) {
+			t.Errorf("automatic installer output missing %q:\n%s", want, output)
 		}
 	}
 }

@@ -783,6 +783,135 @@ wait_for_health() {
   return 1
 }
 
+valid_ipv4() {
+  local value=$1 old_ifs octet
+  case "$value" in
+    ""|*[!0-9.]*) return 1 ;;
+  esac
+  old_ifs=$IFS
+  IFS=.
+  set -- $value
+  IFS=$old_ifs
+  [ "$#" -eq 4 ] || return 1
+  for octet in "$@"; do
+    case "$octet" in
+      ""|*[!0-9]*) return 1 ;;
+    esac
+    [ "$octet" -le 255 ] || return 1
+  done
+}
+
+valid_ipv6() {
+  local value=$1
+  case "$value" in
+    *:*) ;;
+    *) return 1 ;;
+  esac
+  case "$value" in
+    *[!0-9A-Fa-f:.]*) return 1 ;;
+  esac
+}
+
+is_private_ipv4() {
+  local value=$1 old_ifs first second
+  valid_ipv4 "$value" || return 1
+  old_ifs=$IFS
+  IFS=.
+  set -- $value
+  IFS=$old_ifs
+  first=$1
+  second=$2
+  [ "$first" -eq 10 ] && return 0
+  [ "$first" -eq 172 ] && [ "$second" -ge 16 ] && [ "$second" -le 31 ] && return 0
+  [ "$first" -eq 192 ] && [ "$second" -eq 168 ] && return 0
+  [ "$first" -eq 100 ] && [ "$second" -ge 64 ] && [ "$second" -le 127 ] && return 0
+  return 1
+}
+
+detect_lan_ip() {
+  local configured=${OBOARD_LAN_IP:-} candidate
+  if valid_ipv4 "$configured" || valid_ipv6 "$configured"; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+
+  if command -v ip >/dev/null 2>&1; then
+    candidate=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')
+    if is_private_ipv4 "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    for candidate in $(ip -o -4 addr show scope global 2>/dev/null | awk '{split($4, address, "/"); print address[1]}'); do
+      if is_private_ipv4 "$candidate"; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  fi
+
+  if command -v hostname >/dev/null 2>&1; then
+    for candidate in $(hostname -I 2>/dev/null || true); do
+      if is_private_ipv4 "$candidate"; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+
+detect_public_ip() {
+  local configured=${OBOARD_PUBLIC_IP:-} endpoint candidate
+  if valid_ipv4 "$configured" || valid_ipv6 "$configured"; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+
+  for endpoint in https://api.ipify.org https://ifconfig.me/ip https://icanhazip.com; do
+    candidate=$(curl -4 -fsS --connect-timeout 2 --max-time 4 "$endpoint" 2>/dev/null | tr -d '[:space:]' || true)
+    if valid_ipv4 "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  candidate=$(curl -6 -fsS --connect-timeout 2 --max-time 4 https://api64.ipify.org 2>/dev/null | tr -d '[:space:]' || true)
+  if valid_ipv6 "$candidate"; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  return 1
+}
+
+url_host() {
+  case "$1" in
+    *:*) printf '[%s]' "$1" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+panel_url() {
+  local host
+  host=$(url_host "$1")
+  printf 'http://%s:%s%s' "$host" "$PORT" "$BASE_PATH"
+}
+
+print_access_urls() {
+  local lan_ip public_ip
+  lan_ip=$(detect_lan_ip || true)
+  public_ip=$(detect_public_ip || true)
+  echo "面板地址："
+  if [ -n "$lan_ip" ]; then
+    echo "  内网访问：$(panel_url "$lan_ip")"
+  fi
+  if [ -n "$public_ip" ] && [ "$public_ip" != "$lan_ip" ]; then
+    echo "  公网访问：$(panel_url "$public_ip")"
+  fi
+  if [ -z "$lan_ip" ] && [ -z "$public_ip" ]; then
+    echo "  本机访问：$(panel_url 127.0.0.1)"
+    echo "  未能自动探测服务器 IP，请确认网卡和公网出口后替换地址。"
+  fi
+}
+
 print_result() {
   local tag=$1 admin_username admin_password
   admin_username=$(env_value OBOARD_ADMIN_USERNAME)
@@ -791,7 +920,7 @@ print_result() {
   echo "========================================"
   echo "OBoard Docker 部署完成"
   echo "========================================"
-  echo "面板地址：http://服务器IP:$PORT$BASE_PATH"
+  print_access_urls
   echo "镜像：$IMAGE:$tag"
   echo "部署目录：$INSTALL_ROOT"
   echo "数据目录：$INSTALL_ROOT/data"
