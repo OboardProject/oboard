@@ -223,7 +223,6 @@ OBOARD_DOWNLOADS=/opt/oboard/downloads
 OBOARD_BACKUP_DIR=/var/lib/oboard/backups
 OBOARD_CONTROLLER_UPDATER_SOCKET=/run/oboard/controller-updater.sock
 OBOARD_UPDATE_CHANNEL=dev
-OBOARD_INSTALL_METHOD=binary
 OBOARD_CORS_ORIGINS=
 EOF
 else
@@ -256,9 +255,6 @@ fi
 
 if ! grep -q '^OBOARD_UPDATE_CHANNEL=' /etc/oboard/controller.env; then
   printf 'OBOARD_UPDATE_CHANNEL=dev\n' >> /etc/oboard/controller.env
-fi
-if ! grep -q '^OBOARD_INSTALL_METHOD=' /etc/oboard/controller.env; then
-  printf 'OBOARD_INSTALL_METHOD=binary\n' >> /etc/oboard/controller.env
 fi
 if ! grep -q '^OBOARD_CONTROLLER_UPDATER_SOCKET=' /etc/oboard/controller.env; then
   printf 'OBOARD_CONTROLLER_UPDATER_SOCKET=/run/oboard/controller-updater.sock\n' >> /etc/oboard/controller.env

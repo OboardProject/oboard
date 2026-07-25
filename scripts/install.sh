@@ -12,10 +12,7 @@ VERSION_VALUE=${VERSION_INPUT:-latest}
 INSTALL_CHANNEL=stable
 COMPONENT=${COMPONENT:-${1:-controller}}
 INSTALL_DIR=${INSTALL_DIR:-/usr/local/bin}
-DOCKER_ROOT=${OBOARD_DOCKER_DIR:-/opt/oboard-docker}
-INSTALL_METHOD_INPUT=${OBOARD_INSTALL_METHOD:-}
 ACTION_INPUT=${OBOARD_ACTION:-}
-INSTALL_METHOD=binary
 ACTION=install
 INSTALLATION_EXISTS=0
 TMP_DIR=
@@ -55,44 +52,8 @@ binary_installation_exists() {
     [ -f /etc/init.d/oboard-controller ]
 }
 
-docker_installation_exists() {
-  [ -f "$DOCKER_ROOT/.env" ] ||
-    [ -f "$DOCKER_ROOT/docker-compose.yml" ] ||
-    [ -s "$DOCKER_ROOT/data/oboard.sqlite" ]
-}
-
 select_installation() {
-  local binary_exists=0 docker_exists=0
-  binary_installation_exists && binary_exists=1
-  docker_installation_exists && docker_exists=1
-
-  case "$INSTALL_METHOD_INPUT" in
-    "")
-      if [ "$binary_exists" = 1 ] && [ "$docker_exists" = 1 ]; then
-        echo "检测到二进制和 Docker 两种主控安装，本次操作已停止。" >&2
-        echo "请重新执行并指定 OBOARD_INSTALL_METHOD=binary 或 OBOARD_INSTALL_METHOD=docker。" >&2
-        exit 1
-      elif [ "$docker_exists" = 1 ]; then
-        INSTALL_METHOD=docker
-        INSTALLATION_EXISTS=1
-      elif [ "$binary_exists" = 1 ]; then
-        INSTALL_METHOD=binary
-        INSTALLATION_EXISTS=1
-      fi
-      ;;
-    binary)
-      INSTALL_METHOD=binary
-      INSTALLATION_EXISTS=$binary_exists
-      ;;
-    docker)
-      INSTALL_METHOD=docker
-      INSTALLATION_EXISTS=$docker_exists
-      ;;
-    *)
-      echo "安装方式只能选择二进制或 Docker。" >&2
-      exit 1
-      ;;
-  esac
+  binary_installation_exists && INSTALLATION_EXISTS=1
 
   case "$ACTION_INPUT" in
     ""|install|update|uninstall) ;;
@@ -112,29 +73,6 @@ select_installation() {
 case "$COMPONENT" in
   controller|controller-agent|all) select_installation ;;
 esac
-
-if [ "$INSTALL_METHOD" = docker ]; then
-  docker_script=
-  script_file=${BASH_SOURCE[0]:-}
-  if [ -n "$script_file" ] && [ -f "$script_file" ]; then
-    script_dir=$(CDPATH= cd -- "$(dirname -- "$script_file")" 2>/dev/null && pwd)
-    if [ -f "$script_dir/install-docker.sh" ]; then
-      docker_script=$script_dir/install-docker.sh
-    fi
-  fi
-  if [ -n "$docker_script" ]; then
-    if [ "$ACTION" = update ] && [ -z "$VERSION_INPUT" ]; then
-      exec env OBOARD_ACTION=update OBOARD_DOCKER_DIR="$DOCKER_ROOT" sh "$docker_script"
-    fi
-    exec env OBOARD_ACTION="$ACTION" OBOARD_DOCKER_DIR="$DOCKER_ROOT" VERSION="$VERSION_VALUE" sh "$docker_script"
-  fi
-  if [ "$ACTION" = update ] && [ -z "$VERSION_INPUT" ]; then
-    curl --proto '=https' --tlsv1.2 -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install-docker.sh" | env OBOARD_ACTION=update OBOARD_DOCKER_DIR="$DOCKER_ROOT" sh
-    exit $?
-  fi
-  curl --proto '=https' --tlsv1.2 -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install-docker.sh" | env OBOARD_ACTION="$ACTION" OBOARD_DOCKER_DIR="$DOCKER_ROOT" VERSION="$VERSION_VALUE" sh
-  exit $?
-fi
 
 if [ "$ACTION" = uninstall ]; then
   echo "二进制主控不能通过此脚本卸载。" >&2
@@ -248,7 +186,7 @@ ensure_acme_sh() {
 }
 
 detect_virt_hint() {
-  if [ -f /.dockerenv ] || [ -f /run/.containerenv ]; then
+  if [ -f /run/.containerenv ]; then
     echo container
     return
   fi
@@ -267,7 +205,7 @@ detect_virt_hint() {
       return
     fi
   fi
-  if [ -r /proc/1/cgroup ] && grep -qiE 'lxc|docker|kubepods|containerd|podman|libpod|incus' /proc/1/cgroup 2>/dev/null; then
+  if [ -r /proc/1/cgroup ] && grep -qiE 'lxc|kubepods|containerd|podman|libpod|incus' /proc/1/cgroup 2>/dev/null; then
     echo container
     return
   fi
@@ -407,40 +345,163 @@ prepare_controller_env() {
   fi
 }
 
-controller_public_url() {
-  local addr port host base_path public_url
-  base_path=$( (sed -n 's/^OBOARD_BASE_PATH=//p' /etc/oboard/controller.env 2>/dev/null || true) | tail -n1)
+valid_ipv4() {
+  local value=$1 old_ifs octet
+  case "$value" in ""|*[!0-9.]*) return 1 ;; esac
+  old_ifs=$IFS
+  IFS=.
+  set -- $value
+  IFS=$old_ifs
+  [ "$#" -eq 4 ] || return 1
+  for octet in "$@"; do
+    case "$octet" in ""|*[!0-9]*) return 1 ;; esac
+    [ "$octet" -le 255 ] || return 1
+  done
+}
+
+valid_ipv6() {
+  local value=$1
+  case "$value" in *:*) ;; *) return 1 ;; esac
+  case "$value" in *[!0-9A-Fa-f:.]*) return 1 ;; esac
+}
+
+is_private_ipv4() {
+  local value=$1 old_ifs first second
+  valid_ipv4 "$value" || return 1
+  old_ifs=$IFS
+  IFS=.
+  set -- $value
+  IFS=$old_ifs
+  first=$1
+  second=$2
+  [ "$first" -eq 10 ] && return 0
+  [ "$first" -eq 172 ] && [ "$second" -ge 16 ] && [ "$second" -le 31 ] && return 0
+  [ "$first" -eq 192 ] && [ "$second" -eq 168 ] && return 0
+  [ "$first" -eq 100 ] && [ "$second" -ge 64 ] && [ "$second" -le 127 ] && return 0
+  return 1
+}
+
+detect_lan_ip() {
+  local configured=${OBOARD_LAN_IP:-} candidate
+  if valid_ipv4 "$configured" || valid_ipv6 "$configured"; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+  if command -v ip >/dev/null 2>&1; then
+    candidate=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')
+    if is_private_ipv4 "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    for candidate in $(ip -o -4 addr show scope global 2>/dev/null | awk '{split($4, address, "/"); print address[1]}'); do
+      if is_private_ipv4 "$candidate"; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  fi
+  if command -v hostname >/dev/null 2>&1; then
+    for candidate in $(hostname -I 2>/dev/null || true); do
+      if is_private_ipv4 "$candidate"; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+
+detect_public_ip() {
+  local configured=${OBOARD_PUBLIC_IP:-} endpoint candidate
+  if valid_ipv4 "$configured" || valid_ipv6 "$configured"; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+  for endpoint in https://api.ipify.org https://ifconfig.me/ip https://icanhazip.com; do
+    candidate=$(curl -4 -fsS --connect-timeout 2 --max-time 4 "$endpoint" 2>/dev/null | tr -d '[:space:]' || true)
+    if valid_ipv4 "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  candidate=$(curl -6 -fsS --connect-timeout 2 --max-time 4 https://api64.ipify.org 2>/dev/null | tr -d '[:space:]' || true)
+  if valid_ipv6 "$candidate"; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  return 1
+}
+
+controller_base_path() {
+  local base_path=${OBOARD_BASE_PATH:-}
+  if [ -z "$base_path" ]; then
+    base_path=$( (sed -n 's/^OBOARD_BASE_PATH=//p' /etc/oboard/controller.env 2>/dev/null || true) | tail -n1)
+  fi
   base_path=${base_path%/}
   [ "$base_path" = / ] && base_path=
+  printf '%s' "$base_path"
+}
+
+controller_port() {
+  local addr=${OBOARD_ADDR:-} port
+  if [ -z "$addr" ]; then
+    addr=$( (sed -n 's/^OBOARD_ADDR=//p' /etc/oboard/controller.env 2>/dev/null || true) | tail -n1)
+  fi
+  port=${addr##*:}
+  case "$port" in *[!0-9]*|"") port=2787 ;; esac
+  printf '%s' "$port"
+}
+
+controller_url() {
+  local host=$1
+  case "$host" in *:*) host="[$host]" ;; esac
+  printf 'http://%s:%s%s' "$host" "$(controller_port)" "$(controller_base_path)"
+}
+
+configured_public_url() {
+  local public_url=${OBOARD_PUBLIC_URL%/} base_path
+  base_path=$(controller_base_path)
+  case "$public_url" in *"$base_path") ;; *) public_url="$public_url$base_path" ;; esac
+  printf '%s' "$public_url"
+}
+
+controller_agent_url() {
   if [ -n "${OBOARD_PUBLIC_URL:-}" ]; then
-    public_url=${OBOARD_PUBLIC_URL%/}
-    case "$public_url" in
-      *"$base_path") ;;
-      *) public_url="$public_url$base_path" ;;
-    esac
-    printf '%s\n' "$public_url"
+    configured_public_url
+  else
+    controller_url 127.0.0.1
+  fi
+}
+
+print_controller_urls() {
+  local lan_ip public_ip
+  if [ -n "${OBOARD_PUBLIC_URL:-}" ]; then
+    echo "  访问地址：$(configured_public_url)"
     return
   fi
-  addr=$( (sed -n 's/^OBOARD_ADDR=//p' /etc/oboard/controller.env 2>/dev/null || true) | tail -n1)
-  port=${addr##*:}
-  case "$port" in (*[!0-9]*|"") port=2787 ;; esac
-  host=$( (hostname -I 2>/dev/null || true) | awk '{print $1}')
-  if [ -z "$host" ] && command -v ip >/dev/null 2>&1; then
-    host=$( (ip route get 1.1.1.1 2>/dev/null || true) | awk '{for(i=1;i<=NF;i++) if($i=="src") {print $(i+1); exit}}')
+  lan_ip=$(detect_lan_ip || true)
+  public_ip=$(detect_public_ip || true)
+  if [ -n "$lan_ip" ]; then
+    echo "  内网访问：$(controller_url "$lan_ip")"
   fi
-  [ -n "$host" ] || host=127.0.0.1
-  case "$host" in (*:*) host="[$host]" ;; esac
-  printf 'http://%s:%s%s\n' "$host" "$port" "$base_path"
+  if [ -n "$public_ip" ] && [ "$public_ip" != "$lan_ip" ]; then
+    echo "  公网访问：$(controller_url "$public_ip")"
+  fi
+  if [ -z "$lan_ip" ] && [ -z "$public_ip" ]; then
+    echo "  本机访问：$(controller_url 127.0.0.1)"
+    echo "  未能自动探测服务器 IP，请确认网卡和公网出口后替换地址。"
+  fi
 }
 
 print_controller_help() {
   local url
-  url=$(controller_public_url)
+  url=$(controller_agent_url)
   echo ""
   echo "========================================"
   echo "OBoard 主控安装 / 更新完成"
   echo "========================================"
-  echo "面板地址：$url"
+  echo "面板地址："
+  print_controller_urls
   echo "配置文件：/etc/oboard/controller.env"
   echo "数据目录：/var/lib/oboard"
   echo ""
@@ -490,7 +551,7 @@ install_agent_from_controller() {
   local action=${OBOARD_AGENT_ACTION:-install}
   local controller_url=${OBOARD_CONTROLLER_URL:-}
   if [ -z "$controller_url" ]; then
-    controller_url=$(controller_public_url)
+    controller_url=$(controller_agent_url)
   fi
   controller_url=${controller_url%/}
   if [ "$action" = install ] && [ -z "${OBOARD_ENROLL_TOKEN:-}" ]; then
@@ -620,23 +681,6 @@ prepare_controller_updater_runtime() {
   install -d -m 0700 -o root -g root /var/lib/oboard/controller-update
 }
 
-harden_controller_updater_unit() {
-  local unit=/etc/systemd/system/oboard-controller-updater.service
-  local tmp
-  [ -f "$unit" ] || return 0
-  # Older packages required binary- or docker-only paths and failed NAMESPACE
-  # setup when the inactive install mode directories were absent.
-  tmp=$(mktemp)
-  sed \
-    -e 's#\([[:space:]]\)/var/lib/oboard\([[:space:]]\)#\1-/var/lib/oboard\2#g' \
-    -e 's#\([[:space:]]\)/opt/oboard\([[:space:]]\)#\1-/opt/oboard\2#g' \
-    -e 's#\([[:space:]]\)/opt/oboard-docker\([[:space:]]\)#\1-/opt/oboard-docker\2#g' \
-    -e 's#\([[:space:]]\)/etc/oboard\([[:space:]]\)#\1-/etc/oboard\2#g' \
-    "$unit" > "$tmp"
-  sed -e 's#--/#-/#g' "$tmp" > "$unit"
-  rm -f "$tmp"
-}
-
 start_controller_systemd() {
   if [ "${OBOARD_START_SERVICE:-1}" = "0" ]; then
     echo "已按 OBOARD_START_SERVICE=0 跳过主控启动。" >&2
@@ -722,11 +766,9 @@ install_component() {
         fi
         prepare_controller_env
         set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"
-        set_controller_env_value OBOARD_INSTALL_METHOD binary
         configure_bootstrap_admin
         cp "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/
         cp "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/
-        harden_controller_updater_unit
         prepare_controller_updater_runtime
         systemctl daemon-reload
         systemctl enable oboard-controller-updater
@@ -762,7 +804,6 @@ install_component() {
         fi
         prepare_controller_env
         set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"
-        set_controller_env_value OBOARD_INSTALL_METHOD binary
         configure_bootstrap_admin
         cp "$work/deploy/openrc/oboard-controller" /etc/init.d/oboard-controller
         cp "$work/deploy/openrc/oboard-controller-updater" /etc/init.d/oboard-controller-updater

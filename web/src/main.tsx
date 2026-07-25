@@ -65,7 +65,6 @@ function stripAppBasePath(pathname: string) {
 
 type Role = 'admin' | 'operator' | 'viewer'
 type ControllerUpdateStatus = {
-  install_method: 'binary' | 'docker' | ''
   channel: 'stable' | 'dev' | 'pinned' | ''
   current: { version: string; build: string; commit: string; date: string }
   available: { version: string; build: string; commit: string; date: string }
@@ -2155,7 +2154,7 @@ function SettingsPage({ data, client, load, notify }: any) {
 
 function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   const emptyStatus: ControllerUpdateStatus = {
-    install_method: '', channel: '', current: { version: data.version?.version || '', build: data.version?.build || '', commit: data.version?.commit || '', date: data.version?.built_at || '' },
+    channel: '', current: { version: data.version?.version || '', build: data.version?.build || '', commit: data.version?.commit || '', date: data.version?.built_at || '' },
     available: { version: '', build: '', commit: '', date: '' }, update_available: false, auto_update_enabled: false, status: 'loading',
   }
   const [snapshot, setSnapshot] = useState<ControllerUpdateStatus>(emptyStatus)
@@ -2243,7 +2242,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || snapshot.status === 'installing' ? 'warning' : 'ok'
   return <section className="settings-card controller-update-card">
     <div className="settings-card-head">
-      <div><h3>主控更新</h3><p className="muted">{snapshot.install_method === 'docker' ? 'Docker 安装' : snapshot.install_method === 'binary' ? '二进制安装' : '正在读取安装信息'} · {channelLabel}</p></div>
+      <div><h3>主控更新</h3><p className="muted">二进制安装 · {channelLabel}</p></div>
       <span className={`status-pill ${statusTone}`}>{labels[snapshot.status] || snapshot.status}</span>
     </div>
     {snapshot.channel === 'dev' && <div className="controller-update-warning"><Info size={17} /><span><strong>开发版更新频繁</strong><small>可能包含尚未稳定的功能。</small></span></div>}

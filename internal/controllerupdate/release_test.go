@@ -144,50 +144,25 @@ func writeTestControllerArchive(t *testing.T, path string, entries []archiveEntr
 
 func TestDetectInstallation(t *testing.T) {
 	root := t.TempDir()
-	dockerRoot := filepath.Join(root, "docker")
-	if err := os.MkdirAll(dockerRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	binaryEnv := filepath.Join(root, "controller.env")
-	service := NewService(ServiceConfig{DockerRoot: dockerRoot, BinaryEnvPath: binaryEnv, ControllerBinary: filepath.Join(root, "oboard-controller"), StatePath: filepath.Join(root, "status.json")})
-	if err := os.WriteFile(filepath.Join(dockerRoot, ".env"), []byte("OBOARD_IMAGE=ghcr.io/oboardproject/oboard\nOBOARD_TAG=dev\n"), 0o600); err != nil {
+	binary := filepath.Join(root, "oboard-controller")
+	service := NewService(ServiceConfig{BinaryEnvPath: binaryEnv, ControllerBinary: binary, StatePath: filepath.Join(root, "status.json")})
+	if channel, _, detectionError := service.detectInstallation(); channel != "" || detectionError == "" {
+		t.Fatalf("missing binary got channel=%q error=%q", channel, detectionError)
+	}
+	if err := os.WriteFile(binary, []byte("controller"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	method, channel, _, detectionError := service.detectInstallation()
-	if method != "docker" || channel != "dev" {
-		t.Fatalf("got %s/%s", method, channel)
-	}
-	if detectionError != "" {
-		t.Fatal(detectionError)
-	}
-	if err := os.WriteFile(filepath.Join(dockerRoot, ".env"), []byte("OBOARD_IMAGE=example.invalid/oboard\nOBOARD_TAG=latest\n"), 0o600); err != nil {
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_UPDATE_CHANNEL=dev\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, channel, command, _ := service.detectInstallation()
-	if channel != "pinned" || !strings.Contains(command, officialImage) {
-		t.Fatalf("custom image got channel=%s command=%q", channel, command)
+	if channel, _, detectionError := service.detectInstallation(); channel != "dev" || detectionError != "" {
+		t.Fatalf("development binary got channel=%q error=%q", channel, detectionError)
 	}
-	if err := os.WriteFile(binaryEnv, []byte("OBOARD_INSTALL_METHOD=binary\nOBOARD_UPDATE_CHANNEL=stable\n"), 0o600); err != nil {
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_UPDATE_CHANNEL=pinned\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	method, channel, _, detectionError = service.detectInstallation()
-	if method != "" || channel != "" || detectionError == "" {
-		t.Fatalf("conflicting installations got method=%q channel=%q error=%q", method, channel, detectionError)
-	}
-}
-
-func TestValidateDockerImageLabels(t *testing.T) {
-	expected := BuildInfo{Version: "1.2.0", Commit: "abc123"}
-	labels := map[string]string{
-		"org.opencontainers.image.source":   "https://github.com/OboardProject/oboard",
-		"org.opencontainers.image.version":  expected.Version,
-		"org.opencontainers.image.revision": expected.Commit,
-	}
-	if err := validateDockerImageLabels(labels, expected); err != nil {
-		t.Fatal(err)
-	}
-	labels["org.opencontainers.image.revision"] = "other"
-	if err := validateDockerImageLabels(labels, expected); err == nil {
-		t.Fatal("mismatched Docker image commit was accepted")
+	if channel, command, detectionError := service.detectInstallation(); channel != "pinned" || !strings.Contains(command, "OBOARD_UPDATE_CHANNEL=stable") || detectionError != "" {
+		t.Fatalf("pinned binary got channel=%q command=%q error=%q", channel, command, detectionError)
 	}
 }

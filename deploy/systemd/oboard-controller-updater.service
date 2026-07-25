@@ -2,7 +2,6 @@
 Description=OBoard Controller Updater
 After=network-online.target
 Wants=network-online.target
-Before=docker.service
 
 [Service]
 Type=simple
@@ -19,7 +18,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=/run/oboard -/var/lib/oboard -/opt/oboard -/opt/oboard-docker /usr/local/bin -/etc/oboard /etc/systemd/system
+ReadWritePaths=/run/oboard /var/lib/oboard /opt/oboard /usr/local/bin
 LockPersonality=true
 MemoryDenyWriteExecute=true
 

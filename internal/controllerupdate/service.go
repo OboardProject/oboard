@@ -24,12 +24,9 @@ import (
 	"github.com/OboardProject/oboard/internal/version"
 )
 
-const officialImage = "ghcr.io/oboardproject/oboard"
-
 type ServiceConfig struct {
 	SocketPath       string
 	BinaryEnvPath    string
-	DockerRoot       string
 	StatePath        string
 	ControllerBinary string
 	UpdaterBinary    string
@@ -50,7 +47,6 @@ func DefaultServiceConfig() ServiceConfig {
 	return ServiceConfig{
 		SocketPath:       DefaultSocketPath,
 		BinaryEnvPath:    "/etc/oboard/controller.env",
-		DockerRoot:       "/opt/oboard-docker",
 		StatePath:        "/var/lib/oboard/controller-update/status.json",
 		ControllerBinary: "/usr/local/bin/oboard-controller",
 		UpdaterBinary:    "/usr/local/bin/oboard-controller-updater",
@@ -60,7 +56,7 @@ func DefaultServiceConfig() ServiceConfig {
 		HTTPClient:       &http.Client{Timeout: 2 * time.Minute},
 		RunCommand: func(ctx context.Context, name string, args ...string) error {
 			switch name {
-			case "docker", "systemctl", "rc-service":
+			case "systemctl", "rc-service":
 			default:
 				return errors.New("command is not allowlisted")
 			}
@@ -80,9 +76,6 @@ func NewService(config ServiceConfig) *Service {
 	}
 	if config.BinaryEnvPath == "" {
 		config.BinaryEnvPath = defaults.BinaryEnvPath
-	}
-	if config.DockerRoot == "" {
-		config.DockerRoot = defaults.DockerRoot
 	}
 	if config.StatePath == "" {
 		config.StatePath = defaults.StatePath
@@ -187,7 +180,7 @@ func (s *Service) handleInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	status := s.decorateStatus(s.status)
-	if status.InstallMethod == "" {
+	if status.Channel == "" {
 		s.mu.Unlock()
 		writeStatus(w, http.StatusConflict, status)
 		return
@@ -230,7 +223,7 @@ func requestHasBody(r *http.Request) bool {
 func (s *Service) check(ctx context.Context) (Status, error) {
 	s.mu.Lock()
 	status := s.decorateStatus(s.status)
-	if status.InstallMethod == "" {
+	if status.Channel == "" {
 		err := errors.New(status.LastError)
 		s.mu.Unlock()
 		return status, err
@@ -276,7 +269,7 @@ func (s *Service) check(ctx context.Context) (Status, error) {
 func (s *Service) install(ctx context.Context) (Status, error) {
 	s.mu.Lock()
 	status := s.decorateStatus(s.status)
-	if status.InstallMethod == "" {
+	if status.Channel == "" {
 		err := errors.New(status.LastError)
 		s.mu.Unlock()
 		return status, err
@@ -301,11 +294,7 @@ func (s *Service) install(ctx context.Context) (Status, error) {
 			defer s.mu.Unlock()
 			return status, s.saveStatus(status)
 		}
-		if status.InstallMethod == "docker" {
-			err = s.installDocker(ctx, status, release)
-		} else {
-			err = s.installBinary(ctx, release)
-		}
+		err = s.installBinary(ctx, release)
 	}
 	if err != nil {
 		status.State, status.LastError = "failed", err.Error()
@@ -324,9 +313,9 @@ func (s *Service) install(ctx context.Context) (Status, error) {
 }
 
 func (s *Service) decorateStatus(status Status) Status {
-	method, channel, command, detectionError := s.detectInstallation()
-	status.InstallMethod, status.Channel, status.ManualCommand = method, channel, command
-	status.Current = s.currentBuildInfo(method)
+	channel, command, detectionError := s.detectInstallation()
+	status.Channel, status.ManualCommand = channel, command
+	status.Current = s.currentBuildInfo()
 	if detectionError != "" {
 		status.State = "failed"
 		status.UpdateAvailable = false
@@ -343,35 +332,15 @@ func (s *Service) decorateStatus(status Status) Status {
 	return status
 }
 
-func (s *Service) detectInstallation() (string, string, string, string) {
-	dockerValues, dockerErr := readEnv(filepath.Join(s.config.DockerRoot, ".env"))
+func (s *Service) detectInstallation() (string, string, string) {
+	info, err := os.Stat(s.config.ControllerBinary)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", "", "未检测到二进制主控安装。"
+	}
 	binaryValues, _ := readEnv(s.config.BinaryEnvPath)
-	dockerInstalled := dockerErr == nil && (strings.EqualFold(strings.TrimSpace(dockerValues["OBOARD_INSTALL_METHOD"]), "docker") || strings.TrimSpace(dockerValues["OBOARD_TAG"]) != "")
-	binaryInstalled := strings.EqualFold(strings.TrimSpace(binaryValues["OBOARD_INSTALL_METHOD"]), "binary")
-	if info, err := os.Stat(s.config.ControllerBinary); err == nil && info.Mode().IsRegular() {
-		binaryInstalled = true
-	}
-	if dockerInstalled && binaryInstalled {
-		return "", "", "", "检测到二进制和 Docker 两种主控安装。请保留一种安装后再检查更新。"
-	}
-	if dockerInstalled {
-		tag := strings.TrimSpace(dockerValues["OBOARD_TAG"])
-		image := strings.ToLower(strings.TrimSpace(dockerValues["OBOARD_IMAGE"]))
-		if image != "" && image != officialImage {
-			return "docker", "pinned", "cd /opt/oboard-docker && sed -i 's#^OBOARD_IMAGE=.*#OBOARD_IMAGE=ghcr.io/oboardproject/oboard#' .env", ""
-		}
-		switch tag {
-		case "dev":
-			return "docker", "dev", "", ""
-		case "latest", "stable":
-			return "docker", "stable", "", ""
-		default:
-			return "docker", "pinned", "cd /opt/oboard-docker && sed -i 's/^OBOARD_TAG=.*/OBOARD_TAG=latest/' .env && docker compose pull controller && docker compose up -d controller", ""
-		}
-	}
 	channel := strings.ToLower(strings.TrimSpace(binaryValues["OBOARD_UPDATE_CHANNEL"]))
 	if channel == "pinned" {
-		return "binary", "pinned", "sed -i 's/^OBOARD_UPDATE_CHANNEL=.*/OBOARD_UPDATE_CHANNEL=stable/' /etc/oboard/controller.env && (systemctl restart oboard-controller-updater || rc-service oboard-controller-updater restart)", ""
+		return "pinned", "sed -i 's/^OBOARD_UPDATE_CHANNEL=.*/OBOARD_UPDATE_CHANNEL=stable/' /etc/oboard/controller.env && (systemctl restart oboard-controller-updater || rc-service oboard-controller-updater restart)", ""
 	}
 	if channel != "dev" && channel != "stable" {
 		if version.IsDev() {
@@ -380,24 +349,16 @@ func (s *Service) detectInstallation() (string, string, string, string) {
 			channel = "stable"
 		}
 	}
-	return "binary", channel, "", ""
+	return channel, "", ""
 }
 
-func (s *Service) currentBuildInfo(method string) BuildInfo {
+func (s *Service) currentBuildInfo() BuildInfo {
 	info := BuildInfo{Version: version.Version, Build: version.Build, Commit: version.Commit, Date: version.Date}
 	values, _ := readEnv(s.config.BinaryEnvPath)
-	if method == "docker" {
-		values, _ = readEnv(filepath.Join(s.config.DockerRoot, ".env"))
-	}
 	basePath := strings.TrimRight(values["OBOARD_BASE_PATH"], "/")
 	port := "2787"
-	if method == "docker" && values["OBOARD_PORT"] != "" {
-		port = values["OBOARD_PORT"]
-	}
-	if method == "binary" {
-		if addr := values["OBOARD_ADDR"]; strings.Contains(addr, ":") {
-			port = addr[strings.LastIndex(addr, ":")+1:]
-		}
+	if addr := values["OBOARD_ADDR"]; strings.Contains(addr, ":") {
+		port = addr[strings.LastIndex(addr, ":")+1:]
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get("http://127.0.0.1:" + port + basePath + "/api/v1/version")
@@ -690,11 +651,11 @@ func (s *Service) replaceBinaryProgram(ctx context.Context, stage string) error 
 			return err
 		}
 	}
-	if err := s.restartAndWait(ctx, "binary"); err != nil {
+	if err := s.restartAndWait(ctx); err != nil {
 		runRollback()
 		rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		if rollbackErr := s.restartAndWait(rollbackCtx, "binary"); rollbackErr != nil {
+		if rollbackErr := s.restartAndWait(rollbackCtx); rollbackErr != nil {
 			return fmt.Errorf("controller update failed (%v) and program rollback did not become healthy: %w", err, rollbackErr)
 		}
 		return fmt.Errorf("controller health check failed; program files rolled back: %w", err)
@@ -788,141 +749,14 @@ func copyRootFile(sourceRoot *os.Root, source string, destinationRoot *os.Root, 
 	return closeErr
 }
 
-func (s *Service) installDocker(ctx context.Context, status Status, release remoteRelease) error {
-	values, err := readEnv(filepath.Join(s.config.DockerRoot, ".env"))
-	if err != nil {
+func (s *Service) restartAndWait(ctx context.Context) error {
+	if err := s.restartController(ctx); err != nil {
 		return err
 	}
-	if strings.ToLower(values["OBOARD_IMAGE"]) != officialImage {
-		return errors.New("Docker self-update requires the official OBoard image")
-	}
-	tag := values["OBOARD_TAG"]
-	if tag == "stable" {
-		tag = "latest"
-	}
-	if tag != "latest" && tag != "dev" {
-		return errors.New("pinned Docker installation cannot be updated")
-	}
-	stage, err := s.stageControllerRelease(ctx, release)
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(stage)
-	rollbackUpdater, commitUpdater, err := stageFileReplacement(filepath.Join(stage, "bin/oboard-controller-updater"), s.config.UpdaterBinary)
-	if err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			rollbackUpdater()
-		}
-	}()
-	oldID, err := dockerOutput(ctx, "inspect", "--format", "{{.Image}}", "oboard-controller")
-	if err != nil {
-		return err
-	}
-	compose := []string{"compose", "--project-directory", s.config.DockerRoot, "--env-file", filepath.Join(s.config.DockerRoot, ".env"), "-f", filepath.Join(s.config.DockerRoot, "docker-compose.yml")}
-	if err := s.config.RunCommand(ctx, "docker", append(compose, "pull", "controller")...); err != nil {
-		return err
-	}
-	if err := validateDockerImage(ctx, officialImage+":"+tag, status.Available); err != nil {
-		return err
-	}
-	if err := s.config.RunCommand(ctx, "docker", append(compose, "up", "-d", "controller")...); err != nil {
-		return err
-	}
-	if err := s.waitHealth(ctx, "docker"); err != nil {
-		rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		if rollbackErr := s.config.RunCommand(rollbackCtx, "docker", "image", "tag", strings.TrimSpace(oldID), officialImage+":"+tag); rollbackErr != nil {
-			return fmt.Errorf("controller update failed (%v) and Docker rollback could not restore the previous tag: %w", err, rollbackErr)
-		}
-		if rollbackErr := s.config.RunCommand(rollbackCtx, "docker", append(compose, "up", "-d", "controller")...); rollbackErr != nil {
-			return fmt.Errorf("controller update failed (%v) and Docker rollback could not start the previous image: %w", err, rollbackErr)
-		}
-		if rollbackErr := s.waitHealth(rollbackCtx, "docker"); rollbackErr != nil {
-			return fmt.Errorf("controller update failed (%v) and Docker rollback did not become healthy: %w", err, rollbackErr)
-		}
-		return fmt.Errorf("controller health check failed; previous Docker image restored: %w", err)
-	}
-	commitUpdater()
-	committed = true
-	return nil
+	return s.waitHealth(ctx)
 }
 
-func stageFileReplacement(source, destination string) (rollback func(), commit func(), err error) {
-	pending := destination + ".update-new"
-	backup := destination + ".update-backup"
-	_ = os.RemoveAll(pending)
-	_ = os.RemoveAll(backup)
-	if err := copyTree(source, pending); err != nil {
-		return nil, nil, err
-	}
-	hadPrevious := false
-	if _, err := os.Stat(destination); err == nil {
-		hadPrevious = true
-		if err := os.Rename(destination, backup); err != nil {
-			_ = os.RemoveAll(pending)
-			return nil, nil, err
-		}
-	} else if !os.IsNotExist(err) {
-		_ = os.RemoveAll(pending)
-		return nil, nil, err
-	}
-	if err := os.Rename(pending, destination); err != nil {
-		if hadPrevious {
-			_ = os.Rename(backup, destination)
-		}
-		_ = os.RemoveAll(pending)
-		return nil, nil, err
-	}
-	rollback = func() {
-		_ = os.RemoveAll(destination)
-		if hadPrevious {
-			_ = os.Rename(backup, destination)
-		}
-	}
-	commit = func() { _ = os.RemoveAll(backup) }
-	return rollback, commit, nil
-}
-
-func validateDockerImage(ctx context.Context, image string, expected BuildInfo) error {
-	output, err := dockerOutput(ctx, "image", "inspect", "--format", "{{json .Config.Labels}}", image)
-	if err != nil {
-		return fmt.Errorf("inspect pulled Controller image: %w", err)
-	}
-	labels := map[string]string{}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &labels); err != nil {
-		return fmt.Errorf("decode pulled Controller image labels: %w", err)
-	}
-	return validateDockerImageLabels(labels, expected)
-}
-
-func validateDockerImageLabels(labels map[string]string, expected BuildInfo) error {
-	if labels["org.opencontainers.image.source"] != "https://github.com/OboardProject/oboard" || labels["org.opencontainers.image.version"] != expected.Version || labels["org.opencontainers.image.revision"] != expected.Commit {
-		return errors.New("pulled Controller image metadata does not match the release manifest")
-	}
-	return nil
-}
-
-func dockerOutput(ctx context.Context, args ...string) (string, error) {
-	// #nosec G204 -- executable is fixed and args are built only from root-owned updater state.
-	output, err := exec.CommandContext(ctx, "docker", args...).Output()
-	return string(output), err
-}
-
-func (s *Service) restartAndWait(ctx context.Context, method string) error {
-	if err := s.restartController(ctx, method); err != nil {
-		return err
-	}
-	return s.waitHealth(ctx, method)
-}
-
-func (s *Service) restartController(ctx context.Context, method string) error {
-	if method == "docker" {
-		return nil
-	}
+func (s *Service) restartController(ctx context.Context) error {
 	if _, err := os.Stat("/run/systemd/system"); err == nil {
 		return s.config.RunCommand(ctx, "systemctl", "restart", "oboard-controller.service")
 	}
@@ -932,15 +766,10 @@ func (s *Service) restartController(ctx context.Context, method string) error {
 	return errors.New("supported service manager not found")
 }
 
-func (s *Service) waitHealth(ctx context.Context, method string) error {
+func (s *Service) waitHealth(ctx context.Context) error {
 	values, _ := readEnv(s.config.BinaryEnvPath)
 	port := "2787"
-	if method == "docker" {
-		values, _ = readEnv(filepath.Join(s.config.DockerRoot, ".env"))
-		if values["OBOARD_PORT"] != "" {
-			port = values["OBOARD_PORT"]
-		}
-	} else if addr := values["OBOARD_ADDR"]; strings.Contains(addr, ":") {
+	if addr := values["OBOARD_ADDR"]; strings.Contains(addr, ":") {
 		port = addr[strings.LastIndex(addr, ":")+1:]
 	}
 	url := "http://127.0.0.1:" + port + strings.TrimRight(values["OBOARD_BASE_PATH"], "/") + "/healthz"

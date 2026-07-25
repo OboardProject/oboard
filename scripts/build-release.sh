@@ -89,13 +89,6 @@ package_controller() {
   cp "$CONTROLLER_DIR/deploy/openrc/oboard-controller" "$stage/deploy/openrc/"
   cp "$CONTROLLER_DIR/deploy/openrc/oboard-controller-updater" "$stage/deploy/openrc/"
   cp "$CONTROLLER_DIR/deploy/controller.env.example" "$stage/deploy/"
-  mkdir -p "$stage/deploy/docker"
-  cp "$CONTROLLER_DIR/deploy/docker-compose.yml" "$stage/deploy/"
-  cp "$CONTROLLER_DIR/deploy/docker/Dockerfile.controller" "$stage/deploy/docker/"
-  cp "$CONTROLLER_DIR/deploy/docker/entrypoint.sh" "$stage/deploy/docker/"
-  mkdir -p "$stage/scripts"
-  cp "$CONTROLLER_DIR/scripts/install-docker.sh" "$stage/scripts/"
-  cp "$CONTROLLER_DIR/scripts/update-docker.sh" "$stage/scripts/"
 
   local archive="$OUT_DIR/oboard_controller_${ARTIFACT_VERSION}_${os}_${arch}.tar.gz"
   local install_archive="$OUT_DIR/oboard_controller_${ARTIFACT_VERSION}_${os}_${arch}_install.tar.gz"

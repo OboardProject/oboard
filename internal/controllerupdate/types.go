@@ -34,7 +34,6 @@ type BuildInfo struct {
 }
 
 type Status struct {
-	InstallMethod     string    `json:"install_method"`
 	Channel           string    `json:"channel"`
 	Current           BuildInfo `json:"current"`
 	Available         BuildInfo `json:"available"`

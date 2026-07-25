@@ -14,11 +14,12 @@ import (
 
 func TestControllerUpdateAPIAndBackupRetention(t *testing.T) {
 	root := t.TempDir()
-	dockerRoot := filepath.Join(root, "docker")
-	if err := os.MkdirAll(dockerRoot, 0o700); err != nil {
+	binary := filepath.Join(root, "oboard-controller")
+	if err := os.WriteFile(binary, []byte("controller"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dockerRoot, ".env"), []byte("OBOARD_IMAGE=ghcr.io/oboardproject/oboard\nOBOARD_TAG=1.2.3\n"), 0o600); err != nil {
+	binaryEnv := filepath.Join(root, "controller.env")
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_UPDATE_CHANNEL=pinned\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	socketDir, err := os.MkdirTemp("/tmp", "obu-")
@@ -29,11 +30,11 @@ func TestControllerUpdateAPIAndBackupRetention(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 	statePath := filepath.Join(root, "updater-status.json")
 	updater := controllerupdate.NewService(controllerupdate.ServiceConfig{
-		SocketPath:    socketPath,
-		DockerRoot:    dockerRoot,
-		BinaryEnvPath: filepath.Join(root, "controller.env"),
-		StatePath:     statePath,
-		WorkRoot:      filepath.Join(root, "work"),
+		SocketPath:       socketPath,
+		BinaryEnvPath:    binaryEnv,
+		ControllerBinary: binary,
+		StatePath:        statePath,
+		WorkRoot:         filepath.Join(root, "work"),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -79,7 +80,7 @@ func TestControllerUpdateAPIAndBackupRetention(t *testing.T) {
 	login := request(t, handler, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := login["token"].(string)
 	status := request(t, handler, http.MethodGet, "/api/v1/controller-update", adminToken, nil, http.StatusOK)
-	if status["install_method"] != "docker" || status["channel"] != "pinned" || status["status"] != "pinned" {
+	if _, exists := status["install_method"]; exists || status["channel"] != "pinned" || status["status"] != "pinned" {
 		t.Fatalf("unexpected update status: %#v", status)
 	}
 	request(t, handler, http.MethodPost, "/api/v1/controller-update/check", adminToken, nil, http.StatusOK)
@@ -105,14 +106,13 @@ func TestControllerUpdateAPIAndBackupRetention(t *testing.T) {
 }
 
 func TestFallbackControllerUpdateStatus(t *testing.T) {
-	t.Setenv("OBOARD_INSTALL_METHOD", "docker")
 	t.Setenv("OBOARD_UPDATE_CHANNEL", "latest")
 	status := (&Server{}).fallbackControllerUpdateStatus()
-	if status.InstallMethod != "docker" || status.Channel != "stable" || status.State != "unavailable" {
+	if status.Channel != "stable" || status.State != "unavailable" {
 		t.Fatalf("unexpected fallback status: %#v", status)
 	}
 	t.Setenv("OBOARD_UPDATE_CHANNEL", "1.2.3")
 	if status := (&Server{}).fallbackControllerUpdateStatus(); status.Channel != "pinned" {
-		t.Fatalf("exact Docker tag should be pinned: %#v", status)
+		t.Fatalf("exact binary version should be pinned: %#v", status)
 	}
 }

@@ -55,7 +55,6 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"almalinux",
 		"OBOARD_UPDATE_CHANNEL",
 		"oboard-controller-updater",
-		"harden_controller_updater_unit",
 		"prepare_controller_updater_runtime",
 		"wait_for_controller_updater",
 		"curl --unix-socket /run/oboard/controller-updater.sock",
@@ -79,7 +78,7 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 	}
 }
 
-func TestControllerUpdaterUnitOptionalInstallPaths(t *testing.T) {
+func TestControllerUpdaterUnitBinaryWritePaths(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("unable to locate test file")
@@ -90,19 +89,13 @@ func TestControllerUpdaterUnitOptionalInstallPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(content)
-	for _, optional := range []string{"-/var/lib/oboard", "-/opt/oboard", "-/opt/oboard-docker", "-/etc/oboard"} {
-		if !strings.Contains(text, optional) {
-			t.Fatalf("updater unit must mark %s as optional so binary and Docker installs can start with only their own paths", optional)
-		}
+	want := "ReadWritePaths=/run/oboard /var/lib/oboard /opt/oboard /usr/local/bin"
+	if !strings.Contains(text, want) {
+		t.Fatalf("updater unit missing binary installation write paths %q", want)
 	}
-	for _, required := range []string{
-		"ReadWritePaths=/run/oboard /var/lib/oboard ",
-		"ReadWritePaths=/run/oboard /var/lib/oboard /opt/oboard /opt/oboard-docker ",
-		" /opt/oboard /opt/oboard-docker ",
-		" /etc/oboard /etc/systemd/system",
-	} {
-		if strings.Contains(text, required) {
-			t.Fatalf("updater unit still requires a non-optional install path fragment %q", required)
+	for _, removed := range []string{"docker", "-/var/lib/oboard", "-/opt/oboard", "/etc/systemd/system"} {
+		if strings.Contains(strings.ToLower(text), removed) {
+			t.Fatalf("updater unit still contains removed path or dependency %q", removed)
 		}
 	}
 }
@@ -121,7 +114,7 @@ func TestControllerUpdaterRuntimePreparationPreservesDataRoot(t *testing.T) {
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 
-	for _, script := range []string{"scripts/install.sh", "scripts/install-docker.sh"} {
+	for _, script := range []string{"scripts/install.sh"} {
 		t.Run(script, func(t *testing.T) {
 			content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(script)))
 			if err != nil {

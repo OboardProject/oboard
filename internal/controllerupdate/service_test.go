@@ -9,15 +9,16 @@ import (
 
 func TestPinnedCheckPersistsStatus(t *testing.T) {
 	root := t.TempDir()
-	dockerRoot := filepath.Join(root, "docker")
-	if err := os.MkdirAll(dockerRoot, 0o700); err != nil {
+	binary := filepath.Join(root, "oboard-controller")
+	if err := os.WriteFile(binary, []byte("controller"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dockerRoot, ".env"), []byte("OBOARD_IMAGE=ghcr.io/oboardproject/oboard\nOBOARD_TAG=1.2.3\n"), 0o600); err != nil {
+	binaryEnv := filepath.Join(root, "controller.env")
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_UPDATE_CHANNEL=pinned\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	statePath := filepath.Join(root, "status.json")
-	config := ServiceConfig{DockerRoot: dockerRoot, BinaryEnvPath: filepath.Join(root, "controller.env"), StatePath: statePath}
+	config := ServiceConfig{BinaryEnvPath: binaryEnv, ControllerBinary: binary, StatePath: statePath}
 	service := NewService(config)
 	status, err := service.check(context.Background())
 	if err != nil {
@@ -29,47 +30,6 @@ func TestPinnedCheckPersistsStatus(t *testing.T) {
 	restored := NewService(config)
 	if restored.status.State != "pinned" || restored.status.LastCheckedAt == "" {
 		t.Fatalf("status was not restored: %#v", restored.status)
-	}
-}
-
-func TestStageFileReplacementRollbackAndCommit(t *testing.T) {
-	root := t.TempDir()
-	source := filepath.Join(root, "source")
-	destination := filepath.Join(root, "destination")
-	if err := os.WriteFile(source, []byte("new"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(destination, []byte("old"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	rollback, _, err := stageFileReplacement(source, destination)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertFileContent(t, destination, "new")
-	rollback()
-	assertFileContent(t, destination, "old")
-
-	rollback, commit, err := stageFileReplacement(source, destination)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = rollback
-	commit()
-	assertFileContent(t, destination, "new")
-	if _, err := os.Stat(destination + ".update-backup"); !os.IsNotExist(err) {
-		t.Fatalf("backup remains after commit: %v", err)
-	}
-}
-
-func assertFileContent(t *testing.T, path, expected string) {
-	t.Helper()
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(content) != expected {
-		t.Fatalf("%s = %q, want %q", path, content, expected)
 	}
 }
 

@@ -109,10 +109,6 @@ func (s *Server) controllerUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) fallbackControllerUpdateStatus() controllerupdate.Status {
-	method := strings.ToLower(strings.TrimSpace(os.Getenv("OBOARD_INSTALL_METHOD")))
-	if method != "docker" {
-		method = "binary"
-	}
 	channel := strings.ToLower(strings.TrimSpace(os.Getenv("OBOARD_UPDATE_CHANNEL")))
 	switch channel {
 	case "dev":
@@ -128,10 +124,9 @@ func (s *Server) fallbackControllerUpdateStatus() controllerupdate.Status {
 		channel = "pinned"
 	}
 	return controllerupdate.Status{
-		InstallMethod: method,
-		Channel:       channel,
-		State:         "unavailable",
-		LastError:     "主控更新器不可用，请检查 oboard-controller-updater 服务。",
+		Channel:   channel,
+		State:     "unavailable",
+		LastError: "主控更新器不可用，请检查 oboard-controller-updater 服务。",
 	}
 }
 
