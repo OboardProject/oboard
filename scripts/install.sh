@@ -57,7 +57,7 @@ select_installation() {
 
   case "$ACTION_INPUT" in
     ""|install|update|uninstall) ;;
-    *) echo "操作方式无效，请重新执行安装或更新。" >&2; exit 1 ;;
+    *) echo "操作方式无效，请选择安装、更新或卸载。" >&2; exit 1 ;;
   esac
   if [ "$INSTALLATION_EXISTS" = 1 ] && [ "$ACTION_INPUT" != uninstall ]; then
     ACTION=update
@@ -70,30 +70,7 @@ select_installation() {
   fi
 }
 
-case "$COMPONENT" in
-  controller|controller-agent|all) select_installation ;;
-esac
-
-if [ "$ACTION" = uninstall ]; then
-  echo "二进制主控不能通过此脚本卸载。" >&2
-  exit 1
-fi
-if [ "$ACTION" = update ] && [ -z "$VERSION_INPUT" ]; then
-  installed_channel=$(sed -n 's/^OBOARD_UPDATE_CHANNEL=//p' /etc/oboard/controller.env 2>/dev/null | tail -n1 | tr -d "'\"")
-  case "$installed_channel" in
-    dev) VERSION_VALUE=dev ;;
-    pinned)
-      echo "当前主控使用固定版本。请设置 VERSION=latest 或 VERSION=dev 后再更新。" >&2
-      exit 1
-      ;;
-    *) VERSION_VALUE=latest ;;
-  esac
-fi
-
-TMP_DIR=$(make_install_tmp)
-
 cleanup() { [ -z "$TMP_DIR" ] || rm -rf "$TMP_DIR"; }
-trap cleanup EXIT
 
 need_root() {
   if [ "$(id -u)" -ne 0 ]; then
@@ -144,7 +121,7 @@ ensure_base_tools() {
   if [ "$need_curl$need_ca$need_tar$need_sha" = "0000" ]; then
     return 0
   fi
-  echo "正在安装安装依赖（curl / CA / tar / checksum）..."
+  echo "正在安装所需组件（curl / CA 证书 / tar / 校验工具）..."
   packages=""
   [ "$need_curl" = 1 ] && packages="$packages curl"
   [ "$need_ca" = 1 ] && packages="$packages ca-certificates"
@@ -606,16 +583,43 @@ detect_arch() {
 }
 
 latest_version() {
-  curl --proto '=https' --tlsv1.2 -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-    | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' \
-    | head -n 1
+  local payload version
+  payload=$(curl --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 -fsSL \
+    "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null || true)
+  version=$(printf '%s' "$payload" | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -n 1)
+  if [ -n "$version" ]; then
+    printf '%s\n' "$version"
+    return 0
+  fi
+  if curl --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 -fsSL --range 0-0 \
+    "https://github.com/$REPO/releases/download/dev/sha256sums.txt" -o /dev/null 2>/dev/null; then
+    printf 'dev\n'
+    return 0
+  fi
+  return 1
+}
+
+download_file() {
+  local url=$1 destination=$2 attempt
+  for attempt in 1 2 3 4 5; do
+    if curl --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 300 -fsL "$url" -o "$destination"; then
+      return 0
+    fi
+    rm -f "$destination"
+    [ "$attempt" = 5 ] || sleep 2
+  done
+  return 1
 }
 
 verify_archive_paths() {
-  local archive=$1
-  if tar -tzf "$archive" | grep -E '(^/|(^|/)\.\.(/|$))' >/dev/null; then
-    echo "Archive contains unsafe paths: $archive" >&2
-    exit 1
+  local archive=$1 listing
+  if ! listing=$(tar -tzf "$archive"); then
+    echo "安装包损坏或格式不正确，已停止安装。" >&2
+    return 1
+  fi
+  if printf '%s\n' "$listing" | grep -E '(^/|(^|/)\.\.(/|$))' >/dev/null; then
+    echo "安装包包含不安全的文件路径，已停止安装。" >&2
+    return 1
   fi
 }
 
@@ -625,20 +629,32 @@ verify_checksum() {
   local release_tag="v$version"
   [ "$version" = dev ] && release_tag=dev
   local sums_url="https://github.com/$REPO/releases/download/$release_tag/sha256sums.txt"
-  if ! curl --proto '=https' --tlsv1.2 -fsSL "$sums_url" -o "$sums"; then
-    echo "sha256sums.txt not found for v$version; refusing unchecked install. Set OBOARD_SKIP_CHECKSUM=1 to override." >&2
+  if ! download_file "$sums_url" "$sums"; then
     if [ "${OBOARD_SKIP_CHECKSUM:-0}" != "1" ]; then
+      echo "无法下载安装包校验文件，已停止安装。" >&2
+      echo "请检查服务器是否可以访问 GitHub，然后稍后重试。" >&2
       exit 1
     fi
+    echo "未下载到校验文件，已按 OBOARD_SKIP_CHECKSUM=1 跳过校验。" >&2
     return 0
   fi
-  awk -v name="$name" '$2 == name || $2 ~ "/" name "$" { print $1 "  " name; found=1 } END { exit found ? 0 : 1 }' "$sums" > "$TMP_DIR/$name.sha256"
+  if ! awk -v name="$name" '$2 == name || $2 ~ "/" name "$" { print $1 "  " name; found=1 } END { exit found ? 0 : 1 }' \
+    "$sums" > "$TMP_DIR/$name.sha256"; then
+    echo "校验文件中没有当前安装包，已停止安装。" >&2
+    exit 1
+  fi
   if command -v sha256sum >/dev/null 2>&1; then
-    (cd "$TMP_DIR" && sha256sum -c "$name.sha256")
+    if ! (cd "$TMP_DIR" && sha256sum -c "$name.sha256"); then
+      echo "安装包校验失败，请重新下载安装。" >&2
+      exit 1
+    fi
   elif command -v shasum >/dev/null 2>&1; then
-    (cd "$TMP_DIR" && shasum -a 256 -c "$name.sha256")
+    if ! (cd "$TMP_DIR" && shasum -a 256 -c "$name.sha256"); then
+      echo "安装包校验失败，请重新下载安装。" >&2
+      exit 1
+    fi
   else
-    echo "sha256sum/shasum is required to verify release archives" >&2
+    echo "缺少安装包校验工具，请安装 sha256sum 或 shasum 后重试。" >&2
     exit 1
   fi
 }
@@ -699,6 +715,73 @@ start_controller_openrc() {
   echo "主控服务已启动。"
 }
 
+uninstall_controller() {
+  local service_manager=$1 purge=${OBOARD_PURGE_DATA:-0}
+  case "$purge" in
+    0|1) ;;
+    *)
+      echo "OBOARD_PURGE_DATA 只能设置为 0 或 1。" >&2
+      return 1
+      ;;
+  esac
+  if [ "$INSTALLATION_EXISTS" != 1 ]; then
+    echo "未检测到已安装的 OBoard 主控，无需卸载。"
+    return 0
+  fi
+
+  echo "正在卸载 OBoard 主控..."
+  case "$service_manager" in
+    systemd)
+      systemctl disable --now oboard-controller.service >/dev/null 2>&1 || true
+      systemctl disable --now oboard-controller-updater.service >/dev/null 2>&1 || true
+      ;;
+    openrc)
+      rc-service oboard-controller stop >/dev/null 2>&1 || true
+      rc-service oboard-controller-updater stop >/dev/null 2>&1 || true
+      rc-update del oboard-controller default >/dev/null 2>&1 || true
+      rc-update del oboard-controller-updater default >/dev/null 2>&1 || true
+      ;;
+  esac
+
+  rm -f /etc/systemd/system/oboard-controller.service \
+    /etc/systemd/system/oboard-controller-updater.service \
+    /etc/init.d/oboard-controller \
+    /etc/init.d/oboard-controller-updater
+  if [ "$service_manager" = systemd ]; then
+    systemctl daemon-reload
+    systemctl reset-failed oboard-controller.service oboard-controller-updater.service >/dev/null 2>&1 || true
+  fi
+  rm -f "$INSTALL_DIR/oboard-controller" \
+    "$INSTALL_DIR/oboard-controller-updater" \
+    "$INSTALL_DIR/oboard-controller.update-backup" \
+    "$INSTALL_DIR/oboard-controller.update-new" \
+    "$INSTALL_DIR/oboard-controller-updater.update-backup" \
+    "$INSTALL_DIR/oboard-controller-updater.update-new"
+  rm -rf /opt/oboard/web /opt/oboard/downloads /run/oboard /var/lib/oboard/controller-update
+  rmdir /opt/oboard 2>/dev/null || true
+  rm -f /var/log/oboard-controller.log /var/log/oboard-controller-updater.log
+
+  if [ "$purge" = 1 ]; then
+    rm -rf /etc/oboard /var/lib/oboard
+    if command -v userdel >/dev/null 2>&1; then
+      userdel oboard >/dev/null 2>&1 || true
+    elif command -v deluser >/dev/null 2>&1; then
+      deluser oboard >/dev/null 2>&1 || true
+    fi
+    if command -v groupdel >/dev/null 2>&1; then
+      groupdel oboard >/dev/null 2>&1 || true
+    elif command -v delgroup >/dev/null 2>&1; then
+      delgroup oboard >/dev/null 2>&1 || true
+    fi
+    echo "OBoard 主控已卸载，配置和数据已删除。"
+  else
+    echo "OBoard 主控已卸载。"
+    echo "配置和数据已保留在 /etc/oboard 和 /var/lib/oboard。"
+    echo "再次安装时会自动使用原有账号和数据。"
+    echo "如需彻底删除，请重新执行卸载命令并添加 OBOARD_PURGE_DATA=1。"
+  fi
+}
+
 install_file_atomic() {
   local source=$1 destination=$2 mode=${3:-0755}
   install -m "$mode" "$source" "$destination.new"
@@ -740,7 +823,11 @@ install_component() {
   echo ""
   echo "[1/4] 下载 OBoard $component $version"
   mkdir -p "$work"
-  curl --proto '=https' --tlsv1.2 -fL "$url" -o "$TMP_DIR/$archive"
+  if ! download_file "$url" "$TMP_DIR/$archive"; then
+    echo "安装包下载失败：$archive" >&2
+    echo "请检查服务器是否可以访问 GitHub，然后稍后重试。" >&2
+    return 1
+  fi
   echo "[2/4] 校验安装包"
   verify_checksum "$TMP_DIR/$archive" "$version" "$archive"
   verify_archive_paths "$TMP_DIR/$archive"
@@ -834,7 +921,30 @@ install_component() {
   fi
 }
 
+case "$COMPONENT" in
+  controller|controller-agent|all) select_installation ;;
+esac
 need_root
+if [ "$ACTION" = uninstall ]; then
+  SERVICE_MANAGER=$(detect_service_manager)
+  uninstall_controller "$SERVICE_MANAGER"
+  exit 0
+fi
+if [ "$ACTION" = update ] && [ -z "$VERSION_INPUT" ]; then
+  installed_channel=$(sed -n 's/^OBOARD_UPDATE_CHANNEL=//p' /etc/oboard/controller.env 2>/dev/null | tail -n1 | tr -d "'\"")
+  case "$installed_channel" in
+    dev) VERSION_VALUE=dev ;;
+    pinned)
+      echo "当前主控使用固定版本。请设置 VERSION=latest 或 VERSION=dev 后再更新。" >&2
+      exit 1
+      ;;
+    *) VERSION_VALUE=latest ;;
+  esac
+fi
+
+TMP_DIR=$(make_install_tmp)
+trap cleanup EXIT
+
 echo "OBoard 安装程序"
 echo "==============="
 case "$COMPONENT" in
@@ -874,12 +984,20 @@ case "$COMPONENT" in
 esac
 
 case "$VERSION_VALUE" in
-  latest|stable|"") VERSION_VALUE=$(latest_version); INSTALL_CHANNEL=stable ;;
+  latest|stable|"")
+    VERSION_VALUE=$(latest_version || true)
+    if [ "$VERSION_VALUE" = dev ]; then
+      INSTALL_CHANNEL=dev
+      echo "当前暂无可用的稳定版，将安装最新开发版。"
+    else
+      INSTALL_CHANNEL=stable
+    fi
+    ;;
   dev|development|nightly) VERSION_VALUE=dev; INSTALL_CHANNEL=dev ;;
   *) INSTALL_CHANNEL=pinned ;;
 esac
 if [ -z "$VERSION_VALUE" ]; then
-  echo "无法获取主控 release 版本。" >&2
+  echo "无法获取可用的主控版本。请检查服务器是否可以访问 GitHub，然后重试。" >&2
   exit 1
 fi
 VERSION_VALUE=${VERSION_VALUE#v}

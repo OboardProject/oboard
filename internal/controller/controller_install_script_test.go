@@ -59,6 +59,12 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"wait_for_controller_updater",
 		"curl --unix-socket /run/oboard/controller-updater.sock",
 		"/var/lib/oboard/controller-update",
+		"uninstall_controller",
+		"OBoard 主控已卸载",
+		"配置和数据已保留",
+		"OBOARD_PURGE_DATA",
+		"当前暂无可用的稳定版，将安装最新开发版",
+		"安装包下载失败",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("controller installer missing %q", want)
