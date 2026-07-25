@@ -187,9 +187,14 @@ func (s *Service) handleInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	status := s.decorateStatus(s.status)
+	if status.InstallMethod == "" {
+		s.mu.Unlock()
+		writeStatus(w, http.StatusConflict, status)
+		return
+	}
 	if status.Channel == "pinned" {
 		s.mu.Unlock()
-		status.LastError = "pinned installations cannot be updated from the panel"
+		status.LastError = "当前主控使用固定版本，不能直接更新。"
 		writeStatus(w, http.StatusConflict, status)
 		return
 	}
@@ -200,7 +205,7 @@ func (s *Service) handleInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	if status.State == "checking" {
 		s.mu.Unlock()
-		status.LastError = "an update check is already running"
+		status.LastError = "正在检查更新，请稍后再试。"
 		writeStatus(w, http.StatusConflict, status)
 		return
 	}
@@ -225,6 +230,11 @@ func requestHasBody(r *http.Request) bool {
 func (s *Service) check(ctx context.Context) (Status, error) {
 	s.mu.Lock()
 	status := s.decorateStatus(s.status)
+	if status.InstallMethod == "" {
+		err := errors.New(status.LastError)
+		s.mu.Unlock()
+		return status, err
+	}
 	if status.State == "installing" {
 		s.mu.Unlock()
 		return status, nil
@@ -266,9 +276,14 @@ func (s *Service) check(ctx context.Context) (Status, error) {
 func (s *Service) install(ctx context.Context) (Status, error) {
 	s.mu.Lock()
 	status := s.decorateStatus(s.status)
+	if status.InstallMethod == "" {
+		err := errors.New(status.LastError)
+		s.mu.Unlock()
+		return status, err
+	}
 	if status.Channel == "pinned" {
 		s.mu.Unlock()
-		return status, errors.New("pinned installations cannot be updated from the panel")
+		return status, errors.New("当前主控使用固定版本，不能直接更新")
 	}
 	status.State, status.LastError = "installing", ""
 	if err := s.saveStatus(status); err != nil {
@@ -309,9 +324,15 @@ func (s *Service) install(ctx context.Context) (Status, error) {
 }
 
 func (s *Service) decorateStatus(status Status) Status {
-	method, channel, command := s.detectInstallation()
+	method, channel, command, detectionError := s.detectInstallation()
 	status.InstallMethod, status.Channel, status.ManualCommand = method, channel, command
 	status.Current = s.currentBuildInfo(method)
+	if detectionError != "" {
+		status.State = "failed"
+		status.UpdateAvailable = false
+		status.LastError = detectionError
+		return status
+	}
 	if channel == "pinned" && status.State != "installing" {
 		status.State = "pinned"
 		status.UpdateAvailable = false
@@ -322,26 +343,35 @@ func (s *Service) decorateStatus(status Status) Status {
 	return status
 }
 
-func (s *Service) detectInstallation() (string, string, string) {
-	if values, err := readEnv(filepath.Join(s.config.DockerRoot, ".env")); err == nil && values["OBOARD_TAG"] != "" {
-		tag := strings.TrimSpace(values["OBOARD_TAG"])
-		image := strings.ToLower(strings.TrimSpace(values["OBOARD_IMAGE"]))
+func (s *Service) detectInstallation() (string, string, string, string) {
+	dockerValues, dockerErr := readEnv(filepath.Join(s.config.DockerRoot, ".env"))
+	binaryValues, _ := readEnv(s.config.BinaryEnvPath)
+	dockerInstalled := dockerErr == nil && (strings.EqualFold(strings.TrimSpace(dockerValues["OBOARD_INSTALL_METHOD"]), "docker") || strings.TrimSpace(dockerValues["OBOARD_TAG"]) != "")
+	binaryInstalled := strings.EqualFold(strings.TrimSpace(binaryValues["OBOARD_INSTALL_METHOD"]), "binary")
+	if info, err := os.Stat(s.config.ControllerBinary); err == nil && info.Mode().IsRegular() {
+		binaryInstalled = true
+	}
+	if dockerInstalled && binaryInstalled {
+		return "", "", "", "检测到二进制和 Docker 两种主控安装。请保留一种安装后再检查更新。"
+	}
+	if dockerInstalled {
+		tag := strings.TrimSpace(dockerValues["OBOARD_TAG"])
+		image := strings.ToLower(strings.TrimSpace(dockerValues["OBOARD_IMAGE"]))
 		if image != "" && image != officialImage {
-			return "docker", "pinned", "cd /opt/oboard-docker && sed -i 's#^OBOARD_IMAGE=.*#OBOARD_IMAGE=ghcr.io/oboardproject/oboard#' .env"
+			return "docker", "pinned", "cd /opt/oboard-docker && sed -i 's#^OBOARD_IMAGE=.*#OBOARD_IMAGE=ghcr.io/oboardproject/oboard#' .env", ""
 		}
 		switch tag {
 		case "dev":
-			return "docker", "dev", ""
+			return "docker", "dev", "", ""
 		case "latest", "stable":
-			return "docker", "stable", ""
+			return "docker", "stable", "", ""
 		default:
-			return "docker", "pinned", "cd /opt/oboard-docker && sed -i 's/^OBOARD_TAG=.*/OBOARD_TAG=latest/' .env && docker compose pull controller && docker compose up -d controller"
+			return "docker", "pinned", "cd /opt/oboard-docker && sed -i 's/^OBOARD_TAG=.*/OBOARD_TAG=latest/' .env && docker compose pull controller && docker compose up -d controller", ""
 		}
 	}
-	values, _ := readEnv(s.config.BinaryEnvPath)
-	channel := strings.ToLower(strings.TrimSpace(values["OBOARD_UPDATE_CHANNEL"]))
+	channel := strings.ToLower(strings.TrimSpace(binaryValues["OBOARD_UPDATE_CHANNEL"]))
 	if channel == "pinned" {
-		return "binary", "pinned", "sed -i 's/^OBOARD_UPDATE_CHANNEL=.*/OBOARD_UPDATE_CHANNEL=stable/' /etc/oboard/controller.env && (systemctl restart oboard-controller-updater || rc-service oboard-controller-updater restart)"
+		return "binary", "pinned", "sed -i 's/^OBOARD_UPDATE_CHANNEL=.*/OBOARD_UPDATE_CHANNEL=stable/' /etc/oboard/controller.env && (systemctl restart oboard-controller-updater || rc-service oboard-controller-updater restart)", ""
 	}
 	if channel != "dev" && channel != "stable" {
 		if version.IsDev() {
@@ -350,7 +380,7 @@ func (s *Service) detectInstallation() (string, string, string) {
 			channel = "stable"
 		}
 	}
-	return "binary", channel, ""
+	return "binary", channel, "", ""
 }
 
 func (s *Service) currentBuildInfo(method string) BuildInfo {

@@ -86,20 +86,31 @@ func TestDetectInstallation(t *testing.T) {
 	if err := os.MkdirAll(dockerRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	service := NewService(ServiceConfig{DockerRoot: dockerRoot, BinaryEnvPath: filepath.Join(root, "controller.env"), StatePath: filepath.Join(root, "status.json")})
+	binaryEnv := filepath.Join(root, "controller.env")
+	service := NewService(ServiceConfig{DockerRoot: dockerRoot, BinaryEnvPath: binaryEnv, ControllerBinary: filepath.Join(root, "oboard-controller"), StatePath: filepath.Join(root, "status.json")})
 	if err := os.WriteFile(filepath.Join(dockerRoot, ".env"), []byte("OBOARD_IMAGE=ghcr.io/oboardproject/oboard\nOBOARD_TAG=dev\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	method, channel, _ := service.detectInstallation()
+	method, channel, _, detectionError := service.detectInstallation()
 	if method != "docker" || channel != "dev" {
 		t.Fatalf("got %s/%s", method, channel)
+	}
+	if detectionError != "" {
+		t.Fatal(detectionError)
 	}
 	if err := os.WriteFile(filepath.Join(dockerRoot, ".env"), []byte("OBOARD_IMAGE=example.invalid/oboard\nOBOARD_TAG=latest\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, channel, command := service.detectInstallation()
+	_, channel, command, _ := service.detectInstallation()
 	if channel != "pinned" || !strings.Contains(command, officialImage) {
 		t.Fatalf("custom image got channel=%s command=%q", channel, command)
+	}
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_INSTALL_METHOD=binary\nOBOARD_UPDATE_CHANNEL=stable\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	method, channel, _, detectionError = service.detectInstallation()
+	if method != "" || channel != "" || detectionError == "" {
+		t.Fatalf("conflicting installations got method=%q channel=%q error=%q", method, channel, detectionError)
 	}
 }
 

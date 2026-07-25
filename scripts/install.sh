@@ -12,6 +12,12 @@ VERSION_VALUE=${VERSION_INPUT:-latest}
 INSTALL_CHANNEL=stable
 COMPONENT=${COMPONENT:-${1:-controller}}
 INSTALL_DIR=${INSTALL_DIR:-/usr/local/bin}
+DOCKER_ROOT=${OBOARD_DOCKER_DIR:-/opt/oboard-docker}
+INSTALL_METHOD_INPUT=${OBOARD_INSTALL_METHOD:-}
+ACTION_INPUT=${OBOARD_ACTION:-}
+INSTALL_METHOD=binary
+ACTION=install
+INSTALLATION_EXISTS=0
 TMP_DIR=
 CONTROLLER_DATA_EXISTED=0
 ADMIN_USERNAME_INPUT=${OBOARD_ADMIN_USERNAME:-}
@@ -41,20 +47,109 @@ make_install_tmp() {
   return 1
 }
 
-if [ "${OBOARD_INSTALL_METHOD:-binary}" = docker ]; then
-  docker_script=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)/install-docker.sh
-  if [ -f "$docker_script" ]; then
-    if [ "${OBOARD_ACTION:-install}" = update ] && [ -z "$VERSION_INPUT" ]; then
-      exec env OBOARD_ACTION=update sh "$docker_script"
-    fi
-    exec env OBOARD_ACTION="${OBOARD_ACTION:-install}" VERSION="$VERSION_VALUE" sh "$docker_script"
+binary_installation_exists() {
+  [ -f /etc/oboard/controller.env ] ||
+    [ -x "$INSTALL_DIR/oboard-controller" ] ||
+    [ -s /var/lib/oboard/oboard.sqlite ] ||
+    [ -f /etc/systemd/system/oboard-controller.service ] ||
+    [ -f /etc/init.d/oboard-controller ]
+}
+
+docker_installation_exists() {
+  [ -f "$DOCKER_ROOT/.env" ] ||
+    [ -f "$DOCKER_ROOT/docker-compose.yml" ] ||
+    [ -s "$DOCKER_ROOT/data/oboard.sqlite" ]
+}
+
+select_installation() {
+  local binary_exists=0 docker_exists=0
+  binary_installation_exists && binary_exists=1
+  docker_installation_exists && docker_exists=1
+
+  case "$INSTALL_METHOD_INPUT" in
+    "")
+      if [ "$binary_exists" = 1 ] && [ "$docker_exists" = 1 ]; then
+        echo "检测到二进制和 Docker 两种主控安装，本次操作已停止。" >&2
+        echo "请重新执行并指定 OBOARD_INSTALL_METHOD=binary 或 OBOARD_INSTALL_METHOD=docker。" >&2
+        exit 1
+      elif [ "$docker_exists" = 1 ]; then
+        INSTALL_METHOD=docker
+        INSTALLATION_EXISTS=1
+      elif [ "$binary_exists" = 1 ]; then
+        INSTALL_METHOD=binary
+        INSTALLATION_EXISTS=1
+      fi
+      ;;
+    binary)
+      INSTALL_METHOD=binary
+      INSTALLATION_EXISTS=$binary_exists
+      ;;
+    docker)
+      INSTALL_METHOD=docker
+      INSTALLATION_EXISTS=$docker_exists
+      ;;
+    *)
+      echo "安装方式只能选择二进制或 Docker。" >&2
+      exit 1
+      ;;
+  esac
+
+  case "$ACTION_INPUT" in
+    ""|install|update|uninstall) ;;
+    *) echo "操作方式无效，请重新执行安装或更新。" >&2; exit 1 ;;
+  esac
+  if [ "$INSTALLATION_EXISTS" = 1 ] && [ "$ACTION_INPUT" != uninstall ]; then
+    ACTION=update
+  else
+    ACTION=${ACTION_INPUT:-install}
   fi
-  if [ "${OBOARD_ACTION:-install}" = update ] && [ -z "$VERSION_INPUT" ]; then
-    curl --proto '=https' --tlsv1.2 -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install-docker.sh" | env OBOARD_ACTION=update sh
+  if [ "$ACTION" = update ] && [ "$INSTALLATION_EXISTS" = 0 ]; then
+    echo "没有找到已安装的主控，请先完成安装。" >&2
+    exit 1
+  fi
+}
+
+case "$COMPONENT" in
+  controller|controller-agent|all) select_installation ;;
+esac
+
+if [ "$INSTALL_METHOD" = docker ]; then
+  docker_script=
+  script_file=${BASH_SOURCE[0]:-}
+  if [ -n "$script_file" ] && [ -f "$script_file" ]; then
+    script_dir=$(CDPATH= cd -- "$(dirname -- "$script_file")" 2>/dev/null && pwd)
+    if [ -f "$script_dir/install-docker.sh" ]; then
+      docker_script=$script_dir/install-docker.sh
+    fi
+  fi
+  if [ -n "$docker_script" ]; then
+    if [ "$ACTION" = update ] && [ -z "$VERSION_INPUT" ]; then
+      exec env OBOARD_ACTION=update OBOARD_DOCKER_DIR="$DOCKER_ROOT" sh "$docker_script"
+    fi
+    exec env OBOARD_ACTION="$ACTION" OBOARD_DOCKER_DIR="$DOCKER_ROOT" VERSION="$VERSION_VALUE" sh "$docker_script"
+  fi
+  if [ "$ACTION" = update ] && [ -z "$VERSION_INPUT" ]; then
+    curl --proto '=https' --tlsv1.2 -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install-docker.sh" | env OBOARD_ACTION=update OBOARD_DOCKER_DIR="$DOCKER_ROOT" sh
     exit $?
   fi
-  curl --proto '=https' --tlsv1.2 -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install-docker.sh" | env OBOARD_ACTION="${OBOARD_ACTION:-install}" VERSION="$VERSION_VALUE" sh
+  curl --proto '=https' --tlsv1.2 -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install-docker.sh" | env OBOARD_ACTION="$ACTION" OBOARD_DOCKER_DIR="$DOCKER_ROOT" VERSION="$VERSION_VALUE" sh
   exit $?
+fi
+
+if [ "$ACTION" = uninstall ]; then
+  echo "二进制主控不能通过此脚本卸载。" >&2
+  exit 1
+fi
+if [ "$ACTION" = update ] && [ -z "$VERSION_INPUT" ]; then
+  installed_channel=$(sed -n 's/^OBOARD_UPDATE_CHANNEL=//p' /etc/oboard/controller.env 2>/dev/null | tail -n1 | tr -d "'\"")
+  case "$installed_channel" in
+    dev) VERSION_VALUE=dev ;;
+    pinned)
+      echo "当前主控使用固定版本。请设置 VERSION=latest 或 VERSION=dev 后再更新。" >&2
+      exit 1
+      ;;
+    *) VERSION_VALUE=latest ;;
+  esac
 fi
 
 TMP_DIR=$(make_install_tmp)
@@ -511,7 +606,6 @@ wait_for_controller_updater() {
 
 prepare_controller_updater_runtime() {
   install -d -m 0750 -o root -g oboard /run/oboard
-  # Native installs own the parent as oboard; only the updater subtree is root-owned.
   if [ -L /var/lib/oboard ]; then
     echo "拒绝使用符号链接形式的更新器状态目录：/var/lib/oboard" >&2
     return 1
@@ -699,6 +793,15 @@ install_component() {
 need_root
 echo "OBoard 安装程序"
 echo "==============="
+case "$COMPONENT" in
+  controller|controller-agent|all)
+    if [ "$ACTION" = update ]; then
+      echo "检测到已安装的二进制主控，将保留现有数据和设置并更新。"
+    else
+      echo "正在安装 OBoard 主控。"
+    fi
+    ;;
+esac
 OS_VALUE=$(detect_os)
 ARCH_VALUE=$(detect_arch)
 DISTRO_VALUE=$(detect_distro)

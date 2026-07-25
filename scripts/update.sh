@@ -4,46 +4,38 @@ set -euo pipefail
 COMPONENT=${COMPONENT:-${1:-controller}}
 VERSION_INPUT=${VERSION:-}
 REPO=${OBOARD_REPO:-OboardProject/oboard}
-export COMPONENT OBOARD_REPO="$REPO"
-if [ "${OBOARD_INSTALL_METHOD:-binary}" = docker ]; then
-  SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-  if [ -f "$SCRIPT_DIR/install-docker.sh" ]; then
-    if [ -z "$VERSION_INPUT" ]; then
-      exec env -u VERSION OBOARD_ACTION=update sh "$SCRIPT_DIR/install-docker.sh"
-    fi
-    exec env OBOARD_ACTION=update VERSION="$VERSION_INPUT" sh "$SCRIPT_DIR/install-docker.sh"
-  fi
-  if [ -z "$VERSION_INPUT" ]; then
-    curl -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install-docker.sh" | env -u VERSION OBOARD_ACTION=update sh
-    exit $?
-  fi
-  curl -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install-docker.sh" | env OBOARD_ACTION=update VERSION="$VERSION_INPUT" sh
-  exit $?
-fi
+export COMPONENT OBOARD_REPO="$REPO" OBOARD_ACTION=update
 if [ -n "$VERSION_INPUT" ]; then
   VERSION=$VERSION_INPUT
+  export VERSION
 else
-  installed_channel=$(sed -n 's/^OBOARD_UPDATE_CHANNEL=//p' /etc/oboard/controller.env 2>/dev/null | tail -n1 | tr -d "'\"")
-  case "$installed_channel" in
-    dev) VERSION=dev ;;
-    pinned)
-      echo "当前主控固定在指定版本。请明确设置 VERSION=latest 或 VERSION=dev 后再更新。" >&2
-      exit 1
-      ;;
-    *) VERSION=latest ;;
-  esac
+  unset VERSION
 fi
-export VERSION
 case "$COMPONENT" in
   agent|agent-sb|node|controller-agent|all) export OBOARD_AGENT_ACTION=update ;;
 esac
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-if [ -x "$SCRIPT_DIR/install.sh" ]; then
-  "$SCRIPT_DIR/install.sh" "$COMPONENT"
-else
-  curl --proto '=https' --tlsv1.2 -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install.sh" | bash -s -- "$COMPONENT"
+SCRIPT_DIR=
+SCRIPT_FILE=${BASH_SOURCE[0]:-}
+if [ -n "$SCRIPT_FILE" ] && [ -f "$SCRIPT_FILE" ]; then
+  SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_FILE")" && pwd)
 fi
+case "$COMPONENT" in
+  controller)
+    if [ -n "$SCRIPT_DIR" ] && [ -x "$SCRIPT_DIR/install.sh" ]; then
+      exec "$SCRIPT_DIR/install.sh" "$COMPONENT"
+    fi
+    curl --proto '=https' --tlsv1.2 -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install.sh" | bash -s -- "$COMPONENT"
+    exit $?
+    ;;
+  *)
+    if [ -n "$SCRIPT_DIR" ] && [ -x "$SCRIPT_DIR/install.sh" ]; then
+      "$SCRIPT_DIR/install.sh" "$COMPONENT"
+    else
+      curl --proto '=https' --tlsv1.2 -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install.sh" | bash -s -- "$COMPONENT"
+    fi
+    ;;
+esac
 
 restart_systemd() {
   case "$COMPONENT" in
@@ -91,4 +83,4 @@ elif command -v rc-service >/dev/null 2>&1; then
   restart_openrc
 fi
 
-echo "OBoard $COMPONENT 已更新到 $VERSION。"
+echo "OBoard $COMPONENT 更新完成。"

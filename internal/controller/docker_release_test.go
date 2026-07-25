@@ -19,7 +19,7 @@ func TestDockerInstallAndReleaseAssets(t *testing.T) {
 		"deploy/docker/Dockerfile.controller": {"EXPOSE 2787", "OBOARD_ADDR=:2787", "OBOARD_DOWNLOADS=/app/downloads", "OBOARD_BASE_PATH", "HEALTHCHECK", "entrypoint.sh"},
 		"deploy/docker/entrypoint.sh":         {"su-exec", "OBOARD_UPDATER_GID", "controller-updater.sock"},
 		"deploy/docker-compose.yml":           {"ghcr.io/oboardproject/oboard", "${OBOARD_PORT:-2787}:2787", "OBOARD_BASE_PATH", "./data:/app/data", "controller-updater.sock", "OBOARD_UPDATER_GID", "read_only: true", "cap_drop:", "cap_add:", "CHOWN", "SETGID", "SETUID", "set OBOARD_ADMIN_PASSWORD"},
-		"scripts/install-docker.sh":           {"VERSION_VALUE", "OBOARD_TAG", "docker compose", "docker-cli", "docker-compose-v2", "docker_compose_ready", "install_compose_plugin_binary", "OBOARD_COMPOSE_VERSION", "checksums.txt", "wait_for_health", "dev|development|nightly", "generate_admin_password", "configure_bootstrap_admin", "设置超级管理员", "自动加入“管理员组”", "不能在面板中删除", "Controller 和 Agent 相互独立，也可以安装在同一台服务器上", "OBOARD_PORT 必须是 1 到 65535", "OBOARD_BASE_PATH", "更新当前渠道", "2787", "wait_for_controller_updater", "curl --unix-socket /run/oboard/controller-updater.sock", "harden_controller_updater_unit", "prepare_controller_updater_runtime", "/var/lib/oboard/controller-update", "make_install_tmp", "write_controller_entrypoint", "./oboard-entrypoint:/usr/local/bin/oboard-entrypoint:ro"},
+		"scripts/install-docker.sh":           {"VERSION_VALUE", "OBOARD_TAG", "OBOARD_INSTALL_METHOD=docker", "docker compose", "docker-cli", "docker-compose-v2", "docker_compose_ready", "install_compose_plugin_binary", "OBOARD_COMPOSE_VERSION", "checksums.txt", "wait_for_health", "dev|development|nightly", "generate_admin_password", "configure_bootstrap_admin", "设置超级管理员", "自动加入“管理员组”", "不能在面板中删除", "Controller 和 Agent 相互独立，也可以安装在同一台服务器上", "OBOARD_PORT 必须是 1 到 65535", "OBOARD_BASE_PATH", "更新当前渠道", "2787", "wait_for_controller_updater", "curl --unix-socket /run/oboard/controller-updater.sock", "harden_controller_updater_unit", "prepare_controller_updater_runtime", "/var/lib/oboard/controller-update", "make_install_tmp", "write_controller_entrypoint", "./oboard-entrypoint:/usr/local/bin/oboard-entrypoint:ro"},
 		"scripts/verify-release.sh":           {"Testing Controller", "Building Web UI", "Building current-platform binaries", "cmd/controller-updater"},
 		"scripts/fetch-agent-release.sh":      {"OBOARD_RELEASE_PUBLIC_KEY", "gh release download", "release-manifest.json.sig", "OBOARD_AGENT_CHANNEL", "OBOARD_AGENT_RELEASE_WAIT_ATTEMPTS"},
 		".github/workflows/ci.yml":            {"verify-release.sh", "go-version: '1.25.12'", "node-version: '22'"},
@@ -56,6 +56,15 @@ func TestDockerInstallAndReleaseAssets(t *testing.T) {
 			t.Errorf("install-docker.sh still contains removed Compose v1 compatibility %q", removed)
 		}
 	}
+	for _, name := range []string{"install.sh", "update.sh"} {
+		content, err := os.ReadFile(filepath.Join(root, "scripts", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(content), "BASH_SOURCE[0]") || strings.Contains(string(content), `dirname -- "$0"`) {
+			t.Errorf("%s does not safely locate its companion scripts", name)
+		}
+	}
 	if bash, err := exec.LookPath("bash"); err == nil {
 		path := filepath.Join(root, "scripts", "build-docker.sh")
 		if output, err := exec.Command(bash, "-n", path).CombinedOutput(); err != nil {
@@ -86,10 +95,18 @@ func TestGenericDockerUpdatePreservesInstalledChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := func(script string, env ...string) string {
+	installedRoot := filepath.Join(temp, "installed")
+	if err := os.MkdirAll(installedRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(installedRoot, ".env"), []byte("OBOARD_TAG=dev\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(script, dockerRoot string, env ...string) string {
 		t.Helper()
 		cmd := exec.Command("bash", filepath.Join(temp, script))
-		cmd.Env = append(os.Environ(), append([]string{"OBOARD_INSTALL_METHOD=docker", "VERSION="}, env...)...)
+		cmd.Env = testCommandEnv(append([]string{"OBOARD_DOCKER_DIR=" + dockerRoot, "OBOARD_INSTALL_METHOD=", "OBOARD_ACTION=", "VERSION="}, env...)...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s failed: %v\n%s", script, err, output)
@@ -97,16 +114,91 @@ func TestGenericDockerUpdatePreservesInstalledChannel(t *testing.T) {
 		return strings.TrimSpace(string(output))
 	}
 
-	if got := run("update.sh"); got != "action=update version=preserve" {
+	if got := run("update.sh", installedRoot); got != "action=update version=preserve" {
 		t.Fatalf("generic update changed the installed channel: %q", got)
 	}
-	if got := run("update.sh", "VERSION=dev"); got != "action=update version=dev" {
+	if got := run("update.sh", installedRoot, "VERSION=dev"); got != "action=update version=dev" {
 		t.Fatalf("explicit development channel not forwarded: %q", got)
 	}
-	if got := run("install.sh", "OBOARD_ACTION=update"); got != "action=update version=preserve" {
-		t.Fatalf("generic installer update changed the installed channel: %q", got)
+	if got := run("install.sh", installedRoot); got != "action=update version=preserve" {
+		t.Fatalf("generic installer did not detect the existing Docker installation: %q", got)
 	}
-	if got := run("install.sh", "OBOARD_ACTION=install"); got != "action=install version=latest" {
+	if got := run("install.sh", installedRoot, "OBOARD_ACTION=install"); got != "action=update version=preserve" {
+		t.Fatalf("existing Docker install did not switch to update: %q", got)
+	}
+	freshRoot := filepath.Join(temp, "fresh")
+	if got := run("install.sh", freshRoot, "OBOARD_INSTALL_METHOD=docker"); got != "action=install version=latest" {
 		t.Fatalf("fresh Docker install should default to latest: %q", got)
 	}
+	if got := run("install.sh", installedRoot, "OBOARD_ACTION=update"); got != "action=update version=preserve" {
+		t.Fatalf("generic installer update changed the installed channel: %q", got)
+	}
+}
+
+func TestGenericInstallDetectsExistingInstallationMethod(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to locate repository")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	temp := t.TempDir()
+	installer := filepath.Join(temp, "install.sh")
+	content, err := os.ReadFile(filepath.Join(root, "scripts", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(installer, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(temp, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "oboard-controller"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(dockerRoot string) string {
+		t.Helper()
+		cmd := exec.Command("bash", installer)
+		cmd.Env = testCommandEnv([]string{"INSTALL_DIR=" + binDir, "OBOARD_DOCKER_DIR=" + dockerRoot, "OBOARD_INSTALL_METHOD=", "OBOARD_ACTION=uninstall", "VERSION="}...)
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("installer unexpectedly succeeded:\n%s", output)
+		}
+		return string(output)
+	}
+
+	if output := run(filepath.Join(temp, "no-docker")); !strings.Contains(output, "二进制主控不能通过此脚本卸载") {
+		t.Fatalf("binary installation was not detected:\n%s", output)
+	}
+	dockerRoot := filepath.Join(temp, "docker")
+	if err := os.MkdirAll(dockerRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dockerRoot, ".env"), []byte("OBOARD_TAG=dev\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", installer)
+	cmd.Env = testCommandEnv("INSTALL_DIR="+binDir, "OBOARD_DOCKER_DIR="+dockerRoot, "OBOARD_INSTALL_METHOD=", "OBOARD_ACTION=", "VERSION=")
+	output, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "检测到二进制和 Docker 两种主控安装") {
+		t.Fatalf("conflicting installations were not rejected: %v\n%s", err, output)
+	}
+}
+
+func testCommandEnv(overrides ...string) []string {
+	keys := map[string]bool{}
+	for _, value := range overrides {
+		key, _, _ := strings.Cut(value, "=")
+		keys[key] = true
+	}
+	env := make([]string, 0, len(os.Environ())+len(overrides))
+	for _, value := range os.Environ() {
+		key, _, _ := strings.Cut(value, "=")
+		if !keys[key] {
+			env = append(env, value)
+		}
+	}
+	return append(env, overrides...)
 }

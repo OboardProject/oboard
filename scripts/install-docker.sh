@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
 
-ACTION=${OBOARD_ACTION:-install}
+ACTION_INPUT=${OBOARD_ACTION:-}
+ACTION=install
 INSTALL_ROOT=${OBOARD_DOCKER_DIR:-/opt/oboard-docker}
 IMAGE_INPUT=${OBOARD_IMAGE:-}
 VERSION_INPUT=${VERSION:-${OBOARD_VERSION:-}}
@@ -14,6 +15,23 @@ ADMIN_USERNAME_INPUT=${OBOARD_ADMIN_USERNAME:-}
 ADMIN_PASSWORD_INPUT=${OBOARD_ADMIN_PASSWORD:-}
 ADMIN_USERNAME=${ADMIN_USERNAME_INPUT:-admin}
 ADMIN_PASSWORD=${ADMIN_PASSWORD_INPUT:-}
+INSTALLATION_EXISTS=0
+if [ -f "$INSTALL_ROOT/.env" ] || [ -f "$INSTALL_ROOT/docker-compose.yml" ] || [ -s "$INSTALL_ROOT/data/oboard.sqlite" ]; then
+  INSTALLATION_EXISTS=1
+fi
+case "$ACTION_INPUT" in
+  ""|install|update|uninstall) ;;
+  *) echo "操作方式无效，请重新执行安装或更新。" >&2; exit 1 ;;
+esac
+if [ "$INSTALLATION_EXISTS" = 1 ] && [ "$ACTION_INPUT" != uninstall ]; then
+  ACTION=update
+else
+  ACTION=${ACTION_INPUT:-install}
+fi
+if [ "$ACTION" = update ] && [ "$INSTALLATION_EXISTS" = 0 ]; then
+  echo "没有找到已安装的 Docker 主控，请先完成安装。" >&2
+  exit 1
+fi
 [ -s "$INSTALL_ROOT/data/oboard.sqlite" ] && FRESH_INSTALL=0
 
 env_value() {
@@ -505,7 +523,6 @@ harden_controller_updater_unit() {
 
 prepare_controller_updater_runtime() {
   install -d -m 0750 -o root -g oboard /run/oboard
-  # Native installs own the parent as oboard; only the updater subtree is root-owned.
   if [ -L /var/lib/oboard ]; then
     echo "拒绝使用符号链接形式的更新器状态目录：/var/lib/oboard" >&2
     return 1
@@ -721,6 +738,7 @@ write_env() {
     cat > "$env_file" <<EOF
 OBOARD_IMAGE=$IMAGE
 OBOARD_TAG=$tag
+OBOARD_INSTALL_METHOD=docker
 OBOARD_PORT=$PORT
 OBOARD_BASE_PATH=$BASE_PATH
 OBOARD_SESSION_SECRET=$(generate_secret)
@@ -737,6 +755,7 @@ EOF
   cat "$tmp_env" > "$env_file"
   rm -f "$tmp_env"
   grep -q '^OBOARD_BASE_PATH=' "$env_file" || printf 'OBOARD_BASE_PATH=%s\n' "$BASE_PATH" >> "$env_file"
+  set_env_value OBOARD_INSTALL_METHOD docker
   set_env_value OBOARD_UPDATER_GID "$UPDATER_GID"
   if [ "$FRESH_INSTALL" = 1 ]; then
     set_env_value OBOARD_ADMIN_USERNAME "$ADMIN_USERNAME"
@@ -816,7 +835,12 @@ case "$ACTION" in
     fi
     exit 0
     ;;
-  install|update) ;;
+  install)
+    echo "正在安装 OBoard 主控。"
+    ;;
+  update)
+    echo "检测到已安装的 Docker 主控，将保留现有设置并更新。"
+    ;;
   *) echo "未知操作：$ACTION" >&2; exit 2 ;;
 esac
 
