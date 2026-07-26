@@ -19,12 +19,13 @@ func TestBinaryOnlyControllerReleaseAssets(t *testing.T) {
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	required := map[string][]string{
 		"scripts/build-release.sh":         {"create_tar_archive \"$stage\" \"$archive\" bin web downloads", "${arch}_install.tar.gz", "deploy/systemd", "deploy/openrc"},
-		"scripts/install.sh":               {"OBOARD_UPDATE_CHANNEL", "oboard-controller-updater", "install_component controller", "prepare_controller_updater_runtime", "uninstall_controller", "OBOARD_PURGE_DATA"},
+		"scripts/install.sh":               {"OBOARD_UPDATE_CHANNEL", "oboard-controller-updater", "install_component controller", "prepare_controller_updater_runtime", "uninstall_controller", "OBOARD_PURGE_DATA", "drain_piped_script"},
 		"scripts/verify-release.sh":        {"Testing Controller", "Building Web UI", "Building current-platform binaries", "cmd/controller-updater"},
 		"scripts/fetch-agent-release.sh":   {"OBOARD_RELEASE_PUBLIC_KEY", "release-manifest.json.sig", "OBOARD_AGENT_CHANNEL"},
-		".github/workflows/dev-build.yml":  {"contents: write", "OBOARD_AGENT_CHANNEL: dev", "controller-release-manifest.json", "gh release create dev"},
-		".github/workflows/prerelease.yml": {"contents: write", "OBOARD_AGENT_CHANNEL: release", "gh release create"},
-		".github/workflows/release.yml":    {"contents: write", "OBOARD_AGENT_CHANNEL: release", "gh release create"},
+		".github/workflows/ci.yml":         {"contents: read", "Test Controller and release build inputs"},
+		".github/workflows/dev-build.yml":  {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "OBOARD_AGENT_CHANNEL: dev", "controller-release-manifest.json", "gh release create dev"},
+		".github/workflows/prerelease.yml": {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "OBOARD_AGENT_CHANNEL: release", "gh release create"},
+		".github/workflows/release.yml":    {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "OBOARD_AGENT_CHANNEL: release", "gh release create"},
 	}
 	for name, fragments := range required {
 		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
@@ -57,9 +58,10 @@ func TestBinaryOnlyControllerReleaseAssets(t *testing.T) {
 	for name, fragments := range map[string][]string{
 		"scripts/build-release.sh":         {"deploy/docker", "install-docker", "update-docker"},
 		"scripts/install.sh":               {"OBOARD_DOCKER", "OBOARD_INSTALL_METHOD", "install-docker", "docker compose"},
-		".github/workflows/dev-build.yml":  {"docker/", "ghcr.io", "packages: write", "Docker"},
-		".github/workflows/prerelease.yml": {"docker/", "ghcr.io", "packages: write", "Docker"},
-		".github/workflows/release.yml":    {"docker/", "ghcr.io", "packages: write", "Docker"},
+		".github/workflows/ci.yml":         {"docker/", "ghcr.io", "packages: write", "Docker", "app-id:", "container:", "services:"},
+		".github/workflows/dev-build.yml":  {"docker/", "ghcr.io", "packages: write", "Docker", "app-id:", "container:", "services:"},
+		".github/workflows/prerelease.yml": {"docker/", "ghcr.io", "packages: write", "Docker", "app-id:", "container:", "services:"},
+		".github/workflows/release.yml":    {"docker/", "ghcr.io", "packages: write", "Docker", "app-id:", "container:", "services:"},
 	} {
 		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
 		if err != nil {

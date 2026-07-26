@@ -24,7 +24,7 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Verify Controller release inputs
+      - name: Test Controller and release build inputs
         run: ./scripts/verify-release.sh
       - name: Verify Go module and vet
         run: |

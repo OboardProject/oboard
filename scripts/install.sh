@@ -72,6 +72,12 @@ select_installation() {
 
 cleanup() { [ -z "$TMP_DIR" ] || rm -rf "$TMP_DIR"; }
 
+drain_piped_script() {
+  if [ ! -t 0 ]; then
+    cat >/dev/null || true
+  fi
+}
+
 need_root() {
   if [ "$(id -u)" -ne 0 ]; then
     echo "安装需要写入系统目录，请切换到 root 或使用 sudo 重新执行。" >&2
@@ -928,6 +934,7 @@ need_root
 if [ "$ACTION" = uninstall ]; then
   SERVICE_MANAGER=$(detect_service_manager)
   uninstall_controller "$SERVICE_MANAGER"
+  drain_piped_script
   exit 0
 fi
 if [ "$ACTION" = update ] && [ -z "$VERSION_INPUT" ]; then
