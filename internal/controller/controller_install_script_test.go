@@ -31,17 +31,17 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"configure_bootstrap_admin",
 		"OBOARD_ADMIN_USERNAME",
 		"OBOARD_ADMIN_PASSWORD",
-		"超级管理员密码：由主控首次启动时生成并打印到服务日志",
+		"generate_admin_password",
+		"超级管理员密码：$BOOTSTRAP_ADMIN_PASSWORD_VALUE",
+		"该密码只显示这一次",
 		"登录后请立即修改密码",
-		"systemctl status oboard-controller",
-		"rc-service oboard-controller status",
-		"输入 obag 打开管理菜单",
+		"clear_bootstrap_admin_password",
+		"unset_controller_env_value",
+		"wait_for_controller_ready",
 		"prepare_controller_env",
 		"OBOARD_BASE_PATH",
 		"install_agent_from_controller",
-		"Controller 和 Agent 相互独立，也可以安装在同一台服务器上",
 		"不会互相覆盖",
-		"oboard-controller；Agent 服务：oboard-agent、oboard-sb",
 		"COMPONENT=agent",
 		"make_install_tmp",
 		"OBOARD_TMPDIR",
@@ -76,6 +76,9 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 	}
 	if strings.Contains(text, "首次登录密码：admin") {
 		t.Fatal("controller installer still advertises a well-known default password")
+	}
+	if strings.Contains(text, "grep -A2 'first administrator'") {
+		t.Fatal("controller installer still sends operators to the service log for the bootstrap password")
 	}
 	if strings.Contains(text, `install_component agent`) || strings.Contains(text, `install_component sb`) {
 		t.Fatal("controller installer still installs Agent artifacts from the controller release")

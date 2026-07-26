@@ -21,6 +21,9 @@ ADMIN_USERNAME_INPUT=${OBOARD_ADMIN_USERNAME:-}
 ADMIN_PASSWORD_INPUT=${OBOARD_ADMIN_PASSWORD:-}
 BOOTSTRAP_ADMIN_USERNAME=
 BOOTSTRAP_ADMIN_PASSWORD_CONFIGURED=0
+BOOTSTRAP_ADMIN_PASSWORD_GENERATED=0
+BOOTSTRAP_ADMIN_PASSWORD_VALUE=
+BOOTSTRAP_ADMIN_PASSWORD_PERSISTED=0
 [ -s /var/lib/oboard/oboard.sqlite ] && CONTROLLER_DATA_EXISTED=1
 
 make_install_tmp() {
@@ -243,6 +246,24 @@ set_controller_env_value() {
   mv "$tmp" "$env_file"
 }
 
+unset_controller_env_value() {
+  local key=$1 env_file=/etc/oboard/controller.env tmp
+  [ -f "$env_file" ] || return 0
+  tmp=$(mktemp /etc/oboard/controller.env.XXXXXX)
+  sed "/^${key}=/d" "$env_file" > "$tmp"
+  chmod 0600 "$tmp"
+  mv "$tmp" "$env_file"
+}
+
+generate_admin_password() {
+  # Alphanumeric only: the value is shown once in a terminal and retyped by hand.
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | cut -c1-20
+  else
+    od -An -N64 -tx1 /dev/urandom | tr -dc 'A-Za-z0-9' | cut -c1-20
+  fi
+}
+
 configure_bootstrap_admin() {
   local username password confirm configured_username configured_password
   [ "$CONTROLLER_DATA_EXISTED" = 0 ] || return 0
@@ -288,12 +309,44 @@ configure_bootstrap_admin() {
     exit 1
   fi
 
-  set_controller_env_value OBOARD_ADMIN_USERNAME "$username"
-  if [ -n "$password" ]; then
-    set_controller_env_value OBOARD_ADMIN_PASSWORD "$password"
+  # Generate here rather than letting the controller do it at first boot: the
+  # installer can print the password directly instead of sending the operator
+  # to journalctl for a value that only appears once.
+  if [ -z "$password" ]; then
+    password=$(generate_admin_password)
+    if [ "${#password}" -lt 10 ]; then
+      echo "无法生成超级管理员密码，请确认系统提供 openssl 或 /dev/urandom。" >&2
+      exit 1
+    fi
+    BOOTSTRAP_ADMIN_PASSWORD_GENERATED=1
+  else
     BOOTSTRAP_ADMIN_PASSWORD_CONFIGURED=1
   fi
+
+  set_controller_env_value OBOARD_ADMIN_USERNAME "$username"
+  set_controller_env_value OBOARD_ADMIN_PASSWORD "$password"
+  BOOTSTRAP_ADMIN_PASSWORD_PERSISTED=1
+  BOOTSTRAP_ADMIN_PASSWORD_VALUE=$password
   BOOTSTRAP_ADMIN_USERNAME=$username
+}
+
+# The bootstrap password only needs to exist in controller.env until the first
+# boot creates the administrator. Leaving it there would keep a cleartext
+# credential on disk and would silently re-bootstrap the same password if the
+# database were ever removed.
+clear_bootstrap_admin_password() {
+  [ "$BOOTSTRAP_ADMIN_PASSWORD_PERSISTED" = 1 ] || return 0
+  if [ "${OBOARD_START_SERVICE:-1}" = "0" ]; then
+    # The administrator is created on first boot, which has not happened yet.
+    return 0
+  fi
+  if ! wait_for_controller_ready; then
+    echo "主控尚未就绪，已保留 /etc/oboard/controller.env 中的 OBOARD_ADMIN_PASSWORD。" >&2
+    echo "确认主控启动正常后，可手动删除该行。" >&2
+    return 0
+  fi
+  unset_controller_env_value OBOARD_ADMIN_PASSWORD
+  BOOTSTRAP_ADMIN_PASSWORD_PERSISTED=0
 }
 
 prepare_controller_env() {
@@ -477,56 +530,29 @@ print_controller_urls() {
 }
 
 print_controller_help() {
-  local url
-  url=$(controller_agent_url)
   echo ""
   echo "========================================"
   echo "OBoard 主控安装 / 更新完成"
   echo "========================================"
   echo "面板地址："
   print_controller_urls
-  echo "配置文件：/etc/oboard/controller.env"
-  echo "数据目录：/var/lib/oboard"
   echo ""
   if [ "$CONTROLLER_DATA_EXISTED" = 1 ]; then
     echo "原有面板账号和数据已保留，请使用原账号登录。"
   else
     echo "超级管理员账号：${BOOTSTRAP_ADMIN_USERNAME:-admin}"
-    echo "该账号已自动加入“管理员组”，并作为首位超级管理员不能在面板中删除。"
-    if [ "$BOOTSTRAP_ADMIN_PASSWORD_CONFIGURED" = 1 ]; then
-      echo "超级管理员密码：已按安装时设置保存，不会输出到服务日志。"
+    if [ "$BOOTSTRAP_ADMIN_PASSWORD_GENERATED" = 1 ]; then
+      echo "超级管理员密码：$BOOTSTRAP_ADMIN_PASSWORD_VALUE"
+      echo "该密码只显示这一次，请先保存再关闭窗口。"
     else
-      echo "超级管理员密码：由主控首次启动时生成并打印到服务日志（一次性）。"
-      echo "查看方式示例："
-      if [ "$SERVICE_MANAGER" = openrc ]; then
-        echo "  tail -n 100 /var/log/oboard-controller.log | grep -A2 'first administrator'"
-      else
-        echo "  journalctl -u oboard-controller -n 100 --no-pager | grep -A2 'first administrator'"
-      fi
+      echo "超级管理员密码：已按安装时设置保存。"
     fi
     echo "登录后请立即修改密码。"
   fi
-  echo ""
-  if [ "$SERVICE_MANAGER" = systemd ]; then
-    echo "常用维护命令："
-    echo "  systemctl status oboard-controller     查看运行状态"
-    echo "  systemctl restart oboard-controller    重启主控"
-    echo "  journalctl -u oboard-controller -n 100 --no-pager"
-  elif [ "$SERVICE_MANAGER" = openrc ]; then
-    echo "常用维护命令："
-    echo "  rc-service oboard-controller status    查看运行状态"
-    echo "  rc-service oboard-controller restart   重启主控"
-    echo "  tail -n 100 /var/log/oboard-controller.log"
-  else
+  if [ "$SERVICE_MANAGER" != systemd ] && [ "$SERVICE_MANAGER" != openrc ]; then
+    echo ""
     echo "未识别服务管理器，请手动启动 oboard-controller。"
   fi
-  echo ""
-  echo "Controller 和 Agent 相互独立，也可以安装在同一台服务器上。"
-  echo "主控服务：oboard-controller；Agent 服务：oboard-agent、oboard-sb。"
-  echo "两者使用独立配置和数据目录，不会互相覆盖。"
-  echo "如需让本机同时作为节点，请先在面板添加服务器并取得安装令牌，然后执行："
-  echo "  curl -fsSL '$url/install/agent.sh' | OBOARD_ENROLL_TOKEN='面板令牌' bash"
-  echo "Agent 安装完成后，可在 SSH 中输入 obag 打开管理菜单。"
   echo "========================================"
 }
 
@@ -701,6 +727,18 @@ prepare_controller_updater_runtime() {
     install -d -m 0750 -o root -g root /var/lib/oboard
   fi
   install -d -m 0700 -o root -g root /var/lib/oboard/controller-update
+}
+
+wait_for_controller_ready() {
+  local i url
+  url="$(controller_url 127.0.0.1)/healthz"
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if curl --max-time 2 --fail --silent --show-error "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 start_controller_systemd() {
@@ -906,6 +944,7 @@ install_component() {
         wait_for_controller_updater
         systemctl enable oboard-controller
         start_controller_systemd
+        clear_bootstrap_admin_password
         ;;
       agent)
         install -d -m 0700 /etc/oboard-agent /var/lib/oboard-agent
@@ -945,6 +984,7 @@ install_component() {
         wait_for_controller_updater
         rc-update add oboard-controller default
         start_controller_openrc
+        clear_bootstrap_admin_password
         ;;
       agent)
         install -d -m 0700 /etc/oboard-agent /var/lib/oboard-agent
