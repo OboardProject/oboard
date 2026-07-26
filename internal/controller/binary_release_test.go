@@ -19,7 +19,7 @@ func TestBinaryOnlyControllerReleaseAssets(t *testing.T) {
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	required := map[string][]string{
 		"scripts/build-release.sh":         {"create_tar_archive \"$stage\" \"$archive\" bin web downloads", "${arch}_install.tar.gz", "deploy/systemd", "deploy/openrc"},
-		"scripts/install.sh":               {"OBOARD_UPDATE_CHANNEL", "oboard-controller-updater", "install_component controller", "prepare_controller_updater_runtime", "uninstall_controller", "OBOARD_PURGE_DATA", "drain_piped_script"},
+		"scripts/install.sh":               {"OBOARD_UPDATE_CHANNEL", "oboard-controller-updater", "install_component controller", "prepare_controller_updater_runtime", "uninstall_controller", "OBOARD_PURGE_DATA", "resolve_purge_data", "drain_piped_script"},
 		"scripts/verify-release.sh":        {"Testing Controller", "Building Web UI", "Building current-platform binaries", "cmd/controller-updater"},
 		"scripts/fetch-agent-release.sh":   {"OBOARD_RELEASE_PUBLIC_KEY", "release-manifest.json.sig", "OBOARD_AGENT_CHANNEL"},
 		".github/workflows/ci.yml":         {"contents: read", "Test Controller and release build inputs"},
@@ -151,6 +151,7 @@ func TestBinaryInstallerUninstallDataPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := extractShellFunction(t, string(content), "uninstall_controller")
+	resolver := extractShellFunction(t, string(content), "resolve_purge_data")
 
 	for _, test := range []struct {
 		name  string
@@ -190,7 +191,7 @@ func TestBinaryInstallerUninstallDataPolicy(t *testing.T) {
 				writeInstallerTestFile(t, path)
 			}
 
-			function := rewriteControllerUninstallPaths(original, paths)
+			function := rewriteControllerUninstallPaths(resolver+"\n"+original, paths)
 			harness := function + "\nuserdel() { :; }\ngroupdel() { :; }\n" +
 				"INSTALLATION_EXISTS=1\nINSTALL_DIR=" + shellQuote(paths.install) + "\n" +
 				"OBOARD_PURGE_DATA=" + map[bool]string{false: "0", true: "1"}[test.purge] + "\n" +

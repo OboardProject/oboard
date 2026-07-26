@@ -63,6 +63,10 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"OBoard 主控已卸载",
 		"配置和数据已保留",
 		"OBOARD_PURGE_DATA",
+		"resolve_purge_data",
+		"是否同时删除主控的配置和数据",
+		"删除请直接回车，保留请输入 n [Y/n]",
+		"当前无法交互确认，已保留",
 		"当前暂无可用的稳定版，将安装最新开发版",
 		"安装包下载失败",
 	} {

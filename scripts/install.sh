@@ -721,19 +721,56 @@ start_controller_openrc() {
   echo "主控服务已启动。"
 }
 
-uninstall_controller() {
-  local service_manager=$1 purge=${OBOARD_PURGE_DATA:-0}
-  case "$purge" in
-    0|1) ;;
+resolve_purge_data() {
+  local requested=${OBOARD_PURGE_DATA:-} answer
+  case "$requested" in
+    0|1)
+      printf '%s\n' "$requested"
+      return 0
+      ;;
+    "") ;;
     *)
       echo "OBOARD_PURGE_DATA 只能设置为 0 或 1。" >&2
       return 1
       ;;
   esac
+  if ! { : < /dev/tty; } 2>/dev/null; then
+    echo "当前无法交互确认，已保留 /etc/oboard 和 /var/lib/oboard 中的配置和数据。" >&2
+    echo "如需一并删除，请在卸载命令中添加 OBOARD_PURGE_DATA=1。" >&2
+    printf '0\n'
+    return 0
+  fi
+  while true; do
+    printf '\n是否同时删除主控的配置和数据？\n' > /dev/tty
+    printf '将删除 /etc/oboard 和 /var/lib/oboard，包含数据库、证书和备份，删除后无法恢复。\n' > /dev/tty
+    printf '删除请直接回车，保留请输入 n [Y/n]：' > /dev/tty
+    if ! IFS= read -r answer < /dev/tty; then
+      printf '\n' > /dev/tty
+      echo "未读取到确认输入，已保留配置和数据。" >&2
+      printf '0\n'
+      return 0
+    fi
+    case "$answer" in
+      ""|y|Y|yes|Yes|YES)
+        printf '1\n'
+        return 0
+        ;;
+      n|N|no|No|NO)
+        printf '0\n'
+        return 0
+        ;;
+      *) printf '请输入 y 或 n。\n' > /dev/tty ;;
+    esac
+  done
+}
+
+uninstall_controller() {
+  local service_manager=$1 purge
   if [ "$INSTALLATION_EXISTS" != 1 ]; then
     echo "未检测到已安装的 OBoard 主控，无需卸载。"
     return 0
   fi
+  purge=$(resolve_purge_data) || return 1
 
   echo "正在卸载 OBoard 主控..."
   case "$service_manager" in
