@@ -2164,3 +2164,198 @@ func TestDeploymentListenerConflictQueuesNoPartialTasks(t *testing.T) {
 		t.Fatalf("later-server listener conflict queued partial deployment tasks: %#v", tasks)
 	}
 }
+
+func TestDisabledProxyPathDoesNotBlockPageDataOrDeployment(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+
+	serverA := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
+	serverB := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
+	inbound := request(t, h, http.MethodPost, "/api/v1/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
+
+	serverC := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "C", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
+	serverCID := int64(serverC["server"].(map[string]any)["id"].(float64))
+
+	// Build a branch while it is disabled, then force a shape that path semantics
+	// reject: a transparent forward after sing-box already decrypted the traffic.
+	created := request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": false}, http.StatusCreated)
+	pathID := int64(created["proxy_path"].(map[string]any)["id"].(float64))
+	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox"}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "singbox"}, http.StatusCreated)
+	steps, err := db.ListProxyPathStepsForPath(context.Background(), pathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 2 {
+		t.Fatalf("step count = %d", len(steps))
+	}
+	steps[1].TransportMode = model.ProxyPathTransportPortForward
+	if err := db.UpdateProxyPathStep(context.Background(), &steps[1]); err != nil {
+		t.Fatal(err)
+	}
+
+	// A disabled half-configured branch must not take down the page or block the
+	// deployment of every other server.
+	request(t, h, http.MethodGet, "/api/v1/page-data?page=proxy-paths", token, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+
+	// Enabling it is the point where the operator must be told it is invalid, and
+	// the stored row must stay disabled.
+	request(t, h, http.MethodPatch, "/api/v1/proxy-paths/"+itoa(pathID), token, map[string]any{"enabled": true}, http.StatusBadRequest)
+	stored, err := db.GetProxyPath(context.Background(), pathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Enabled {
+		t.Fatal("rejected enable must not persist")
+	}
+}
+
+func TestProxyPathStepConfigDropsUnsupportedKeys(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+
+	serverA := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
+	serverB := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
+	inbound := request(t, h, http.MethodPost, "/api/v1/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
+	created := request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	pathID := int64(created["proxy_path"].(map[string]any)["id"].(float64))
+
+	// internal_port is read by the config generator. Accepting it would bypass
+	// port allocation and desynchronize the plan from the generated config.
+	step := request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "config_json": `{"chain_method":"2022-blake3-aes-256-gcm","internal_port":45678,"unknown":"x"}`}, http.StatusCreated)
+	cfg := map[string]any{}
+	if err := json.Unmarshal([]byte(step["proxy_path_step"].(map[string]any)["config_json"].(string)), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg["internal_port"]; ok {
+		t.Fatalf("internal_port must be dropped: %#v", cfg)
+	}
+	if _, ok := cfg["unknown"]; ok {
+		t.Fatalf("unknown keys must be dropped: %#v", cfg)
+	}
+	if cfg["chain_method"] != "2022-blake3-aes-256-gcm" {
+		t.Fatalf("chain_method must survive: %#v", cfg)
+	}
+	// An invalid forward backend is rejected instead of being stored verbatim.
+	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverAID, "transport_mode": "port_forward", "config_json": `{"backend":"bogus"}`}, http.StatusBadRequest)
+}
+
+func TestProxyPathStepDeleteKeepsChainWhenValidationFails(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+
+	serverA := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
+	serverB := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
+	serverC := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "C", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
+	serverCID := int64(serverC["server"].(map[string]any)["id"].(float64))
+	inbound := request(t, h, http.MethodPost, "/api/v1/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
+	created := request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	pathID := int64(created["proxy_path"].(map[string]any)["id"].(float64))
+
+	// A transparent prefix whose processing hop is the second step.
+	first := request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "port_forward"}, http.StatusCreated)
+	firstID := int64(first["proxy_path_step"].(map[string]any)["id"].(float64))
+	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "port_forward"}, http.StatusCreated)
+
+	// Deleting from the first hop removes the whole chain, so the path goes too.
+	result := request(t, h, http.MethodDelete, "/api/v1/proxy-path-steps/"+itoa(firstID), token, nil, http.StatusOK)
+	if result["path_deleted"] != true || int(result["deleted_steps"].(float64)) != 2 {
+		t.Fatalf("delete result = %#v", result)
+	}
+	remaining, err := db.ListProxyPathStepsForPath(context.Background(), pathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("steps survived a full-chain delete: %#v", remaining)
+	}
+}
+
+func TestDeploymentPersistsAndReusesGeneratedPorts(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+
+	serverA := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
+	serverB := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
+	inbound := request(t, h, http.MethodPost, "/api/v1/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
+	created := request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	pathID := int64(created["proxy_path"].(map[string]any)["id"].(float64))
+	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox"}, http.StatusCreated)
+
+	request(t, h, http.MethodPost, "/api/v1/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	allocations, err := db.ListProxyPathPortAllocations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allocations) != 1 || allocations[0].Kind != model.ProxyPathPortKindChainService || allocations[0].ServerID != serverBID {
+		t.Fatalf("deployment did not persist the shared listener port: %#v", allocations)
+	}
+	assigned := allocations[0].Port
+	if assigned < 31000 || assigned > 31100 {
+		t.Fatalf("allocated port %d is outside the target's configured range", assigned)
+	}
+
+	// Occupy the allocated port with a new inbound on the target, then deploy
+	// again. The stored allocation must win so the live listener does not move.
+	request(t, h, http.MethodPost, "/api/v1/inbounds", token, map[string]any{"server_id": serverBID, "name": "squatter", "protocol": "vless", "listen_ip": "0.0.0.0", "port": assigned, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/deployments/apply", token, map[string]any{}, http.StatusBadRequest)
+	after, err := db.ListProxyPathPortAllocations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 1 || after[0].Port != assigned {
+		t.Fatalf("stored allocation changed: before=%d after=%#v", assigned, after)
+	}
+
+	// Removing the branch releases the record so the port returns to the pool.
+	request(t, h, http.MethodDelete, "/api/v1/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	released, err := db.ListProxyPathPortAllocations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(released) != 0 {
+		t.Fatalf("allocation survived removal of its only consumer: %#v", released)
+	}
+}

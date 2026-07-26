@@ -10,6 +10,39 @@ import {
 import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, MarkerType, Node, NodeChange, PanOnScrollMode, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getStraightPath, getViewportForBounds } from 'reactflow'
 import type { EdgeProps, ReactFlowInstance } from 'reactflow'
 import 'reactflow/dist/style.css'
+import type {
+  CertificateMode,
+  DNSRecordTypes,
+  EntryIPMode,
+  ExternalOutbound,
+  ExternalProtocol,
+  Inbound,
+  Protocol,
+  ProxyPath,
+  ProxyPathNamePart,
+  ProxyPathStep,
+  ProxyPathTransportMode,
+  RegionMode,
+  Server,
+} from './components/proxy-path/types'
+import { TransportDialog } from './components/proxy-path/TransportDialog'
+import {
+  GRAPH_ENTRY_NODE_WIDTH,
+  defaultEntryGraphPosition,
+  defaultImportedGraphPosition,
+  defaultServerGraphPosition,
+  graphEntryHandleLeft,
+  graphEntryHandleRatio,
+  graphPathHandleLeft,
+  graphServerNodeWidth,
+  loadGraphPositions,
+  loadGraphToolboxPosition,
+  saveGraphPositions,
+  saveGraphToolboxPosition,
+  snapGraphPosition,
+} from './components/proxy-path/layout'
+import type { GraphPosition } from './components/proxy-path/layout'
+import type { TransportDialogTarget, TransportSelection } from './components/proxy-path/TransportDialog'
 import './style.css'
 import logo from './assets/logo.svg'
 import { 
@@ -80,15 +113,7 @@ type BackupDestination = { provider: 's3' | 'webdav' | ''; endpoint: string; buc
 type ControllerBackup = { id: string; name: string; origin: 'manual' | 'automatic' | 'uploaded' | 'pre_restore' | string; local_status: string; remote_status: string; remote_error?: string; remote_retrievable: boolean; size_bytes: number; source_version: string; format_version: number; protected: boolean; created_at: string }
 type ControllerBackupSettings = { enabled: boolean; schedule: 'daily' | 'weekly'; time: string; weekday: number; local_retention: number; remote_retention: number; destination: BackupDestination; password_configured: boolean; destination_configured: boolean; last_success_at?: string; last_error?: string }
 type ControllerBackupSnapshot = { settings: ControllerBackupSettings; backups: ControllerBackup[] }
-type Protocol = 'vless' | 'hy2' | 'anytls' | 'shadowsocks' | 'ssh'
-type ExternalProtocol = Exclude<Protocol, 'ssh'> | 'socks'
-type EntryIPMode = 'auto' | 'ipv4' | 'ipv6' | 'custom'
-type RegionMode = 'auto' | 'manual'
-type Server = { id: number; name: string; entry_address: string; public_ipv4: string; public_ipv6: string; region_code: string; detected_region_code: string; region_mode: RegionMode; entry_ip_mode: EntryIPMode; listen_ip: string; ip_stack: string; udp_inbound_mode: string; mtu_mode: string; mtu_value: number; mtu_probe_host: string; mtu_probe_port: number; mtu_overhead_bytes: number; port_range_start: number; port_range_end: number; ssh_port: number; status: string; os: string; distro_id: string; distro_version: string; distro_name: string; libc: string; service_manager: string; package_manager: string; arch: string; cpu: string; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; agent_memory_bytes: number; agent_id?: string; agent_version: string; agent_build: string; sing_box_version: string; monitoring_mode: 'lightweight' | 'standard'; traffic_reset_mode: string; traffic_reset_day: number; network_upload_bps: number; network_download_bps: number; traffic_upload_bytes: number; traffic_download_bytes: number; traffic_period_start?: string; traffic_period_end?: string; connectivity_probe_enabled: boolean; connection_audit_enabled: boolean; connectivity_status: string; connectivity_latency_ms: number; connectivity_checked_at?: string; connectivity_error?: string; telemetry_updated_at?: string }
 type ServerMetricSample = { id: number; server_id: number; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; network_upload_bps: number; network_download_bps: number; traffic_upload_bytes: number; traffic_download_bytes: number; connectivity_available?: boolean; connectivity_latency_ms: number; sampled_at: string }
-type DNSRecordTypes = 'auto' | 'a' | 'aaaa' | 'both'
-type CertificateMode = 'external' | 'auto' | 'exact' | 'wildcard' | 'explicit'
-type Inbound = { id: number; server_id: number; name: string; protocol: Protocol; listen_ip: string; port: number; entry_ip_mode: EntryIPMode; external_ip: string; dns_sync_enabled: boolean; dns_credential_id?: number; dns_domain: string; dns_proxy_enabled: boolean; dns_record_types: DNSRecordTypes; ddns_enabled: boolean; ddns_interval_seconds: number; dns_sync_status: string; dns_sync_error: string; dns_last_synced_at?: string; tls: boolean; certificate_mode?: CertificateMode; certificate_id?: number; certificate_domain?: string; config_json: string; enabled: boolean }
 type DNSProvider = 'cloudflare' | 'alidns' | 'tencent_dns' | 'tencent_esa' | 'huawei_cloud'
 type DNSCredentialZone = { id: number; credential_id: number; zone_name: string; provider_zone_id?: string; server_id?: number }
 type DNSCredential = { id: number; name: string; provider: DNSProvider; zones: DNSCredentialZone[]; configured: boolean; enabled: boolean; verified_at?: string; last_error?: string }
@@ -126,12 +151,7 @@ type NotificationChannel = { id: number; owner_user_id: number; owner_username?:
 type NotificationAnnouncement = { id: number; actor_user_id: number; actor_name: string; title: string; body: string; user_ids: number[]; queued_count: number; created_at: string }
 type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'warp' | 'interface'
 type RoutingRule = { id: number; server_id: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; warp_profile_id?: number; outbound_tag: string; interface_name?: string; enabled: boolean }
-type ExternalOutbound = { id: number; server_id?: number; name: string; protocol: ExternalProtocol; scope: 'global' | 'server'; target_address: string; target_port: number; config_json: string; expose_to_users: boolean; enabled: boolean }
 type ExternalOutboundAccessGrant = { id: number; external_outbound_id: number; subject_type: AccessSubjectType; subject_id: number; enabled: boolean }
-type ProxyPathNamePart = { kind: 'literal'; value: string } | { kind: 'server'; server_id: number } | { kind: 'external_outbound'; external_outbound_id: number }
-type ProxyPath = { id: number; name: string; name_mode: 'auto' | 'custom'; name_template: ProxyPathNamePart[]; inbound_id: number; enabled: boolean }
-type ProxyPathTransportMode = 'singbox' | 'port_forward' | 'tunnel'
-type ProxyPathStep = { id: number; path_id: number; position: number; node_type: 'server_inbound' | 'imported'; transport_mode?: ProxyPathTransportMode; processing_role?: boolean; server_id?: number; inbound_id?: number; external_outbound_id?: number; config_json?: string }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
 type SubscriptionFormat = 'plain-json' | 'stash' | 'clash-meta' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'v2ray' | 'v2ray-uri' | 'clash'
 type SubscriptionProfile = { id: number; name: string; group_name: string; description: string; config_json: string; enabled: boolean; created_at?: string; updated_at?: string }
@@ -4454,9 +4474,12 @@ type TransportMode = 'port-forward' | 'tunnel'
 type TransportDraft = { mode: TransportMode; name: string; source_server_id: number; target_server_id: number; listen_ip: string; listen_port: number; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; type: TunnelType; priority: number; config_json: string; enabled: boolean }
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step'; id: number; label: string; path_id?: number; node_id?: string }
 type ImportedNodeDraft = { content: string; scope: 'global' | 'server'; server_id: number; expose_to_users: boolean; position?: GraphPosition | null }
-type GraphPosition = { x: number; y: number }
 type CanvasServerInstance = { instance_id: string; server_id: number }
-const GRAPH_ENTRY_NODE_WIDTH = 260
+type TransportDialogRequest = {
+  target: TransportDialogTarget
+  current?: string
+  resolve: (value: TransportSelection | null) => void
+}
 
 function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, panelActionsTarget }: any) {
   const dialogs = useDialogs()
@@ -4494,6 +4517,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const [importDraft, setImportDraft] = useState<ImportedNodeDraft | null>(null)
 	const [configNode, setConfigNode] = useState<ExternalOutbound | null>(null)
 	const [namingPath, setNamingPath] = useState<ProxyPath | null>(null)
+	const [transportRequest, setTransportRequest] = useState<TransportDialogRequest | null>(null)
   const [graphMenu, setGraphMenu] = useState<{ x: number; y: number; entity: GraphEntity } | null>(null)
   const [activeGraphEntity, setActiveGraphEntity] = useState<GraphEntity | null>(null)
   useEffect(() => { setNodes(builtFlow.nodes); setEdges(builtFlow.edges) }, [builtFlow])
@@ -4748,73 +4772,106 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  setCanvasImportedIDs(ids => ids.includes(node.id) ? ids : [...ids, node.id])
 	  await createPathFromEntry(entry, { node_type: 'imported', external_outbound_id: node.id })
 	}
-	const chooseProxyPathTransport = async (targetServer: Server | null, current?: ProxyPathStep, targetInbound?: Inbound | null): Promise<{ transport_mode: ProxyPathTransportMode; processing_role: false; config_json: string } | null> => {
-	  let existing: any = {}
-	  try { existing = JSON.parse(current?.config_json || '{}') } catch { existing = {} }
-	  const value = await dialogs.prompt({ title: '选择传递方式', message: '选择这一跳如何传递流量。', defaultValue: 'singbox', choices: [
-	    { value: 'singbox', label: targetInbound ? `使用已有 ${labelProtocol(targetInbound.protocol)} 入口` : '共享 SS 链式代理' },
-	    { value: 'port_forward', label: '端口转发' },
-	    { value: 'tunnel', label: 'SSH / WG 隧道' },
-	  ] })
-	  if (!value) return null
-	  const transport = (['singbox', 'port_forward', 'tunnel'].includes(value) ? value : 'singbox') as ProxyPathTransportMode
-	  if (transport === 'port_forward') return { transport_mode: transport, processing_role: false, config_json: '{}' }
-	  let chainMethod = ''
-	  if (!targetInbound) {
-	    const selectedMethod = await dialogs.prompt({
-	      title: '链路加密方法',
-	      message: '相同目标服务器和加密方法会复用一个 SS 服务端口。',
-	      defaultValue: existing.chain_method || '2022-blake3-aes-128-gcm',
-	      choices: proxyPathChainMethods.map(item => ({ value: item.value, label: item.label })),
-	    })
-	    if (!selectedMethod) return null
-	    chainMethod = selectedMethod
-	  }
-	  if (transport !== 'tunnel') return { transport_mode: transport, processing_role: false, config_json: chainMethod ? JSON.stringify({ chain_method: chainMethod }) : '{}' }
-	  const tunnelType = await dialogs.prompt({ title: '选择隧道', message: 'SSH 会自动准备专用账户与密钥；WireGuard 会自动生成双端密钥和点对点地址。', defaultValue: existing.type || 'ssh', choices: [
-	    { value: 'ssh', label: 'SSH 隧道' },
-	    { value: 'wireguard', label: 'WireGuard 隧道' },
-	  ] })
-	  if (!tunnelType) return null
-	  const tunnelConfig: Record<string, string | number> = { type: tunnelType }
-	  if (chainMethod) tunnelConfig.chain_method = chainMethod
-	  if (tunnelType === 'ssh') {
-	    if (existing.ssh_port) {
-	      tunnelConfig.ssh_port = existing.ssh_port
-	    } else if (!targetServer?.ssh_port) {
-	      const rawPort = await dialogs.prompt({ title: 'SSH 端口', message: '目标服务器未保存 SSH 端口，请输入本次隧道使用的端口。', placeholder: '1-65535', inputType: 'number' })
-	      if (rawPort === null) return null
-	      const sshPort = Number(rawPort)
-	      if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535) {
-	        await dialogs.alert({ title: '端口无效', message: 'SSH 端口必须是 1 到 65535 的整数。' })
-	        return null
-	      }
-	      tunnelConfig.ssh_port = sshPort
-	    }
-	  }
-	  return { transport_mode: transport, processing_role: false, config_json: JSON.stringify(tunnelConfig) }
-	}
-	const chooseTransportForTarget = async (target: { node_type: 'imported' | 'server_inbound'; server_id?: number; inbound_id?: number }, current?: ProxyPathStep) => {
-	  if (target.node_type === 'imported') return { transport_mode: 'singbox' as ProxyPathTransportMode, processing_role: false as const, config_json: '{}' }
+	// One panel collects the whole selection so the operator can revise any field
+	// before committing, instead of walking an unrevisable chain of prompts.
+	const openTransportDialog = (request: Omit<TransportDialogRequest, 'resolve'>) =>
+	  new Promise<TransportSelection | null>(resolve => setTransportRequest({ ...request, resolve }))
+	const chooseTransportForTarget = async (target: { node_type: 'imported' | 'server_inbound'; server_id?: number; inbound_id?: number }, current?: ProxyPathStep, sourceLabel?: string): Promise<TransportSelection | null> => {
 	  const targetInbound = target.inbound_id ? entries.find(item => item.id === target.inbound_id) : null
 	  const targetServerID = target.server_id || targetInbound?.server_id
 	  const targetServer = targetServerID ? servers.find(item => item.id === targetServerID) || null : null
-	  return chooseProxyPathTransport(targetServer, current, targetInbound)
-	}
-	const confirmSharedAppend = async (count: number, targetLabel: string) => {
-	  if (count <= 1) return true
-	  return dialogs.confirm({
-	    title: '追加到多条路径',
-	    message: `“共享”连接会把 ${targetLabel || '目标节点'} 同时追加到 ${count} 条路径。每条路径都会独立保存并下发。`,
-	    confirmText: '追加到全部路径',
+	  const importedNode = target.node_type === 'imported' && (target as any).external_outbound_id
+	    ? ((data.external_outbounds || []) as ExternalOutbound[]).find(item => item.id === (target as any).external_outbound_id)
+	    : undefined
+	  const targetLabel = target.node_type === 'imported'
+	    ? importedNode?.name || '导入节点'
+	    : targetServer?.name || `服务器 ${targetServerID || ''}`.trim()
+	  return openTransportDialog({
+	    target: {
+	      sourceLabel: sourceLabel || selected?.name || '当前节点',
+	      targetLabel,
+	      targetInboundLabel: targetInbound ? `${targetInbound.name || `入口 ${targetInbound.id}`} / ${labelProtocol(targetInbound.protocol)}:${targetInbound.port}` : undefined,
+	      targetSSHPort: targetServer?.ssh_port || 0,
+	      importedOnly: target.node_type === 'imported',
+	    },
+	    current: current?.config_json,
 	  })
+	}
+	const proxyPathDisplayName = (path: ProxyPath) => path.name || `路径 ${path.id}`
+	const confirmSharedAppend = async (count: number, targetLabel: string, names: string[] = [], mode: 'append' | 'create' = 'append') => {
+	  if (count <= 1) return true
+	  const appending = mode === 'append'
+	  return dialogs.confirm({
+	    title: appending ? '追加到多条路径' : '为每个入口新建链路',
+	    message: <div className="dialog-detail">
+	      <p>
+	        {appending
+	          ? `会把 ${targetLabel || '目标节点'} 追加到以下 ${count} 条已有路径的末尾。`
+	          : `会为以下 ${count} 个入口各新建一条链路，出口都是 ${targetLabel || '目标节点'}。`}
+	        每条路径独立保存，需要下发配置后生效。
+	      </p>
+	      {names.length > 0 && <ul>{names.map((name, index) => <li key={index}>{name}</li>)}</ul>}
+	    </div>,
+	    confirmText: appending ? `追加到这 ${count} 条路径` : `新建这 ${count} 条链路`,
+	  })
+	}
+	// Every shared append is a separate request. Report what actually landed rather
+	// than stopping at the first failure and leaving the operator to guess which
+	// branches were modified.
+	const runSharedAppends = async <T,>(items: T[], label: (item: T) => string, append: (item: T) => Promise<ProxyPathStep | null>) => {
+	  const createdSteps: ProxyPathStep[] = []
+	  const failures: string[] = []
+	  for (const item of items) {
+	    try {
+	      const created = await append(item)
+	      if (created) createdSteps.push(created)
+	      else failures.push(`${label(item)}：未创建路径步骤`)
+	    } catch (error: any) {
+	      failures.push(`${label(item)}：${localizeErrorMessage(error?.message || error)}`)
+	    }
+	  }
+	  if (failures.length) {
+	    await dialogs.alert({
+	      title: createdSteps.length ? '部分路径未追加' : '追加失败',
+	      message: <div className="dialog-detail">
+	        <p>{createdSteps.length ? `${createdSteps.length} 条路径已追加，以下 ${failures.length} 条失败：` : '没有路径被修改。失败原因：'}</p>
+	        <ul>{failures.map((item, index) => <li key={index}>{item}</li>)}</ul>
+	      </div>,
+	    })
+	  }
+	  return createdSteps
 	}
 	const ensureTransparentPathExclusive = async (pathID: number, inboundID: number) => {
 	  const siblings: ProxyPath[] = (data.proxy_paths || []).filter((path: ProxyPath) => path.enabled !== false && path.inbound_id === inboundID && path.id !== pathID)
 	  if (!siblings.length) return true
-	  const ok = await dialogs.confirm({ title: '端口转发将独占入口', message: `透明端口转发必须独占入口端口。继续会删除另外 ${siblings.length} 条分支及其后续节点。`, tone: 'danger', confirmText: '替换其他分支' })
+	  const ok = await dialogs.confirm({
+	    title: '端口转发将独占入口',
+	    message: <div className="dialog-detail">
+	      <p>透明端口转发必须独占入口端口，因此以下 {siblings.length} 条分支及其后续节点会被删除，对应的订阅节点也会消失。</p>
+	      <ul>{siblings.map(path => <li key={path.id}>{proxyPathDisplayName(path)}</li>)}</ul>
+	    </div>,
+	    tone: 'danger',
+	    confirmText: `删除这 ${siblings.length} 条分支`,
+	  })
 	  if (!ok) return false
-	  for (const path of siblings) await client.request(`/proxy-paths/${path.id}`, { method: 'DELETE' })
+	  const failures: string[] = []
+	  for (const path of siblings) {
+	    try {
+	      await client.request(`/proxy-paths/${path.id}`, { method: 'DELETE' })
+	    } catch (error: any) {
+	      failures.push(`${proxyPathDisplayName(path)}：${localizeErrorMessage(error?.message || error)}`)
+	    }
+	  }
+	  if (failures.length) {
+	    await dialogs.alert({
+	      title: '分支未全部删除',
+	      message: <div className="dialog-detail">
+	        <p>入口仍被其他分支占用，端口转发无法启用。请先处理：</p>
+	        <ul>{failures.map((item, index) => <li key={index}>{item}</li>)}</ul>
+	      </div>,
+	    })
+	    return false
+	  }
 	  return true
 	}
 	const createPathFromEntry = async (entry: Inbound, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
@@ -4872,27 +4929,24 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    const allSteps = (data.proxy_path_steps || []) as ProxyPathStep[]
 	    const terminalSteps = allSteps.filter(step => proxyPathStepNodeID(step) === conn.source && !allSteps.some(other => other.path_id === step.path_id && other.position > step.position))
 	    if (terminalSteps.length) {
-	      if (!await confirmSharedAppend(terminalSteps.length, targetEntity?.label || '目标节点')) return
+	      const stepPathName = (step: ProxyPathStep) => {
+	        const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === step.path_id)
+	        return path ? proxyPathDisplayName(path) : `路径 ${step.path_id}`
+	      }
+	      if (!await confirmSharedAppend(terminalSteps.length, targetEntity?.label || '目标节点', terminalSteps.map(stepPathName))) return
 	      const transport = await chooseTransportForTarget(target)
 	      if (!transport) return
-	      const createdSteps: ProxyPathStep[] = []
-	      for (const step of terminalSteps) {
-	        const created = await appendPathAfterStep(step.id, { ...target, ...transport })
-	        if (created) createdSteps.push(created)
-	      }
+	      const createdSteps = await runSharedAppends(terminalSteps, stepPathName, step => appendPathAfterStep(step.id, { ...target, ...transport }))
 	      consumeCanvasServerTarget(conn.target, createdSteps)
 	      return
 	    }
 	    const serverEntries = entries.filter(entry => entry.server_id === sourceEntity.id && entry.enabled !== false)
 	    if (!serverEntries.length) return dialogs.alert({ title: '没有可共享的入口', message: '这台服务器还没有可用入口，无法创建共享后续路径。' })
-	    if (!await confirmSharedAppend(serverEntries.length, targetEntity?.label || '目标节点')) return
+	    const entryLabel = (entry: Inbound) => `${entry.name || `入口 ${entry.id}`} / ${labelProtocol(entry.protocol)}:${entry.port}`
+	    if (!await confirmSharedAppend(serverEntries.length, targetEntity?.label || '目标节点', serverEntries.map(entryLabel), 'create')) return
 	    const transport = await chooseTransportForTarget(target)
 	    if (!transport) return
-	    const createdSteps: ProxyPathStep[] = []
-	    for (const entry of serverEntries) {
-	      const created = await createPathFromEntry(entry, { ...target, ...transport })
-	      if (created) createdSteps.push(created)
-	    }
+	    const createdSteps = await runSharedAppends(serverEntries, entryLabel, entry => createPathFromEntry(entry, { ...target, ...transport }))
 	    consumeCanvasServerTarget(conn.target, createdSteps)
 	    return
 	  }
@@ -4910,7 +4964,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const sourceHandleEntry = sourceHandleInboundID ? entries.find(x => x.id === sourceHandleInboundID) || null : null
 	  if (sourceEntity?.type === 'entry' && targetEntity?.type === 'imported') {
 	    const entry = entries.find(x => x.id === sourceEntity.id)
-	    const transport = await chooseTransportForTarget({ node_type: 'imported' })
+	    const transport = await chooseTransportForTarget({ node_type: 'imported', external_outbound_id: targetEntity.id } as any, undefined, sourceEntity.label)
 	    if (entry && transport) await createPathFromEntry(entry, { node_type: 'imported', external_outbound_id: targetEntity.id, ...transport })
 	    return
 	  }
@@ -4938,7 +4992,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }
 	  if (sourceEntity?.type === 'server' && targetEntity?.type === 'imported') {
 	    const entry = sourceHandleEntry && sourceHandleEntry.server_id === sourceEntity.id ? sourceHandleEntry : await chooseEntryForServer(sourceEntity.id, 'source')
-	    const transport = await chooseTransportForTarget({ node_type: 'imported' })
+	    const transport = await chooseTransportForTarget({ node_type: 'imported', external_outbound_id: targetEntity.id } as any, undefined, sourceEntity.label)
 	    if (entry && transport) await createPathFromEntry(entry, { node_type: 'imported', external_outbound_id: targetEntity.id, ...transport })
 	    return
 	  }
@@ -4952,6 +5006,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    return
 	  }
 	  return dialogs.alert({ title: '请选择路径连接点', message: '从入口节点、一级服务器上的入口点，或路径中服务器/导入节点旁的继续连接点拖线。这样系统才能知道要追加哪一条代理路径。' })
+  }
+  // React Flow does not await onConnect, so a rejected request would otherwise
+  // surface only as an unhandled rejection in the console.
+  const onConnect = (conn: Connection) => {
+    void connect(conn).catch(async (error: any) => {
+      await dialogs.alert({ title: '连接失败', message: localizeErrorMessage(error?.message || error) })
+    })
   }
   const addServer = (position?: GraphPosition) => {
     serverDraftPosition.current = position || nextServerGraphPosition(data)
@@ -5133,7 +5194,25 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }
     const item = meta[entity.type]
     const cascading = entity.type === 'proxy-path-step'
-    const ok = await dialogs.confirm({ title: cascading ? '取消后续链路' : `删除${item.name}`, message: cascading ? `确认从 ${entity.label} 开始断开？该位置及其全部后续节点都会从这条路径移除。` : `确认删除 ${entity.label}？`, tone: 'danger', confirmText: cascading ? '取消后续节点' : '删除' })
+    // Deleting a server or an entry cuts every path that traverses it, including
+    // branches rooted at another entry server that this canvas does not draw.
+    const affected = entity.type === 'server' || entity.type === 'entry'
+      ? proxyPathsTouchingEntity(data, entity)
+      : []
+    const ok = await dialogs.confirm({
+      title: cascading ? '取消后续链路' : `删除${item.name}`,
+      message: cascading
+        ? `确认从 ${entity.label} 开始断开？该位置及其全部后续节点都会从这条路径移除。`
+        : <div className="dialog-detail">
+            <p>确认删除 {entity.label}？</p>
+            {affected.length > 0 && <>
+              <p>以下 {affected.length} 条链路经过它，会被同步截断或删除：</p>
+              <ul>{affected.map((name, index) => <li key={index}>{name}</li>)}</ul>
+            </>}
+          </div>,
+      tone: 'danger',
+      confirmText: cascading ? '取消后续节点' : '删除',
+    })
     if (!ok) return
     try {
       await client.request(item.path, { method: 'DELETE' })
@@ -5147,9 +5226,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const step = (data.proxy_path_steps || []).find((x: ProxyPathStep) => x.id === entity.id)
 	  if (!step) return
 	  if (step.node_type !== 'server_inbound') return dialogs.alert({ title: '无法更改', message: '导入节点必须使用 sing-box 出站链。' })
-	  const transport = await chooseTransportForTarget(step, step)
-	  if (!transport) return
 	  const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === step.path_id)
+	  const transport = await chooseTransportForTarget(step, step, proxyPathStepUpstreamLabel(data, step))
+	  if (!transport) return
 	  try {
 	    if (transport.transport_mode === 'port_forward' && path && !await ensureTransparentPathExclusive(path.id, path.inbound_id)) return
 	    await client.request(`/proxy-path-steps/${step.id}`, { method: 'PATCH', body: JSON.stringify({ ...step, ...transport }) })
@@ -5360,7 +5439,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
           onEdgeContextMenu={onEdgeContextMenu} 
           onPaneClick={closeGraphMenu} 
           onMoveStart={closeGraphMenu} 
-          onConnect={connect} 
+          onConnect={onConnect}
           panOnScroll
           zoomOnScroll={false}
           zoomOnPinch 
@@ -5420,6 +5499,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     <AnimatePresence>{importDraft && <ImportNodeDialog draft={importDraft} setDraft={setImportDraft} servers={servers} onCancel={() => setImportDraft(null)} onSubmit={submitImportNode} />}</AnimatePresence>
     <AnimatePresence>{configNode && <ImportedNodeConfigDialog node={configNode} data={data} client={client} load={load} onClose={() => setConfigNode(null)} />}</AnimatePresence>
 	<AnimatePresence>{namingPath && <ProxyPathNameDialog path={namingPath} data={data} client={client} load={load} onClose={() => setNamingPath(null)} />}</AnimatePresence>
+	<AnimatePresence>{transportRequest && <TransportDialog
+	  target={transportRequest.target}
+	  current={transportRequest.current}
+	  chainMethods={proxyPathChainMethods}
+	  onCancel={() => { transportRequest.resolve(null); setTransportRequest(null) }}
+	  onSubmit={selection => { transportRequest.resolve(selection); setTransportRequest(null) }}
+	/>}</AnimatePresence>
   </div>
 }
 
@@ -6539,6 +6625,10 @@ type GraphServerRole = {
   processingPaths: number
   transparentPaths: number
   relayPaths: number
+  /** Paths rooted at a different entry server that traverse this server. The
+   *  canvas only renders one root at a time, so without this the operator cannot
+   *  see that a change here also affects branches they are not looking at. */
+  foreignPaths: string[]
 }
 type GraphEntryPathInfo = {
   pathCount: number
@@ -6623,7 +6713,39 @@ function ProxyGraphLegend() {
 }
 
 function emptyGraphServerRole(isRoot = false): GraphServerRole {
-  return { isRoot, processingPaths: 0, transparentPaths: 0, relayPaths: 0 }
+  return { isRoot, processingPaths: 0, transparentPaths: 0, relayPaths: 0, foreignPaths: [] }
+}
+
+// Names of the enabled paths that traverse each server but are rooted at another
+// entry server. Shared Shadowsocks services and shared tunnels are keyed by
+// target server, not by root, so this is exactly the coupling a single-root view
+// hides.
+function foreignProxyPathsByServer(data: any, rootServerID: number) {
+  const inboundByID = new Map<number, Inbound>(((data.inbounds || []) as Inbound[]).map(x => [x.id, x]))
+  const stepsByPath = new Map<number, ProxyPathStep[]>()
+  ;((data.proxy_path_steps || []) as ProxyPathStep[]).forEach(step => {
+    const list = stepsByPath.get(step.path_id) || []
+    list.push(step)
+    stepsByPath.set(step.path_id, list)
+  })
+  const out = new Map<number, string[]>()
+  ;((data.proxy_paths || []) as ProxyPath[]).forEach(path => {
+    if (path.enabled === false) return
+    const root = inboundByID.get(path.inbound_id)
+    if (!root || root.server_id === rootServerID) return
+    const label = path.name || `路径 ${path.id}`
+    const touched = new Set<number>([root.server_id])
+    ;(stepsByPath.get(path.id) || []).forEach(step => {
+      const serverID = graphStepServerID(step, inboundByID)
+      if (serverID) touched.add(serverID)
+    })
+    touched.forEach(serverID => {
+      const list = out.get(serverID) || []
+      if (!list.includes(label)) list.push(label)
+      out.set(serverID, list)
+    })
+  })
+  return out
 }
 
 function graphStepServerID(step: ProxyPathStep, inboundByID: Map<number, Inbound>) {
@@ -6696,11 +6818,20 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   })
   const serverRoles = new Map<number, GraphServerRole>()
   const entryPathInfo = new Map<number, GraphEntryPathInfo>()
+  const foreignPaths = foreignProxyPathsByServer(data, rootID)
   const roleFor = (serverID: number, isRoot = false) => {
     const current = serverRoles.get(serverID) || emptyGraphServerRole(isRoot)
     if (isRoot) current.isRoot = true
+    current.foreignPaths = foreignPaths.get(serverID) || []
     serverRoles.set(serverID, current)
     return current
+  }
+  // A server can be on the canvas without joining any visible path and still be
+  // used by branches rooted elsewhere, so read through this instead of falling
+  // back to a blank role.
+  const displayRole = (serverID: number, isRoot = false) => {
+    const role = serverRoles.get(serverID) || emptyGraphServerRole(isRoot)
+    return { ...role, foreignPaths: foreignPaths.get(serverID) || role.foreignPaths }
   }
   roleFor(rootID, true)
   entries.filter(entry => entry.server_id === rootID && entry.enabled !== false).forEach(entry => {
@@ -6761,7 +6892,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     serverEntries.forEach((entry, index) => serverEntryIndexes.set(entry.id, index))
     const serverWidth = graphServerNodeWidth(serverEntries.length)
     serverWidths.set(s.id, serverWidth)
-    nodes.push({ id, className: 'graph-node server-graph-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: s.id, label: s.name || `服务器 ${s.id}` } as GraphEntity, label: <GraphNode kind={s.id === rootID ? '一级服务器' : '服务器'} title={s.name} meta={`${labelValue(s.status || 'unknown')} · ${serverDefaultEntryAddress(s) || '无公网 IP'}`} entryHandles={serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))} pathHandles={continuationByNode.get(id) || []} role={serverRoles.get(s.id) || emptyGraphServerRole(s.id === rootID)} status={s.status} ipv4={s.public_ipv4 || '未检测'} cpu={Math.round(s.cpu_usage_percent || 0)} memory={s.memory_total_bytes ? Math.round((s.memory_used_bytes / s.memory_total_bytes) * 100) : 0} /> } })
+    nodes.push({ id, className: 'graph-node server-graph-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: s.id, label: s.name || `服务器 ${s.id}` } as GraphEntity, label: <GraphNode kind={s.id === rootID ? '一级服务器' : '服务器'} title={s.name} meta={`${labelValue(s.status || 'unknown')} · ${serverDefaultEntryAddress(s) || '无公网 IP'}`} entryHandles={serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))} pathHandles={continuationByNode.get(id) || []} role={displayRole(s.id, s.id === rootID)} status={s.status} ipv4={s.public_ipv4 || '未检测'} cpu={Math.round(s.cpu_usage_percent || 0)} memory={s.memory_total_bytes ? Math.round((s.memory_used_bytes / s.memory_total_bytes) * 100) : 0} /> } })
   })
   canvasServerInstances.forEach((instance, index) => {
     const server = (data.servers || []).find((item: Server) => item.id === instance.server_id) as Server | undefined
@@ -6770,7 +6901,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const serverEntries = entries.filter(x => x.server_id === server.id && x.enabled !== false).sort((a, b) => (a.port - b.port) || (a.id - b.id))
     const serverWidth = graphServerNodeWidth(serverEntries.length)
     const position = positions[id] || defaultServerGraphPosition(visibleServers.length + index)
-    nodes.push({ id, className: 'graph-node server-graph-node canvas-server-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: server.id, label: server.name || `服务器 ${server.id}`, node_id: id } as GraphEntity, label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${serverDefaultEntryAddress(server) || '无公网 IP'}`} entryHandles={serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))} role={serverRoles.get(server.id) || emptyGraphServerRole()} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
+    nodes.push({ id, className: 'graph-node server-graph-node canvas-server-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: server.id, label: server.name || `服务器 ${server.id}`, node_id: id } as GraphEntity, label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${serverDefaultEntryAddress(server) || '无公网 IP'}`} entryHandles={serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
   })
   const entryIndexesByServer = new Map<number, number>()
   visibleEntries.forEach((x: Inbound, i: number) => {
@@ -6823,7 +6954,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       const serverID = graphStepServerID(step, inboundByID)
       const server = (data.servers || []).find((item: Server) => item.id === serverID) as Server | undefined
       if (!server) return
-      nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · 路径 ${path.id}`} pathHandles={continuationByNode.get(id) || []} role={serverRoles.get(server.id) || emptyGraphServerRole()} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
+      nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · 路径 ${path.id}`} pathHandles={continuationByNode.get(id) || []} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
     })
   })
   visiblePaths.forEach(path => {
@@ -6875,6 +7006,55 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     }, { animated: x.enabled !== false, targetHandle: 'target-top' }))
   })
   return { nodes: nodes.map(node => ({ ...node, type: 'proxyGraphNode' })), edges }
+}
+
+// Label of the node that feeds this step, so the transport preview reads as an
+// actual hop instead of falling back to the current canvas root.
+// Every enabled path that traverses a server or uses an inbound, regardless of
+// which entry server it is rooted at. Used to spell out the blast radius of a
+// delete that the single-root canvas would otherwise hide.
+function proxyPathsTouchingEntity(data: any, entity: GraphEntity) {
+  const inboundByID = new Map<number, Inbound>(((data.inbounds || []) as Inbound[]).map(x => [x.id, x]))
+  const stepsByPath = new Map<number, ProxyPathStep[]>()
+  ;((data.proxy_path_steps || []) as ProxyPathStep[]).forEach(step => {
+    const list = stepsByPath.get(step.path_id) || []
+    list.push(step)
+    stepsByPath.set(step.path_id, list)
+  })
+  const out: string[] = []
+  ;((data.proxy_paths || []) as ProxyPath[]).forEach(path => {
+    if (path.enabled === false) return
+    const root = inboundByID.get(path.inbound_id)
+    if (!root) return
+    const steps = stepsByPath.get(path.id) || []
+    const usesEntity = entity.type === 'entry'
+      ? root.id === entity.id || steps.some(step => step.inbound_id === entity.id)
+      : root.server_id === entity.id || steps.some(step => graphStepServerID(step, inboundByID) === entity.id)
+    if (!usesEntity) return
+    const label = path.name || `路径 ${path.id}`
+    if (!out.includes(label)) out.push(label)
+  })
+  return out
+}
+
+function proxyPathStepUpstreamLabel(data: any, step: ProxyPathStep) {
+  const earlier = ((data.proxy_path_steps || []) as ProxyPathStep[])
+    .filter(item => item.path_id === step.path_id && item.position < step.position)
+    .sort((a, b) => (a.position - b.position) || (a.id - b.id))
+  const previous = earlier[earlier.length - 1]
+  if (previous) {
+    if (previous.node_type === 'imported' && previous.external_outbound_id) {
+      const node = ((data.external_outbounds || []) as ExternalOutbound[]).find(item => item.id === previous.external_outbound_id)
+      return node?.name || `导入节点 ${previous.external_outbound_id}`
+    }
+    const serverID = previous.server_id || ((data.inbounds || []) as Inbound[]).find(item => item.id === previous.inbound_id)?.server_id
+    const server = ((data.servers || []) as Server[]).find(item => item.id === serverID)
+    if (server) return server.name || `服务器 ${server.id}`
+  }
+  const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === step.path_id)
+  const root = path ? ((data.inbounds || []) as Inbound[]).find(item => item.id === path.inbound_id) : undefined
+  const rootServer = root ? ((data.servers || []) as Server[]).find(item => item.id === root.server_id) : undefined
+  return rootServer?.name || root?.name || '入口'
 }
 
 function proxyPathStepNodeID(step: ProxyPathStep) {
@@ -6931,29 +7111,6 @@ function pathStepIDFromHandle(handle?: string | null) {
   return match ? Number(match[1]) : 0
 }
 
-function graphServerNodeWidth(entryCount: number) {
-  return Math.max(GRAPH_ENTRY_NODE_WIDTH, Math.max(1, entryCount) * GRAPH_ENTRY_NODE_WIDTH)
-}
-
-function graphEntryHandleRatio(index: number, count: number, reserveCenter = false) {
-  if (reserveCenter) {
-    const leftCount = Math.ceil(count / 2)
-    if (index < leftCount) return ((index + 1) / (leftCount + 1)) * 0.42
-    const rightCount = count - leftCount
-    return 0.58 + ((index - leftCount + 1) / (rightCount + 1)) * 0.42
-  }
-  return (index + 0.5) / Math.max(1, count)
-}
-
-function graphEntryHandleLeft(index: number, count: number, reserveCenter = false) {
-  return `${graphEntryHandleRatio(index, count, reserveCenter) * 100}%`
-}
-
-function graphPathHandleLeft(index: number, count: number) {
-  if (count <= 1) return '50%'
-  return `${15 + (index * 70) / (count - 1)}%`
-}
-
 type GraphEntryHandle = { id: number; label: string; title: string }
 type GraphPathHandle = { step_id: number; label: string; title: string }
 
@@ -6986,6 +7143,13 @@ function GraphNode({
 }) {
   const isOnline = status === 'online'
   const hasSharedPathHandle = entryHandles.length > 1 || pathHandles.length > 1
+  // One handle, two outcomes: append to the paths that already end here, or start
+  // one path per entry when none does. Label whichever one will actually happen.
+  const sharedAppendsToPaths = pathHandles.length > 1
+  const sharedHandleLabel = sharedAppendsToPaths ? '全部路径' : '全部入口'
+  const sharedHandleTitle = sharedAppendsToPaths
+    ? `向经过这里的 ${pathHandles.length} 条路径各追加同一个下一跳`
+    : `为这台服务器的 ${entryHandles.length} 个入口各新建一条链路`
   const metaParts = meta.split(' · ')
   const subtitle1 = metaParts[0] || ''
   const subtitle2 = metaParts[1] || ''
@@ -7044,8 +7208,10 @@ function GraphNode({
       }) : !pathHandles.length ? <Handle id="source-bottom" className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} /> : null}
 
       {hasSharedPathHandle && <>
-        <Handle id="server-shared" className="connect-handle connect-source server-shared-source-handle" type="source" position={Position.Bottom} title="让所有入口共用同一后续路径" />
-        <span className="server-shared-source-label">共享</span>
+        {/* The same handle appends to every path that terminates here, or, when no
+            path does yet, creates one new path per entry. Name the actual effect. */}
+        <Handle id="server-shared" className="connect-handle connect-source server-shared-source-handle" type="source" position={Position.Bottom} title={sharedHandleTitle} />
+        <span className="server-shared-source-label">{sharedHandleLabel}</span>
       </>}
       
       {pathHandles.map((path, index) => {
@@ -7078,6 +7244,10 @@ function GraphNode({
             {isOnline && <div className="rf-node-metrics"><span>CPU {cpu || 0}%</span><span>内存 {memory || 0}%</span></div>}
             <div className="graph-role-chips">
               {role?.isRoot && <span className="role-chip role-gateway"><ServerIcon size={10} />一级接入</span>}
+              {(role?.foreignPaths?.length || 0) > 0 && <span
+                className="role-chip role-foreign"
+                title={`来自其他入口服务器的链路也经过这里：\n${role!.foreignPaths.join('\n')}`}
+              ><Workflow size={10} />其他入口 {role!.foreignPaths.length} 条</span>}
               {(role?.processingPaths || 0) > 0 && <span className="role-chip role-processing"><Shield size={10} />在此处理加解密{role!.processingPaths > 1 ? ` ×${role!.processingPaths}` : ''}</span>}
               {(role?.transparentPaths || 0) > 0 && <span className="role-chip role-transparent"><ArrowLeftRight size={10} />透明传递{role!.transparentPaths > 1 ? ` ×${role!.transparentPaths}` : ''}</span>}
               {(role?.relayPaths || 0) > 0 && <span className="role-chip role-relay"><Workflow size={10} />中继{role!.relayPaths > 1 ? ` ×${role!.relayPaths}` : ''}</span>}
@@ -7102,14 +7272,6 @@ function GraphNode({
       </div>
     </div>
   )
-}
-
-function loadGraphPositions() {
-  try { return JSON.parse(localStorage.getItem('oboard.proxyGraph.positions.v5') || '{}') } catch { return {} }
-}
-
-function saveGraphPositions(positions: Record<string, { x: number; y: number }>) {
-  localStorage.setItem('oboard.proxyGraph.positions.v5', JSON.stringify(positions))
 }
 
 /** Topology-aware layout for the current proxy-path canvas. */
@@ -7247,27 +7409,6 @@ function autoLayoutProxyGraphPositions(
   return positions
 }
 
-function loadGraphToolboxPosition(): GraphPosition {
-  try {
-    const value = JSON.parse(localStorage.getItem('oboard.proxyGraph.toolboxPosition.v1') || '{}')
-    return { x: Number.isFinite(value.x) ? value.x : 12, y: Number.isFinite(value.y) ? value.y : 12 }
-  } catch {
-    return { x: 12, y: 12 }
-  }
-}
-
-function saveGraphToolboxPosition(position: GraphPosition) {
-  localStorage.setItem('oboard.proxyGraph.toolboxPosition.v1', JSON.stringify(position))
-}
-
-function snapGraphPosition(position: GraphPosition): GraphPosition {
-  return { x: Math.round(position.x), y: Math.round(position.y) }
-}
-
-function defaultServerGraphPosition(index: number): GraphPosition {
-  return { x: 630, y: 300 + index * 370 }
-}
-
 function defaultServerGraphPositionFor(data: any, serverID: number, rootServerID = 0): GraphPosition {
   const servers: Server[] = data.servers || []
   const rootID = rootServerID || serverID || servers[0]?.id || 0
@@ -7281,15 +7422,6 @@ function defaultServerGraphPositionFor(data: any, serverID: number, rootServerID
 
 function nextServerGraphPosition(data: any): GraphPosition {
   return defaultServerGraphPosition((data.servers || []).length)
-}
-
-function defaultEntryGraphPosition(serverPosition: GraphPosition, index: number, total = 1, serverWidth = graphServerNodeWidth(total)): GraphPosition {
-  const centerX = serverPosition.x + serverWidth * graphEntryHandleRatio(index, total)
-  return { x: Math.round(centerX - GRAPH_ENTRY_NODE_WIDTH / 2), y: serverPosition.y - 170 }
-}
-
-function defaultImportedGraphPosition(index: number): GraphPosition {
-  return { x: 630, y: 670 + index * 370 }
 }
 
 function nextEntryGraphPosition(data: any, positions: Record<string, GraphPosition>, serverID: number, rootServerID = 0): GraphPosition {
@@ -7317,6 +7449,10 @@ function graphNodeServerId(id: string, data: any, canvasServerInstances: CanvasS
   return 0
 }
 
+// Fast client-side pre-check over explicitly created resources only. It cannot
+// see path-derived forwards, tunnels or shared listeners, and it compares
+// addresses literally, so an empty result does not promise a successful deploy —
+// Controller still runs the authoritative listener validation per server.
 function deploymentConflicts(data: any) {
   const conflicts: string[] = []
   const seen = new Map<string, string>()

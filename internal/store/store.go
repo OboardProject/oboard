@@ -140,6 +140,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists external_outbound_access_grants (id integer primary key autoincrement, external_outbound_id integer not null references external_outbounds(id) on delete cascade, subject_type text not null, subject_id integer not null, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(external_outbound_id,subject_type,subject_id))`,
 		`create table if not exists proxy_paths (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, name_mode text not null default 'auto', name_template_json text not null default '[]', secret text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_steps (id integer primary key autoincrement, path_id integer not null references proxy_paths(id) on delete cascade, position integer not null, node_type text not null, transport_mode text not null default 'singbox', processing_role integer not null default 0, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, config_json text not null default '{}', created_at text not null, updated_at text not null)`,
+		`create table if not exists proxy_path_port_allocations (id integer primary key autoincrement, kind text not null, scope_key text not null, server_id integer not null references servers(id) on delete cascade, port integer not null, created_at text not null, updated_at text not null, unique(kind,scope_key,server_id))`,
 		`create table if not exists warp_profiles (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, status text not null default 'needed', config_json text not null default '{}', mtu integer not null default 0, dns_strategy text not null default '', last_requested_at text, error text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_lists (id integer primary key autoincrement, name text not null unique, kind text not null, revision integer not null default 1, candidates_json text not null, enabled integer not null default 1, protected integer not null default 0, created_at text not null, updated_at text not null)`,
 		`create table if not exists server_dns_policies (server_id integer primary key references servers(id) on delete cascade, encrypted_list_id integer not null references dns_lists(id) on delete restrict, bootstrap_list_id integer not null references dns_lists(id) on delete restrict, revision integer not null default 1, strategy text not null default 'auto', auto_test text not null default 'first_apply', test_interval_seconds integer not null default 3600, encrypted_selected_json text not null default '[]', bootstrap_selected_json text not null default '[]', encrypted_selection_revision integer not null default 0, bootstrap_selection_revision integer not null default 0, last_attempt_at text, last_success_at text, last_error text not null default '', needs_benchmark integer not null default 1, created_at text not null, updated_at text not null)`,
@@ -201,6 +202,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_ssh_user_keys_user on ssh_user_keys(user_id, enabled)`,
 		`create index if not exists idx_dns_credential_zones_credential on dns_credential_zones(credential_id, zone_name)`,
 		`create index if not exists idx_dns_credential_zones_server on dns_credential_zones(server_id)`,
+		`create index if not exists idx_proxy_path_port_allocations_server on proxy_path_port_allocations(server_id)`,
 	}
 	for _, stmt := range schema {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -222,6 +224,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.dropColumn(ctx, "proxy_paths", "name", `alter table proxy_paths drop column name`); err != nil {
 		return err
 	}
+	if err := s.ensureProxyPathStepPositions(ctx); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `insert into dns_credential_zones(credential_id,zone_name,provider_zone_id,created_at,updated_at) select id,zone_name,zone_id,created_at,updated_at from dns_credentials where zone_name<>'' and not exists(select 1 from dns_credential_zones where credential_id=dns_credentials.id)`); err != nil {
 		return err
 	}
@@ -229,6 +234,57 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	return s.ensureDefaultDNSLists(ctx)
+}
+
+// ensureProxyPathStepPositions compacts each path's positions to a dense 1..N
+// sequence and then enforces uniqueness. Position is the only ordering source
+// for an ordered chain, so a duplicate would make every consumer fall back to
+// its (position, id) tie-break and would collide the synthetic resource IDs
+// derived from position.
+func (s *Store) ensureProxyPathStepPositions(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `select id,path_id from proxy_path_steps order by path_id asc,position asc,id asc`)
+	if err != nil {
+		return err
+	}
+	type ordered struct {
+		id     int64
+		pathID int64
+	}
+	items := []ordered{}
+	for rows.Next() {
+		var item ordered
+		if err := rows.Scan(&item.id, &item.pathID); err != nil {
+			return errors.Join(err, rows.Close())
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return errors.Join(err, rows.Close())
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	// Shift every row out of the target range first so the rewrite cannot trip
+	// the unique index halfway through.
+	if _, err := tx.ExecContext(ctx, `update proxy_path_steps set position=-position where position>0`); err != nil {
+		return err
+	}
+	next := map[int64]int{}
+	for _, item := range items {
+		next[item.pathID]++
+		if _, err := tx.ExecContext(ctx, `update proxy_path_steps set position=? where id=?`, next[item.pathID], item.id); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `create unique index if not exists idx_proxy_path_steps_position on proxy_path_steps(path_id,position)`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ensureColumn(ctx context.Context, table, column, alterSQL string) error {
@@ -2535,47 +2591,63 @@ func (s *Store) DeleteProxyPath(ctx context.Context, id int64) error {
 	return err
 }
 
-func (s *Store) DeleteProxyPathsForInbound(ctx context.Context, inboundID int64) error {
-	rows, err := s.db.QueryContext(ctx, `select id from proxy_paths where inbound_id=?`, inboundID)
+// ListProxyPathPortAllocations returns every persisted generated-listener port.
+// Ports are stored rather than re-derived so that the value an operator can see
+// is the value that gets deployed, and so an unrelated topology change cannot
+// shift a listener that is already live.
+func (s *Store) ListProxyPathPortAllocations(ctx context.Context) ([]model.ProxyPathPortAllocation, error) {
+	rows, err := s.db.QueryContext(ctx, `select id,kind,scope_key,server_id,port,created_at,updated_at from proxy_path_port_allocations order by kind asc,scope_key asc,server_id asc`)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
-	var ids []int64
+	var out []model.ProxyPathPortAllocation
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return err
+		var v model.ProxyPathPortAllocation
+		var ca, ua string
+		if err := rows.Scan(&v.ID, &v.Kind, &v.ScopeKey, &v.ServerID, &v.Port, &ca, &ua); err != nil {
+			return nil, err
 		}
-		ids = append(ids, id)
+		v.CreatedAt = parseTime(ca)
+		v.UpdatedAt = parseTime(ua)
+		out = append(out, v)
 	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if err := s.DeleteProxyPath(ctx, id); err != nil {
-			return err
-		}
-	}
-	_, err = s.db.ExecContext(ctx, `delete from proxy_path_steps where inbound_id=?`, inboundID)
-	return err
+	return out, rows.Err()
 }
 
-func (s *Store) DeleteProxyPathStepsForExternal(ctx context.Context, externalID int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from proxy_path_steps where external_outbound_id=?`, externalID)
-	return err
-}
-
-// CleanupRoutingForServer removes topology edges owned by or targeting a
-// server. For ordered proxy paths it cuts the path at the first affected step
-// rather than retaining later nodes as a silently rewired chain.
-func (s *Store) CleanupRoutingForServer(ctx context.Context, serverID int64) error {
+// SaveProxyPathPortAllocations persists newly allocated ports and removes the
+// records that are no longer claimed by any generated listener. Both run in one
+// transaction so a concurrent reader never sees a partially rewritten set.
+func (s *Store) SaveProxyPathPortAllocations(ctx context.Context, added []model.ProxyPathPortAllocation, removedIDs []int64) error {
+	if len(added) == 0 && len(removedIDs) == 0 {
+		return nil
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `select s.path_id,min(s.position) from proxy_path_steps s left join inbounds i on i.id=s.inbound_id where s.server_id=? or i.server_id=? group by s.path_id`, serverID, serverID)
+	ts := now()
+	for _, item := range added {
+		if _, err := tx.ExecContext(ctx, `insert into proxy_path_port_allocations(kind,scope_key,server_id,port,created_at,updated_at) values(?,?,?,?,?,?) on conflict(kind,scope_key,server_id) do update set port=excluded.port,updated_at=excluded.updated_at`, item.Kind, item.ScopeKey, item.ServerID, item.Port, ts, ts); err != nil {
+			return err
+		}
+	}
+	for _, id := range removedIDs {
+		if _, err := tx.ExecContext(ctx, `delete from proxy_path_port_allocations where id=?`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// truncateProxyPathStepsTx cuts every path at its first step returned by the
+// match query, which must select (path_id, min(position)). Proxy path steps are
+// an ordered chain, so deleting only the matched row would leave later steps in
+// place and silently reconnect a different topology than the operator selected.
+// Paths left without any step are removed as well.
+func truncateProxyPathStepsTx(ctx context.Context, tx *sql.Tx, matchQuery string, args ...any) error {
+	rows, err := tx.QueryContext(ctx, matchQuery, args...)
 	if err != nil {
 		return err
 	}
@@ -2591,6 +2663,9 @@ func (s *Store) CleanupRoutingForServer(ctx context.Context, serverID int64) err
 		}
 		cuts = append(cuts, item)
 	}
+	if err := rows.Err(); err != nil {
+		return errors.Join(err, rows.Close())
+	}
 	if err := rows.Close(); err != nil {
 		return err
 	}
@@ -2603,6 +2678,53 @@ func (s *Store) CleanupRoutingForServer(ctx context.Context, serverID int64) err
 		if _, err := tx.ExecContext(ctx, `delete from proxy_paths where id=? and not exists (select 1 from proxy_path_steps s where s.path_id=proxy_paths.id)`, item.pathID); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (s *Store) DeleteProxyPathsForInbound(ctx context.Context, inboundID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// A path rooted at this inbound loses its entry point entirely.
+	if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id in (select id from proxy_paths where inbound_id=?)`, inboundID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `delete from proxy_paths where inbound_id=?`, inboundID); err != nil {
+		return err
+	}
+	// A path that only traverses this inbound as a hop is cut at that hop.
+	if err := truncateProxyPathStepsTx(ctx, tx, `select path_id,min(position) from proxy_path_steps where inbound_id=? group by path_id`, inboundID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) DeleteProxyPathStepsForExternal(ctx context.Context, externalID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := truncateProxyPathStepsTx(ctx, tx, `select path_id,min(position) from proxy_path_steps where external_outbound_id=? group by path_id`, externalID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// CleanupRoutingForServer removes topology edges owned by or targeting a
+// server. For ordered proxy paths it cuts the path at the first affected step
+// rather than retaining later nodes as a silently rewired chain.
+func (s *Store) CleanupRoutingForServer(ctx context.Context, serverID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := truncateProxyPathStepsTx(ctx, tx, `select s.path_id,min(s.position) from proxy_path_steps s left join inbounds i on i.id=s.inbound_id where s.server_id=? or i.server_id=? group by s.path_id`, serverID, serverID); err != nil {
+		return err
 	}
 	statements := []struct {
 		query string
@@ -2631,34 +2753,8 @@ func (s *Store) PruneOrphanedProxyPathSteps(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `select s.path_id,min(s.position) from proxy_path_steps s left join servers sv on sv.id=s.server_id left join inbounds i on i.id=s.inbound_id where (s.server_id is not null and sv.id is null) or (s.inbound_id is not null and i.id is null) group by s.path_id`)
-	if err != nil {
+	if err := truncateProxyPathStepsTx(ctx, tx, `select s.path_id,min(s.position) from proxy_path_steps s left join servers sv on sv.id=s.server_id left join inbounds i on i.id=s.inbound_id where (s.server_id is not null and sv.id is null) or (s.inbound_id is not null and i.id is null) group by s.path_id`); err != nil {
 		return err
-	}
-	type cut struct {
-		pathID   int64
-		position int
-	}
-	cuts := []cut{}
-	for rows.Next() {
-		var item cut
-		if err := rows.Scan(&item.pathID, &item.position); err != nil {
-			return errors.Join(err, rows.Close())
-		}
-		cuts = append(cuts, item)
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, item := range cuts {
-		if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id=? and position>=?`, item.pathID, item.position); err != nil {
-			return err
-		}
-	}
-	for _, item := range cuts {
-		if _, err := tx.ExecContext(ctx, `delete from proxy_paths where id=? and not exists (select 1 from proxy_path_steps s where s.path_id=proxy_paths.id)`, item.pathID); err != nil {
-			return err
-		}
 	}
 	return tx.Commit()
 }
@@ -4427,6 +4523,7 @@ type FullRoutingConfig struct {
 	ServerDNSPolicies            []model.ServerDNSPolicy             `json:"server_dns_policies"`
 	Users                        []model.User                        `json:"users"`
 	SSHUserKeys                  []model.SSHUserKey                  `json:"ssh_user_keys"`
+	ProxyPathPortAllocations     []model.ProxyPathPortAllocation     `json:"proxy_path_port_allocations"`
 }
 
 func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, error) {
@@ -4451,6 +4548,10 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 		return FullRoutingConfig{}, err
 	}
 	users, err := s.ListUsers(ctx)
+	if err != nil {
+		return FullRoutingConfig{}, err
+	}
+	portAllocations, err := s.ListProxyPathPortAllocations(ctx)
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
@@ -4498,7 +4599,7 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
-	return FullRoutingConfig{Servers: servers, Inbounds: in, InboundUsers: inboundUsers, UserGroups: groups, UserGroupMembers: members, InboundAccessGrants: grants, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ExternalOutboundAccessGrants: externalGrants, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, SSHUserKeys: sshUserKeys}, nil
+	return FullRoutingConfig{Servers: servers, Inbounds: in, InboundUsers: inboundUsers, UserGroups: groups, UserGroupMembers: members, InboundAccessGrants: grants, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ExternalOutboundAccessGrants: externalGrants, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, SSHUserKeys: sshUserKeys, ProxyPathPortAllocations: portAllocations}, nil
 }
 
 func nullEmpty(v string) any {

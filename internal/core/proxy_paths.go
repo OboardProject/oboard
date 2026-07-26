@@ -21,6 +21,108 @@ var proxyPathChainMethods = map[string]int{
 	"2022-blake3-chacha20-poly1305": 3,
 }
 
+// ProxyPathPortLedger holds the persisted generated-listener ports and records
+// the ones a projection had to allocate. A projection prefers a stored port so
+// that an unrelated change — a new inbound, a disabled branch, another path
+// claiming a nearby port — cannot move a listener that is already deployed.
+//
+// The ledger is read-only with respect to the database. Controller persists
+// Pending() after a projection succeeds, so a rejected deployment leaves no
+// half-claimed ports behind.
+type ProxyPathPortLedger struct {
+	stored   map[proxyPathPortKey]int
+	pending  map[proxyPathPortKey]int
+	used     map[proxyPathPortKey]bool
+	order    []proxyPathPortKey
+	complete bool
+}
+
+type proxyPathPortKey struct {
+	Kind     string
+	ScopeKey string
+	ServerID int64
+}
+
+// NewProxyPathPortLedger builds a ledger from persisted allocations. A nil or
+// empty slice yields a ledger that allocates everything fresh, which is also the
+// behavior pure-Core callers and fixtures get.
+func NewProxyPathPortLedger(allocations []model.ProxyPathPortAllocation) *ProxyPathPortLedger {
+	ledger := &ProxyPathPortLedger{stored: make(map[proxyPathPortKey]int, len(allocations)), pending: map[proxyPathPortKey]int{}}
+	for _, item := range allocations {
+		if item.Port > 0 {
+			ledger.stored[proxyPathPortKey{Kind: item.Kind, ScopeKey: item.ScopeKey, ServerID: item.ServerID}] = item.Port
+		}
+	}
+	return ledger
+}
+
+// resolve returns the port for one listener, allocating through allocate only
+// when neither a stored nor an already-pending value exists.
+func (l *ProxyPathPortLedger) resolve(kind, scopeKey string, serverID int64, allocate func() int) int {
+	if l == nil {
+		return allocate()
+	}
+	key := proxyPathPortKey{Kind: kind, ScopeKey: scopeKey, ServerID: serverID}
+	if port, ok := l.stored[key]; ok {
+		if l.used == nil {
+			l.used = map[proxyPathPortKey]bool{}
+		}
+		l.used[key] = true
+		return port
+	}
+	if port, ok := l.pending[key]; ok {
+		return port
+	}
+	port := allocate()
+	if port <= 0 {
+		return 0
+	}
+	l.pending[key] = port
+	l.order = append(l.order, key)
+	return port
+}
+
+// markProjectionComplete records that a projection enumerated every enabled path
+// without aborting, so the set of resolved listeners is authoritative.
+func (l *ProxyPathPortLedger) markProjectionComplete() {
+	if l != nil {
+		l.complete = true
+	}
+}
+
+// StaleProxyPathPortAllocationIDs reports the persisted records no listener
+// claims anymore, so Controller can release those ports for future allocation.
+//
+// Releasing requires a complete projection. A run that aborted partway resolved
+// only some listeners, and treating that partial view as authoritative would drop
+// allocations that are still deployed.
+func StaleProxyPathPortAllocationIDs(stored []model.ProxyPathPortAllocation, ledger *ProxyPathPortLedger) []int64 {
+	if ledger == nil || !ledger.complete {
+		return nil
+	}
+	out := []int64{}
+	for _, item := range stored {
+		key := proxyPathPortKey{Kind: item.Kind, ScopeKey: item.ScopeKey, ServerID: item.ServerID}
+		if ledger.used[key] || ledger.pending[key] > 0 {
+			continue
+		}
+		out = append(out, item.ID)
+	}
+	return out
+}
+
+// Pending returns the allocations this projection created, in allocation order.
+func (l *ProxyPathPortLedger) Pending() []model.ProxyPathPortAllocation {
+	if l == nil {
+		return nil
+	}
+	out := make([]model.ProxyPathPortAllocation, 0, len(l.order))
+	for _, key := range l.order {
+		out = append(out, model.ProxyPathPortAllocation{Kind: key.Kind, ScopeKey: key.ScopeKey, ServerID: key.ServerID, Port: l.pending[key]})
+	}
+	return out
+}
+
 type proxyPathChainServiceKey struct {
 	ServerID int64
 	Method   string
@@ -54,7 +156,7 @@ func proxyPathStepChainMethod(step model.ProxyPathStep) string {
 	return normalizeProxyPathChainMethod(stringValue(parseStepConfig(step.ConfigJSON), "chain_method", ""))
 }
 
-func buildProxyPathChainServices(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound) (map[proxyPathChainServiceKey]*proxyPathChainService, error) {
+func buildProxyPathChainServices(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound, ledger *ProxyPathPortLedger) (map[proxyPathChainServiceKey]*proxyPathChainService, error) {
 	serverByID := make(map[int64]model.Server, len(servers))
 	for _, server := range servers {
 		serverByID[server.ID] = server
@@ -122,7 +224,9 @@ func buildProxyPathChainServices(paths []model.ProxyPath, steps []model.ProxyPat
 		server := serverByID[key.ServerID]
 		methodIndex := proxyPathChainMethods[key.Method]
 		start, end := proxyPathServerPortRange(server)
-		port := proxyPathAvailablePortForProtocol(server, server.ID*977, methodIndex*131, start, end, model.ForwardProtocolTCPUDP, true, occupied)
+		port := ledger.resolve(model.ProxyPathPortKindChainService, key.Method, server.ID, func() int {
+			return proxyPathAvailablePortForProtocol(server, server.ID*977, methodIndex*131, start, end, model.ForwardProtocolTCPUDP, true, occupied)
+		})
 		if port == 0 {
 			return nil, fmt.Errorf("server %s has no available port for shared Shadowsocks chain service", server.Name)
 		}
@@ -163,8 +267,11 @@ func proxyPathChainServiceTag(method string) string {
 	return "oboard-chain-ss-" + strings.NewReplacer("2022-blake3-", "", "-gcm", "", "-poly1305", "").Replace(method) + "-in"
 }
 
+// proxyPathChainServiceID derives the negative ID of a shared Shadowsocks
+// listener. Server ID and method index use disjoint bit fields, keeping this
+// range distinct from proxyPathInternalOutboundID for every reachable server ID.
 func proxyPathChainServiceID(serverID int64, method string) int64 {
-	return -920000000000 - serverID*10 - int64(proxyPathChainMethods[normalizeProxyPathChainMethod(method)])
+	return -(int64(1)<<41 + (serverID&0xffffff)<<4 + int64(proxyPathChainMethods[normalizeProxyPathChainMethod(method)])&0xf)
 }
 
 func proxyPathChainServicePassword(server model.Server, method string) string {
@@ -183,6 +290,24 @@ func stableProxyPathResourceID(kind string, values ...any) int64 {
 }
 
 func BuildProxyPathPlans(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound) ([]model.ProxyPathPlan, error) {
+	plans, _, err := buildProxyPathPlansWithInbounds(paths, steps, servers, inbounds, nil)
+	return plans, err
+}
+
+// BuildProxyPathPlansWithLedger projects the paths while preferring persisted
+// generated-listener ports. Newly allocated ports are recorded on the ledger for
+// the caller to persist once the deployment is accepted.
+func BuildProxyPathPlansWithLedger(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound, ledger *ProxyPathPortLedger) ([]model.ProxyPathPlan, error) {
+	plans, _, err := buildProxyPathPlansWithInbounds(paths, steps, servers, inbounds, ledger)
+	return plans, err
+}
+
+// buildProxyPathPlansWithInbounds also returns the synthetic inbound table the
+// projection allocated, keyed by inbound ID. Config generation must reuse this
+// table instead of recomputing ports: the allocator picks the first free port
+// from a seed, so a different occupancy set would silently yield a different
+// port and the derived forward would target a listener nobody owns.
+func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound, ledger *ProxyPathPortLedger) ([]model.ProxyPathPlan, map[int64]model.Inbound, error) {
 	inboundByID := map[int64]model.Inbound{}
 	for _, inbound := range inbounds {
 		inboundByID[inbound.ID] = inbound
@@ -196,11 +321,11 @@ func BuildProxyPathPlans(paths []model.ProxyPath, steps []model.ProxyPathStep, s
 		stepsByPath[step.PathID] = append(stepsByPath[step.PathID], step)
 	}
 	if err := validateProxyPathTransportSet(paths, stepsByPath, inboundByID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	chainServices, err := buildProxyPathChainServices(paths, steps, servers, inbounds)
+	chainServices, err := buildProxyPathChainServices(paths, steps, servers, inbounds, ledger)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, service := range chainServices {
 		inboundByID[service.Inbound.ID] = service.Inbound
@@ -221,7 +346,7 @@ func BuildProxyPathPlans(paths []model.ProxyPath, steps []model.ProxyPathStep, s
 		root, ok := inboundByID[path.InboundID]
 		if !ok {
 			if path.Enabled {
-				return nil, fmt.Errorf("代理路径 %s 的入口不存在", path.Name)
+				return nil, nil, fmt.Errorf("代理路径 %s 的入口不存在", path.Name)
 			}
 			plan.Warnings = append(plan.Warnings, "入口不存在")
 			out = append(out, plan)
@@ -243,18 +368,23 @@ func BuildProxyPathPlans(paths []model.ProxyPath, steps []model.ProxyPathStep, s
 			targetServerID, targetInbound, targetOK := proxyPathStepTargetServer(step, inboundByID)
 			var plannedInbound model.Inbound
 			if targetOK {
-				plannedInbound = proxyPathPlanTargetInbound(path, step, targetServerID, targetInbound, serverByID, inboundByID, chainServices)
+				plannedInbound = proxyPathPlanTargetInbound(path, step, targetServerID, targetInbound, serverByID, inboundByID, chainServices, ledger)
 				if step.TransportMode == model.ProxyPathTransportPortForward && step.ProcessingRole {
 					plannedInbound.Protocol = root.Protocol
 					plannedInbound.ConfigJSON = root.ConfigJSON
 				}
-				inboundByID[plannedInbound.ID] = plannedInbound
+				// Only an enabled path reserves runtime ports. A disabled branch
+				// deploys nothing, so letting it occupy a port would make enabling or
+				// disabling it silently change the allocation of unrelated paths.
+				if path.Enabled {
+					inboundByID[plannedInbound.ID] = plannedInbound
+				}
 			}
 			switch mode {
 			case model.ProxyPathTransportPortForward:
 				if !targetOK {
 					if path.Enabled {
-						return nil, fmt.Errorf("代理路径 %s 第 %d 跳端口转发需要目标服务器", path.Name, step.Position)
+						return nil, nil, fmt.Errorf("代理路径 %s 第 %d 跳端口转发需要目标服务器", path.Name, step.Position)
 					}
 					plan.Warnings = append(plan.Warnings, fmt.Sprintf("第 %d 跳端口转发需要目标服务器", step.Position))
 					continue
@@ -262,7 +392,7 @@ func BuildProxyPathPlans(paths []model.ProxyPath, steps []model.ProxyPathStep, s
 				f, err := proxyPathManagedPortForward(path, step, root, previousServerID, targetServerID, sourceListenPort, plannedInbound, serverByID)
 				if err != nil {
 					if path.Enabled {
-						return nil, err
+						return nil, nil, err
 					}
 					plan.Warnings = append(plan.Warnings, err.Error())
 					continue
@@ -272,7 +402,7 @@ func BuildProxyPathPlans(paths []model.ProxyPath, steps []model.ProxyPathStep, s
 			case model.ProxyPathTransportTunnel:
 				if !targetOK {
 					if path.Enabled {
-						return nil, fmt.Errorf("代理路径 %s 第 %d 跳隧道需要目标服务器", path.Name, step.Position)
+						return nil, nil, fmt.Errorf("代理路径 %s 第 %d 跳隧道需要目标服务器", path.Name, step.Position)
 					}
 					plan.Warnings = append(plan.Warnings, fmt.Sprintf("第 %d 跳隧道需要目标服务器", step.Position))
 					continue
@@ -281,10 +411,10 @@ func BuildProxyPathPlans(paths []model.ProxyPath, steps []model.ProxyPathStep, s
 				t, exists := sharedTunnels[tunnelKey]
 				if !exists {
 					var err error
-					t, err = proxyPathManagedTunnel(path, step, previousServerID, targetServerID, plannedInbound, serverByID, inboundByID)
+					t, err = proxyPathManagedTunnel(path, step, previousServerID, targetServerID, plannedInbound, serverByID, inboundByID, ledger)
 					if err != nil {
 						if path.Enabled {
-							return nil, err
+							return nil, nil, err
 						}
 						plan.Warnings = append(plan.Warnings, err.Error())
 						continue
@@ -302,7 +432,8 @@ func BuildProxyPathPlans(paths []model.ProxyPath, steps []model.ProxyPathStep, s
 		_ = processingCount // processing_role is an internal marker for a transparent prefix.
 		out = append(out, plan)
 	}
-	return out, nil
+	ledger.markProjectionComplete()
+	return out, inboundByID, nil
 }
 
 func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int64][]model.ProxyPathStep, inboundByID map[int64]model.Inbound) error {
@@ -582,7 +713,7 @@ func transparentForwardProtocol(inbound model.Inbound) model.ForwardProtocol {
 	}
 }
 
-func proxyPathPlanTargetInbound(path model.ProxyPath, step model.ProxyPathStep, targetServerID int64, targetInbound *model.Inbound, servers map[int64]model.Server, inbounds map[int64]model.Inbound, services map[proxyPathChainServiceKey]*proxyPathChainService) model.Inbound {
+func proxyPathPlanTargetInbound(path model.ProxyPath, step model.ProxyPathStep, targetServerID int64, targetInbound *model.Inbound, servers map[int64]model.Server, inbounds map[int64]model.Inbound, services map[proxyPathChainServiceKey]*proxyPathChainService, ledger *ProxyPathPortLedger) model.Inbound {
 	if targetInbound != nil {
 		return *targetInbound
 	}
@@ -590,11 +721,15 @@ func proxyPathPlanTargetInbound(path model.ProxyPath, step model.ProxyPathStep, 
 		return service.Inbound
 	}
 	server := servers[targetServerID]
-	return proxyPathInternalInbound(path, step, server, inbounds)
+	return proxyPathInternalInbound(path, step, server, inbounds, ledger)
 }
 
 func DerivedPortForwardsFromProxyPaths(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound) ([]model.PortForward, error) {
-	plans, err := BuildProxyPathPlans(paths, steps, servers, inbounds)
+	return DerivedPortForwardsFromProxyPathsWithLedger(paths, steps, servers, inbounds, nil)
+}
+
+func DerivedPortForwardsFromProxyPathsWithLedger(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound, ledger *ProxyPathPortLedger) ([]model.PortForward, error) {
+	plans, err := BuildProxyPathPlansWithLedger(paths, steps, servers, inbounds, ledger)
 	if err != nil {
 		return nil, err
 	}
@@ -609,7 +744,11 @@ func DerivedPortForwardsFromProxyPaths(paths []model.ProxyPath, steps []model.Pr
 }
 
 func DerivedTunnelsFromProxyPaths(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound) ([]model.Tunnel, error) {
-	plans, err := BuildProxyPathPlans(paths, steps, servers, inbounds)
+	return DerivedTunnelsFromProxyPathsWithLedger(paths, steps, servers, inbounds, nil)
+}
+
+func DerivedTunnelsFromProxyPathsWithLedger(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound, ledger *ProxyPathPortLedger) ([]model.Tunnel, error) {
+	plans, err := BuildProxyPathPlansWithLedger(paths, steps, servers, inbounds, ledger)
 	if err != nil {
 		return nil, err
 	}
@@ -681,7 +820,7 @@ func proxyPathReachableServerAddress(source, target model.Server) (string, error
 	return "", fmt.Errorf("目标服务器 %s 没有与源服务器 IP 栈兼容的公网地址", target.Name)
 }
 
-func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sourceServerID, targetServerID int64, targetInbound model.Inbound, servers map[int64]model.Server, inbounds map[int64]model.Inbound) (model.Tunnel, error) {
+func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sourceServerID, targetServerID int64, targetInbound model.Inbound, servers map[int64]model.Server, inbounds map[int64]model.Inbound, ledger *ProxyPathPortLedger) (model.Tunnel, error) {
 	if sourceServerID == 0 || targetServerID == 0 || sourceServerID == targetServerID {
 		return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳隧道的源/目标服务器无效", path.Name, step.Position)
 	}
@@ -703,7 +842,9 @@ func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sour
 		if err != nil {
 			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳生成共享 SSH 凭据: %w", path.Name, step.Position, err)
 		}
-		listenPort := proxyPathTunnelPort(source, tunnel.ID, 0, 31, inbounds)
+		listenPort := ledger.resolve(model.ProxyPathPortKindTunnelSSH, fmt.Sprint(tunnel.ID), source.ID, func() int {
+			return proxyPathTunnelPort(source, tunnel.ID, 0, 31, inbounds)
+		})
 		sshPort := intValueFromMap(cfg, "ssh_port", 0)
 		if sshPort == 0 {
 			sshPort = target.SSHPort
@@ -741,7 +882,9 @@ func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sour
 			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳生成共享 WireGuard 目标凭据: %w", path.Name, step.Position, err)
 		}
 		sourceAddress, targetAddress := proxyPathWireGuardAddresses(tunnel.ID, 0)
-		listenPort := proxyPathTunnelPort(target, tunnel.ID, 0, 47, inbounds)
+		listenPort := ledger.resolve(model.ProxyPathPortKindTunnelWG, fmt.Sprint(tunnel.ID), target.ID, func() int {
+			return proxyPathTunnelPort(target, tunnel.ID, 0, 47, inbounds)
+		})
 		if listenPort == 0 {
 			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳的目标服务器端口范围内没有可用 WireGuard UDP 端口", path.Name, step.Position)
 		}
@@ -779,8 +922,10 @@ func proxyPathTunnelReuseKey(step model.ProxyPathStep, sourceServerID, targetSer
 		}
 		return fmt.Sprintf("ssh:%d:%d:%d:%d", sourceServerID, targetServerID, sshPort, targetInbound.Port)
 	case model.TunnelTypeWireGuard:
-		keepalive := intValueFromMap(cfg, "persistent_keepalive", 25)
-		return fmt.Sprintf("wireguard:%d:%d:%d", sourceServerID, targetServerID, keepalive)
+		// persistent_keepalive is a tuning value, not part of the peer identity.
+		// Including it would rotate the whole key pair and the interface addresses
+		// when an operator only adjusts the keepalive interval.
+		return fmt.Sprintf("wireguard:%d:%d", sourceServerID, targetServerID)
 	default:
 		return fmt.Sprintf("%s:%d:%d", typeName, sourceServerID, targetServerID)
 	}
@@ -819,7 +964,10 @@ func proxyPathAvailablePort(server model.Server, pathSeed int64, positionSeed, s
 func proxyPathAvailablePortForProtocol(server model.Server, pathSeed int64, positionSeed, start, end int, protocol model.ForwardProtocol, fallback bool, inbounds map[int64]model.Inbound) int {
 	occupied := map[int]bool{}
 	for _, inbound := range inbounds {
-		if inbound.Enabled && inbound.ServerID == server.ID && inbound.Port > 0 && (protocol == "" || proxyPathInboundUsesProtocol(inbound, protocol)) {
+		// Disabled inbounds are reserved too. Allocation is deterministic, so
+		// handing a disabled inbound's port to a generated listener would create a
+		// listener conflict the operator cannot resolve by re-enabling it.
+		if inbound.ServerID == server.ID && inbound.Port > 0 && (protocol == "" || proxyPathInboundUsesProtocol(inbound, protocol)) {
 			occupied[inbound.Port] = true
 		}
 	}
@@ -857,7 +1005,7 @@ func proxyPathAvailablePortForProtocol(server model.Server, pathSeed int64, posi
 
 func proxyPathPortAvailable(serverID int64, port int, protocol model.ForwardProtocol, inbounds map[int64]model.Inbound) bool {
 	for _, inbound := range inbounds {
-		if !inbound.Enabled || inbound.ServerID != serverID || inbound.Port != port {
+		if inbound.ServerID != serverID || inbound.Port != port {
 			continue
 		}
 		if proxyPathInboundUsesProtocol(inbound, protocol) {
@@ -942,8 +1090,26 @@ func intValueFromMap(m map[string]any, key string, fallback int) int {
 	return fallback
 }
 
+const (
+	// syntheticProxyPathIDBase keeps derived IDs far away from autoincrement rows
+	// and from the negative ranges used by generated inbounds.
+	syntheticProxyPathIDBase  = int64(1) << 52
+	syntheticProxyPathIDKind  = int64(1) << 48
+	syntheticProxyPathIDShift = 24
+	syntheticProxyPathIDField = int64(1)<<syntheticProxyPathIDShift - 1
+)
+
+// syntheticProxyPathID derives a stable resource ID for a component owned by one
+// path step. Path and step IDs occupy disjoint bit fields: step IDs come from a
+// global autoincrement, so a decimal layout would let a step ID above its field
+// width carry into the neighbouring path's range and silently share one derived
+// resource between two paths. The result stays below 2^53 so it survives the
+// JSON round-trip through the Web UI without losing precision.
 func syntheticProxyPathID(pathID, stepID int64, kind int64) int64 {
-	return 900000000000 + kind*1000000000 + pathID*10000 + stepID
+	return syntheticProxyPathIDBase +
+		kind*syntheticProxyPathIDKind +
+		(pathID&syntheticProxyPathIDField)<<syntheticProxyPathIDShift +
+		(stepID & syntheticProxyPathIDField)
 }
 
 func managedConfigJSON(pathID, stepID int64) string {

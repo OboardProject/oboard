@@ -626,6 +626,32 @@ type ProxyPathPlan struct {
 	Tunnels      []Tunnel            `json:"tunnels,omitempty"`
 }
 
+// ProxyPathPortAllocation records the port one generated proxy-path listener
+// owns. Allocation is persisted rather than re-derived on every projection so an
+// unrelated topology change cannot move a listener that is already deployed, and
+// so the port an operator inspects is the port that gets applied.
+type ProxyPathPortAllocation struct {
+	ID        int64     `json:"id"`
+	Kind      string    `json:"kind"`
+	ScopeKey  string    `json:"scope_key"`
+	ServerID  int64     `json:"server_id"`
+	Port      int       `json:"port"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Allocation kinds. The scope key identifies what owns the port within a kind.
+const (
+	// ScopeKey is the normalized SS2022 method.
+	ProxyPathPortKindChainService = "chain_service"
+	// ScopeKey is "<pathID>:<position>".
+	ProxyPathPortKindInternal = "internal_inbound"
+	// ScopeKey is the derived tunnel ID; the loopback listener lives on the source.
+	ProxyPathPortKindTunnelSSH = "tunnel_ssh_loopback"
+	// ScopeKey is the derived tunnel ID; the UDP listener lives on the target.
+	ProxyPathPortKindTunnelWG = "tunnel_wireguard"
+)
+
 type ProxyPathStep struct {
 	ID                 int64                      `json:"id"`
 	PathID             int64                      `json:"path_id"`

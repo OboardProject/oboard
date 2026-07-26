@@ -35,7 +35,8 @@ func validateListenResources(resources []listenResource) error {
 			if !resources[i].conflicts(resources[j]) {
 				continue
 			}
-			return fmt.Errorf("listen resource conflict on server %d (%s %s:%d): %s conflicts with %s",
+			return fmt.Errorf("%w: listen resource conflict on server %d (%s %s:%d): %s conflicts with %s",
+				ErrInvalidDesiredState,
 				resources[i].serverID,
 				listenTransportName(resources[i].protocol&resources[j].protocol),
 				normalizeListenAddress(resources[i].address),

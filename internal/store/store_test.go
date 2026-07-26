@@ -1448,3 +1448,163 @@ func TestServerTelemetryRatesPeriodsAndHistory(t *testing.T) {
 		t.Fatalf("new period should start at zero: upload=%d download=%d", stored.TrafficUploadBytes, stored.TrafficDownloadBytes)
 	}
 }
+
+func proxyPathTruncationFixture(t *testing.T, s *Store) (int64, int64, int64, int64) {
+	t.Helper()
+	ctx := context.Background()
+	root := &model.Server{Name: "root", ListenIP: "0.0.0.0", PortRangeStart: 30000, PortRangeEnd: 30100, Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	mid := &model.Server{Name: "mid", PublicIPv4: "203.0.113.5", ListenIP: "0.0.0.0", PortRangeStart: 31000, PortRangeEnd: 31100, Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, mid); err != nil {
+		t.Fatal(err)
+	}
+	exit := &model.Server{Name: "exit", PublicIPv4: "203.0.113.9", ListenIP: "0.0.0.0", PortRangeStart: 32000, PortRangeEnd: 32100, Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, exit); err != nil {
+		t.Fatal(err)
+	}
+	rootInbound := &model.Inbound{ServerID: root.ID, Name: "root-entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: "{}", Enabled: true}
+	if err := s.CreateInbound(ctx, rootInbound); err != nil {
+		t.Fatal(err)
+	}
+	hopInbound := &model.Inbound{ServerID: mid.ID, Name: "mid-entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 8443, ConfigJSON: "{}", Enabled: true}
+	if err := s.CreateInbound(ctx, hopInbound); err != nil {
+		t.Fatal(err)
+	}
+	path := &model.ProxyPath{InboundID: rootInbound.ID, Secret: "seed", Enabled: true}
+	if err := s.CreateProxyPath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	first := &model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, InboundID: &hopInbound.ID, ServerID: &mid.ID, ConfigJSON: "{}"}
+	if err := s.CreateProxyPathStep(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	second := &model.ProxyPathStep{PathID: path.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &exit.ID, ConfigJSON: "{}"}
+	if err := s.CreateProxyPathStep(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	return path.ID, hopInbound.ID, first.ID, second.ID
+}
+
+func TestDeleteProxyPathsForInboundTruncatesLaterSteps(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	pathID, hopInboundID, _, _ := proxyPathTruncationFixture(t, s)
+
+	if err := s.DeleteProxyPathsForInbound(ctx, hopInboundID); err != nil {
+		t.Fatal(err)
+	}
+	steps, err := s.ListProxyPathStepsForPath(ctx, pathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Removing the hop must cut the chain there. Keeping the later step would
+	// silently rewire the path to a topology the operator never selected.
+	if len(steps) != 0 {
+		t.Fatalf("steps after cutting the middle hop = %d, want 0: %#v", len(steps), steps)
+	}
+	paths, err := s.ListProxyPaths(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		if path.ID == pathID {
+			t.Fatalf("path %d survived without any step", pathID)
+		}
+	}
+}
+
+func TestDeleteProxyPathStepsForExternalTruncatesLaterSteps(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "root", ListenIP: "0.0.0.0", PortRangeStart: 30000, PortRangeEnd: 30100, Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	exit := &model.Server{Name: "exit", PublicIPv4: "203.0.113.9", ListenIP: "0.0.0.0", PortRangeStart: 32000, PortRangeEnd: 32100, Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, exit); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: "{}", Enabled: true}
+	if err := s.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	external := &model.ExternalOutbound{Name: "socks-a", Protocol: model.ProtocolSocks, TargetAddress: "198.51.100.7", TargetPort: 1080, Scope: model.ExternalOutboundScopeGlobal, ConfigJSON: "{}", Enabled: true}
+	if err := s.CreateExternalOutbound(ctx, external); err != nil {
+		t.Fatal(err)
+	}
+	path := &model.ProxyPath{InboundID: inbound.ID, Secret: "seed", Enabled: true}
+	if err := s.CreateProxyPath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	imported := &model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepImported, TransportMode: model.ProxyPathTransportSingBox, ExternalOutboundID: &external.ID, ConfigJSON: "{}"}
+	if err := s.CreateProxyPathStep(ctx, imported); err != nil {
+		t.Fatal(err)
+	}
+	later := &model.ProxyPathStep{PathID: path.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &exit.ID, ConfigJSON: "{}"}
+	if err := s.CreateProxyPathStep(ctx, later); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.DeleteProxyPathStepsForExternal(ctx, external.ID); err != nil {
+		t.Fatal(err)
+	}
+	steps, err := s.ListProxyPathStepsForPath(ctx, path.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 0 {
+		t.Fatalf("steps after removing the imported hop = %d, want 0: %#v", len(steps), steps)
+	}
+}
+
+func TestProxyPathStepPositionsAreCompactedAndUnique(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`create table proxy_path_steps (id integer primary key autoincrement, path_id integer not null, position integer not null, node_type text not null, transport_mode text not null default 'singbox', processing_role integer not null default 0, server_id integer, inbound_id integer, external_outbound_id integer, config_json text not null default '{}', created_at text not null, updated_at text not null)`); err != nil {
+		t.Fatal(err)
+	}
+	// Two rows share one position, as a concurrent create could produce before
+	// the unique index existed.
+	for _, position := range []int{1, 2, 2, 5} {
+		if _, err := db.Exec(`insert into proxy_path_steps(path_id,position,node_type,created_at,updated_at) values(1,?,'server_inbound','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`, position); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("migration must repair duplicate positions: %v", err)
+	}
+	defer s.Close()
+	steps, err := s.ListProxyPathStepsForPath(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 4 {
+		t.Fatalf("step count = %d, want 4", len(steps))
+	}
+	for index, step := range steps {
+		if step.Position != index+1 {
+			t.Fatalf("positions were not compacted: %#v", steps)
+		}
+	}
+	if _, err := s.db.Exec(`insert into proxy_path_steps(path_id,position,node_type,created_at,updated_at) values(1,1,'server_inbound','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err == nil {
+		t.Fatal("duplicate (path_id, position) must be rejected by the unique index")
+	}
+}

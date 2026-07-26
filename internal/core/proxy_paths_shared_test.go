@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,7 +114,7 @@ func TestSharedProxyPathShadowsocksMethodsUseSeparatePorts(t *testing.T) {
 		{ID: 31, PathID: path256Again.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &bID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{"chain_method":"2022-blake3-aes-256-gcm"}`},
 	}
 	opts := ConfigOptions{Servers: []model.Server{serverA, serverB}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{path128, path256, path256Again}, ProxyPathSteps: steps}
-	services, err := buildProxyPathChainServices(opts.ProxyPaths, steps, opts.Servers, opts.Inbounds)
+	services, err := buildProxyPathChainServices(opts.ProxyPaths, steps, opts.Servers, opts.Inbounds, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +155,7 @@ func TestExplicitProxyPathInboundOverridesSharedShadowsocksDefault(t *testing.T)
 		InboundUsers:   []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}},
 	}
 
-	services, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds)
+	services, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,4 +331,290 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestSyntheticProxyPathIDsUseDisjointFields(t *testing.T) {
+	// Step IDs come from a global autoincrement. A decimal layout carried a large
+	// step ID into the neighbouring path's range, so two paths derived one shared
+	// forward. Disjoint bit fields must keep these distinct.
+	// Under the previous decimal layout (base + kind*1e9 + pathID*1e4 + stepID),
+	// step ID 10000 on path 1 landed exactly on path 2 step 0.
+	if a, b := syntheticProxyPathID(1, 10000, 10), syntheticProxyPathID(2, 0, 10); a == b {
+		t.Fatalf("path/step fields collide: %d", a)
+	}
+	seen := map[int64]string{}
+	for _, pathID := range []int64{1, 2, 3, 999, 100000} {
+		for _, stepID := range []int64{0, 1, 9999, 10000, 20000, 123456} {
+			id := syntheticProxyPathID(pathID, stepID, 10)
+			key := fmt.Sprintf("path=%d step=%d", pathID, stepID)
+			if previous, ok := seen[id]; ok {
+				t.Fatalf("id %d shared by %s and %s", id, previous, key)
+			}
+			seen[id] = key
+			if id >= 1<<53 {
+				t.Fatalf("%s produced %d, which loses precision as JSON", key, id)
+			}
+		}
+	}
+	// Generated inbound IDs are negative and must not overlap between the shared
+	// service range and the per-hop range.
+	if internal, chain := proxyPathInternalOutboundID(100000, 1), proxyPathChainServiceID(100000, DefaultProxyPathChainMethod); internal == chain {
+		t.Fatalf("internal and chain ranges overlap at %d", internal)
+	}
+	if a, b := proxyPathInternalOutboundID(1, 5000), proxyPathInternalOutboundID(2, 1); a == b {
+		t.Fatalf("internal inbound path/position fields collide: %d", a)
+	}
+}
+
+func TestTransparentPathForwardTargetsGeneratedProcessingPort(t *testing.T) {
+	// The derived forward and the processing server's generated listener are
+	// produced by two different builders. They must agree on the port, otherwise
+	// the forward relays into a port nobody listens on.
+	front := model.Server{ID: 1, Name: "front", ChainSecret: "chain-1", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
+	back := model.Server{ID: 2, Name: "back", ChainSecret: "chain-2", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
+	root := model.Inbound{ID: 11, ServerID: front.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 101, Name: "front-back", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	backID := back.ID
+	steps := []model.ProxyPathStep{
+		{ID: 1001, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &backID, TransportMode: model.ProxyPathTransportPortForward, ProcessingRole: true, ConfigJSON: `{}`},
+	}
+	users := []model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "alice-password"}}
+	opts := ConfigOptions{
+		Servers:        []model.Server{front, back},
+		Inbounds:       []model.Inbound{root},
+		ProxyPaths:     []model.ProxyPath{path},
+		ProxyPathSteps: steps,
+		InboundUsers:   []model.InboundUser{{InboundID: root.ID, UserID: users[0].ID, Enabled: true}},
+	}
+
+	forwards, err := DerivedPortForwardsFromProxyPaths(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(forwards) != 1 {
+		t.Fatalf("derived forwards = %d, want 1", len(forwards))
+	}
+	if forwards[0].ListenPort != root.Port {
+		t.Fatalf("forward should listen on the public entry port: %#v", forwards[0])
+	}
+
+	configBack := mustServerConfig(t, back, opts.Inbounds, users, opts)
+	processing := findInbound(configBack, proxyPathInternalInboundTag(path.ID, 1))
+	if processing == nil {
+		t.Fatalf("processing inbound missing on back server: %s", configBack)
+	}
+	if got := intFromAny(processing["listen_port"]); got != forwards[0].TargetPort {
+		t.Fatalf("forward target %d does not match generated listener %d", forwards[0].TargetPort, got)
+	}
+	// The front server must not keep a user-protocol listener on that port.
+	if front := mustServerConfig(t, front, opts.Inbounds, users, opts); findInbound(front, tag("in", root.ID)) != nil {
+		t.Fatalf("front server must hand its entry port to the managed forward: %s", front)
+	}
+}
+
+func TestDisabledProxyPathDoesNotReserveGeneratedPorts(t *testing.T) {
+	// Enabling or disabling one branch must not shift the ports another branch
+	// receives, otherwise a routine toggle silently rewrites unrelated config.
+	source := model.Server{ID: 1, Name: "src", ChainSecret: "chain-1", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
+	target := model.Server{ID: 2, Name: "dst", ChainSecret: "chain-2", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
+	root := model.Inbound{ID: 11, ServerID: source.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	other := model.Inbound{ID: 12, ServerID: source.ID, Name: "entry-2", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 8443, ConfigJSON: `{}`, Enabled: true}
+	live := model.ProxyPath{ID: 101, Name: "live", InboundID: root.ID, Secret: "live", Enabled: true}
+	targetID := target.ID
+	liveSteps := []model.ProxyPathStep{
+		{ID: 1001, PathID: live.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`},
+	}
+	servers := []model.Server{source, target}
+	inbounds := []model.Inbound{root, other}
+
+	baseline, err := DerivedTunnelsFromProxyPaths([]model.ProxyPath{live}, liveSteps, servers, inbounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baselineServices, err := buildProxyPathChainServices([]model.ProxyPath{live}, liveSteps, servers, inbounds, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	disabled := model.ProxyPath{ID: 102, Name: "disabled", InboundID: other.ID, Secret: "disabled", Enabled: false}
+	withDisabled := append(append([]model.ProxyPathStep(nil), liveSteps...), model.ProxyPathStep{ID: 2001, PathID: disabled.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportPortForward, ProcessingRole: true, ConfigJSON: `{}`})
+	afterServices, err := buildProxyPathChainServices([]model.ProxyPath{live, disabled}, withDisabled, servers, inbounds, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, service := range baselineServices {
+		after, ok := afterServices[key]
+		if !ok {
+			t.Fatalf("shared service %#v disappeared once a disabled path existed", key)
+		}
+		if after.Inbound.Port != service.Inbound.Port {
+			t.Fatalf("disabled path moved shared port from %d to %d", service.Inbound.Port, after.Inbound.Port)
+		}
+	}
+	afterTunnels, err := DerivedTunnelsFromProxyPaths([]model.ProxyPath{live, disabled}, withDisabled, servers, inbounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterTunnels) != len(baseline) {
+		t.Fatalf("disabled path contributed %d tunnels", len(afterTunnels)-len(baseline))
+	}
+}
+
+func TestGeneratedPortSkipsDisabledInboundPort(t *testing.T) {
+	// Allocation is deterministic, so handing a disabled inbound's port to a
+	// generated listener would create a conflict the operator cannot fix by
+	// re-enabling that inbound.
+	server := model.Server{ID: 1, Name: "s", ChainSecret: "chain-1", ListenIP: "0.0.0.0", PortRangeStart: 30000, PortRangeEnd: 30001}
+	disabled := model.Inbound{ID: 21, ServerID: server.ID, Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 30000, ConfigJSON: `{}`, Enabled: false}
+	inbounds := map[int64]model.Inbound{disabled.ID: disabled}
+	for attempt := 0; attempt < 4; attempt++ {
+		port := proxyPathAvailablePortForProtocol(server, int64(attempt), 0, 30000, 30001, model.ForwardProtocolTCP, false, inbounds)
+		if port == disabled.Port {
+			t.Fatalf("generated listener took the disabled inbound's port %d", port)
+		}
+	}
+}
+
+func findInbound(raw, tag string) map[string]any {
+	var parsed SingBoxConfig
+	_ = json.Unmarshal([]byte(raw), &parsed)
+	for _, inbound := range parsed.Inbounds {
+		if inbound["tag"] == tag {
+			return inbound
+		}
+	}
+	return nil
+}
+
+func TestPortLedgerKeepsAllocatedPortsStableAcrossTopologyChanges(t *testing.T) {
+	// The whole point of persisting ports: adding an unrelated inbound on the
+	// target must not move a listener that is already deployed.
+	source := model.Server{ID: 1, Name: "src", ChainSecret: "chain-1", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
+	target := model.Server{ID: 2, Name: "dst", ChainSecret: "chain-2", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
+	root := model.Inbound{ID: 11, ServerID: source.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 101, Name: "src-dst", InboundID: root.ID, Secret: "seed", Enabled: true}
+	targetID := target.ID
+	steps := []model.ProxyPathStep{
+		{ID: 1001, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`},
+	}
+	servers := []model.Server{source, target}
+
+	first := NewProxyPathPortLedger(nil)
+	services, err := buildProxyPathChainServices([]model.ProxyPath{path}, steps, servers, []model.Inbound{root}, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := proxyPathChainServiceKey{ServerID: target.ID, Method: DefaultProxyPathChainMethod}
+	originalPort := services[key].Inbound.Port
+	if originalPort == 0 {
+		t.Fatal("no port was allocated")
+	}
+	pending := first.Pending()
+	if len(pending) != 1 || pending[0].Kind != model.ProxyPathPortKindChainService || pending[0].Port != originalPort || pending[0].ServerID != target.ID {
+		t.Fatalf("pending allocation = %#v", pending)
+	}
+
+	// Occupy the allocated port with a new inbound and re-project from the stored
+	// allocation. Without persistence the allocator would skip to another port.
+	squatter := model.Inbound{ID: 21, ServerID: target.ID, Name: "new", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: originalPort, ConfigJSON: `{}`, Enabled: true}
+	stored := []model.ProxyPathPortAllocation{{ID: 7, Kind: pending[0].Kind, ScopeKey: pending[0].ScopeKey, ServerID: pending[0].ServerID, Port: originalPort}}
+	second := NewProxyPathPortLedger(stored)
+	services, err = buildProxyPathChainServices([]model.ProxyPath{path}, steps, servers, []model.Inbound{root, squatter}, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := services[key].Inbound.Port; got != originalPort {
+		t.Fatalf("stored port moved from %d to %d", originalPort, got)
+	}
+	if extra := second.Pending(); len(extra) != 0 {
+		t.Fatalf("re-projection allocated again: %#v", extra)
+	}
+	// The record is still claimed, so it must not be released.
+	if stale := StaleProxyPathPortAllocationIDs(stored, second); len(stale) != 0 {
+		t.Fatalf("claimed allocation reported stale: %#v", stale)
+	}
+}
+
+func TestStaleProxyPathPortAllocationsNeedACompleteProjection(t *testing.T) {
+	stored := []model.ProxyPathPortAllocation{
+		{ID: 1, Kind: model.ProxyPathPortKindChainService, ScopeKey: DefaultProxyPathChainMethod, ServerID: 9, Port: 31000},
+		{ID: 2, Kind: model.ProxyPathPortKindTunnelWG, ScopeKey: "555", ServerID: 9, Port: 31500},
+	}
+
+	// A projection that aborted resolved only part of the topology. Treating that
+	// partial view as authoritative would release ports that are still deployed.
+	partial := NewProxyPathPortLedger(stored)
+	partial.resolve(model.ProxyPathPortKindChainService, DefaultProxyPathChainMethod, 9, func() int { return 31000 })
+	if stale := StaleProxyPathPortAllocationIDs(stored, partial); len(stale) != 0 {
+		t.Fatalf("incomplete projection released %#v", stale)
+	}
+
+	// Once the projection completed, whatever it did not claim is genuinely free.
+	complete := NewProxyPathPortLedger(stored)
+	complete.resolve(model.ProxyPathPortKindChainService, DefaultProxyPathChainMethod, 9, func() int { return 31000 })
+	complete.markProjectionComplete()
+	stale := StaleProxyPathPortAllocationIDs(stored, complete)
+	if len(stale) != 1 || stale[0] != 2 {
+		t.Fatalf("stale ids = %#v, want only the unclaimed WireGuard record", stale)
+	}
+}
+
+func TestSSHTunnelIdentityStaysStableWhenTargetGainsInbound(t *testing.T) {
+	// The SSH reuse key embeds the target service port, so before ports were
+	// persisted an unrelated inbound on the target could move that port, change
+	// the reuse key, and silently rotate the tunnel ID and its key pair.
+	source := model.Server{ID: 1, Name: "src", ChainSecret: "chain-1", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100, SSHPort: 22}
+	target := model.Server{ID: 2, Name: "dst", ChainSecret: "chain-2", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100, SSHPort: 22}
+	root := model.Inbound{ID: 11, ServerID: source.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 101, Name: "src-dst", InboundID: root.ID, Secret: "seed", Enabled: true}
+	targetID := target.ID
+	steps := []model.ProxyPathStep{
+		{ID: 1001, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: `{"type":"ssh","ssh_port":22}`},
+	}
+	servers := []model.Server{source, target}
+
+	ledger := NewProxyPathPortLedger(nil)
+	before, err := DerivedTunnelsFromProxyPathsWithLedger([]model.ProxyPath{path}, steps, servers, []model.Inbound{root}, ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 1 {
+		t.Fatalf("tunnel count = %d", len(before))
+	}
+	stored := make([]model.ProxyPathPortAllocation, 0, len(ledger.Pending()))
+	for index, item := range ledger.Pending() {
+		item.ID = int64(index + 1)
+		stored = append(stored, item)
+	}
+
+	// A new inbound occupies the shared service port that the first projection
+	// picked. With the allocation persisted the tunnel identity must not move.
+	chainPort := 0
+	services, err := buildProxyPathChainServices([]model.ProxyPath{path}, steps, servers, []model.Inbound{root}, NewProxyPathPortLedger(stored))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, service := range services {
+		chainPort = service.Inbound.Port
+	}
+	if chainPort == 0 {
+		t.Fatal("shared service port not allocated")
+	}
+	squatter := model.Inbound{ID: 21, ServerID: target.ID, Name: "new", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: chainPort, ConfigJSON: `{}`, Enabled: true}
+	after, err := DerivedTunnelsFromProxyPathsWithLedger([]model.ProxyPath{path}, steps, servers, []model.Inbound{root, squatter}, NewProxyPathPortLedger(stored))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 1 {
+		t.Fatalf("tunnel count after change = %d", len(after))
+	}
+	if before[0].ID != after[0].ID {
+		t.Fatalf("tunnel ID rotated: %d -> %d", before[0].ID, after[0].ID)
+	}
+	if before[0].ConfigJSON != after[0].ConfigJSON {
+		t.Fatalf("tunnel credentials rotated:\nbefore=%s\nafter=%s", before[0].ConfigJSON, after[0].ConfigJSON)
+	}
+	if before[0].ListenPort != after[0].ListenPort {
+		t.Fatalf("loopback listener moved: %d -> %d", before[0].ListenPort, after[0].ListenPort)
+	}
 }

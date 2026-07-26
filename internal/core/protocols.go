@@ -82,6 +82,10 @@ type ConfigOptions struct {
 	UserGroups        []model.UserGroup
 	UserGroupMembers  []model.UserGroupMember
 	TrafficPolicies   map[int64]model.TrafficRuntimePolicy
+	// PortLedger supplies persisted generated-listener ports. When nil every
+	// generated port is derived fresh, which keeps pure-Core callers and fixtures
+	// working without a database.
+	PortLedger *ProxyPathPortLedger
 }
 
 func AdapterFor(protocol model.Protocol) (Adapter, error) {
@@ -330,7 +334,14 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		applyServerNetworkPolicy(item, server, inbound.Protocol, true)
 		config.Inbounds = append(config.Inbounds, item)
 	}
-	internalInbounds, err := buildProxyPathInternalInbounds(server, opts, users, &config)
+	// Project the paths once and share the allocated synthetic listeners with both
+	// the internal inbound builder and the outbound/rule builder. Two independent
+	// derivations could pick different ports for the same hop.
+	_, plannedPathInbounds, err := buildProxyPathPlansWithInbounds(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, opts.PortLedger)
+	if err != nil {
+		return "", err
+	}
+	internalInbounds, err := buildProxyPathInternalInbounds(server, opts, users, &config, plannedPathInbounds)
 	if err != nil {
 		return "", err
 	}
@@ -366,7 +377,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		}
 		config.Outbounds = append(config.Outbounds, item)
 	}
-	pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, opts, users)
+	pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, opts, users, plannedPathInbounds)
 	if err != nil {
 		return "", err
 	}
@@ -585,8 +596,8 @@ func stripPrivateConfigFields(raw map[string]any, protocol model.Protocol) {
 	}
 }
 
-func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, users []model.User, config *SingBoxConfig) ([]map[string]any, error) {
-	chainServices, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds)
+func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, users []model.User, config *SingBoxConfig, plannedInbounds map[int64]model.Inbound) ([]map[string]any, error) {
+	chainServices, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, opts.PortLedger)
 	if err != nil {
 		return nil, err
 	}
@@ -656,7 +667,13 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 				continue
 			}
 			seen[key] = true
-			internal := proxyPathInternalInbound(path, step, server, inboundByID)
+			// Reuse the port the deployment projection already allocated. Deriving
+			// it again here would use a different occupancy set and could pick a
+			// port the derived forward does not target.
+			internal, planned := plannedInbounds[proxyPathInternalOutboundID(path.ID, step.Position)]
+			if !planned {
+				internal = proxyPathInternalInbound(path, step, server, inboundByID, opts.PortLedger)
+			}
 			inboundByID[internal.ID] = internal
 			if !step.ProcessingRole {
 				// Transparent intermediate servers only own the managed
@@ -699,7 +716,7 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 	return out, nil
 }
 
-func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, users []model.User) ([]map[string]any, []map[string]any, error) {
+func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, users []model.User, plannedInbounds map[int64]model.Inbound) ([]map[string]any, []map[string]any, error) {
 	inboundByID := map[int64]model.Inbound{}
 	for _, inbound := range opts.Inbounds {
 		inboundByID[inbound.ID] = inbound
@@ -721,13 +738,20 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 	}
 	paths := append([]model.ProxyPath(nil), opts.ProxyPaths...)
 	sort.SliceStable(paths, func(i, j int) bool { return paths[i].ID < paths[j].ID })
-	chainServices, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds)
+	chainServices, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, opts.PortLedger)
 	if err != nil {
 		return nil, nil, err
 	}
 	pathPlans, err := BuildProxyPathPlans(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds)
 	if err != nil {
 		return nil, nil, err
+	}
+	// Adopt the projection's synthetic listeners so every hop dials the port the
+	// deployment plan actually provisions.
+	for id, inbound := range plannedInbounds {
+		if _, ok := inboundByID[id]; !ok {
+			inboundByID[id] = inbound
+		}
 	}
 	tunnelByID := map[int64]model.Tunnel{}
 	tunnelIDByStep := map[[2]int64]int64{}
@@ -790,7 +814,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 				continue
 			}
 			stepTag := proxyPathStepTag(path.ID, step.Position)
-			item, err := proxyPathStepOutbound(path, step, server, serverByID, inboundByID, externalByID, users, stepTag, chainServices)
+			item, err := proxyPathStepOutbound(path, step, server, serverByID, inboundByID, externalByID, users, stepTag, chainServices, opts.PortLedger)
 			if err != nil {
 				return nil, nil, fmt.Errorf("proxy path %s step %d: %w", path.Name, step.Position, err)
 			}
@@ -883,20 +907,24 @@ func proxyPathInternalInboundTag(pathID int64, position int) string {
 	return fmt.Sprintf("oboard-path-%d-step-%d-in", pathID, position)
 }
 
+// proxyPathInternalOutboundID derives the negative ID of a generated per-hop
+// listener. Path ID and position use disjoint bit fields so a long chain cannot
+// carry into the neighbouring path's range.
 func proxyPathInternalOutboundID(pathID int64, position int) int64 {
-	return -910000000000 - pathID*1000 - int64(position)
+	return -(int64(1)<<45 + (pathID&0xffffff)<<12 + int64(position)&0xfff)
 }
 
-func proxyPathInternalInbound(path model.ProxyPath, step model.ProxyPathStep, server model.Server, inboundByID map[int64]model.Inbound) model.Inbound {
-	port := intValueFromStepConfig(step.ConfigJSON, "internal_port", 0)
+func proxyPathInternalInbound(path model.ProxyPath, step model.ProxyPathStep, server model.Server, inboundByID map[int64]model.Inbound, ledger *ProxyPathPortLedger) model.Inbound {
+	// The port is always allocated by Controller. Honoring a caller-supplied
+	// internal_port would bypass the availability checks and let the derived plan
+	// and the generated core config disagree about the processing listener.
 	managedSSH := step.TransportMode == model.ProxyPathTransportTunnel && strings.EqualFold(stringValue(parseStepConfig(step.ConfigJSON), "type", ""), string(model.TunnelTypeSSH))
-	if port == 0 {
+	port := ledger.resolve(model.ProxyPathPortKindInternal, fmt.Sprintf("%d:%d", path.ID, step.Position), server.ID, func() int {
 		if managedSSH {
-			port = proxyPathAvailablePort(server, path.ID*149, step.Position*29, 23000, 29999, inboundByID)
-		} else {
-			port = proxyPathInternalPort(server, path.ID, step.Position, inboundByID)
+			return proxyPathAvailablePort(server, path.ID*149, step.Position*29, 23000, 29999, inboundByID)
 		}
-	}
+		return proxyPathInternalPort(server, path.ID, step.Position, inboundByID)
+	})
 	listenIP := firstNonEmpty(server.ListenIP, "0.0.0.0")
 	if managedSSH {
 		listenIP = "127.0.0.1"
@@ -909,7 +937,7 @@ func proxyPathInternalUser(path model.ProxyPath, step model.ProxyPathStep) model
 	if strings.TrimSpace(seed) == "" {
 		seed = fmt.Sprintf("path:%d:step:%d", path.ID, step.Position)
 	}
-	return model.User{ID: -path.ID*1000 - int64(step.Position), Username: fmt.Sprintf("__oboard_path_%d_step_%d", path.ID, step.Position), Status: "active", ProxyUUID: deterministicUUID(fmt.Sprintf("%s:step:%d:uuid", seed, step.Position)), ProxyPassword: deterministicSecret(fmt.Sprintf("%s:step:%d:password", seed, step.Position))}
+	return model.User{ID: proxyPathInternalOutboundID(path.ID, step.Position), Username: fmt.Sprintf("__oboard_path_%d_step_%d", path.ID, step.Position), Status: "active", ProxyUUID: deterministicUUID(fmt.Sprintf("%s:step:%d:uuid", seed, step.Position)), ProxyPassword: deterministicSecret(fmt.Sprintf("%s:step:%d:password", seed, step.Position))}
 }
 
 func proxyPathInternalPort(server model.Server, pathID int64, position int, inboundByID map[int64]model.Inbound) int {
@@ -920,7 +948,7 @@ func proxyPathInternalPort(server model.Server, pathID int64, position int, inbo
 	return proxyPathAvailablePort(server, pathID*97, position*17, start, end, inboundByID)
 }
 
-func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourceServer model.Server, serverByID map[int64]model.Server, inboundByID map[int64]model.Inbound, externalByID map[int64]model.ExternalOutbound, users []model.User, outboundTag string, services map[proxyPathChainServiceKey]*proxyPathChainService) (map[string]any, error) {
+func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourceServer model.Server, serverByID map[int64]model.Server, inboundByID map[int64]model.Inbound, externalByID map[int64]model.ExternalOutbound, users []model.User, outboundTag string, services map[proxyPathChainServiceKey]*proxyPathChainService, ledger *ProxyPathPortLedger) (map[string]any, error) {
 	switch step.NodeType {
 	case model.ProxyPathStepImported:
 		if step.ExternalOutboundID == nil || *step.ExternalOutboundID == 0 {
@@ -955,8 +983,11 @@ func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourc
 			if ok {
 				if service, serviceOK := proxyPathChainServiceForStep(services, step, targetServer.ID); serviceOK {
 					inbound = service.Inbound
+				} else if planned, plannedOK := inboundByID[proxyPathInternalOutboundID(path.ID, step.Position)]; plannedOK {
+					// Prefer the listener the projection allocated for this hop.
+					inbound = planned
 				} else {
-					inbound = proxyPathInternalInbound(path, step, targetServer, inboundByID)
+					inbound = proxyPathInternalInbound(path, step, targetServer, inboundByID, ledger)
 				}
 				inboundByID[inbound.ID] = inbound
 			}

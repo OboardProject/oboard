@@ -71,6 +71,11 @@ type Server struct {
 	backupConfigured            bool
 	backupMu                    sync.Mutex
 	backupRestart               func()
+	// deploymentMu serializes deployment preparation. Preparing a deployment
+	// repairs stored topology, refreshes derived roles and allocates one
+	// monotonic config version, so two concurrent applies would interleave those
+	// writes and hand overlapping desired state to the same Agents.
+	deploymentMu sync.Mutex
 }
 
 func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *oboardlog.Manager) *Server {
@@ -768,14 +773,12 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		if err := s.normalizeEnabledProxyPathProcessingRoles(ctx); err != nil {
+			return err
+		}
 		paths, err := s.store.ListProxyPaths(ctx)
 		if err != nil {
 			return err
-		}
-		for _, path := range paths {
-			if err := s.normalizeProxyPathProcessingRoles(ctx, path.ID); err != nil {
-				return err
-			}
 		}
 		steps, err := s.store.ListProxyPathSteps(ctx)
 		if err != nil {
@@ -5651,16 +5654,26 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			pathSteps := proxyPathStepsForPath(steps, id)
-			plans, err := core.BuildProxyPathPlans([]model.ProxyPath{item}, pathSteps, servers, inbounds)
+			// Project the whole set against the persisted ports: shared listeners,
+			// shared tunnels and the single-transparent-path rule all depend on the
+			// other paths, so a single-path or ledger-less projection would report
+			// ports and conflicts that differ from what a deployment produces.
+			allocations, err := s.store.ListProxyPathPortAllocations(r.Context())
+			if err != nil {
+				fail(w, err, 500)
+				return
+			}
+			plans, err := core.BuildProxyPathPlansWithLedger(resolved, steps, servers, inbounds, core.NewProxyPathPortLedger(allocations))
 			if err != nil {
 				fail(w, err, 400)
 				return
 			}
-			if len(plans) == 0 {
+			plan, ok := proxyPathPlanByID(plans, id)
+			if !ok {
 				write(w, 200, map[string]any{"plan": proxyPathPlanSummary(item, pathSteps)})
 				return
 			}
-			write(w, 200, map[string]any{"plan": publicProxyPathPlan(plans[0])})
+			write(w, 200, map[string]any{"plan": publicProxyPathPlan(plan)})
 			return
 		}
 		if id != 0 {
@@ -5744,6 +5757,18 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		// A path built while disabled can hold steps that no longer project. Verify
+		// the stored result and restore the previous row instead of letting the next
+		// deployment fail for every server.
+		if v.Enabled {
+			if err := s.validateEnabledProxyPathPlan(r.Context(), id); err != nil {
+				restore := *current
+				_ = s.store.UpdateProxyPath(r.Context(), &restore)
+				_ = s.normalizeProxyPathProcessingRoles(r.Context(), id)
+				fail(w, err, 400)
+				return
+			}
+		}
 		v = s.resolvedProxyPath(r.Context(), v)
 		auditReq(s, r, "update", "proxy-path", fmt.Sprint(id))
 		write(w, 200, map[string]any{"proxy_path": v})
@@ -5753,6 +5778,10 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.store.DeleteProxyPath(r.Context(), id); err != nil {
+			fail(w, err, 500)
+			return
+		}
+		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
 			fail(w, err, 500)
 			return
 		}
@@ -5798,6 +5827,86 @@ func (s *Server) validateProxyPath(ctx context.Context, v *model.ProxyPath) erro
 	return core.NormalizeProxyPathName(v, steps, servers, inbounds, externals)
 }
 
+// validateProxyPathTruncation projects the topology that would remain after
+// cutting one path at the given position. It runs entirely in memory so a
+// rejected delete leaves the stored chain untouched.
+func (s *Server) validateProxyPathTruncation(ctx context.Context, pathID int64, position int) error {
+	data, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		return err
+	}
+	resolveRoutingProxyPathNames(&data)
+	steps := make([]model.ProxyPathStep, 0, len(data.ProxyPathSteps))
+	for _, step := range data.ProxyPathSteps {
+		if step.PathID == pathID && step.Position >= position {
+			continue
+		}
+		steps = append(steps, step)
+	}
+	// The remaining leading transparent segment may end on a different hop, so
+	// mirror normalizeProxyPathProcessingRoles instead of reusing stale flags.
+	if err := normalizeProxyPathProcessingRolesInMemory(steps, pathID); err != nil {
+		return err
+	}
+	_, err = core.BuildProxyPathPlansWithLedger(data.ProxyPaths, steps, data.Servers, data.Inbounds, core.NewProxyPathPortLedger(data.ProxyPathPortAllocations))
+	return err
+}
+
+// normalizeProxyPathProcessingRolesInMemory applies the same derivation as
+// normalizeProxyPathProcessingRoles to one path inside a candidate step slice.
+func normalizeProxyPathProcessingRolesInMemory(steps []model.ProxyPathStep, pathID int64) error {
+	indexes := make([]int, 0, len(steps))
+	for i := range steps {
+		if steps[i].PathID == pathID {
+			indexes = append(indexes, i)
+		}
+	}
+	sort.SliceStable(indexes, func(a, b int) bool {
+		left, right := steps[indexes[a]], steps[indexes[b]]
+		if left.Position == right.Position {
+			return left.ID < right.ID
+		}
+		return left.Position < right.Position
+	})
+	processorIndex := -1
+	transparentPrefix := true
+	for _, index := range indexes {
+		mode := steps[index].TransportMode
+		if mode == "" {
+			mode = model.ProxyPathTransportSingBox
+		}
+		if mode == model.ProxyPathTransportPortForward {
+			if !transparentPrefix {
+				return errors.New("端口转发只能位于路径开头；链式代理或隧道之后不能再透明转发")
+			}
+			processorIndex = index
+			continue
+		}
+		transparentPrefix = false
+	}
+	for _, index := range indexes {
+		steps[index].ProcessingRole = processorIndex >= 0 && index == processorIndex
+	}
+	return nil
+}
+
+// validateEnabledProxyPathPlan rejects enabling a path whose stored steps cannot
+// be projected. Step writes already run this check, but a path that was built
+// while disabled would otherwise pass its own validation and then fail the
+// deployment for every server.
+func (s *Server) validateEnabledProxyPathPlan(ctx context.Context, pathID int64) error {
+	if err := s.normalizeProxyPathProcessingRoles(ctx, pathID); err != nil {
+		return err
+	}
+	data, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		return err
+	}
+	resolveRoutingProxyPathNames(&data)
+	_, err = core.BuildProxyPathPlansWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, core.NewProxyPathPortLedger(data.ProxyPathPortAllocations))
+	return err
+}
+
 func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/proxy-path-steps/")
 	switch r.Method {
@@ -5823,7 +5932,12 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if v.Position <= 0 {
-			v.Position = s.nextProxyPathStepPosition(r.Context(), v.PathID)
+			position, err := s.nextProxyPathStepPosition(r.Context(), v.PathID)
+			if err != nil {
+				fail(w, err, 500)
+				return
+			}
+			v.Position = position
 		}
 		if err := s.validateProxyPathStep(r.Context(), &v, 0); err != nil {
 			fail(w, err, 400)
@@ -5910,6 +6024,15 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 				deletedSteps++
 			}
 		}
+		// Verify the projection of the remaining chain before deleting anything.
+		// Deleting first would leave the operator with a 400 response and a path
+		// that has already lost its steps.
+		if deletedSteps < len(steps) {
+			if err := s.validateProxyPathTruncation(r.Context(), current.PathID, current.Position); err != nil {
+				fail(w, err, 400)
+				return
+			}
+		}
 		if err := s.store.DeleteProxyPathStepsFromPosition(r.Context(), current.PathID, current.Position); err != nil {
 			fail(w, err, 500)
 			return
@@ -5927,13 +6050,13 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			if err := s.normalizeAndValidateProxyPath(r.Context(), current.PathID); err != nil {
-				fail(w, err, 400)
-				return
-			}
-			if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
 				fail(w, err, 500)
 				return
 			}
+		}
+		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
+			fail(w, err, 500)
+			return
 		}
 		auditReq(s, r, "delete", "proxy-path-step", fmt.Sprint(id))
 		write(w, 200, map[string]any{"deleted": true, "deleted_steps": deletedSteps, "path_deleted": pathDeleted})
@@ -5942,10 +6065,10 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) nextProxyPathStepPosition(ctx context.Context, pathID int64) int {
+func (s *Server) nextProxyPathStepPosition(ctx context.Context, pathID int64) (int, error) {
 	steps, err := s.store.ListProxyPathStepsForPath(ctx, pathID)
 	if err != nil {
-		return 1
+		return 0, err
 	}
 	max := 0
 	for _, step := range steps {
@@ -5953,7 +6076,7 @@ func (s *Server) nextProxyPathStepPosition(ctx context.Context, pathID int64) in
 			max = step.Position
 		}
 	}
-	return max + 1
+	return max + 1, nil
 }
 
 func (s *Server) validateProxyPathStep(ctx context.Context, v *model.ProxyPathStep, currentID int64) error {
@@ -6029,16 +6152,18 @@ func (s *Server) validateProxyPathStep(ctx context.Context, v *model.ProxyPathSt
 				return err
 			}
 			cfg["chain_method"] = method
-			if v.TransportMode != model.ProxyPathTransportTunnel {
-				encoded, err := json.Marshal(cfg)
-				if err != nil {
-					return err
-				}
-				v.ConfigJSON = string(encoded)
-			}
 		}
-		if v.TransportMode == model.ProxyPathTransportTunnel {
+		switch v.TransportMode {
+		case model.ProxyPathTransportTunnel:
 			if err := normalizeProxyPathTunnelConfig(v, cfg); err != nil {
+				return err
+			}
+		case model.ProxyPathTransportPortForward:
+			if err := normalizeProxyPathForwardConfig(v, cfg); err != nil {
+				return err
+			}
+		default:
+			if err := normalizeProxyPathChainConfig(v, cfg); err != nil {
 				return err
 			}
 		}
@@ -6057,11 +6182,59 @@ func (s *Server) validateProxyPathStep(ctx context.Context, v *model.ProxyPathSt
 	if err := s.validateProxyPathServerLoop(ctx, path.InboundID, appendProxyPathStep(steps, *v, currentID)); err != nil {
 		return err
 	}
-	if path.Enabled {
-		if err := s.validateInboundPathReuse(ctx, path.InboundID, path.ID); err != nil {
-			return err
+	// Branch reuse is a property of the path set, not of one step. It is enforced
+	// when a path is created or enabled; repeating it here would reject adding a
+	// hop with an error about branch reuse that the operator cannot act on.
+	return nil
+}
+
+// normalizeProxyPathChainConfig rebuilds a sing-box step's config from an
+// allowlist. Unknown keys are dropped so a client cannot inject a value that a
+// generator reads without validation, such as internal_port.
+func normalizeProxyPathChainConfig(v *model.ProxyPathStep, cfg map[string]any) error {
+	managed := map[string]any{}
+	if method := strings.TrimSpace(fmt.Sprint(cfg["chain_method"])); method != "" && method != "<nil>" {
+		managed["chain_method"] = method
+	}
+	b, err := json.Marshal(managed)
+	if err != nil {
+		return err
+	}
+	v.ConfigJSON = string(b)
+	return nil
+}
+
+// normalizeProxyPathForwardConfig rebuilds a transparent forward step's config
+// from an allowlist and validates the operator-selectable fields. internal_port
+// is deliberately not accepted: the generated processing listener must stay
+// under Controller port allocation so plan and core config agree.
+func normalizeProxyPathForwardConfig(v *model.ProxyPathStep, cfg map[string]any) error {
+	managed := map[string]any{}
+	if raw, ok := cfg["backend"]; ok {
+		backend := strings.ToLower(strings.TrimSpace(fmt.Sprint(raw)))
+		if backend != "" && backend != "<nil>" {
+			switch model.ForwardBackend(backend) {
+			case model.ForwardBackendAuto, model.ForwardBackendRealm, model.ForwardBackendNFT, model.ForwardBackendBuiltin:
+				managed["backend"] = backend
+			default:
+				return errors.New("端口转发后端必须是 auto、realm、nft 或 builtin")
+			}
 		}
 	}
+	if raw, ok := cfg["listen_ip"]; ok {
+		listenIP := strings.TrimSpace(fmt.Sprint(raw))
+		if listenIP != "" && listenIP != "<nil>" {
+			if _, err := netip.ParseAddr(listenIP); err != nil {
+				return fmt.Errorf("listen_ip: %w", err)
+			}
+			managed["listen_ip"] = listenIP
+		}
+	}
+	b, err := json.Marshal(managed)
+	if err != nil {
+		return err
+	}
+	v.ConfigJSON = string(b)
 	return nil
 }
 
@@ -6122,39 +6295,42 @@ func normalizeProxyPathTunnelConfig(v *model.ProxyPathStep, cfg map[string]any) 
 	return nil
 }
 
+// normalizeEnabledProxyPathProcessingRoles refreshes derived processing roles for
+// every enabled path. Disabled paths are skipped on purpose: Core validation and
+// plan building both exempt them, so a half-configured disabled branch must not
+// be able to fail a page load or block a deployment for every server.
+func (s *Server) normalizeEnabledProxyPathProcessingRoles(ctx context.Context) error {
+	paths, err := s.store.ListProxyPaths(ctx)
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		if !path.Enabled {
+			continue
+		}
+		if err := s.normalizeProxyPathProcessingRoles(ctx, path.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Server) normalizeProxyPathProcessingRoles(ctx context.Context, pathID int64) error {
 	steps, err := s.store.ListProxyPathStepsForPath(ctx, pathID)
 	if err != nil {
 		return err
 	}
-	sort.SliceStable(steps, func(i, j int) bool {
-		if steps[i].Position == steps[j].Position {
-			return steps[i].ID < steps[j].ID
-		}
-		return steps[i].Position < steps[j].Position
-	})
-	processorID := int64(0)
-	transparentPrefix := true
-	for _, step := range steps {
-		mode := step.TransportMode
-		if mode == "" {
-			mode = model.ProxyPathTransportSingBox
-		}
-		if mode == model.ProxyPathTransportPortForward {
-			if !transparentPrefix {
-				return errors.New("端口转发只能位于路径开头；链式代理或隧道之后不能再透明转发")
-			}
-			processorID = step.ID
-			continue
-		}
-		transparentPrefix = false
+	stored := make([]bool, len(steps))
+	for i := range steps {
+		stored[i] = steps[i].ProcessingRole
+	}
+	if err := normalizeProxyPathProcessingRolesInMemory(steps, pathID); err != nil {
+		return err
 	}
 	for i := range steps {
-		want := processorID != 0 && steps[i].ID == processorID
-		if steps[i].ProcessingRole == want {
+		if steps[i].ProcessingRole == stored[i] {
 			continue
 		}
-		steps[i].ProcessingRole = want
 		if err := s.store.UpdateProxyPathStep(ctx, &steps[i]); err != nil {
 			return err
 		}
@@ -6171,7 +6347,7 @@ func (s *Server) normalizeAndValidateProxyPath(ctx context.Context, pathID int64
 		return err
 	}
 	resolveRoutingProxyPathNames(&data)
-	_, err = core.BuildProxyPathPlans(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds)
+	_, err = core.BuildProxyPathPlansWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, core.NewProxyPathPortLedger(data.ProxyPathPortAllocations))
 	return err
 }
 
@@ -6241,6 +6417,15 @@ func proxyPathByID(paths []model.ProxyPath, id int64) (model.ProxyPath, bool) {
 		}
 	}
 	return model.ProxyPath{}, false
+}
+
+func proxyPathPlanByID(plans []model.ProxyPathPlan, id int64) (model.ProxyPathPlan, bool) {
+	for _, plan := range plans {
+		if plan.PathID == id {
+			return plan, true
+		}
+	}
+	return model.ProxyPathPlan{}, false
 }
 
 func proxyPathStepsForPath(steps []model.ProxyPathStep, pathID int64) []model.ProxyPathStep {
@@ -7768,6 +7953,11 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Preparation repairs stored topology, refreshes derived roles and allocates
+	// one monotonic config version. Serialize it so two concurrent applies cannot
+	// interleave those writes or queue overlapping desired state.
+	s.deploymentMu.Lock()
+	defer s.deploymentMu.Unlock()
 	if err := s.store.PruneOrphanedProxyPathSteps(r.Context()); err != nil {
 		fail(w, err, 500)
 		return
@@ -7776,16 +7966,9 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	paths, err := s.store.ListProxyPaths(r.Context())
-	if err != nil {
-		fail(w, err, 500)
+	if err := s.normalizeEnabledProxyPathProcessingRoles(r.Context()); err != nil {
+		fail(w, err, 400)
 		return
-	}
-	for _, path := range paths {
-		if err := s.normalizeProxyPathProcessingRoles(r.Context(), path.ID); err != nil {
-			fail(w, err, 400)
-			return
-		}
 	}
 	data, err := s.store.FullRoutingConfigData(r.Context())
 	if err != nil {
@@ -7804,12 +7987,21 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	derivedForwards, err := core.DerivedPortForwardsFromProxyPaths(data.ProxyPaths, data.ProxyPathSteps, servers, in)
+	// Reuse the ports already recorded for generated listeners and let the
+	// projection allocate only what is genuinely new. One ledger is shared by the
+	// derivation below and by every per-server config, so all of them agree.
+	allocations, err := s.store.ListProxyPathPortAllocations(r.Context())
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	ledger := core.NewProxyPathPortLedger(allocations)
+	derivedForwards, err := core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, servers, in, ledger)
 	if err != nil {
 		fail(w, err, 400)
 		return
 	}
-	derivedTunnels, err := core.DerivedTunnelsFromProxyPaths(data.ProxyPaths, data.ProxyPathSteps, servers, in)
+	derivedTunnels, err := core.DerivedTunnelsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, servers, in, ledger)
 	if err != nil {
 		fail(w, err, 400)
 		return
@@ -7881,9 +8073,12 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 			warpRequests = append(warpRequests, plan)
 		}
 
-		generated, err := s.generateServerCoreConfig(r.Context(), server, data)
+		generated, err := s.generateServerCoreConfigWithLedger(r.Context(), server, data, ledger)
 		if err != nil {
-			fail(w, err, 500)
+			// Generation rejects operator-fixable desired state too — a listener
+			// conflict, an unreachable address, an unsupported protocol field. Those
+			// are 400s like the dedicated validators below, not server faults.
+			fail(w, err, deploymentConfigErrorStatus(err))
 			return
 		}
 		managedAssets, cfg := generated.Assets, generated.Config
@@ -7970,6 +8165,13 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 			MTUDetection:         mtuPlan,
 		}
 		prepared = append(prepared, preparedDeployment{serverID: server.ID, payload: payload})
+	}
+	// Every server validated, so the ports this projection chose are the ones the
+	// Agents will receive. Persist them before queueing any task: from now on a
+	// later topology change must reuse these values instead of re-deriving them.
+	if err := s.store.SaveProxyPathPortAllocations(r.Context(), ledger.Pending(), core.StaleProxyPathPortAllocationIDs(allocations, ledger)); err != nil {
+		fail(w, err, 500)
+		return
 	}
 	tasks := make([]model.AgentTask, 0, len(prepared))
 	for _, item := range prepared {
@@ -8258,7 +8460,30 @@ type generatedServerCoreConfig struct {
 	TrafficPolicies map[int64]model.TrafficRuntimePolicy
 }
 
+// deploymentConfigErrorStatus separates desired state the operator can correct
+// from genuine server faults, so a listener conflict does not surface as a 500.
+func deploymentConfigErrorStatus(err error) int {
+	if errors.Is(err, core.ErrInvalidDesiredState) {
+		return 400
+	}
+	return 500
+}
+
 func (s *Server) generateServerCoreConfig(ctx context.Context, server model.Server, data store.FullRoutingConfig) (generatedServerCoreConfig, error) {
+	return s.generateServerCoreConfigWithLedger(ctx, server, data, nil)
+}
+
+// generateServerCoreConfigWithLedger lets the deployment pipeline share one
+// generated-port allocation across every server it prepares. Passing nil derives
+// a ledger from the allocations already loaded with the routing snapshot.
+func (s *Server) generateServerCoreConfigWithLedger(ctx context.Context, server model.Server, data store.FullRoutingConfig, ledger *core.ProxyPathPortLedger) (generatedServerCoreConfig, error) {
+	if ledger == nil {
+		ledger = core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
+	}
+	return s.generateServerCoreConfigInner(ctx, server, data, ledger)
+}
+
+func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model.Server, data store.FullRoutingConfig, ledger *core.ProxyPathPortLedger) (generatedServerCoreConfig, error) {
 	resolveRoutingProxyPathNames(&data)
 	inbounds, assets, err := s.prepareCertificateInbounds(ctx, data.Inbounds, server.ID)
 	if err != nil {
@@ -8278,6 +8503,7 @@ func (s *Server) generateServerCoreConfig(ctx context.Context, server model.Serv
 		RoutingRules: data.RoutingRules, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
 		Servers: data.Servers, Inbounds: inbounds, WARPProfiles: data.WARPProfiles, InboundUsers: bindings,
 		UserGroups: data.UserGroups, UserGroupMembers: data.UserGroupMembers, TrafficPolicies: trafficPolicies,
+		PortLedger: ledger,
 	})
 	if err != nil {
 		return generatedServerCoreConfig{}, err

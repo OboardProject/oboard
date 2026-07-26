@@ -3,9 +3,16 @@ package core
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// ErrInvalidDesiredState marks a failure the operator can fix by changing the
+// stored configuration — a listener conflict, an unreachable address, an
+// unsupported protocol field. Callers map it to a client error instead of
+// reporting a server fault.
+var ErrInvalidDesiredState = errors.New("invalid desired state")
 
 func ValidateGeneratedSingBoxConfig(config SingBoxConfig) error {
 	v := &configValidator{
@@ -21,7 +28,7 @@ func ValidateGeneratedSingBoxConfig(config SingBoxConfig) error {
 	v.validateInbounds(config.Inbounds)
 	v.validateRoute(config.Route)
 	if len(v.issues) > 0 {
-		return fmt.Errorf("generated sing-box config invalid: %s", strings.Join(v.issues, "; "))
+		return fmt.Errorf("%w: generated sing-box config invalid: %s", ErrInvalidDesiredState, strings.Join(v.issues, "; "))
 	}
 	return nil
 }

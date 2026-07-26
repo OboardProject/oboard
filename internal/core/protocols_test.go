@@ -1421,7 +1421,7 @@ func TestProxyPathTunnelPortsAvoidGeneratedInboundCollisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chainInbound := proxyPathInternalInbound(chainPath, chainStep, target, map[int64]model.Inbound{targetPublic.ID: targetPublic})
+	chainInbound := proxyPathInternalInbound(chainPath, chainStep, target, map[int64]model.Inbound{targetPublic.ID: targetPublic}, nil)
 	var sshTunnel model.Tunnel
 	for _, plan := range plans {
 		if plan.PathID == sshPath.ID && len(plan.Tunnels) == 1 {
@@ -1459,7 +1459,7 @@ func TestProxyPathSSHTunnelConnectsSingBoxToManagedLocalForward(t *testing.T) {
 	if err := json.Unmarshal([]byte(tunnel.ConfigJSON), &tunnelConfig); err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds)
+	services, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
