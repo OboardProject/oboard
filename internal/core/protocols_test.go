@@ -526,8 +526,8 @@ func TestProxyPathBranchesUseAuthUserRoutesAndSubscriptionNodes(t *testing.T) {
 	inbound := model.Inbound{ID: 10, ServerID: 1, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
 	externalA := model.ExternalOutbound{ID: 30, Name: "socks-a", Protocol: model.ProtocolSocks, TargetAddress: "socks-a.example.com", TargetPort: 1080, ConfigJSON: `{"type":"socks","server":"socks-a.example.com","server_port":1080}`, Enabled: true}
 	externalB := model.ExternalOutbound{ID: 31, Name: "socks-b", Protocol: model.ProtocolSocks, TargetAddress: "socks-b.example.com", TargetPort: 1080, ConfigJSON: `{"type":"socks","server":"socks-b.example.com","server_port":1080}`, Enabled: true}
-	pathA := model.ProxyPath{ID: 40, Name: "branch-a", InboundID: inbound.ID, Secret: "path-a", Enabled: true}
-	pathB := model.ProxyPath{ID: 41, Name: "branch-b", InboundID: inbound.ID, Secret: "path-b", Enabled: true}
+	pathA := model.ProxyPath{ID: 40, NameMode: model.ProxyPathNameCustom, NameTemplate: []model.ProxyPathNamePart{{Kind: model.ProxyPathNameLiteral, Value: "branch-a"}}, InboundID: inbound.ID, Secret: "path-a", Enabled: true}
+	pathB := model.ProxyPath{ID: 41, NameMode: model.ProxyPathNameCustom, NameTemplate: []model.ProxyPathNamePart{{Kind: model.ProxyPathNameLiteral, Value: "branch-b"}}, InboundID: inbound.ID, Secret: "path-b", Enabled: true}
 	extAID, extBID := externalA.ID, externalB.ID
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
 	opts := ConfigOptions{

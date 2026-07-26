@@ -749,6 +749,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.PruneOrphanedProxyPathSteps(ctx); err != nil {
 			return err
 		}
+		if err := s.reconcileProxyPathNameTemplates(ctx); err != nil {
+			return err
+		}
 		inbounds, err := s.store.ListInbounds(ctx)
 		if err != nil {
 			return err
@@ -778,6 +781,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		paths = core.ResolveProxyPathNames(paths, steps, out["servers"].([]model.Server), inbounds, externals)
 		forwards, err := s.store.ListPortForwards(ctx)
 		if err != nil {
 			return err
@@ -1912,6 +1916,10 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodDelete {
 		if err := s.store.CleanupRoutingForServer(r.Context(), id); err != nil {
+			fail(w, err, 500)
+			return
+		}
+		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
 			fail(w, err, 500)
 			return
 		}
@@ -3365,6 +3373,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.store.DeleteProxyPathsForInbound(r.Context(), id); err != nil {
+			fail(w, err, 500)
+			return
+		}
+		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
 			fail(w, err, 500)
 			return
 		}
@@ -5097,6 +5109,10 @@ func (s *Server) externalOutbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
+			fail(w, err, 500)
+			return
+		}
 		if err := s.store.Delete(r.Context(), "external_outbounds", id); err != nil {
 			fail(w, err, 500)
 			return
@@ -5623,52 +5639,50 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if id != 0 && len(parts) > 1 && parts[1] == "plan" {
-			item, err := s.store.GetProxyPath(r.Context(), id)
-			if err != nil {
-				fail(w, err, 404)
-				return
-			}
-			steps, err := s.store.ListProxyPathStepsForPath(r.Context(), id)
+			items, steps, servers, inbounds, externals, err := s.proxyPathNameData(r.Context())
 			if err != nil {
 				fail(w, err, 500)
 				return
 			}
-			servers, err := s.store.ListServers(r.Context())
-			if err != nil {
-				fail(w, err, 500)
+			resolved := core.ResolveProxyPathNames(items, steps, servers, inbounds, externals)
+			item, ok := proxyPathByID(resolved, id)
+			if !ok {
+				fail(w, sql.ErrNoRows, 404)
 				return
 			}
-			inbounds, err := s.store.ListInbounds(r.Context())
-			if err != nil {
-				fail(w, err, 500)
-				return
-			}
-			plans, err := core.BuildProxyPathPlans([]model.ProxyPath{*item}, steps, servers, inbounds)
+			pathSteps := proxyPathStepsForPath(steps, id)
+			plans, err := core.BuildProxyPathPlans([]model.ProxyPath{item}, pathSteps, servers, inbounds)
 			if err != nil {
 				fail(w, err, 400)
 				return
 			}
 			if len(plans) == 0 {
-				write(w, 200, map[string]any{"plan": proxyPathPlanSummary(*item, steps)})
+				write(w, 200, map[string]any{"plan": proxyPathPlanSummary(item, pathSteps)})
 				return
 			}
 			write(w, 200, map[string]any{"plan": publicProxyPathPlan(plans[0])})
 			return
 		}
 		if id != 0 {
-			item, err := s.store.GetProxyPath(r.Context(), id)
+			items, steps, servers, inbounds, externals, err := s.proxyPathNameData(r.Context())
 			if err != nil {
-				fail(w, err, 404)
+				fail(w, err, 500)
+				return
+			}
+			item, ok := proxyPathByID(core.ResolveProxyPathNames(items, steps, servers, inbounds, externals), id)
+			if !ok {
+				fail(w, sql.ErrNoRows, 404)
 				return
 			}
 			write(w, 200, map[string]any{"proxy_path": item})
 			return
 		}
-		items, err := s.store.ListProxyPaths(r.Context())
+		items, steps, servers, inbounds, externals, err := s.proxyPathNameData(r.Context())
 		if err != nil {
 			fail(w, err, 500)
 			return
 		}
+		items = core.ResolveProxyPathNames(items, steps, servers, inbounds, externals)
 		write(w, 200, map[string]any{"proxy_paths": items})
 	case http.MethodPost:
 		var v model.ProxyPath
@@ -5691,6 +5705,7 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		v = s.resolvedProxyPath(r.Context(), v)
 		auditReq(s, r, "create", "proxy-path", fmt.Sprint(v.ID))
 		write(w, 201, map[string]any{"proxy_path": v})
 	case http.MethodPatch:
@@ -5711,6 +5726,16 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(v.Secret) == "" {
 			v.Secret = current.Secret
 		}
+		if v.InboundID != current.InboundID && v.NameMode == model.ProxyPathNameCustom {
+			steps, _ := s.store.ListProxyPathStepsForPath(r.Context(), id)
+			servers, _ := s.store.ListServers(r.Context())
+			inbounds, _ := s.store.ListInbounds(r.Context())
+			externals, _ := s.store.ListExternalOutbounds(r.Context())
+			if !core.ProxyPathNameTemplateIsValid(v, steps, servers, inbounds, externals) {
+				v.NameMode = model.ProxyPathNameAuto
+				v.NameTemplate = []model.ProxyPathNamePart{}
+			}
+		}
 		if err := s.validateProxyPath(r.Context(), &v); err != nil {
 			fail(w, err, 400)
 			return
@@ -5719,6 +5744,7 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		v = s.resolvedProxyPath(r.Context(), v)
 		auditReq(s, r, "update", "proxy-path", fmt.Sprint(id))
 		write(w, 200, map[string]any{"proxy_path": v})
 	case http.MethodDelete:
@@ -5738,10 +5764,6 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) validateProxyPath(ctx context.Context, v *model.ProxyPath) error {
-	v.Name = strings.TrimSpace(v.Name)
-	if v.Name == "" {
-		v.Name = "代理路径"
-	}
 	if v.InboundID == 0 {
 		return errors.New("inbound_id required")
 	}
@@ -5757,7 +5779,23 @@ func (s *Server) validateProxyPath(ctx context.Context, v *model.ProxyPath) erro
 			return err
 		}
 	}
-	return nil
+	steps, err := s.store.ListProxyPathStepsForPath(ctx, v.ID)
+	if err != nil {
+		return err
+	}
+	servers, err := s.store.ListServers(ctx)
+	if err != nil {
+		return err
+	}
+	inbounds, err := s.store.ListInbounds(ctx)
+	if err != nil {
+		return err
+	}
+	externals, err := s.store.ListExternalOutbounds(ctx)
+	if err != nil {
+		return err
+	}
+	return core.NormalizeProxyPathName(v, steps, servers, inbounds, externals)
 }
 
 func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
@@ -5801,6 +5839,10 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
+			fail(w, err, 500)
+			return
+		}
 		if stored, err := s.store.GetProxyPathStep(r.Context(), v.ID); err == nil {
 			v = *stored
 		}
@@ -5836,6 +5878,10 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			_ = s.store.UpdateProxyPathStep(r.Context(), current)
 			_ = s.normalizeProxyPathProcessingRoles(r.Context(), current.PathID)
 			fail(w, err, 400)
+			return
+		}
+		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
+			fail(w, err, 500)
 			return
 		}
 		if stored, err := s.store.GetProxyPathStep(r.Context(), v.ID); err == nil {
@@ -5879,9 +5925,15 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 				fail(w, err, 500)
 				return
 			}
-		} else if err := s.normalizeAndValidateProxyPath(r.Context(), current.PathID); err != nil {
-			fail(w, err, 400)
-			return
+		} else {
+			if err := s.normalizeAndValidateProxyPath(r.Context(), current.PathID); err != nil {
+				fail(w, err, 400)
+				return
+			}
+			if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
+				fail(w, err, 500)
+				return
+			}
 		}
 		auditReq(s, r, "delete", "proxy-path-step", fmt.Sprint(id))
 		write(w, 200, map[string]any{"deleted": true, "deleted_steps": deletedSteps, "path_deleted": pathDeleted})
@@ -6118,8 +6170,87 @@ func (s *Server) normalizeAndValidateProxyPath(ctx context.Context, pathID int64
 	if err != nil {
 		return err
 	}
+	resolveRoutingProxyPathNames(&data)
 	_, err = core.BuildProxyPathPlans(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds)
 	return err
+}
+
+func (s *Server) proxyPathNameData(ctx context.Context) ([]model.ProxyPath, []model.ProxyPathStep, []model.Server, []model.Inbound, []model.ExternalOutbound, error) {
+	paths, err := s.store.ListProxyPaths(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	steps, err := s.store.ListProxyPathSteps(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	servers, err := s.store.ListServers(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	inbounds, err := s.store.ListInbounds(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	externals, err := s.store.ListExternalOutbounds(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	return paths, steps, servers, inbounds, externals, nil
+}
+
+func (s *Server) resolvedProxyPath(ctx context.Context, fallback model.ProxyPath) model.ProxyPath {
+	paths, steps, servers, inbounds, externals, err := s.proxyPathNameData(ctx)
+	if err != nil {
+		return fallback
+	}
+	resolved, ok := proxyPathByID(core.ResolveProxyPathNames(paths, steps, servers, inbounds, externals), fallback.ID)
+	if !ok {
+		return fallback
+	}
+	return resolved
+}
+
+func (s *Server) reconcileProxyPathNameTemplates(ctx context.Context) error {
+	paths, steps, servers, inbounds, externals, err := s.proxyPathNameData(ctx)
+	if err != nil {
+		return err
+	}
+	for index := range paths {
+		path := &paths[index]
+		if path.NameMode != model.ProxyPathNameCustom || core.ProxyPathNameTemplateIsValid(*path, steps, servers, inbounds, externals) {
+			continue
+		}
+		path.NameMode = model.ProxyPathNameAuto
+		path.NameTemplate = []model.ProxyPathNamePart{}
+		if err := s.store.UpdateProxyPath(ctx, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func resolveRoutingProxyPathNames(data *store.FullRoutingConfig) {
+	data.ProxyPaths = core.ResolveProxyPathNames(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, data.ExternalOutbounds)
+}
+
+func proxyPathByID(paths []model.ProxyPath, id int64) (model.ProxyPath, bool) {
+	for _, path := range paths {
+		if path.ID == id {
+			return path, true
+		}
+	}
+	return model.ProxyPath{}, false
+}
+
+func proxyPathStepsForPath(steps []model.ProxyPathStep, pathID int64) []model.ProxyPathStep {
+	out := make([]model.ProxyPathStep, 0)
+	for _, step := range steps {
+		if step.PathID == pathID {
+			out = append(out, step)
+		}
+	}
+	return out
 }
 
 func appendProxyPathStep(steps []model.ProxyPathStep, next model.ProxyPathStep, currentID int64) []model.ProxyPathStep {
@@ -7572,6 +7703,10 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
+		fail(w, err, 500)
+		return
+	}
 	paths, err := s.store.ListProxyPaths(r.Context())
 	if err != nil {
 		fail(w, err, 500)
@@ -7588,6 +7723,7 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	resolveRoutingProxyPathNames(&data)
 	servers, in := data.Servers, data.Inbounds
 	forwards, err := s.store.ListPortForwards(r.Context())
 	if err != nil {
@@ -8054,6 +8190,7 @@ type generatedServerCoreConfig struct {
 }
 
 func (s *Server) generateServerCoreConfig(ctx context.Context, server model.Server, data store.FullRoutingConfig) (generatedServerCoreConfig, error) {
+	resolveRoutingProxyPathNames(&data)
 	inbounds, assets, err := s.prepareCertificateInbounds(ctx, data.Inbounds, server.ID)
 	if err != nil {
 		return generatedServerCoreConfig{}, err

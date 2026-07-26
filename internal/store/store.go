@@ -138,7 +138,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists routing_rules (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, priority integer not null default 100, match_json text not null default '{}', action text not null, outbound_id integer references outbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, target_server_id integer references servers(id) on delete set null, warp_profile_id integer references warp_profiles(id) on delete set null, outbound_tag text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists external_outbounds (id integer primary key autoincrement, server_id integer references servers(id) on delete set null, name text not null, protocol text not null, scope text not null default 'global', target_address text not null default '', target_port integer not null default 0, config_json text not null default '{}', expose_to_users integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists external_outbound_access_grants (id integer primary key autoincrement, external_outbound_id integer not null references external_outbounds(id) on delete cascade, subject_type text not null, subject_id integer not null, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(external_outbound_id,subject_type,subject_id))`,
-		`create table if not exists proxy_paths (id integer primary key autoincrement, name text not null, inbound_id integer not null references inbounds(id) on delete cascade, secret text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists proxy_paths (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, name_mode text not null default 'auto', name_template_json text not null default '[]', secret text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_steps (id integer primary key autoincrement, path_id integer not null references proxy_paths(id) on delete cascade, position integer not null, node_type text not null, transport_mode text not null default 'singbox', processing_role integer not null default 0, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, config_json text not null default '{}', created_at text not null, updated_at text not null)`,
 		`create table if not exists warp_profiles (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, status text not null default 'needed', config_json text not null default '{}', mtu integer not null default 0, dns_strategy text not null default '', last_requested_at text, error text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_lists (id integer primary key autoincrement, name text not null unique, kind text not null, revision integer not null default 1, candidates_json text not null, enabled integer not null default 1, protected integer not null default 0, created_at text not null, updated_at text not null)`,
@@ -213,6 +213,15 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureColumn(ctx, "controller_backups", "remote_target", `alter table controller_backups add column remote_target text not null default ''`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn(ctx, "proxy_paths", "name_mode", `alter table proxy_paths add column name_mode text not null default 'auto'`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "proxy_paths", "name_template_json", `alter table proxy_paths add column name_template_json text not null default '[]'`); err != nil {
+		return err
+	}
+	if err := s.dropColumn(ctx, "proxy_paths", "name", `alter table proxy_paths drop column name`); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `insert into dns_credential_zones(credential_id,zone_name,provider_zone_id,created_at,updated_at) select id,zone_name,zone_id,created_at,updated_at from dns_credentials where zone_name<>'' and not exists(select 1 from dns_credential_zones where credential_id=dns_credentials.id)`); err != nil {
 		return err
 	}
@@ -228,6 +237,18 @@ func (s *Store) ensureColumn(ctx context.Context, table, column, alterSQL string
 		return err
 	}
 	if count > 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, alterSQL)
+	return err
+}
+
+func (s *Store) dropColumn(ctx context.Context, table, column, alterSQL string) error {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from pragma_table_info(?) where name=?`, table, column).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
 		return nil
 	}
 	_, err := s.db.ExecContext(ctx, alterSQL)
@@ -2423,7 +2444,10 @@ func (s *Store) CreateProxyPath(ctx context.Context, v *model.ProxyPath) error {
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into proxy_paths(name,inbound_id,secret,enabled,created_at,updated_at) values(?,?,?,?,?,?)`, v.Name, v.InboundID, v.Secret, boolInt(v.Enabled), ts, ts)
+	if err := encodeProxyPathNameTemplate(v); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, `insert into proxy_paths(inbound_id,name_mode,name_template_json,secret,enabled,created_at,updated_at) values(?,?,?,?,?,?,?)`, v.InboundID, v.NameMode, v.NameTemplateJSON, v.Secret, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -2432,12 +2456,15 @@ func (s *Store) CreateProxyPath(ctx context.Context, v *model.ProxyPath) error {
 }
 
 func (s *Store) UpdateProxyPath(ctx context.Context, v *model.ProxyPath) error {
-	_, err := s.db.ExecContext(ctx, `update proxy_paths set name=?,inbound_id=?,secret=?,enabled=?,updated_at=? where id=?`, v.Name, v.InboundID, v.Secret, boolInt(v.Enabled), now(), v.ID)
+	if err := encodeProxyPathNameTemplate(v); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `update proxy_paths set inbound_id=?,name_mode=?,name_template_json=?,secret=?,enabled=?,updated_at=? where id=?`, v.InboundID, v.NameMode, v.NameTemplateJSON, v.Secret, boolInt(v.Enabled), now(), v.ID)
 	return err
 }
 
 func (s *Store) ListProxyPaths(ctx context.Context) ([]model.ProxyPath, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,name,inbound_id,coalesce(secret,''),enabled,created_at,updated_at from proxy_paths order by id desc`)
+	rows, err := s.db.QueryContext(ctx, `select id,inbound_id,coalesce(name_mode,'auto'),coalesce(name_template_json,'[]'),coalesce(secret,''),enabled,created_at,updated_at from proxy_paths order by id desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -2447,7 +2474,10 @@ func (s *Store) ListProxyPaths(ctx context.Context) ([]model.ProxyPath, error) {
 		var v model.ProxyPath
 		var en int
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.Name, &v.InboundID, &v.Secret, &en, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.InboundID, &v.NameMode, &v.NameTemplateJSON, &v.Secret, &en, &ca, &ua); err != nil {
+			return nil, err
+		}
+		if err := decodeProxyPathNameTemplate(&v); err != nil {
 			return nil, err
 		}
 		v.Enabled = en == 1
@@ -2456,6 +2486,32 @@ func (s *Store) ListProxyPaths(ctx context.Context) ([]model.ProxyPath, error) {
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func encodeProxyPathNameTemplate(v *model.ProxyPath) error {
+	if v.NameMode == "" {
+		v.NameMode = model.ProxyPathNameAuto
+	}
+	if v.NameTemplate == nil {
+		v.NameTemplate = []model.ProxyPathNamePart{}
+	}
+	b, err := json.Marshal(v.NameTemplate)
+	if err != nil {
+		return err
+	}
+	v.NameTemplateJSON = string(b)
+	return nil
+}
+
+func decodeProxyPathNameTemplate(v *model.ProxyPath) error {
+	if v.NameMode == "" {
+		v.NameMode = model.ProxyPathNameAuto
+	}
+	v.NameTemplate = []model.ProxyPathNamePart{}
+	if strings.TrimSpace(v.NameTemplateJSON) == "" {
+		return nil
+	}
+	return json.Unmarshal([]byte(v.NameTemplateJSON), &v.NameTemplate)
 }
 
 func (s *Store) GetProxyPath(ctx context.Context, id int64) (*model.ProxyPath, error) {

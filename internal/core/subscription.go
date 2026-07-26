@@ -14,8 +14,8 @@ import (
 )
 
 type SubscriptionOptions struct {
-	Format                       model.SubscriptionFormat
-	Profile                      *model.SubscriptionProfile
+	Format  model.SubscriptionFormat
+	Profile *model.SubscriptionProfile
 	// RequireAssignments forces deny-by-default assignment filtering even when
 	// Assignments is empty. Used when a concrete profile_id is requested so an
 	// empty profile cannot fall back to every accessible inbound.
@@ -62,6 +62,7 @@ func GenerateSubscriptionWithOptions(user model.User, servers []model.Server, in
 }
 
 func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []model.Inbound, opts SubscriptionOptions) ([]SubscriptionNode, error) {
+	opts.ProxyPaths = ResolveProxyPathNames(opts.ProxyPaths, opts.ProxyPathSteps, servers, inbounds, opts.ExternalOutbounds)
 	serverByID := map[int64]model.Server{}
 	for _, server := range servers {
 		serverByID[server.ID] = server

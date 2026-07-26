@@ -554,13 +554,38 @@ type ExternalOutboundAccessGrant struct {
 }
 
 type ProxyPath struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	InboundID int64     `json:"inbound_id"`
-	Secret    string    `json:"-"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID               int64               `json:"id"`
+	Name             string              `json:"name"`
+	NameMode         ProxyPathNameMode   `json:"name_mode"`
+	NameTemplate     []ProxyPathNamePart `json:"name_template"`
+	NameTemplateJSON string              `json:"-"`
+	InboundID        int64               `json:"inbound_id"`
+	Secret           string              `json:"-"`
+	Enabled          bool                `json:"enabled"`
+	CreatedAt        time.Time           `json:"created_at"`
+	UpdatedAt        time.Time           `json:"updated_at"`
+}
+
+type ProxyPathNameMode string
+
+const (
+	ProxyPathNameAuto   ProxyPathNameMode = "auto"
+	ProxyPathNameCustom ProxyPathNameMode = "custom"
+)
+
+type ProxyPathNamePartKind string
+
+const (
+	ProxyPathNameLiteral          ProxyPathNamePartKind = "literal"
+	ProxyPathNameServer           ProxyPathNamePartKind = "server"
+	ProxyPathNameExternalOutbound ProxyPathNamePartKind = "external_outbound"
+)
+
+type ProxyPathNamePart struct {
+	Kind               ProxyPathNamePartKind `json:"kind"`
+	Value              string                `json:"value,omitempty"`
+	ServerID           int64                 `json:"server_id,omitempty"`
+	ExternalOutboundID int64                 `json:"external_outbound_id,omitempty"`
 }
 
 type ProxyPathStepNodeType string

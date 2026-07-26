@@ -34,6 +34,47 @@ func TestOpenRestrictsDatabaseFilePermissions(t *testing.T) {
 	}
 }
 
+func TestProxyPathLegacyNamesMigrateToAutomaticMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`create table proxy_paths (id integer primary key autoincrement, name text not null, inbound_id integer not null, secret text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into proxy_paths(name,inbound_id,secret,enabled,created_at,updated_at) values('entry 分支 7',1,'secret',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	paths, err := s.ListProxyPaths(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 1 || paths[0].NameMode != model.ProxyPathNameAuto || len(paths[0].NameTemplate) != 0 || paths[0].Name != "" {
+		t.Fatalf("migrated path = %#v", paths)
+	}
+	created := model.ProxyPath{InboundID: 2, Enabled: true}
+	if err := s.CreateProxyPath(context.Background(), &created); err != nil {
+		t.Fatalf("create path after migration: %v", err)
+	}
+	var legacyNameColumns int
+	if err := s.db.QueryRow(`select count(*) from pragma_table_info('proxy_paths') where name='name'`).Scan(&legacyNameColumns); err != nil {
+		t.Fatal(err)
+	}
+	if legacyNameColumns != 0 {
+		t.Fatalf("legacy name column count = %d", legacyNameColumns)
+	}
+}
+
 func TestDNSCredentialZonesPreserveRecordMetadataOnUpdate(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

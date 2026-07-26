@@ -128,7 +128,8 @@ type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'warp' | 'inte
 type RoutingRule = { id: number; server_id: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; warp_profile_id?: number; outbound_tag: string; interface_name?: string; enabled: boolean }
 type ExternalOutbound = { id: number; server_id?: number; name: string; protocol: ExternalProtocol; scope: 'global' | 'server'; target_address: string; target_port: number; config_json: string; expose_to_users: boolean; enabled: boolean }
 type ExternalOutboundAccessGrant = { id: number; external_outbound_id: number; subject_type: AccessSubjectType; subject_id: number; enabled: boolean }
-type ProxyPath = { id: number; name: string; inbound_id: number; enabled: boolean }
+type ProxyPathNamePart = { kind: 'literal'; value: string } | { kind: 'server'; server_id: number } | { kind: 'external_outbound'; external_outbound_id: number }
+type ProxyPath = { id: number; name: string; name_mode: 'auto' | 'custom'; name_template: ProxyPathNamePart[]; inbound_id: number; enabled: boolean }
 type ProxyPathTransportMode = 'singbox' | 'port_forward' | 'tunnel'
 type ProxyPathStep = { id: number; path_id: number; position: number; node_type: 'server_inbound' | 'imported'; transport_mode?: ProxyPathTransportMode; processing_role?: boolean; server_id?: number; inbound_id?: number; external_outbound_id?: number; config_json?: string }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
@@ -4492,6 +4493,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const [transportDraft, setTransportDraft] = useState<TransportDraft | null>(null)
 	const [importDraft, setImportDraft] = useState<ImportedNodeDraft | null>(null)
 	const [configNode, setConfigNode] = useState<ExternalOutbound | null>(null)
+	const [namingPath, setNamingPath] = useState<ProxyPath | null>(null)
   const [graphMenu, setGraphMenu] = useState<{ x: number; y: number; entity: GraphEntity } | null>(null)
   const [activeGraphEntity, setActiveGraphEntity] = useState<GraphEntity | null>(null)
   useEffect(() => { setNodes(builtFlow.nodes); setEdges(builtFlow.edges) }, [builtFlow])
@@ -4817,7 +4819,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	}
 	const createPathFromEntry = async (entry: Inbound, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
 	  if (target.transport_mode === 'port_forward' && !await ensureTransparentPathExclusive(0, entry.id)) return null
-	  const result = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ name: `${entry.name || '入口'} 分支 ${(data.proxy_paths || []).filter((p: ProxyPath) => p.inbound_id === entry.id).length + 1}`, inbound_id: entry.id, enabled: true }) }) as { proxy_path?: ProxyPath }
+	  const result = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: entry.id, enabled: true }) }) as { proxy_path?: ProxyPath }
 	  if (!result.proxy_path?.id) return null
 	  let createdStep: ProxyPathStep | null = null
 	  try {
@@ -5161,6 +5163,18 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  setGraphMenu(null)
 	  await editProxyPathTransportForEntity(entity)
 	}
+	const editProxyPathNameForEntity = (entity: GraphEntity | null | undefined) => {
+	  if (!entity || entity.type !== 'proxy-path-step') return
+	  const step = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(item => item.id === entity.id)
+	  const pathID = entity.path_id || step?.path_id || 0
+	  const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === pathID)
+	  if (path) setNamingPath(path)
+	}
+	const editProxyPathName = () => {
+	  const entity = graphMenu?.entity
+	  setGraphMenu(null)
+	  editProxyPathNameForEntity(entity)
+	}
   const runTool = (action: ProxyToolAction, position?: GraphPosition) => {
 	  if (action === 'server') return void addServer(position)
 	  if (action === 'entry') return void addEntry(position)
@@ -5202,7 +5216,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   }
   const openGraphContextMenu = (clientX: number, clientY: number, entity: GraphEntity) => {
     const menuWidth = Math.min(260, Math.max(148, window.innerWidth - 16))
-    const menuHeight = entity.type === 'proxy-path-step' ? 126 : 86
+    const menuHeight = entity.type === 'proxy-path-step' ? 166 : 86
     setGraphMenu({
       x: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(clientY, window.innerHeight - menuHeight - 8)),
@@ -5368,6 +5382,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         <ProxyGraphLegend />
         {activeGraphEntity && <div className="graph-selection-toolbar" role="toolbar" aria-label="当前选中项操作">
           <strong title={activeGraphEntity.label}>{activeGraphEntity.label}</strong>
+		  {activeGraphEntity.type === 'proxy-path-step' && <button type="button" className="ghost" onClick={() => editProxyPathNameForEntity(activeGraphEntity)}><Edit3 size={13} />链路命名</button>}
           {activeGraphActionLabel && <button type="button" className="ghost" onClick={() => void openActiveGraphEntity()}><Edit3 size={13} />{activeGraphActionLabel}</button>}
           <button type="button" className="ghost danger-text" onClick={() => void deleteActiveGraphEntity()}><Trash2 size={13} />{activeGraphEntity.node_id?.startsWith('canvas-server-') ? '移出画布' : activeGraphEntity.type === 'proxy-path-step' ? '断开后续' : '删除'}</button>
           <button type="button" className="ghost icon-button" onClick={() => setActiveGraphEntity(null)} aria-label="取消选择" title="取消选择"><X size={13} /></button>
@@ -5376,6 +5391,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 
         {graphMenu && <div className="graph-context-menu" style={{ left: graphMenu.x, top: graphMenu.y }} onContextMenu={e => e.preventDefault()}>
           <div className="graph-context-menu-title">{graphMenu.entity.label}</div>
+		  {graphMenu.entity.type === 'proxy-path-step' && <button onClick={editProxyPathName}><Edit3 size={14} />链路命名</button>}
 		  {graphMenu.entity.type === 'proxy-path-step' && <button onClick={editProxyPathTransport}><ArrowLeftRight size={14} />更改传递方式</button>}
 		  <button className="danger-text" onClick={deleteGraphMenuEntity}><Trash2 size={14} />{graphMenu.entity.node_id?.startsWith('canvas-server-') ? '从画布移除' : graphMenu.entity.type === 'proxy-path-step' ? '取消此处及后续节点' : '删除'}</button>
         </div>}
@@ -5403,7 +5419,145 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     <AnimatePresence>{transportDraft && <TransportDraftDialog draft={transportDraft} setDraft={setTransportDraft} servers={servers} onCancel={() => setTransportDraft(null)} onSubmit={submitTransportDraft} />}</AnimatePresence>
     <AnimatePresence>{importDraft && <ImportNodeDialog draft={importDraft} setDraft={setImportDraft} servers={servers} onCancel={() => setImportDraft(null)} onSubmit={submitImportNode} />}</AnimatePresence>
     <AnimatePresence>{configNode && <ImportedNodeConfigDialog node={configNode} data={data} client={client} load={load} onClose={() => setConfigNode(null)} />}</AnimatePresence>
+	<AnimatePresence>{namingPath && <ProxyPathNameDialog path={namingPath} data={data} client={client} load={load} onClose={() => setNamingPath(null)} />}</AnimatePresence>
   </div>
+}
+
+type ProxyPathNameReference = { key: string; label: string; part: ProxyPathNamePart }
+
+function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: ProxyPath; data: any; client: ReturnType<typeof api>; load: () => Promise<void>; onClose: () => void }) {
+  const dialogs = useDialogs()
+  const references = useMemo(() => proxyPathNameReferences(data, path), [data.servers, data.inbounds, data.external_outbounds, data.proxy_path_steps, path.id])
+  const initialTemplate = path.name_template?.length ? path.name_template : defaultProxyPathNameTemplate(references)
+  const [mode, setMode] = useState<'auto' | 'custom'>(path.name_mode === 'custom' ? 'custom' : 'auto')
+  const [parts, setParts] = useState<ProxyPathNamePart[]>(initialTemplate)
+  const [saving, setSaving] = useState(false)
+  const chain = proxyPathChainLabels(data, path)
+  const preview = mode === 'auto'
+    ? (path.name_mode === 'auto' ? path.name : (chain.length > 1 ? `${chain[0]}｜${chain[chain.length - 1]}` : chain[0] || path.name))
+    : renderProxyPathNameTemplate(parts, data)
+
+  const switchMode = (next: 'auto' | 'custom') => {
+    setMode(next)
+    if (next === 'custom' && !parts.length) setParts(defaultProxyPathNameTemplate(references))
+  }
+  const addReference = (key: string) => {
+    const reference = references.find(item => item.key === key)
+    if (!reference) return
+    setParts(current => [...current, reference.part])
+  }
+  const addLiteral = () => setParts(current => [...current, { kind: 'literal', value: '' }])
+  const updateLiteral = (index: number, value: string) => setParts(current => current.map((part, partIndex) => partIndex === index ? { kind: 'literal', value } : part))
+  const removePart = (index: number) => setParts(current => current.filter((_, partIndex) => partIndex !== index))
+  const movePart = (index: number, offset: number) => setParts(current => {
+    const target = index + offset
+    if (target < 0 || target >= current.length) return current
+    const next = current.slice()
+    ;[next[index], next[target]] = [next[target], next[index]]
+    return next
+  })
+  const save = async () => {
+    if (mode === 'custom' && !preview.trim()) return
+    setSaving(true)
+    try {
+      await client.request(`/proxy-paths/${path.id}`, { method: 'PATCH', body: JSON.stringify({ name_mode: mode, name_template: mode === 'custom' ? parts : [] }) })
+      await load()
+      onClose()
+    } catch (error: any) {
+      await dialogs.alert({ title: '保存链路名称失败', message: localizeErrorMessage(error.message || error) })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return <MotionDialogPanel onCancel={onClose} className="proxy-path-name-dialog">
+    <header className="dialog-head">
+      <div><h2>链路命名</h2><p className="muted">{chain.join(' → ')}</p></div>
+      <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><X size={16} /></button>
+    </header>
+    <div className="dialog-body proxy-path-name-body">
+      <Select variant="segmented" value={mode} onChange={event => switchMode(event.target.value as 'auto' | 'custom')} aria-label="链路命名方式">
+        <option value="auto">自动命名</option>
+        <option value="custom">自定义模板</option>
+      </Select>
+      <div className="proxy-path-name-preview"><span>名称预览</span><strong>{preview || '链路名称'}</strong></div>
+      {mode === 'custom' && <>
+        <div className="proxy-path-name-insert">
+          <Select value="" onChange={event => addReference(event.target.value)} aria-label="插入链路节点">
+            <option value="">插入链路节点</option>
+            {references.map(reference => <option key={reference.key} value={reference.key}>{reference.label}</option>)}
+          </Select>
+          <button type="button" className="ghost" onClick={addLiteral}><Plus size={14} />添加文字</button>
+        </div>
+        <div className="proxy-path-name-parts">
+          {parts.map((part, index) => <div className="proxy-path-name-part" key={`${proxyPathNamePartKey(part)}-${index}`}>
+            <span className={`proxy-path-name-part-kind ${part.kind}`}>{part.kind === 'literal' ? '文字' : '动态'}</span>
+            {part.kind === 'literal'
+              ? <input value={part.value} onChange={event => updateLiteral(index, event.target.value)} placeholder="输入名称文字" autoFocus={parts.length === 1} />
+              : <strong>{proxyPathNameReferenceLabel(part, data)}</strong>}
+            <div className="proxy-path-name-part-actions">
+              <button type="button" className="ghost icon-button" onClick={() => movePart(index, -1)} disabled={index === 0} aria-label="向前移动" title="向前移动"><ArrowUp size={14} /></button>
+              <button type="button" className="ghost icon-button" onClick={() => movePart(index, 1)} disabled={index === parts.length - 1} aria-label="向后移动" title="向后移动"><ArrowDown size={14} /></button>
+              <button type="button" className="ghost icon-button danger-text" onClick={() => removePart(index)} aria-label="删除片段" title="删除片段"><Trash2 size={14} /></button>
+            </div>
+          </div>)}
+        </div>
+      </>}
+    </div>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onClose}>取消</button><button type="button" onClick={() => void save()} disabled={saving || (mode === 'custom' && !preview.trim())}>{saving ? '保存中...' : '保存'}</button></footer>
+  </MotionDialogPanel>
+}
+
+function proxyPathNameReferences(data: any, path: ProxyPath): ProxyPathNameReference[] {
+  const servers: Server[] = data.servers || []
+  const inbounds: Inbound[] = data.inbounds || []
+  const externals: ExternalOutbound[] = data.external_outbounds || []
+  const root = inbounds.find(inbound => inbound.id === path.inbound_id)
+  const rootServer = root ? servers.find(server => server.id === root.server_id) : undefined
+  const references: ProxyPathNameReference[] = []
+  const seen = new Set<string>()
+  const add = (reference: ProxyPathNameReference) => {
+    if (seen.has(reference.key)) return
+    seen.add(reference.key)
+    references.push(reference)
+  }
+  if (rootServer) add({ key: `server:${rootServer.id}`, label: `入口 · ${rootServer.name}`, part: { kind: 'server', server_id: rootServer.id } })
+  const steps = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === path.id).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
+  steps.forEach((step, index) => {
+    const role = index === steps.length - 1 ? '出口' : `第 ${step.position} 跳`
+    if (step.external_outbound_id) {
+      const external = externals.find(item => item.id === step.external_outbound_id)
+      if (external) add({ key: `external:${external.id}`, label: `${role} · ${external.name}`, part: { kind: 'external_outbound', external_outbound_id: external.id } })
+      return
+    }
+    const inbound = step.inbound_id ? inbounds.find(item => item.id === step.inbound_id) : undefined
+    const serverID = step.server_id || inbound?.server_id || 0
+    const server = servers.find(item => item.id === serverID)
+    if (server) add({ key: `server:${server.id}`, label: `${role} · ${server.name}`, part: { kind: 'server', server_id: server.id } })
+  })
+  return references
+}
+
+function defaultProxyPathNameTemplate(references: ProxyPathNameReference[]): ProxyPathNamePart[] {
+  if (!references.length) return []
+  if (references.length === 1) return [references[0].part]
+  return [references[0].part, { kind: 'literal', value: '｜' }, references[references.length - 1].part]
+}
+
+function renderProxyPathNameTemplate(parts: ProxyPathNamePart[], data: any) {
+  return parts.map(part => part.kind === 'literal' ? part.value : proxyPathNameReferenceLabel(part, data)).join('').trim()
+}
+
+function proxyPathNameReferenceLabel(part: ProxyPathNamePart, data: any) {
+  if (part.kind === 'server') return ((data.servers || []) as Server[]).find(server => server.id === part.server_id)?.name || `服务器 #${part.server_id}`
+  if (part.kind === 'external_outbound') return ((data.external_outbounds || []) as ExternalOutbound[]).find(node => node.id === part.external_outbound_id)?.name || `导入节点 #${part.external_outbound_id}`
+  return part.value
+}
+
+function proxyPathNamePartKey(part: ProxyPathNamePart) {
+  if (part.kind === 'server') return `server-${part.server_id}`
+  if (part.kind === 'external_outbound') return `external-${part.external_outbound_id}`
+  return `literal-${part.value}`
 }
 
 
@@ -8286,6 +8440,7 @@ function Subscriptions({ data, client, load, notify }: any) {
   const [newGroupName, setNewGroupName] = useState('')
   const [creatingGroup, setCreatingGroup] = useState(false)
   const [assigning, setAssigning] = useState(false)
+  const [namingPath, setNamingPath] = useState<ProxyPath | null>(null)
 
   const users: User[] = data.users || []
   const servers: Server[] = data.servers || []
@@ -8517,7 +8672,7 @@ function Subscriptions({ data, client, load, notify }: any) {
     return `${unique.slice(0, 2).join('、')} 等 ${unique.length} 人`
   }
 
-  return (
+  return <>
     <Panel title="订阅" className="subscriptions-panel">
       {!iconsReady ? (
         <div className="subscription-page-loading" role="status" aria-live="polite">
@@ -8705,6 +8860,7 @@ function Subscriptions({ data, client, load, notify }: any) {
                                               </React.Fragment>
                                             ))}
                                           </div>
+										  <button type="button" className="ghost icon-button sub-chain-name-edit" onClick={() => setNamingPath(path)} aria-label={`编辑 ${path.name || `链路 #${path.id}`} 名称`} title="编辑链路名称"><Edit3 size={14} /></button>
                                         </div>
                                       )
                                     }) : (
@@ -8808,7 +8964,8 @@ function Subscriptions({ data, client, load, notify }: any) {
         </div>
       )}
     </Panel>
-  )
+	<AnimatePresence>{namingPath && <ProxyPathNameDialog path={namingPath} data={data} client={client} load={load} onClose={() => setNamingPath(null)} />}</AnimatePresence>
+  </>
 }
 
 const fallbackNotificationEventOptions: NotificationEventDefinition[] = [

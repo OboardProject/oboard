@@ -1279,6 +1279,64 @@ func TestProxyPathServerOnlyStepsPlanAndValidation(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 4, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "port_forward"}, http.StatusBadRequest)
 }
 
+func TestProxyPathAutomaticAndCustomNamesFollowTopology(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+	serverA := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "香港", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
+	serverB := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "洛杉矶", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
+	serverC := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "东京", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
+	serverCID := int64(serverC["server"].(map[string]any)["id"].(float64))
+	inbound := request(t, h, http.MethodPost, "/api/v1/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
+	createdPath := request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"name_mode": "auto", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	pathID := int64(createdPath["proxy_path"].(map[string]any)["id"].(float64))
+	createdStep := request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusCreated)
+	stepID := int64(createdStep["proxy_path_step"].(map[string]any)["id"].(float64))
+
+	path := request(t, h, http.MethodGet, "/api/v1/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	if path["name"] != "香港｜洛杉矶" || path["name_mode"] != "auto" {
+		t.Fatalf("automatic path = %#v", path)
+	}
+	template := []map[string]any{
+		{"kind": "literal", "value": "专线 "},
+		{"kind": "server", "server_id": serverAID},
+		{"kind": "literal", "value": "｜"},
+		{"kind": "server", "server_id": serverBID},
+	}
+	path = request(t, h, http.MethodPatch, "/api/v1/proxy-paths/"+itoa(pathID), token, map[string]any{"name_mode": "custom", "name_template": template}, http.StatusOK)["proxy_path"].(map[string]any)
+	if path["name"] != "专线 香港｜洛杉矶" || path["name_mode"] != "custom" {
+		t.Fatalf("custom path = %#v", path)
+	}
+	storedB, err := db.GetServer(context.Background(), serverBID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedB.Name = "纽约"
+	storedB.UpdatedAt = time.Now().UTC()
+	if err := db.UpdateServer(context.Background(), storedB); err != nil {
+		t.Fatal(err)
+	}
+	path = request(t, h, http.MethodGet, "/api/v1/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	if path["name"] != "专线 香港｜纽约" {
+		t.Fatalf("renamed custom path = %#v", path)
+	}
+	request(t, h, http.MethodPatch, "/api/v1/proxy-path-steps/"+itoa(stepID), token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusOK)
+	path = request(t, h, http.MethodGet, "/api/v1/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	if path["name"] != "香港｜东京" || path["name_mode"] != "auto" {
+		t.Fatalf("topology fallback path = %#v", path)
+	}
+}
+
 func TestProxyPathTransportCanChangeAndDeleteCascades(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
