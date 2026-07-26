@@ -26,12 +26,12 @@ import (
 
 func TestCertificateMaterialAndSelection(t *testing.T) {
 	certificatePEM, privateKeyPEM := testCertificateMaterial(t, []string{"entry.example.com"}, time.Now().Add(60*24*time.Hour))
-	material, err := validateCertificateMaterial(certificatePEM, certificatePEM, privateKeyPEM, []string{"entry.example.com"})
+	material, err := validateCertificateMaterial(certificatePEM, certificatePEM, privateKeyPEM, []string{"entry.example.com"}, certificateMaterialPolicy{})
 	if err != nil || len(material.Domains) != 1 {
 		t.Fatalf("valid certificate material rejected: material=%#v err=%v", material, err)
 	}
 	_, otherKey := testCertificateMaterial(t, []string{"entry.example.com"}, time.Now().Add(60*24*time.Hour))
-	if _, err := validateCertificateMaterial(certificatePEM, certificatePEM, otherKey, nil); err == nil {
+	if _, err := validateCertificateMaterial(certificatePEM, certificatePEM, otherKey, nil, certificateMaterialPolicy{}); err == nil {
 		t.Fatal("mismatched private key was accepted")
 	}
 
@@ -113,7 +113,7 @@ func TestAgentCertificateAssetAuthorization(t *testing.T) {
 	}
 	certificatePEM, privateKeyPEM := testCertificateMaterial(t, certificate.Domains, time.Now().Add(60*24*time.Hour))
 	srv := newTestServer(db, "test-secret", "")
-	if err := srv.storeCertificateMaterial(ctx, certificate, certificatePEM, certificatePEM, privateKeyPEM); err != nil {
+	if err := srv.storeCertificateMaterial(ctx, certificate, certificatePEM, certificatePEM, privateKeyPEM, certificateMaterialPolicy{}); err != nil {
 		t.Fatal(err)
 	}
 	inbound := &model.Inbound{ServerID: server.ID, Name: "tls", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, TLS: true, ConfigJSON: `{}`, Enabled: true}
@@ -163,7 +163,7 @@ func TestCoreConfigRefreshIncludesManagedCertificateAssets(t *testing.T) {
 	}
 	certificatePEM, privateKeyPEM := testCertificateMaterial(t, certificate.Domains, time.Now().Add(60*24*time.Hour))
 	srv := newTestServer(db, "test-secret", "")
-	if err := srv.storeCertificateMaterial(ctx, certificate, certificatePEM, certificatePEM, privateKeyPEM); err != nil {
+	if err := srv.storeCertificateMaterial(ctx, certificate, certificatePEM, certificatePEM, privateKeyPEM, certificateMaterialPolicy{}); err != nil {
 		t.Fatal(err)
 	}
 	inbound := &model.Inbound{ServerID: server.ID, Name: "tls", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, TLS: true, ConfigJSON: `{}`, Enabled: true}
@@ -299,4 +299,81 @@ func testCertificateMaterial(t *testing.T, domains []string, notAfter time.Time)
 		t.Fatal(err)
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
+}
+
+// TestAgentReportedCertificateMaterialIsUntrusted pins the trust boundary for
+// Agent-reported certificate material. A node must not be able to substitute
+// self-signed material or widen the operator-approved domain set, because the
+// stored certificate is redistributed to every node bound to it and its
+// primary domain flows back into Controller-driven renewals.
+func TestAgentReportedCertificateMaterialIsUntrusted(t *testing.T) {
+	approved := []string{"entry.example.com"}
+	selfSignedPEM, selfSignedKey := testCertificateMaterial(t, approved, time.Now().Add(60*24*time.Hour))
+
+	// Operator import and Controller ACME remain able to store this material.
+	if _, err := validateCertificateMaterial(selfSignedPEM, selfSignedPEM, selfSignedKey, approved, certificateMaterialPolicy{}); err != nil {
+		t.Fatalf("trusted path rejected valid material: %v", err)
+	}
+
+	// The same material reported by an Agent must be refused: an allowlisted
+	// public ACME CA can never produce an unverifiable chain.
+	if _, err := validateCertificateMaterial(selfSignedPEM, selfSignedPEM, selfSignedKey, approved, untrustedCertificateMaterial); err == nil {
+		t.Fatal("agent-reported self-signed certificate was accepted")
+	}
+
+	// A SAN outside the approved set must be refused regardless of chain.
+	widenedPEM, widenedKey := testCertificateMaterial(t, []string{"entry.example.com", "victim.example.com"}, time.Now().Add(60*24*time.Hour))
+	if _, err := validateCertificateMaterial(widenedPEM, widenedPEM, widenedKey, approved, untrustedCertificateMaterial); err == nil {
+		t.Fatal("agent-reported certificate widened the approved domain set")
+	}
+}
+
+func TestRequireApprovedDomainSetIgnoresOrdering(t *testing.T) {
+	// The issuing CA chooses SAN ordering, so equality must be set-based.
+	if err := requireApprovedDomainSet([]string{"a.example.com", "b.example.com"}, []string{"b.example.com", "a.example.com"}); err != nil {
+		t.Fatalf("reordered SAN set rejected: %v", err)
+	}
+	if err := requireApprovedDomainSet([]string{"a.example.com"}, []string{"a.example.com", "b.example.com"}); err == nil {
+		t.Fatal("extra SAN accepted")
+	}
+	if err := requireApprovedDomainSet([]string{"a.example.com", "b.example.com"}, []string{"a.example.com"}); err == nil {
+		t.Fatal("missing SAN accepted")
+	}
+	if err := requireApprovedDomainSet(nil, []string{"a.example.com"}); err == nil {
+		t.Fatal("empty approved set accepted")
+	}
+}
+
+// TestWARPPrivateKeyIsNotExposedByAPI pins that WireGuard key material stays
+// server-side. WARP profiles are Operator-reachable, so a raw config_json
+// would hand every operator the node's live private key.
+func TestWARPPrivateKeyIsNotExposedByAPI(t *testing.T) {
+	const stored = `{"type":"wireguard","private_key":"c2VjcmV0LWtleS12YWx1ZQ==","peers":[{"public_key":"cHVi"}]}`
+
+	redacted := publicWARPProfile(model.WARPProfile{ConfigJSON: stored})
+	if strings.Contains(redacted.ConfigJSON, "c2VjcmV0LWtleS12YWx1ZQ==") {
+		t.Fatalf("private key leaked in API response: %s", redacted.ConfigJSON)
+	}
+	if !strings.Contains(redacted.ConfigJSON, "private_key_configured") {
+		t.Fatalf("redacted config lost the configured marker: %s", redacted.ConfigJSON)
+	}
+	// Non-secret fields must survive so the UI keeps working.
+	if !strings.Contains(redacted.ConfigJSON, "cHVi") {
+		t.Fatalf("redaction dropped non-secret fields: %s", redacted.ConfigJSON)
+	}
+
+	// A redacted round-trip must not destroy the stored key.
+	restored := restoreWARPPrivateKey(redacted.ConfigJSON, stored)
+	if !strings.Contains(restored, "c2VjcmV0LWtleS12YWx1ZQ==") {
+		t.Fatalf("round-trip destroyed the stored private key: %s", restored)
+	}
+	if strings.Contains(restored, "private_key_configured") {
+		t.Fatalf("restored config kept the redaction marker: %s", restored)
+	}
+
+	// A genuinely new key must still replace the stored one.
+	rotated := restoreWARPPrivateKey(`{"type":"wireguard","private_key":"bmV3LWtleQ=="}`, stored)
+	if !strings.Contains(rotated, "bmV3LWtleQ==") {
+		t.Fatalf("rotation was ignored: %s", rotated)
+	}
 }

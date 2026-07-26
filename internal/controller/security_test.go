@@ -794,3 +794,43 @@ func TestEnrollmentTokenIncludesExpiry(t *testing.T) {
 		t.Fatalf("expires_in_seconds=%v", enroll["expires_in_seconds"])
 	}
 }
+
+// TestDiagnosticRoutesRequireOperator pins the role floor for infrastructure
+// diagnostics and the audit trail. Viewers are ordinary proxy users, so they
+// must not read resolver benchmarks, MTU/probe results, or the audit log.
+func TestDiagnosticRoutesRequireOperator(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	password, _ := security.HashPassword("long-user-password")
+	viewer := &model.User{Username: "viewer", PasswordHash: password, Role: model.RoleViewer, Status: "active", ProxyUUID: "u", ProxyPassword: "p", SubscriptionToken: "s"}
+	if err := db.CreateUser(ctx, viewer); err != nil {
+		t.Fatal(err)
+	}
+	operator := &model.User{Username: "operator", PasswordHash: password, Role: model.RoleOperator, Status: "active", ProxyUUID: "u2", ProxyPassword: "p2", SubscriptionToken: "s2"}
+	if err := db.CreateUser(ctx, operator); err != nil {
+		t.Fatal(err)
+	}
+	tokenFor := func(u *model.User) string {
+		token, err := security.SignSession("test-secret", security.TokenClaims{Subject: u.ID, Role: string(u.Role), Expiry: time.Now().Add(time.Hour)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return token
+	}
+	viewerToken := tokenFor(viewer)
+	operatorToken := tokenFor(operator)
+	h := newTestServer(db, "test-secret", "").Handler()
+
+	for _, path := range []string{"/api/v1/dns-benchmarks", "/api/v1/mtu-detections", "/api/v1/port-forward-probes", "/api/v1/inbound-probes"} {
+		request(t, h, http.MethodGet, path, viewerToken, nil, http.StatusForbidden)
+		request(t, h, http.MethodGet, path, operatorToken, nil, http.StatusOK)
+	}
+
+	// The audit trail records admin activity and must stay admin-only.
+	request(t, h, http.MethodGet, "/api/v1/audit-logs", viewerToken, nil, http.StatusForbidden)
+	request(t, h, http.MethodGet, "/api/v1/audit-logs", operatorToken, nil, http.StatusForbidden)
+}

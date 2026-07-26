@@ -159,8 +159,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/subscription-assignments/", s.auth(s.subscriptionAssignments, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists", s.auth(s.dnsLists, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists/", s.auth(s.dnsLists, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/dns-benchmarks", s.auth(s.dnsBenchmarks, model.RoleViewer))
-	mux.HandleFunc("/api/v1/mtu-detections", s.auth(s.mtuDetections, model.RoleViewer))
+	mux.HandleFunc("/api/v1/dns-benchmarks", s.auth(s.dnsBenchmarks, model.RoleOperator))
+	mux.HandleFunc("/api/v1/mtu-detections", s.auth(s.mtuDetections, model.RoleOperator))
 	mux.HandleFunc("/api/v1/port-forwards", s.auth(s.portForwards, model.RoleOperator))
 	mux.HandleFunc("/api/v1/port-forwards/", s.auth(s.portForwards, model.RoleOperator))
 	mux.HandleFunc("/api/v1/tunnels", s.auth(s.tunnels, model.RoleOperator))
@@ -168,15 +168,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/notification-channels", s.auth(s.notificationChannels, model.RoleViewer))
 	mux.HandleFunc("/api/v1/notification-channels/", s.auth(s.notificationChannels, model.RoleViewer))
 	mux.HandleFunc("/api/v1/notification-announcements", s.auth(s.notificationAnnouncements, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/port-forward-probes", s.auth(s.portForwardProbes, model.RoleViewer))
-	mux.HandleFunc("/api/v1/inbound-probes", s.auth(s.inboundProbes, model.RoleViewer))
+	mux.HandleFunc("/api/v1/port-forward-probes", s.auth(s.portForwardProbes, model.RoleOperator))
+	mux.HandleFunc("/api/v1/inbound-probes", s.auth(s.inboundProbes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/deployments/apply", s.auth(s.applyDeployment, model.RoleOperator))
 	mux.HandleFunc("/api/v1/deployments/", s.auth(s.deployment, model.RoleOperator))
 	mux.HandleFunc("/api/v1/agent-tasks", s.auth(s.agentTasks, model.RoleOperator))
 	mux.HandleFunc("/api/v1/agent-tasks/", s.auth(s.agentTask, model.RoleOperator))
 	mux.HandleFunc("/api/v1/subscriptions", notFound)
 	mux.HandleFunc("/api/v1/subscriptions/", s.subscription)
-	mux.HandleFunc("/api/v1/audit-logs", s.auth(s.auditLogs, model.RoleViewer))
+	mux.HandleFunc("/api/v1/audit-logs", s.auth(s.auditLogs, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/audit/overview", s.auth(s.connectionAuditOverview, model.RoleOperator))
 	mux.HandleFunc("/api/v1/audit/users/", s.auth(s.connectionAuditUser, model.RoleOperator))
 	mux.HandleFunc("/api/v1/agent/enroll", s.agentEnroll)
@@ -818,7 +818,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		out["proxy_path_steps"] = publicProxyPathSteps(steps)
 		out["port_forwards"] = forwards
 		out["tunnels"] = publicTunnels(tunnels)
-		out["warp_profiles"] = warps
+		out["warp_profiles"] = publicWARPProfiles(warps)
 		out["dns_lists"] = dnsLists
 		out["server_dns_policies"] = dnsPolicies
 		out["inbound_probes"] = inboundProbes
@@ -954,7 +954,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		out["routing_rules"] = rules
 		out["outbounds"] = outbounds
 		out["external_outbounds"] = externals
-		out["warp_profiles"] = warps
+		out["warp_profiles"] = publicWARPProfiles(warps)
 		return nil
 	}
 	addExternal := func() error {
@@ -993,7 +993,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		out["warp_profiles"] = items
+		out["warp_profiles"] = publicWARPProfiles(items)
 		return nil
 	}
 	addDNS := func() error {
@@ -6364,7 +6364,7 @@ func (s *Server) warpProfiles(w http.ResponseWriter, r *http.Request) {
 				fail(w, err, 404)
 				return
 			}
-			write(w, 200, map[string]any{"warp_profile": item})
+			write(w, 200, map[string]any{"warp_profile": publicWARPProfile(*item)})
 			return
 		}
 		items, err := s.store.ListWARPProfiles(r.Context())
@@ -6372,7 +6372,7 @@ func (s *Server) warpProfiles(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		write(w, 200, map[string]any{"warp_profiles": items})
+		write(w, 200, map[string]any{"warp_profiles": publicWARPProfiles(items)})
 	case http.MethodPost:
 		var v model.WARPProfile
 		if !decode(w, r, &v) {
@@ -6386,7 +6386,7 @@ func (s *Server) warpProfiles(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		write(w, 201, map[string]any{"warp_profile": v})
+		write(w, 201, map[string]any{"warp_profile": publicWARPProfile(v)})
 	case http.MethodPatch:
 		if id == 0 {
 			fail(w, errors.New("missing id"), 400)
@@ -6397,6 +6397,12 @@ func (s *Server) warpProfiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		v.ID = id
+		// Responses redact private_key, so a client that edits a profile it
+		// just read would otherwise write the placeholder back and destroy the
+		// node's WireGuard key. Keep the stored key when it was not replaced.
+		if current, err := s.store.GetWARPProfile(r.Context(), id); err == nil {
+			v.ConfigJSON = restoreWARPPrivateKey(v.ConfigJSON, current.ConfigJSON)
+		}
 		if err := s.validateWARPProfile(r.Context(), &v); err != nil {
 			fail(w, err, 400)
 			return
@@ -6405,7 +6411,7 @@ func (s *Server) warpProfiles(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		write(w, 200, map[string]any{"warp_profile": v})
+		write(w, 200, map[string]any{"warp_profile": publicWARPProfile(v)})
 	case http.MethodDelete:
 		if id == 0 {
 			fail(w, errors.New("missing id"), 400)
@@ -6419,6 +6425,69 @@ func (s *Server) warpProfiles(w http.ResponseWriter, r *http.Request) {
 	default:
 		method(w)
 	}
+}
+
+func publicWARPProfiles(items []model.WARPProfile) []model.WARPProfile {
+	out := make([]model.WARPProfile, len(items))
+	for i := range items {
+		out[i] = publicWARPProfile(items[i])
+	}
+	return out
+}
+
+// publicWARPProfile redacts the WireGuard private key from API responses. A
+// ready profile's config_json holds live key material, and the Web UI only
+// needs to know whether a configuration exists.
+func publicWARPProfile(item model.WARPProfile) model.WARPProfile {
+	item.ConfigJSON = redactWARPConfigJSON(item.ConfigJSON)
+	return item
+}
+
+// restoreWARPPrivateKey carries the stored WireGuard private key into an
+// incoming configuration whose key is still the redaction placeholder.
+func restoreWARPPrivateKey(incoming, stored string) string {
+	var next map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(incoming)), &next); err != nil {
+		return incoming
+	}
+	key, _ := next["private_key"].(string)
+	if strings.TrimSpace(key) != "" && strings.Trim(key, "*") != "" {
+		return incoming
+	}
+	var previous map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stored)), &previous); err != nil {
+		return incoming
+	}
+	storedKey, _ := previous["private_key"].(string)
+	if strings.TrimSpace(storedKey) == "" {
+		return incoming
+	}
+	next["private_key"] = storedKey
+	delete(next, "private_key_configured")
+	out, err := json.Marshal(next)
+	if err != nil {
+		return incoming
+	}
+	return string(out)
+}
+
+func redactWARPConfigJSON(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return `{"configured":true}`
+	}
+	if key, _ := cfg["private_key"].(string); strings.TrimSpace(key) != "" {
+		cfg["private_key"] = "********"
+		cfg["private_key_configured"] = true
+	}
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		return `{"configured":true}`
+	}
+	return string(out)
 }
 
 func (s *Server) validateWARPProfile(ctx context.Context, v *model.WARPProfile) error {
@@ -8406,6 +8475,10 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) auditLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		method(w)
+		return
+	}
 	items, err := s.store.ListAuditPage(r.Context(), intQuery(r, "limit", 100), intQuery(r, "offset", 0), r.URL.Query().Get("action"))
 	if err != nil {
 		fail(w, err, 500)

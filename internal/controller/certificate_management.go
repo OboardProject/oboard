@@ -274,7 +274,7 @@ func (s *Server) importCertificate(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	material, err := validateCertificateMaterial(req.CertificatePEM, req.FullchainPEM, req.PrivateKeyPEM, nil)
+	material, err := validateCertificateMaterial(req.CertificatePEM, req.FullchainPEM, req.PrivateKeyPEM, nil, certificateMaterialPolicy{})
 	if err != nil {
 		fail(w, err, 400)
 		return
@@ -288,7 +288,7 @@ func (s *Server) importCertificate(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	if err := s.storeCertificateMaterial(r.Context(), certificate, req.CertificatePEM, req.FullchainPEM, req.PrivateKeyPEM); err != nil {
+	if err := s.storeCertificateMaterial(r.Context(), certificate, req.CertificatePEM, req.FullchainPEM, req.PrivateKeyPEM, certificateMaterialPolicy{}); err != nil {
 		_ = s.store.DeleteCertificate(r.Context(), certificate.ID)
 		fail(w, err, 500)
 		return
@@ -302,7 +302,25 @@ type parsedCertificateMaterial struct {
 	Domains []string
 }
 
-func validateCertificateMaterial(certificatePEM, fullchainPEM, privateKeyPEM string, requestedDomains []string) (parsedCertificateMaterial, error) {
+// certificateMaterialPolicy constrains how far a certificate submission is
+// trusted. Operator imports and Controller-driven ACME runs are trusted
+// sources. Material reported by an Agent is not: without these constraints a
+// compromised node could substitute self-signed material for the domains it
+// serves, or widen the operator-approved domain set and have the poisoned
+// primary domain flow back into Controller renewals.
+type certificateMaterialPolicy struct {
+	// RequireTrustedChain rejects material that does not chain to a publicly
+	// trusted root. Agent HTTP-01 issuance always uses an allowlisted public
+	// ACME CA, so an unverifiable chain means the node supplied its own.
+	RequireTrustedChain bool
+	// RequireExactDomains rejects any SAN outside the approved domain set.
+	RequireExactDomains bool
+}
+
+// untrustedCertificateMaterial is the policy for Agent-reported material.
+var untrustedCertificateMaterial = certificateMaterialPolicy{RequireTrustedChain: true, RequireExactDomains: true}
+
+func validateCertificateMaterial(certificatePEM, fullchainPEM, privateKeyPEM string, requestedDomains []string, policy certificateMaterialPolicy) (parsedCertificateMaterial, error) {
 	leafPEM := strings.TrimSpace(certificatePEM)
 	if leafPEM == "" {
 		leafPEM = strings.TrimSpace(fullchainPEM)
@@ -339,7 +357,75 @@ func validateCertificateMaterial(certificatePEM, fullchainPEM, privateKeyPEM str
 			return parsedCertificateMaterial{}, fmt.Errorf("certificate does not cover %s", requested)
 		}
 	}
+	if policy.RequireExactDomains {
+		if err := requireApprovedDomainSet(requestedDomains, domains); err != nil {
+			return parsedCertificateMaterial{}, err
+		}
+	}
+	if policy.RequireTrustedChain {
+		if err := verifyCertificateChain(leaf, fullchainPEM); err != nil {
+			return parsedCertificateMaterial{}, err
+		}
+	}
 	return parsedCertificateMaterial{Leaf: leaf, Domains: domains}, nil
+}
+
+// requireApprovedDomainSet rejects a certificate whose SANs differ from the
+// operator-approved domain set. Order is irrelevant because the issuing CA
+// chooses SAN ordering, so both sides are compared as sets.
+func requireApprovedDomainSet(approved, actual []string) error {
+	if len(approved) == 0 {
+		return errors.New("certificate has no approved domain set")
+	}
+	allowed := make(map[string]bool, len(approved))
+	for _, domain := range approved {
+		allowed[domain] = true
+	}
+	present := make(map[string]bool, len(actual))
+	for _, domain := range actual {
+		present[domain] = true
+		if !allowed[domain] {
+			return fmt.Errorf("certificate contains unapproved domain %s", domain)
+		}
+	}
+	for _, domain := range approved {
+		if !present[domain] {
+			return fmt.Errorf("certificate does not cover %s", domain)
+		}
+	}
+	return nil
+}
+
+// verifyCertificateChain validates the leaf against the system trust store,
+// using the submitted fullchain only as a source of intermediates.
+func verifyCertificateChain(leaf *x509.Certificate, fullchainPEM string) error {
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		return fmt.Errorf("load system trust store: %w", err)
+	}
+	intermediates := x509.NewCertPool()
+	rest := []byte(fullchainPEM)
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		parsed, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return fmt.Errorf("parse chain certificate: %w", err)
+		}
+		if !parsed.Equal(leaf) {
+			intermediates.AddCert(parsed)
+		}
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+		return fmt.Errorf("certificate does not chain to a trusted root: %w", err)
+	}
+	return nil
 }
 
 func parsePrivateKey(data []byte) (crypto.Signer, error) {
@@ -361,8 +447,8 @@ func parsePrivateKey(data []byte) (crypto.Signer, error) {
 	return nil, errors.New("unsupported private key format")
 }
 
-func (s *Server) storeCertificateMaterial(ctx context.Context, certificate *model.Certificate, certificatePEM, fullchainPEM, privateKeyPEM string) error {
-	material, err := validateCertificateMaterial(certificatePEM, fullchainPEM, privateKeyPEM, certificate.Domains)
+func (s *Server) storeCertificateMaterial(ctx context.Context, certificate *model.Certificate, certificatePEM, fullchainPEM, privateKeyPEM string, policy certificateMaterialPolicy) error {
+	material, err := validateCertificateMaterial(certificatePEM, fullchainPEM, privateKeyPEM, certificate.Domains, policy)
 	if err != nil {
 		return err
 	}

@@ -198,7 +198,7 @@ func (s *Server) installAndStoreACMECertificate(ctx context.Context, certificate
 	if err != nil {
 		return err
 	}
-	return s.storeCertificateMaterial(ctx, certificate, string(certificatePEM), string(fullchainPEM), string(privateKeyPEM))
+	return s.storeCertificateMaterial(ctx, certificate, string(certificatePEM), string(fullchainPEM), string(privateKeyPEM), certificateMaterialPolicy{})
 }
 
 func (s *Server) runACME(ctx context.Context, args ...string) (string, error) {

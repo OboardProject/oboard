@@ -3597,6 +3597,10 @@ func isTerminalTaskStatus(status string) bool {
 	}
 }
 
+// IsTerminalTaskStatus reports whether a task has settled and must not accept
+// further Agent-supplied results.
+func IsTerminalTaskStatus(status string) bool { return isTerminalTaskStatus(status) }
+
 func (s *Store) ActiveTaskByServerType(ctx context.Context, serverID int64, taskType string) (*model.AgentTask, error) {
 	rows, err := s.db.QueryContext(ctx, `select id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at from agent_tasks where server_id=? and type=? and status in ('pending','running') order by id desc limit 1`, serverID, taskType)
 	if err != nil {

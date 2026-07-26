@@ -12,6 +12,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 func (s *Server) agentManagedAssets(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +124,13 @@ func (s *Server) agentCertificateIssues(w http.ResponseWriter, r *http.Request) 
 		fail(w, errors.New("certificate task does not belong to this agent"), 403)
 		return
 	}
+	// A settled task must not accept further material, otherwise a node can
+	// keep rewriting the stored certificate and force every node bound to it
+	// to re-sync on each new revision.
+	if store.IsTerminalTaskStatus(task.Status) {
+		fail(w, errors.New("certificate task is already settled"), http.StatusConflict)
+		return
+	}
 	var payload model.IssueCertificateHTTPTaskPayload
 	if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil || payload.CertificateID != report.CertificateID {
 		fail(w, errors.New("certificate report does not match task payload"), 400)
@@ -147,7 +155,7 @@ func (s *Server) agentCertificateIssues(w http.ResponseWriter, r *http.Request) 
 		fail(w, errors.New("certificate is not authorized for this agent"), 403)
 		return
 	}
-	if err := s.storeCertificateMaterial(r.Context(), certificate, report.CertificatePEM, report.FullchainPEM, report.PrivateKeyPEM); err != nil {
+	if err := s.storeCertificateMaterial(r.Context(), certificate, report.CertificatePEM, report.FullchainPEM, report.PrivateKeyPEM, untrustedCertificateMaterial); err != nil {
 		fail(w, fmt.Errorf("store issued certificate: %w", err), 400)
 		return
 	}
