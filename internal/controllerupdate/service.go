@@ -683,15 +683,6 @@ func (s *Service) saveStatus(status Status) error {
 	return nil
 }
 
-func (s *Service) installBinary(ctx context.Context, release remoteRelease) error {
-	stage, err := s.stageControllerRelease(ctx, release)
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(stage)
-	return s.replaceBinaryProgram(ctx, stage)
-}
-
 func (s *Service) stageControllerRelease(ctx context.Context, release remoteRelease) (string, error) {
 	artifact, err := selectArtifact(release.Manifest, runtime.GOOS, runtime.GOARCH)
 	if err != nil {
