@@ -33,6 +33,20 @@ func TestPinnedCheckPersistsStatus(t *testing.T) {
 	}
 }
 
+func TestDefaultServiceConfigUsesSelectedInstallDirectory(t *testing.T) {
+	t.Setenv("OBOARD_INSTALL_DIR", "/opt/oboard")
+	config := DefaultServiceConfig()
+	if config.ControllerBinary != "/opt/oboard/oboard-controller" || config.UpdaterBinary != "/opt/oboard/oboard-controller-updater" {
+		t.Fatalf("unexpected custom binary paths: %#v", config)
+	}
+
+	t.Setenv("OBOARD_INSTALL_DIR", "/tmp/unsafe")
+	config = DefaultServiceConfig()
+	if config.ControllerBinary != "/usr/local/bin/oboard-controller" || config.UpdaterBinary != "/usr/local/bin/oboard-controller-updater" {
+		t.Fatalf("unsafe install directory was accepted: %#v", config)
+	}
+}
+
 func TestValidateStagedBuild(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "controller")
 	script := "#!/bin/sh\nprintf '%s\\n' '{\"version\":\"1.2.0\",\"build\":\"22\",\"commit\":\"abc\",\"date\":\"2026-07-24T00:00:00Z\"}'\n"

@@ -10,6 +10,7 @@ Restart=on-failure
 RestartSec=5
 User=root
 Group=oboard
+EnvironmentFile=-/etc/oboard/controller.env
 UMask=0077
 RuntimeDirectory=oboard
 RuntimeDirectoryMode=0750

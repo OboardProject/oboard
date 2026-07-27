@@ -576,15 +576,21 @@ func TestAgentInstallScriptsUseLowSpaceTempFallback(t *testing.T) {
 			t.Fatalf("%s status = %d", path, rec.Code)
 		}
 		script := rec.Body.String()
-		cmd := exec.Command("bash", "-n")
-		cmd.Stdin = strings.NewReader(script)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%s shell syntax: %v: %s", path, err, output)
+		for _, shellName := range []string{"bash", "dash"} {
+			shell, err := exec.LookPath(shellName)
+			if err != nil {
+				continue
+			}
+			cmd := exec.Command(shell, "-n")
+			cmd.Stdin = strings.NewReader(script)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%s %s syntax: %v: %s", path, shellName, err, output)
+			}
 		}
 		for _, want := range []string{
 			"make_update_tmp", "OBOARD_TMPDIR", "/run", "32768", "df -i",
 			"pkg_install", "ensure_base_tools", "ensure_release_verifier",
-			"detect_virt_hint", "ca-certificates", "microdnf", "zypper", "pacman",
+			"detect_virt_hint", "ca-certificates", "coreutils", "command -v install", "microdnf", "zypper", "pacman",
 		} {
 			if !strings.Contains(script, want) {
 				t.Fatalf("%s missing %q", path, want)
@@ -604,6 +610,15 @@ func TestAgentInstallScriptsUseLowSpaceTempFallback(t *testing.T) {
 				"User=root",
 				"MemoryDenyWriteExecute=true",
 				"RestrictSUIDSGID=true",
+				"ACME_SH_VERSION=3.1.4",
+				"ACME_SH_SHA256=fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32",
+				"install_pinned_acme_sh",
+				"sha256_file",
+				"OBOARD_INSTALL_CHOICE",
+				"选择 Agent 程序安装目录",
+				"INSTALL_ENV_PATH=${OBOARD_AGENT_INSTALL_ENV:-/etc/oboard-agent/install.env}",
+				"persist_agent_install_dir",
+				"resolve_agent_install_dir",
 			} {
 				if !strings.Contains(script, want) {
 					t.Fatalf("%s missing managed log service setting %q", path, want)
@@ -624,7 +639,7 @@ func TestAgentInstallScriptsUseLowSpaceTempFallback(t *testing.T) {
 		if !strings.Contains(script, `ln -s "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/obag"`) {
 			t.Fatalf("%s does not install the obag management command", path)
 		}
-		for _, want := range []string{"直接输入", "obag status", "obag check", "obag logs agent", "obag logs core"} {
+		for _, want := range []string{"management_command=obag", "$management_command status", "$management_command check", "$management_command logs agent", "$management_command logs core"} {
 			if !strings.Contains(script, want) {
 				t.Fatalf("%s missing user management hint %q", path, want)
 			}
@@ -633,6 +648,127 @@ func TestAgentInstallScriptsUseLowSpaceTempFallback(t *testing.T) {
 			t.Fatalf("%s still duplicates downloaded binaries", path)
 		}
 	}
+}
+
+func TestAgentInstallScriptACMEFallback(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "http://example.com"); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/install/agent.sh", nil)
+	rec := httptest.NewRecorder()
+	newTestServer(db, "test-secret", "").Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("install script status = %d", rec.Code)
+	}
+	script := rec.Body.String()
+	assertACMEInstallerBehavior(t, script)
+	assertPackageManagerDispatch(t, script)
+	assertInstallToolBootstrap(t, script)
+	assertInstallDirectoryChoices(t, script)
+}
+
+func TestAgentInstallDirectoryPersistence(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "http://example.com"); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/install/agent.sh", nil)
+	rec := httptest.NewRecorder()
+	newTestServer(db, "test-secret", "").Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("install script status = %d", rec.Code)
+	}
+	script := rec.Body.String()
+	shell, err := exec.LookPath("dash")
+	if err != nil {
+		shell, err = exec.LookPath("sh")
+	}
+	if err != nil {
+		t.Skip("a POSIX shell is unavailable")
+	}
+
+	source := strings.Join([]string{
+		extractShellFunction(t, script, "valid_install_dir"),
+		extractShellFunction(t, script, "install_dir_for_choice"),
+		extractShellFunction(t, script, "configured_agent_install_dir"),
+		extractShellFunction(t, script, "choose_install_dir"),
+		extractShellFunction(t, script, "resolve_agent_install_dir"),
+	}, "\n")
+	t.Run("restore persisted directory", func(t *testing.T) {
+		installEnv := filepath.Join(t.TempDir(), "install.env")
+		if err := os.WriteFile(installEnv, []byte("OBOARD_INSTALL_DIR=/usr/local/sbin\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		harness := strings.Join([]string{
+			source,
+			"INSTALL_ENV_PATH=" + shellQuote(installEnv),
+			"INSTALL_DIR_INPUT=",
+			"INSTALL_DIR=",
+			"ACTION=update",
+			"resolve_agent_install_dir",
+			"printf 'resolved=%s\\n' \"$INSTALL_DIR\"",
+		}, "\n")
+		output, err := exec.Command(shell, "-c", harness).CombinedOutput()
+		if err != nil || !strings.Contains(string(output), "resolved=/usr/local/sbin") {
+			t.Fatalf("persisted Agent directory was not restored: %v\n%s", err, output)
+		}
+	})
+
+	t.Run("reject directory change", func(t *testing.T) {
+		installEnv := filepath.Join(t.TempDir(), "install.env")
+		if err := os.WriteFile(installEnv, []byte("OBOARD_INSTALL_DIR=/opt/oboard\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		harness := strings.Join([]string{
+			source,
+			"INSTALL_ENV_PATH=" + shellQuote(installEnv),
+			"INSTALL_DIR_INPUT=/usr/local/bin",
+			"INSTALL_DIR=",
+			"ACTION=update",
+			"resolve_agent_install_dir",
+		}, "\n")
+		output, err := exec.Command(shell, "-c", harness).CombinedOutput()
+		if err == nil || !strings.Contains(string(output), "更新或卸载时不能改为") {
+			t.Fatalf("Agent install directory change was not rejected: %v\n%s", err, output)
+		}
+	})
+
+	t.Run("persist root-only selection", func(t *testing.T) {
+		installEnv := filepath.Join(t.TempDir(), "etc", "oboard-agent", "install.env")
+		harness := strings.Join([]string{
+			extractShellFunction(t, script, "persist_agent_install_dir"),
+			"INSTALL_ENV_PATH=" + shellQuote(installEnv),
+			"INSTALL_DIR=/opt/oboard",
+			"persist_agent_install_dir",
+		}, "\n")
+		output, err := exec.Command(shell, "-c", harness).CombinedOutput()
+		if err != nil {
+			t.Fatalf("persist install directory failed: %v\n%s", err, output)
+		}
+		content, err := os.ReadFile(installEnv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(content) != "OBOARD_INSTALL_DIR=/opt/oboard\n" {
+			t.Fatalf("unexpected persisted install directory: %q", content)
+		}
+		info, err := os.Stat(installEnv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Fatalf("install directory state mode = %04o, want 0600", mode)
+		}
+	})
 }
 
 func TestTrafficWindowForPeriodKey(t *testing.T) {
@@ -984,7 +1120,7 @@ func TestAgentSelfUpdateScriptSupportsPOSIXShellAndDeferredAckRestart(t *testing
 		t.Fatalf("self update script status = %d", rr.Code)
 	}
 	script := rr.Body.String()
-	for _, want := range []string{"#!/bin/sh", "OBOARD_AGENT_RESTART:-delayed", `AGENT_RESTART" = none`, "sleep 60", `data["time_sync_command"] = "auto"`, "verify_manifest_with_openssl", `ln -s "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/obag"`, "OBoard Agent 自更新完成", "obag check"} {
+	for _, want := range []string{"#!/bin/sh", "OBOARD_AGENT_RESTART:-delayed", `AGENT_RESTART" = none`, "sleep 60", `data["time_sync_command"] = "auto"`, "verify_manifest_with_openssl", "command -v install", "coreutils", "OBOARD_AGENT_INSTALL_ENV", "configured_agent_install_dir", `data.setdefault("core_binary", install_dir + "/oboard-sb")`, `ln -s "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/obag"`, "OBoard Agent 自更新完成", "$management_command check"} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("self update script missing %q", want)
 		}
@@ -992,6 +1128,7 @@ func TestAgentSelfUpdateScriptSupportsPOSIXShellAndDeferredAckRestart(t *testing
 	if strings.Contains(script, "set -euo pipefail") {
 		t.Fatal("self update script still requires bash pipefail")
 	}
+	assertInstallToolBootstrap(t, script)
 }
 
 func TestInboundPortPatchAffectsDeploymentConfig(t *testing.T) {

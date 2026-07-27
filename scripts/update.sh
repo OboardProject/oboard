@@ -1,5 +1,6 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
+(set -o pipefail) 2>/dev/null && set -o pipefail
 
 COMPONENT=${COMPONENT:-${1:-controller}}
 VERSION_INPUT=${VERSION:-}
@@ -16,7 +17,7 @@ case "$COMPONENT" in
 esac
 
 SCRIPT_DIR=
-SCRIPT_FILE=${BASH_SOURCE[0]:-}
+SCRIPT_FILE=${0:-}
 if [ -n "$SCRIPT_FILE" ] && [ -f "$SCRIPT_FILE" ]; then
   SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_FILE")" && pwd)
 fi
@@ -25,14 +26,14 @@ case "$COMPONENT" in
     if [ -n "$SCRIPT_DIR" ] && [ -x "$SCRIPT_DIR/install.sh" ]; then
       exec "$SCRIPT_DIR/install.sh" "$COMPONENT"
     fi
-    curl --proto '=https' --tlsv1.2 -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install.sh" | bash -s -- "$COMPONENT"
+    curl --proto '=https' --tlsv1.2 -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install.sh" | sh -s -- "$COMPONENT"
     exit $?
     ;;
   *)
     if [ -n "$SCRIPT_DIR" ] && [ -x "$SCRIPT_DIR/install.sh" ]; then
       "$SCRIPT_DIR/install.sh" "$COMPONENT"
     else
-      curl --proto '=https' --tlsv1.2 -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install.sh" | bash -s -- "$COMPONENT"
+      curl --proto '=https' --tlsv1.2 -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install.sh" | sh -s -- "$COMPONENT"
     fi
     ;;
 esac

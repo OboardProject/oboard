@@ -44,12 +44,13 @@ type Service struct {
 }
 
 func DefaultServiceConfig() ServiceConfig {
+	installDir := defaultInstallDir()
 	return ServiceConfig{
 		SocketPath:       DefaultSocketPath,
 		BinaryEnvPath:    "/etc/oboard/controller.env",
 		StatePath:        "/var/lib/oboard/controller-update/status.json",
-		ControllerBinary: "/usr/local/bin/oboard-controller",
-		UpdaterBinary:    "/usr/local/bin/oboard-controller-updater",
+		ControllerBinary: filepath.Join(installDir, "oboard-controller"),
+		UpdaterBinary:    filepath.Join(installDir, "oboard-controller-updater"),
 		WebRoot:          "/opt/oboard/web/dist",
 		DownloadsRoot:    "/opt/oboard/downloads",
 		WorkRoot:         "/var/lib/oboard/controller-update",
@@ -66,6 +67,15 @@ func DefaultServiceConfig() ServiceConfig {
 			command.Stderr = os.Stderr
 			return command.Run()
 		},
+	}
+}
+
+func defaultInstallDir() string {
+	switch value := strings.TrimSpace(os.Getenv("OBOARD_INSTALL_DIR")); value {
+	case "/usr/local/bin", "/opt/oboard", "/usr/local/sbin":
+		return value
+	default:
+		return "/usr/local/bin"
 	}
 }
 

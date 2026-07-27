@@ -1,7 +1,12 @@
 #!/sbin/openrc-run
 
 description="OBoard Controller Updater"
-command="/usr/local/bin/oboard-controller-updater"
+if [ -f /etc/oboard/controller.env ]; then
+	set -a
+	. /etc/oboard/controller.env
+	set +a
+fi
+command="${OBOARD_INSTALL_DIR:-/usr/local/bin}/oboard-controller-updater"
 command_background=true
 pidfile="/run/${RC_SVCNAME}.pid"
 output_log="/var/log/${RC_SVCNAME}.log"

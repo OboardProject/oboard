@@ -89,6 +89,14 @@ func TestBinaryOnlyControllerReleaseAssets(t *testing.T) {
 			}
 		}
 	}
+	if dash, err := exec.LookPath("dash"); err == nil {
+		for _, name := range []string{"scripts/install.sh", "scripts/update.sh"} {
+			path := filepath.Join(root, filepath.FromSlash(name))
+			if output, err := exec.Command(dash, "-n", path).CombinedOutput(); err != nil {
+				t.Fatalf("%s POSIX shell syntax error: %v\n%s", name, err, output)
+			}
+		}
+	}
 }
 
 func TestBinaryInstallerUninstallConsumesPipedScript(t *testing.T) {
@@ -107,7 +115,7 @@ func TestBinaryInstallerUninstallConsumesPipedScript(t *testing.T) {
 	}
 	command := exec.Command("bash")
 	command.Env = controllerTestEnv(
-		"INSTALL_DIR="+t.TempDir(),
+		"INSTALL_DIR=/usr/local/bin",
 		"OBOARD_ACTION=uninstall",
 		"VERSION=",
 		"PATH="+fakeBin+":"+os.Getenv("PATH"),

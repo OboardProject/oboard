@@ -3492,8 +3492,8 @@ function shellQuote(value: string) {
 function agentScriptCommand(controllerURL: string, action: 'install' | 'update' | 'uninstall', token = '') {
   const base = controllerURL.replace(/\/+$/, '')
   const download = `curl -fsSL ${shellQuote(`${base}/install/agent.sh`)}`
-  if (action === 'install') return `${download} | OBOARD_ENROLL_TOKEN=${shellQuote(token)} bash`
-  return `${download} | bash -s -- ${action}`
+  if (action === 'install') return `${download} | OBOARD_ENROLL_TOKEN=${shellQuote(token)} sh`
+  return `${download} | sh -s -- ${action}`
 }
 
 function agentUpdateCommand(controllerURL: string) {

@@ -1,5 +1,6 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
+(set -o pipefail) 2>/dev/null && set -o pipefail
 
 REPO=${OBOARD_REPO:-OboardProject/oboard}
 # Refuse obviously malicious repo values used in download URLs.
@@ -11,7 +12,8 @@ VERSION_INPUT=${VERSION:-}
 VERSION_VALUE=${VERSION_INPUT:-latest}
 INSTALL_CHANNEL=stable
 COMPONENT=${COMPONENT:-${1:-controller}}
-INSTALL_DIR=${INSTALL_DIR:-/usr/local/bin}
+INSTALL_DIR_INPUT=${INSTALL_DIR:-${OBOARD_INSTALL_DIR:-}}
+INSTALL_DIR=
 ACTION_INPUT=${OBOARD_ACTION:-}
 ACTION=install
 INSTALLATION_EXISTS=0
@@ -24,6 +26,10 @@ BOOTSTRAP_ADMIN_PASSWORD_CONFIGURED=0
 BOOTSTRAP_ADMIN_PASSWORD_GENERATED=0
 BOOTSTRAP_ADMIN_PASSWORD_VALUE=
 BOOTSTRAP_ADMIN_PASSWORD_PERSISTED=0
+ACME_SH_VERSION=3.1.4
+ACME_SH_SHA256=fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32
+ACME_SH_URL="https://raw.githubusercontent.com/acmesh-official/acme.sh/$ACME_SH_VERSION/acme.sh"
+ACME_SH_INSTALL_PATH=/usr/local/bin/acme.sh
 [ -s /var/lib/oboard/oboard.sqlite ] && CONTROLLER_DATA_EXISTED=1
 
 make_install_tmp() {
@@ -48,11 +54,18 @@ make_install_tmp() {
 }
 
 binary_installation_exists() {
-  [ -f /etc/oboard/controller.env ] ||
-    [ -x "$INSTALL_DIR/oboard-controller" ] ||
+  local candidate
+  if [ -f /etc/oboard/controller.env ] ||
     [ -s /var/lib/oboard/oboard.sqlite ] ||
     [ -f /etc/systemd/system/oboard-controller.service ] ||
-    [ -f /etc/init.d/oboard-controller ]
+    [ -f /etc/init.d/oboard-controller ]; then
+    return 0
+  fi
+  for candidate in "$INSTALL_DIR_INPUT" /usr/local/bin /opt/oboard /usr/local/sbin; do
+    [ -n "$candidate" ] || continue
+    [ ! -x "$candidate/oboard-controller" ] || return 0
+  done
+  return 1
 }
 
 select_installation() {
@@ -71,6 +84,96 @@ select_installation() {
     echo "没有找到已安装的主控，请先完成安装。" >&2
     exit 1
   fi
+}
+
+valid_install_dir() {
+  case "$1" in
+    /usr/local/bin|/opt/oboard|/usr/local/sbin) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+install_dir_for_choice() {
+  case "$1" in
+    ""|1) printf '/usr/local/bin\n' ;;
+    2) printf '/opt/oboard\n' ;;
+    3) printf '/usr/local/sbin\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+configured_controller_install_dir() {
+  [ -f /etc/oboard/controller.env ] || return 0
+  sed -n 's/^OBOARD_INSTALL_DIR=//p' /etc/oboard/controller.env 2>/dev/null | tail -n1 | tr -d "'\""
+}
+
+choose_install_dir() {
+  local choice=${OBOARD_INSTALL_CHOICE:-} selected
+  if [ -n "$choice" ]; then
+    install_dir_for_choice "$choice"
+    return
+  fi
+  if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
+    install_dir_for_choice 1
+    return
+  fi
+  while :; do
+    printf '\n选择程序安装目录\n' > /dev/tty
+    printf '  1) /usr/local/bin（推荐，默认）\n' > /dev/tty
+    printf '  2) /opt/oboard\n' > /dev/tty
+    printf '  3) /usr/local/sbin\n' > /dev/tty
+    printf '请选择 [1]：' > /dev/tty
+    IFS= read -r choice < /dev/tty || choice=
+    if selected=$(install_dir_for_choice "$choice"); then
+      printf '%s\n' "$selected"
+      return 0
+    fi
+    printf '请输入 1、2 或 3。\n' > /dev/tty
+  done
+}
+
+resolve_controller_install_dir() {
+  local persisted candidate existing_dir
+  persisted=$(configured_controller_install_dir)
+  existing_dir=$persisted
+  if [ -n "$persisted" ] && ! valid_install_dir "$persisted"; then
+    echo "已保存的安装目录无效：$persisted" >&2
+    exit 1
+  fi
+  if [ -z "$existing_dir" ]; then
+    for candidate in /usr/local/bin /opt/oboard /usr/local/sbin; do
+      if [ -x "$candidate/oboard-controller" ]; then
+        existing_dir=$candidate
+        break
+      fi
+    done
+  fi
+  if [ -n "$INSTALL_DIR_INPUT" ]; then
+    if ! valid_install_dir "$INSTALL_DIR_INPUT"; then
+      echo "INSTALL_DIR/OBOARD_INSTALL_DIR 仅支持 /usr/local/bin、/opt/oboard 或 /usr/local/sbin。" >&2
+      exit 1
+    fi
+    if [ -n "$existing_dir" ] && [ "$INSTALL_DIR_INPUT" != "$existing_dir" ] && [ "$INSTALLATION_EXISTS" = 1 ]; then
+      echo "已安装主控使用 $existing_dir；更新或卸载时不能改为 $INSTALL_DIR_INPUT。" >&2
+      exit 1
+    fi
+    INSTALL_DIR=$INSTALL_DIR_INPUT
+  elif [ -n "$existing_dir" ]; then
+    INSTALL_DIR=$existing_dir
+  else
+    if [ -z "$INSTALL_DIR" ]; then
+      if [ "$ACTION" = install ]; then
+        INSTALL_DIR=$(choose_install_dir) || {
+          echo "安装目录选项无效。" >&2
+          exit 1
+        }
+      else
+        INSTALL_DIR=/usr/local/bin
+      fi
+    fi
+  fi
+  export INSTALL_DIR
+  echo "程序安装目录：$INSTALL_DIR"
 }
 
 cleanup() { [ -z "$TMP_DIR" ] || rm -rf "$TMP_DIR"; }
@@ -119,34 +222,30 @@ ensure_base_tools() {
   need_ca=0
   need_tar=0
   need_sha=0
+  need_install=0
   command -v curl >/dev/null 2>&1 || need_curl=1
   command -v tar >/dev/null 2>&1 || need_tar=1
+  command -v install >/dev/null 2>&1 || need_install=1
   if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
     need_sha=1
   fi
   if [ ! -f /etc/ssl/certs/ca-certificates.crt ] && [ ! -f /etc/pki/tls/certs/ca-bundle.crt ] && [ ! -f /etc/ssl/cert.pem ]; then
     need_ca=1
   fi
-  if [ "$need_curl$need_ca$need_tar$need_sha" = "0000" ]; then
+  if [ "$need_curl$need_ca$need_tar$need_sha$need_install" = "00000" ]; then
     return 0
   fi
-  echo "正在安装所需组件（curl / CA 证书 / tar / 校验工具）..."
+  echo "正在安装所需组件（curl / CA 证书 / tar / 校验工具 / install）..."
   packages=""
   [ "$need_curl" = 1 ] && packages="$packages curl"
   [ "$need_ca" = 1 ] && packages="$packages ca-certificates"
   [ "$need_tar" = 1 ] && packages="$packages tar"
-  if [ "$need_sha" = 1 ]; then
-    if command -v apk >/dev/null 2>&1; then
-      packages="$packages coreutils"
-    elif command -v apt-get >/dev/null 2>&1; then
-      packages="$packages coreutils"
-    else
-      packages="$packages coreutils"
-    fi
+  if [ "$need_sha" = 1 ] || [ "$need_install" = 1 ]; then
+    packages="$packages coreutils"
   fi
   # shellcheck disable=SC2086
   pkg_install $packages || {
-    echo "依赖安装失败，请手动安装 curl、ca-certificates、tar、sha256sum 后重试。" >&2
+    echo "依赖安装失败，请手动安装 curl、ca-certificates、tar、sha256sum、install 后重试。" >&2
     exit 1
   }
   if command -v update-ca-certificates >/dev/null 2>&1; then
@@ -156,17 +255,77 @@ ensure_base_tools() {
   fi
 }
 
+sha256_file() {
+  local path=$1
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$path" | awk '{print $NF}'
+  else
+    return 1
+  fi
+}
+
+install_pinned_acme_sh() {
+  local download staged actual target_dir
+  download=$(mktemp "${OBOARD_TMPDIR:-/tmp}/oboard-acme.XXXXXX") || {
+    echo "无法创建 acme.sh 下载临时文件。" >&2
+    return 1
+  }
+  target_dir=${ACME_SH_INSTALL_PATH%/*}
+  staged="$target_dir/.acme.sh.$$"
+  if ! curl --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 -fsSL \
+    "$ACME_SH_URL" -o "$download"; then
+    rm -f "$download"
+    echo "无法下载固定版本的 acme.sh。" >&2
+    return 1
+  fi
+  actual=$(sha256_file "$download" || true)
+  if [ "$actual" != "$ACME_SH_SHA256" ]; then
+    rm -f "$download"
+    echo "acme.sh 校验失败，已停止安装。" >&2
+    return 1
+  fi
+  mkdir -p "$target_dir"
+  rm -f "$staged"
+  if ! cp "$download" "$staged" || ! chmod 0755 "$staged" || ! mv -f "$staged" "$ACME_SH_INSTALL_PATH"; then
+    rm -f "$download" "$staged"
+    echo "无法安装 acme.sh 到 $ACME_SH_INSTALL_PATH。" >&2
+    return 1
+  fi
+  rm -f "$download"
+}
+
 ensure_acme_sh() {
+  local packages=
+  command -v openssl >/dev/null 2>&1 || packages="$packages openssl"
+  command -v socat >/dev/null 2>&1 || packages="$packages socat"
+  if [ -n "$packages" ]; then
+    echo "正在安装证书签发依赖（openssl / socat）..."
+    # shellcheck disable=SC2086
+    if ! pkg_install $packages; then
+      echo "证书签发依赖安装失败，请手动安装 openssl 和 socat 后重试。" >&2
+      exit 1
+    fi
+  fi
+  if ! command -v openssl >/dev/null 2>&1 || ! command -v socat >/dev/null 2>&1; then
+    echo "安装后仍缺少 openssl 或 socat。" >&2
+    exit 1
+  fi
+
   if command -v acme.sh >/dev/null 2>&1; then
     return 0
   fi
-  echo "正在安装证书签发依赖（acme.sh / openssl / socat）..."
-  if ! pkg_install acme.sh openssl socat; then
-    echo "当前发行版仓库未提供 acme.sh。请先安装 acme.sh、openssl、socat，并确保 acme.sh 位于 PATH 后重试。" >&2
-    exit 1
+  echo "正在通过系统软件包安装 acme.sh..."
+  if pkg_install acme.sh && command -v acme.sh >/dev/null 2>&1; then
+    return 0
   fi
-  if ! command -v acme.sh >/dev/null 2>&1; then
-    echo "安装后仍找不到 acme.sh，请检查 PATH。" >&2
+
+  echo "系统仓库未提供 acme.sh，正在安装经过校验的固定版本 $ACME_SH_VERSION..."
+  if ! install_pinned_acme_sh || [ ! -x "$ACME_SH_INSTALL_PATH" ]; then
+    echo "acme.sh 安装失败。" >&2
     exit 1
   fi
 }
@@ -574,9 +733,9 @@ install_agent_from_controller() {
   echo "===================="
   echo "主控地址：$controller_url"
   if [ "$action" = update ]; then
-    curl -fsSL "$controller_url/install/agent.sh" | bash -s -- update
+    curl -fsSL "$controller_url/install/agent.sh" | sh -s -- update
   else
-    curl -fsSL "$controller_url/install/agent.sh" | OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" bash
+    curl -fsSL "$controller_url/install/agent.sh" | OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" sh
   fi
 }
 
@@ -869,6 +1028,13 @@ install_file_atomic() {
   mv -f "$destination.new" "$destination"
 }
 
+render_service_file() {
+  local source=$1 destination=$2 mode=${3:-0644}
+  sed "s#/usr/local/bin#$INSTALL_DIR#g" "$source" > "$destination.new"
+  chmod "$mode" "$destination.new"
+  mv -f "$destination.new" "$destination"
+}
+
 replace_tree_atomic() {
   local source=$1 destination=$2 owner=${3:-}
   rm -rf "$destination.new" "$destination.old"
@@ -914,6 +1080,7 @@ install_component() {
   verify_archive_paths "$TMP_DIR/$archive"
   tar -xzf "$TMP_DIR/$archive" -C "$work"
   echo "[3/4] 安装程序文件"
+  install -d -m 0755 "$INSTALL_DIR"
   install_file_atomic "$work/bin/oboard-$component" "$INSTALL_DIR/oboard-$component" 0755
   if [ "$component" = controller ]; then
     install_file_atomic "$work/bin/oboard-controller-updater" "$INSTALL_DIR/oboard-controller-updater" 0755
@@ -934,9 +1101,10 @@ install_component() {
         fi
         prepare_controller_env
         set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"
+        set_controller_env_value OBOARD_INSTALL_DIR "$INSTALL_DIR"
         configure_bootstrap_admin
-        cp "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/
-        cp "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/
+        render_service_file "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/oboard-controller.service
+        render_service_file "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/oboard-controller-updater.service
         prepare_controller_updater_runtime
         systemctl daemon-reload
         systemctl enable oboard-controller-updater
@@ -973,11 +1141,10 @@ install_component() {
         fi
         prepare_controller_env
         set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"
+        set_controller_env_value OBOARD_INSTALL_DIR "$INSTALL_DIR"
         configure_bootstrap_admin
-        cp "$work/deploy/openrc/oboard-controller" /etc/init.d/oboard-controller
-        cp "$work/deploy/openrc/oboard-controller-updater" /etc/init.d/oboard-controller-updater
-        chmod 0755 /etc/init.d/oboard-controller
-        chmod 0755 /etc/init.d/oboard-controller-updater
+        render_service_file "$work/deploy/openrc/oboard-controller" /etc/init.d/oboard-controller 0755
+        render_service_file "$work/deploy/openrc/oboard-controller-updater" /etc/init.d/oboard-controller-updater 0755
         prepare_controller_updater_runtime
         rc-update add oboard-controller-updater default
         rc-service oboard-controller-updater restart
@@ -1008,6 +1175,9 @@ case "$COMPONENT" in
   controller|controller-agent|all) select_installation ;;
 esac
 need_root
+case "$COMPONENT" in
+  controller|controller-agent|all) resolve_controller_install_dir ;;
+esac
 if [ "$ACTION" = uninstall ]; then
   SERVICE_MANAGER=$(detect_service_manager)
   uninstall_controller "$SERVICE_MANAGER"

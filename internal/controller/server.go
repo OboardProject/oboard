@@ -9617,8 +9617,9 @@ func (s *Server) agentInstallScript(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		return
 	}
-	script := `#!/usr/bin/env bash
-set -euo pipefail
+	script := `#!/bin/sh
+set -eu
+(set -o pipefail) 2>/dev/null && set -o pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "请使用 root 执行，或通过 sudo 运行命令。" >&2
@@ -9626,7 +9627,9 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 ACTION=${OBOARD_ACTION:-${1:-install}}
-INSTALL_DIR=${INSTALL_DIR:-/usr/local/bin}
+INSTALL_DIR_INPUT=${INSTALL_DIR:-${OBOARD_INSTALL_DIR:-}}
+INSTALL_ENV_PATH=${OBOARD_AGENT_INSTALL_ENV:-/etc/oboard-agent/install.env}
+INSTALL_DIR=
 CONFIG_PATH=${OBOARD_AGENT_CONFIG:-/etc/oboard-agent/config.json}
 STATE_DIR=${OBOARD_AGENT_STATE:-/var/lib/oboard-agent}
 AGENT_RESTART=${OBOARD_AGENT_RESTART:-delayed}
@@ -9638,6 +9641,104 @@ UPDATE_SOURCE=${OBOARD_UPDATE_SOURCE:-panel}
 UPDATE_REPO=${OBOARD_UPDATE_REPO:-OboardProject/oboard-agent}
 OBOARD_PURGE=${OBOARD_PURGE:-1}
 RELEASE_PUBLIC_KEY=__RELEASE_PUBLIC_KEY__
+ACME_SH_VERSION=3.1.4
+ACME_SH_SHA256=fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32
+ACME_SH_URL="https://raw.githubusercontent.com/acmesh-official/acme.sh/$ACME_SH_VERSION/acme.sh"
+ACME_SH_INSTALL_PATH=/usr/local/bin/acme.sh
+
+valid_install_dir() {
+  case "$1" in
+    /usr/local/bin|/opt/oboard|/usr/local/sbin) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+install_dir_for_choice() {
+  case "$1" in
+    ""|1) printf '/usr/local/bin\n' ;;
+    2) printf '/opt/oboard\n' ;;
+    3) printf '/usr/local/sbin\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+configured_agent_install_dir() {
+  [ -f "$INSTALL_ENV_PATH" ] || return 0
+  sed -n 's/^OBOARD_INSTALL_DIR=//p' "$INSTALL_ENV_PATH" 2>/dev/null | tail -n1 | tr -d "'\""
+}
+
+choose_install_dir() {
+  choice=${OBOARD_INSTALL_CHOICE:-}
+  if [ -n "$choice" ]; then
+    install_dir_for_choice "$choice"
+    return
+  fi
+  if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
+    install_dir_for_choice 1
+    return
+  fi
+  while :; do
+    printf '\n选择 Agent 程序安装目录\n' > /dev/tty
+    printf '  1) /usr/local/bin（推荐，默认）\n' > /dev/tty
+    printf '  2) /opt/oboard\n' > /dev/tty
+    printf '  3) /usr/local/sbin\n' > /dev/tty
+    printf '请选择 [1]：' > /dev/tty
+    IFS= read -r choice < /dev/tty || choice=
+    if selected=$(install_dir_for_choice "$choice"); then
+      printf '%s\n' "$selected"
+      return 0
+    fi
+    printf '请输入 1、2 或 3。\n' > /dev/tty
+  done
+}
+
+resolve_agent_install_dir() {
+  persisted=$(configured_agent_install_dir)
+  existing_dir=$persisted
+  if [ -n "$persisted" ] && ! valid_install_dir "$persisted"; then
+    echo "已保存的 Agent 安装目录无效：$persisted" >&2
+    exit 1
+  fi
+  if [ -z "$existing_dir" ]; then
+    for candidate in /usr/local/bin /opt/oboard /usr/local/sbin; do
+      if [ -x "$candidate/oboard-agent" ]; then
+        existing_dir=$candidate
+        break
+      fi
+    done
+  fi
+  if [ -n "$INSTALL_DIR_INPUT" ]; then
+    if ! valid_install_dir "$INSTALL_DIR_INPUT"; then
+      echo "INSTALL_DIR/OBOARD_INSTALL_DIR 仅支持 /usr/local/bin、/opt/oboard 或 /usr/local/sbin。" >&2
+      exit 1
+    fi
+    if [ -n "$existing_dir" ] && [ "$INSTALL_DIR_INPUT" != "$existing_dir" ]; then
+      echo "已安装 Agent 使用 $existing_dir；更新或卸载时不能改为 $INSTALL_DIR_INPUT。" >&2
+      exit 1
+    fi
+    INSTALL_DIR=$INSTALL_DIR_INPUT
+  elif [ -n "$existing_dir" ]; then
+    INSTALL_DIR=$existing_dir
+  elif [ "$ACTION" = install ]; then
+    INSTALL_DIR=$(choose_install_dir) || {
+      echo "安装目录选项无效。" >&2
+      exit 1
+    }
+  else
+    INSTALL_DIR=/usr/local/bin
+  fi
+  export INSTALL_DIR
+  echo "Agent 程序安装目录：$INSTALL_DIR"
+}
+
+persist_agent_install_dir() {
+  install -d -m 0700 "$(dirname "$INSTALL_ENV_PATH")"
+  printf 'OBOARD_INSTALL_DIR=%s\n' "$INSTALL_DIR" > "$INSTALL_ENV_PATH.new"
+  chmod 0600 "$INSTALL_ENV_PATH.new"
+  mv -f "$INSTALL_ENV_PATH.new" "$INSTALL_ENV_PATH"
+}
+
+resolve_agent_install_dir
 
 if [ "$ACTION" = uninstall ]; then
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
@@ -9653,6 +9754,9 @@ if [ "$ACTION" = uninstall ]; then
     rm -f /etc/init.d/oboard-agent /etc/init.d/oboard-sb
   fi
   rm -f "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/oboard-sb" "$INSTALL_DIR/obag"
+  if [ "$INSTALL_DIR" = /opt/oboard ]; then
+    rmdir "$INSTALL_DIR" 2>/dev/null || true
+  fi
   if [ "$OBOARD_PURGE" = 1 ]; then
     rm -rf "$(dirname "$CONFIG_PATH")" "$STATE_DIR"
   fi
@@ -9743,14 +9847,16 @@ ensure_base_tools() {
   # containers (Alpine, Debian slim, CentOS minimal, many LXC templates).
   need_curl=0
   need_ca=0
+  need_install=0
   command -v curl >/dev/null 2>&1 || need_curl=1
+  command -v install >/dev/null 2>&1 || need_install=1
   if [ ! -f /etc/ssl/certs/ca-certificates.crt ] && [ ! -f /etc/pki/tls/certs/ca-bundle.crt ] && [ ! -f /etc/ssl/cert.pem ]; then
     need_ca=1
   fi
-  if [ "$need_curl" = 0 ] && [ "$need_ca" = 0 ]; then
+  if [ "$need_curl$need_ca$need_install" = "000" ]; then
     return 0
   fi
-  echo "正在安装基础依赖（curl / CA 证书）..."
+  echo "正在安装基础依赖（curl / CA 证书 / install）..."
   packages=""
   if [ "$need_curl" = 1 ]; then
     packages="$packages curl"
@@ -9758,9 +9864,12 @@ ensure_base_tools() {
   if [ "$need_ca" = 1 ]; then
     packages="$packages ca-certificates"
   fi
+  if [ "$need_install" = 1 ]; then
+    packages="$packages coreutils"
+  fi
   # shellcheck disable=SC2086
   pkg_install $packages || {
-    echo "基础依赖安装失败，请手动安装 curl 与 CA 证书后重试。" >&2
+    echo "基础依赖安装失败，请手动安装 curl、CA 证书和 install 后重试。" >&2
     exit 1
   }
   if command -v update-ca-certificates >/dev/null 2>&1; then
@@ -9789,17 +9898,77 @@ ensure_release_verifier() {
   fi
 }
 
+sha256_file() {
+  local path=$1
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$path" | awk '{print $NF}'
+  else
+    return 1
+  fi
+}
+
+install_pinned_acme_sh() {
+  local download staged actual target_dir
+  download=$(mktemp "${OBOARD_TMPDIR:-/tmp}/oboard-acme.XXXXXX") || {
+    echo "无法创建 acme.sh 下载临时文件。" >&2
+    return 1
+  }
+  target_dir=${ACME_SH_INSTALL_PATH%/*}
+  staged="$target_dir/.acme.sh.$$"
+  if ! curl --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 -fsSL \
+    "$ACME_SH_URL" -o "$download"; then
+    rm -f "$download"
+    echo "无法下载固定版本的 acme.sh。" >&2
+    return 1
+  fi
+  actual=$(sha256_file "$download" || true)
+  if [ "$actual" != "$ACME_SH_SHA256" ]; then
+    rm -f "$download"
+    echo "acme.sh 校验失败，已停止安装。" >&2
+    return 1
+  fi
+  mkdir -p "$target_dir"
+  rm -f "$staged"
+  if ! cp "$download" "$staged" || ! chmod 0755 "$staged" || ! mv -f "$staged" "$ACME_SH_INSTALL_PATH"; then
+    rm -f "$download" "$staged"
+    echo "无法安装 acme.sh 到 $ACME_SH_INSTALL_PATH。" >&2
+    return 1
+  fi
+  rm -f "$download"
+}
+
 ensure_acme_sh() {
+  local packages=
+  command -v openssl >/dev/null 2>&1 || packages="$packages openssl"
+  command -v socat >/dev/null 2>&1 || packages="$packages socat"
+  if [ -n "$packages" ]; then
+    echo "正在安装 HTTP-01 证书签发依赖（openssl / socat）..."
+    # shellcheck disable=SC2086
+    if ! pkg_install $packages; then
+      echo "HTTP-01 证书签发依赖安装失败，请手动安装 openssl 和 socat 后重试。" >&2
+      exit 1
+    fi
+  fi
+  if ! command -v openssl >/dev/null 2>&1 || ! command -v socat >/dev/null 2>&1; then
+    echo "安装后仍缺少 openssl 或 socat。" >&2
+    exit 1
+  fi
+
   if command -v acme.sh >/dev/null 2>&1; then
     return 0
   fi
-  echo "正在安装 HTTP-01 证书签发依赖（acme.sh / openssl / socat）..."
-  if ! pkg_install acme.sh openssl socat; then
-    echo "当前发行版仓库未提供 acme.sh。请先安装 acme.sh、openssl、socat，并确保 acme.sh 位于 PATH 后重试。" >&2
-    exit 1
+  echo "正在通过系统软件包安装 acme.sh..."
+  if pkg_install acme.sh && command -v acme.sh >/dev/null 2>&1; then
+    return 0
   fi
-  if ! command -v acme.sh >/dev/null 2>&1; then
-    echo "安装后仍找不到 acme.sh，请检查 PATH。" >&2
+
+  echo "系统仓库未提供 acme.sh，正在安装经过校验的固定版本 $ACME_SH_VERSION..."
+  if ! install_pinned_acme_sh || [ ! -x "$ACME_SH_INSTALL_PATH" ]; then
+    echo "acme.sh 安装失败。" >&2
     exit 1
   fi
 }
@@ -10058,21 +10227,23 @@ download_binaries() {
 
 print_management_help() {
   result_title=$1
+  management_command=obag
+  command -v obag >/dev/null 2>&1 || management_command="$INSTALL_DIR/obag"
   echo ""
   echo "========================================"
   echo "OBoard Agent $result_title"
   echo "========================================"
   echo "以后通过 SSH 登录本机，直接输入以下命令："
   echo ""
-  echo "  obag"
+  echo "  $management_command"
   echo ""
   echo "即可打开中文管理菜单，查看状态、控制服务、读取日志和检查主控连接。"
   echo ""
   echo "常用快捷命令："
-  echo "  obag status       查看运行状态"
-  echo "  obag check        检查与主控的连接"
-  echo "  obag logs agent   查看 Agent 日志"
-  echo "  obag logs core    查看 oboard-sb 日志"
+  echo "  $management_command status       查看运行状态"
+  echo "  $management_command check        检查与主控的连接"
+  echo "  $management_command logs agent   查看 Agent 日志"
+  echo "  $management_command logs core    查看 oboard-sb 日志"
   echo "========================================"
 }
 
@@ -10242,6 +10413,7 @@ case "$ACTION" in
     need_base_url
     : "${OBOARD_ENROLL_TOKEN:?缺少 OBOARD_ENROLL_TOKEN}"
     download_binaries
+    persist_agent_install_dir
     write_units
     resolve_update_policy
     OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$INSTALL_DIR/oboard-agent" \
@@ -10265,6 +10437,7 @@ case "$ACTION" in
     echo "正在更新 OBoard Agent，请稍候..."
     need_base_url
     download_binaries
+    persist_agent_install_dir
     write_units
     restart_after_update
     echo "[4/4] Agent 和 oboard-sb 服务已刷新"
@@ -10306,7 +10479,9 @@ set -eu
 
 BASE_URL=__BASE_URL__
 RELEASE_PUBLIC_KEY=__RELEASE_PUBLIC_KEY__
-INSTALL_DIR=${INSTALL_DIR:-/usr/local/bin}
+INSTALL_DIR_INPUT=${INSTALL_DIR:-${OBOARD_INSTALL_DIR:-}}
+INSTALL_ENV_PATH=${OBOARD_AGENT_INSTALL_ENV:-/etc/oboard-agent/install.env}
+INSTALL_DIR=
 CONFIG_PATH=${OBOARD_AGENT_CONFIG:-/etc/oboard-agent/config.json}
 STATE_DIR=${OBOARD_AGENT_STATE:-/var/lib/oboard-agent}
 AGENT_RESTART=${OBOARD_AGENT_RESTART:-delayed}
@@ -10315,6 +10490,28 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "请使用 root 执行，或通过 sudo 运行命令。" >&2
   exit 1
 fi
+
+configured_agent_install_dir() {
+  [ -f "$INSTALL_ENV_PATH" ] || return 0
+  sed -n 's/^OBOARD_INSTALL_DIR=//p' "$INSTALL_ENV_PATH" 2>/dev/null | tail -n1 | tr -d "'\""
+}
+
+persisted_install_dir=$(configured_agent_install_dir)
+if [ -n "$INSTALL_DIR_INPUT" ] && [ -n "$persisted_install_dir" ] && [ "$INSTALL_DIR_INPUT" != "$persisted_install_dir" ]; then
+  echo "已安装 Agent 使用 $persisted_install_dir；自更新时不能改为 $INSTALL_DIR_INPUT。" >&2
+  exit 1
+fi
+case "${INSTALL_DIR_INPUT:-$persisted_install_dir}" in
+  /usr/local/bin|/opt/oboard|/usr/local/sbin)
+    INSTALL_DIR=${INSTALL_DIR_INPUT:-$persisted_install_dir}
+    ;;
+  "") INSTALL_DIR=/usr/local/bin ;;
+  *)
+    echo "已保存的 Agent 安装目录无效。" >&2
+    exit 1
+    ;;
+esac
+export INSTALL_DIR
 
 fix_hostname_resolution() {
   host_name=$(hostname 2>/dev/null || true)
@@ -10392,14 +10589,16 @@ ensure_base_tools() {
   # containers (Alpine, Debian slim, CentOS minimal, many LXC templates).
   need_curl=0
   need_ca=0
+  need_install=0
   command -v curl >/dev/null 2>&1 || need_curl=1
+  command -v install >/dev/null 2>&1 || need_install=1
   if [ ! -f /etc/ssl/certs/ca-certificates.crt ] && [ ! -f /etc/pki/tls/certs/ca-bundle.crt ] && [ ! -f /etc/ssl/cert.pem ]; then
     need_ca=1
   fi
-  if [ "$need_curl" = 0 ] && [ "$need_ca" = 0 ]; then
+  if [ "$need_curl$need_ca$need_install" = "000" ]; then
     return 0
   fi
-  echo "正在安装基础依赖（curl / CA 证书）..."
+  echo "正在安装基础依赖（curl / CA 证书 / install）..."
   packages=""
   if [ "$need_curl" = 1 ]; then
     packages="$packages curl"
@@ -10407,9 +10606,12 @@ ensure_base_tools() {
   if [ "$need_ca" = 1 ]; then
     packages="$packages ca-certificates"
   fi
+  if [ "$need_install" = 1 ]; then
+    packages="$packages coreutils"
+  fi
   # shellcheck disable=SC2086
   pkg_install $packages || {
-    echo "基础依赖安装失败，请手动安装 curl 与 CA 证书后重试。" >&2
+    echo "基础依赖安装失败，请手动安装 curl、CA 证书和 install 后重试。" >&2
     exit 1
   }
   if command -v update-ca-certificates >/dev/null 2>&1; then
@@ -10603,6 +10805,10 @@ if [ "$OS_VALUE" != linux ] || [ "$ARCH_VALUE" = unsupported ]; then
 fi
 echo "环境：linux/$ARCH_VALUE 服务管理器=$SERVICE_MANAGER 虚拟化=$VIRT_HINT"
 ensure_base_tools
+install -d -m 0700 "$(dirname "$INSTALL_ENV_PATH")"
+printf 'OBOARD_INSTALL_DIR=%s\n' "$INSTALL_DIR" > "$INSTALL_ENV_PATH.new"
+chmod 0600 "$INSTALL_ENV_PATH.new"
+mv -f "$INSTALL_ENV_PATH.new" "$INSTALL_ENV_PATH"
 fix_hostname_resolution
 load_target_version
 
@@ -10698,32 +10904,35 @@ install_downloaded_binaries() {
 install_downloaded_binaries
 
 print_management_help() {
+  management_command=obag
+  command -v obag >/dev/null 2>&1 || management_command="$INSTALL_DIR/obag"
   echo ""
   echo "========================================"
   echo "OBoard Agent 自更新完成"
   echo "========================================"
-  echo "通过 SSH 登录本机后直接输入：obag"
+  echo "通过 SSH 登录本机后输入：$management_command"
   echo "即可查看状态、控制服务、读取日志和检查主控连接。"
   echo ""
   echo "常用快捷命令："
-  echo "  obag status       查看运行状态"
-  echo "  obag check        检查与主控的连接"
-  echo "  obag logs agent   查看 Agent 日志"
-  echo "  obag logs core    查看 oboard-sb 日志"
+  echo "  $management_command status       查看运行状态"
+  echo "  $management_command check        检查与主控的连接"
+  echo "  $management_command logs agent   查看 Agent 日志"
+  echo "  $management_command logs core    查看 oboard-sb 日志"
   echo "========================================"
 }
 
 if [ -f "$CONFIG_PATH" ]; then
   if command -v python3 >/dev/null 2>&1; then
-    TARGET_DEV="${TARGET_DEV:-}" python3 - "$CONFIG_PATH" <<'PY'
+    TARGET_DEV="${TARGET_DEV:-}" python3 - "$CONFIG_PATH" "$INSTALL_DIR" <<'PY'
 import json, sys
 path = sys.argv[1]
+install_dir = sys.argv[2]
 with open(path, "r", encoding="utf-8") as f:
     data = json.load(f)
 data["reload_command"] = "auto"
 data["restart_command"] = "auto"
 data["time_sync_command"] = "auto"
-data.setdefault("core_binary", "/usr/local/bin/oboard-sb")
+data.setdefault("core_binary", install_dir + "/oboard-sb")
 data.setdefault("core_service", "oboard-sb")
 data.setdefault("update_repo", "OboardProject/oboard-agent")
 target_dev = str(__import__("os").environ.get("TARGET_DEV", "")).lower() in ("true", "1", "yes")
