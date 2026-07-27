@@ -191,12 +191,14 @@ trap cleanup EXIT
 tar -xzf "$OBOARD_ARCHIVE" -C "$work"
 
 if ! id oboard >/dev/null 2>&1; then
-  useradd --system --home /var/lib/oboard --shell /usr/sbin/nologin oboard
+  useradd --system --home /opt/oboard/data --shell /usr/sbin/nologin oboard
 fi
-install -d -m 0750 -o oboard -g oboard /var/lib/oboard /opt/oboard/web /opt/oboard/downloads /etc/oboard
-install -m 0755 "$work/bin/oboard-controller" /usr/local/bin/oboard-controller
+install -d -m 0755 -o root -g root /opt/oboard
+install -d -m 0750 -o root -g root /opt/oboard/config
+install -d -m 0750 -o oboard -g oboard /opt/oboard/data /opt/oboard/data/backups /opt/oboard/data/logs /opt/oboard/data/acme /opt/oboard/web /opt/oboard/downloads
+install -m 0755 "$work/bin/oboard-controller" /opt/oboard/oboard-controller
 if [ -f "$work/bin/oboard-controller-updater" ]; then
-  install -m 0755 "$work/bin/oboard-controller-updater" /usr/local/bin/oboard-controller-updater
+  install -m 0755 "$work/bin/oboard-controller-updater" /opt/oboard/oboard-controller-updater
 fi
 rm -rf /opt/oboard/web/dist.new
 cp -R "$work/web/dist" /opt/oboard/web/dist.new
@@ -211,58 +213,61 @@ if [ -d "$work/downloads" ]; then
   mv /opt/oboard/downloads.new /opt/oboard/downloads
 fi
 
-if [ ! -f /etc/oboard/controller.env ]; then
-  install -m 0600 -o root -g root /dev/null /etc/oboard/controller.env
-  cat > /etc/oboard/controller.env <<EOF
+if [ ! -f /opt/oboard/config/controller.env ]; then
+  install -m 0600 -o root -g root /dev/null /opt/oboard/config/controller.env
+  cat > /opt/oboard/config/controller.env <<EOF
 OBOARD_SESSION_SECRET=$OBOARD_SESSION_SECRET_NEW
 OBOARD_ADDR=:$OBOARD_HTTP_PORT
 OBOARD_BASE_PATH=$OBOARD_BASE_PATH
-OBOARD_DB=/var/lib/oboard/oboard.sqlite
+OBOARD_INSTALL_DIR=/opt/oboard
+OBOARD_DB=/opt/oboard/data/oboard.sqlite
 OBOARD_STATIC=/opt/oboard/web/dist
 OBOARD_DOWNLOADS=/opt/oboard/downloads
-OBOARD_BACKUP_DIR=/var/lib/oboard/backups
+OBOARD_BACKUP_DIR=/opt/oboard/data/backups
+OBOARD_LOG_FILE=/opt/oboard/data/logs/controller.log
+OBOARD_ACME_HOME=/opt/oboard/data/acme
 OBOARD_CONTROLLER_UPDATER_SOCKET=/run/oboard/controller-updater.sock
 OBOARD_UPDATE_CHANNEL=dev
 OBOARD_CORS_ORIGINS=
 EOF
 else
-  if grep -q '^OBOARD_ADDR=' /etc/oboard/controller.env; then
-    sed -i "s#^OBOARD_ADDR=.*#OBOARD_ADDR=:$OBOARD_HTTP_PORT#" /etc/oboard/controller.env
+  if grep -q '^OBOARD_ADDR=' /opt/oboard/config/controller.env; then
+    sed -i "s#^OBOARD_ADDR=.*#OBOARD_ADDR=:$OBOARD_HTTP_PORT#" /opt/oboard/config/controller.env
   else
-    printf '\nOBOARD_ADDR=:%s\n' "$OBOARD_HTTP_PORT" >> /etc/oboard/controller.env
+    printf '\nOBOARD_ADDR=:%s\n' "$OBOARD_HTTP_PORT" >> /opt/oboard/config/controller.env
   fi
-  if ! grep -q '^OBOARD_SESSION_SECRET=' /etc/oboard/controller.env; then
-    printf 'OBOARD_SESSION_SECRET=%s\n' "$OBOARD_SESSION_SECRET_NEW" >> /etc/oboard/controller.env
+  if ! grep -q '^OBOARD_SESSION_SECRET=' /opt/oboard/config/controller.env; then
+    printf 'OBOARD_SESSION_SECRET=%s\n' "$OBOARD_SESSION_SECRET_NEW" >> /opt/oboard/config/controller.env
   fi
-  if grep -q '^OBOARD_BASE_PATH=' /etc/oboard/controller.env; then
-    sed -i "s#^OBOARD_BASE_PATH=.*#OBOARD_BASE_PATH=$OBOARD_BASE_PATH#" /etc/oboard/controller.env
+  if grep -q '^OBOARD_BASE_PATH=' /opt/oboard/config/controller.env; then
+    sed -i "s#^OBOARD_BASE_PATH=.*#OBOARD_BASE_PATH=$OBOARD_BASE_PATH#" /opt/oboard/config/controller.env
   else
-    printf 'OBOARD_BASE_PATH=%s\n' "$OBOARD_BASE_PATH" >> /etc/oboard/controller.env
+    printf 'OBOARD_BASE_PATH=%s\n' "$OBOARD_BASE_PATH" >> /opt/oboard/config/controller.env
   fi
-  if ! grep -q '^OBOARD_DB=' /etc/oboard/controller.env; then
-    printf 'OBOARD_DB=/var/lib/oboard/oboard.sqlite\n' >> /etc/oboard/controller.env
+  if ! grep -q '^OBOARD_DB=' /opt/oboard/config/controller.env; then
+    printf 'OBOARD_DB=/opt/oboard/data/oboard.sqlite\n' >> /opt/oboard/config/controller.env
   fi
-  if ! grep -q '^OBOARD_STATIC=' /etc/oboard/controller.env; then
-    printf 'OBOARD_STATIC=/opt/oboard/web/dist\n' >> /etc/oboard/controller.env
+  if ! grep -q '^OBOARD_STATIC=' /opt/oboard/config/controller.env; then
+    printf 'OBOARD_STATIC=/opt/oboard/web/dist\n' >> /opt/oboard/config/controller.env
   fi
-  if grep -q '^OBOARD_DOWNLOADS=' /etc/oboard/controller.env; then
-    sed -i "s#^OBOARD_DOWNLOADS=.*#OBOARD_DOWNLOADS=/opt/oboard/downloads#" /etc/oboard/controller.env
+  if grep -q '^OBOARD_DOWNLOADS=' /opt/oboard/config/controller.env; then
+    sed -i "s#^OBOARD_DOWNLOADS=.*#OBOARD_DOWNLOADS=/opt/oboard/downloads#" /opt/oboard/config/controller.env
   else
-    printf 'OBOARD_DOWNLOADS=/opt/oboard/downloads\n' >> /etc/oboard/controller.env
+    printf 'OBOARD_DOWNLOADS=/opt/oboard/downloads\n' >> /opt/oboard/config/controller.env
   fi
-  chmod 0600 /etc/oboard/controller.env
+  chmod 0600 /opt/oboard/config/controller.env
 fi
 
-if ! grep -q '^OBOARD_UPDATE_CHANNEL=' /etc/oboard/controller.env; then
-  printf 'OBOARD_UPDATE_CHANNEL=dev\n' >> /etc/oboard/controller.env
+if ! grep -q '^OBOARD_UPDATE_CHANNEL=' /opt/oboard/config/controller.env; then
+  printf 'OBOARD_UPDATE_CHANNEL=dev\n' >> /opt/oboard/config/controller.env
 fi
-if ! grep -q '^OBOARD_CONTROLLER_UPDATER_SOCKET=' /etc/oboard/controller.env; then
-  printf 'OBOARD_CONTROLLER_UPDATER_SOCKET=/run/oboard/controller-updater.sock\n' >> /etc/oboard/controller.env
+if ! grep -q '^OBOARD_CONTROLLER_UPDATER_SOCKET=' /opt/oboard/config/controller.env; then
+  printf 'OBOARD_CONTROLLER_UPDATER_SOCKET=/run/oboard/controller-updater.sock\n' >> /opt/oboard/config/controller.env
 fi
-if ! grep -q '^OBOARD_BACKUP_DIR=' /etc/oboard/controller.env; then
-  printf 'OBOARD_BACKUP_DIR=/var/lib/oboard/backups\n' >> /etc/oboard/controller.env
+if ! grep -q '^OBOARD_BACKUP_DIR=' /opt/oboard/config/controller.env; then
+  printf 'OBOARD_BACKUP_DIR=/opt/oboard/data/backups\n' >> /opt/oboard/config/controller.env
 fi
-chmod 0600 /etc/oboard/controller.env
+chmod 0600 /opt/oboard/config/controller.env
 
 cp "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/oboard-controller.service
 if [ -f "$work/deploy/systemd/oboard-controller-updater.service" ]; then

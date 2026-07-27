@@ -115,7 +115,7 @@ func TestBinaryInstallerUninstallConsumesPipedScript(t *testing.T) {
 	}
 	command := exec.Command("bash")
 	command.Env = controllerTestEnv(
-		"INSTALL_DIR=/usr/local/bin",
+		"INSTALL_DIR="+filepath.Join(t.TempDir(), "oboard"),
 		"OBOARD_ACTION=uninstall",
 		"VERSION=",
 		"PATH="+fakeBin+":"+os.Getenv("PATH"),
@@ -171,26 +171,21 @@ func TestBinaryInstallerUninstallDataPolicy(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			temp := t.TempDir()
 			paths := controllerUninstallTestPaths{
-				install: filepath.Join(temp, "bin"),
-				etc:     filepath.Join(temp, "etc", "oboard"),
-				data:    filepath.Join(temp, "var", "lib", "oboard"),
-				opt:     filepath.Join(temp, "opt", "oboard"),
+				install: filepath.Join(temp, "oboard"),
 				run:     filepath.Join(temp, "run", "oboard"),
-				logs:    filepath.Join(temp, "var", "log"),
 				systemd: filepath.Join(temp, "etc", "systemd", "system"),
 				init:    filepath.Join(temp, "etc", "init.d"),
 			}
 			for _, path := range []string{
 				filepath.Join(paths.install, "oboard-controller"),
 				filepath.Join(paths.install, "oboard-controller-updater"),
-				filepath.Join(paths.etc, "controller.env"),
-				filepath.Join(paths.data, "oboard.sqlite"),
-				filepath.Join(paths.data, "controller-update", "status.json"),
-				filepath.Join(paths.opt, "web", "dist", "index.html"),
-				filepath.Join(paths.opt, "downloads", "release-manifest.json"),
+				filepath.Join(paths.install, "config", "controller.env"),
+				filepath.Join(paths.install, "data", "oboard.sqlite"),
+				filepath.Join(paths.install, "data", "controller-update", "status.json"),
+				filepath.Join(paths.install, "web", "dist", "index.html"),
+				filepath.Join(paths.install, "downloads", "release-manifest.json"),
+				filepath.Join(paths.install, "tools", "acme.sh"),
 				filepath.Join(paths.run, "controller-updater.sock"),
-				filepath.Join(paths.logs, "oboard-controller.log"),
-				filepath.Join(paths.logs, "oboard-controller-updater.log"),
 				filepath.Join(paths.systemd, "oboard-controller.service"),
 				filepath.Join(paths.systemd, "oboard-controller-updater.service"),
 				filepath.Join(paths.init, "oboard-controller"),
@@ -209,23 +204,31 @@ func TestBinaryInstallerUninstallDataPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatalf("uninstall failed: %v\n%s", err, output)
 			}
-			for _, path := range []string{paths.install, paths.opt, paths.run, filepath.Join(paths.data, "controller-update"), paths.systemd, paths.init} {
+			for _, path := range []string{paths.run, paths.systemd, paths.init} {
 				if entries, err := os.ReadDir(path); err == nil && len(entries) != 0 {
 					t.Errorf("runtime path was not cleared: %s", path)
 				}
 			}
-			for _, path := range []string{filepath.Join(paths.logs, "oboard-controller.log"), filepath.Join(paths.logs, "oboard-controller-updater.log")} {
+			for _, path := range []string{
+				filepath.Join(paths.install, "oboard-controller"),
+				filepath.Join(paths.install, "oboard-controller-updater"),
+				filepath.Join(paths.install, "web"),
+				filepath.Join(paths.install, "downloads"),
+				filepath.Join(paths.install, "tools"),
+				filepath.Join(paths.install, "data", "controller-update"),
+			} {
 				if _, err := os.Stat(path); !os.IsNotExist(err) {
 					t.Errorf("runtime file was not removed: %s", path)
 				}
 			}
-			for _, path := range []string{paths.etc, paths.data} {
-				_, err := os.Stat(path)
-				if test.purge && !os.IsNotExist(err) {
-					t.Errorf("purged path still exists: %s", path)
-				}
-				if !test.purge && err != nil {
-					t.Errorf("preserved path is missing: %s: %v", path, err)
+			if _, err := os.Stat(paths.install); test.purge && !os.IsNotExist(err) {
+				t.Errorf("purged installation root still exists: %s", paths.install)
+			}
+			for _, path := range []string{filepath.Join(paths.install, "config", "controller.env"), filepath.Join(paths.install, "data", "oboard.sqlite")} {
+				if !test.purge {
+					if _, err := os.Stat(path); err != nil {
+						t.Errorf("preserved path is missing: %s: %v", path, err)
+					}
 				}
 			}
 		})
@@ -344,11 +347,7 @@ func controllerTestEnv(overrides ...string) []string {
 
 type controllerUninstallTestPaths struct {
 	install string
-	etc     string
-	data    string
-	opt     string
 	run     string
-	logs    string
 	systemd string
 	init    string
 }
@@ -356,11 +355,7 @@ type controllerUninstallTestPaths struct {
 func rewriteControllerUninstallPaths(function string, paths controllerUninstallTestPaths) string {
 	replacements := [][2]string{
 		{"/etc/systemd/system", paths.systemd},
-		{"/var/log", paths.logs},
-		{"/var/lib/oboard", paths.data},
-		{"/etc/oboard", paths.etc},
 		{"/etc/init.d", paths.init},
-		{"/opt/oboard", paths.opt},
 		{"/run/oboard", paths.run},
 	}
 	for _, replacement := range replacements {

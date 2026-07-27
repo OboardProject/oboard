@@ -54,16 +54,17 @@ type Service struct {
 
 func DefaultServiceConfig() ServiceConfig {
 	installDir := defaultInstallDir()
+	dataDir := filepath.Join(installDir, "data")
 	return ServiceConfig{
 		SocketPath:         DefaultSocketPath,
-		BinaryEnvPath:      "/etc/oboard/controller.env",
-		StatePath:          "/var/lib/oboard/controller-update/status.json",
-		RuntimeStatePath:   "/var/lib/oboard/" + RuntimeStateName,
+		BinaryEnvPath:      filepath.Join(installDir, "config/controller.env"),
+		StatePath:          filepath.Join(dataDir, "controller-update/status.json"),
+		RuntimeStatePath:   filepath.Join(dataDir, RuntimeStateName),
 		ControllerBinary:   filepath.Join(installDir, "oboard-controller"),
 		UpdaterBinary:      filepath.Join(installDir, "oboard-controller-updater"),
-		WebRoot:            "/opt/oboard/web/dist",
-		DownloadsRoot:      "/opt/oboard/downloads",
-		WorkRoot:           "/var/lib/oboard/controller-update",
+		WebRoot:            filepath.Join(installDir, "web/dist"),
+		DownloadsRoot:      filepath.Join(installDir, "downloads"),
+		WorkRoot:           filepath.Join(dataDir, "controller-update"),
 		HTTPClient:         &http.Client{Timeout: 2 * time.Minute},
 		HealthClient:       &http.Client{Timeout: 3 * time.Second},
 		HealthTimeout:      90 * time.Second,
@@ -90,7 +91,7 @@ func defaultInstallDir() string {
 	if value, ok := normalizeInstallDir(os.Getenv("OBOARD_INSTALL_DIR")); ok {
 		return value
 	}
-	return "/usr/local/bin"
+	return "/opt/oboard"
 }
 
 func normalizeInstallDir(value string) (string, bool) {
@@ -98,6 +99,15 @@ func normalizeInstallDir(value string) (string, bool) {
 	value = strings.TrimRight(value, "/")
 	if value == "" || value == "." || !filepath.IsAbs(value) || filepath.Clean(value) != value {
 		return "", false
+	}
+	switch value {
+	case "/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", "/proc", "/root", "/run", "/sbin", "/sys", "/tmp", "/usr", "/usr/bin", "/usr/lib", "/usr/lib64", "/usr/sbin", "/usr/local", "/usr/local/bin", "/usr/local/sbin", "/var", "/var/lib", "/opt", "/data", "/srv":
+		return "", false
+	}
+	for _, prefix := range []string{"/bin/", "/boot/", "/dev/", "/etc/", "/home/", "/lib/", "/lib64/", "/proc/", "/root/", "/run/", "/sbin/", "/sys/", "/tmp/", "/usr/bin/", "/usr/lib/", "/usr/lib64/", "/usr/sbin/", "/usr/local/bin/", "/usr/local/sbin/"} {
+		if strings.HasPrefix(value, prefix) {
+			return "", false
+		}
 	}
 	for _, char := range value {
 		if char == '/' || char == '.' || char == '_' || char == '-' ||
@@ -582,7 +592,7 @@ func (s *Service) detectInstallation() (string, string, string) {
 	binaryValues, _ := readEnv(s.config.BinaryEnvPath)
 	channel := strings.ToLower(strings.TrimSpace(binaryValues["OBOARD_UPDATE_CHANNEL"]))
 	if channel == "pinned" {
-		return "pinned", "sed -i 's/^OBOARD_UPDATE_CHANNEL=.*/OBOARD_UPDATE_CHANNEL=stable/' /etc/oboard/controller.env && (systemctl restart oboard-controller-updater || rc-service oboard-controller-updater restart)", ""
+		return "pinned", "sed -i 's/^OBOARD_UPDATE_CHANNEL=.*/OBOARD_UPDATE_CHANNEL=stable/' " + s.config.BinaryEnvPath + " && (systemctl restart oboard-controller-updater || rc-service oboard-controller-updater restart)", ""
 	}
 	if channel != "dev" && channel != "stable" {
 		if version.IsDev() {

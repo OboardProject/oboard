@@ -1,16 +1,16 @@
 #!/sbin/openrc-run
 
 description="OBoard Controller Updater"
-if [ -f /etc/oboard/controller.env ]; then
+if [ -f /opt/oboard/config/controller.env ]; then
 	set -a
-	. /etc/oboard/controller.env
+	. /opt/oboard/config/controller.env
 	set +a
 fi
-command="${OBOARD_INSTALL_DIR:-/usr/local/bin}/oboard-controller-updater"
+command="/opt/oboard/oboard-controller-updater"
 command_background=true
 pidfile="/run/${RC_SVCNAME}.pid"
-output_log="/var/log/${RC_SVCNAME}.log"
-error_log="/var/log/${RC_SVCNAME}.log"
+output_log="/opt/oboard/data/logs/${RC_SVCNAME}.log"
+error_log="/opt/oboard/data/logs/${RC_SVCNAME}.log"
 
 depend() {
 	need net

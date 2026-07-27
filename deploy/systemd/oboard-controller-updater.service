@@ -5,12 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/oboard-controller-updater
+ExecStart=/opt/oboard/oboard-controller-updater
 Restart=on-failure
 RestartSec=5
 User=root
 Group=oboard
-EnvironmentFile=-/etc/oboard/controller.env
+EnvironmentFile=-/opt/oboard/config/controller.env
 UMask=0077
 RuntimeDirectory=oboard
 RuntimeDirectoryMode=0750
@@ -19,7 +19,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=/run/oboard /var/lib/oboard /opt/oboard /usr/local/bin
+ReadWritePaths=/run/oboard /opt/oboard
 LockPersonality=true
 MemoryDenyWriteExecute=true
 

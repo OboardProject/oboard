@@ -52,8 +52,10 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"install_dir_from_input",
 		"请输入安装目录（留空为/opt/oboard）：",
 		"/opt/oboard",
-		"/usr/local/sbin",
 		"OBOARD_INSTALL_DIR",
+		"CONTROLLER_CONFIG_DIR",
+		"CONTROLLER_DATA_DIR",
+		"configure_controller_paths",
 		"resolve_controller_install_dir",
 		"render_service_file",
 		"make_install_tmp",
@@ -77,14 +79,14 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"prepare_controller_updater_runtime",
 		"wait_for_controller_updater",
 		"curl --unix-socket /run/oboard/controller-updater.sock",
-		"/var/lib/oboard/controller-update",
+		`"$CONTROLLER_DATA_DIR/controller-update"`,
 		"uninstall_controller",
 		"OBoard 主控已卸载",
 		"配置和数据已保留",
 		"OBOARD_PURGE_DATA",
 		"resolve_purge_data",
 		"是否同时删除主控的配置和数据",
-		"删除请直接回车，保留请输入 n [Y/n]",
+		"清除请输入 y，保留请直接回车 [y/N]",
 		"当前无法交互确认，已保留",
 		"当前暂无可用的稳定版，将安装最新开发版",
 		"安装包下载失败",
@@ -101,6 +103,11 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 	}
 	if strings.Contains(text, `install_component agent`) || strings.Contains(text, `install_component sb`) {
 		t.Fatal("controller installer still installs Agent artifacts from the controller release")
+	}
+	for _, obsolete := range []string{"/etc/oboard/controller.env", "/var/lib/oboard/oboard.sqlite", "/var/lib/oboard/controller-update", "/opt/oboard/web /opt/oboard/downloads"} {
+		if strings.Contains(text, obsolete) {
+			t.Fatalf("controller installer still contains obsolete split path %q", obsolete)
+		}
 	}
 	for _, shellName := range []string{"bash", "dash"} {
 		if shell, err := exec.LookPath(shellName); err == nil {
@@ -147,45 +154,43 @@ func TestControllerInstallDirectorySelection(t *testing.T) {
 	if err != nil {
 		t.Skip("a POSIX shell is unavailable")
 	}
-	t.Run("restore persisted directory", func(t *testing.T) {
-		envPath := filepath.Join(t.TempDir(), "controller.env")
-		if err := os.WriteFile(envPath, []byte("OBOARD_INSTALL_DIR=/data/oboard/\n"), 0o600); err != nil {
+	configuredFor := func(t *testing.T, root string) string {
+		t.Helper()
+		servicePath := filepath.Join(t.TempDir(), "oboard-controller.service")
+		if err := os.WriteFile(servicePath, []byte("ExecStart="+root+"/oboard-controller\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		configured := strings.ReplaceAll(extractShellFunction(t, script, "configured_controller_install_dir"), "/etc/oboard/controller.env", shellQuote(envPath))
+		configured := strings.ReplaceAll(extractShellFunction(t, script, "configured_controller_install_dir"), "/etc/systemd/system/oboard-controller.service", shellQuote(servicePath))
+		return strings.ReplaceAll(configured, "/etc/init.d/oboard-controller", shellQuote(filepath.Join(t.TempDir(), "missing-openrc")))
+	}
+
+	t.Run("restore directory from service", func(t *testing.T) {
 		harness := strings.Join([]string{
 			extractShellFunction(t, script, "normalize_install_dir"),
 			extractShellFunction(t, script, "install_dir_from_input"),
-			configured,
+			configuredFor(t, "/data/oboard"),
 			extractShellFunction(t, script, "choose_install_dir"),
 			extractShellFunction(t, script, "resolve_controller_install_dir"),
 			"INSTALL_DIR_INPUT=",
 			"INSTALL_DIR=",
-			"INSTALLATION_EXISTS=1",
-			"ACTION=update",
+			"CONTROLLER_DATA_EXISTED=0",
 			"resolve_controller_install_dir",
-			"printf 'resolved=%s\\n' \"$INSTALL_DIR\"",
+			"printf 'resolved=%s env=%s data=%s web=%s downloads=%s acme=%s\\n' \"$INSTALL_DIR\" \"$CONTROLLER_ENV\" \"$CONTROLLER_DATA_DIR\" \"$CONTROLLER_WEB_DIR\" \"$CONTROLLER_DOWNLOADS_DIR\" \"$ACME_SH_INSTALL_PATH\"",
 		}, "\n")
 		output, err := exec.Command(shell, "-c", harness).CombinedOutput()
-		if err != nil || !strings.Contains(string(output), "resolved=/data/oboard") {
-			t.Fatalf("persisted install directory was not restored: %v\n%s", err, output)
+		want := "resolved=/data/oboard env=/data/oboard/config/controller.env data=/data/oboard/data web=/data/oboard/web downloads=/data/oboard/downloads acme=/data/oboard/tools/acme.sh"
+		if err != nil || !strings.Contains(string(output), want) {
+			t.Fatalf("service install directory was not restored: %v\n%s", err, output)
 		}
 	})
 
 	t.Run("reject directory change during update", func(t *testing.T) {
-		envPath := filepath.Join(t.TempDir(), "controller.env")
-		if err := os.WriteFile(envPath, []byte("OBOARD_INSTALL_DIR=/data/oboard\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		configured := strings.ReplaceAll(extractShellFunction(t, script, "configured_controller_install_dir"), "/etc/oboard/controller.env", shellQuote(envPath))
 		harness := strings.Join([]string{
 			extractShellFunction(t, script, "normalize_install_dir"),
-			configured,
+			configuredFor(t, "/data/oboard"),
 			extractShellFunction(t, script, "resolve_controller_install_dir"),
 			"INSTALL_DIR_INPUT=/srv/oboard",
 			"INSTALL_DIR=",
-			"INSTALLATION_EXISTS=1",
-			"ACTION=update",
 			"resolve_controller_install_dir",
 		}, "\n")
 		output, err := exec.Command(shell, "-c", harness).CombinedOutput()
@@ -198,7 +203,7 @@ func TestControllerInstallDirectorySelection(t *testing.T) {
 		root := t.TempDir()
 		source := filepath.Join(root, "source.service")
 		destination := filepath.Join(root, "rendered.service")
-		fixture := "ExecStart=/usr/local/bin/oboard-controller\nReadWritePaths=/var/lib/oboard /usr/local/bin\n"
+		fixture := "ExecStart=/opt/oboard/oboard-controller\nEnvironmentFile=-/opt/oboard/config/controller.env\nReadWritePaths=/run/oboard /opt/oboard\n"
 		if err := os.WriteFile(source, []byte(fixture), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -214,7 +219,7 @@ func TestControllerInstallDirectorySelection(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(rendered), "/usr/local/bin") || !strings.Contains(string(rendered), "ExecStart=/data/oboard/oboard-controller") || !strings.Contains(string(rendered), "ReadWritePaths=/var/lib/oboard /data/oboard") {
+		if strings.Contains(string(rendered), "/opt/oboard") || !strings.Contains(string(rendered), "ExecStart=/data/oboard/oboard-controller") || !strings.Contains(string(rendered), "EnvironmentFile=-/data/oboard/config/controller.env") || !strings.Contains(string(rendered), "ReadWritePaths=/run/oboard /data/oboard") {
 			t.Fatalf("unexpected rendered service:\n%s", rendered)
 		}
 		assertPathMode(t, destination, 0o644)
@@ -232,16 +237,46 @@ func TestControllerUpdaterUnitBinaryWritePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(content)
-	if !strings.Contains(text, "EnvironmentFile=-/etc/oboard/controller.env") {
+	if !strings.Contains(text, "EnvironmentFile=-/opt/oboard/config/controller.env") {
 		t.Fatal("updater unit does not load the persisted install directory")
 	}
-	want := "ReadWritePaths=/run/oboard /var/lib/oboard /opt/oboard /usr/local/bin"
+	want := "ReadWritePaths=/run/oboard /opt/oboard"
 	if !strings.Contains(text, want) {
 		t.Fatalf("updater unit missing binary installation write paths %q", want)
 	}
-	for _, removed := range []string{"docker", "-/var/lib/oboard", "-/opt/oboard", "/etc/systemd/system"} {
+	for _, removed := range []string{"docker", "/var/lib/oboard", "/etc/oboard", "/usr/local/bin", "/etc/systemd/system"} {
 		if strings.Contains(strings.ToLower(text), removed) {
 			t.Fatalf("updater unit still contains removed path or dependency %q", removed)
+		}
+	}
+}
+
+func TestControllerDeploymentFilesUseSingleInstallRoot(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to locate test file")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	files := []string{
+		"deploy/systemd/oboard-controller.service",
+		"deploy/systemd/oboard-controller-updater.service",
+		"deploy/openrc/oboard-controller",
+		"deploy/openrc/oboard-controller-updater",
+		"deploy/controller.env.example",
+	}
+	for _, name := range files {
+		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(content)
+		for _, obsolete := range []string{"/etc/oboard", "/var/lib/oboard", "/usr/local/bin/oboard-controller", "/var/log/oboard-controller"} {
+			if strings.Contains(text, obsolete) {
+				t.Errorf("%s contains obsolete split path %q", name, obsolete)
+			}
+		}
+		if !strings.Contains(text, "/opt/oboard") {
+			t.Errorf("%s does not use the default installation root", name)
 		}
 	}
 }
@@ -267,15 +302,15 @@ func TestControllerUpdaterRuntimePreparationPreservesDataRoot(t *testing.T) {
 				t.Fatal(err)
 			}
 			original := extractShellFunction(t, string(content), "prepare_controller_updater_runtime")
-			rewrite := func(dataRoot, runtimeRoot string) string {
-				function := strings.ReplaceAll(original, "/var/lib/oboard", shellQuote(dataRoot))
-				function = strings.ReplaceAll(function, "/run/oboard", shellQuote(runtimeRoot))
+			rewrite := func(runtimeRoot string) string {
+				function := strings.ReplaceAll(original, "/run/oboard", shellQuote(runtimeRoot))
 				function = strings.ReplaceAll(function, "-o root -g oboard ", "")
-				return strings.ReplaceAll(function, "-o root -g root ", "")
+				function = strings.ReplaceAll(function, "-o root -g root ", "")
+				return strings.ReplaceAll(function, "-o oboard -g oboard ", "")
 			}
-			run := func(t *testing.T, function string) error {
+			run := func(t *testing.T, function, dataRoot string) error {
 				t.Helper()
-				cmd := exec.Command(bash, "-c", function+"\nprepare_controller_updater_runtime")
+				cmd := exec.Command(bash, "-c", function+"\nCONTROLLER_DATA_DIR="+shellQuote(dataRoot)+"\nprepare_controller_updater_runtime")
 				output, err := cmd.CombinedOutput()
 				if err != nil {
 					t.Logf("runtime preparation output:\n%s", output)
@@ -293,7 +328,7 @@ func TestControllerUpdaterRuntimePreparationPreservesDataRoot(t *testing.T) {
 				if err := os.Chmod(dataRoot, 0o711); err != nil {
 					t.Fatal(err)
 				}
-				if err := run(t, rewrite(dataRoot, runtimeRoot)); err != nil {
+				if err := run(t, rewrite(runtimeRoot), dataRoot); err != nil {
 					t.Fatal(err)
 				}
 				assertPathMode(t, dataRoot, 0o711)
@@ -305,7 +340,7 @@ func TestControllerUpdaterRuntimePreparationPreservesDataRoot(t *testing.T) {
 				temp := t.TempDir()
 				dataRoot := filepath.Join(temp, "data")
 				runtimeRoot := filepath.Join(temp, "run")
-				if err := run(t, rewrite(dataRoot, runtimeRoot)); err != nil {
+				if err := run(t, rewrite(runtimeRoot), dataRoot); err != nil {
 					t.Fatal(err)
 				}
 				assertPathMode(t, dataRoot, 0o750)
@@ -322,7 +357,7 @@ func TestControllerUpdaterRuntimePreparationPreservesDataRoot(t *testing.T) {
 				if err := os.Symlink(target, dataRoot); err != nil {
 					t.Skipf("cannot create symlink: %v", err)
 				}
-				if err := run(t, rewrite(dataRoot, filepath.Join(temp, "run"))); err == nil {
+				if err := run(t, rewrite(filepath.Join(temp, "run")), dataRoot); err == nil {
 					t.Fatal("runtime preparation accepted a symlink data root")
 				}
 			})
@@ -376,6 +411,7 @@ func assertACMEInstallerBehavior(t *testing.T, script string) {
 
 func assertACMEInstallerBehaviorWithShell(t *testing.T, script, shell string) {
 	t.Helper()
+	coLocated := strings.Contains(script, "CONTROLLER_CONFIG_DIR=")
 	hashToolName := ""
 	hashToolPath := ""
 	for _, candidate := range []string{"sha256sum", "shasum"} {
@@ -525,7 +561,11 @@ func assertACMEInstallerBehaviorWithShell(t *testing.T, script, shell string) {
 		if mode := info.Mode().Perm(); mode != 0o755 {
 			t.Fatalf("installed acme.sh mode = %04o, want 0755", mode)
 		}
-		if result.packageLog != "openssl socat\nacme.sh\n" {
+		wantPackages := "openssl socat\nacme.sh\n"
+		if coLocated {
+			wantPackages = "openssl socat\n"
+		}
+		if result.packageLog != wantPackages {
 			t.Fatalf("package attempts = %q", result.packageLog)
 		}
 		if leftovers, err := filepath.Glob(filepath.Join(result.root, "oboard-acme.*")); err != nil || len(leftovers) != 0 {
@@ -554,29 +594,32 @@ func assertACMEInstallerBehaviorWithShell(t *testing.T, script, shell string) {
 		if result.err != nil {
 			t.Fatalf("existing acme.sh was rejected: %v\n%s", result.err, result.output)
 		}
-		if strings.Contains(result.packageLog, "acme.sh") {
-			t.Fatalf("existing acme.sh triggered a package attempt: %q", result.packageLog)
+		_, err := os.Stat(result.target)
+		if coLocated && err != nil {
+			t.Fatalf("co-located acme.sh was not installed: %v", err)
 		}
-		if _, err := os.Stat(result.target); !os.IsNotExist(err) {
+		if !coLocated && !os.IsNotExist(err) {
 			t.Fatalf("existing acme.sh was replaced by fallback target: %v", err)
 		}
 	})
 
-	t.Run("distribution package", func(t *testing.T) {
-		result := run(t, fixtureHash, false, true, "")
-		if result.err != nil {
-			t.Fatalf("distribution package was rejected: %v\n%s", result.err, result.output)
-		}
-		if result.packageLog != "openssl socat\nacme.sh\n" {
-			t.Fatalf("package attempts = %q", result.packageLog)
-		}
-		if _, err := os.Stat(filepath.Join(result.root, "curl.log")); !os.IsNotExist(err) {
-			t.Fatalf("distribution package triggered fallback download: %v", err)
-		}
-		if _, err := os.Stat(result.target); !os.IsNotExist(err) {
-			t.Fatalf("distribution package triggered fallback install: %v", err)
-		}
-	})
+	if !coLocated {
+		t.Run("distribution package", func(t *testing.T) {
+			result := run(t, fixtureHash, false, true, "")
+			if result.err != nil {
+				t.Fatalf("distribution package was rejected: %v\n%s", result.err, result.output)
+			}
+			if result.packageLog != "openssl socat\nacme.sh\n" {
+				t.Fatalf("package attempts = %q", result.packageLog)
+			}
+			if _, err := os.Stat(filepath.Join(result.root, "curl.log")); !os.IsNotExist(err) {
+				t.Fatalf("distribution package triggered fallback download: %v", err)
+			}
+			if _, err := os.Stat(result.target); !os.IsNotExist(err) {
+				t.Fatalf("distribution package triggered fallback install: %v", err)
+			}
+		})
+	}
 
 	for _, failure := range []struct {
 		name    string
@@ -666,6 +709,7 @@ func assertPackageManagerDispatch(t *testing.T, script string) {
 
 func assertInstallDirectoryInputs(t *testing.T, script string) {
 	t.Helper()
+	singleRoot := strings.Contains(script, "CONTROLLER_CONFIG_DIR=")
 	shell, err := exec.LookPath("dash")
 	if err != nil {
 		shell, err = exec.LookPath("sh")
@@ -677,18 +721,20 @@ func assertInstallDirectoryInputs(t *testing.T, script string) {
 		extractShellFunction(t, script, "normalize_install_dir"),
 		extractShellFunction(t, script, "install_dir_from_input"),
 	}, "\n")
-	for _, test := range []struct {
-		name  string
-		input string
-		want  string
-	}{
+	valid := []struct{ name, input, want string }{
 		{name: "default", input: "", want: "/opt/oboard"},
-		{name: "local bin", input: "/usr/local/bin", want: "/usr/local/bin"},
 		{name: "opt", input: "/opt/oboard", want: "/opt/oboard"},
-		{name: "local sbin", input: "/usr/local/sbin", want: "/usr/local/sbin"},
+		{name: "local", input: "/usr/local/oboard", want: "/usr/local/oboard"},
 		{name: "custom", input: "/data/oboard", want: "/data/oboard"},
 		{name: "trim trailing slash", input: "/data/oboard/", want: "/data/oboard"},
-	} {
+	}
+	if !singleRoot {
+		valid = append(valid,
+			struct{ name, input, want string }{name: "local bin", input: "/usr/local/bin", want: "/usr/local/bin"},
+			struct{ name, input, want string }{name: "local sbin", input: "/usr/local/sbin", want: "/usr/local/sbin"},
+		)
+	}
+	for _, test := range valid {
 		t.Run(test.name, func(t *testing.T) {
 			output, err := exec.Command(shell, "-c", source+"\ninstall_dir_from_input "+shellQuote(test.input)).CombinedOutput()
 			if err != nil || strings.TrimSpace(string(output)) != test.want {
@@ -696,7 +742,11 @@ func assertInstallDirectoryInputs(t *testing.T, script string) {
 			}
 		})
 	}
-	for _, input := range []string{"data/oboard", "/", "/data//oboard", "/data/../etc", "/data/oboard path", "/data/oboard;rm"} {
+	invalid := []string{"data/oboard", "/", "/data//oboard", "/data/../etc", "/data/oboard path", "/data/oboard;rm"}
+	if singleRoot {
+		invalid = append(invalid, "/usr/local/bin", "/usr/local/sbin", "/usr/local/bin/oboard", "/var/lib", "/opt", "/data", "/home/user/oboard", "/proc/oboard")
+	}
+	for _, input := range invalid {
 		output, err := exec.Command(shell, "-c", source+"\ninstall_dir_from_input "+shellQuote(input)).CombinedOutput()
 		if err == nil {
 			t.Fatalf("invalid install directory %q was accepted: %s", input, output)

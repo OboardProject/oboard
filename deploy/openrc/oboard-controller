@@ -1,18 +1,18 @@
 #!/sbin/openrc-run
 
 description="OBoard Controller"
-if [ -f /etc/oboard/controller.env ]; then
+if [ -f /opt/oboard/config/controller.env ]; then
 	set -a
-	. /etc/oboard/controller.env
+	. /opt/oboard/config/controller.env
 	set +a
 fi
-command="${OBOARD_INSTALL_DIR:-/usr/local/bin}/oboard-controller"
+command="/opt/oboard/oboard-controller"
 command_user="oboard:oboard"
 pidfile="/run/${RC_SVCNAME}.pid"
 supervisor="supervise-daemon"
 respawn_delay=5
-output_log="/var/log/${RC_SVCNAME}.log"
-error_log="/var/log/${RC_SVCNAME}.log"
+output_log="/opt/oboard/data/logs/${RC_SVCNAME}.log"
+error_log="/opt/oboard/data/logs/${RC_SVCNAME}.log"
 
 depend() {
 	need net oboard-controller-updater
@@ -20,16 +20,16 @@ depend() {
 }
 
 start_pre() {
-	checkpath -d -m 0750 -o oboard:oboard /var/lib/oboard /opt/oboard/web /opt/oboard/downloads /etc/oboard
-	if [ -f /etc/oboard/controller.env ]; then
+	checkpath -d -m 0750 -o oboard:oboard /opt/oboard/data /opt/oboard/data/logs /opt/oboard/web /opt/oboard/downloads
+	if [ -f /opt/oboard/config/controller.env ]; then
 		set -a
-		. /etc/oboard/controller.env
+		. /opt/oboard/config/controller.env
 		set +a
 	fi
 	: ${OBOARD_ADDR:=:2787}
 	: ${OBOARD_BASE_PATH:=}
-	: ${OBOARD_DB:=/var/lib/oboard/oboard.sqlite}
-	: ${OBOARD_LOG_FILE:=/var/lib/oboard/logs/controller.log}
+	: ${OBOARD_DB:=/opt/oboard/data/oboard.sqlite}
+	: ${OBOARD_LOG_FILE:=/opt/oboard/data/logs/controller.log}
 	: ${OBOARD_LOG_MAX_MB:=32}
 	: ${OBOARD_LOG_BACKUPS:=5}
 	: ${OBOARD_STATIC:=/opt/oboard/web/dist}

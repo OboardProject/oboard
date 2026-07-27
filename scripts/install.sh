@@ -14,6 +14,11 @@ INSTALL_CHANNEL=stable
 COMPONENT=${COMPONENT:-${1:-controller}}
 INSTALL_DIR_INPUT=${INSTALL_DIR:-${OBOARD_INSTALL_DIR:-}}
 INSTALL_DIR=
+CONTROLLER_CONFIG_DIR=
+CONTROLLER_ENV=
+CONTROLLER_DATA_DIR=
+CONTROLLER_WEB_DIR=
+CONTROLLER_DOWNLOADS_DIR=
 ACTION_INPUT=${OBOARD_ACTION:-}
 ACTION=install
 INSTALLATION_EXISTS=0
@@ -29,8 +34,7 @@ BOOTSTRAP_ADMIN_PASSWORD_PERSISTED=0
 ACME_SH_VERSION=3.1.4
 ACME_SH_SHA256=fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32
 ACME_SH_URL="https://raw.githubusercontent.com/acmesh-official/acme.sh/$ACME_SH_VERSION/acme.sh"
-ACME_SH_INSTALL_PATH=/usr/local/bin/acme.sh
-[ -s /var/lib/oboard/oboard.sqlite ] && CONTROLLER_DATA_EXISTED=1
+ACME_SH_INSTALL_PATH=
 
 make_install_tmp() {
   local base candidate available_kb
@@ -54,17 +58,11 @@ make_install_tmp() {
 }
 
 binary_installation_exists() {
-  local candidate
-  if [ -f /etc/oboard/controller.env ] ||
-    [ -s /var/lib/oboard/oboard.sqlite ] ||
-    [ -f /etc/systemd/system/oboard-controller.service ] ||
-    [ -f /etc/init.d/oboard-controller ]; then
+  if [ -x "$INSTALL_DIR/oboard-controller" ] ||
+    [ -f "$CONTROLLER_ENV" ] ||
+    [ -s "$CONTROLLER_DATA_DIR/oboard.sqlite" ]; then
     return 0
   fi
-  for candidate in "$INSTALL_DIR_INPUT" /usr/local/bin /opt/oboard /usr/local/sbin; do
-    [ -n "$candidate" ] || continue
-    [ ! -x "$candidate/oboard-controller" ] || return 0
-  done
   return 1
 }
 
@@ -98,6 +96,10 @@ normalize_install_dir() {
   case "$value" in
     /|*//*|*[!A-Za-z0-9_./-]*) return 1 ;;
   esac
+  case "$value" in
+    /bin|/boot|/dev|/etc|/home|/lib|/lib64|/proc|/root|/run|/sbin|/sys|/tmp|/usr|/usr/bin|/usr/lib|/usr/lib64|/usr/sbin|/usr/local|/usr/local/bin|/usr/local/sbin|/var|/var/lib|/opt|/data|/srv) return 1 ;;
+    /bin/*|/boot/*|/dev/*|/etc/*|/home/*|/lib/*|/lib64/*|/proc/*|/root/*|/run/*|/sbin/*|/sys/*|/tmp/*|/usr/bin/*|/usr/lib/*|/usr/lib64/*|/usr/sbin/*|/usr/local/bin/*|/usr/local/sbin/*) return 1 ;;
+  esac
   case "$value/" in
     */./*|*/../*) return 1 ;;
   esac
@@ -109,8 +111,13 @@ install_dir_from_input() {
 }
 
 configured_controller_install_dir() {
-  [ -f /etc/oboard/controller.env ] || return 0
-  sed -n 's/^OBOARD_INSTALL_DIR=//p' /etc/oboard/controller.env 2>/dev/null | tail -n1 | tr -d "'\""
+  local value=
+  if [ -f /etc/systemd/system/oboard-controller.service ]; then
+    value=$(sed -n 's#^ExecStart=\(.*\)/oboard-controller$#\1#p' /etc/systemd/system/oboard-controller.service 2>/dev/null | tail -n1)
+  elif [ -f /etc/init.d/oboard-controller ]; then
+    value=$(sed -n 's#^command="\(.*\)/oboard-controller"$#\1#p' /etc/init.d/oboard-controller 2>/dev/null | tail -n1)
+  fi
+  printf '%s\n' "$value"
 }
 
 choose_install_dir() {
@@ -131,7 +138,7 @@ choose_install_dir() {
 }
 
 resolve_controller_install_dir() {
-  local persisted candidate existing_dir normalized raw_persisted
+  local persisted existing_dir normalized raw_persisted
   persisted=$(configured_controller_install_dir)
   if [ -n "$persisted" ]; then
     raw_persisted=$persisted
@@ -142,21 +149,13 @@ resolve_controller_install_dir() {
     persisted=$normalized
   fi
   existing_dir=$persisted
-  if [ -z "$existing_dir" ]; then
-    for candidate in /usr/local/bin /opt/oboard /usr/local/sbin; do
-      if [ -x "$candidate/oboard-controller" ]; then
-        existing_dir=$candidate
-        break
-      fi
-    done
-  fi
   if [ -n "$INSTALL_DIR_INPUT" ]; then
     if ! normalized=$(normalize_install_dir "$INSTALL_DIR_INPUT"); then
       echo "INSTALL_DIR/OBOARD_INSTALL_DIR 必须是规范的绝对路径。" >&2
       exit 1
     fi
     INSTALL_DIR_INPUT=$normalized
-    if [ -n "$existing_dir" ] && [ "$INSTALL_DIR_INPUT" != "$existing_dir" ] && [ "$INSTALLATION_EXISTS" = 1 ]; then
+    if [ -n "$existing_dir" ] && [ "$INSTALL_DIR_INPUT" != "$existing_dir" ]; then
       echo "已安装主控使用 $existing_dir；更新或卸载时不能改为 $INSTALL_DIR_INPUT。" >&2
       exit 1
     fi
@@ -164,19 +163,21 @@ resolve_controller_install_dir() {
   elif [ -n "$existing_dir" ]; then
     INSTALL_DIR=$existing_dir
   else
-    if [ -z "$INSTALL_DIR" ]; then
-      if [ "$ACTION" = install ]; then
-        INSTALL_DIR=$(choose_install_dir) || {
-          echo "安装目录无效。" >&2
-          exit 1
-        }
-      else
-        INSTALL_DIR=/usr/local/bin
-      fi
-    fi
+    INSTALL_DIR=$(choose_install_dir) || {
+      echo "安装目录无效。" >&2
+      exit 1
+    }
   fi
   export INSTALL_DIR
-  echo "程序安装目录：$INSTALL_DIR"
+  CONTROLLER_CONFIG_DIR=$INSTALL_DIR/config
+  CONTROLLER_ENV=$CONTROLLER_CONFIG_DIR/controller.env
+  CONTROLLER_DATA_DIR=$INSTALL_DIR/data
+  CONTROLLER_WEB_DIR=$INSTALL_DIR/web
+  CONTROLLER_DOWNLOADS_DIR=$INSTALL_DIR/downloads
+  ACME_SH_INSTALL_PATH=$INSTALL_DIR/tools/acme.sh
+  export CONTROLLER_CONFIG_DIR CONTROLLER_ENV CONTROLLER_DATA_DIR CONTROLLER_WEB_DIR CONTROLLER_DOWNLOADS_DIR ACME_SH_INSTALL_PATH
+  [ -s "$CONTROLLER_DATA_DIR/oboard.sqlite" ] && CONTROLLER_DATA_EXISTED=1
+  echo "OBoard 安装根目录：$INSTALL_DIR"
 }
 
 cleanup() { [ -z "$TMP_DIR" ] || rm -rf "$TMP_DIR"; }
@@ -302,7 +303,7 @@ install_pinned_acme_sh() {
 }
 
 ensure_acme_sh() {
-  local packages=
+  local packages= actual
   command -v openssl >/dev/null 2>&1 || packages="$packages openssl"
   command -v socat >/dev/null 2>&1 || packages="$packages socat"
   if [ -n "$packages" ]; then
@@ -318,15 +319,13 @@ ensure_acme_sh() {
     exit 1
   fi
 
-  if command -v acme.sh >/dev/null 2>&1; then
-    return 0
+  if [ -x "$ACME_SH_INSTALL_PATH" ]; then
+    actual=$(sha256_file "$ACME_SH_INSTALL_PATH" || true)
+    if [ "$actual" = "$ACME_SH_SHA256" ]; then
+      return 0
+    fi
   fi
-  echo "正在通过系统软件包安装 acme.sh..."
-  if pkg_install acme.sh && command -v acme.sh >/dev/null 2>&1; then
-    return 0
-  fi
-
-  echo "系统仓库未提供 acme.sh，正在安装经过校验的固定版本 $ACME_SH_VERSION..."
+  echo "正在安装经过校验的 acme.sh $ACME_SH_VERSION..."
   if ! install_pinned_acme_sh || [ ! -x "$ACME_SH_INSTALL_PATH" ]; then
     echo "acme.sh 安装失败。" >&2
     exit 1
@@ -389,7 +388,7 @@ generate_secret() {
 
 controller_env_value() {
   local key=$1 value
-  value=$(sed -n "s/^${key}=//p" /etc/oboard/controller.env 2>/dev/null | tail -n1)
+  value=$(sed -n "s/^${key}=//p" "$CONTROLLER_ENV" 2>/dev/null | tail -n1)
   value=${value#\"}
   value=${value%\"}
   value=${value#\'}
@@ -398,10 +397,10 @@ controller_env_value() {
 }
 
 set_controller_env_value() {
-  local key=$1 value=$2 env_file=/etc/oboard/controller.env tmp escaped
+  local key=$1 value=$2 env_file=$CONTROLLER_ENV tmp escaped
   # systemd EnvironmentFile understands unquoted or double-quoted values; avoid single quotes.
   escaped=$(printf '%s' "$value" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
-  tmp=$(mktemp /etc/oboard/controller.env.XXXXXX)
+  tmp=$(mktemp "$CONTROLLER_CONFIG_DIR/controller.env.XXXXXX")
   sed "/^${key}=/d" "$env_file" > "$tmp"
   printf '%s="%s"\n' "$key" "$escaped" >> "$tmp"
   chmod 0600 "$tmp"
@@ -409,9 +408,9 @@ set_controller_env_value() {
 }
 
 unset_controller_env_value() {
-  local key=$1 env_file=/etc/oboard/controller.env tmp
+  local key=$1 env_file=$CONTROLLER_ENV tmp
   [ -f "$env_file" ] || return 0
-  tmp=$(mktemp /etc/oboard/controller.env.XXXXXX)
+  tmp=$(mktemp "$CONTROLLER_CONFIG_DIR/controller.env.XXXXXX")
   sed "/^${key}=/d" "$env_file" > "$tmp"
   chmod 0600 "$tmp"
   mv "$tmp" "$env_file"
@@ -503,7 +502,7 @@ clear_bootstrap_admin_password() {
     return 0
   fi
   if ! wait_for_controller_ready; then
-    echo "主控尚未就绪，已保留 /etc/oboard/controller.env 中的 OBOARD_ADMIN_PASSWORD。" >&2
+    echo "主控尚未就绪，已保留 $CONTROLLER_ENV 中的 OBOARD_ADMIN_PASSWORD。" >&2
     echo "确认主控启动正常后，可手动删除该行。" >&2
     return 0
   fi
@@ -512,7 +511,7 @@ clear_bootstrap_admin_password() {
 }
 
 prepare_controller_env() {
-  local env_file=/etc/oboard/controller.env
+  local env_file=$CONTROLLER_ENV
   if [ ! -f "$env_file" ]; then
     return 0
   fi
@@ -541,6 +540,17 @@ prepare_controller_env() {
     fi
     chmod 0600 "$env_file"
   fi
+}
+
+configure_controller_paths() {
+  set_controller_env_value OBOARD_INSTALL_DIR "$INSTALL_DIR"
+  set_controller_env_value OBOARD_DB "$CONTROLLER_DATA_DIR/oboard.sqlite"
+  set_controller_env_value OBOARD_STATIC "$CONTROLLER_WEB_DIR/dist"
+  set_controller_env_value OBOARD_DOWNLOADS "$CONTROLLER_DOWNLOADS_DIR"
+  set_controller_env_value OBOARD_BACKUP_DIR "$CONTROLLER_DATA_DIR/backups"
+  set_controller_env_value OBOARD_LOG_FILE "$CONTROLLER_DATA_DIR/logs/controller.log"
+  set_controller_env_value OBOARD_ACME_SH "$ACME_SH_INSTALL_PATH"
+  set_controller_env_value OBOARD_ACME_HOME "$CONTROLLER_DATA_DIR/acme"
 }
 
 valid_ipv4() {
@@ -633,7 +643,7 @@ detect_public_ip() {
 controller_base_path() {
   local base_path=${OBOARD_BASE_PATH:-}
   if [ -z "$base_path" ]; then
-    base_path=$( (sed -n 's/^OBOARD_BASE_PATH=//p' /etc/oboard/controller.env 2>/dev/null || true) | tail -n1)
+    base_path=$( (sed -n 's/^OBOARD_BASE_PATH=//p' "$CONTROLLER_ENV" 2>/dev/null || true) | tail -n1)
   fi
   base_path=${base_path%/}
   [ "$base_path" = / ] && base_path=
@@ -643,7 +653,7 @@ controller_base_path() {
 controller_port() {
   local addr=${OBOARD_ADDR:-} port
   if [ -z "$addr" ]; then
-    addr=$( (sed -n 's/^OBOARD_ADDR=//p' /etc/oboard/controller.env 2>/dev/null || true) | tail -n1)
+    addr=$( (sed -n 's/^OBOARD_ADDR=//p' "$CONTROLLER_ENV" 2>/dev/null || true) | tail -n1)
   fi
   port=${addr##*:}
   case "$port" in *[!0-9]*|"") port=2787 ;; esac
@@ -696,6 +706,7 @@ print_controller_help() {
   echo "========================================"
   echo "OBoard 主控安装 / 更新完成"
   echo "========================================"
+  echo "安装根目录：$INSTALL_DIR"
   echo "面板地址："
   print_controller_urls
   echo ""
@@ -877,18 +888,18 @@ wait_for_controller_updater() {
 
 prepare_controller_updater_runtime() {
   install -d -m 0750 -o root -g oboard /run/oboard
-  if [ -L /var/lib/oboard ]; then
-    echo "拒绝使用符号链接形式的更新器状态目录：/var/lib/oboard" >&2
+  if [ -L "$CONTROLLER_DATA_DIR" ]; then
+    echo "拒绝使用符号链接形式的数据目录：$CONTROLLER_DATA_DIR" >&2
     return 1
   fi
-  if [ -e /var/lib/oboard ] && [ ! -d /var/lib/oboard ]; then
-    echo "更新器状态路径不是目录：/var/lib/oboard" >&2
+  if [ -e "$CONTROLLER_DATA_DIR" ] && [ ! -d "$CONTROLLER_DATA_DIR" ]; then
+    echo "主控数据路径不是目录：$CONTROLLER_DATA_DIR" >&2
     return 1
   fi
-  if [ ! -d /var/lib/oboard ]; then
-    install -d -m 0750 -o root -g root /var/lib/oboard
+  if [ ! -d "$CONTROLLER_DATA_DIR" ]; then
+    install -d -m 0750 -o oboard -g oboard "$CONTROLLER_DATA_DIR"
   fi
-  install -d -m 0700 -o root -g root /var/lib/oboard/controller-update
+  install -d -m 0700 -o root -g root "$CONTROLLER_DATA_DIR/controller-update"
 }
 
 wait_for_controller_ready() {
@@ -922,7 +933,7 @@ start_controller_openrc() {
 }
 
 resolve_purge_data() {
-  local requested=${OBOARD_PURGE_DATA:-} answer
+  local requested=${OBOARD_PURGE_DATA:-} answer root=${INSTALL_DIR:-/opt/oboard}
   case "$requested" in
     0|1)
       printf '%s\n' "$requested"
@@ -935,15 +946,15 @@ resolve_purge_data() {
       ;;
   esac
   if ! { : < /dev/tty; } 2>/dev/null; then
-    echo "当前无法交互确认，已保留 /etc/oboard 和 /var/lib/oboard 中的配置和数据。" >&2
+    echo "当前无法交互确认，已保留 $root/config 和 $root/data 中的配置和数据。" >&2
     echo "如需一并删除，请在卸载命令中添加 OBOARD_PURGE_DATA=1。" >&2
     printf '0\n'
     return 0
   fi
   while true; do
     printf '\n是否同时删除主控的配置和数据？\n' > /dev/tty
-    printf '将删除 /etc/oboard 和 /var/lib/oboard，包含数据库、证书和备份，删除后无法恢复。\n' > /dev/tty
-    printf '删除请直接回车，保留请输入 n [Y/n]：' > /dev/tty
+    printf '将删除整个安装根目录 %s，包含数据库、证书和备份，删除后无法恢复。\n' "$root" > /dev/tty
+    printf '清除请输入 y，保留请直接回车 [y/N]：' > /dev/tty
     if ! IFS= read -r answer < /dev/tty; then
       printf '\n' > /dev/tty
       echo "未读取到确认输入，已保留配置和数据。" >&2
@@ -951,11 +962,11 @@ resolve_purge_data() {
       return 0
     fi
     case "$answer" in
-      ""|y|Y|yes|Yes|YES)
+      y|Y|yes|Yes|YES)
         printf '1\n'
         return 0
         ;;
-      n|N|no|No|NO)
+      ""|n|N|no|No|NO)
         printf '0\n'
         return 0
         ;;
@@ -1000,16 +1011,11 @@ uninstall_controller() {
     "$INSTALL_DIR/oboard-controller.update-new" \
     "$INSTALL_DIR/oboard-controller-updater.update-backup" \
     "$INSTALL_DIR/oboard-controller-updater.update-new"
-  case "$INSTALL_DIR" in
-    /usr/local/bin|/usr/local/sbin|/opt/oboard) ;;
-    *) rmdir "$INSTALL_DIR" 2>/dev/null || true ;;
-  esac
-  rm -rf /opt/oboard/web /opt/oboard/downloads /run/oboard /var/lib/oboard/controller-update
-  rmdir /opt/oboard 2>/dev/null || true
-  rm -f /var/log/oboard-controller.log /var/log/oboard-controller-updater.log
+  rm -rf "$INSTALL_DIR/web" "$INSTALL_DIR/downloads" "$INSTALL_DIR/tools" \
+    "$INSTALL_DIR/data/controller-update" /run/oboard
 
   if [ "$purge" = 1 ]; then
-    rm -rf /etc/oboard /var/lib/oboard
+    rm -rf "$INSTALL_DIR"
     if command -v userdel >/dev/null 2>&1; then
       userdel oboard >/dev/null 2>&1 || true
     elif command -v deluser >/dev/null 2>&1; then
@@ -1023,7 +1029,7 @@ uninstall_controller() {
     echo "OBoard 主控已卸载，配置和数据已删除。"
   else
     echo "OBoard 主控已卸载。"
-    echo "配置和数据已保留在 /etc/oboard 和 /var/lib/oboard。"
+    echo "配置和数据已保留在 $INSTALL_DIR/config 和 $INSTALL_DIR/data。"
     echo "再次安装时会自动使用原有账号和数据。"
     echo "如需彻底删除，请重新执行卸载命令并添加 OBOARD_PURGE_DATA=1。"
   fi
@@ -1037,7 +1043,7 @@ install_file_atomic() {
 
 render_service_file() {
   local source=$1 destination=$2 mode=${3:-0644}
-  sed "s#/usr/local/bin#$INSTALL_DIR#g" "$source" > "$destination.new"
+  sed "s#/opt/oboard#$INSTALL_DIR#g" "$source" > "$destination.new"
   chmod "$mode" "$destination.new"
   mv -f "$destination.new" "$destination"
 }
@@ -1096,19 +1102,20 @@ install_component() {
   if [ "$os" = linux ] && [ "$service_manager" = systemd ] && [ -d "$work/deploy/systemd" ]; then
     case "$component" in
       controller)
-        create_system_user oboard /var/lib/oboard
-        install -d -m 0750 -o oboard -g oboard /var/lib/oboard /var/lib/oboard/backups /opt/oboard/web /opt/oboard/downloads /etc/oboard
-        replace_tree_atomic "$work/web/dist" /opt/oboard/web/dist oboard:oboard
+        create_system_user oboard "$CONTROLLER_DATA_DIR"
+        install -d -m 0750 -o root -g root "$CONTROLLER_CONFIG_DIR"
+        install -d -m 0750 -o oboard -g oboard "$CONTROLLER_DATA_DIR" "$CONTROLLER_DATA_DIR/backups" "$CONTROLLER_DATA_DIR/logs" "$CONTROLLER_DATA_DIR/acme" "$CONTROLLER_WEB_DIR" "$CONTROLLER_DOWNLOADS_DIR"
+        replace_tree_atomic "$work/web/dist" "$CONTROLLER_WEB_DIR/dist" oboard:oboard
         if [ -d "$work/downloads" ]; then
-          replace_tree_atomic "$work/downloads" /opt/oboard/downloads oboard:oboard
+          replace_tree_atomic "$work/downloads" "$CONTROLLER_DOWNLOADS_DIR" oboard:oboard
         fi
-        if [ ! -f /etc/oboard/controller.env ]; then
-          cp "$work/deploy/controller.env.example" /etc/oboard/controller.env
-          chmod 0600 /etc/oboard/controller.env
+        if [ ! -f "$CONTROLLER_ENV" ]; then
+          cp "$work/deploy/controller.env.example" "$CONTROLLER_ENV"
+          chmod 0600 "$CONTROLLER_ENV"
         fi
         prepare_controller_env
+        configure_controller_paths
         set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"
-        set_controller_env_value OBOARD_INSTALL_DIR "$INSTALL_DIR"
         configure_bootstrap_admin
         render_service_file "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/oboard-controller.service
         render_service_file "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/oboard-controller-updater.service
@@ -1136,19 +1143,20 @@ install_component() {
   elif [ "$os" = linux ] && [ "$service_manager" = openrc ] && [ -d "$work/deploy/openrc" ]; then
     case "$component" in
       controller)
-        create_system_user oboard /var/lib/oboard
-        install -d -m 0750 -o oboard -g oboard /var/lib/oboard /var/lib/oboard/backups /opt/oboard/web /opt/oboard/downloads /etc/oboard
-        replace_tree_atomic "$work/web/dist" /opt/oboard/web/dist oboard:oboard
+        create_system_user oboard "$CONTROLLER_DATA_DIR"
+        install -d -m 0750 -o root -g root "$CONTROLLER_CONFIG_DIR"
+        install -d -m 0750 -o oboard -g oboard "$CONTROLLER_DATA_DIR" "$CONTROLLER_DATA_DIR/backups" "$CONTROLLER_DATA_DIR/logs" "$CONTROLLER_DATA_DIR/acme" "$CONTROLLER_WEB_DIR" "$CONTROLLER_DOWNLOADS_DIR"
+        replace_tree_atomic "$work/web/dist" "$CONTROLLER_WEB_DIR/dist" oboard:oboard
         if [ -d "$work/downloads" ]; then
-          replace_tree_atomic "$work/downloads" /opt/oboard/downloads oboard:oboard
+          replace_tree_atomic "$work/downloads" "$CONTROLLER_DOWNLOADS_DIR" oboard:oboard
         fi
-        if [ ! -f /etc/oboard/controller.env ]; then
-          cp "$work/deploy/controller.env.example" /etc/oboard/controller.env
-          chmod 0600 /etc/oboard/controller.env
+        if [ ! -f "$CONTROLLER_ENV" ]; then
+          cp "$work/deploy/controller.env.example" "$CONTROLLER_ENV"
+          chmod 0600 "$CONTROLLER_ENV"
         fi
         prepare_controller_env
+        configure_controller_paths
         set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"
-        set_controller_env_value OBOARD_INSTALL_DIR "$INSTALL_DIR"
         configure_bootstrap_admin
         render_service_file "$work/deploy/openrc/oboard-controller" /etc/init.d/oboard-controller 0755
         render_service_file "$work/deploy/openrc/oboard-controller-updater" /etc/init.d/oboard-controller-updater 0755
@@ -1178,12 +1186,12 @@ install_component() {
   fi
 }
 
-case "$COMPONENT" in
-  controller|controller-agent|all) select_installation ;;
-esac
 need_root
 case "$COMPONENT" in
-  controller|controller-agent|all) resolve_controller_install_dir ;;
+  controller|controller-agent|all)
+    resolve_controller_install_dir
+    select_installation
+    ;;
 esac
 if [ "$ACTION" = uninstall ]; then
   SERVICE_MANAGER=$(detect_service_manager)
@@ -1192,7 +1200,7 @@ if [ "$ACTION" = uninstall ]; then
   exit 0
 fi
 if [ "$ACTION" = update ] && [ -z "$VERSION_INPUT" ]; then
-  installed_channel=$(sed -n 's/^OBOARD_UPDATE_CHANNEL=//p' /etc/oboard/controller.env 2>/dev/null | tail -n1 | tr -d "'\"")
+  installed_channel=$(sed -n 's/^OBOARD_UPDATE_CHANNEL=//p' "$CONTROLLER_ENV" 2>/dev/null | tail -n1 | tr -d "'\"")
   case "$installed_channel" in
     dev) VERSION_VALUE=dev ;;
     pinned)
