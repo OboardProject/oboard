@@ -60,14 +60,20 @@ func WriteRuntimeState(path string, state RuntimeState) error {
 
 func readRuntimeState(path string) (RuntimeState, error) {
 	var state RuntimeState
-	info, err := os.Lstat(path)
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return state, err
+	}
+	defer root.Close()
+	name := filepath.Base(path)
+	info, err := root.Lstat(name)
 	if err != nil {
 		return state, err
 	}
 	if !info.Mode().IsRegular() {
 		return state, errors.New("Controller runtime state must be a regular file")
 	}
-	file, err := os.Open(path)
+	file, err := root.Open(name)
 	if err != nil {
 		return state, err
 	}
