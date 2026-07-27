@@ -1067,10 +1067,6 @@ func parseStepConfig(raw string) map[string]any {
 	return m
 }
 
-func intValueFromStepConfig(raw, key string, fallback int) int {
-	return intValueFromMap(parseStepConfig(raw), key, fallback)
-}
-
 func intValueFromMap(m map[string]any, key string, fallback int) int {
 	switch v := m[key].(type) {
 	case float64:
