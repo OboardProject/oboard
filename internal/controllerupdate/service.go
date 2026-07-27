@@ -38,9 +38,11 @@ type ServiceConfig struct {
 }
 
 type Service struct {
-	config ServiceConfig
-	mu     sync.Mutex
-	status Status
+	config        ServiceConfig
+	mu            sync.Mutex
+	status        Status
+	installCancel context.CancelFunc
+	installRun    uint64
 }
 
 func DefaultServiceConfig() ServiceConfig {
@@ -127,6 +129,13 @@ func NewService(config ServiceConfig) *Service {
 	}
 	s := &Service{config: config, status: Status{State: "idle"}}
 	s.loadStatus()
+	if isTransientUpdateState(s.status.State) {
+		s.status.State = "idle"
+		s.status.UpdateAvailable = false
+		s.status.CanCancel = false
+		s.status.LastError = ""
+		_ = s.saveStatus(s.status)
+	}
 	return s
 }
 
@@ -164,6 +173,7 @@ func (s *Service) Serve(ctx context.Context) error {
 	mux.HandleFunc("/v1/status", s.handleStatus)
 	mux.HandleFunc("/v1/check", s.handleCheck)
 	mux.HandleFunc("/v1/install", s.handleInstall)
+	mux.HandleFunc("/v1/cancel", s.handleCancel)
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { <-ctx.Done(); _ = server.Close() }()
 	err = server.Serve(listener)
@@ -181,6 +191,12 @@ func (s *Service) handleStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	status := s.decorateStatus(s.status)
+	if status != s.status {
+		if isActiveUpdateState(s.status.State) && !isActiveUpdateState(status.State) && s.installCancel != nil {
+			s.installCancel()
+		}
+		_ = s.saveStatus(status)
+	}
 	writeStatus(w, http.StatusOK, status)
 }
 
@@ -215,7 +231,7 @@ func (s *Service) handleInstall(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, http.StatusConflict, status)
 		return
 	}
-	if status.State == "installing" {
+	if isActiveUpdateState(status.State) {
 		s.mu.Unlock()
 		writeStatus(w, http.StatusOK, status)
 		return
@@ -226,17 +242,57 @@ func (s *Service) handleInstall(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, http.StatusConflict, status)
 		return
 	}
-	status.State, status.LastError = "installing", ""
+	runCtx, cancel := context.WithCancel(context.Background())
+	status.State, status.LastError, status.CanCancel = "downloading", "", true
 	if err := s.saveStatus(status); err != nil {
+		cancel()
 		s.mu.Unlock()
 		status.LastError = err.Error()
 		writeStatus(w, http.StatusInternalServerError, status)
 		return
 	}
+	s.installCancel = cancel
+	s.installRun++
+	runID := s.installRun
 	s.mu.Unlock()
 	go func() {
-		_, _ = s.install(context.Background())
+		_, _ = s.install(runCtx)
+		s.mu.Lock()
+		if s.installRun == runID {
+			s.installCancel = nil
+		}
+		s.mu.Unlock()
 	}()
+	writeStatus(w, http.StatusOK, status)
+}
+
+func (s *Service) handleCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || requestHasBody(r) {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status := s.decorateStatus(s.status)
+	if status.State != "downloading" || !status.CanCancel || s.installCancel == nil {
+		status.CanCancel = false
+		if status.State == "installing" {
+			status.LastError = "新版本已经开始安装，现在不能中断。"
+		} else {
+			status.LastError = "当前没有可以中断的更新。"
+		}
+		writeStatus(w, http.StatusConflict, status)
+		return
+	}
+	s.installCancel()
+	status.State = "cancelling"
+	status.CanCancel = false
+	status.LastError = ""
+	if err := s.saveStatus(status); err != nil {
+		status.LastError = err.Error()
+		writeStatus(w, http.StatusInternalServerError, status)
+		return
+	}
 	writeStatus(w, http.StatusOK, status)
 }
 
@@ -252,7 +308,7 @@ func (s *Service) check(ctx context.Context) (Status, error) {
 		s.mu.Unlock()
 		return status, err
 	}
-	if status.State == "installing" {
+	if isActiveUpdateState(status.State) {
 		s.mu.Unlock()
 		return status, nil
 	}
@@ -302,37 +358,105 @@ func (s *Service) install(ctx context.Context) (Status, error) {
 		s.mu.Unlock()
 		return status, errors.New("当前主控使用固定版本，不能直接更新")
 	}
-	status.State, status.LastError = "installing", ""
+	s.mu.Unlock()
+
+	release, err := fetchRelease(ctx, s.config.HTTPClient, status.Channel)
+	if err != nil {
+		return s.finishInstallError(err)
+	}
+	available := BuildInfo{Version: release.Manifest.Version, Build: release.Manifest.Build, Commit: release.Manifest.Commit, Date: release.Manifest.Date}
+	s.mu.Lock()
+	status = s.decorateStatus(s.status)
+	status.Available = available
+	status.UpdateAvailable = buildInfoUpdateAvailable(status.Channel, status.Current, available)
+	if !status.UpdateAvailable {
+		status.State, status.CanCancel, status.LastError = "current", false, ""
+		err := s.saveStatus(status)
+		s.mu.Unlock()
+		return status, err
+	}
+	if ctx.Err() != nil || status.State == "cancelling" {
+		s.mu.Unlock()
+		return s.finishCancelledInstall()
+	}
+	status.State, status.CanCancel, status.LastError = "downloading", true, ""
 	if err := s.saveStatus(status); err != nil {
 		s.mu.Unlock()
 		return status, err
 	}
 	s.mu.Unlock()
-	release, err := fetchRelease(ctx, s.config.HTTPClient, status.Channel)
-	if err == nil {
-		status.Available = BuildInfo{Version: release.Manifest.Version, Build: release.Manifest.Build, Commit: release.Manifest.Commit, Date: release.Manifest.Date}
-		status.UpdateAvailable = updateAvailable(status.Channel, status.Current, release.Manifest)
-		if !status.UpdateAvailable {
-			status.State = "current"
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			return status, s.saveStatus(status)
-		}
-		err = s.installBinary(ctx, release)
-	}
+
+	stage, err := s.stageControllerRelease(ctx, release)
 	if err != nil {
-		status.State, status.LastError = "failed", err.Error()
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if persistErr := s.saveStatus(status); persistErr != nil {
-			return status, errors.Join(err, persistErr)
-		}
+		return s.finishInstallError(err)
+	}
+	defer os.RemoveAll(stage)
+
+	s.mu.Lock()
+	status = s.decorateStatus(s.status)
+	status.Available = available
+	status.UpdateAvailable = buildInfoUpdateAvailable(status.Channel, status.Current, available)
+	if ctx.Err() != nil || status.State == "cancelling" {
+		s.mu.Unlock()
+		return s.finishCancelledInstall()
+	}
+	if !status.UpdateAvailable {
+		status.State, status.CanCancel, status.LastError = "current", false, ""
+		err := s.saveStatus(status)
+		s.mu.Unlock()
 		return status, err
 	}
-	status.State, status.UpdateAvailable, status.LastError = "installed", false, ""
-	status.Current = status.Available
+	status.State, status.CanCancel, status.LastError = "installing", false, ""
+	if err := s.saveStatus(status); err != nil {
+		s.mu.Unlock()
+		return status, err
+	}
+	s.mu.Unlock()
+
+	if err := s.replaceBinaryProgram(ctx, stage); err != nil {
+		return s.finishInstallError(err)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	status = s.decorateStatus(s.status)
+	status.State, status.UpdateAvailable, status.CanCancel, status.LastError = "installed", false, false, ""
+	status.Current = available
+	return status, s.saveStatus(status)
+}
+
+func (s *Service) finishInstallError(installErr error) (Status, error) {
+	if errors.Is(installErr, context.Canceled) {
+		return s.finishCancelledInstall()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status := s.decorateStatus(s.status)
+	if status.State == "current" && !status.UpdateAvailable {
+		status.CanCancel = false
+		status.LastError = ""
+		return status, s.saveStatus(status)
+	}
+	status.State, status.CanCancel, status.LastError = "failed", false, installErr.Error()
+	if persistErr := s.saveStatus(status); persistErr != nil {
+		return status, errors.Join(installErr, persistErr)
+	}
+	return status, installErr
+}
+
+func (s *Service) finishCancelledInstall() (Status, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status := s.decorateStatus(s.status)
+	status.CanCancel = false
+	status.LastError = ""
+	status.UpdateAvailable = buildInfoUpdateAvailable(status.Channel, status.Current, status.Available)
+	if status.UpdateAvailable {
+		status.State = "cancelled"
+	} else if status.Available.Version != "" {
+		status.State = "current"
+	} else {
+		status.State = "idle"
+	}
 	return status, s.saveStatus(status)
 }
 
@@ -344,16 +468,41 @@ func (s *Service) decorateStatus(status Status) Status {
 		status.State = "failed"
 		status.UpdateAvailable = false
 		status.LastError = detectionError
+		status.CanCancel = false
 		return status
 	}
 	if channel == "pinned" && status.State != "installing" {
 		status.State = "pinned"
 		status.UpdateAvailable = false
+		status.CanCancel = false
+	} else if status.Available.Version != "" && !buildInfoUpdateAvailable(channel, status.Current, status.Available) {
+		status.State = "current"
+		status.UpdateAvailable = false
+		status.CanCancel = false
+		status.LastError = ""
 	}
 	if status.State == "" {
 		status.State = "idle"
 	}
+	if status.State != "downloading" {
+		status.CanCancel = false
+	}
 	return status
+}
+
+func buildInfoUpdateAvailable(channel string, current, available BuildInfo) bool {
+	if strings.TrimSpace(available.Version) == "" {
+		return false
+	}
+	return updateAvailable(channel, current, Manifest{Version: available.Version, Build: available.Build, Commit: available.Commit, Date: available.Date})
+}
+
+func isActiveUpdateState(state string) bool {
+	return state == "downloading" || state == "installing" || state == "cancelling"
+}
+
+func isTransientUpdateState(state string) bool {
+	return state == "checking" || isActiveUpdateState(state)
 }
 
 func (s *Service) detectInstallation() (string, string, string) {

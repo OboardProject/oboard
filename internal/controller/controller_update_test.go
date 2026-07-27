@@ -86,6 +86,7 @@ func TestControllerUpdateAPIAndBackupRetention(t *testing.T) {
 	request(t, handler, http.MethodPost, "/api/v1/controller-update/check", adminToken, nil, http.StatusOK)
 	request(t, handler, http.MethodPost, "/api/v1/settings", adminToken, map[string]any{"controller_auto_update_enabled": true}, http.StatusConflict)
 	request(t, handler, http.MethodPost, "/api/v1/controller-update/install", adminToken, nil, http.StatusConflict)
+	request(t, handler, http.MethodPost, "/api/v1/controller-update/cancel", adminToken, nil, http.StatusConflict)
 
 	request(t, handler, http.MethodPost, "/api/v1/users", adminToken, map[string]any{"username": "viewer", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	viewerLogin := request(t, handler, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "viewer", "password": "long-user-password"}, http.StatusOK)

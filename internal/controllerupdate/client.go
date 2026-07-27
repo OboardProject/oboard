@@ -42,6 +42,10 @@ func (c *Client) Install(ctx context.Context) (Status, error) {
 	return c.call(ctx, http.MethodPost, "/v1/install")
 }
 
+func (c *Client) Cancel(ctx context.Context) (Status, error) {
+	return c.call(ctx, http.MethodPost, "/v1/cancel")
+}
+
 func (c *Client) call(ctx context.Context, method, path string) (Status, error) {
 	req, err := http.NewRequestWithContext(ctx, method, "http://unix"+path, nil)
 	if err != nil {

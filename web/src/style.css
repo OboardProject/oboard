@@ -4618,6 +4618,70 @@ body:has(.dialog-root) .topbar-actions {
   line-height: 1.55;
 }
 
+.controller-update-stages {
+  display: grid;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.controller-update-stage {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.controller-update-stage:last-child {
+  border-bottom: 0;
+}
+
+.controller-update-stage > span {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.controller-update-stage > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.controller-update-stage strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.controller-update-stage small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.controller-update-stage.active > span {
+  border-color: var(--text-strong);
+  background: var(--text-strong);
+  color: var(--surface-solid);
+}
+
+.controller-update-stage.active strong {
+  color: var(--text-strong);
+}
+
+.controller-update-stage.done > span {
+  border-color: color-mix(in srgb, var(--success) 34%, var(--border));
+  background: var(--success-soft);
+  color: var(--success);
+}
+
 .controller-update-install-progress {
   height: 6px;
   overflow: hidden;
@@ -4638,6 +4702,10 @@ body:has(.dialog-root) .topbar-actions {
 
 .controller-update-install-result.failed > svg {
   color: var(--danger);
+}
+
+.controller-update-install-result.cancelled > svg {
+  color: var(--text-secondary);
 }
 
 @keyframes controller-update-progress {
@@ -4794,6 +4862,18 @@ body:has(.dialog-root) .topbar-actions {
   overflow-wrap: anywhere;
 }
 
+.certificate-eab-controls {
+  width: min(390px, 58%);
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.certificate-eab-controls > button {
+  white-space: nowrap;
+}
+
 .certificate-eab-warning,
 .certificate-eab-secret-note {
   padding: 10px 12px;
@@ -4884,14 +4964,94 @@ body:has(.dialog-root) .topbar-actions {
   font-weight: 650;
 }
 
+.certificate-eab-saved {
+  display: grid;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.certificate-eab-saved-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.certificate-eab-saved-head strong {
+  color: var(--text-strong);
+}
+
+.certificate-eab-saved-head span,
+.certificate-eab-saved-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.certificate-eab-saved-empty {
+  padding: 14px 0 4px;
+  text-align: center;
+}
+
+.certificate-eab-saved-list {
+  display: grid;
+}
+
+.certificate-eab-saved-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.certificate-eab-saved-row:last-child {
+  border-bottom: 0;
+}
+
+.certificate-eab-saved-row > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.certificate-eab-saved-row strong {
+  color: var(--text-strong);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.certificate-eab-saved-row span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 560px) {
   .certificate-eab-row {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .certificate-eab-row > button {
+  .certificate-eab-controls {
     width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .certificate-eab-controls > button {
+    width: 100%;
+  }
+
+  .certificate-eab-saved-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .certificate-eab-saved-row .record-actions {
+    justify-content: flex-end;
   }
 }
 
@@ -10085,6 +10245,33 @@ select:-webkit-autofill {
   opacity: 0.7;
 }
 
+.login-passkey,
+.login-back {
+  width: 100%;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-solid);
+  color: var(--text-strong);
+  box-shadow: none;
+}
+
+.login-passkey:hover,
+.login-back:hover {
+  background: var(--surface-2);
+  transform: none;
+}
+
+.login-back {
+  min-height: 36px;
+  border-color: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
 .login-divider {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -10169,6 +10356,169 @@ select:-webkit-autofill {
   grid-column: 1 / -1;
 }
 
+.account-login-security {
+  grid-column: 1 / -1;
+}
+
+.account-security-list {
+  display: grid;
+}
+
+.account-security-item {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 15px 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.account-security-item:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.account-security-item:last-child {
+  padding-bottom: 0;
+}
+
+.account-security-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.account-security-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.account-security-copy strong {
+  color: var(--text-strong);
+  font-size: 14px;
+}
+
+.account-security-copy span,
+.account-security-note,
+.account-passkey-list small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.account-security-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.account-security-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.account-security-note,
+.account-passkey-list {
+  grid-column: 2 / -1;
+  margin: 0;
+}
+
+.account-passkey-list {
+  display: grid;
+  margin-top: 2px;
+  border-top: 1px solid var(--border-color);
+}
+
+.account-passkey-list > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.account-passkey-list > div:last-child {
+  border-bottom: 0;
+}
+
+.account-passkey-list span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.account-passkey-list strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.totp-setup-dialog,
+.recovery-codes-dialog {
+  width: min(560px, calc(100vw - 28px));
+}
+
+.totp-setup-body,
+.recovery-codes-body {
+  display: grid;
+  gap: 16px;
+}
+
+.totp-qr {
+  width: 224px;
+  height: 224px;
+  display: grid;
+  place-items: center;
+  justify-self: center;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--border);
+}
+
+.totp-qr img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.totp-manual {
+  display: grid;
+  gap: 7px;
+}
+
+.totp-manual > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.recovery-code-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.recovery-code-grid code {
+  min-width: 0;
+  padding: 9px 10px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-strong);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-align: center;
+}
+
 .account-format-grid {
   grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
 }
@@ -10231,6 +10581,29 @@ select:-webkit-autofill {
   }
   .account-subscription-buttons button {
     flex: 1 1 auto;
+  }
+
+  .account-security-item {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .account-security-actions,
+  .account-security-note,
+  .account-passkey-list {
+    grid-column: 1 / -1;
+  }
+
+  .account-security-actions {
+    justify-content: stretch;
+  }
+
+  .account-security-actions button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .recovery-code-grid {
+    grid-template-columns: 1fr;
   }
 }
 

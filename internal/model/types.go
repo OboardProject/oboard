@@ -153,6 +153,35 @@ type User struct {
 	UpdatedAt                 time.Time  `json:"updated_at"`
 }
 
+type UserAuthentication struct {
+	UserID                 int64
+	TOTPEnabled            bool
+	TOTPSecretEncrypted    string
+	RecoveryCodeHashesJSON string
+	TOTPLastUsedStep       int64
+	WebAuthnUserHandle     string
+	UpdatedAt              time.Time
+}
+
+type PasskeyCredential struct {
+	ID             int64      `json:"id"`
+	UserID         int64      `json:"-"`
+	Name           string     `json:"name"`
+	CredentialID   string     `json:"-"`
+	CredentialJSON string     `json:"-"`
+	CreatedAt      time.Time  `json:"created_at"`
+	LastUsedAt     *time.Time `json:"last_used_at,omitempty"`
+}
+
+type AuthChallenge struct {
+	TokenHash     string
+	Kind          string
+	UserID        int64
+	DataEncrypted string
+	ExpiresAt     time.Time
+	CreatedAt     time.Time
+}
+
 type SubscriptionFormat string
 
 const (
@@ -386,34 +415,45 @@ type DNSRecord struct {
 	Enabled          bool   `json:"enabled"`
 }
 
+type GoogleEABCredential struct {
+	ID               int64     `json:"id"`
+	KeyID            string    `json:"key_id"`
+	Remark           string    `json:"remark"`
+	HMACKeyEncrypted string    `json:"-"`
+	UsageCount       int       `json:"usage_count"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"-"`
+}
+
 type Certificate struct {
-	ID                   int64       `json:"id"`
-	Name                 string      `json:"name"`
-	PrimaryDomain        string      `json:"primary_domain"`
-	Domains              []string    `json:"domains"`
-	Wildcard             bool        `json:"wildcard"`
-	ChallengeType        string      `json:"challenge_type"`
-	DNSCredentialID      *int64      `json:"dns_credential_id,omitempty"`
-	IssuanceServerID     *int64      `json:"issuance_server_id,omitempty"`
-	ACMECA               string      `json:"acme_ca"`
-	AccountEmail         string      `json:"account_email"`
-	EABKeyID             string      `json:"eab_key_id,omitempty"`
-	EABHMACKeyEncrypted  string      `json:"-"`
-	EABConfigured        bool        `json:"eab_configured,omitempty"`
-	Status               string      `json:"status"`
-	CertificatePEM       string      `json:"-"`
-	FullchainPEM         string      `json:"-"`
-	PrivateKeyEncrypted  string      `json:"-"`
-	Revision             string      `json:"revision,omitempty"`
-	NotBefore            *time.Time  `json:"not_before,omitempty"`
-	NotAfter             *time.Time  `json:"not_after,omitempty"`
-	AutoRenew            bool        `json:"auto_renew"`
-	ValidationRecords    []DNSRecord `json:"validation_records,omitempty"`
-	LastError            string      `json:"last_error,omitempty"`
-	LastIssuedAt         *time.Time  `json:"last_issued_at,omitempty"`
-	LastRenewalAttemptAt *time.Time  `json:"last_renewal_attempt_at,omitempty"`
-	CreatedAt            time.Time   `json:"created_at"`
-	UpdatedAt            time.Time   `json:"updated_at"`
+	ID                    int64       `json:"id"`
+	Name                  string      `json:"name"`
+	PrimaryDomain         string      `json:"primary_domain"`
+	Domains               []string    `json:"domains"`
+	Wildcard              bool        `json:"wildcard"`
+	ChallengeType         string      `json:"challenge_type"`
+	DNSCredentialID       *int64      `json:"dns_credential_id,omitempty"`
+	IssuanceServerID      *int64      `json:"issuance_server_id,omitempty"`
+	ACMECA                string      `json:"acme_ca"`
+	AccountEmail          string      `json:"account_email"`
+	GoogleEABCredentialID *int64      `json:"google_eab_credential_id,omitempty"`
+	EABKeyID              string      `json:"eab_key_id,omitempty"`
+	EABHMACKeyEncrypted   string      `json:"-"`
+	EABConfigured         bool        `json:"eab_configured,omitempty"`
+	Status                string      `json:"status"`
+	CertificatePEM        string      `json:"-"`
+	FullchainPEM          string      `json:"-"`
+	PrivateKeyEncrypted   string      `json:"-"`
+	Revision              string      `json:"revision,omitempty"`
+	NotBefore             *time.Time  `json:"not_before,omitempty"`
+	NotAfter              *time.Time  `json:"not_after,omitempty"`
+	AutoRenew             bool        `json:"auto_renew"`
+	ValidationRecords     []DNSRecord `json:"validation_records,omitempty"`
+	LastError             string      `json:"last_error,omitempty"`
+	LastIssuedAt          *time.Time  `json:"last_issued_at,omitempty"`
+	LastRenewalAttemptAt  *time.Time  `json:"last_renewal_attempt_at,omitempty"`
+	CreatedAt             time.Time   `json:"created_at"`
+	UpdatedAt             time.Time   `json:"updated_at"`
 }
 
 type InboundCertificateBinding struct {

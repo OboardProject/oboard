@@ -75,8 +75,14 @@ func (s *Server) releaseCertificateIssue(id int64) {
 func (s *Server) markCertificateIssueFailed(ctx context.Context, certificate *model.Certificate, issueErr error) {
 	certificate.Status = model.CertificateStatusFailed
 	certificate.LastError = trimACMEError(issueErr.Error())
+	if _, hmacKey, err := s.certificateEABCredentials(ctx, certificate); err == nil && hmacKey != "" {
+		certificate.LastError = strings.ReplaceAll(certificate.LastError, hmacKey, "[已隐藏]")
+	}
 	if err := s.store.UpdateCertificate(ctx, certificate); err != nil {
 		log.Printf("certificate %d: persist issuance failure: %v", certificate.ID, err)
+	}
+	if certificate.ACMECA == "google" {
+		s.notifyGoogleCertificateIssueFailure(ctx, certificate)
 	}
 }
 
@@ -88,11 +94,11 @@ func (s *Server) runDNSCertificateIssue(ctx context.Context, certificate *model.
 		return fmt.Errorf("secure ACME home: %w", err)
 	}
 	if !resumeManual {
-		eabHMACKey, err := s.certificateEABHMACKey(certificate)
+		eabKeyID, eabHMACKey, err := s.certificateEABCredentials(ctx, certificate)
 		if err != nil {
 			return err
 		}
-		output, runErr := s.runACME(ctx, issueACMEArgs(s.acmeHome, *certificate, renew, eabHMACKey)...)
+		output, runErr := s.runACME(ctx, issueACMEArgs(s.acmeHome, *certificate, renew, eabKeyID, eabHMACKey)...)
 		records := parseACMEDNSChallenges(output)
 		if len(records) == 0 {
 			if runErr == nil {
@@ -159,7 +165,7 @@ func (s *Server) runDNSCertificateIssue(ctx context.Context, certificate *model.
 	return s.installAndStoreACMECertificate(ctx, certificate)
 }
 
-func issueACMEArgs(home string, certificate model.Certificate, renew bool, eabHMACKey string) []string {
+func issueACMEArgs(home string, certificate model.Certificate, renew bool, eabKeyID, eabHMACKey string) []string {
 	args := []string{"--home", home, "--config-home", home, "--server", certificate.ACMECA, "--issue", "--keylength", "ec-256", "--dns", "--yes-I-know-dns-manual-mode-enough-go-ahead-please"}
 	if renew {
 		args = append(args, "--force")
@@ -167,8 +173,8 @@ func issueACMEArgs(home string, certificate model.Certificate, renew bool, eabHM
 	if certificate.AccountEmail != "" {
 		args = append(args, "--accountemail", certificate.AccountEmail)
 	}
-	if certificate.ACMECA == "google" && certificate.EABKeyID != "" && eabHMACKey != "" {
-		args = append(args, "--eab-kid", certificate.EABKeyID, "--eab-hmac-key", eabHMACKey)
+	if certificate.ACMECA == "google" && eabKeyID != "" && eabHMACKey != "" {
+		args = append(args, "--eab-kid", eabKeyID, "--eab-hmac-key", eabHMACKey)
 	}
 	for _, domain := range certificate.Domains {
 		args = append(args, "-d", domain)
@@ -176,18 +182,29 @@ func issueACMEArgs(home string, certificate model.Certificate, renew bool, eabHM
 	return args
 }
 
-func (s *Server) certificateEABHMACKey(certificate *model.Certificate) (string, error) {
+func (s *Server) certificateEABCredentials(ctx context.Context, certificate *model.Certificate) (string, string, error) {
 	if certificate.ACMECA != "google" {
-		return "", nil
+		return "", "", nil
+	}
+	if certificate.GoogleEABCredentialID != nil {
+		credential, err := s.store.GetGoogleEABCredential(ctx, *certificate.GoogleEABCredentialID)
+		if err != nil {
+			return "", "", errors.New("已保存的 Google EAB 不存在，请重新选择")
+		}
+		value, err := security.DecryptSecret(s.sessionSecret, googleEABHMACKeyPurpose, credential.HMACKeyEncrypted)
+		if err != nil {
+			return "", "", errors.New("已保存的 Google EAB 无法读取，请删除后重新添加")
+		}
+		return credential.KeyID, value, nil
 	}
 	if certificate.EABKeyID == "" || certificate.EABHMACKeyEncrypted == "" {
-		return "", errors.New("Google Trust Services 需要 EAB，请先填写 Key ID 和 HMAC Key")
+		return "", "", errors.New("Google Trust Services 需要 EAB，请先填写 Key ID 和 HMAC Key")
 	}
 	value, err := security.DecryptSecret(s.sessionSecret, certificateEABHMACKeyPurpose, certificate.EABHMACKeyEncrypted)
 	if err != nil {
-		return "", errors.New("Google EAB 信息无法读取，请重新填写 Key ID 和 HMAC Key")
+		return "", "", errors.New("Google EAB 信息无法读取，请重新填写 Key ID 和 HMAC Key")
 	}
-	return value, nil
+	return certificate.EABKeyID, value, nil
 }
 
 func resumeACMEArgs(home string, certificate model.Certificate) []string {

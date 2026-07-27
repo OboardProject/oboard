@@ -197,6 +197,24 @@ func (s *Server) controllerUpdateInstall(w http.ResponseWriter, r *http.Request)
 	s.writeControllerUpdateStatus(w, r, status)
 }
 
+func (s *Server) controllerUpdateCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	status, err := s.controllerUpdater.Cancel(r.Context())
+	if err != nil {
+		if strings.TrimSpace(status.LastError) != "" {
+			fail(w, errors.New(status.LastError), http.StatusConflict)
+		} else {
+			fail(w, errors.New("当前没有可以中断的更新"), http.StatusConflict)
+		}
+		return
+	}
+	auditReq(s, r, "cancel", "controller_update", status.Channel+":"+status.Available.Version)
+	s.writeControllerUpdateStatus(w, r, status)
+}
+
 func controllerUpdateOperationError(prefix string, status controllerupdate.Status, err error) error {
 	if strings.Contains(err.Error(), "controller updater unavailable") {
 		return errors.New("主控更新器不可用，请检查 oboard-controller-updater 服务")

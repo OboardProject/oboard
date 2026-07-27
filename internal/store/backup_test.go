@@ -37,7 +37,7 @@ func TestBackupCreatesReadableSnapshot(t *testing.T) {
 	}
 }
 
-func TestRewrapEncryptedSecretsIncludesCertificateEAB(t *testing.T) {
+func TestRewrapEncryptedSecretsIncludesGoogleEAB(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +58,14 @@ func TestRewrapEncryptedSecretsIncludesCertificateEAB(t *testing.T) {
 	if err := db.CreateCertificate(ctx, certificate); err != nil {
 		t.Fatal(err)
 	}
+	savedEncrypted, err := security.EncryptSecret(sourceSecret, "google-eab-hmac-key", hmacKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	savedCredential := &model.GoogleEABCredential{KeyID: "saved-google-key-id", Remark: "backup", HMACKeyEncrypted: savedEncrypted}
+	if err := db.CreateGoogleEABCredential(ctx, savedCredential); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.RewrapEncryptedSecrets(ctx, sourceSecret, targetSecret); err != nil {
 		t.Fatal(err)
 	}
@@ -71,5 +79,13 @@ func TestRewrapEncryptedSecretsIncludesCertificateEAB(t *testing.T) {
 	plain, err := security.DecryptSecret(targetSecret, "certificate-eab-hmac-key", stored.EABHMACKeyEncrypted)
 	if err != nil || plain != hmacKey {
 		t.Fatalf("decrypt rewrapped EAB HMAC: value=%q err=%v", plain, err)
+	}
+	savedStored, err := db.GetGoogleEABCredential(ctx, savedCredential.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	savedPlain, err := security.DecryptSecret(targetSecret, "google-eab-hmac-key", savedStored.HMACKeyEncrypted)
+	if err != nil || savedPlain != hmacKey || savedStored.HMACKeyEncrypted == savedEncrypted {
+		t.Fatalf("decrypt rewrapped saved EAB HMAC: value=%q err=%v", savedPlain, err)
 	}
 }

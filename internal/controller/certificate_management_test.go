@@ -148,13 +148,77 @@ func TestGoogleEABCertificateAPIEncryptsAndPreservesSecret(t *testing.T) {
 func TestGoogleEABIsIncludedInACMEIssueArguments(t *testing.T) {
 	args := issueACMEArgs("/tmp/acme", model.Certificate{
 		ACMECA: "google", EABKeyID: "google-key-id", AccountEmail: "admin@example.com", Domains: []string{"example.com"},
-	}, false, "google-hmac-key")
+	}, false, "google-key-id", "google-hmac-key")
 	joined := strings.Join(args, "\x00")
 	for _, expected := range []string{"--eab-kid\x00google-key-id", "--eab-hmac-key\x00google-hmac-key"} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("ACME args missing %q: %#v", expected, args)
 		}
 	}
+}
+
+func TestSavedGoogleEABCredentialAPIAndCertificateSelection(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+
+	const hmacKey = "saved-google-eab-hmac-key"
+	created := request(t, h, http.MethodPost, "/api/v1/google-eab-credentials", token, map[string]any{
+		"key_id": "saved-google-key-id", "hmac_key": hmacKey, "remark": "生产账号",
+	}, http.StatusCreated)["google_eab_credential"].(map[string]any)
+	if created["key_id"] != "saved-google-key-id" || created["remark"] != "生产账号" || created["usage_count"] != float64(0) {
+		t.Fatalf("saved Google EAB response = %#v", created)
+	}
+	for _, secretField := range []string{"hmac_key", "hmac_key_encrypted", "updated_at"} {
+		if _, exists := created[secretField]; exists {
+			t.Fatalf("saved Google EAB response exposed %s", secretField)
+		}
+	}
+	credentialID := int64(created["id"].(float64))
+	storedCredential, err := db.GetGoogleEABCredential(context.Background(), credentialID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := security.DecryptSecret("test-secret", googleEABHMACKeyPurpose, storedCredential.HMACKeyEncrypted)
+	if err != nil || plain != hmacKey || storedCredential.HMACKeyEncrypted == hmacKey {
+		t.Fatalf("stored saved EAB HMAC: value=%q err=%v", plain, err)
+	}
+	listed := request(t, h, http.MethodGet, "/api/v1/google-eab-credentials", token, nil, http.StatusOK)["google_eab_credentials"].([]any)
+	if len(listed) != 1 {
+		t.Fatalf("saved Google EAB list = %#v", listed)
+	}
+
+	createdCertificate := request(t, h, http.MethodPost, "/api/v1/certificates", token, map[string]any{
+		"name": "saved-google-eab", "domains": []string{"saved.example.com"}, "challenge_type": model.CertificateChallengeDNSManual,
+		"acme_ca": "google", "google_eab_credential_id": credentialID,
+	}, http.StatusCreated)["certificate"].(map[string]any)
+	certificateID := int64(createdCertificate["id"].(float64))
+	if int64(createdCertificate["google_eab_credential_id"].(float64)) != credentialID || createdCertificate["eab_configured"] != true {
+		t.Fatalf("certificate saved EAB response = %#v", createdCertificate)
+	}
+	storedCertificate, err := db.GetCertificate(context.Background(), certificateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyID, resolvedHMAC, err := srv.certificateEABCredentials(context.Background(), storedCertificate)
+	if err != nil || keyID != "saved-google-key-id" || resolvedHMAC != hmacKey {
+		t.Fatalf("resolved saved EAB = key_id=%q hmac=%q err=%v", keyID, resolvedHMAC, err)
+	}
+	request(t, h, http.MethodDelete, "/api/v1/google-eab-credentials/"+strconv.FormatInt(credentialID, 10), token, nil, http.StatusConflict)
+	request(t, h, http.MethodDelete, "/api/v1/certificates/"+strconv.FormatInt(certificateID, 10), token, nil, http.StatusOK)
+	request(t, h, http.MethodDelete, "/api/v1/google-eab-credentials/"+strconv.FormatInt(credentialID, 10), token, nil, http.StatusOK)
+
+	request(t, h, http.MethodPost, "/api/v1/certificates", token, map[string]any{
+		"name": "missing-saved-eab", "domains": []string{"missing.example.com"}, "challenge_type": model.CertificateChallengeDNSManual,
+		"acme_ca": "google", "google_eab_credential_id": credentialID,
+	}, http.StatusBadRequest)
 }
 
 func TestParseACMEDNSChallenges(t *testing.T) {

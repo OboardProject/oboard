@@ -23,16 +23,17 @@ import (
 )
 
 type certificateRequest struct {
-	Name             string   `json:"name"`
-	Domains          []string `json:"domains"`
-	ChallengeType    string   `json:"challenge_type"`
-	DNSCredentialID  *int64   `json:"dns_credential_id"`
-	IssuanceServerID *int64   `json:"issuance_server_id"`
-	ACMECA           string   `json:"acme_ca"`
-	AccountEmail     string   `json:"account_email"`
-	EABKeyID         *string  `json:"eab_key_id"`
-	EABHMACKey       *string  `json:"eab_hmac_key"`
-	AutoRenew        *bool    `json:"auto_renew"`
+	Name                  string   `json:"name"`
+	Domains               []string `json:"domains"`
+	ChallengeType         string   `json:"challenge_type"`
+	DNSCredentialID       *int64   `json:"dns_credential_id"`
+	IssuanceServerID      *int64   `json:"issuance_server_id"`
+	ACMECA                string   `json:"acme_ca"`
+	AccountEmail          string   `json:"account_email"`
+	GoogleEABCredentialID *int64   `json:"google_eab_credential_id"`
+	EABKeyID              *string  `json:"eab_key_id"`
+	EABHMACKey            *string  `json:"eab_hmac_key"`
+	AutoRenew             *bool    `json:"auto_renew"`
 }
 
 const certificateEABHMACKeyPurpose = "certificate-eab-hmac-key"
@@ -224,6 +225,7 @@ func (s *Server) buildCertificate(req certificateRequest, current *model.Certifi
 
 func (s *Server) applyCertificateEAB(req certificateRequest, certificate *model.Certificate, current *model.Certificate) error {
 	if certificate.ACMECA != "google" {
+		certificate.GoogleEABCredentialID = nil
 		certificate.EABKeyID = ""
 		certificate.EABHMACKeyEncrypted = ""
 		certificate.EABConfigured = false
@@ -231,6 +233,24 @@ func (s *Server) applyCertificateEAB(req certificateRequest, certificate *model.
 	}
 	if certificate.ChallengeType == model.CertificateChallengeHTTP {
 		return errors.New("Google Trust Services 的 EAB 目前仅支持面板 DNS-01 或手动 DNS-01")
+	}
+	if req.GoogleEABCredentialID != nil {
+		if *req.GoogleEABCredentialID > 0 {
+			id := *req.GoogleEABCredentialID
+			certificate.GoogleEABCredentialID = &id
+			certificate.EABKeyID = ""
+			certificate.EABHMACKeyEncrypted = ""
+			certificate.EABConfigured = true
+			return nil
+		}
+		certificate.GoogleEABCredentialID = nil
+	}
+	if req.EABKeyID != nil || req.EABHMACKey != nil {
+		certificate.GoogleEABCredentialID = nil
+	}
+	if certificate.GoogleEABCredentialID != nil {
+		certificate.EABConfigured = true
+		return nil
 	}
 
 	previousKeyID := certificate.EABKeyID
@@ -302,6 +322,14 @@ func normalizeCertificateDomains(domains []string) ([]string, error) {
 }
 
 func (s *Server) validateCertificateReferences(ctx context.Context, certificate model.Certificate) error {
+	if certificate.GoogleEABCredentialID != nil {
+		if certificate.ACMECA != "google" {
+			return errors.New("只有 Google Trust Services 可以使用 Google EAB")
+		}
+		if _, err := s.store.GetGoogleEABCredential(ctx, *certificate.GoogleEABCredentialID); err != nil {
+			return errors.New("选择的 Google EAB 不存在，请重新选择")
+		}
+	}
 	if certificate.DNSCredentialID != nil {
 		credential, err := s.store.GetDNSCredential(ctx, *certificate.DNSCredentialID)
 		if err != nil || !credential.Enabled {

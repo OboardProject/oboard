@@ -39,6 +39,7 @@ type Status struct {
 	Available         BuildInfo `json:"available"`
 	UpdateAvailable   bool      `json:"update_available"`
 	AutoUpdateEnabled bool      `json:"auto_update_enabled"`
+	CanCancel         bool      `json:"can_cancel"`
 	State             string    `json:"status"`
 	LastCheckedAt     string    `json:"last_checked_at,omitempty"`
 	LastError         string    `json:"last_error,omitempty"`

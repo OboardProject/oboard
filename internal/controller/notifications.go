@@ -28,6 +28,7 @@ const (
 	notificationTrafficQuota      = "traffic_quota_exceeded"
 	notificationTaskFailed        = "task_failed"
 	notificationTaskTimeout       = "task_timeout"
+	notificationCertificateFailed = "certificate_issuance_failed"
 	notificationAdminAnnouncement = "admin_announcement"
 )
 
@@ -51,6 +52,7 @@ var notificationEventDefinitions = []notificationEventDefinition{
 	{notificationTrafficQuota, "流量已用完", "所选用户本周期达到流量额度时通知", []string{"UserName", "UserID", "Used", "Limit", "ResetAt", "Time"}},
 	{notificationTaskFailed, "任务失败", "Agent 更新、配置下发等任务失败时通知", []string{"TaskType", "TaskID", "ServerName", "Error", "Time"}},
 	{notificationTaskTimeout, "任务超时", "任务等待或执行超过五分钟时通知", []string{"TaskType", "TaskID", "ServerName", "Error", "Time"}},
+	{notificationCertificateFailed, "Google 证书签发失败", "Google EAB 失效或证书签发失败时通知", []string{"CertificateName", "Domains", "EABKeyID", "Error", "Time"}},
 	{notificationAdminAnnouncement, "管理员通知", "管理员发送给你的消息", []string{"Title", "Message", "Sender", "Time"}},
 }
 
@@ -74,6 +76,10 @@ var defaultNotificationTemplates = map[string]model.NotificationTemplate{
 	notificationTaskTimeout: {
 		Title: "任务超时 · {{.TaskType}}",
 		Body:  "服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}",
+	},
+	notificationCertificateFailed: {
+		Title: "Google 证书签发失败 · {{.CertificateName}}",
+		Body:  "证书：{{.CertificateName}}\n域名：{{.Domains}}\nEAB Key ID：{{.EABKeyID}}\n原因：{{.Error}}\n\nGoogle EAB 可能已经失效，请在证书设置中更换后重试。\n时间：{{.Time}}",
 	},
 	notificationAdminAnnouncement: {
 		Title: "{{.Title}}",
@@ -432,6 +438,7 @@ func allowedNotificationEventSet(role model.Role) map[string]bool {
 		allowed[notificationServerOnline] = true
 		allowed[notificationTaskFailed] = true
 		allowed[notificationTaskTimeout] = true
+		allowed[notificationCertificateFailed] = true
 	}
 	return allowed
 }
@@ -697,7 +704,7 @@ func (s *Server) enqueueNotificationEvent(ctx context.Context, event notificatio
 
 func notificationChannelEligible(channel model.NotificationChannel, ownerRole model.Role, event notificationEvent) bool {
 	switch event.Name {
-	case notificationServerOffline, notificationServerOnline, notificationTaskFailed, notificationTaskTimeout:
+	case notificationServerOffline, notificationServerOnline, notificationTaskFailed, notificationTaskTimeout, notificationCertificateFailed:
 		return roleAllows(ownerRole, model.RoleAdmin)
 	case notificationTrafficQuota:
 		if channel.OwnerUserID == event.TargetUserID {
@@ -920,6 +927,40 @@ func (s *Server) notifyTaskFailure(ctx context.Context, task model.AgentTask) {
 			"ServerName": serverName,
 			"Error":      errorText,
 			"Time":       s.notificationNow(ctx),
+		},
+	})
+}
+
+func (s *Server) notifyGoogleCertificateIssueFailure(ctx context.Context, certificate *model.Certificate) {
+	keyID := certificate.EABKeyID
+	if certificate.GoogleEABCredentialID != nil {
+		if credential, err := s.store.GetGoogleEABCredential(ctx, *certificate.GoogleEABCredentialID); err == nil {
+			keyID = credential.KeyID
+		}
+	}
+	if strings.TrimSpace(keyID) == "" {
+		keyID = "未找到"
+	}
+	errorText := strings.TrimSpace(certificate.LastError)
+	if errorText == "" {
+		errorText = "Google Trust Services 未返回具体原因"
+	}
+	if len(errorText) > 1000 {
+		errorText = errorText[len(errorText)-1000:]
+	}
+	attempt := time.Now().UTC()
+	if certificate.LastRenewalAttemptAt != nil {
+		attempt = certificate.LastRenewalAttemptAt.UTC()
+	}
+	s.enqueueNotificationEvent(ctx, notificationEvent{
+		Name: notificationCertificateFailed,
+		Key:  fmt.Sprintf("certificate:%d:failed:%s", certificate.ID, attempt.Format(time.RFC3339Nano)),
+		Data: map[string]string{
+			"CertificateName": certificate.Name,
+			"Domains":         strings.Join(certificate.Domains, ", "),
+			"EABKeyID":        keyID,
+			"Error":           errorText,
+			"Time":            s.notificationNow(ctx),
 		},
 	})
 }

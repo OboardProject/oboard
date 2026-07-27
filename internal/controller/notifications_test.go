@@ -447,6 +447,62 @@ func TestNotificationDispatchScopeTemplatesAndDedupe(t *testing.T) {
 	}
 }
 
+func TestGoogleCertificateFailureNotificationRedactsEABSecret(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	hServer := newTestServer(db, "test-secret", "")
+	h := hServer.Handler()
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/notification-channels", token, map[string]any{
+		"name": "google-eab", "type": "telegram", "enabled": true, "events": notificationCertificateFailed,
+		"config_json": `{"bot_token":"admin-token","chat_id":"200"}`,
+	}, http.StatusCreated)
+
+	const hmacKey = "notification-secret-hmac"
+	created := request(t, h, http.MethodPost, "/api/v1/certificates", token, map[string]any{
+		"name": "google-notify", "domains": []string{"notify.example.com"}, "challenge_type": model.CertificateChallengeDNSManual,
+		"acme_ca": "google", "eab_key_id": "notify-key-id", "eab_hmac_key": hmacKey,
+	}, http.StatusCreated)["certificate"].(map[string]any)
+	certificate, err := db.GetCertificate(context.Background(), int64(created["id"].(float64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type sentMessage struct{ title, body string }
+	var sentMu sync.Mutex
+	sent := []sentMessage{}
+	hServer.notificationSender = func(_ context.Context, _ model.NotificationChannel, title, body string) error {
+		sentMu.Lock()
+		defer sentMu.Unlock()
+		sent = append(sent, sentMessage{title: title, body: body})
+		return nil
+	}
+	hServer.markCertificateIssueFailed(context.Background(), certificate, errors.New("externalAccountRequired: "+hmacKey))
+	waitNotificationCount(t, &sentMu, &sent, 1)
+
+	sentMu.Lock()
+	message := sent[0]
+	sentMu.Unlock()
+	if !strings.Contains(message.title, "Google 证书签发失败") || !strings.Contains(message.body, "notify-key-id") || !strings.Contains(message.body, "externalAccountRequired") {
+		t.Fatalf("Google certificate failure message = %#v", message)
+	}
+	if strings.Contains(message.body, hmacKey) {
+		t.Fatal("Google certificate failure notification exposed the HMAC key")
+	}
+	stored, err := db.GetCertificate(context.Background(), certificate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stored.LastError, hmacKey) || !strings.Contains(stored.LastError, "[已隐藏]") {
+		t.Fatalf("stored certificate error was not redacted: %q", stored.LastError)
+	}
+}
+
 func TestTaskTimeoutAndAdminAnnouncementQueue(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

@@ -100,9 +100,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/version", s.version)
 	mux.HandleFunc("/api/v1/auth/bootstrap", s.bootstrap)
 	mux.HandleFunc("/api/v1/auth/login", s.login)
+	mux.HandleFunc("/api/v1/auth/totp/verify", s.verifyTOTPLogin)
+	mux.HandleFunc("/api/v1/auth/passkey/login/begin", s.passkeyLoginBegin)
+	mux.HandleFunc("/api/v1/auth/passkey/login/finish", s.passkeyLoginFinish)
 	mux.HandleFunc("/api/v1/auth/logout", s.auth(s.logout, model.RoleViewer))
 	mux.HandleFunc("/api/v1/auth/password", s.auth(s.changePassword, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me", s.auth(s.me, model.RoleViewer))
+	mux.HandleFunc("/api/v1/me/authentication", s.auth(s.authenticationStatus, model.RoleViewer))
+	mux.HandleFunc("/api/v1/me/totp/setup/begin", s.auth(s.totpSetupBegin, model.RoleViewer))
+	mux.HandleFunc("/api/v1/me/totp/setup/confirm", s.auth(s.totpSetupConfirm, model.RoleViewer))
+	mux.HandleFunc("/api/v1/me/totp/disable", s.auth(s.totpDisable, model.RoleViewer))
+	mux.HandleFunc("/api/v1/me/totp/recovery-codes", s.auth(s.totpRecoveryCodes, model.RoleViewer))
+	mux.HandleFunc("/api/v1/me/passkeys/register/begin", s.auth(s.passkeyRegisterBegin, model.RoleViewer))
+	mux.HandleFunc("/api/v1/me/passkeys/register/finish", s.auth(s.passkeyRegisterFinish, model.RoleViewer))
+	mux.HandleFunc("/api/v1/me/passkeys/", s.auth(s.passkeys, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/subscription-age", s.auth(s.selfSubscriptionAge, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/ssh-user-keys", s.auth(s.selfSSHUserKeys, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/ssh-user-keys/", s.auth(s.selfSSHUserKeys, model.RoleViewer))
@@ -113,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/controller-update", s.auth(s.controllerUpdate, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/check", s.auth(s.controllerUpdateCheck, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/install", s.auth(s.controllerUpdateInstall, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/controller-update/cancel", s.auth(s.controllerUpdateCancel, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups", s.auth(s.controllerBackups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups/settings", s.auth(s.controllerBackupSettings, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups/settings/test", s.auth(s.controllerBackupTestDestination, model.RoleAdmin))
@@ -122,6 +134,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/system-logs", s.auth(s.systemLogs, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-credentials", s.auth(s.dnsCredentials, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-credentials/", s.auth(s.dnsCredentialSubroutes, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/google-eab-credentials", s.auth(s.googleEABCredentials, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/google-eab-credentials/", s.auth(s.googleEABCredentials, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-records", s.auth(s.dnsRecords, model.RoleOperator))
 	mux.HandleFunc("/api/v1/dns-sync", s.auth(s.dnsSync, model.RoleOperator))
 	mux.HandleFunc("/api/v1/certificates", s.auth(s.certificates, model.RoleOperator))
@@ -1258,8 +1272,15 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 	case "account":
 		if user := currentUser(r); user != nil {
 			out["account_user"] = selfUserResponse(ctx, s.store, *user, role)
+			var passkeys []model.PasskeyCredential
+			passkeys, err = s.store.ListPasskeyCredentials(ctx, user.ID)
+			if err == nil {
+				out["passkeys"] = passkeys
+			}
 			var keys []model.SSHUserKey
-			keys, err = s.store.ListSSHUserKeysForUser(ctx, user.ID)
+			if err == nil {
+				keys, err = s.store.ListSSHUserKeysForUser(ctx, user.ID)
+			}
 			if err == nil {
 				out["ssh_user_keys"] = keys
 			}
@@ -1308,6 +1329,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			out["certificates"], err = s.store.ListCertificates(ctx)
+		}
+		if err == nil {
+			out["google_eab_credentials"], err = s.store.ListGoogleEABCredentials(ctx)
 		}
 		if err == nil {
 			err = addServers()
@@ -1430,24 +1454,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("用户名或密码错误"), 401)
 		return
 	}
-	effectiveRole, err := s.store.EffectiveUserRole(r.Context(), *u)
-	if err != nil {
-		fail(w, err, 500)
+	if s.beginSecondFactorLogin(w, r, u) {
 		return
 	}
-	u.Role = effectiveRole
-	token, err := security.SignSession(s.sessionSecret, security.TokenClaims{Subject: u.ID, Role: string(u.Role), SessionVersion: u.SessionVersion, Expiry: time.Now().Add(24 * time.Hour)})
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
-	csrfToken := s.csrfTokenForSession(token)
-	s.setSessionCookie(w, r, token)
-	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &u.ID, Action: "login", Target: "user", Detail: u.Username, IP: r.RemoteAddr})
-	if u.Role == model.RoleAdmin {
-		s.TriggerControllerUpdateCheck(r.Context())
-	}
-	write(w, 200, map[string]any{"token": token, "csrf_token": csrfToken, "user": u})
+	s.finishUserLogin(w, r, u, "login")
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -1602,6 +1612,8 @@ func (s *Server) selfSubscriptionAge(w http.ResponseWriter, r *http.Request) {
 func selfUserResponse(ctx context.Context, st *store.Store, user model.User, role model.Role) map[string]any {
 	protected, _ := st.IsBootstrapAdmin(ctx, user.ID)
 	settings, _ := st.ListSettings(ctx)
+	authentication, _ := st.GetUserAuthentication(ctx, user.ID)
+	passkeys, _ := st.ListPasskeyCredentials(ctx, user.ID)
 	return map[string]any{
 		"id":                          user.ID,
 		"username":                    user.Username,
@@ -1613,6 +1625,8 @@ func selfUserResponse(ctx context.Context, st *store.Store, user model.User, rol
 		"subscription_age_enabled":    user.SubscriptionAgeEnabled,
 		"subscription_age_public_key": user.SubscriptionAgePublicKey,
 		"subscription_age_policy":     normalizeSubscriptionAgePolicy(settings[settingSubscriptionAgePolicy]),
+		"totp_enabled":                authentication.TOTPEnabled,
+		"passkey_count":               len(passkeys),
 	}
 }
 

@@ -52,7 +52,7 @@ import {
   Zap, Sliders, Menu, X, Sun, Moon, RefreshCw, ChevronDown, ChevronRight, Check, Info,
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
-  KeyRound, ExternalLink, CalendarSync, BadgeCheck
+  KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -104,6 +104,7 @@ type ControllerUpdateStatus = {
   available: { version: string; build: string; commit: string; date: string }
   update_available: boolean
   auto_update_enabled: boolean
+  can_cancel: boolean
   status: string
   last_checked_at?: string
   last_error?: string
@@ -119,7 +120,8 @@ type DNSProvider = 'cloudflare' | 'alidns' | 'tencent_dns' | 'tencent_esa' | 'hu
 type DNSCredentialZone = { id: number; credential_id: number; zone_name: string; provider_zone_id?: string; server_id?: number }
 type DNSCredential = { id: number; name: string; provider: DNSProvider; zones: DNSCredentialZone[]; configured: boolean; enabled: boolean; verified_at?: string; last_error?: string }
 type DNSRecord = { id: string; credential_id: number; dns_zone_id?: number; zone_id?: string; zone_name: string; type: string; name: string; content: string; comment?: string; server_id?: number; inbound_id?: number; proxied?: boolean; ttl: number; enabled: boolean }
-type Certificate = { id: number; name: string; primary_domain: string; domains: string[]; wildcard: boolean; challenge_type: 'http01' | 'dns01' | 'dns01_manual' | 'imported'; dns_credential_id?: number; issuance_server_id?: number; acme_ca: string; account_email: string; eab_key_id?: string; eab_configured?: boolean; status: string; revision?: string; not_before?: string; not_after?: string; auto_renew: boolean; validation_records?: DNSRecord[]; last_error?: string; last_issued_at?: string; last_renewal_attempt_at?: string }
+type GoogleEABCredential = { id: number; key_id: string; remark: string; usage_count: number; created_at: string }
+type Certificate = { id: number; name: string; primary_domain: string; domains: string[]; wildcard: boolean; challenge_type: 'http01' | 'dns01' | 'dns01_manual' | 'imported'; dns_credential_id?: number; issuance_server_id?: number; acme_ca: string; account_email: string; google_eab_credential_id?: number; eab_key_id?: string; eab_configured?: boolean; status: string; revision?: string; not_before?: string; not_after?: string; auto_renew: boolean; validation_records?: DNSRecord[]; last_error?: string; last_issued_at?: string; last_renewal_attempt_at?: string }
 type InboundUser = { id: number; inbound_id: number; user_id: number; enabled: boolean }
 type SSHUserKey = { id: number; user_id: number; name: string; public_key: string; fingerprint: string; enabled: boolean }
 type SSHAccess = { inbound_id: number; name: string; address: string; port: number; username: string }
@@ -129,7 +131,9 @@ type UserGroup = { id: number; name: string; description: string; role: Role; sy
 type UserGroupMember = { id: number; group_id: number; user_id: number; enabled: boolean }
 type InboundAccessGrant = { id: number; subject_type: AccessSubjectType; subject_id: number; scope_type: AccessScopeType; server_id?: number; inbound_id?: number; enabled: boolean }
 type Outbound = { id: number; server_id: number; next_server_id?: number; name: string; protocol: Protocol; target_address: string; target_port: number; config_json: string; enabled: boolean }
-type User = { id: number; username: string; nickname: string; role: Role; status: string; protected?: boolean; proxy_uuid: string; proxy_password: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_used_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; traffic_period_key?: string; traffic_period_end?: string; traffic_quota_state?: string; subscription_token: string; subscription_burn_after_read: boolean; subscription_burned_at?: string; subscription_age_enabled: boolean; subscription_age_public_key?: string; subscription_age_policy?: 'optional' | 'required' }
+type User = { id: number; username: string; nickname: string; role: Role; status: string; protected?: boolean; proxy_uuid: string; proxy_password: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_used_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; traffic_period_key?: string; traffic_period_end?: string; traffic_quota_state?: string; subscription_token: string; subscription_burn_after_read: boolean; subscription_burned_at?: string; subscription_age_enabled: boolean; subscription_age_public_key?: string; subscription_age_policy?: 'optional' | 'required'; totp_enabled?: boolean; passkey_count?: number }
+type PasskeyCredential = { id: number; name: string; created_at: string; last_used_at?: string }
+type AuthenticationStatus = { totp_enabled: boolean; recovery_codes_remaining: number; passkeys: PasskeyCredential[]; passkey_supported: boolean }
 type DNSTransport = 'udp' | 'tcp' | 'dot' | 'doh' | 'doq'
 type DNSListKind = 'encrypted' | 'bootstrap'
 type DNSCandidate = { tag: string; transport: DNSTransport; server: string; port: number; path?: string; tls_name?: string }
@@ -166,7 +170,7 @@ type ConnectionAuditDimension = { key: string; label: string; secondary?: string
 type ConnectionAuditReport = { report_id: string; server_id: number; user_id: number; inbound_id?: number; path_id?: number; source_ip: string; source_geo_code?: string; network: string; destination?: string; destination_port?: number; outbound_tag?: string; outbound_type?: string; connection_count: number; active_peak: number; active_at_end: number; started_at: string; ended_at: string }
 type ConnectionAuditUserDetail = { summary: ConnectionAuditUser; sources: ConnectionAuditDimension[]; destinations: ConnectionAuditDimension[]; outbounds: ConnectionAuditDimension[]; servers: ConnectionAuditDimension[]; recent: ConnectionAuditReport[] }
 type LimitMode = 'inherit' | 'custom'
-type SessionUser = Pick<User, 'id' | 'username' | 'nickname' | 'role' | 'status'>
+type SessionUser = Pick<User, 'id' | 'username' | 'nickname' | 'role' | 'status' | 'totp_enabled' | 'passkey_count'>
 type UserDraft = { username: string; nickname: string; password?: string; role: Role; status: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; limit_mode: LimitMode }
 type UserGroupDraft = { name: string; description: string; role: Role; enabled: boolean; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number }
 
@@ -678,6 +682,7 @@ const errorMessages: Record<string, string> = {
   'missing or malformed jwt': '登录状态已失效，请重新登录',
   'current password is incorrect': '当前密码不正确',
   'new password must be at least 8 characters': '新密码至少需要 8 位',
+  'new password must be at least 10 characters': '新密码至少需要 10 位',
   'rate limit exceeded': '操作过于频繁，请稍后再试',
   forbidden: '权限不足，无法执行该操作',
   'method not allowed': '请求方法不允许',
@@ -689,6 +694,11 @@ const errorMessages: Record<string, string> = {
   'age encryption is only supported for Mihomo subscriptions': 'Age 加密仅支持 Mihomo、Clash.Meta 和 Clash 格式',
   'do not upload an age secret key; provide the public key': '请填写 Age 公钥，不要上传私钥',
   'subscription_age_policy must be optional or required': '订阅加密策略无效',
+  '验证码或恢复码错误': '验证码或恢复码错误',
+  '六位验证码错误': '六位验证码错误',
+  '该账号无法使用通行密钥': '该账号尚未添加通行密钥，或当前环境不支持',
+  '通行密钥验证失败': '通行密钥验证失败，请重试',
+  '通行密钥登录请求已失效': '通行密钥登录已超时，请重试',
   '用户名或密码错误': '用户名或密码错误'
 }
 
@@ -857,6 +867,88 @@ async function copyText(value: string) {
   } finally {
     document.body.removeChild(textarea)
   }
+}
+
+function passkeyAvailable() {
+  return window.isSecureContext && 'PublicKeyCredential' in window && Boolean(navigator.credentials)
+}
+
+function base64URLToBytes(value: string) {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4)
+  const binary = window.atob(padded)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index)
+  return bytes
+}
+
+function bytesToBase64URL(value: ArrayBuffer | ArrayBufferView | null) {
+  if (!value) return ''
+  const bytes = value instanceof ArrayBuffer
+    ? new Uint8Array(value)
+    : new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)))
+  }
+  return window.btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function decodePasskeyCreationOptions(options: any): PublicKeyCredentialCreationOptions {
+  return {
+    ...options,
+    challenge: base64URLToBytes(options.challenge),
+    user: { ...options.user, id: base64URLToBytes(options.user.id) },
+    excludeCredentials: (options.excludeCredentials || []).map((credential: any) => ({ ...credential, id: base64URLToBytes(credential.id) })),
+  }
+}
+
+function decodePasskeyRequestOptions(options: any): PublicKeyCredentialRequestOptions {
+  return {
+    ...options,
+    challenge: base64URLToBytes(options.challenge),
+    allowCredentials: (options.allowCredentials || []).map((credential: any) => ({ ...credential, id: base64URLToBytes(credential.id) })),
+  }
+}
+
+function passkeyCredentialJSON(credential: PublicKeyCredential) {
+  const response: any = credential.response
+  const payload: any = {
+    id: credential.id,
+    rawId: bytesToBase64URL(credential.rawId),
+    type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment || undefined,
+    clientExtensionResults: credential.getClientExtensionResults(),
+    response: {
+      clientDataJSON: bytesToBase64URL(response.clientDataJSON),
+    },
+  }
+  if (response.attestationObject) {
+    payload.response.attestationObject = bytesToBase64URL(response.attestationObject)
+    payload.response.authenticatorData = typeof response.getAuthenticatorData === 'function' ? bytesToBase64URL(response.getAuthenticatorData()) : undefined
+    payload.response.publicKey = typeof response.getPublicKey === 'function' ? bytesToBase64URL(response.getPublicKey()) : undefined
+    payload.response.publicKeyAlgorithm = typeof response.getPublicKeyAlgorithm === 'function' ? response.getPublicKeyAlgorithm() : 0
+    payload.response.transports = typeof response.getTransports === 'function' ? response.getTransports() : []
+  } else {
+    payload.response.authenticatorData = bytesToBase64URL(response.authenticatorData)
+    payload.response.signature = bytesToBase64URL(response.signature)
+    payload.response.userHandle = response.userHandle ? bytesToBase64URL(response.userHandle) : undefined
+  }
+  return payload
+}
+
+async function createPasskeyCredential(options: any) {
+  if (!passkeyAvailable()) throw new Error('当前浏览器或访问方式不支持通行密钥')
+  const credential = await navigator.credentials.create({ publicKey: decodePasskeyCreationOptions(options.publicKey) }) as PublicKeyCredential | null
+  if (!credential) throw new Error('没有创建通行密钥')
+  return passkeyCredentialJSON(credential)
+}
+
+async function getPasskeyCredential(options: any) {
+  if (!passkeyAvailable()) throw new Error('当前浏览器或访问方式不支持通行密钥')
+  const credential = await navigator.credentials.get({ publicKey: decodePasskeyRequestOptions(options.publicKey) }) as PublicKeyCredential | null
+  if (!credential) throw new Error('没有选择通行密钥')
+  return passkeyCredentialJSON(credential)
 }
 
 function sleep(ms: number) {
@@ -1577,6 +1669,10 @@ function App() {
 function Login({ theme, toggleTheme, onToken }: { theme: string; toggleTheme: (event?: React.MouseEvent<HTMLElement>) => void; onToken: (token: string, user: SessionUser, csrfToken: string) => void }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
+  const [challengeToken, setChallengeToken] = useState('')
+  const [loginStep, setLoginStep] = useState<'password' | 'totp'>('password')
+  const [secondFactorPasskey, setSecondFactorPasskey] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -1586,13 +1682,52 @@ function Login({ theme, toggleTheme, onToken }: { theme: string; toggleTheme: (e
     setIsLoading(true)
     setError('')
     try {
-      const res = await api('').request<{ csrf_token: string; user: SessionUser }>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+      if (loginStep === 'totp') {
+        const res = await api('').request<{ csrf_token: string; user: SessionUser }>('/auth/totp/verify', { method: 'POST', body: JSON.stringify({ challenge_token: challengeToken, code }) })
+        onToken('cookie', res.user, res.csrf_token)
+        return
+      }
+      const res = await api('').request<{ csrf_token?: string; user?: SessionUser; two_factor_required?: boolean; challenge_token?: string; passkey_available?: boolean }>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+      if (res.two_factor_required && res.challenge_token) {
+        setChallengeToken(res.challenge_token)
+        setSecondFactorPasskey(Boolean(res.passkey_available))
+        setLoginStep('totp')
+        setPassword('')
+        setCode('')
+        return
+      }
+      if (!res.user || !res.csrf_token) throw new Error('登录响应无效')
       onToken('cookie', res.user, res.csrf_token)
     } catch (e: any) {
       setError(localizeErrorMessage(e?.message || '用户名或密码错误'))
     } finally {
       setIsLoading(false)
     }
+  }
+
+  const loginWithPasskey = async () => {
+    if (!username.trim() || isLoading) return
+    setIsLoading(true)
+    setError('')
+    try {
+      const begin = await api('').request<{ options: any; challenge_token: string }>('/auth/passkey/login/begin', { method: 'POST', body: JSON.stringify({ username: username.trim() }) })
+      const credential = await getPasskeyCredential(begin.options)
+      const result = await api('').request<{ csrf_token: string; user: SessionUser }>('/auth/passkey/login/finish', { method: 'POST', body: JSON.stringify({ challenge_token: begin.challenge_token, credential }) })
+      onToken('cookie', result.user, result.csrf_token)
+    } catch (e: any) {
+      const name = String(e?.name || '')
+      setError(name === 'NotAllowedError' ? '未完成通行密钥验证' : localizeErrorMessage(e?.message || e))
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const backToPassword = () => {
+    setLoginStep('password')
+    setChallengeToken('')
+    setSecondFactorPasskey(false)
+    setCode('')
+    setError('')
   }
 
   return (
@@ -1678,12 +1813,12 @@ $ _`}</pre>
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
         >
-          <div className="login-panel-kicker">登录</div>
-          <h2>欢迎回来</h2>
-          <p className="login-panel-desc">请输入账号信息以访问控制台。</p>
+          <div className="login-panel-kicker">{loginStep === 'totp' ? '双重认证' : '登录'}</div>
+          <h2>{loginStep === 'totp' ? '确认是你本人' : '欢迎回来'}</h2>
+          <p className="login-panel-desc">{loginStep === 'totp' ? '输入认证器中的六位验证码，也可以使用一枚恢复码。' : '请输入账号信息以访问控制台。'}</p>
 
           <form className="login-form-hyvps" onSubmit={handleSubmit}>
-            <label className="login-field">
+            {loginStep === 'password' ? <><label className="login-field">
               <span className="sr-only">用户名</span>
               <div className="login-input-wrap">
                 <User size={16} className="login-input-leading" aria-hidden="true" />
@@ -1720,13 +1855,33 @@ $ _`}</pre>
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
-            </label>
+            </label></> : <label className="login-field">
+              <span className="sr-only">验证码或恢复码</span>
+              <div className="login-input-wrap">
+                <Smartphone size={16} className="login-input-leading" aria-hidden="true" />
+                <input
+                  value={code}
+                  onChange={e => setCode(e.target.value)}
+                  placeholder="六位验证码或恢复码"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  required
+                  aria-label="验证码或恢复码"
+                />
+              </div>
+            </label>}
 
             {error && <div className="login-error">{error}</div>}
 
             <button type="submit" className="login-submit" disabled={isLoading}>
-              {isLoading ? '登录中…' : '登录'}
+              {isLoading ? '验证中…' : loginStep === 'totp' ? '验证并登录' : '登录'}
             </button>
+
+            {passkeyAvailable() && (loginStep === 'password' || secondFactorPasskey) && <>
+              <div className="login-divider"><span>或者</span></div>
+              <button type="button" className="login-passkey" onClick={() => void loginWithPasskey()} disabled={isLoading || !username.trim()}><Fingerprint size={17} />使用通行密钥</button>
+            </>}
+            {loginStep === 'totp' && <button type="button" className="login-back" onClick={backToPassword} disabled={isLoading}>返回密码登录</button>}
           </form>
 
           {/* Shown when the left hero (and its theme control) is hidden on narrow screens. */}
@@ -1781,6 +1936,15 @@ function AccountPage({ data, client, load, notify }: any) {
   const [iconsReady, setIconsReady] = useState(false)
   const [ageEnabled, setAgeEnabled] = useState(Boolean(user?.subscription_age_enabled))
   const [agePublicKey, setAgePublicKey] = useState(user?.subscription_age_public_key || '')
+  const [authentication, setAuthentication] = useState<AuthenticationStatus>({
+    totp_enabled: Boolean(user?.totp_enabled),
+    recovery_codes_remaining: 0,
+    passkeys: data.passkeys || [],
+    passkey_supported: passkeyAvailable(),
+  })
+  const [totpSetup, setTOTPSetup] = useState<{ secret: string; qr_data_url: string } | null>(null)
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
+  const [securityWorking, setSecurityWorking] = useState('')
 
   useEffect(() => setNickname(user?.nickname || ''), [user?.nickname])
   useEffect(() => {
@@ -1792,6 +1956,17 @@ function AccountPage({ data, client, load, notify }: any) {
     preloadSubscriptionClientIcons().then(() => { if (active) setIconsReady(true) })
     return () => { active = false }
   }, [])
+
+  const refreshAuthentication = async () => {
+    const result = await client.request('/me/authentication') as AuthenticationStatus
+    setAuthentication(result)
+  }
+
+  useEffect(() => {
+    let active = true
+    client.request('/me/authentication').then((result: AuthenticationStatus) => { if (active) setAuthentication(result) }).catch(() => undefined)
+    return () => { active = false }
+  }, [user?.id])
 
   const formats: Array<{ id: SubscriptionFormat; name: string }> = [
     { id: 'sing-box', name: 'sing-box' },
@@ -1837,14 +2012,118 @@ function AccountPage({ data, client, load, notify }: any) {
   }
 
   const savePassword = async () => {
-    if (newPassword.length < 8) {
-      notify?.('新密码至少需要 8 个字符', 'warning')
+    if (newPassword.length < 10) {
+      notify?.('新密码至少需要 10 个字符', 'warning')
       return
     }
     await client.request('/auth/password', { method: 'POST', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) })
     setCurrentPassword('')
     setNewPassword('')
     notify?.('密码已修改', 'success')
+  }
+
+  const beginTOTPSetup = async () => {
+    const currentPassword = await dialogs.prompt({ title: '开启双重认证', message: '先验证当前登录密码，再绑定认证器。', placeholder: '当前密码', inputType: 'password', confirmText: '继续' })
+    if (currentPassword === null) return
+    setSecurityWorking('totp-setup')
+    try {
+      const result = await client.request('/me/totp/setup/begin', { method: 'POST', body: JSON.stringify({ current_password: currentPassword }) }) as { secret: string; qr_data_url: string }
+      setTOTPSetup(result)
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setSecurityWorking('')
+    }
+  }
+
+  const completeTOTPSetup = async (result: { recovery_codes: string[]; csrf_token?: string }) => {
+    if (result.csrf_token) sessionStorage.setItem('oboard.csrf', result.csrf_token)
+    setTOTPSetup(null)
+    setRecoveryCodes(result.recovery_codes)
+    await refreshAuthentication()
+    await load()
+    notify?.('双重认证已开启', 'success')
+  }
+
+  const disableTOTP = async () => {
+    const confirmed = await dialogs.confirm({ title: '停用双重认证？', message: '停用后，账号只需要密码或通行密钥即可登录。', confirmText: '继续停用', tone: 'danger' })
+    if (!confirmed) return
+    const currentPassword = await dialogs.prompt({ title: '验证登录密码', placeholder: '当前密码', inputType: 'password', confirmText: '下一步' })
+    if (currentPassword === null) return
+    const code = await dialogs.prompt({ title: '验证认证器', message: '输入六位验证码，也可以使用一枚恢复码。', placeholder: '验证码或恢复码', inputType: 'text', confirmText: '停用' })
+    if (code === null) return
+    setSecurityWorking('totp-disable')
+    try {
+      const result = await client.request('/me/totp/disable', { method: 'POST', body: JSON.stringify({ current_password: currentPassword, code }) }) as { csrf_token?: string }
+      if (result.csrf_token) sessionStorage.setItem('oboard.csrf', result.csrf_token)
+      await refreshAuthentication()
+      await load()
+      notify?.('双重认证已停用', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setSecurityWorking('')
+    }
+  }
+
+  const regenerateRecoveryCodes = async () => {
+    const currentPassword = await dialogs.prompt({ title: '生成新的恢复码', message: '生成后，之前的恢复码会立即失效。', placeholder: '当前密码', inputType: 'password', confirmText: '下一步' })
+    if (currentPassword === null) return
+    const code = await dialogs.prompt({ title: '验证认证器', placeholder: '六位验证码或恢复码', inputType: 'text', confirmText: '生成' })
+    if (code === null) return
+    setSecurityWorking('totp-recovery')
+    try {
+      const result = await client.request('/me/totp/recovery-codes', { method: 'POST', body: JSON.stringify({ current_password: currentPassword, code }) }) as { recovery_codes: string[] }
+      setRecoveryCodes(result.recovery_codes)
+      await refreshAuthentication()
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setSecurityWorking('')
+    }
+  }
+
+  const addPasskey = async () => {
+    const name = await dialogs.prompt({ title: '添加通行密钥', message: '名称用于区分这台设备或密码管理器。', defaultValue: '我的通行密钥', placeholder: '例如：MacBook', confirmText: '下一步' })
+    if (name === null) return
+    const currentPassword = await dialogs.prompt({ title: '验证登录密码', placeholder: '当前密码', inputType: 'password', confirmText: '添加' })
+    if (currentPassword === null) return
+    const code = authentication.totp_enabled ? await dialogs.prompt({ title: '验证认证器', message: '输入六位验证码，也可以使用一枚恢复码。', placeholder: '验证码或恢复码', confirmText: '添加' }) : ''
+    if (code === null) return
+    setSecurityWorking('passkey-add')
+    try {
+      const begin = await client.request('/me/passkeys/register/begin', { method: 'POST', body: JSON.stringify({ name, current_password: currentPassword, code }) }) as { options: any; challenge_token: string }
+      const credential = await createPasskeyCredential(begin.options)
+      await client.request('/me/passkeys/register/finish', { method: 'POST', body: JSON.stringify({ challenge_token: begin.challenge_token, credential }) })
+      await refreshAuthentication()
+      await load()
+      notify?.('通行密钥已添加', 'success')
+    } catch (error: any) {
+      const message = String(error?.name || '') === 'NotAllowedError' ? '未完成通行密钥创建' : localizeErrorMessage(error?.message || error)
+      notify?.(message, 'error')
+    } finally {
+      setSecurityWorking('')
+    }
+  }
+
+  const removePasskey = async (passkey: PasskeyCredential) => {
+    const confirmed = await dialogs.confirm({ title: '移除通行密钥？', message: `将移除“${passkey.name}”，这台设备之后不能再用它登录。`, confirmText: '移除', tone: 'danger' })
+    if (!confirmed) return
+    const currentPassword = await dialogs.prompt({ title: '验证登录密码', placeholder: '当前密码', inputType: 'password', confirmText: '移除' })
+    if (currentPassword === null) return
+    const code = authentication.totp_enabled ? await dialogs.prompt({ title: '验证认证器', message: '输入六位验证码，也可以使用一枚恢复码。', placeholder: '验证码或恢复码', confirmText: '移除' }) : ''
+    if (code === null) return
+    setSecurityWorking(`passkey-${passkey.id}`)
+    try {
+      await client.request(`/me/passkeys/${passkey.id}`, { method: 'DELETE', body: JSON.stringify({ current_password: currentPassword, code }) })
+      await refreshAuthentication()
+      await load()
+      notify?.('通行密钥已移除', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setSecurityWorking('')
+    }
   }
 
   const addSSHUserKey = async () => {
@@ -1880,7 +2159,7 @@ function AccountPage({ data, client, load, notify }: any) {
     notify?.(ok ? 'SSH 动态代理命令已复制' : '复制失败，请手动复制', ok ? 'success' : 'error')
   }
 
-  return <Panel title="我的账户" className="account-panel">
+  return <><Panel title="我的账户" className="account-panel">
     <div className="account-layout">
       <section className="sub-section account-subscription-section">
         <div className="sub-section-head"><div><h3><LinkIcon size={16} />我的订阅</h3><p className="muted">选择客户端格式后复制自己的订阅链接。</p></div></div>
@@ -1899,6 +2178,25 @@ function AccountPage({ data, client, load, notify }: any) {
       </section>
 
       <div className="account-settings-grid">
+        <section className="sub-section account-login-security">
+          <div className="sub-section-head"><div><h3><ShieldCheck size={16} />登录安全</h3><p className="muted">管理双重认证、恢复码和通行密钥。</p></div></div>
+          <div className="account-security-list">
+            <div className="account-security-item">
+              <div className="account-security-icon"><Smartphone size={19} /></div>
+              <div className="account-security-copy"><strong>认证器验证码</strong><span>{authentication.totp_enabled ? `已开启 · 剩余 ${authentication.recovery_codes_remaining} 枚恢复码` : '未开启'}</span></div>
+              <div className="account-security-actions">
+                {authentication.totp_enabled ? <><button type="button" className="ghost" onClick={() => void regenerateRecoveryCodes()} disabled={Boolean(securityWorking)}>生成新恢复码</button><button type="button" className="ghost danger-text" onClick={() => void disableTOTP()} disabled={Boolean(securityWorking)}>停用</button></> : <button type="button" onClick={() => void beginTOTPSetup()} disabled={Boolean(securityWorking)}>{securityWorking === 'totp-setup' ? '准备中…' : '开启'}</button>}
+              </div>
+            </div>
+            <div className="account-security-item passkeys">
+              <div className="account-security-icon"><Fingerprint size={19} /></div>
+              <div className="account-security-copy"><strong>通行密钥</strong><span>{authentication.passkeys.length ? `已添加 ${authentication.passkeys.length} 个` : '使用设备解锁直接登录'}</span></div>
+              <div className="account-security-actions"><button type="button" className="ghost" onClick={() => void addPasskey()} disabled={Boolean(securityWorking) || !authentication.passkey_supported || !passkeyAvailable()}><Plus size={15} />添加</button></div>
+              {!authentication.passkey_supported || !passkeyAvailable() ? <p className="account-security-note">通行密钥需要通过 HTTPS 访问面板。</p> : null}
+              {authentication.passkeys.length > 0 && <div className="account-passkey-list">{authentication.passkeys.map(passkey => <div key={passkey.id}><span><strong>{passkey.name}</strong><small>{passkey.last_used_at ? `最近使用 ${formatDate(passkey.last_used_at)}` : `添加于 ${formatDate(passkey.created_at)}`}</small></span><button type="button" className="ghost danger-text" onClick={() => void removePasskey(passkey)} disabled={Boolean(securityWorking)}>移除</button></div>)}</div>}
+            </div>
+          </div>
+        </section>
         <section className="sub-section account-age-section">
           <div className="sub-section-head"><div><h3><Shield size={16} />订阅加密</h3><p className="muted">只填写客户端生成的公钥，私钥不要上传到面板。</p></div><span className={`sub-pill ${ageRequired ? 'warn' : ageReady ? 'ok' : ''}`}>{ageRequired ? '管理员强制' : ageReady ? '已开启' : '未开启'}</span></div>
           <div className="form account-form">
@@ -1925,7 +2223,7 @@ function AccountPage({ data, client, load, notify }: any) {
           <div className="sub-section-head"><div><h3><Lock size={16} />修改密码</h3><p className="muted">修改后下次登录使用新密码。</p></div></div>
           <div className="form account-form">
             <FormField label="当前密码"><input type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} /></FormField>
-            <FormField label="新密码" hint="至少 8 个字符"><input type="password" autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} /></FormField>
+            <FormField label="新密码" hint="至少 10 个字符"><input type="password" autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} /></FormField>
             <button onClick={savePassword} disabled={!currentPassword || !newPassword}>修改密码</button>
           </div>
         </section>
@@ -1939,6 +2237,57 @@ function AccountPage({ data, client, load, notify }: any) {
       </div>
     </div>
   </Panel>
+  <AnimatePresence>{totpSetup && <TOTPSetupDialog setup={totpSetup} client={client} onCancel={() => setTOTPSetup(null)} onComplete={completeTOTPSetup} />}</AnimatePresence>
+  <AnimatePresence>{recoveryCodes && <RecoveryCodesDialog codes={recoveryCodes} onClose={() => setRecoveryCodes(null)} />}</AnimatePresence>
+  </>
+}
+
+function TOTPSetupDialog({ setup, client, onCancel, onComplete }: { setup: { secret: string; qr_data_url: string }; client: ReturnType<typeof api>; onCancel: () => void; onComplete: (result: { recovery_codes: string[]; csrf_token?: string }) => Promise<void> }) {
+  const [code, setCode] = useState('')
+  const [error, setError] = useState('')
+  const [working, setWorking] = useState(false)
+  const confirm = async () => {
+    if (!/^\d{6}$/.test(code.trim()) || working) {
+      setError('请输入认证器显示的六位验证码')
+      return
+    }
+    setWorking(true)
+    setError('')
+    try {
+      const result = await client.request('/me/totp/setup/confirm', { method: 'POST', body: JSON.stringify({ code: code.trim() }) }) as { recovery_codes: string[]; csrf_token?: string }
+      await onComplete(result)
+    } catch (requestError: any) {
+      setError(localizeErrorMessage(requestError?.message || requestError))
+    } finally {
+      setWorking(false)
+    }
+  }
+  return <MotionDialogPanel onCancel={onCancel} className="totp-setup-dialog">
+    <header className="dialog-head"><div><h2>绑定认证器</h2><p className="muted">使用任意支持六位动态验证码的认证器扫描二维码。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button></header>
+    <div className="dialog-body totp-setup-body">
+      <div className="totp-qr"><img src={setup.qr_data_url} alt="OBoard 双重认证二维码" /></div>
+      <div className="totp-manual"><span>无法扫描时，手动输入密钥</span><CopyBlock value={setup.secret} /></div>
+      <FormField label="六位验证码" hint="输入当前验证码以完成开启。"><input value={code} onChange={event => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" placeholder="000000" autoFocus /></FormField>
+      {error && <div className="login-error">{error}</div>}
+    </div>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={working}>取消</button><button type="button" onClick={() => void confirm()} disabled={working || code.length !== 6}>{working ? '验证中…' : '验证并开启'}</button></footer>
+  </MotionDialogPanel>
+}
+
+function RecoveryCodesDialog({ codes, onClose }: { codes: string[]; onClose: () => void }) {
+  const [copied, setCopied] = useState(false)
+  const copyAll = async () => {
+    const ok = await copyText(codes.join('\n'))
+    setCopied(ok)
+  }
+  return <MotionDialogPanel onCancel={onClose} className="recovery-codes-dialog">
+    <header className="dialog-head"><div><h2>保存恢复码</h2><p className="muted">每枚恢复码只能使用一次，关闭后不会再次显示。</p></div></header>
+    <div className="dialog-body recovery-codes-body">
+      <div className="controller-update-install-notice"><strong>请存放在安全的位置</strong><span>手机无法使用时，可以用其中一枚恢复码完成登录。</span></div>
+      <div className="recovery-code-grid">{codes.map(code => <code key={code}>{code}</code>)}</div>
+    </div>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => void copyAll()}><Copy size={15} />{copied ? '已复制' : '复制全部'}</button><button type="button" onClick={onClose}>我已保存</button></footer>
+  </MotionDialogPanel>
 }
 
 
@@ -2177,7 +2526,7 @@ function SettingsPage({ data, client, load, notify }: any) {
 function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   const emptyStatus: ControllerUpdateStatus = {
     channel: '', current: { version: data.version?.version || '', build: data.version?.build || '', commit: data.version?.commit || '', date: data.version?.built_at || '' },
-    available: { version: '', build: '', commit: '', date: '' }, update_available: false, auto_update_enabled: false, status: 'loading',
+    available: { version: '', build: '', commit: '', date: '' }, update_available: false, auto_update_enabled: false, can_cancel: false, status: 'loading',
   }
   const [snapshot, setSnapshot] = useState<ControllerUpdateStatus>(emptyStatus)
   const [working, setWorking] = useState('')
@@ -2187,6 +2536,8 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   const [installConnectionInterrupted, setInstallConnectionInterrupted] = useState(false)
   const [installFailure, setInstallFailure] = useState('')
   const installExpectedRef = useRef(false)
+  const cancelExpectedRef = useRef(false)
+  const installRequestPendingRef = useRef(false)
   const installTargetBuildRef = useRef('')
   const updateInstallExpected = (value: boolean) => {
     installExpectedRef.current = value
@@ -2196,20 +2547,42 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
     if (!installExpectedRef.current) return
     setInstallConnectionInterrupted(false)
     const targetReached = Boolean(installTargetBuildRef.current) && result.current?.build === installTargetBuildRef.current
-    if (result.status === 'installed' || (targetReached && !result.update_available)) {
+    if (result.status === 'cancelled') {
+      cancelExpectedRef.current = false
+      updateInstallExpected(false)
+      setInstallPhase('cancelled')
+      setInstallDialogOpen(true)
+      notify?.('更新已中断', 'success')
+      return
+    }
+    const alreadyCurrent = result.status === 'current' && !result.update_available
+    if (result.status === 'installed' || alreadyCurrent || (targetReached && !result.update_available)) {
+      cancelExpectedRef.current = false
       updateInstallExpected(false)
       setInstallPhase('complete')
       setInstallDialogOpen(true)
       return
     }
     if (result.status === 'failed' || result.status === 'unavailable') {
+      cancelExpectedRef.current = false
       updateInstallExpected(false)
       setInstallFailure(result.last_error || '主控更新未能完成，请检查更新状态。')
       setInstallPhase('failed')
       setInstallDialogOpen(true)
       return
     }
-    setInstallPhase('waiting')
+    const taskExpired = result.status === 'idle' || result.status === 'pinned' || (result.status === 'available' && !installRequestPendingRef.current)
+    if (taskExpired) {
+      cancelExpectedRef.current = false
+      updateInstallExpected(false)
+      setInstallPhase('stopped')
+      setInstallDialogOpen(true)
+      return
+    }
+    if (result.status === 'downloading') setInstallPhase('downloading')
+    else if (result.status === 'installing') setInstallPhase('installing')
+    else if (result.status === 'cancelling') setInstallPhase('cancelling')
+    else setInstallPhase('starting')
   }
   const refresh = async (quiet = false) => {
     if (!quiet) setWorking('load')
@@ -2218,7 +2591,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
       setSnapshot(result)
       applyInstallStatus(result)
     } catch (error: any) {
-      if (quiet && (installExpectedRef.current || snapshot.status === 'installing') && isExpectedControllerUpdateDisconnect(error)) {
+      if (quiet && (installExpectedRef.current || ['downloading', 'installing', 'cancelling'].includes(snapshot.status)) && isExpectedControllerUpdateDisconnect(error)) {
         setInstallConnectionInterrupted(true)
       } else {
         notify?.(localizeErrorMessage(error?.message || error), 'error')
@@ -2229,15 +2602,15 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   }
   useEffect(() => { void refresh() }, [])
   useEffect(() => {
-    if (!installExpected && !['installing', 'checking'].includes(snapshot.status)) return
+    if (!installExpected && !['downloading', 'installing', 'cancelling', 'checking'].includes(snapshot.status)) return
     const timer = window.setInterval(() => { void refresh(true) }, 3000)
     return () => window.clearInterval(timer)
   }, [snapshot.status, installExpected])
   useEffect(() => {
-    if (snapshot.status !== 'installing' || installExpected) return
+    if (!['downloading', 'installing', 'cancelling'].includes(snapshot.status) || installExpected) return
     installTargetBuildRef.current = snapshot.available?.build || ''
     updateInstallExpected(true)
-    setInstallPhase('waiting')
+    setInstallPhase(snapshot.status as ControllerUpdateInstallPhase)
     setInstallDialogOpen(true)
   }, [snapshot.status, installExpected])
   const check = async () => {
@@ -2254,8 +2627,8 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
     }
   }
   const openInstall = () => {
-    if (installExpected || snapshot.status === 'installing') {
-      setInstallPhase('waiting')
+    if (installExpected || ['downloading', 'installing', 'cancelling'].includes(snapshot.status)) {
+      setInstallPhase(snapshot.status === 'cancelling' ? 'cancelling' : snapshot.status === 'installing' ? 'installing' : 'downloading')
       setInstallDialogOpen(true)
       return
     }
@@ -2268,9 +2641,11 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   const install = async () => {
     if (working || snapshot.channel === 'pinned' || !snapshot.update_available) return
     installTargetBuildRef.current = snapshot.available?.build || ''
+    cancelExpectedRef.current = false
     updateInstallExpected(true)
     setInstallPhase('starting')
     setWorking('install')
+    installRequestPendingRef.current = true
     try {
       const result = await client.request('/controller-update/install', { method: 'POST' }) as ControllerUpdateStatus
       setSnapshot(result)
@@ -2280,12 +2655,30 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
       if (isExpectedControllerUpdateDisconnect(error)) {
         setSnapshot(previous => ({ ...previous, status: 'installing' }))
         setInstallConnectionInterrupted(true)
-        setInstallPhase('waiting')
+        setInstallPhase('installing')
       } else {
         updateInstallExpected(false)
         setInstallFailure(localizeErrorMessage(error?.message || error))
         setInstallPhase('failed')
       }
+    } finally {
+      installRequestPendingRef.current = false
+      setWorking('')
+    }
+  }
+  const cancelInstall = async () => {
+    if (working || !snapshot.can_cancel) return
+    setWorking('cancel')
+    try {
+      cancelExpectedRef.current = true
+      const result = await client.request('/controller-update/cancel', { method: 'POST' }) as ControllerUpdateStatus
+      setSnapshot(result)
+      setInstallPhase('cancelling')
+      notify?.('正在中断更新', 'success')
+    } catch (error: any) {
+      cancelExpectedRef.current = false
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+      await refresh(true)
     } finally {
       setWorking('')
     }
@@ -2318,14 +2711,14 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
     notify?.('切换命令已复制', 'success')
   }
   const labels: Record<string, string> = {
-    loading: '读取中', idle: '等待检查', checking: '检查中', current: '已是最新', available: '可更新', installing: '安装中', installed: '已安装', failed: '失败', unavailable: '更新器不可用', pinned: '固定版本',
+    loading: '读取中', idle: '等待检查', checking: '检查中', current: '已是最新', available: '可更新', downloading: '下载中', installing: '安装中', cancelling: '正在中断', cancelled: '已中断', installed: '已安装', failed: '失败', unavailable: '更新器不可用', pinned: '固定版本',
   }
   const channelLabel = snapshot.channel === 'dev' ? '开发版' : snapshot.channel === 'stable' ? '正式版' : snapshot.channel === 'pinned' ? '固定版本' : '未知'
-  const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || snapshot.status === 'installing' ? 'warning' : 'ok'
-  const updateInProgress = installExpected || snapshot.status === 'installing'
+  const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || ['downloading', 'installing', 'cancelling'].includes(snapshot.status) ? 'warning' : 'ok'
+  const updateInProgress = installExpected || ['downloading', 'installing', 'cancelling'].includes(snapshot.status)
   return <section className="settings-card controller-update-card">
     <div className="settings-card-head">
-      <div><h3>主控更新</h3><p className="muted">二进制安装 · {channelLabel}</p></div>
+      <div><h3>主控更新</h3><p className="muted">更新通道 · {channelLabel}</p></div>
       <span className={`status-pill ${statusTone}`}>{labels[snapshot.status] || snapshot.status}</span>
     </div>
     {snapshot.channel === 'dev' && <div className="controller-update-warning"><Info size={17} /><span><strong>开发版更新频繁</strong><small>可能包含尚未稳定的功能。</small></span></div>}
@@ -2355,15 +2748,18 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
       targetVersion={snapshot.available?.version || ''}
       connectionInterrupted={installConnectionInterrupted}
       failure={installFailure}
+      canCancel={Boolean(snapshot.can_cancel) && installPhase === 'downloading'}
+      cancelling={working === 'cancel' || installPhase === 'cancelling'}
       onCancel={() => setInstallDialogOpen(false)}
       onInstall={() => void install()}
+      onInterrupt={() => void cancelInstall()}
       onHide={() => setInstallDialogOpen(false)}
       onReload={() => window.location.reload()}
     />}</AnimatePresence>
   </section>
 }
 
-type ControllerUpdateInstallPhase = 'confirm' | 'starting' | 'waiting' | 'complete' | 'failed'
+type ControllerUpdateInstallPhase = 'confirm' | 'starting' | 'downloading' | 'installing' | 'cancelling' | 'cancelled' | 'stopped' | 'complete' | 'failed'
 
 function isExpectedControllerUpdateDisconnect(error: unknown) {
   if (error instanceof TypeError) return true
@@ -2371,28 +2767,39 @@ function isExpectedControllerUpdateDisconnect(error: unknown) {
   return ['failed to fetch', 'networkerror', 'load failed', 'bad gateway', 'service unavailable', 'gateway timeout'].some(value => message.includes(value))
 }
 
-function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, onCancel, onInstall, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; onCancel: () => void; onInstall: () => void; onHide: () => void; onReload: () => void }) {
-  const waiting = phase === 'starting' || phase === 'waiting'
-  const title = phase === 'confirm' ? '更新期间面板会暂时离线' : waiting ? '正在安装主控更新' : phase === 'complete' ? '主控更新已完成' : '主控更新未完成'
+function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, onCancel, onInstall, onInterrupt, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; onCancel: () => void; onInstall: () => void; onInterrupt: () => void; onHide: () => void; onReload: () => void }) {
+  const waiting = ['starting', 'downloading', 'installing', 'cancelling'].includes(phase)
+  const title = phase === 'confirm' ? '更新期间面板会暂时离线' : phase === 'starting' ? '正在准备更新' : phase === 'downloading' ? '正在下载更新' : phase === 'installing' ? '正在安装更新' : phase === 'cancelling' ? '正在中断更新' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : phase === 'complete' ? '主控更新已完成' : '主控更新未完成'
+  const activeTitle = phase === 'starting' ? '正在备份数据' : phase === 'downloading' ? '正在下载并检查更新文件' : phase === 'cancelling' ? '正在停止下载' : connectionInterrupted ? '正在重新启动主控' : '正在安装新版本'
+  const activeDescription = phase === 'starting' ? '备份完成后会自动开始下载。' : phase === 'downloading' ? '此阶段可以安全中断，不会改动当前程序。' : phase === 'cancelling' ? '当前程序不会被替换，请稍候。' : connectionInterrupted ? '面板会自动尝试重新连接。' : '安装完成后主控会自动重新启动。'
+  const downloadDone = phase === 'installing'
   return <MotionDialogPanel onCancel={waiting ? onHide : onCancel} className="controller-update-install-dialog" system>
-    <header className="dialog-head"><div><h2>{title}</h2><p className="muted">{targetVersion ? `目标版本 ${targetVersion}` : '主控二进制更新'}</p></div>{!waiting && <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>}</header>
+    <header className="dialog-head"><div><h2>{title}</h2><p className="muted">{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>{!waiting && <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>}</header>
     <div className="dialog-body controller-update-install-body">
       {phase === 'confirm' && <>
-        <div className="controller-update-install-lead"><Info size={20} /><div><strong>整个过程通常需要几分钟</strong><p>面板会先备份数据库，再下载、校验并安装新版本，最后重启主控服务。</p></div></div>
-        <div className="controller-update-install-notice"><strong>出现连接错误或 502 是正常现象</strong><span>主控停止和重新启动期间，面板可能暂时无法访问，刷新页面也可能看到 502 Bad Gateway。这不代表更新失败。</span></div>
+        <div className="controller-update-install-lead"><Info size={20} /><div><strong>整个过程通常需要几分钟</strong><p>面板会先备份数据库，再下载并检查更新文件，然后安装新版本，最后重新启动主控。</p></div></div>
+        <div className="controller-update-install-notice"><strong>更新期间暂时无法访问面板是正常现象</strong><span>主控停止和重新启动期间，连接可能短暂中断，刷新时也可能看到 502 或“页面暂时无法访问”的提示。这不代表更新失败。</span></div>
         <p className="muted controller-update-install-advice">请不要重复点击安装或手动重启服务，等待几分钟后再重新打开面板。</p>
       </>}
       {waiting && <>
-        <div className="controller-update-install-state" aria-live="polite"><RefreshCw size={24} className="spin" /><div><strong>{connectionInterrupted ? '主控正在重启，暂时无法连接' : phase === 'starting' ? '正在创建备份并启动更新' : '安装已开始，正在等待主控恢复'}</strong><p>{connectionInterrupted ? '这是更新过程中的正常阶段，面板会继续尝试连接。' : '下载和安装时间取决于当前网络，请耐心等待。'}</p></div></div>
+        <div className="controller-update-install-state" aria-live="polite"><RefreshCw size={24} className="spin" /><div><strong>{activeTitle}</strong><p>{activeDescription}</p></div></div>
+        <div className="controller-update-stages" aria-label="更新进度">
+          <div className={`controller-update-stage ${phase === 'downloading' || phase === 'cancelling' ? 'active' : downloadDone ? 'done' : ''}`}><span>{downloadDone ? <Check size={14} /> : '1'}</span><div><strong>下载更新</strong><small>{downloadDone ? '更新文件已经准备好' : phase === 'cancelling' ? '正在停止下载' : phase === 'downloading' ? '正在下载并检查文件' : '等待开始'}</small></div></div>
+          <div className={`controller-update-stage ${phase === 'installing' ? 'active' : ''}`}><span>2</span><div><strong>安装更新</strong><small>{phase === 'installing' ? connectionInterrupted ? '正在重新启动主控' : '正在安装新版本' : '等待下载完成'}</small></div></div>
+        </div>
         <div className="controller-update-install-progress" role="progressbar" aria-label="主控更新进行中"><span /></div>
-        <div className="controller-update-install-notice compact"><span>期间出现网络错误、短暂白屏或 502 Bad Gateway 都是正常现象。</span></div>
+        <div className="controller-update-install-notice compact"><span>期间出现连接中断、短暂白屏或 502 提示都是正常现象。</span></div>
       </>}
+      {phase === 'cancelled' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>更新已安全中断</strong><p>当前版本没有被改动，可以稍后重新开始更新。</p></div></div>}
+      {phase === 'stopped' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>本次更新不会继续进行</strong><p>请重新检查当前版本，再决定是否重新更新。</p></div></div>}
       {phase === 'complete' && <div className="controller-update-install-result success"><Check size={24} /><div><strong>新版本已经安装完成</strong><p>主控服务已恢复，可以重新加载面板并继续使用。</p></div></div>}
       {phase === 'failed' && <div className="controller-update-install-result failed"><Info size={24} /><div><strong>更新没有完成</strong><p>{failure || '请检查主控更新状态后重试。'}</p></div></div>}
     </div>
     <footer className="dialog-actions">
       {phase === 'confirm' && <><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" onClick={onInstall}>我知道了，开始更新</button></>}
-      {waiting && <button type="button" className="ghost" onClick={onHide}>在后台等待</button>}
+      {waiting && <>{canCancel && <button type="button" className="ghost danger-text" onClick={onInterrupt} disabled={cancelling}><X size={14} />{cancelling ? '正在中断...' : '中断更新'}</button>}<button type="button" className="ghost" onClick={onHide}>在后台继续</button></>}
+      {phase === 'cancelled' && <button type="button" onClick={onCancel}>关闭</button>}
+      {phase === 'stopped' && <button type="button" onClick={onCancel}>关闭</button>}
       {phase === 'complete' && <button type="button" onClick={onReload}>重新加载面板</button>}
       {phase === 'failed' && <button type="button" onClick={onCancel}>关闭</button>}
     </footer>
@@ -2872,18 +3279,27 @@ function CertificateLogDialog({ certificate, onClose }: { certificate: Certifica
   </MotionDialogPanel>
 }
 
-function CertificateEABDialog({ keyID, hmacKey, configured, secretRequired, saving, onChange, onCancel, onSubmit }: { keyID: string; hmacKey: string; configured: boolean; secretRequired: boolean; saving: boolean; onChange: (patch: { keyID?: string; hmacKey?: string }) => void; onCancel: () => void; onSubmit: () => void }) {
+function CertificateEABDialog({ keyID, hmacKey, remark, retain, configured, secretRequired, credentials, saving, deletingID, onChange, onSelectCredential, onDeleteCredential, onCancel, onSubmit }: { keyID: string; hmacKey: string; remark: string; retain: boolean; configured: boolean; secretRequired: boolean; credentials: GoogleEABCredential[]; saving: boolean; deletingID: number; onChange: (patch: { keyID?: string; hmacKey?: string; remark?: string; retain?: boolean }) => void; onSelectCredential: (credential: GoogleEABCredential) => void; onDeleteCredential: (credential: GoogleEABCredential) => void; onCancel: () => void; onSubmit: () => void }) {
   return <MotionDialogPanel onCancel={onCancel} className="certificate-eab-dialog">
     <header className="dialog-head"><div><h2>填写 Google EAB</h2><p className="muted">连接您的 Google Cloud 公共 CA 账号</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body">
       <div className="certificate-eab-guide"><KeyRound size={20} /><div><strong>需要从 Google 获取两项信息</strong><p>Google Trust Services 要求先完成外部账号绑定。请打开 Google 官方页面，按页面指引获取 Key ID 和 HMAC Key。</p><a href="https://cloud.google.com/certificate-manager/docs/public-ca-tutorial?hl=zh-cn#request-key-hmac" target="_blank" rel="noreferrer">打开 Google 官方获取页面<ExternalLink size={14} /></a></div></div>
-      <div className="certificate-eab-secret-note">HMAC Key 是敏感信息，请在获取后 7 天内使用。保存后 OBoard 只会显示“已配置”，不会再次展示密钥。</div>
+      <div className="certificate-eab-secret-note">HMAC Key 是敏感信息，请在获取后尽快使用。提交后 OBoard 不会再次展示密钥。</div>
       <div className="form server-dialog-form labeled-form">
         <FormField label="Key ID（密钥编号）" required hint="粘贴 Google 返回的 keyId。"><input value={keyID} onChange={event => onChange({ keyID: event.target.value })} autoComplete="off" spellCheck={false} /></FormField>
-        <FormField label="HMAC Key（绑定密钥）" required={secretRequired} hint={configured && !secretRequired ? '已保存。留空则保持当前值。' : configured ? '更换 Key ID 时，需要同时填写新的 HMAC Key。' : '粘贴 Google 返回的 b64MacKey。'}><input type="password" value={hmacKey} onChange={event => onChange({ hmacKey: event.target.value })} autoComplete="new-password" spellCheck={false} placeholder={configured && !secretRequired ? '留空保持当前值' : ''} /></FormField>
+        <FormField label="HMAC Key（绑定密钥）" required={secretRequired} hint={retain && configured ? '长期保存需要重新填写 HMAC Key，原密钥无法再次查看。' : configured && !secretRequired ? '已保存。留空则保持当前值。' : configured ? '更换 Key ID 时，需要同时填写新的 HMAC Key。' : '粘贴 Google 返回的 b64MacKey。'}><input type="password" value={hmacKey} onChange={event => onChange({ hmacKey: event.target.value })} autoComplete="new-password" spellCheck={false} placeholder={configured && !secretRequired ? '留空保持当前值' : ''} /></FormField>
+        <label className="check-row"><input type="checkbox" checked={retain} onChange={event => onChange({ retain: event.target.checked })} /><span>保存到 EAB 列表，供以后签发使用</span></label>
+        {retain && <FormField label="备注" hint="只用于区分不同 EAB。"><input value={remark} maxLength={120} onChange={event => onChange({ remark: event.target.value })} placeholder="例如：生产账号" /></FormField>}
+      </div>
+      <div className="certificate-eab-saved">
+        <div className="certificate-eab-saved-head"><strong>已保存的 EAB</strong><span>{credentials.length} 项</span></div>
+        {credentials.length ? <div className="certificate-eab-saved-list">{credentials.map(credential => <div className="certificate-eab-saved-row" key={credential.id}>
+          <div><strong>{credential.key_id}</strong><span>{credential.remark || '无备注'} · 创建于 {formatTableTime(credential.created_at)}</span></div>
+          <div className="record-actions"><button type="button" className="ghost" onClick={() => onSelectCredential(credential)} disabled={saving}>使用</button><button type="button" className="ghost icon-button danger-text" onClick={() => onDeleteCredential(credential)} disabled={deletingID === credential.id} title="删除已保存的 EAB" aria-label="删除已保存的 EAB"><Trash2 size={14} /></button></div>
+        </div>)}</div> : <div className="certificate-eab-saved-empty">还没有保存的 EAB</div>}
       </div>
     </div>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" onClick={onSubmit} disabled={saving || !keyID || (secretRequired && !hmacKey)}>{saving ? '保存中...' : configured ? '保存 EAB' : '保存到本次申请'}</button></footer>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" onClick={onSubmit} disabled={saving || !keyID || (secretRequired && !hmacKey)}>{saving ? '保存中...' : retain ? '保存并使用' : configured ? '保存 EAB' : '仅用于此证书'}</button></footer>
   </MotionDialogPanel>
 }
 
@@ -2892,21 +3308,23 @@ function CertificateSettings({ data, client, load, notify }: any) {
   const certificates: Certificate[] = data.certificates || []
   const credentials: DNSCredential[] = data.dns_credentials || []
   const servers: Server[] = data.servers || []
-  const [draft, setDraft] = useState<any>({ name: '', domains: '', challenge_type: 'dns01', dns_credential_id: 0, issuance_server_id: 0, acme_ca: 'letsencrypt', account_email: '', eab_key_id: '', eab_hmac_key: '', auto_renew: true })
+  const [draft, setDraft] = useState<any>({ name: '', domains: '', challenge_type: 'dns01', dns_credential_id: 0, issuance_server_id: 0, acme_ca: 'letsencrypt', account_email: '', google_eab_credential_id: 0, eab_key_id: '', eab_hmac_key: '', auto_renew: true })
+  const [eabCredentials, setEABCredentials] = useState<GoogleEABCredential[]>(data.google_eab_credentials || [])
   const [autoMatch, setAutoMatch] = useState(data.settings?.certificate_auto_match_enabled !== false && data.settings?.certificate_auto_match_enabled !== 'false')
   const [preference, setPreference] = useState(data.settings?.certificate_default_preference === 'wildcard' ? 'wildcard' : 'subdomain')
   const [working, setWorking] = useState('')
   const [importDraft, setImportDraft] = useState({ name: '', certificate_pem: '', fullchain_pem: '', private_key_pem: '' })
   const [eabTarget, setEABTarget] = useState<'draft' | Certificate | null>(null)
-  const [eabDraft, setEABDraft] = useState({ keyID: '', hmacKey: '' })
+  const [eabDraft, setEABDraft] = useState({ keyID: '', hmacKey: '', remark: '', retain: false })
   const [logCertificate, setLogCertificate] = useState<Certificate | null>(null)
   useEffect(() => { setAutoMatch(data.settings?.certificate_auto_match_enabled !== false && data.settings?.certificate_auto_match_enabled !== 'false'); setPreference(data.settings?.certificate_default_preference === 'wildcard' ? 'wildcard' : 'subdomain') }, [data.settings])
+  useEffect(() => { setEABCredentials(data.google_eab_credentials || []) }, [data.google_eab_credentials])
   const createCertificate = async () => {
     const domains = String(draft.domains).split(/[\s,]+/).map(item => item.trim()).filter(Boolean)
     if (!draft.name.trim() || !domains.length) return
     const payload: any = { ...draft, domains, dns_credential_id: draft.challenge_type === 'dns01' ? Number(draft.dns_credential_id || 0) : undefined, issuance_server_id: draft.challenge_type === 'http01' ? Number(draft.issuance_server_id || 0) : undefined }
     setWorking('create')
-    try { await client.request('/certificates', { method: 'POST', body: JSON.stringify(payload) }); setDraft({ ...draft, name: '', domains: '', account_email: '', eab_key_id: '', eab_hmac_key: '' }); await load(); notify?.('证书申请已创建', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+    try { await client.request('/certificates', { method: 'POST', body: JSON.stringify(payload) }); setDraft({ ...draft, name: '', domains: '', account_email: '', google_eab_credential_id: 0, eab_key_id: '', eab_hmac_key: '' }); await load(); notify?.('证书申请已创建', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const certificateAction = async (certificate: Certificate, action: 'issue' | 'renew' | 'confirm-dns') => {
     setWorking(`${action}-${certificate.id}`)
@@ -2933,37 +3351,79 @@ function CertificateSettings({ data, client, load, notify }: any) {
     try { await client.request('/certificates/import', { method: 'POST', body: JSON.stringify(importDraft) }); setImportDraft({ name: '', certificate_pem: '', fullchain_pem: '', private_key_pem: '' }); await load(); notify?.('证书已导入', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
   }
   const openDraftEAB = () => {
-    setEABDraft({ keyID: String(draft.eab_key_id || ''), hmacKey: String(draft.eab_hmac_key || '') })
+    setEABDraft({ keyID: String(draft.eab_key_id || ''), hmacKey: String(draft.eab_hmac_key || ''), remark: '', retain: false })
     setEABTarget('draft')
   }
   const openCertificateEAB = (certificate: Certificate) => {
-    setEABDraft({ keyID: certificate.eab_key_id || '', hmacKey: '' })
+    setEABDraft({ keyID: certificate.google_eab_credential_id ? '' : certificate.eab_key_id || '', hmacKey: '', remark: '', retain: false })
     setEABTarget(certificate)
   }
   const closeEAB = () => {
     setEABTarget(null)
-    setEABDraft({ keyID: '', hmacKey: '' })
+    setEABDraft({ keyID: '', hmacKey: '', remark: '', retain: false })
   }
-  const eabSecretRequired = eabTarget === 'draft' || Boolean(eabTarget && (!eabTarget.eab_configured || eabDraft.keyID !== (eabTarget.eab_key_id || '')))
-  const saveEAB = async () => {
-    if (!eabDraft.keyID || (eabSecretRequired && !eabDraft.hmacKey)) return
+  const existingDirectEAB = Boolean(eabTarget && eabTarget !== 'draft' && !eabTarget.google_eab_credential_id && eabTarget.eab_configured)
+  const eabSecretRequired = eabDraft.retain || eabTarget === 'draft' || Boolean(eabTarget && (!existingDirectEAB || eabDraft.keyID !== (eabTarget.eab_key_id || '')))
+  const selectSavedEAB = async (credential: GoogleEABCredential) => {
     if (eabTarget === 'draft') {
-      setDraft((current: any) => ({ ...current, eab_key_id: eabDraft.keyID, eab_hmac_key: eabDraft.hmacKey }))
+      setDraft((current: any) => ({ ...current, google_eab_credential_id: credential.id, eab_key_id: '', eab_hmac_key: '' }))
       closeEAB()
       return
     }
     if (!eabTarget) return
-    setWorking(`eab-${eabTarget.id}`)
+    setWorking(`eab-select-${eabTarget.id}`)
     try {
-      const payload: Record<string, string> = { eab_key_id: eabDraft.keyID }
-      if (eabDraft.hmacKey) payload.eab_hmac_key = eabDraft.hmacKey
+      await client.request(`/certificates/${eabTarget.id}`, { method: 'PATCH', body: JSON.stringify({ google_eab_credential_id: credential.id }) })
+      closeEAB()
+      await load()
+      notify?.(`已使用 EAB ${credential.key_id}`, 'success')
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const saveEAB = async () => {
+    if (!eabDraft.keyID || (eabSecretRequired && !eabDraft.hmacKey)) return
+    setWorking(eabTarget === 'draft' ? 'eab-save-draft' : `eab-save-${eabTarget?.id || 0}`)
+    try {
+      let credentialID = 0
+      if (eabDraft.retain) {
+        const result = await client.request('/google-eab-credentials', { method: 'POST', body: JSON.stringify({ key_id: eabDraft.keyID, hmac_key: eabDraft.hmacKey, remark: eabDraft.remark }) })
+        const credential = result.google_eab_credential as GoogleEABCredential
+        credentialID = credential.id
+        setEABCredentials(current => [credential, ...current.filter(item => item.id !== credential.id)])
+      }
+      if (eabTarget === 'draft') {
+        setDraft((current: any) => credentialID
+          ? { ...current, google_eab_credential_id: credentialID, eab_key_id: '', eab_hmac_key: '' }
+          : { ...current, google_eab_credential_id: 0, eab_key_id: eabDraft.keyID, eab_hmac_key: eabDraft.hmacKey })
+        closeEAB()
+        if (credentialID) await load(undefined, { background: true })
+        return
+      }
+      if (!eabTarget) return
+      const payload: Record<string, string | number> = credentialID
+        ? { google_eab_credential_id: credentialID }
+        : { google_eab_credential_id: 0, eab_key_id: eabDraft.keyID }
+      if (!credentialID && eabDraft.hmacKey) payload.eab_hmac_key = eabDraft.hmacKey
       await client.request(`/certificates/${eabTarget.id}`, { method: 'PATCH', body: JSON.stringify(payload) })
       closeEAB()
       await load()
-      notify?.('Google EAB 已保存', 'success')
+      notify?.(credentialID ? 'Google EAB 已保存并应用' : 'Google EAB 已应用', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
-  const draftEABConfigured = Boolean(draft.eab_key_id && draft.eab_hmac_key)
+  const deleteSavedEAB = async (credential: GoogleEABCredential) => {
+    const ok = await dialogs.confirm({ title: '删除已保存的 EAB', message: `确认删除 ${credential.key_id}？HMAC Key 无法找回。`, confirmText: '删除', tone: 'danger' })
+    if (!ok) return
+    setWorking(`eab-delete-${credential.id}`)
+    try {
+      await client.request(`/google-eab-credentials/${credential.id}`, { method: 'DELETE' })
+      setEABCredentials(current => current.filter(item => item.id !== credential.id))
+      setDraft((current: any) => Number(current.google_eab_credential_id || 0) === credential.id ? { ...current, google_eab_credential_id: 0 } : current)
+      await load(undefined, { background: true })
+      notify?.('已删除保存的 Google EAB', 'success')
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const draftDirectEABConfigured = Boolean(draft.eab_key_id && draft.eab_hmac_key)
+  const draftEABConfigured = Boolean(Number(draft.google_eab_credential_id || 0) > 0 || draftDirectEABConfigured)
+  const draftEABSelection = Number(draft.google_eab_credential_id || 0) > 0 ? String(draft.google_eab_credential_id) : draftDirectEABConfigured ? 'direct' : ''
   const googleHTTPUnsupported = draft.acme_ca === 'google' && draft.challenge_type === 'http01'
   return <div className="settings-grid">
     <section className="settings-card">
@@ -2974,8 +3434,13 @@ function CertificateSettings({ data, client, load, notify }: any) {
         <FormField label="验证方式"><Select value={draft.challenge_type} onChange={e => setDraft({ ...draft, challenge_type: e.target.value })}><option value="dns01">面板 DNS-01</option><option value="dns01_manual">手动 DNS-01</option><option value="http01">Agent HTTP-01</option></Select></FormField>
         {draft.challenge_type === 'dns01' && <FormField label="域名服务账号"><Select value={draft.dns_credential_id} onChange={e => setDraft({ ...draft, dns_credential_id: Number(e.target.value) })}><option value={0}>选择账号</option>{credentials.filter(item => item.verified_at).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
         {draft.challenge_type === 'http01' && <FormField label="签发服务器"><Select value={draft.issuance_server_id} onChange={e => setDraft({ ...draft, issuance_server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map(server => <option key={server.id} value={server.id}>{server.name}</option>)}</Select></FormField>}
-        <FormField label="ACME CA"><Select value={draft.acme_ca} onChange={e => { const acmeCA = e.target.value; setDraft({ ...draft, acme_ca: acmeCA, ...(acmeCA === 'google' ? {} : { eab_key_id: '', eab_hmac_key: '' }) }); if (acmeCA === 'google') openDraftEAB() }}><option value="letsencrypt">Let's Encrypt</option><option value="zerossl">ZeroSSL</option><option value="buypass">Buypass</option><option value="google">Google Trust Services</option></Select></FormField>
-        {draft.acme_ca === 'google' && <div className="certificate-eab-row"><div className="certificate-eab-state"><KeyRound size={16} /><span><strong>Google EAB</strong><small>{draftEABConfigured ? `已配置 · ${draft.eab_key_id}` : '需要填写 Key ID 和 HMAC Key'}</small></span></div><button type="button" className="ghost" onClick={openDraftEAB}>{draftEABConfigured ? '修改 EAB' : '填写 EAB'}</button></div>}
+        <FormField label="ACME CA"><Select value={draft.acme_ca} onChange={e => { const acmeCA = e.target.value; setDraft({ ...draft, acme_ca: acmeCA, ...(acmeCA === 'google' ? {} : { google_eab_credential_id: 0, eab_key_id: '', eab_hmac_key: '' }) }) }}><option value="letsencrypt">Let's Encrypt</option><option value="zerossl">ZeroSSL</option><option value="buypass">Buypass</option><option value="google">Google Trust Services</option></Select></FormField>
+        {draft.acme_ca === 'google' && <div className="certificate-eab-row"><div className="certificate-eab-state"><KeyRound size={16} /><span><strong>Google EAB</strong><small>{draftEABConfigured ? '已配置，可用于本次签发' : '请选择已保存的 EAB，或填写新的 EAB'}</small></span></div><div className="certificate-eab-controls"><Select value={draftEABSelection} onChange={event => {
+          const value = event.target.value
+          if (value === 'direct') setDraft({ ...draft, google_eab_credential_id: 0 })
+          else if (Number(value) > 0) setDraft({ ...draft, google_eab_credential_id: Number(value), eab_key_id: '', eab_hmac_key: '' })
+          else setDraft({ ...draft, google_eab_credential_id: 0, eab_key_id: '', eab_hmac_key: '' })
+        }}><option value="">选择已保存的 EAB</option>{draftDirectEABConfigured && <option value="direct">{draft.eab_key_id} · 仅本次使用</option>}{eabCredentials.map(credential => <option key={credential.id} value={credential.id}>{credential.key_id}{credential.remark ? ` · ${credential.remark}` : ''}</option>)}</Select><button type="button" className="ghost" onClick={openDraftEAB}><Plus size={14} />新增 EAB</button></div></div>}
         {googleHTTPUnsupported && <div className="certificate-eab-warning">Google EAB 暂不支持 Agent HTTP-01，请选择面板 DNS-01 或手动 DNS-01。</div>}
         <FormField label="账户邮箱"><input type="email" value={draft.account_email} onChange={e => setDraft({ ...draft, account_email: e.target.value })} placeholder={defaultCertificateAccountEmail(draft.domains) || 'admin@example.com'} /></FormField>
         <label className="check-row"><input type="checkbox" checked={draft.auto_renew} onChange={e => setDraft({ ...draft, auto_renew: e.target.checked })} /><span>自动续期</span></label>
@@ -3007,7 +3472,7 @@ function CertificateSettings({ data, client, load, notify }: any) {
       })}</div>
     </section>
     <AnimatePresence>{logCertificate && <CertificateLogDialog certificate={logCertificate} onClose={() => setLogCertificate(null)} />}</AnimatePresence>
-    <AnimatePresence>{eabTarget && <CertificateEABDialog keyID={eabDraft.keyID} hmacKey={eabDraft.hmacKey} configured={eabTarget !== 'draft' && Boolean(eabTarget.eab_configured)} secretRequired={eabSecretRequired} saving={eabTarget !== 'draft' && working === `eab-${eabTarget.id}`} onChange={patch => setEABDraft(current => ({ ...current, ...patch }))} onCancel={closeEAB} onSubmit={() => void saveEAB()} />}</AnimatePresence>
+    <AnimatePresence>{eabTarget && <CertificateEABDialog keyID={eabDraft.keyID} hmacKey={eabDraft.hmacKey} remark={eabDraft.remark} retain={eabDraft.retain} configured={existingDirectEAB} secretRequired={eabSecretRequired} credentials={eabCredentials} saving={working.startsWith('eab-') && !working.startsWith('eab-delete-')} deletingID={working.startsWith('eab-delete-') ? Number(working.slice('eab-delete-'.length)) : 0} onChange={patch => setEABDraft(current => ({ ...current, ...patch }))} onSelectCredential={credential => void selectSavedEAB(credential)} onDeleteCredential={credential => void deleteSavedEAB(credential)} onCancel={closeEAB} onSubmit={() => void saveEAB()} />}</AnimatePresence>
   </div>
 }
 
@@ -9311,6 +9776,7 @@ const fallbackNotificationEventOptions: NotificationEventDefinition[] = [
   { value: 'traffic_quota_exceeded', label: '流量已用完', description: '额度用完时提醒', variables: ['UserName', 'UserID', 'Used', 'Limit', 'ResetAt', 'Time'] },
   { value: 'task_failed', label: '任务失败', description: '任务失败时提醒', variables: ['TaskType', 'TaskID', 'ServerName', 'Error', 'Time'] },
   { value: 'task_timeout', label: '任务超时', description: '任务超时时提醒', variables: ['TaskType', 'TaskID', 'ServerName', 'Error', 'Time'] },
+  { value: 'certificate_issuance_failed', label: 'Google 证书签发失败', description: 'EAB 失效或签发失败时提醒', variables: ['CertificateName', 'Domains', 'EABKeyID', 'Error', 'Time'] },
   { value: 'admin_announcement', label: '管理员通知', description: '接收管理员消息', variables: ['Title', 'Message', 'Sender', 'Time'] },
 ]
 
@@ -9324,6 +9790,7 @@ const fallbackNotificationTemplates: Record<string, NotificationTemplate> = {
   traffic_quota_exceeded: { title: '流量已用完 · {{.UserName}}', body: '{{.UserName}} 本周期流量已用完\n已用：{{.Used}} / {{.Limit}}\n重置：{{.ResetAt}}' },
   task_failed: { title: '任务失败 · {{.TaskType}}', body: '服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}' },
   task_timeout: { title: '任务超时 · {{.TaskType}}', body: '服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}' },
+  certificate_issuance_failed: { title: 'Google 证书签发失败 · {{.CertificateName}}', body: '证书：{{.CertificateName}}\n域名：{{.Domains}}\nEAB Key ID：{{.EABKeyID}}\n原因：{{.Error}}\n\nGoogle EAB 可能已经失效，请在证书设置中更换后重试。\n时间：{{.Time}}' },
   admin_announcement: { title: '{{.Title}}', body: '{{.Message}}\n\n来自：{{.Sender}}' },
 }
 
@@ -9354,7 +9821,7 @@ function emptyNotificationDraft(defaults: Record<string, NotificationTemplate>, 
     type,
     enabled: true,
     events: isAdmin
-      ? ['server_offline', 'server_online', 'traffic_quota_exceeded', 'task_failed', 'task_timeout']
+      ? ['server_offline', 'server_online', 'traffic_quota_exceeded', 'task_failed', 'task_timeout', 'certificate_issuance_failed']
       : ['traffic_quota_exceeded', 'admin_announcement'],
     bot_token: '',
     chat_id: '',
@@ -10681,8 +11148,15 @@ function auditTitle(log: AuditLog, actor: string, target: { type: string; label:
   const action = String(log.action || '')
   const detail = String(log.detail || '').trim()
   if (action === 'login') return `${actor} 登录成功`
+  if (action === 'login_totp') return `${actor} 通过双重认证登录成功`
+  if (action === 'login_passkey') return `${actor} 使用通行密钥登录成功`
   if (action === 'bootstrap') return `${actor} 创建了首个管理员`
   if (action === 'change_password') return `${actor} 修改了登录密码`
+  if (action === 'enable' && log.target === 'totp') return `${actor} 开启了双重认证`
+  if (action === 'disable' && log.target === 'totp') return `${actor} 停用了双重认证`
+  if (action === 'rotate' && log.target === 'totp-recovery-codes') return `${actor} 生成了新的双重认证恢复码`
+  if (action === 'create' && log.target === 'passkey') return `${actor} 添加了通行密钥`
+  if (action === 'delete' && log.target === 'passkey') return `${actor} 移除了通行密钥`
   if (action === 'agent_enroll') return `Agent 接入了服务器 ${target.label}`
   if (action === 'notify') return `系统发送了通知：${target.label}`
   if (action === 'notify_failed') return `通知发送失败：${target.label}`
@@ -10728,6 +11202,7 @@ function auditTargetInfo(log: AuditLog, data: any) {
   if (target === 'notification_channel') return { type, label: auditNotificationLabel(detail, data) }
   if (target === 'agent-config' || target === 'mtu' || target === 'enroll-token') return { type, label: auditServerLabel(numberFromString(detail), data) }
   if (target === 'subscription-token' || target === 'subscription-age') return { type, label: auditUserLabel(numberFromString(detail), data) }
+  if (target === 'totp' || target === 'totp-recovery-codes') return { type, label: auditUserLabel(numberFromString(detail), data) }
   const id = numberFromString(detail)
   const row = id ? auditResourceByTarget(target, id, data) : null
   if (row) return { type, label: resourceLabel(row, `${type} #${id}`) }
@@ -10750,9 +11225,9 @@ function auditDetailText(log: AuditLog, targetLabel: string) {
 
 function auditActionLabel(action: string) {
   const labels: Record<string, string> = {
-    bootstrap: '初始化', login: '登录', change_password: '改密',
+    bootstrap: '初始化', login: '登录', login_totp: '双重认证登录', login_passkey: '通行密钥登录', change_password: '改密',
     create: '创建', update: '更新', delete: '删除',
-    grant: '授权', revoke: '撤销', rotate: '轮换',
+    grant: '授权', revoke: '撤销', rotate: '轮换', enable: '开启', disable: '停用',
     apply: '下发', dismiss: '忽略', diagnose: '诊断', detect: '检测',
     notify: '通知', notify_failed: '通知失败', agent_enroll: 'Agent',
   }
@@ -10765,15 +11240,15 @@ function auditActionVerb(action: string) {
     grant: '授权了', revoke: '撤销了', rotate: '轮换了',
     apply: '下发了', dismiss: '忽略了', diagnose: '诊断了', detect: '检测了',
     notify: '通知了', notify_failed: '通知失败：',
-    bootstrap: '初始化了', login: '登录了', change_password: '修改了',
+    bootstrap: '初始化了', login: '登录了', login_totp: '登录了', login_passkey: '登录了', change_password: '修改了', enable: '开启了', disable: '停用了',
   }
   return verbs[action] || `${auditActionLabel(action)}了`
 }
 
 function auditActionTone(action: string): AuditTone {
   if (['delete', 'notify_failed'].includes(action)) return 'danger'
-  if (['update', 'apply', 'dismiss', 'diagnose', 'detect', 'rotate', 'revoke'].includes(action)) return 'warning'
-  if (['create', 'grant', 'bootstrap', 'login', 'agent_enroll', 'notify'].includes(action)) return 'success'
+  if (['update', 'apply', 'dismiss', 'diagnose', 'detect', 'rotate', 'revoke', 'disable'].includes(action)) return 'warning'
+  if (['create', 'grant', 'bootstrap', 'login', 'login_totp', 'login_passkey', 'enable', 'agent_enroll', 'notify'].includes(action)) return 'success'
   return 'neutral'
 }
 
@@ -10784,6 +11259,7 @@ function auditTargetTypeLabel(target: string) {
     'user-group': '用户组', 'user-group-member': '用户组成员', 'inbound-access': '入口权限',
     routing_rule: '分流规则', notification_channel: '通知渠道', port_forward: '端口转发',
     tunnel: '隧道', deployment: '配置下发', 'subscription-token': '订阅令牌', 'subscription-age': 'Age 订阅',
+    totp: '双重认证', 'totp-recovery-codes': '恢复码', passkey: '通行密钥',
     'subscription-profile': '订阅配置', 'subscription-assignment': '订阅分配',
   }
   return labels[target] || humanLabel(target)
