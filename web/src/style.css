@@ -4658,6 +4658,146 @@ body:has(.dialog-root) .topbar-actions {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.certificate-eab-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.certificate-eab-state {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.certificate-eab-state > svg {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.certificate-eab-state > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.certificate-eab-state strong {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.certificate-eab-state small {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.certificate-eab-warning,
+.certificate-eab-secret-note {
+  padding: 10px 12px;
+  border-left: 3px solid var(--warning);
+  background: var(--warning-soft);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.certificate-eab-dialog {
+  width: min(560px, calc(100vw - 28px));
+}
+
+.certificate-log-dialog {
+  width: min(720px, calc(100vw - 28px));
+}
+
+.certificate-log-body {
+  display: grid;
+  gap: 14px;
+}
+
+.certificate-log-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.certificate-log-empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.certificate-log-empty svg {
+  color: var(--text-secondary);
+}
+
+.certificate-eab-dialog .dialog-body {
+  display: grid;
+  gap: 16px;
+}
+
+.certificate-eab-guide {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.certificate-eab-guide > svg {
+  margin-top: 2px;
+  color: var(--text-secondary);
+}
+
+.certificate-eab-guide > div {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.certificate-eab-guide strong {
+  color: var(--text-strong);
+  font-size: 14px;
+}
+
+.certificate-eab-guide p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.certificate-eab-guide a {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+@media (max-width: 560px) {
+  .certificate-eab-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .certificate-eab-row > button {
+    width: 100%;
+  }
+}
+
 .age-policy-toggle {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(110px, 1fr));

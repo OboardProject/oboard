@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
@@ -29,8 +30,12 @@ type certificateRequest struct {
 	IssuanceServerID *int64   `json:"issuance_server_id"`
 	ACMECA           string   `json:"acme_ca"`
 	AccountEmail     string   `json:"account_email"`
+	EABKeyID         *string  `json:"eab_key_id"`
+	EABHMACKey       *string  `json:"eab_hmac_key"`
 	AutoRenew        *bool    `json:"auto_renew"`
 }
+
+const certificateEABHMACKeyPurpose = "certificate-eab-hmac-key"
 
 func (s *Server) certificates(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -211,7 +216,64 @@ func (s *Server) buildCertificate(req certificateRequest, current *model.Certifi
 	default:
 		return nil, fmt.Errorf("unsupported ACME CA %q", certificate.ACMECA)
 	}
+	if err := s.applyCertificateEAB(req, certificate, current); err != nil {
+		return nil, err
+	}
 	return certificate, nil
+}
+
+func (s *Server) applyCertificateEAB(req certificateRequest, certificate *model.Certificate, current *model.Certificate) error {
+	if certificate.ACMECA != "google" {
+		certificate.EABKeyID = ""
+		certificate.EABHMACKeyEncrypted = ""
+		certificate.EABConfigured = false
+		return nil
+	}
+	if certificate.ChallengeType == model.CertificateChallengeHTTP {
+		return errors.New("Google Trust Services 的 EAB 目前仅支持面板 DNS-01 或手动 DNS-01")
+	}
+
+	previousKeyID := certificate.EABKeyID
+	if req.EABKeyID != nil {
+		if err := validateCertificateEABValue("Key ID", *req.EABKeyID, 512); err != nil {
+			return err
+		}
+		certificate.EABKeyID = *req.EABKeyID
+	}
+	hmacKeyProvided := req.EABHMACKey != nil && *req.EABHMACKey != ""
+	if current != nil && certificate.EABKeyID != previousKeyID && !hmacKeyProvided {
+		return errors.New("更换 EAB Key ID 时，请同时填写新的 HMAC Key")
+	}
+	if hmacKeyProvided {
+		if err := validateCertificateEABValue("HMAC Key", *req.EABHMACKey, 2048); err != nil {
+			return err
+		}
+		encrypted, err := security.EncryptSecret(s.sessionSecret, certificateEABHMACKeyPurpose, *req.EABHMACKey)
+		if err != nil {
+			return fmt.Errorf("保存 EAB HMAC Key: %w", err)
+		}
+		certificate.EABHMACKeyEncrypted = encrypted
+	}
+	if certificate.EABKeyID == "" || certificate.EABHMACKeyEncrypted == "" {
+		return errors.New("Google Trust Services 需要 EAB，请填写 Key ID 和 HMAC Key")
+	}
+	certificate.EABConfigured = true
+	return nil
+}
+
+func validateCertificateEABValue(label, value string, maxLength int) error {
+	if value == "" {
+		return fmt.Errorf("%s 不能为空", label)
+	}
+	if len(value) > maxLength {
+		return fmt.Errorf("%s 过长，请重新获取后再填写", label)
+	}
+	for _, r := range value {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return fmt.Errorf("%s 格式不正确，请检查是否包含空格或换行", label)
+		}
+	}
+	return nil
 }
 
 func defaultCertificateAccountEmail(domain string) string {

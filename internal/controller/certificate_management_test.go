@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +79,81 @@ func TestCertificateAccountEmailDefaultsToPrimaryDomain(t *testing.T) {
 	}
 	if custom.AccountEmail != "ops@example.net" {
 		t.Fatalf("custom account email was overwritten: %q", custom.AccountEmail)
+	}
+}
+
+func TestGoogleEABCertificateAPIEncryptsAndPreservesSecret(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+
+	const hmacKey = "test-google-eab-hmac-key"
+	created := request(t, h, http.MethodPost, "/api/v1/certificates", token, map[string]any{
+		"name":           "google-eab",
+		"domains":        []string{"entry.example.com"},
+		"challenge_type": model.CertificateChallengeDNSManual,
+		"acme_ca":        "google",
+		"account_email":  "admin@example.com",
+		"eab_key_id":     "google-key-id",
+		"eab_hmac_key":   hmacKey,
+	}, http.StatusCreated)["certificate"].(map[string]any)
+	if created["eab_key_id"] != "google-key-id" || created["eab_configured"] != true {
+		t.Fatalf("EAB status response = %#v", created)
+	}
+	if _, exists := created["eab_hmac_key"]; exists {
+		t.Fatal("API returned the EAB HMAC key")
+	}
+	if _, exists := created["eab_hmac_key_encrypted"]; exists {
+		t.Fatal("API returned the encrypted EAB HMAC key")
+	}
+
+	id := int64(created["id"].(float64))
+	stored, err := db.GetCertificate(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.EABHMACKeyEncrypted == "" || stored.EABHMACKeyEncrypted == hmacKey {
+		t.Fatalf("stored EAB HMAC value is not encrypted: %q", stored.EABHMACKeyEncrypted)
+	}
+	plain, err := security.DecryptSecret("test-secret", certificateEABHMACKeyPurpose, stored.EABHMACKeyEncrypted)
+	if err != nil || plain != hmacKey {
+		t.Fatalf("decrypt EAB HMAC: value=%q err=%v", plain, err)
+	}
+	originalEncrypted := stored.EABHMACKeyEncrypted
+
+	request(t, h, http.MethodPatch, "/api/v1/certificates/"+strconv.FormatInt(id, 10), token, map[string]any{"eab_key_id": "google-key-id"}, http.StatusOK)
+	stored, err = db.GetCertificate(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.EABHMACKeyEncrypted != originalEncrypted {
+		t.Fatal("PATCH without an HMAC key replaced the saved secret")
+	}
+	request(t, h, http.MethodPatch, "/api/v1/certificates/"+strconv.FormatInt(id, 10), token, map[string]any{"eab_key_id": "different-key-id"}, http.StatusBadRequest)
+
+	request(t, h, http.MethodPost, "/api/v1/certificates", token, map[string]any{
+		"name": "missing-eab", "domains": []string{"missing.example.com"}, "challenge_type": model.CertificateChallengeDNSManual, "acme_ca": "google",
+	}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/certificates", token, map[string]any{
+		"name": "http-eab", "domains": []string{"http.example.com"}, "challenge_type": model.CertificateChallengeHTTP, "issuance_server_id": 1, "acme_ca": "google", "eab_key_id": "kid", "eab_hmac_key": "secret",
+	}, http.StatusBadRequest)
+}
+
+func TestGoogleEABIsIncludedInACMEIssueArguments(t *testing.T) {
+	args := issueACMEArgs("/tmp/acme", model.Certificate{
+		ACMECA: "google", EABKeyID: "google-key-id", AccountEmail: "admin@example.com", Domains: []string{"example.com"},
+	}, false, "google-hmac-key")
+	joined := strings.Join(args, "\x00")
+	for _, expected := range []string{"--eab-kid\x00google-key-id", "--eab-hmac-key\x00google-hmac-key"} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("ACME args missing %q: %#v", expected, args)
+		}
 	}
 }
 

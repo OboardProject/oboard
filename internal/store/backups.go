@@ -96,6 +96,9 @@ func (s *Store) RewrapEncryptedSecrets(ctx context.Context, sourceSecret, target
 	if err := rewrapColumn(ctx, tx, `select id,private_key_encrypted from certificates where private_key_encrypted<>''`, `update certificates set private_key_encrypted=?,updated_at=? where id=?`, sourceSecret, targetSecret, "certificate-private-key"); err != nil {
 		return err
 	}
+	if err := rewrapColumn(ctx, tx, `select id,eab_hmac_key_encrypted from certificates where eab_hmac_key_encrypted<>''`, `update certificates set eab_hmac_key_encrypted=?,updated_at=? where id=?`, sourceSecret, targetSecret, "certificate-eab-hmac-key"); err != nil {
+		return err
+	}
 	var backupSecret string
 	err = tx.QueryRowContext(ctx, `select value from app_settings where key=?`, controllerBackupSecretsSetting).Scan(&backupSecret)
 	if err == nil && backupSecret != "" {

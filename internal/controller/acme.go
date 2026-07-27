@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 )
 
 var (
@@ -22,6 +23,9 @@ var (
 )
 
 func (s *Server) startACMECertificateIssue(ctx context.Context, certificate *model.Certificate, renew, resumeManual bool) error {
+	if certificate.ACMECA == "google" && certificate.ChallengeType == model.CertificateChallengeHTTP {
+		return errors.New("Google Trust Services 的 EAB 目前仅支持面板 DNS-01 或手动 DNS-01")
+	}
 	s.certificateIssueMu.Lock()
 	if s.certificateIssues[certificate.ID] {
 		s.certificateIssueMu.Unlock()
@@ -84,7 +88,11 @@ func (s *Server) runDNSCertificateIssue(ctx context.Context, certificate *model.
 		return fmt.Errorf("secure ACME home: %w", err)
 	}
 	if !resumeManual {
-		output, runErr := s.runACME(ctx, issueACMEArgs(s.acmeHome, *certificate, renew)...)
+		eabHMACKey, err := s.certificateEABHMACKey(certificate)
+		if err != nil {
+			return err
+		}
+		output, runErr := s.runACME(ctx, issueACMEArgs(s.acmeHome, *certificate, renew, eabHMACKey)...)
 		records := parseACMEDNSChallenges(output)
 		if len(records) == 0 {
 			if runErr == nil {
@@ -151,7 +159,7 @@ func (s *Server) runDNSCertificateIssue(ctx context.Context, certificate *model.
 	return s.installAndStoreACMECertificate(ctx, certificate)
 }
 
-func issueACMEArgs(home string, certificate model.Certificate, renew bool) []string {
+func issueACMEArgs(home string, certificate model.Certificate, renew bool, eabHMACKey string) []string {
 	args := []string{"--home", home, "--config-home", home, "--server", certificate.ACMECA, "--issue", "--keylength", "ec-256", "--dns", "--yes-I-know-dns-manual-mode-enough-go-ahead-please"}
 	if renew {
 		args = append(args, "--force")
@@ -159,10 +167,27 @@ func issueACMEArgs(home string, certificate model.Certificate, renew bool) []str
 	if certificate.AccountEmail != "" {
 		args = append(args, "--accountemail", certificate.AccountEmail)
 	}
+	if certificate.ACMECA == "google" && certificate.EABKeyID != "" && eabHMACKey != "" {
+		args = append(args, "--eab-kid", certificate.EABKeyID, "--eab-hmac-key", eabHMACKey)
+	}
 	for _, domain := range certificate.Domains {
 		args = append(args, "-d", domain)
 	}
 	return args
+}
+
+func (s *Server) certificateEABHMACKey(certificate *model.Certificate) (string, error) {
+	if certificate.ACMECA != "google" {
+		return "", nil
+	}
+	if certificate.EABKeyID == "" || certificate.EABHMACKeyEncrypted == "" {
+		return "", errors.New("Google Trust Services 需要 EAB，请先填写 Key ID 和 HMAC Key")
+	}
+	value, err := security.DecryptSecret(s.sessionSecret, certificateEABHMACKeyPurpose, certificate.EABHMACKeyEncrypted)
+	if err != nil {
+		return "", errors.New("Google EAB 信息无法读取，请重新填写 Key ID 和 HMAC Key")
+	}
+	return value, nil
 }
 
 func resumeACMEArgs(home string, certificate model.Certificate) []string {

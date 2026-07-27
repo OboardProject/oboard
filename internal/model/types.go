@@ -397,6 +397,9 @@ type Certificate struct {
 	IssuanceServerID     *int64      `json:"issuance_server_id,omitempty"`
 	ACMECA               string      `json:"acme_ca"`
 	AccountEmail         string      `json:"account_email"`
+	EABKeyID             string      `json:"eab_key_id,omitempty"`
+	EABHMACKeyEncrypted  string      `json:"-"`
+	EABConfigured        bool        `json:"eab_configured,omitempty"`
 	Status               string      `json:"status"`
 	CertificatePEM       string      `json:"-"`
 	FullchainPEM         string      `json:"-"`

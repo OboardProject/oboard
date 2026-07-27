@@ -51,7 +51,8 @@ import {
   Settings2, Activity, ArrowLeftRight, HelpCircle, HardDrive, 
   Zap, Sliders, Menu, X, Sun, Moon, RefreshCw, ChevronDown, ChevronRight, Check, Info,
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
-  Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal
+  Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
+  KeyRound, ExternalLink, CalendarSync, BadgeCheck
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -118,7 +119,7 @@ type DNSProvider = 'cloudflare' | 'alidns' | 'tencent_dns' | 'tencent_esa' | 'hu
 type DNSCredentialZone = { id: number; credential_id: number; zone_name: string; provider_zone_id?: string; server_id?: number }
 type DNSCredential = { id: number; name: string; provider: DNSProvider; zones: DNSCredentialZone[]; configured: boolean; enabled: boolean; verified_at?: string; last_error?: string }
 type DNSRecord = { id: string; credential_id: number; dns_zone_id?: number; zone_id?: string; zone_name: string; type: string; name: string; content: string; comment?: string; server_id?: number; inbound_id?: number; proxied?: boolean; ttl: number; enabled: boolean }
-type Certificate = { id: number; name: string; primary_domain: string; domains: string[]; wildcard: boolean; challenge_type: 'http01' | 'dns01' | 'dns01_manual' | 'imported'; dns_credential_id?: number; issuance_server_id?: number; acme_ca: string; account_email: string; status: string; revision?: string; not_before?: string; not_after?: string; auto_renew: boolean; validation_records?: DNSRecord[]; last_error?: string; last_issued_at?: string }
+type Certificate = { id: number; name: string; primary_domain: string; domains: string[]; wildcard: boolean; challenge_type: 'http01' | 'dns01' | 'dns01_manual' | 'imported'; dns_credential_id?: number; issuance_server_id?: number; acme_ca: string; account_email: string; eab_key_id?: string; eab_configured?: boolean; status: string; revision?: string; not_before?: string; not_after?: string; auto_renew: boolean; validation_records?: DNSRecord[]; last_error?: string; last_issued_at?: string; last_renewal_attempt_at?: string }
 type InboundUser = { id: number; inbound_id: number; user_id: number; enabled: boolean }
 type SSHUserKey = { id: number; user_id: number; name: string; public_key: string; fingerprint: string; enabled: boolean }
 type SSHAccess = { inbound_id: number; name: string; address: string; port: number; username: string }
@@ -2752,27 +2753,65 @@ function defaultCertificateAccountEmail(rawDomains: unknown) {
   return domain ? `admin@${domain}` : ''
 }
 
+function CertificateLogDialog({ certificate, onClose }: { certificate: Certificate; onClose: () => void }) {
+  const log = String(certificate.last_error || '').trim()
+  return <MotionDialogPanel onCancel={onClose} className="certificate-log-dialog">
+    <header className="dialog-head"><div><h2>签发日志</h2><p className="muted">{certificate.name} · {certificate.domains.join(' · ')}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>
+    <div className="dialog-body certificate-log-body">
+      <div className="certificate-log-meta"><span className={`status-pill ${certificate.status === 'ready' ? 'ok' : certificate.status === 'failed' ? 'warning' : ''}`}>{certificateLabelValue(certificate.status)}</span><span>{certificate.last_renewal_attempt_at ? `最近尝试：${formatTableTime(certificate.last_renewal_attempt_at)}` : '尚未开始签发'}</span></div>
+      {log ? <div className="raw-log-copy"><CopyBlock value={log} /></div> : <div className="certificate-log-empty"><FileText size={20} /><span>最近一次签发没有可查看的错误日志。</span></div>}
+    </div>
+    <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
+  </MotionDialogPanel>
+}
+
+function CertificateEABDialog({ keyID, hmacKey, configured, secretRequired, saving, onChange, onCancel, onSubmit }: { keyID: string; hmacKey: string; configured: boolean; secretRequired: boolean; saving: boolean; onChange: (patch: { keyID?: string; hmacKey?: string }) => void; onCancel: () => void; onSubmit: () => void }) {
+  return <MotionDialogPanel onCancel={onCancel} className="certificate-eab-dialog">
+    <header className="dialog-head"><div><h2>填写 Google EAB</h2><p className="muted">连接您的 Google Cloud 公共 CA 账号</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button></header>
+    <div className="dialog-body">
+      <div className="certificate-eab-guide"><KeyRound size={20} /><div><strong>需要从 Google 获取两项信息</strong><p>Google Trust Services 要求先完成外部账号绑定。请打开 Google 官方页面，按页面指引获取 Key ID 和 HMAC Key。</p><a href="https://cloud.google.com/certificate-manager/docs/public-ca-tutorial?hl=zh-cn#request-key-hmac" target="_blank" rel="noreferrer">打开 Google 官方获取页面<ExternalLink size={14} /></a></div></div>
+      <div className="certificate-eab-secret-note">HMAC Key 是敏感信息，请在获取后 7 天内使用。保存后 OBoard 只会显示“已配置”，不会再次展示密钥。</div>
+      <div className="form server-dialog-form labeled-form">
+        <FormField label="Key ID（密钥编号）" required hint="粘贴 Google 返回的 keyId。"><input value={keyID} onChange={event => onChange({ keyID: event.target.value })} autoComplete="off" spellCheck={false} /></FormField>
+        <FormField label="HMAC Key（绑定密钥）" required={secretRequired} hint={configured && !secretRequired ? '已保存。留空则保持当前值。' : configured ? '更换 Key ID 时，需要同时填写新的 HMAC Key。' : '粘贴 Google 返回的 b64MacKey。'}><input type="password" value={hmacKey} onChange={event => onChange({ hmacKey: event.target.value })} autoComplete="new-password" spellCheck={false} placeholder={configured && !secretRequired ? '留空保持当前值' : ''} /></FormField>
+      </div>
+    </div>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" onClick={onSubmit} disabled={saving || !keyID || (secretRequired && !hmacKey)}>{saving ? '保存中...' : configured ? '保存 EAB' : '保存到本次申请'}</button></footer>
+  </MotionDialogPanel>
+}
+
 function CertificateSettings({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
   const certificates: Certificate[] = data.certificates || []
   const credentials: DNSCredential[] = data.dns_credentials || []
   const servers: Server[] = data.servers || []
-  const [draft, setDraft] = useState<any>({ name: '', domains: '', challenge_type: 'dns01', dns_credential_id: 0, issuance_server_id: 0, acme_ca: 'letsencrypt', account_email: '', auto_renew: true })
+  const [draft, setDraft] = useState<any>({ name: '', domains: '', challenge_type: 'dns01', dns_credential_id: 0, issuance_server_id: 0, acme_ca: 'letsencrypt', account_email: '', eab_key_id: '', eab_hmac_key: '', auto_renew: true })
   const [autoMatch, setAutoMatch] = useState(data.settings?.certificate_auto_match_enabled !== false && data.settings?.certificate_auto_match_enabled !== 'false')
   const [preference, setPreference] = useState(data.settings?.certificate_default_preference === 'wildcard' ? 'wildcard' : 'subdomain')
   const [working, setWorking] = useState('')
   const [importDraft, setImportDraft] = useState({ name: '', certificate_pem: '', fullchain_pem: '', private_key_pem: '' })
+  const [eabTarget, setEABTarget] = useState<'draft' | Certificate | null>(null)
+  const [eabDraft, setEABDraft] = useState({ keyID: '', hmacKey: '' })
+  const [logCertificate, setLogCertificate] = useState<Certificate | null>(null)
   useEffect(() => { setAutoMatch(data.settings?.certificate_auto_match_enabled !== false && data.settings?.certificate_auto_match_enabled !== 'false'); setPreference(data.settings?.certificate_default_preference === 'wildcard' ? 'wildcard' : 'subdomain') }, [data.settings])
   const createCertificate = async () => {
     const domains = String(draft.domains).split(/[\s,]+/).map(item => item.trim()).filter(Boolean)
     if (!draft.name.trim() || !domains.length) return
     const payload: any = { ...draft, domains, dns_credential_id: draft.challenge_type === 'dns01' ? Number(draft.dns_credential_id || 0) : undefined, issuance_server_id: draft.challenge_type === 'http01' ? Number(draft.issuance_server_id || 0) : undefined }
     setWorking('create')
-    try { await client.request('/certificates', { method: 'POST', body: JSON.stringify(payload) }); setDraft({ ...draft, name: '', domains: '', account_email: '' }); await load(); notify?.('证书申请已创建', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+    try { await client.request('/certificates', { method: 'POST', body: JSON.stringify(payload) }); setDraft({ ...draft, name: '', domains: '', account_email: '', eab_key_id: '', eab_hmac_key: '' }); await load(); notify?.('证书申请已创建', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const certificateAction = async (certificate: Certificate, action: 'issue' | 'renew' | 'confirm-dns') => {
     setWorking(`${action}-${certificate.id}`)
-    try { await client.request(`/certificates/${certificate.id}/${action}`, { method: 'POST', body: '{}' }); await load(); notify?.(action === 'confirm-dns' ? 'DNS 验证已继续' : action === 'renew' ? '续期任务已提交' : '签发任务已提交', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+    try { await client.request(`/certificates/${certificate.id}/${action}`, { method: 'POST', body: '{}' }); await load(); notify?.(action === 'confirm-dns' ? 'DNS 验证已继续' : action === 'renew' ? '续签任务已提交' : '签发任务已提交', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const refreshCertificateStatus = async (certificate: Certificate) => {
+    setWorking(`refresh-${certificate.id}`)
+    try {
+      await client.request(`/certificates/${certificate.id}`)
+      await load(undefined, { background: true })
+      notify?.(`${certificate.name} 状态已刷新`, 'success')
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const deleteCertificate = async (certificate: Certificate) => {
     const ok = await dialogs.confirm({ title: '删除证书', message: `确认删除 ${certificate.name}？`, confirmText: '删除', tone: 'danger' })
@@ -2786,6 +2825,39 @@ function CertificateSettings({ data, client, load, notify }: any) {
     if (!importDraft.certificate_pem.trim() || !importDraft.private_key_pem.trim()) return
     try { await client.request('/certificates/import', { method: 'POST', body: JSON.stringify(importDraft) }); setImportDraft({ name: '', certificate_pem: '', fullchain_pem: '', private_key_pem: '' }); await load(); notify?.('证书已导入', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
   }
+  const openDraftEAB = () => {
+    setEABDraft({ keyID: String(draft.eab_key_id || ''), hmacKey: String(draft.eab_hmac_key || '') })
+    setEABTarget('draft')
+  }
+  const openCertificateEAB = (certificate: Certificate) => {
+    setEABDraft({ keyID: certificate.eab_key_id || '', hmacKey: '' })
+    setEABTarget(certificate)
+  }
+  const closeEAB = () => {
+    setEABTarget(null)
+    setEABDraft({ keyID: '', hmacKey: '' })
+  }
+  const eabSecretRequired = eabTarget === 'draft' || Boolean(eabTarget && (!eabTarget.eab_configured || eabDraft.keyID !== (eabTarget.eab_key_id || '')))
+  const saveEAB = async () => {
+    if (!eabDraft.keyID || (eabSecretRequired && !eabDraft.hmacKey)) return
+    if (eabTarget === 'draft') {
+      setDraft((current: any) => ({ ...current, eab_key_id: eabDraft.keyID, eab_hmac_key: eabDraft.hmacKey }))
+      closeEAB()
+      return
+    }
+    if (!eabTarget) return
+    setWorking(`eab-${eabTarget.id}`)
+    try {
+      const payload: Record<string, string> = { eab_key_id: eabDraft.keyID }
+      if (eabDraft.hmacKey) payload.eab_hmac_key = eabDraft.hmacKey
+      await client.request(`/certificates/${eabTarget.id}`, { method: 'PATCH', body: JSON.stringify(payload) })
+      closeEAB()
+      await load()
+      notify?.('Google EAB 已保存', 'success')
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const draftEABConfigured = Boolean(draft.eab_key_id && draft.eab_hmac_key)
+  const googleHTTPUnsupported = draft.acme_ca === 'google' && draft.challenge_type === 'http01'
   return <div className="settings-grid">
     <section className="settings-card">
       <div className="settings-card-head"><div><h3>申请证书</h3><p className="muted">HTTP-01、面板 DNS 或手动 DNS</p></div></div>
@@ -2795,18 +2867,40 @@ function CertificateSettings({ data, client, load, notify }: any) {
         <FormField label="验证方式"><Select value={draft.challenge_type} onChange={e => setDraft({ ...draft, challenge_type: e.target.value })}><option value="dns01">面板 DNS-01</option><option value="dns01_manual">手动 DNS-01</option><option value="http01">Agent HTTP-01</option></Select></FormField>
         {draft.challenge_type === 'dns01' && <FormField label="域名服务账号"><Select value={draft.dns_credential_id} onChange={e => setDraft({ ...draft, dns_credential_id: Number(e.target.value) })}><option value={0}>选择账号</option>{credentials.filter(item => item.verified_at).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
         {draft.challenge_type === 'http01' && <FormField label="签发服务器"><Select value={draft.issuance_server_id} onChange={e => setDraft({ ...draft, issuance_server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map(server => <option key={server.id} value={server.id}>{server.name}</option>)}</Select></FormField>}
-        <FormField label="ACME CA"><Select value={draft.acme_ca} onChange={e => setDraft({ ...draft, acme_ca: e.target.value })}><option value="letsencrypt">Let's Encrypt</option><option value="zerossl">ZeroSSL</option><option value="buypass">Buypass</option><option value="google">Google Trust Services</option></Select></FormField>
+        <FormField label="ACME CA"><Select value={draft.acme_ca} onChange={e => { const acmeCA = e.target.value; setDraft({ ...draft, acme_ca: acmeCA, ...(acmeCA === 'google' ? {} : { eab_key_id: '', eab_hmac_key: '' }) }); if (acmeCA === 'google') openDraftEAB() }}><option value="letsencrypt">Let's Encrypt</option><option value="zerossl">ZeroSSL</option><option value="buypass">Buypass</option><option value="google">Google Trust Services</option></Select></FormField>
+        {draft.acme_ca === 'google' && <div className="certificate-eab-row"><div className="certificate-eab-state"><KeyRound size={16} /><span><strong>Google EAB</strong><small>{draftEABConfigured ? `已配置 · ${draft.eab_key_id}` : '需要填写 Key ID 和 HMAC Key'}</small></span></div><button type="button" className="ghost" onClick={openDraftEAB}>{draftEABConfigured ? '修改 EAB' : '填写 EAB'}</button></div>}
+        {googleHTTPUnsupported && <div className="certificate-eab-warning">Google EAB 暂不支持 Agent HTTP-01，请选择面板 DNS-01 或手动 DNS-01。</div>}
         <FormField label="账户邮箱"><input type="email" value={draft.account_email} onChange={e => setDraft({ ...draft, account_email: e.target.value })} placeholder={defaultCertificateAccountEmail(draft.domains) || 'admin@example.com'} /></FormField>
         <label className="check-row"><input type="checkbox" checked={draft.auto_renew} onChange={e => setDraft({ ...draft, auto_renew: e.target.checked })} /><span>自动续期</span></label>
-        <button onClick={createCertificate} disabled={working === 'create'}>{working === 'create' ? '创建中...' : '创建申请'}</button>
+        <button onClick={createCertificate} disabled={working === 'create' || googleHTTPUnsupported || (draft.acme_ca === 'google' && !draftEABConfigured)}>{working === 'create' ? '创建中...' : '创建申请'}</button>
       </div>
       <details className="advanced-config"><summary>导入现有证书</summary><div className="form settings-form"><FormField label="名称"><input value={importDraft.name} onChange={e => setImportDraft({ ...importDraft, name: e.target.value })} /></FormField><FormField label="证书 PEM"><textarea rows={4} value={importDraft.certificate_pem} onChange={e => setImportDraft({ ...importDraft, certificate_pem: e.target.value })} /></FormField><FormField label="完整链 PEM"><textarea rows={4} value={importDraft.fullchain_pem} onChange={e => setImportDraft({ ...importDraft, fullchain_pem: e.target.value })} /></FormField><FormField label="私钥 PEM"><textarea rows={4} value={importDraft.private_key_pem} onChange={e => setImportDraft({ ...importDraft, private_key_pem: e.target.value })} /></FormField><button onClick={importCertificate}>导入</button></div></details>
     </section>
     <section className="settings-card">
       <div className="settings-card-head"><div><h3>自动匹配</h3><p className="muted">入口域名的全局默认策略</p></div><button onClick={saveMatching}>保存</button></div>
       <div className="form settings-form"><label className="check-row"><input type="checkbox" checked={autoMatch} onChange={e => setAutoMatch(e.target.checked)} /><span>启用自动匹配</span></label><FormField label="默认优先级"><Select variant="segmented" value={preference} onChange={e => setPreference(e.target.value)}><option value="subdomain">精确子域证书</option><option value="wildcard">泛域名证书</option></Select></FormField></div>
-      <div className="dns-record-list">{certificates.map(certificate => <div className="dns-record-row" key={certificate.id}><span className="record-type">{certificate.wildcard ? 'WILD' : 'TLS'}</span><div className="record-main"><strong>{certificate.name}</strong><span>{certificate.domains.join(' · ')}</span><small>{certificate.last_error || (certificate.not_after ? `有效至 ${formatTableTime(certificate.not_after)}` : certificateLabelValue(certificate.challenge_type))}</small>{certificate.status === 'awaiting_dns' && (certificate.validation_records || []).map(record => <code key={`${record.name}-${record.content}`}>{record.name} TXT {record.content}</code>)}</div><span className={`status-pill ${certificate.status === 'ready' ? 'ok' : certificate.status === 'failed' ? 'warning' : ''}`}>{certificateLabelValue(certificate.status)}</span><div className="record-actions">{certificate.status === 'awaiting_dns' ? <button className="ghost" onClick={() => certificateAction(certificate, 'confirm-dns')}>已解析</button> : certificate.challenge_type !== 'imported' ? <button className="ghost icon-button" onClick={() => certificateAction(certificate, certificate.status === 'ready' ? 'renew' : 'issue')} title={certificate.status === 'ready' ? '续期' : '签发'}><RefreshCw size={14} /></button> : null}<button className="ghost icon-button danger-text" onClick={() => deleteCertificate(certificate)} title="删除"><Trash2 size={14} /></button></div></div>)}</div>
+      <div className="dns-record-list">{certificates.map(certificate => {
+        const ready = certificate.status === 'ready'
+        const issueAction = ready ? 'renew' : 'issue'
+        const issueLabel = ready ? '续签证书' : '签发证书'
+        const issueWorking = working === `${issueAction}-${certificate.id}`
+        const refreshWorking = working === `refresh-${certificate.id}`
+        return <div className="dns-record-row" key={certificate.id}>
+          <span className="record-type">{certificate.wildcard ? 'WILD' : 'TLS'}</span>
+          <div className="record-main"><strong>{certificate.name}</strong><span>{certificate.domains.join(' · ')}</span><small>{certificate.last_error || (certificate.not_after ? `有效至 ${formatTableTime(certificate.not_after)}` : certificateLabelValue(certificate.challenge_type))}</small>{certificate.status === 'awaiting_dns' && (certificate.validation_records || []).map(record => <code key={`${record.name}-${record.content}`}>{record.name} TXT {record.content}</code>)}</div>
+          <span className={`status-pill ${ready ? 'ok' : certificate.status === 'failed' ? 'warning' : ''}`}>{certificateLabelValue(certificate.status)}</span>
+          <div className="record-actions">
+            <button type="button" className="ghost icon-button" onClick={() => void refreshCertificateStatus(certificate)} disabled={refreshWorking} title="刷新证书状态" aria-label="刷新证书状态"><RefreshCw size={14} className={refreshWorking ? 'spin' : ''} /></button>
+            <button type="button" className="ghost icon-button" onClick={() => setLogCertificate(certificate)} title="查看签发日志" aria-label="查看签发日志"><FileText size={14} /></button>
+            {certificate.acme_ca === 'google' && <button type="button" className="ghost icon-button" onClick={() => openCertificateEAB(certificate)} title={certificate.eab_configured ? '更新 Google EAB' : '填写 Google EAB'} aria-label={certificate.eab_configured ? '更新 Google EAB' : '填写 Google EAB'}><KeyRound size={14} /></button>}
+            {certificate.status === 'awaiting_dns' ? <button type="button" className="ghost" onClick={() => void certificateAction(certificate, 'confirm-dns')} disabled={working === `confirm-dns-${certificate.id}`}>已解析</button> : certificate.challenge_type !== 'imported' ? <button type="button" className="ghost icon-button" onClick={() => void certificateAction(certificate, issueAction)} disabled={issueWorking || certificate.status === 'issuing'} title={issueLabel} aria-label={issueLabel}>{ready ? <CalendarSync size={14} className={issueWorking ? 'spin' : ''} /> : <BadgeCheck size={14} />}</button> : null}
+            <button type="button" className="ghost icon-button danger-text" onClick={() => void deleteCertificate(certificate)} title="删除证书" aria-label="删除证书"><Trash2 size={14} /></button>
+          </div>
+        </div>
+      })}</div>
     </section>
+    <AnimatePresence>{logCertificate && <CertificateLogDialog certificate={logCertificate} onClose={() => setLogCertificate(null)} />}</AnimatePresence>
+    <AnimatePresence>{eabTarget && <CertificateEABDialog keyID={eabDraft.keyID} hmacKey={eabDraft.hmacKey} configured={eabTarget !== 'draft' && Boolean(eabTarget.eab_configured)} secretRequired={eabSecretRequired} saving={eabTarget !== 'draft' && working === `eab-${eabTarget.id}`} onChange={patch => setEABDraft(current => ({ ...current, ...patch }))} onCancel={closeEAB} onSubmit={() => void saveEAB()} />}</AnimatePresence>
   </div>
 }
 
