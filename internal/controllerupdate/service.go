@@ -71,12 +71,26 @@ func DefaultServiceConfig() ServiceConfig {
 }
 
 func defaultInstallDir() string {
-	switch value := strings.TrimSpace(os.Getenv("OBOARD_INSTALL_DIR")); value {
-	case "/usr/local/bin", "/opt/oboard", "/usr/local/sbin":
+	if value, ok := normalizeInstallDir(os.Getenv("OBOARD_INSTALL_DIR")); ok {
 		return value
-	default:
-		return "/usr/local/bin"
 	}
+	return "/usr/local/bin"
+}
+
+func normalizeInstallDir(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	value = strings.TrimRight(value, "/")
+	if value == "" || value == "." || !filepath.IsAbs(value) || filepath.Clean(value) != value {
+		return "", false
+	}
+	for _, char := range value {
+		if char == '/' || char == '.' || char == '_' || char == '-' ||
+			(char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') {
+			continue
+		}
+		return "", false
+	}
+	return value, true
 }
 
 func NewService(config ServiceConfig) *Service {

@@ -34,16 +34,37 @@ func TestPinnedCheckPersistsStatus(t *testing.T) {
 }
 
 func TestDefaultServiceConfigUsesSelectedInstallDirectory(t *testing.T) {
-	t.Setenv("OBOARD_INSTALL_DIR", "/opt/oboard")
+	t.Setenv("OBOARD_INSTALL_DIR", "/data/oboard/")
 	config := DefaultServiceConfig()
-	if config.ControllerBinary != "/opt/oboard/oboard-controller" || config.UpdaterBinary != "/opt/oboard/oboard-controller-updater" {
+	if config.ControllerBinary != "/data/oboard/oboard-controller" || config.UpdaterBinary != "/data/oboard/oboard-controller-updater" {
 		t.Fatalf("unexpected custom binary paths: %#v", config)
 	}
 
-	t.Setenv("OBOARD_INSTALL_DIR", "/tmp/unsafe")
+	t.Setenv("OBOARD_INSTALL_DIR", "../tmp/unsafe")
 	config = DefaultServiceConfig()
 	if config.ControllerBinary != "/usr/local/bin/oboard-controller" || config.UpdaterBinary != "/usr/local/bin/oboard-controller-updater" {
 		t.Fatalf("unsafe install directory was accepted: %#v", config)
+	}
+}
+
+func TestNormalizeInstallDir(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  string
+	}{
+		{input: "/data/oboard", want: "/data/oboard"},
+		{input: "/data/oboard/", want: "/data/oboard"},
+		{input: "/usr/local/bin", want: "/usr/local/bin"},
+	} {
+		got, ok := normalizeInstallDir(test.input)
+		if !ok || got != test.want {
+			t.Errorf("normalizeInstallDir(%q) = %q, %v; want %q, true", test.input, got, ok, test.want)
+		}
+	}
+	for _, input := range []string{"", "/", "data/oboard", "/data//oboard", "/data/../etc", "/data/oboard path", "/data/oboard;rm"} {
+		if got, ok := normalizeInstallDir(input); ok {
+			t.Errorf("normalizeInstallDir(%q) = %q, true; want rejection", input, got)
+		}
 	}
 }
 

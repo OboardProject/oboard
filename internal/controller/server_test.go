@@ -614,6 +614,7 @@ func TestAgentInstallScriptsUseLowSpaceTempFallback(t *testing.T) {
 				"ACME_SH_SHA256=fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32",
 				"install_pinned_acme_sh",
 				"sha256_file",
+				"normalize_install_dir",
 				"install_dir_from_input",
 				"请输入安装目录（留空为/opt/oboard）：",
 				"INSTALL_ENV_PATH=${OBOARD_AGENT_INSTALL_ENV:-/etc/oboard-agent/install.env}",
@@ -697,7 +698,7 @@ func TestAgentInstallDirectoryPersistence(t *testing.T) {
 	}
 
 	source := strings.Join([]string{
-		extractShellFunction(t, script, "valid_install_dir"),
+		extractShellFunction(t, script, "normalize_install_dir"),
 		extractShellFunction(t, script, "install_dir_from_input"),
 		extractShellFunction(t, script, "configured_agent_install_dir"),
 		extractShellFunction(t, script, "choose_install_dir"),
@@ -705,7 +706,7 @@ func TestAgentInstallDirectoryPersistence(t *testing.T) {
 	}, "\n")
 	t.Run("restore persisted directory", func(t *testing.T) {
 		installEnv := filepath.Join(t.TempDir(), "install.env")
-		if err := os.WriteFile(installEnv, []byte("OBOARD_INSTALL_DIR=/usr/local/sbin\n"), 0o600); err != nil {
+		if err := os.WriteFile(installEnv, []byte("OBOARD_INSTALL_DIR=/data/oboard/\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		harness := strings.Join([]string{
@@ -718,20 +719,20 @@ func TestAgentInstallDirectoryPersistence(t *testing.T) {
 			"printf 'resolved=%s\\n' \"$INSTALL_DIR\"",
 		}, "\n")
 		output, err := exec.Command(shell, "-c", harness).CombinedOutput()
-		if err != nil || !strings.Contains(string(output), "resolved=/usr/local/sbin") {
+		if err != nil || !strings.Contains(string(output), "resolved=/data/oboard") {
 			t.Fatalf("persisted Agent directory was not restored: %v\n%s", err, output)
 		}
 	})
 
 	t.Run("reject directory change", func(t *testing.T) {
 		installEnv := filepath.Join(t.TempDir(), "install.env")
-		if err := os.WriteFile(installEnv, []byte("OBOARD_INSTALL_DIR=/opt/oboard\n"), 0o600); err != nil {
+		if err := os.WriteFile(installEnv, []byte("OBOARD_INSTALL_DIR=/data/oboard\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		harness := strings.Join([]string{
 			source,
 			"INSTALL_ENV_PATH=" + shellQuote(installEnv),
-			"INSTALL_DIR_INPUT=/usr/local/bin",
+			"INSTALL_DIR_INPUT=/srv/oboard",
 			"INSTALL_DIR=",
 			"ACTION=update",
 			"resolve_agent_install_dir",
@@ -747,7 +748,7 @@ func TestAgentInstallDirectoryPersistence(t *testing.T) {
 		harness := strings.Join([]string{
 			extractShellFunction(t, script, "persist_agent_install_dir"),
 			"INSTALL_ENV_PATH=" + shellQuote(installEnv),
-			"INSTALL_DIR=/opt/oboard",
+			"INSTALL_DIR=/data/oboard",
 			"persist_agent_install_dir",
 		}, "\n")
 		output, err := exec.Command(shell, "-c", harness).CombinedOutput()
@@ -758,7 +759,7 @@ func TestAgentInstallDirectoryPersistence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(content) != "OBOARD_INSTALL_DIR=/opt/oboard\n" {
+		if string(content) != "OBOARD_INSTALL_DIR=/data/oboard\n" {
 			t.Fatalf("unexpected persisted install directory: %q", content)
 		}
 		info, err := os.Stat(installEnv)
@@ -1120,7 +1121,7 @@ func TestAgentSelfUpdateScriptSupportsPOSIXShellAndDeferredAckRestart(t *testing
 		t.Fatalf("self update script status = %d", rr.Code)
 	}
 	script := rr.Body.String()
-	for _, want := range []string{"#!/bin/sh", "OBOARD_AGENT_RESTART:-delayed", `AGENT_RESTART" = none`, "sleep 60", `data["time_sync_command"] = "auto"`, "verify_manifest_with_openssl", "command -v install", "coreutils", "OBOARD_AGENT_INSTALL_ENV", "configured_agent_install_dir", `data.setdefault("core_binary", install_dir + "/oboard-sb")`, `ln -s "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/obag"`, "OBoard Agent 自更新完成", "$management_command check"} {
+	for _, want := range []string{"#!/bin/sh", "OBOARD_AGENT_RESTART:-delayed", `AGENT_RESTART" = none`, "sleep 60", `data["time_sync_command"] = "auto"`, "verify_manifest_with_openssl", "command -v install", "coreutils", "OBOARD_AGENT_INSTALL_ENV", "configured_agent_install_dir", "normalize_install_dir", `data.setdefault("core_binary", install_dir + "/oboard-sb")`, `ln -s "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/obag"`, "OBoard Agent 自更新完成", "$management_command check"} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("self update script missing %q", want)
 		}

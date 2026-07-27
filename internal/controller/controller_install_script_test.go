@@ -48,6 +48,7 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"不会互相覆盖",
 		"COMPONENT=agent",
 		"INSTALL_DIR_INPUT",
+		"normalize_install_dir",
 		"install_dir_from_input",
 		"请输入安装目录（留空为/opt/oboard）：",
 		"/opt/oboard",
@@ -148,12 +149,12 @@ func TestControllerInstallDirectorySelection(t *testing.T) {
 	}
 	t.Run("restore persisted directory", func(t *testing.T) {
 		envPath := filepath.Join(t.TempDir(), "controller.env")
-		if err := os.WriteFile(envPath, []byte("OBOARD_INSTALL_DIR=/opt/oboard\n"), 0o600); err != nil {
+		if err := os.WriteFile(envPath, []byte("OBOARD_INSTALL_DIR=/data/oboard/\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		configured := strings.ReplaceAll(extractShellFunction(t, script, "configured_controller_install_dir"), "/etc/oboard/controller.env", shellQuote(envPath))
 		harness := strings.Join([]string{
-			extractShellFunction(t, script, "valid_install_dir"),
+			extractShellFunction(t, script, "normalize_install_dir"),
 			extractShellFunction(t, script, "install_dir_from_input"),
 			configured,
 			extractShellFunction(t, script, "choose_install_dir"),
@@ -166,22 +167,22 @@ func TestControllerInstallDirectorySelection(t *testing.T) {
 			"printf 'resolved=%s\\n' \"$INSTALL_DIR\"",
 		}, "\n")
 		output, err := exec.Command(shell, "-c", harness).CombinedOutput()
-		if err != nil || !strings.Contains(string(output), "resolved=/opt/oboard") {
+		if err != nil || !strings.Contains(string(output), "resolved=/data/oboard") {
 			t.Fatalf("persisted install directory was not restored: %v\n%s", err, output)
 		}
 	})
 
 	t.Run("reject directory change during update", func(t *testing.T) {
 		envPath := filepath.Join(t.TempDir(), "controller.env")
-		if err := os.WriteFile(envPath, []byte("OBOARD_INSTALL_DIR=/usr/local/sbin\n"), 0o600); err != nil {
+		if err := os.WriteFile(envPath, []byte("OBOARD_INSTALL_DIR=/data/oboard\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		configured := strings.ReplaceAll(extractShellFunction(t, script, "configured_controller_install_dir"), "/etc/oboard/controller.env", shellQuote(envPath))
 		harness := strings.Join([]string{
-			extractShellFunction(t, script, "valid_install_dir"),
+			extractShellFunction(t, script, "normalize_install_dir"),
 			configured,
 			extractShellFunction(t, script, "resolve_controller_install_dir"),
-			"INSTALL_DIR_INPUT=/opt/oboard",
+			"INSTALL_DIR_INPUT=/srv/oboard",
 			"INSTALL_DIR=",
 			"INSTALLATION_EXISTS=1",
 			"ACTION=update",
@@ -203,7 +204,7 @@ func TestControllerInstallDirectorySelection(t *testing.T) {
 		}
 		harness := strings.Join([]string{
 			extractShellFunction(t, script, "render_service_file"),
-			"INSTALL_DIR=/opt/oboard",
+			"INSTALL_DIR=/data/oboard",
 			"render_service_file " + shellQuote(source) + " " + shellQuote(destination),
 		}, "\n")
 		if output, err := exec.Command(shell, "-c", harness).CombinedOutput(); err != nil {
@@ -213,7 +214,7 @@ func TestControllerInstallDirectorySelection(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(rendered), "/usr/local/bin") || !strings.Contains(string(rendered), "ExecStart=/opt/oboard/oboard-controller") || !strings.Contains(string(rendered), "ReadWritePaths=/var/lib/oboard /opt/oboard") {
+		if strings.Contains(string(rendered), "/usr/local/bin") || !strings.Contains(string(rendered), "ExecStart=/data/oboard/oboard-controller") || !strings.Contains(string(rendered), "ReadWritePaths=/var/lib/oboard /data/oboard") {
 			t.Fatalf("unexpected rendered service:\n%s", rendered)
 		}
 		assertPathMode(t, destination, 0o644)
@@ -673,7 +674,7 @@ func assertInstallDirectoryInputs(t *testing.T, script string) {
 		t.Skip("a POSIX shell is unavailable")
 	}
 	source := strings.Join([]string{
-		extractShellFunction(t, script, "valid_install_dir"),
+		extractShellFunction(t, script, "normalize_install_dir"),
 		extractShellFunction(t, script, "install_dir_from_input"),
 	}, "\n")
 	for _, test := range []struct {
@@ -685,6 +686,8 @@ func assertInstallDirectoryInputs(t *testing.T, script string) {
 		{name: "local bin", input: "/usr/local/bin", want: "/usr/local/bin"},
 		{name: "opt", input: "/opt/oboard", want: "/opt/oboard"},
 		{name: "local sbin", input: "/usr/local/sbin", want: "/usr/local/sbin"},
+		{name: "custom", input: "/data/oboard", want: "/data/oboard"},
+		{name: "trim trailing slash", input: "/data/oboard/", want: "/data/oboard"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			output, err := exec.Command(shell, "-c", source+"\ninstall_dir_from_input "+shellQuote(test.input)).CombinedOutput()
@@ -693,8 +696,11 @@ func assertInstallDirectoryInputs(t *testing.T, script string) {
 			}
 		})
 	}
-	if output, err := exec.Command(shell, "-c", source+"\ninstall_dir_from_input /tmp/oboard").CombinedOutput(); err == nil {
-		t.Fatalf("unsupported install directory was accepted: %s", output)
+	for _, input := range []string{"data/oboard", "/", "/data//oboard", "/data/../etc", "/data/oboard path", "/data/oboard;rm"} {
+		output, err := exec.Command(shell, "-c", source+"\ninstall_dir_from_input "+shellQuote(input)).CombinedOutput()
+		if err == nil {
+			t.Fatalf("invalid install directory %q was accepted: %s", input, output)
+		}
 	}
 	for _, old := range []string{"install_dir_for_choice", "OBOARD_INSTALL_CHOICE", "请选择 [1]："} {
 		if strings.Contains(script, old) {

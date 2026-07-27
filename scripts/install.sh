@@ -86,17 +86,26 @@ select_installation() {
   fi
 }
 
-valid_install_dir() {
-  case "$1" in
-    /usr/local/bin|/opt/oboard|/usr/local/sbin) return 0 ;;
+normalize_install_dir() {
+  local value=${1:-/opt/oboard}
+  while [ "$value" != / ] && [ "${value%/}" != "$value" ]; do
+    value=${value%/}
+  done
+  case "$value" in
+    /*) ;;
     *) return 1 ;;
   esac
+  case "$value" in
+    /|*//*|*[!A-Za-z0-9_./-]*) return 1 ;;
+  esac
+  case "$value/" in
+    */./*|*/../*) return 1 ;;
+  esac
+  printf '%s\n' "$value"
 }
 
 install_dir_from_input() {
-  local selected=${1:-/opt/oboard}
-  valid_install_dir "$selected" || return 1
-  printf '%s\n' "$selected"
+  normalize_install_dir "${1:-/opt/oboard}"
 }
 
 configured_controller_install_dir() {
@@ -117,18 +126,22 @@ choose_install_dir() {
       printf '%s\n' "$selected"
       return 0
     fi
-    printf '安装目录仅支持 /usr/local/bin、/opt/oboard 或 /usr/local/sbin。\n' > /dev/tty
+    printf '请输入规范的绝对路径，例如 /data/oboard。\n' > /dev/tty
   done
 }
 
 resolve_controller_install_dir() {
-  local persisted candidate existing_dir
+  local persisted candidate existing_dir normalized raw_persisted
   persisted=$(configured_controller_install_dir)
-  existing_dir=$persisted
-  if [ -n "$persisted" ] && ! valid_install_dir "$persisted"; then
-    echo "已保存的安装目录无效：$persisted" >&2
-    exit 1
+  if [ -n "$persisted" ]; then
+    raw_persisted=$persisted
+    if ! normalized=$(normalize_install_dir "$persisted"); then
+      echo "已保存的安装目录无效：$raw_persisted" >&2
+      exit 1
+    fi
+    persisted=$normalized
   fi
+  existing_dir=$persisted
   if [ -z "$existing_dir" ]; then
     for candidate in /usr/local/bin /opt/oboard /usr/local/sbin; do
       if [ -x "$candidate/oboard-controller" ]; then
@@ -138,10 +151,11 @@ resolve_controller_install_dir() {
     done
   fi
   if [ -n "$INSTALL_DIR_INPUT" ]; then
-    if ! valid_install_dir "$INSTALL_DIR_INPUT"; then
-      echo "INSTALL_DIR/OBOARD_INSTALL_DIR 仅支持 /usr/local/bin、/opt/oboard 或 /usr/local/sbin。" >&2
+    if ! normalized=$(normalize_install_dir "$INSTALL_DIR_INPUT"); then
+      echo "INSTALL_DIR/OBOARD_INSTALL_DIR 必须是规范的绝对路径。" >&2
       exit 1
     fi
+    INSTALL_DIR_INPUT=$normalized
     if [ -n "$existing_dir" ] && [ "$INSTALL_DIR_INPUT" != "$existing_dir" ] && [ "$INSTALLATION_EXISTS" = 1 ]; then
       echo "已安装主控使用 $existing_dir；更新或卸载时不能改为 $INSTALL_DIR_INPUT。" >&2
       exit 1
@@ -986,6 +1000,10 @@ uninstall_controller() {
     "$INSTALL_DIR/oboard-controller.update-new" \
     "$INSTALL_DIR/oboard-controller-updater.update-backup" \
     "$INSTALL_DIR/oboard-controller-updater.update-new"
+  case "$INSTALL_DIR" in
+    /usr/local/bin|/usr/local/sbin|/opt/oboard) ;;
+    *) rmdir "$INSTALL_DIR" 2>/dev/null || true ;;
+  esac
   rm -rf /opt/oboard/web /opt/oboard/downloads /run/oboard /var/lib/oboard/controller-update
   rmdir /opt/oboard 2>/dev/null || true
   rm -f /var/log/oboard-controller.log /var/log/oboard-controller-updater.log
@@ -1069,7 +1087,7 @@ install_component() {
   verify_archive_paths "$TMP_DIR/$archive"
   tar -xzf "$TMP_DIR/$archive" -C "$work"
   echo "[3/4] 安装程序文件"
-  install -d -m 0755 "$INSTALL_DIR"
+  install -d -m 0755 -o root -g root "$INSTALL_DIR"
   install_file_atomic "$work/bin/oboard-$component" "$INSTALL_DIR/oboard-$component" 0755
   if [ "$component" = controller ]; then
     install_file_atomic "$work/bin/oboard-controller-updater" "$INSTALL_DIR/oboard-controller-updater" 0755

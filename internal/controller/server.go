@@ -9646,17 +9646,26 @@ ACME_SH_SHA256=fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32
 ACME_SH_URL="https://raw.githubusercontent.com/acmesh-official/acme.sh/$ACME_SH_VERSION/acme.sh"
 ACME_SH_INSTALL_PATH=/usr/local/bin/acme.sh
 
-valid_install_dir() {
-  case "$1" in
-    /usr/local/bin|/opt/oboard|/usr/local/sbin) return 0 ;;
+normalize_install_dir() {
+  value=${1:-/opt/oboard}
+  while [ "$value" != / ] && [ "${value%/}" != "$value" ]; do
+    value=${value%/}
+  done
+  case "$value" in
+    /*) ;;
     *) return 1 ;;
   esac
+  case "$value" in
+    /|*//*|*[!A-Za-z0-9_./-]*) return 1 ;;
+  esac
+  case "$value/" in
+    */./*|*/../*) return 1 ;;
+  esac
+  printf '%s\n' "$value"
 }
 
 install_dir_from_input() {
-  selected=${1:-/opt/oboard}
-  valid_install_dir "$selected" || return 1
-  printf '%s\n' "$selected"
+  normalize_install_dir "${1:-/opt/oboard}"
 }
 
 configured_agent_install_dir() {
@@ -9676,17 +9685,21 @@ choose_install_dir() {
       printf '%s\n' "$selected"
       return 0
     fi
-    printf '安装目录仅支持 /usr/local/bin、/opt/oboard 或 /usr/local/sbin。\n' > /dev/tty
+    printf '请输入规范的绝对路径，例如 /data/oboard。\n' > /dev/tty
   done
 }
 
 resolve_agent_install_dir() {
   persisted=$(configured_agent_install_dir)
-  existing_dir=$persisted
-  if [ -n "$persisted" ] && ! valid_install_dir "$persisted"; then
-    echo "已保存的 Agent 安装目录无效：$persisted" >&2
-    exit 1
+  if [ -n "$persisted" ]; then
+    raw_persisted=$persisted
+    if ! normalized=$(normalize_install_dir "$persisted"); then
+      echo "已保存的 Agent 安装目录无效：$raw_persisted" >&2
+      exit 1
+    fi
+    persisted=$normalized
   fi
+  existing_dir=$persisted
   if [ -z "$existing_dir" ]; then
     for candidate in /usr/local/bin /opt/oboard /usr/local/sbin; do
       if [ -x "$candidate/oboard-agent" ]; then
@@ -9696,10 +9709,11 @@ resolve_agent_install_dir() {
     done
   fi
   if [ -n "$INSTALL_DIR_INPUT" ]; then
-    if ! valid_install_dir "$INSTALL_DIR_INPUT"; then
-      echo "INSTALL_DIR/OBOARD_INSTALL_DIR 仅支持 /usr/local/bin、/opt/oboard 或 /usr/local/sbin。" >&2
+    if ! normalized=$(normalize_install_dir "$INSTALL_DIR_INPUT"); then
+      echo "INSTALL_DIR/OBOARD_INSTALL_DIR 必须是规范的绝对路径。" >&2
       exit 1
     fi
+    INSTALL_DIR_INPUT=$normalized
     if [ -n "$existing_dir" ] && [ "$INSTALL_DIR_INPUT" != "$existing_dir" ]; then
       echo "已安装 Agent 使用 $existing_dir；更新或卸载时不能改为 $INSTALL_DIR_INPUT。" >&2
       exit 1
@@ -9742,9 +9756,10 @@ if [ "$ACTION" = uninstall ]; then
     rm -f /etc/init.d/oboard-agent /etc/init.d/oboard-sb
   fi
   rm -f "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/oboard-sb" "$INSTALL_DIR/obag"
-  if [ "$INSTALL_DIR" = /opt/oboard ]; then
-    rmdir "$INSTALL_DIR" 2>/dev/null || true
-  fi
+  case "$INSTALL_DIR" in
+    /usr/local/bin|/usr/local/sbin) ;;
+    *) rmdir "$INSTALL_DIR" 2>/dev/null || true ;;
+  esac
   if [ "$OBOARD_PURGE" = 1 ]; then
     rm -rf "$(dirname "$CONFIG_PATH")" "$STATE_DIR"
   fi
@@ -10200,7 +10215,7 @@ download_binaries() {
   curl -fsSL "${BASE_URL}/downloads/release-manifest.json.sig" -o "$tmp/release-manifest.json.sig"
   verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name"
   chmod 0755 "$tmp/$agent_name" "$tmp/$core_name"
-  install -d -m 0755 "$INSTALL_DIR"
+  install -d -m 0755 -o root -g root "$INSTALL_DIR"
   # Do not truncate an executable that may currently be running. Write beside it
   # and atomically rename; Linux keeps the old inode for the running process and
   # new restarts pick up the new binary.
@@ -10484,21 +10499,42 @@ configured_agent_install_dir() {
   sed -n 's/^OBOARD_INSTALL_DIR=//p' "$INSTALL_ENV_PATH" 2>/dev/null | tail -n1 | tr -d "'\""
 }
 
+normalize_install_dir() {
+  value=${1:-/usr/local/bin}
+  while [ "$value" != / ] && [ "${value%/}" != "$value" ]; do
+    value=${value%/}
+  done
+  case "$value" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  case "$value" in
+    /|*//*|*[!A-Za-z0-9_./-]*) return 1 ;;
+  esac
+  case "$value/" in
+    */./*|*/../*) return 1 ;;
+  esac
+  printf '%s\n' "$value"
+}
+
 persisted_install_dir=$(configured_agent_install_dir)
+if [ -n "$persisted_install_dir" ]; then
+  if ! persisted_install_dir=$(normalize_install_dir "$persisted_install_dir"); then
+    echo "已保存的 Agent 安装目录无效。" >&2
+    exit 1
+  fi
+fi
+if [ -n "$INSTALL_DIR_INPUT" ]; then
+  if ! INSTALL_DIR_INPUT=$(normalize_install_dir "$INSTALL_DIR_INPUT"); then
+    echo "INSTALL_DIR/OBOARD_INSTALL_DIR 必须是规范的绝对路径。" >&2
+    exit 1
+  fi
+fi
 if [ -n "$INSTALL_DIR_INPUT" ] && [ -n "$persisted_install_dir" ] && [ "$INSTALL_DIR_INPUT" != "$persisted_install_dir" ]; then
   echo "已安装 Agent 使用 $persisted_install_dir；自更新时不能改为 $INSTALL_DIR_INPUT。" >&2
   exit 1
 fi
-case "${INSTALL_DIR_INPUT:-$persisted_install_dir}" in
-  /usr/local/bin|/opt/oboard|/usr/local/sbin)
-    INSTALL_DIR=${INSTALL_DIR_INPUT:-$persisted_install_dir}
-    ;;
-  "") INSTALL_DIR=/usr/local/bin ;;
-  *)
-    echo "已保存的 Agent 安装目录无效。" >&2
-    exit 1
-    ;;
-esac
+INSTALL_DIR=${INSTALL_DIR_INPUT:-${persisted_install_dir:-/usr/local/bin}}
 export INSTALL_DIR
 
 fix_hostname_resolution() {
@@ -10840,7 +10876,7 @@ verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.js
 chmod 0755 "$tmp/$agent_name" "$tmp/$core_name"
 
 install_downloaded_binaries_direct() {
-  install -d -m 0755 "$INSTALL_DIR"
+  install -d -m 0755 -o root -g root "$INSTALL_DIR"
   # Do not truncate an executable that may currently be running. Write beside it
   # and atomically rename; Linux keeps the old inode for the running process and
   # new restarts pick up the new binary.
@@ -10857,7 +10893,7 @@ install_downloaded_binaries_via_systemd() {
   cat > "$helper" <<'HELPER'
 #!/bin/sh
 set -eu
-install -d -m 0755 "$INSTALL_DIR"
+install -d -m 0755 -o root -g root "$INSTALL_DIR"
 install -m 0755 "$TMP_DIR/$AGENT_NAME" "$INSTALL_DIR/oboard-agent.new"
 install -m 0755 "$TMP_DIR/$CORE_NAME" "$INSTALL_DIR/oboard-sb.new"
 mv -f "$INSTALL_DIR/oboard-agent.new" "$INSTALL_DIR/oboard-agent"
