@@ -448,9 +448,16 @@ func TestDeploymentMTURunsOnlyOnFirstUseOrPolicyChange(t *testing.T) {
 	if err := db.AddMTUDetectionResult(ctx, model.MTUDetectionResult{ServerID: server.ID, Mode: model.MTUModeDetect, TargetHost: plan.TargetHost, TargetPort: plan.TargetPort, RecommendedMTU: 1400, ResultJSON: `{"overhead_bytes":80,"desired_mtu":0}`}); err != nil {
 		t.Fatal(err)
 	}
-	plan.DesiredMTU = 1400 // detect mode writes the recommendation back to the server.
+	plan.DesiredMTU = 1400
 	if run, err := srv.shouldRunDeploymentMTU(ctx, plan); err != nil || run {
 		t.Fatalf("unchanged MTU deployment run = %t, err=%v; want false", run, err)
+	}
+	storedServer, err := db.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedServer.MTUValue != 1400 {
+		t.Fatalf("MTU result did not persist the effective value: %d", storedServer.MTUValue)
 	}
 	changed := plan
 	changed.TargetHost = "8.8.8.8"
@@ -462,6 +469,82 @@ func TestDeploymentMTURunsOnlyOnFirstUseOrPolicyChange(t *testing.T) {
 	if run, err := srv.shouldRunDeploymentMTU(ctx, changed); err != nil || !run {
 		t.Fatalf("changed MTU mode run = %t, err=%v; want true", run, err)
 	}
+	changed = plan
+	changed.DesiredMTU = 1450
+	if run, err := srv.shouldRunDeploymentMTU(ctx, changed); err != nil || !run {
+		t.Fatalf("changed desired MTU run = %t, err=%v; want true", run, err)
+	}
+	applied := plan
+	applied.Mode = model.MTUModeApply
+	if err := db.AddMTUDetectionResult(ctx, model.MTUDetectionResult{ServerID: server.ID, Mode: model.MTUModeApply, TargetHost: applied.TargetHost, TargetPort: applied.TargetPort, RecommendedMTU: 1400, AppliedMTU: 1400, ResultJSON: `{"overhead_bytes":80,"desired_mtu":1400}`}); err != nil {
+		t.Fatal(err)
+	}
+	if run, err := srv.shouldRunDeploymentMTU(ctx, applied); err != nil || run {
+		t.Fatalf("unchanged applied MTU run = %t, err=%v; want false", run, err)
+	}
+	if err := db.AddMTUDetectionResult(ctx, model.MTUDetectionResult{ServerID: server.ID, Mode: model.MTUModeApply, TargetHost: applied.TargetHost, TargetPort: applied.TargetPort, RecommendedMTU: 1400, Error: "operation not permitted", ResultJSON: `{"overhead_bytes":80,"desired_mtu":1400}`}); err != nil {
+		t.Fatal(err)
+	}
+	if run, err := srv.shouldRunDeploymentMTU(ctx, applied); err != nil || run {
+		t.Fatalf("unchanged failed MTU run = %t, err=%v; want false", run, err)
+	}
+	changed = applied
+	changed.TargetPort = 8443
+	if run, err := srv.shouldRunDeploymentMTU(ctx, changed); err != nil || !run {
+		t.Fatalf("changed MTU policy after failure run = %t, err=%v; want true", run, err)
+	}
+}
+
+func TestServerCreationDefaultsAndExplicitOverrides(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+
+	request(t, h, http.MethodPost, "/api/v1/settings", token, map[string]any{
+		"server_default_mtu_mode":    "apply",
+		"server_default_bbr_enabled": true,
+	}, http.StatusOK)
+	page := request(t, h, http.MethodGet, "/api/v1/page-data?page=servers", token, nil, http.StatusOK)
+	defaults := page["server_creation_defaults"].(map[string]any)
+	if defaults["mtu_mode"] != "apply" || defaults["bbr_enabled"] != true {
+		t.Fatalf("server creation defaults = %#v", defaults)
+	}
+	proxyPage := request(t, h, http.MethodGet, "/api/v1/page-data?page=proxy-paths", token, nil, http.StatusOK)
+	proxyDefaults := proxyPage["server_creation_defaults"].(map[string]any)
+	if proxyDefaults["mtu_mode"] != "apply" || proxyDefaults["bbr_enabled"] != true {
+		t.Fatalf("proxy-path server creation defaults = %#v", proxyDefaults)
+	}
+
+	created := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "default-server"}, http.StatusCreated)
+	defaultID := int64(created["server"].(map[string]any)["id"].(float64))
+	defaultServer, err := db.GetServer(ctx, defaultID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultServer.MTUMode != model.MTUModeApply || !defaultServer.BBREnabled {
+		t.Fatalf("default server policy = %#v", defaultServer)
+	}
+
+	overridden := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{
+		"name": "override-server", "mtu_mode": "disabled", "bbr_enabled": false,
+	}, http.StatusCreated)
+	overrideID := int64(overridden["server"].(map[string]any)["id"].(float64))
+	overrideServer, err := db.GetServer(ctx, overrideID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overrideServer.MTUMode != model.MTUModeDisabled || overrideServer.BBREnabled {
+		t.Fatalf("explicit server policy = %#v", overrideServer)
+	}
+
+	request(t, h, http.MethodPost, "/api/v1/settings", token, map[string]any{"server_default_mtu_mode": "always"}, http.StatusBadRequest)
 }
 
 func TestDeploymentFailureDismissalPersistsUntilNextDeployment(t *testing.T) {

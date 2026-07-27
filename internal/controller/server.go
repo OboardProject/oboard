@@ -40,6 +40,11 @@ import (
 	"github.com/OboardProject/oboard/internal/version"
 )
 
+const (
+	settingServerDefaultMTUMode    = "server_default_mtu_mode"
+	settingServerDefaultBBREnabled = "server_default_bbr_enabled"
+)
+
 type Server struct {
 	store         *store.Store
 	sessionSecret string
@@ -402,16 +407,18 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		write(w, 200, map[string]any{"settings": s.publicSettings(r.Context(), items)})
 	case http.MethodPost, http.MethodPatch:
 		var req struct {
-			ControllerURL          *string `json:"controller_url"`
-			BasePath               *string `json:"base_path"`
-			CertificateAutoMatch   *bool   `json:"certificate_auto_match_enabled"`
-			CertificatePreference  *string `json:"certificate_default_preference"`
-			SubscriptionAgePolicy  *string `json:"subscription_age_policy"`
-			TrafficTimezone        *string `json:"traffic_timezone"`
-			TrafficEnforcementMode *string `json:"traffic_enforcement_mode"`
-			ControllerLogMaxMB     *int    `json:"controller_log_max_mb"`
-			ControllerLogBackups   *int    `json:"controller_log_backups"`
-			ControllerAutoUpdate   *bool   `json:"controller_auto_update_enabled"`
+			ControllerURL           *string `json:"controller_url"`
+			BasePath                *string `json:"base_path"`
+			CertificateAutoMatch    *bool   `json:"certificate_auto_match_enabled"`
+			CertificatePreference   *string `json:"certificate_default_preference"`
+			SubscriptionAgePolicy   *string `json:"subscription_age_policy"`
+			TrafficTimezone         *string `json:"traffic_timezone"`
+			TrafficEnforcementMode  *string `json:"traffic_enforcement_mode"`
+			ControllerLogMaxMB      *int    `json:"controller_log_max_mb"`
+			ControllerLogBackups    *int    `json:"controller_log_backups"`
+			ControllerAutoUpdate    *bool   `json:"controller_auto_update_enabled"`
+			ServerDefaultMTUMode    *string `json:"server_default_mtu_mode"`
+			ServerDefaultBBREnabled *bool   `json:"server_default_bbr_enabled"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -557,6 +564,27 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, controllerAutoUpdateSetting)
 		}
+		if req.ServerDefaultMTUMode != nil {
+			mode := model.MTUMode(strings.ToLower(strings.TrimSpace(*req.ServerDefaultMTUMode)))
+			switch mode {
+			case model.MTUModeDisabled, model.MTUModeDetect, model.MTUModeApply:
+			default:
+				fail(w, errors.New("server_default_mtu_mode is invalid"), http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), settingServerDefaultMTUMode, string(mode)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingServerDefaultMTUMode)
+		}
+		if req.ServerDefaultBBREnabled != nil {
+			if err := s.store.SetSetting(r.Context(), settingServerDefaultBBREnabled, strconv.FormatBool(*req.ServerDefaultBBREnabled)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingServerDefaultBBREnabled)
+		}
 		if len(changed) > 0 {
 			auditReq(s, r, "update", "settings", strings.Join(changed, ","))
 		}
@@ -576,7 +604,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", "subscription_age_policy": "optional", "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", "subscription_age_policy": "optional", "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false}
 	for key, value := range items {
 		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting {
 			continue
@@ -593,6 +621,16 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 		out["base_path_migration"] = migration
 	}
 	return out
+}
+
+func serverCreationDefaults(settings map[string]string) (model.MTUMode, bool) {
+	mode := model.MTUMode(strings.ToLower(strings.TrimSpace(settings[settingServerDefaultMTUMode])))
+	switch mode {
+	case model.MTUModeDisabled, model.MTUModeDetect, model.MTUModeApply:
+	default:
+		mode = model.MTUModeDetect
+	}
+	return mode, settingBool(settings, settingServerDefaultBBREnabled, false)
 }
 
 func (s *Server) ApplyRuntimeSettings(ctx context.Context) error {
@@ -738,6 +776,15 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		out["settings"] = s.publicSettings(ctx, items)
+		return nil
+	}
+	addServerCreationDefaults := func() error {
+		settings, err := s.store.ListSettings(ctx)
+		if err != nil {
+			return err
+		}
+		mtuMode, bbrEnabled := serverCreationDefaults(settings)
+		out["server_creation_defaults"] = map[string]any{"mtu_mode": mtuMode, "bbr_enabled": bbrEnabled}
 		return nil
 	}
 	addUsers := func() error {
@@ -1114,6 +1161,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			err = addServers()
 		}
 		if err == nil {
+			err = addServerCreationDefaults()
+		}
+		if err == nil {
 			var lists []model.DNSList
 			lists, err = s.store.ListDNSLists(ctx, false)
 			out["dns_lists"] = lists
@@ -1139,6 +1189,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 	case "proxy-paths":
 		if err = require(model.RoleOperator); err == nil {
 			err = addProxy()
+		}
+		if err == nil {
+			err = addServerCreationDefaults()
 		}
 	case "inbounds":
 		if err = require(model.RoleOperator); err == nil {
@@ -1805,9 +1858,30 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 		}
 		write(w, 200, out)
 	case http.MethodPost:
-		var v model.Server
-		if !decode(w, r, &v) {
+		var input struct {
+			model.Server
+			MTUMode    *model.MTUMode `json:"mtu_mode"`
+			BBREnabled *bool          `json:"bbr_enabled"`
+		}
+		if !decode(w, r, &input) {
 			return
+		}
+		v := input.Server
+		settings, err := s.store.ListSettings(r.Context())
+		if err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
+		defaultMTU, defaultBBR := serverCreationDefaults(settings)
+		if input.MTUMode == nil {
+			v.MTUMode = defaultMTU
+		} else {
+			v.MTUMode = *input.MTUMode
+		}
+		if input.BBREnabled == nil {
+			v.BBREnabled = defaultBBR
+		} else {
+			v.BBREnabled = *input.BBREnabled
 		}
 		if err := validateServer(&v); err != nil {
 			fail(w, err, 400)
@@ -1905,8 +1979,12 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPatch {
-		var v model.Server
-		if !decode(w, r, &v) {
+		var input struct {
+			model.Server
+			MTUMode    *model.MTUMode `json:"mtu_mode"`
+			BBREnabled *bool          `json:"bbr_enabled"`
+		}
+		if !decode(w, r, &input) {
 			return
 		}
 		current, err := s.store.GetServer(r.Context(), id)
@@ -1914,7 +1992,18 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 404)
 			return
 		}
+		v := input.Server
 		v.ID = id
+		if input.MTUMode == nil {
+			v.MTUMode = current.MTUMode
+		} else {
+			v.MTUMode = *input.MTUMode
+		}
+		if input.BBREnabled == nil {
+			v.BBREnabled = current.BBREnabled
+		} else {
+			v.BBREnabled = *input.BBREnabled
+		}
 		// Automatic region is Agent telemetry. Panel edits may select auto or a
 		// manual region, but cannot replace the last detected value.
 		v.DetectedRegionCode = current.DetectedRegionCode
@@ -8288,9 +8377,6 @@ func (s *Server) shouldRunDeploymentMTU(ctx context.Context, plan model.MTUDetec
 		return true, nil
 	}
 	last := items[0]
-	if strings.TrimSpace(last.Error) != "" || (last.RecommendedMTU <= 0 && last.AppliedMTU <= 0) {
-		return true, nil
-	}
 	if last.Mode != plan.Mode || last.TargetHost != plan.TargetHost || last.TargetPort != plan.TargetPort {
 		return true, nil
 	}
@@ -8301,16 +8387,15 @@ func (s *Server) shouldRunDeploymentMTU(ctx context.Context, plan model.MTUDetec
 	if json.Unmarshal([]byte(last.ResultJSON), &previous) != nil || previous.OverheadBytes != plan.OverheadBytes {
 		return true, nil
 	}
-	if plan.Mode == model.MTUModeApply && plan.DesiredMTU > 0 {
-		effectiveApplied := last.AppliedMTU
-		if effectiveApplied == 0 {
-			effectiveApplied = previous.DesiredMTU
-		}
-		if effectiveApplied != plan.DesiredMTU {
-			return true, nil
-		}
+	effectiveMTU := last.RecommendedMTU
+	if last.AppliedMTU > 0 {
+		effectiveMTU = last.AppliedMTU
 	}
-	return false, nil
+	lastSucceeded := strings.TrimSpace(last.Error) == "" && last.RecommendedMTU > 0 && (last.Mode != model.MTUModeApply || last.AppliedMTU > 0)
+	if lastSucceeded {
+		return plan.DesiredMTU != effectiveMTU, nil
+	}
+	return plan.DesiredMTU != previous.DesiredMTU, nil
 }
 
 func (s *Server) deployment(w http.ResponseWriter, r *http.Request) {
@@ -9654,6 +9739,11 @@ ALLOW_PANEL_UPDATE=${OBOARD_ALLOW_PANEL_UPDATE:-1}
 UPDATE_SOURCE=${OBOARD_UPDATE_SOURCE:-panel}
 UPDATE_REPO=${OBOARD_UPDATE_REPO:-OboardProject/oboard-agent}
 OBOARD_PURGE=${OBOARD_PURGE:-1}
+INSTALL_BBR=${OBOARD_INSTALL_BBR:-0}
+BBR_AVAILABLE_PATH=${OBOARD_BBR_AVAILABLE_PATH:-/proc/sys/net/ipv4/tcp_available_congestion_control}
+BBR_CONGESTION_PATH=${OBOARD_BBR_CONGESTION_PATH:-/proc/sys/net/ipv4/tcp_congestion_control}
+BBR_QDISC_PATH=${OBOARD_BBR_QDISC_PATH:-/proc/sys/net/core/default_qdisc}
+BBR_CONFIG_PATH=${OBOARD_BBR_CONFIG_PATH:-/etc/sysctl.d/99-oboard-bbr.conf}
 RELEASE_PUBLIC_KEY=__RELEASE_PUBLIC_KEY__
 ACME_SH_VERSION=3.1.4
 ACME_SH_SHA256=fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32
@@ -9809,6 +9899,97 @@ PY
   fi
   printf '\n127.0.1.1 %s\n' "$host_name" >> /etc/hosts
   echo "已修复本机 hostname 解析：$host_name"
+}
+
+bbr_requested() {
+  case "$INSTALL_BBR" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    0|false|FALSE|no|NO|off|OFF|'') return 1 ;;
+    *)
+      echo "BBR 安装选项无效，请回到面板重新复制安装命令。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+bbr_available() {
+  [ -r "$BBR_AVAILABLE_PATH" ] || return 1
+  for value in $(cat "$BBR_AVAILABLE_PATH" 2>/dev/null); do
+    [ "$value" = bbr ] && return 0
+  done
+  return 1
+}
+
+persist_bbr_fq() {
+  if [ -L "$BBR_CONFIG_PATH" ] || { [ -e "$BBR_CONFIG_PATH" ] && [ ! -f "$BBR_CONFIG_PATH" ]; }; then
+    echo "BBR 配置保存位置不是普通文件：$BBR_CONFIG_PATH" >&2
+    return 1
+  fi
+  bbr_config_dir=${BBR_CONFIG_PATH%/*}
+  [ "$bbr_config_dir" != "$BBR_CONFIG_PATH" ] || bbr_config_dir=.
+  install -d -m 0755 "$bbr_config_dir" || return 1
+  bbr_config_new="$BBR_CONFIG_PATH.new.$$"
+  rm -f "$bbr_config_new"
+  if ! (umask 077; printf '%s\n' \
+    'net.core.default_qdisc = fq' \
+    'net.ipv4.tcp_congestion_control = bbr' > "$bbr_config_new"); then
+    rm -f "$bbr_config_new"
+    return 1
+  fi
+  chmod 0600 "$bbr_config_new" || {
+    rm -f "$bbr_config_new"
+    return 1
+  }
+  if ! mv -f "$bbr_config_new" "$BBR_CONFIG_PATH"; then
+    rm -f "$bbr_config_new"
+    return 1
+  fi
+}
+
+enable_bbr_fq() {
+  bbr_requested || {
+    echo "BBR + FQ：未启用"
+    return 0
+  }
+  echo "正在启用 BBR + FQ..."
+  if ! bbr_available; then
+    if ! command -v modprobe >/dev/null 2>&1; then
+      echo "当前系统没有可用的 BBR 模块，也缺少 modprobe。请关闭 BBR 选项后重试，或先安装支持 BBR 的内核。" >&2
+      return 1
+    fi
+    if ! modprobe tcp_bbr 2>/dev/null || ! bbr_available; then
+      echo "当前内核不支持 BBR。安装程序不会自动更换内核，请关闭 BBR 选项后重试。" >&2
+      return 1
+    fi
+  fi
+  if command -v modprobe >/dev/null 2>&1; then
+    modprobe sch_fq 2>/dev/null || true
+  fi
+  if [ ! -r "$BBR_CONGESTION_PATH" ] || [ ! -w "$BBR_CONGESTION_PATH" ] || [ ! -r "$BBR_QDISC_PATH" ] || [ ! -w "$BBR_QDISC_PATH" ]; then
+    echo "当前环境不允许修改 BBR + FQ，常见于受限容器。请关闭 BBR 选项后重试。" >&2
+    return 1
+  fi
+  previous_bbr=$(cat "$BBR_CONGESTION_PATH" 2>/dev/null || true)
+  previous_qdisc=$(cat "$BBR_QDISC_PATH" 2>/dev/null || true)
+  if ! printf '%s\n' fq > "$BBR_QDISC_PATH" || ! printf '%s\n' bbr > "$BBR_CONGESTION_PATH"; then
+    [ -n "$previous_qdisc" ] && printf '%s\n' "$previous_qdisc" > "$BBR_QDISC_PATH" 2>/dev/null || true
+    [ -n "$previous_bbr" ] && printf '%s\n' "$previous_bbr" > "$BBR_CONGESTION_PATH" 2>/dev/null || true
+    echo "当前环境拒绝启用 BBR + FQ。请关闭 BBR 选项后重试。" >&2
+    return 1
+  fi
+  if [ "$(cat "$BBR_QDISC_PATH" 2>/dev/null)" != fq ] || [ "$(cat "$BBR_CONGESTION_PATH" 2>/dev/null)" != bbr ]; then
+    [ -n "$previous_qdisc" ] && printf '%s\n' "$previous_qdisc" > "$BBR_QDISC_PATH" 2>/dev/null || true
+    [ -n "$previous_bbr" ] && printf '%s\n' "$previous_bbr" > "$BBR_CONGESTION_PATH" 2>/dev/null || true
+    echo "内核没有接受 BBR + FQ 设置。请关闭 BBR 选项后重试。" >&2
+    return 1
+  fi
+  if ! persist_bbr_fq; then
+    [ -n "$previous_qdisc" ] && printf '%s\n' "$previous_qdisc" > "$BBR_QDISC_PATH" 2>/dev/null || true
+    [ -n "$previous_bbr" ] && printf '%s\n' "$previous_bbr" > "$BBR_CONGESTION_PATH" 2>/dev/null || true
+    echo "无法保存 BBR + FQ 设置，已恢复原来的网络设置。" >&2
+    return 1
+  fi
+  echo "BBR + FQ 已启用，并会在重启后继续生效。"
 }
 
 json_value() {
@@ -10433,6 +10614,7 @@ case "$ACTION" in
     persist_agent_install_dir
     write_units
     resolve_update_policy
+    enable_bbr_fq
     OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$INSTALL_DIR/oboard-agent" \
       -config "$CONFIG_PATH" \
       -controller "$BASE_URL" \

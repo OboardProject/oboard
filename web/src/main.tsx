@@ -622,7 +622,7 @@ const fieldLabels: Record<string, string> = {
   entry_address: '入口地址', public_ipv4: '检测 IPv4', public_ipv6: '检测 IPv6', entry_ip_mode: '入口地址策略', external_ip: '自定义入口地址', listen_ip: '监听 IP', listen_port: '监听端口', port: '端口', port_range: '端口范围', port_range_start: '端口范围起点', port_range_end: '端口范围终点', target_address: '目标地址', target_port: '目标端口', target_endpoint: '目标端点',
   dns_sync_enabled: '域名解析', dns_credential_id: '域名服务账号', dns_domain: '解析域名', dns_proxy_enabled: '代理访问', dns_record_types: '解析记录', ddns_enabled: '自动更新地址', ddns_interval_seconds: '更新间隔', dns_sync_status: '同步状态', dns_sync_error: '同步错误', dns_last_synced_at: '同步时间',
   subject_type: '授权类型', scope_type: '授权范围',
-  ip_stack: 'IP 栈', udp_inbound_mode: 'UDP 入站', mtu_mode: 'MTU 模式', mtu_value: 'MTU 值', mtu_probe_host: 'MTU 探测主机', mtu_probe_port: 'MTU 探测端口', mtu_overhead_bytes: 'MTU 额外开销',
+  ip_stack: 'IP 栈', udp_inbound_mode: 'UDP 入站', mtu_mode: 'MTU 模式', mtu_value: 'MTU 值', mtu_probe_host: 'MTU 探测主机', mtu_probe_port: 'MTU 探测端口', mtu_overhead_bytes: 'MTU 额外开销', bbr_enabled: 'BBR + FQ',
   os: '系统', system: '系统', distro_id: '发行版 ID', distro_version: '发行版版本', distro_name: '发行版', libc: 'libc', service_manager: '服务管理器', package_manager: '包管理器', arch: '架构', cpu: 'CPU', cpu_usage: 'CPU', cpu_usage_percent: 'CPU 使用率', memory: '内存', memory_used_bytes: '已用内存', memory_total_bytes: '总内存', agent_memory: 'Agent 内存', agent_memory_bytes: 'Agent 内存', agent_version: 'Agent 版本', agent_build: 'Agent 构建', sing_box_version: 'sing-box 版本', download_rate: '下载速率', upload_rate: '上传速率', period_traffic: '周期流量', monitoring_mode: '回报模式',
   tls: 'TLS', certificate_mode: '证书模式', certificate_id: '证书', certificate_domain: '证书域名', config_json: 'JSON 配置', match_json: '匹配规则 JSON', result_json: '结果 JSON', events: '事件',
   proxy_uuid: '代理 UUID', proxy_password: '代理密码', speed_limit_mbps: '限速 Mbps', traffic_limit_bytes: '流量额度', traffic_used_bytes: '已用流量', subscription_token: '订阅令牌',
@@ -2293,7 +2293,7 @@ function RecoveryCodesDialog({ codes, onClose }: { codes: string[]; onClose: () 
 
 function SettingsPage({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'certificates' | 'subscriptions' | 'traffic' | 'backups' | 'updates' | 'logs'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'servers' | 'certificates' | 'subscriptions' | 'traffic' | 'backups' | 'updates' | 'logs'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -2305,6 +2305,8 @@ function SettingsPage({ data, client, load, notify }: any) {
   const [trafficMode, setTrafficMode] = useState(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
   const [controllerLogMaxMB, setControllerLogMaxMB] = useState(Number(data.settings?.controller_log_max_mb || 32))
   const [controllerLogBackups, setControllerLogBackups] = useState(Number(data.settings?.controller_log_backups || 5))
+  const [serverDefaultMTUMode, setServerDefaultMTUMode] = useState(String(data.settings?.server_default_mtu_mode || 'detect'))
+  const [serverDefaultBBREnabled, setServerDefaultBBREnabled] = useState(String(data.settings?.server_default_bbr_enabled || 'false') === 'true')
   const [saving, setSaving] = useState('')
   useEffect(() => { setControllerURL(savedURL || currentOrigin) }, [savedURL, currentOrigin])
   useEffect(() => { setBasePath(currentBasePath) }, [currentBasePath])
@@ -2319,6 +2321,10 @@ function SettingsPage({ data, client, load, notify }: any) {
     setControllerLogMaxMB(Number(data.settings?.controller_log_max_mb || 32))
     setControllerLogBackups(Number(data.settings?.controller_log_backups || 5))
   }, [data.settings?.controller_log_max_mb, data.settings?.controller_log_backups])
+  useEffect(() => {
+    setServerDefaultMTUMode(String(data.settings?.server_default_mtu_mode || 'detect'))
+    setServerDefaultBBREnabled(String(data.settings?.server_default_bbr_enabled || 'false') === 'true')
+  }, [data.settings?.server_default_mtu_mode, data.settings?.server_default_bbr_enabled])
   const runSave = async (key: string, action: () => Promise<void>, success: string) => {
     if (saving) return
     setSaving(key)
@@ -2397,9 +2403,15 @@ function SettingsPage({ data, client, load, notify }: any) {
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ controller_log_max_mb: controllerLogMaxMB, controller_log_backups: controllerLogBackups }) })
     }, '主控日志保留策略已保存')
   }
+  const saveServerDefaults = async () => {
+    await runSave('server-defaults', async () => {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ server_default_mtu_mode: serverDefaultMTUMode, server_default_bbr_enabled: serverDefaultBBREnabled }) })
+    }, '新服务器默认设置已保存')
+  }
   return <section className="settings-shell">
     <nav className="settings-tabs" role="tablist" aria-label="设置分类">
       <button className={activeSection === 'connection' ? 'active' : ''} role="tab" aria-selected={activeSection === 'connection'} onClick={() => setActiveSection('connection')}><LinkIcon size={15} />基础设置</button>
+      <button className={activeSection === 'servers' ? 'active' : ''} role="tab" aria-selected={activeSection === 'servers'} onClick={() => setActiveSection('servers')}><ServerIcon size={15} />服务器默认值</button>
       <button className={activeSection === 'certificates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'certificates'} onClick={() => setActiveSection('certificates')}><Lock size={15} />证书</button>
       <button className={activeSection === 'subscriptions' ? 'active' : ''} role="tab" aria-selected={activeSection === 'subscriptions'} onClick={() => setActiveSection('subscriptions')}><Shield size={15} />订阅安全</button>
       <button className={activeSection === 'traffic' ? 'active' : ''} role="tab" aria-selected={activeSection === 'traffic'} onClick={() => setActiveSection('traffic')}><Gauge size={15} />流量控制</button>
@@ -2463,6 +2475,20 @@ function SettingsPage({ data, client, load, notify }: any) {
               <RefreshCw size={14} className={saving === 'base-path-retry' ? 'spin' : ''} />{saving === 'base-path-retry' ? '重试中...' : '重试失败 Agent'}
             </button>}
           </div>}
+        </div>
+      </section>}
+      {activeSection === 'servers' && <section className="settings-card">
+        <div className="settings-card-head"><div><h3>新服务器默认值</h3><p className="muted">创建服务器时自动带入，可在创建窗口中单独修改。</p></div></div>
+        <div className="form settings-form single-field">
+          <FormField label="MTU" hint="首次部署或设置变化时执行。">
+            <Select variant="segmented" value={serverDefaultMTUMode} onChange={event => setServerDefaultMTUMode(event.target.value)}>
+              {mtuModes.map(mode => <option value={mode} key={mode}>{labelValue(mode)}</option>)}
+            </Select>
+          </FormField>
+          <FormField label="BBR + FQ" hint="首次安装 Agent 时启用。">
+            <label className="notification-enable-row"><input type="checkbox" checked={serverDefaultBBREnabled} onChange={event => setServerDefaultBBREnabled(event.target.checked)} aria-label="新服务器默认启用 BBR + FQ" /></label>
+          </FormField>
+          <div className="settings-actions"><button onClick={() => void saveServerDefaults()} disabled={Boolean(saving)}>{saving === 'server-defaults' ? '保存中...' : '保存默认值'}</button></div>
         </div>
       </section>}
       {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
@@ -3849,8 +3875,8 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
   )
 }
 
-function defaultServerDraft() {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, port_range_start: 100, port_range_end: 65535, ssh_port: 0, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connection_audit_enabled: true }
+function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean }) {
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), port_range_start: 100, port_range_end: 65535, ssh_port: 0, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connection_audit_enabled: true }
 }
 
 function GridViewIcon() {
@@ -3863,7 +3889,8 @@ function ListViewIcon() {
 
 function Servers({ data, client, load, loading, notify }: any) {
   const dialogs = useDialogs()
-  const [draft, setDraft] = useState(defaultServerDraft)
+  const creationDefaults = data.server_creation_defaults || {}
+  const [draft, setDraft] = useState(() => defaultServerDraft(creationDefaults))
   const [createOpen, setCreateOpen] = useState(false)
   const [editServer, setEditServer] = useState<Server | null>(null)
   const [agentConfigServer, setAgentConfigServer] = useState<Server | null>(null)
@@ -3973,7 +4000,7 @@ function Servers({ data, client, load, loading, notify }: any) {
   const createServer = async () => {
     await client.request('/servers', { method: 'POST', body: JSON.stringify(draft) })
     setCreateOpen(false)
-    setDraft(defaultServerDraft())
+    setDraft(defaultServerDraft(creationDefaults))
     await load()
   }
   const updateServer = async (next: any) => {
@@ -4081,7 +4108,7 @@ function Servers({ data, client, load, loading, notify }: any) {
             <span>一键更新 Agent</span>
           </button>
         )}
-        <button onClick={() => setCreateOpen(true)}>添加服务器</button>
+        <button onClick={() => { setDraft(defaultServerDraft(creationDefaults)); setCreateOpen(true) }}>添加服务器</button>
         <div className="view-mode-toggle" role="radiogroup" aria-label="显示方式">
           <button type="button" role="radio" aria-checked={view === 'grid'} className={view === 'grid' ? 'active' : ''} onClick={() => setView('grid')} aria-label="平铺模式" title="平铺模式"><GridViewIcon /></button>
           <button type="button" role="radio" aria-checked={view === 'list'} className={view === 'list' ? 'active' : ''} onClick={() => setView('list')} aria-label="列表模式" title="列表模式"><ListViewIcon /></button>
@@ -4155,10 +4182,10 @@ function shellQuote(value: string) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`
 }
 
-function agentScriptCommand(controllerURL: string, action: 'install' | 'update' | 'uninstall', token = '') {
+function agentScriptCommand(controllerURL: string, action: 'install' | 'update' | 'uninstall', token = '', server?: Pick<Server, 'bbr_enabled'>) {
   const base = controllerURL.replace(/\/+$/, '')
   const download = `curl -fsSL ${shellQuote(`${base}/install/agent.sh`)}`
-  if (action === 'install') return `${download} | OBOARD_ENROLL_TOKEN=${shellQuote(token)} sh`
+  if (action === 'install') return `${download} | OBOARD_ENROLL_TOKEN=${shellQuote(token)} OBOARD_INSTALL_BBR=${server?.bbr_enabled ? '1' : '0'} sh`
   return `${download} | sh -s -- ${action}`
 }
 
@@ -4177,11 +4204,11 @@ function AgentInstallDialog({ server, token, controllerURL, onClose }: { server:
   const [action, setAction] = useState<'install' | 'update' | 'uninstall'>(isOnline ? 'update' : 'install')
   const actionTitle = action === 'install' ? '安装' : action === 'update' ? '更新' : '卸载'
   const actionDescription = action === 'install'
-    ? '安装 Agent 和内核并连接当前面板。'
+    ? `安装 Agent 和内核并连接当前面板${server.bbr_enabled ? '，同时启用 BBR + FQ' : ''}。`
     : action === 'update'
       ? '从当前面板更新 Agent 和内核，保留配置。'
       : '移除 Agent、内核和本机配置。'
-  const command = agentScriptCommand(controllerURL, action, token)
+  const command = agentScriptCommand(controllerURL, action, token, server)
   return <MotionDialogPanel onCancel={onClose} className="install-dialog">
       <header className="dialog-head">
         <div><h2 id="agent-install-title">Agent 和内核</h2><p className="muted">{server.name || '这台服务器'} · {isOnline ? '在线' : '离线'}</p></div>
@@ -4386,6 +4413,9 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: Re
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。">
             <UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} />
           </FormField>
+          <FormField label="BBR + FQ" hint="首次安装 Agent 时启用。">
+            <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.bbr_enabled)} onChange={e => update({ bbr_enabled: e.target.checked })} aria-label="安装时启用 BBR + FQ" /></label>
+          </FormField>
           <FormField label="端口范围" hint="100-65535" full>
             <PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} />
           </FormField>
@@ -4407,7 +4437,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: Re
 
           <div className="form-extra-row">
             <button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)} aria-haspopup="dialog">MTU 检测设置</button>
-            <span>默认使用自动检测。</span>
+            <span>首次部署或设置变化时执行。</span>
           </div>
         </div>
       </div>
@@ -4454,6 +4484,7 @@ function ServerEditDialog({ server, onCancel, onSubmit }: { server: Server; onCa
           <div className="form-section-title">网络策略</div>
           <FormField label="出口解析策略"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
+          <FormField label="BBR + FQ" hint="下次重新安装 Agent 时生效。"><label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.bbr_enabled)} onChange={e => update({ bbr_enabled: e.target.checked })} aria-label="安装时启用 BBR + FQ" /></label></FormField>
           <FormField label="端口范围" hint="100-65535" full><PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} /></FormField>
           <div className="form-section-title">监控与流量</div>
           <FormField label="回报模式" hint="轻量 20 秒，标准 10 秒。">
@@ -4466,7 +4497,7 @@ function ServerEditDialog({ server, onCancel, onSubmit }: { server: Server; onCa
           <FormField label="连接审计" hint="关闭后 Agent 停止采集、上报和本地审计状态写入。">
             <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.connection_audit_enabled)} onChange={e => update({ connection_audit_enabled: e.target.checked })} aria-label="启用连接审计" /></label>
           </FormField>
-          <div className="form-extra-row"><button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)}>MTU 检测设置</button><span>按需修改，默认仅检测。</span></div>
+          <div className="form-extra-row"><button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)}>MTU 检测设置</button><span>修改后会在下次部署重新检测。</span></div>
         </div>
       </div>
       <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={() => onSubmit(draft)} disabled={!portRangeValid}>保存</button></footer>
@@ -4529,24 +4560,24 @@ function MTUSettingsDialog({ draft, onCancel, onSave, nested = true }: { draft: 
   const update = (patch: Partial<typeof value>) => setValue(old => ({ ...old, ...patch }))
   return <MotionDialogPanel onCancel={onCancel} className="mtu-dialog" nested={nested}>
       <header className="dialog-head">
-        <div><h2 id="mtu-dialog-title">MTU 检测设置</h2><p className="muted">默认使用仅检测和自动 MTU。</p></div>
+        <div><h2 id="mtu-dialog-title">MTU 检测设置</h2><p className="muted">首次部署或设置变化时执行，不会随每次下发重复检测。</p></div>
         <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
       <div className="dialog-body">
         <div className="form mtu-dialog-form labeled-form">
-          <FormField label="MTU 模式" hint="选择只检测或自动应用。">
+          <FormField label="MTU 模式" hint="选择只检测或自动应用">
             <Select variant="segmented" value={value.mtu_mode} onChange={e => update({ mtu_mode: e.target.value })}>{mtuModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
           </FormField>
           <FormField label="指定 MTU" hint="0 表示自动。">
             <input type="number" value={value.mtu_value} onChange={e => update({ mtu_value: Number(e.target.value) })} placeholder="0" />
           </FormField>
-          <FormField label="探测目标主机" hint="默认 1.1.1.1。">
+          <FormField label="探测目标主机" hint="默认 1.1.1.1">
             <input value={value.mtu_probe_host} onChange={e => update({ mtu_probe_host: e.target.value })} placeholder="1.1.1.1" />
           </FormField>
-          <FormField label="探测目标端口" hint="默认 443。">
+          <FormField label="探测目标端口" hint="默认 443">
             <input type="number" value={value.mtu_probe_port} onChange={e => update({ mtu_probe_port: Number(e.target.value) })} placeholder="443" />
           </FormField>
-          <FormField label="额外开销字节" hint="不确定时保持 0。">
+          <FormField label="额外开销字节" hint="不确定时保持 0">
             <input type="number" value={value.mtu_overhead_bytes} onChange={e => update({ mtu_overhead_bytes: Number(e.target.value) })} placeholder="0" />
           </FormField>
         </div>
@@ -4989,6 +5020,7 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
             <ServerDetailItem label="UDP 模式" value={labelValue(server.udp_inbound_mode || 'unknown')} />
             <ServerDetailItem label="端口范围" value={portRangeLabel(server)} />
 			<ServerDetailItem label="SSH 端口" value={server.ssh_port ? String(server.ssh_port) : '未设置'} />
+            <ServerDetailItem label="安装时 BBR + FQ" value={server.bbr_enabled ? '启用' : '不启用'} />
             <ServerDetailItem label="公网可访问性" value={connectivityLabel} />
           </dl>
         </section>
@@ -5682,7 +5714,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   }
   const addServer = (position?: GraphPosition) => {
     serverDraftPosition.current = position || nextServerGraphPosition(data)
-    setServerDraft({ ...defaultServerDraft(), name: `server-${servers.length + 1}` })
+    setServerDraft({ ...defaultServerDraft(data.server_creation_defaults || {}), name: `server-${servers.length + 1}` })
   }
   const submitServerDraft = async () => {
     if (!serverDraft) return
