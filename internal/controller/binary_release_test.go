@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -109,13 +110,20 @@ func TestBinaryInstallerUninstallConsumesPipedScript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Redirect persisted-installation lookups at nonexistent paths so the
+	// harness does not depend on the host, and use an installation root that
+	// passes normalize_install_dir on every platform (t.TempDir() lives under
+	// /tmp on Linux, which the installer rejects).
+	script := strings.ReplaceAll(string(content), "/etc/systemd/system/oboard-controller.service", filepath.Join(t.TempDir(), "missing-controller.service"))
+	script = strings.ReplaceAll(script, "/etc/init.d/oboard-controller", filepath.Join(t.TempDir(), "missing-controller"))
+	content = []byte(script)
 	fakeBin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(fakeBin, "id"), []byte("#!/bin/sh\n[ \"${1:-}\" = -u ] && { echo 0; exit 0; }\nexit 1\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	command := exec.Command("bash")
 	command.Env = controllerTestEnv(
-		"INSTALL_DIR="+filepath.Join(t.TempDir(), "oboard"),
+		"INSTALL_DIR="+fmt.Sprintf("/opt/oboard-test-%d", os.Getpid()),
 		"OBOARD_ACTION=uninstall",
 		"VERSION=",
 		"PATH="+fakeBin+":"+os.Getenv("PATH"),
