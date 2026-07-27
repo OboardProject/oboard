@@ -2181,23 +2181,65 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   }
   const [snapshot, setSnapshot] = useState<ControllerUpdateStatus>(emptyStatus)
   const [working, setWorking] = useState('')
+  const [installExpected, setInstallExpected] = useState(false)
+  const [installDialogOpen, setInstallDialogOpen] = useState(false)
+  const [installPhase, setInstallPhase] = useState<ControllerUpdateInstallPhase>('confirm')
+  const [installConnectionInterrupted, setInstallConnectionInterrupted] = useState(false)
+  const [installFailure, setInstallFailure] = useState('')
+  const installExpectedRef = useRef(false)
+  const installTargetBuildRef = useRef('')
+  const updateInstallExpected = (value: boolean) => {
+    installExpectedRef.current = value
+    setInstallExpected(value)
+  }
+  const applyInstallStatus = (result: ControllerUpdateStatus) => {
+    if (!installExpectedRef.current) return
+    setInstallConnectionInterrupted(false)
+    const targetReached = Boolean(installTargetBuildRef.current) && result.current?.build === installTargetBuildRef.current
+    if (result.status === 'installed' || (targetReached && !result.update_available)) {
+      updateInstallExpected(false)
+      setInstallPhase('complete')
+      setInstallDialogOpen(true)
+      return
+    }
+    if (result.status === 'failed' || result.status === 'unavailable') {
+      updateInstallExpected(false)
+      setInstallFailure(result.last_error || '主控更新未能完成，请检查更新状态。')
+      setInstallPhase('failed')
+      setInstallDialogOpen(true)
+      return
+    }
+    setInstallPhase('waiting')
+  }
   const refresh = async (quiet = false) => {
     if (!quiet) setWorking('load')
     try {
       const result = await client.request('/controller-update') as ControllerUpdateStatus
       setSnapshot(result)
+      applyInstallStatus(result)
     } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
+      if (quiet && (installExpectedRef.current || snapshot.status === 'installing') && isExpectedControllerUpdateDisconnect(error)) {
+        setInstallConnectionInterrupted(true)
+      } else {
+        notify?.(localizeErrorMessage(error?.message || error), 'error')
+      }
     } finally {
       if (!quiet) setWorking('')
     }
   }
   useEffect(() => { void refresh() }, [])
   useEffect(() => {
-    if (!['installing', 'checking'].includes(snapshot.status)) return
+    if (!installExpected && !['installing', 'checking'].includes(snapshot.status)) return
     const timer = window.setInterval(() => { void refresh(true) }, 3000)
     return () => window.clearInterval(timer)
-  }, [snapshot.status])
+  }, [snapshot.status, installExpected])
+  useEffect(() => {
+    if (snapshot.status !== 'installing' || installExpected) return
+    installTargetBuildRef.current = snapshot.available?.build || ''
+    updateInstallExpected(true)
+    setInstallPhase('waiting')
+    setInstallDialogOpen(true)
+  }, [snapshot.status, installExpected])
   const check = async () => {
     if (working) return
     setWorking('check')
@@ -2211,21 +2253,39 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
       setWorking('')
     }
   }
+  const openInstall = () => {
+    if (installExpected || snapshot.status === 'installing') {
+      setInstallPhase('waiting')
+      setInstallDialogOpen(true)
+      return
+    }
+    if (working || snapshot.channel === 'pinned' || !snapshot.update_available) return
+    setInstallFailure('')
+    setInstallConnectionInterrupted(false)
+    setInstallPhase('confirm')
+    setInstallDialogOpen(true)
+  }
   const install = async () => {
     if (working || snapshot.channel === 'pinned' || !snapshot.update_available) return
-    const confirmed = await dialogs.confirm({
-      title: '安装主控更新？',
-      message: '更新前会备份数据库，主控重启时面板连接会短暂中断。',
-      confirmText: '备份并安装',
-    })
-    if (!confirmed) return
+    installTargetBuildRef.current = snapshot.available?.build || ''
+    updateInstallExpected(true)
+    setInstallPhase('starting')
     setWorking('install')
     try {
       const result = await client.request('/controller-update/install', { method: 'POST' }) as ControllerUpdateStatus
       setSnapshot(result)
+      applyInstallStatus(result)
       notify?.('更新已开始，主控将自动重启', 'success')
     } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
+      if (isExpectedControllerUpdateDisconnect(error)) {
+        setSnapshot(previous => ({ ...previous, status: 'installing' }))
+        setInstallConnectionInterrupted(true)
+        setInstallPhase('waiting')
+      } else {
+        updateInstallExpected(false)
+        setInstallFailure(localizeErrorMessage(error?.message || error))
+        setInstallPhase('failed')
+      }
     } finally {
       setWorking('')
     }
@@ -2262,6 +2322,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   }
   const channelLabel = snapshot.channel === 'dev' ? '开发版' : snapshot.channel === 'stable' ? '正式版' : snapshot.channel === 'pinned' ? '固定版本' : '未知'
   const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || snapshot.status === 'installing' ? 'warning' : 'ok'
+  const updateInProgress = installExpected || snapshot.status === 'installing'
   return <section className="settings-card controller-update-card">
     <div className="settings-card-head">
       <div><h3>主控更新</h3><p className="muted">二进制安装 · {channelLabel}</p></div>
@@ -2282,14 +2343,60 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
       <span>当前版本保持锁定。切换到正式版通道后，才能在面板内更新。</span>
       <div><code>{snapshot.manual_command}</code><button type="button" className="ghost icon-button" onClick={() => void copyManualCommand()} title="复制切换命令" aria-label="复制切换命令"><Copy size={15} /></button></div>
     </div> : <label className="check-row controller-update-toggle">
-      <input type="checkbox" checked={snapshot.auto_update_enabled} disabled={Boolean(working) || snapshot.status === 'unavailable'} onChange={event => void setAutoUpdate(event.target.checked)} />
+      <input type="checkbox" checked={snapshot.auto_update_enabled} disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress} onChange={event => void setAutoUpdate(event.target.checked)} />
       <span><strong>自动安装主控更新</strong><small>发现当前通道的新版本后，先备份数据库再安装。</small></span>
     </label>}
     <div className="settings-actions controller-update-actions">
-      <button type="button" className="ghost" onClick={() => void check()} disabled={Boolean(working) || snapshot.channel === 'pinned'}><RefreshCw size={14} className={working === 'check' ? 'spin' : ''} />{working === 'check' ? '检查中...' : '检查更新'}</button>
-      <button type="button" onClick={() => void install()} disabled={Boolean(working) || snapshot.channel === 'pinned' || !snapshot.update_available}><Download size={14} />{working === 'install' ? '准备中...' : '备份并安装'}</button>
+      <button type="button" className="ghost" onClick={() => void check()} disabled={Boolean(working) || snapshot.channel === 'pinned' || updateInProgress}><RefreshCw size={14} className={working === 'check' ? 'spin' : ''} />{working === 'check' ? '检查中...' : '检查更新'}</button>
+      <button type="button" onClick={openInstall} disabled={Boolean(working) || snapshot.channel === 'pinned' || (!snapshot.update_available && !updateInProgress)}><Download size={14} />{working === 'install' ? '准备中...' : updateInProgress ? '查看安装进度' : '备份并安装'}</button>
     </div>
+    <AnimatePresence>{installDialogOpen && <ControllerUpdateInstallDialog
+      phase={installPhase}
+      targetVersion={snapshot.available?.version || ''}
+      connectionInterrupted={installConnectionInterrupted}
+      failure={installFailure}
+      onCancel={() => setInstallDialogOpen(false)}
+      onInstall={() => void install()}
+      onHide={() => setInstallDialogOpen(false)}
+      onReload={() => window.location.reload()}
+    />}</AnimatePresence>
   </section>
+}
+
+type ControllerUpdateInstallPhase = 'confirm' | 'starting' | 'waiting' | 'complete' | 'failed'
+
+function isExpectedControllerUpdateDisconnect(error: unknown) {
+  if (error instanceof TypeError) return true
+  const message = String((error as any)?.message || error || '').trim().toLowerCase()
+  return ['failed to fetch', 'networkerror', 'load failed', 'bad gateway', 'service unavailable', 'gateway timeout'].some(value => message.includes(value))
+}
+
+function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, onCancel, onInstall, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; onCancel: () => void; onInstall: () => void; onHide: () => void; onReload: () => void }) {
+  const waiting = phase === 'starting' || phase === 'waiting'
+  const title = phase === 'confirm' ? '更新期间面板会暂时离线' : waiting ? '正在安装主控更新' : phase === 'complete' ? '主控更新已完成' : '主控更新未完成'
+  return <MotionDialogPanel onCancel={waiting ? onHide : onCancel} className="controller-update-install-dialog" system>
+    <header className="dialog-head"><div><h2>{title}</h2><p className="muted">{targetVersion ? `目标版本 ${targetVersion}` : '主控二进制更新'}</p></div>{!waiting && <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>}</header>
+    <div className="dialog-body controller-update-install-body">
+      {phase === 'confirm' && <>
+        <div className="controller-update-install-lead"><Info size={20} /><div><strong>整个过程通常需要几分钟</strong><p>面板会先备份数据库，再下载、校验并安装新版本，最后重启主控服务。</p></div></div>
+        <div className="controller-update-install-notice"><strong>出现连接错误或 502 是正常现象</strong><span>主控停止和重新启动期间，面板可能暂时无法访问，刷新页面也可能看到 502 Bad Gateway。这不代表更新失败。</span></div>
+        <p className="muted controller-update-install-advice">请不要重复点击安装或手动重启服务，等待几分钟后再重新打开面板。</p>
+      </>}
+      {waiting && <>
+        <div className="controller-update-install-state" aria-live="polite"><RefreshCw size={24} className="spin" /><div><strong>{connectionInterrupted ? '主控正在重启，暂时无法连接' : phase === 'starting' ? '正在创建备份并启动更新' : '安装已开始，正在等待主控恢复'}</strong><p>{connectionInterrupted ? '这是更新过程中的正常阶段，面板会继续尝试连接。' : '下载和安装时间取决于当前网络，请耐心等待。'}</p></div></div>
+        <div className="controller-update-install-progress" role="progressbar" aria-label="主控更新进行中"><span /></div>
+        <div className="controller-update-install-notice compact"><span>期间出现网络错误、短暂白屏或 502 Bad Gateway 都是正常现象。</span></div>
+      </>}
+      {phase === 'complete' && <div className="controller-update-install-result success"><Check size={24} /><div><strong>新版本已经安装完成</strong><p>主控服务已恢复，可以重新加载面板并继续使用。</p></div></div>}
+      {phase === 'failed' && <div className="controller-update-install-result failed"><Info size={24} /><div><strong>更新没有完成</strong><p>{failure || '请检查主控更新状态后重试。'}</p></div></div>}
+    </div>
+    <footer className="dialog-actions">
+      {phase === 'confirm' && <><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" onClick={onInstall}>我知道了，开始更新</button></>}
+      {waiting && <button type="button" className="ghost" onClick={onHide}>在后台等待</button>}
+      {phase === 'complete' && <button type="button" onClick={onReload}>重新加载面板</button>}
+      {phase === 'failed' && <button type="button" onClick={onCancel}>关闭</button>}
+    </footer>
+  </MotionDialogPanel>
 }
 
 function ControllerBackupPanel({ client, notify, dialogs }: any) {

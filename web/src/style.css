@@ -4548,6 +4548,103 @@ body:has(.dialog-root) .topbar-actions {
 .controller-update-actions { justify-content: flex-end; }
 .controller-update-actions button { display: inline-flex; align-items: center; gap: 6px; }
 
+.controller-update-install-dialog {
+  width: min(600px, calc(100vw - 28px));
+}
+
+.controller-update-install-body {
+  display: grid;
+  gap: 16px;
+}
+
+.controller-update-install-lead,
+.controller-update-install-state,
+.controller-update-install-result {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.controller-update-install-lead > svg,
+.controller-update-install-state > svg,
+.controller-update-install-result > svg {
+  margin-top: 2px;
+  color: var(--text-secondary);
+}
+
+.controller-update-install-lead > div,
+.controller-update-install-state > div,
+.controller-update-install-result > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.controller-update-install-lead strong,
+.controller-update-install-state strong,
+.controller-update-install-result strong,
+.controller-update-install-notice strong {
+  color: var(--text-strong);
+  font-size: 14px;
+}
+
+.controller-update-install-lead p,
+.controller-update-install-state p,
+.controller-update-install-result p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.controller-update-install-notice {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--warning);
+  background: var(--warning-soft);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.controller-update-install-notice.compact {
+  padding-block: 10px;
+}
+
+.controller-update-install-advice {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.controller-update-install-progress {
+  height: 6px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.controller-update-install-progress span {
+  display: block;
+  width: 36%;
+  height: 100%;
+  background: var(--text-secondary);
+  animation: controller-update-progress 1.4s ease-in-out infinite;
+}
+
+.controller-update-install-result.success > svg {
+  color: var(--success);
+}
+
+.controller-update-install-result.failed > svg {
+  color: var(--danger);
+}
+
+@keyframes controller-update-progress {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(280%); }
+}
+
 .controller-backup-card { gap: 18px; }
 .backup-policy-grid {
   display: grid;
