@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/version"
 )
@@ -90,7 +91,7 @@ func TestValidateStagedBuild(t *testing.T) {
 }
 
 func TestTransientUpdateStateExpiresOnServiceRestart(t *testing.T) {
-	for _, state := range []string{"checking", "downloading", "installing", "cancelling"} {
+	for _, state := range []string{"checking", "downloading", "ready", "installing", "cancelling"} {
 		t.Run(state, func(t *testing.T) {
 			root := t.TempDir()
 			binary := filepath.Join(root, "oboard-controller")
@@ -176,7 +177,7 @@ func TestMatchingStableVersionStopsStaleUpdateProgress(t *testing.T) {
 	}
 }
 
-func TestCancelOnlyDuringDownload(t *testing.T) {
+func TestCancelBeforeInstallation(t *testing.T) {
 	root := t.TempDir()
 	binary := filepath.Join(root, "oboard-controller")
 	if err := os.WriteFile(binary, []byte("controller"), 0o755); err != nil {
@@ -188,29 +189,33 @@ func TestCancelOnlyDuringDownload(t *testing.T) {
 	}
 	service := NewService(ServiceConfig{BinaryEnvPath: binaryEnv, ControllerBinary: binary, StatePath: filepath.Join(root, "status.json")})
 
-	downloadCtx, cancelDownload := context.WithCancel(context.Background())
-	service.installCancel = cancelDownload
-	service.status = Status{State: "downloading", UpdateAvailable: true, CanCancel: true, Available: BuildInfo{Version: "dev", Build: "next", Commit: "next"}}
-	recorder := httptest.NewRecorder()
-	service.handleCancel(recorder, httptest.NewRequest(http.MethodPost, "/v1/cancel", nil))
-	if recorder.Code != http.StatusOK || service.status.State != "cancelling" || service.status.CanCancel {
-		t.Fatalf("download cancellation response=%d status=%#v", recorder.Code, service.status)
-	}
-	select {
-	case <-downloadCtx.Done():
-	default:
-		t.Fatal("download context was not cancelled")
-	}
-	finished, err := service.finishCancelledInstall()
-	if err != nil || finished.State != "cancelled" || !finished.UpdateAvailable {
-		t.Fatalf("cancelled download final status=%#v err=%v", finished, err)
+	for _, state := range []string{"downloading", "ready"} {
+		t.Run(state, func(t *testing.T) {
+			installCtx, cancelInstall := context.WithCancel(context.Background())
+			service.installCancel = cancelInstall
+			service.status = Status{State: state, UpdateAvailable: true, CanCancel: true, Available: BuildInfo{Version: "dev", Build: "next", Commit: "next"}}
+			recorder := httptest.NewRecorder()
+			service.handleCancel(recorder, httptest.NewRequest(http.MethodPost, "/v1/cancel", nil))
+			if recorder.Code != http.StatusOK || service.status.State != "cancelling" || service.status.CanCancel {
+				t.Fatalf("%s cancellation response=%d status=%#v", state, recorder.Code, service.status)
+			}
+			select {
+			case <-installCtx.Done():
+			default:
+				t.Fatalf("%s context was not cancelled", state)
+			}
+			finished, err := service.finishCancelledInstall()
+			if err != nil || finished.State != "cancelled" || !finished.UpdateAvailable {
+				t.Fatalf("cancelled %s final status=%#v err=%v", state, finished, err)
+			}
+		})
 	}
 
 	installCtx, cancelInstall := context.WithCancel(context.Background())
 	defer cancelInstall()
 	service.installCancel = cancelInstall
 	service.status = Status{State: "installing", UpdateAvailable: true, CanCancel: false, Available: BuildInfo{Version: "dev", Build: "next", Commit: "next"}}
-	recorder = httptest.NewRecorder()
+	recorder := httptest.NewRecorder()
 	service.handleCancel(recorder, httptest.NewRequest(http.MethodPost, "/v1/cancel", nil))
 	if recorder.Code != http.StatusConflict || service.status.State != "installing" {
 		t.Fatalf("installation cancellation response=%d status=%#v", recorder.Code, service.status)
@@ -218,6 +223,63 @@ func TestCancelOnlyDuringDownload(t *testing.T) {
 	select {
 	case <-installCtx.Done():
 		t.Fatal("installation context was cancelled")
+	default:
+	}
+}
+
+func TestPrepareInstallationPublishesCancellableReadyWindowAndInstallingGrace(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "oboard-controller")
+	if err := os.WriteFile(binary, []byte("controller"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binaryEnv := filepath.Join(root, "controller.env")
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_UPDATE_CHANNEL=dev\nOBOARD_ADDR=:1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(ServiceConfig{
+		BinaryEnvPath:    binaryEnv,
+		ControllerBinary: binary,
+		StatePath:        filepath.Join(root, "status.json"),
+		RuntimeStatePath: filepath.Join(root, "runtime.json"),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service.installCancel = cancel
+	service.status = Status{State: "downloading", UpdateAvailable: true, CanCancel: true}
+
+	var states []Status
+	var delays []time.Duration
+	service.config.Wait = func(_ context.Context, delay time.Duration) error {
+		service.mu.Lock()
+		states = append(states, service.status)
+		service.mu.Unlock()
+		delays = append(delays, delay)
+		return nil
+	}
+	available := BuildInfo{Version: "dev", Build: "next-build", Commit: "next-commit"}
+	status, err := service.prepareInstallation(ctx, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 2 || len(delays) != 2 {
+		t.Fatalf("transition waits = states %#v, delays %#v", states, delays)
+	}
+	if states[0].State != "ready" || !states[0].CanCancel || delays[0] < 3*time.Second {
+		t.Fatalf("ready window was not cancellable and visible: state=%#v delay=%s", states[0], delays[0])
+	}
+	if states[1].State != "installing" || states[1].CanCancel || delays[1] < 3*time.Second || status.State != "installing" {
+		t.Fatalf("installing grace was not published: states=%#v delays=%#v status=%#v", states, delays, status)
+	}
+
+	recorder := httptest.NewRecorder()
+	service.handleCancel(recorder, httptest.NewRequest(http.MethodPost, "/v1/cancel", nil))
+	if recorder.Code != http.StatusConflict || service.status.State != "installing" {
+		t.Fatalf("installing cancellation response=%d status=%#v", recorder.Code, service.status)
+	}
+	select {
+	case <-ctx.Done():
+		t.Fatal("installing context was cancelled during the grace period")
 	default:
 	}
 }

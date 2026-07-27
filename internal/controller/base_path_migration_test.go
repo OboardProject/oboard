@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/OboardProject/oboard/internal/controllerupdate"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
@@ -39,7 +40,9 @@ func basePathRequest(t *testing.T, handler http.Handler, path string, wantStatus
 
 func TestBasePathMigrationWaitsForAgentCallbackOnNewPath(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "oboard.sqlite")
+	db, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,10 +59,22 @@ func TestBasePathMigrationWaitsForAgentCallbackOnNewPath(t *testing.T) {
 	}
 
 	app := New(db, "test-secret", basePathTestStaticDir(t), "/old", nil)
+	app.ConfigureControllerUpdates(dbPath, "127.0.0.1:2787")
 	handler := app.Handler()
 	redirect, migrated, err := app.startBasePathMigration(ctx, httptest.NewRequest(http.MethodPost, "http://localhost/old/api/v1/settings", nil), "/new")
 	if err != nil || !migrated || redirect != "/new/settings" {
 		t.Fatalf("start migration = redirect %q, migrated %v, err %v", redirect, migrated, err)
+	}
+	runtimeData, err := os.ReadFile(filepath.Join(root, controllerupdate.RuntimeStateName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runtimeState controllerupdate.RuntimeState
+	if err := json.Unmarshal(runtimeData, &runtimeState); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeState.ListenAddress != "127.0.0.1:2787" || len(runtimeState.BasePaths) != 2 || runtimeState.BasePaths[0] != "/new" || runtimeState.BasePaths[1] != "/old" {
+		t.Fatalf("migration runtime state = %#v", runtimeState)
 	}
 	state := app.basePathState()
 	tasks, err := db.ListTasksByConfigVersion(ctx, state.MigrationVersion)
@@ -90,6 +105,13 @@ func TestBasePathMigrationWaitsForAgentCallbackOnNewPath(t *testing.T) {
 	basePathRequest(t, handler, "/new/healthz", http.StatusOK, `"ok":true`)
 	if app.basePathState().MigrationVersion != 0 {
 		t.Fatal("migration remained active after every Agent succeeded")
+	}
+	runtimeData, err = os.ReadFile(filepath.Join(root, controllerupdate.RuntimeStateName))
+	if err != nil || json.Unmarshal(runtimeData, &runtimeState) != nil {
+		t.Fatalf("read finalized runtime state: %v", err)
+	}
+	if len(runtimeState.BasePaths) != 1 || runtimeState.BasePaths[0] != "/new" {
+		t.Fatalf("finalized runtime state = %#v", runtimeState)
 	}
 
 	restarted := New(db, "test-secret", app.staticDir, "/ignored", nil)

@@ -25,16 +25,23 @@ import (
 )
 
 type ServiceConfig struct {
-	SocketPath       string
-	BinaryEnvPath    string
-	StatePath        string
-	ControllerBinary string
-	UpdaterBinary    string
-	WebRoot          string
-	DownloadsRoot    string
-	WorkRoot         string
-	HTTPClient       *http.Client
-	RunCommand       func(context.Context, string, ...string) error
+	SocketPath         string
+	BinaryEnvPath      string
+	StatePath          string
+	RuntimeStatePath   string
+	ControllerBinary   string
+	UpdaterBinary      string
+	WebRoot            string
+	DownloadsRoot      string
+	WorkRoot           string
+	HTTPClient         *http.Client
+	HealthClient       *http.Client
+	HealthTimeout      time.Duration
+	HealthPollInterval time.Duration
+	ReadyWindow        time.Duration
+	InstallGracePeriod time.Duration
+	Wait               func(context.Context, time.Duration) error
+	RunCommand         func(context.Context, string, ...string) error
 }
 
 type Service struct {
@@ -48,15 +55,22 @@ type Service struct {
 func DefaultServiceConfig() ServiceConfig {
 	installDir := defaultInstallDir()
 	return ServiceConfig{
-		SocketPath:       DefaultSocketPath,
-		BinaryEnvPath:    "/etc/oboard/controller.env",
-		StatePath:        "/var/lib/oboard/controller-update/status.json",
-		ControllerBinary: filepath.Join(installDir, "oboard-controller"),
-		UpdaterBinary:    filepath.Join(installDir, "oboard-controller-updater"),
-		WebRoot:          "/opt/oboard/web/dist",
-		DownloadsRoot:    "/opt/oboard/downloads",
-		WorkRoot:         "/var/lib/oboard/controller-update",
-		HTTPClient:       &http.Client{Timeout: 2 * time.Minute},
+		SocketPath:         DefaultSocketPath,
+		BinaryEnvPath:      "/etc/oboard/controller.env",
+		StatePath:          "/var/lib/oboard/controller-update/status.json",
+		RuntimeStatePath:   "/var/lib/oboard/" + RuntimeStateName,
+		ControllerBinary:   filepath.Join(installDir, "oboard-controller"),
+		UpdaterBinary:      filepath.Join(installDir, "oboard-controller-updater"),
+		WebRoot:            "/opt/oboard/web/dist",
+		DownloadsRoot:      "/opt/oboard/downloads",
+		WorkRoot:           "/var/lib/oboard/controller-update",
+		HTTPClient:         &http.Client{Timeout: 2 * time.Minute},
+		HealthClient:       &http.Client{Timeout: 3 * time.Second},
+		HealthTimeout:      90 * time.Second,
+		HealthPollInterval: time.Second,
+		ReadyWindow:        4 * time.Second,
+		InstallGracePeriod: 4 * time.Second,
+		Wait:               waitForContext,
 		RunCommand: func(ctx context.Context, name string, args ...string) error {
 			switch name {
 			case "systemctl", "rc-service":
@@ -106,6 +120,9 @@ func NewService(config ServiceConfig) *Service {
 	if config.StatePath == "" {
 		config.StatePath = defaults.StatePath
 	}
+	if config.RuntimeStatePath == "" {
+		config.RuntimeStatePath = defaults.RuntimeStatePath
+	}
 	if config.ControllerBinary == "" {
 		config.ControllerBinary = defaults.ControllerBinary
 	}
@@ -123,6 +140,24 @@ func NewService(config ServiceConfig) *Service {
 	}
 	if config.HTTPClient == nil {
 		config.HTTPClient = defaults.HTTPClient
+	}
+	if config.HealthClient == nil {
+		config.HealthClient = defaults.HealthClient
+	}
+	if config.HealthTimeout <= 0 {
+		config.HealthTimeout = defaults.HealthTimeout
+	}
+	if config.HealthPollInterval <= 0 {
+		config.HealthPollInterval = defaults.HealthPollInterval
+	}
+	if config.ReadyWindow <= 0 {
+		config.ReadyWindow = defaults.ReadyWindow
+	}
+	if config.InstallGracePeriod <= 0 {
+		config.InstallGracePeriod = defaults.InstallGracePeriod
+	}
+	if config.Wait == nil {
+		config.Wait = defaults.Wait
 	}
 	if config.RunCommand == nil {
 		config.RunCommand = defaults.RunCommand
@@ -274,7 +309,7 @@ func (s *Service) handleCancel(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	status := s.decorateStatus(s.status)
-	if status.State != "downloading" || !status.CanCancel || s.installCancel == nil {
+	if (status.State != "downloading" && status.State != "ready") || !status.CanCancel || s.installCancel == nil {
 		status.CanCancel = false
 		if status.State == "installing" {
 			status.LastError = "新版本已经开始安装，现在不能中断。"
@@ -392,6 +427,46 @@ func (s *Service) install(ctx context.Context) (Status, error) {
 	}
 	defer os.RemoveAll(stage)
 
+	status, err = s.prepareInstallation(ctx, available)
+	if err != nil || status.State != "installing" {
+		return status, err
+	}
+	if err := s.replaceBinaryProgram(ctx, stage); err != nil {
+		return s.finishInstallError(err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status = s.decorateStatus(s.status)
+	status.State, status.UpdateAvailable, status.CanCancel, status.LastError = "installed", false, false, ""
+	status.Current = available
+	return status, s.saveStatus(status)
+}
+
+func (s *Service) prepareInstallation(ctx context.Context, available BuildInfo) (Status, error) {
+	s.mu.Lock()
+	status := s.decorateStatus(s.status)
+	status.Available = available
+	status.UpdateAvailable = buildInfoUpdateAvailable(status.Channel, status.Current, available)
+	if ctx.Err() != nil || status.State == "cancelling" {
+		s.mu.Unlock()
+		return s.finishCancelledInstall()
+	}
+	if !status.UpdateAvailable {
+		status.State, status.CanCancel, status.LastError = "current", false, ""
+		err := s.saveStatus(status)
+		s.mu.Unlock()
+		return status, err
+	}
+	status.State, status.CanCancel, status.LastError = "ready", true, ""
+	if err := s.saveStatus(status); err != nil {
+		s.mu.Unlock()
+		return status, err
+	}
+	s.mu.Unlock()
+	if err := s.config.Wait(ctx, s.config.ReadyWindow); err != nil {
+		return s.finishInstallError(err)
+	}
+
 	s.mu.Lock()
 	status = s.decorateStatus(s.status)
 	status.Available = available
@@ -412,16 +487,10 @@ func (s *Service) install(ctx context.Context) (Status, error) {
 		return status, err
 	}
 	s.mu.Unlock()
-
-	if err := s.replaceBinaryProgram(ctx, stage); err != nil {
+	if err := s.config.Wait(ctx, s.config.InstallGracePeriod); err != nil {
 		return s.finishInstallError(err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	status = s.decorateStatus(s.status)
-	status.State, status.UpdateAvailable, status.CanCancel, status.LastError = "installed", false, false, ""
-	status.Current = available
-	return status, s.saveStatus(status)
+	return status, nil
 }
 
 func (s *Service) finishInstallError(installErr error) (Status, error) {
@@ -471,7 +540,7 @@ func (s *Service) decorateStatus(status Status) Status {
 		status.CanCancel = false
 		return status
 	}
-	if channel == "pinned" && status.State != "installing" {
+	if channel == "pinned" && !isActiveUpdateState(status.State) {
 		status.State = "pinned"
 		status.UpdateAvailable = false
 		status.CanCancel = false
@@ -484,7 +553,7 @@ func (s *Service) decorateStatus(status Status) Status {
 	if status.State == "" {
 		status.State = "idle"
 	}
-	if status.State != "downloading" {
+	if status.State != "downloading" && status.State != "ready" {
 		status.CanCancel = false
 	}
 	return status
@@ -498,7 +567,7 @@ func buildInfoUpdateAvailable(channel string, current, available BuildInfo) bool
 }
 
 func isActiveUpdateState(state string) bool {
-	return state == "downloading" || state == "installing" || state == "cancelling"
+	return state == "downloading" || state == "ready" || state == "installing" || state == "cancelling"
 }
 
 func isTransientUpdateState(state string) bool {
@@ -527,29 +596,22 @@ func (s *Service) detectInstallation() (string, string, string) {
 
 func (s *Service) currentBuildInfo() BuildInfo {
 	info := BuildInfo{Version: version.Version, Build: version.Build, Commit: version.Commit, Date: version.Date}
-	values, _ := readEnv(s.config.BinaryEnvPath)
-	basePath := strings.TrimRight(values["OBOARD_BASE_PATH"], "/")
-	port := "2787"
-	if addr := values["OBOARD_ADDR"]; strings.Contains(addr, ":") {
-		port = addr[strings.LastIndex(addr, ":")+1:]
-	}
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get("http://127.0.0.1:" + port + basePath + "/api/v1/version")
-	if err != nil {
-		return info
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return info
-	}
-	var remote struct {
-		Version string `json:"version"`
-		Build   string `json:"build"`
-		Commit  string `json:"commit"`
-		BuiltAt string `json:"built_at"`
-	}
-	if json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&remote) == nil && remote.Version != "" {
-		return BuildInfo{Version: remote.Version, Build: remote.Build, Commit: remote.Commit, Date: remote.BuiltAt}
+	for _, url := range s.healthURLs("/api/v1/version") {
+		resp, err := s.config.HealthClient.Get(url)
+		if err != nil {
+			continue
+		}
+		var remote struct {
+			Version string `json:"version"`
+			Build   string `json:"build"`
+			Commit  string `json:"commit"`
+			BuiltAt string `json:"built_at"`
+		}
+		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&remote)
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusOK && decodeErr == nil && remote.Version != "" {
+			return BuildInfo{Version: remote.Version, Build: remote.Build, Commit: remote.Commit, Date: remote.BuiltAt}
+		}
 	}
 	return info
 }
@@ -829,9 +891,9 @@ func (s *Service) replaceBinaryProgram(ctx context.Context, stage string) error 
 		rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		if rollbackErr := s.restartAndWait(rollbackCtx); rollbackErr != nil {
-			return fmt.Errorf("controller update failed (%v) and program rollback did not become healthy: %w", err, rollbackErr)
+			return fmt.Errorf("安装新版本后主控未恢复可用（%v），恢复原版本后仍未恢复：%w", err, rollbackErr)
 		}
-		return fmt.Errorf("controller health check failed; program files rolled back: %w", err)
+		return fmt.Errorf("安装新版本后主控未恢复可用，已恢复原版本：%w", err)
 	}
 	for _, item := range targets {
 		_ = os.RemoveAll(item.destination + ".update-backup")
@@ -940,27 +1002,43 @@ func (s *Service) restartController(ctx context.Context) error {
 }
 
 func (s *Service) waitHealth(ctx context.Context) error {
-	values, _ := readEnv(s.config.BinaryEnvPath)
-	port := "2787"
-	if addr := values["OBOARD_ADDR"]; strings.Contains(addr, ":") {
-		port = addr[strings.LastIndex(addr, ":")+1:]
+	urls := s.healthURLs("/healthz")
+	if len(urls) == 0 {
+		return errors.New("无法确定主控的本机健康检查地址")
 	}
-	url := "http://127.0.0.1:" + port + strings.TrimRight(values["OBOARD_BASE_PATH"], "/") + "/healthz"
-	deadline := time.Now().Add(90 * time.Second)
-	for time.Now().Before(deadline) {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
-		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
+	healthCtx, cancel := context.WithTimeout(ctx, s.config.HealthTimeout)
+	defer cancel()
+	for healthCtx.Err() == nil {
+		for _, url := range urls {
+			req, err := http.NewRequestWithContext(healthCtx, http.MethodGet, url, nil)
+			if err != nil {
+				continue
+			}
+			resp, err := s.config.HealthClient.Do(req)
+			if err == nil {
+				_ = resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					return nil
+				}
 			}
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Second):
+		if err := s.config.Wait(healthCtx, s.config.HealthPollInterval); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			break
 		}
 	}
-	return errors.New("controller did not become healthy within 90 seconds")
+	return fmt.Errorf("主控在 %s 内未恢复可用", s.config.HealthTimeout)
+}
+
+func waitForContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

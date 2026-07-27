@@ -287,6 +287,7 @@ func (s *Server) startBasePathMigration(ctx context.Context, r *http.Request, ra
 		MigrationControllerURL: targetURL,
 	}
 	s.basePaths.Store(next)
+	s.syncControllerRuntimeState()
 	for _, target := range targets {
 		if _, err := s.queueAgentTask(ctx, target.ServerID, model.AgentTaskTypeUpdateAgentConfig, map[string]string{"controller_url": targetURL}, versionStamp); err != nil {
 			log.Printf("queue Controller base path migration task for server %d: %v", target.ServerID, err)
@@ -472,6 +473,7 @@ func (s *Server) finalizeBasePathMigrationLocked(ctx context.Context, state *bas
 		return err
 	}
 	s.basePaths.Store(&basePathState{Current: state.Current, Retired: retired})
+	s.syncControllerRuntimeState()
 	return nil
 }
 

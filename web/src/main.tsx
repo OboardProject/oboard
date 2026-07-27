@@ -2606,6 +2606,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
       return
     }
     if (result.status === 'downloading') setInstallPhase('downloading')
+    else if (result.status === 'ready') setInstallPhase('ready')
     else if (result.status === 'installing') setInstallPhase('installing')
     else if (result.status === 'cancelling') setInstallPhase('cancelling')
     else setInstallPhase('starting')
@@ -2617,7 +2618,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
       setSnapshot(result)
       applyInstallStatus(result)
     } catch (error: any) {
-      if (quiet && (installExpectedRef.current || ['downloading', 'installing', 'cancelling'].includes(snapshot.status)) && isExpectedControllerUpdateDisconnect(error)) {
+      if (quiet && (installExpectedRef.current || ['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status)) && isExpectedControllerUpdateDisconnect(error)) {
         setInstallConnectionInterrupted(true)
       } else {
         notify?.(localizeErrorMessage(error?.message || error), 'error')
@@ -2628,12 +2629,12 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   }
   useEffect(() => { void refresh() }, [])
   useEffect(() => {
-    if (!installExpected && !['downloading', 'installing', 'cancelling', 'checking'].includes(snapshot.status)) return
+    if (!installExpected && !['downloading', 'ready', 'installing', 'cancelling', 'checking'].includes(snapshot.status)) return
     const timer = window.setInterval(() => { void refresh(true) }, 3000)
     return () => window.clearInterval(timer)
   }, [snapshot.status, installExpected])
   useEffect(() => {
-    if (!['downloading', 'installing', 'cancelling'].includes(snapshot.status) || installExpected) return
+    if (!['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status) || installExpected) return
     installTargetBuildRef.current = snapshot.available?.build || ''
     updateInstallExpected(true)
     setInstallPhase(snapshot.status as ControllerUpdateInstallPhase)
@@ -2653,8 +2654,8 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
     }
   }
   const openInstall = () => {
-    if (installExpected || ['downloading', 'installing', 'cancelling'].includes(snapshot.status)) {
-      setInstallPhase(snapshot.status === 'cancelling' ? 'cancelling' : snapshot.status === 'installing' ? 'installing' : 'downloading')
+    if (installExpected || ['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status)) {
+      setInstallPhase(snapshot.status === 'cancelling' ? 'cancelling' : snapshot.status === 'installing' ? 'installing' : snapshot.status === 'ready' ? 'ready' : 'downloading')
       setInstallDialogOpen(true)
       return
     }
@@ -2737,11 +2738,11 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
     notify?.('切换命令已复制', 'success')
   }
   const labels: Record<string, string> = {
-    loading: '读取中', idle: '等待检查', checking: '检查中', current: '已是最新', available: '可更新', downloading: '下载中', installing: '安装中', cancelling: '正在中断', cancelled: '已中断', installed: '已安装', failed: '失败', unavailable: '更新器不可用', pinned: '固定版本',
+    loading: '读取中', idle: '等待检查', checking: '检查中', current: '已是最新', available: '可更新', downloading: '下载中', ready: '文件已准备好', installing: '安装中', cancelling: '正在中断', cancelled: '已中断', installed: '已安装', failed: '失败', unavailable: '更新器不可用', pinned: '固定版本',
   }
   const channelLabel = snapshot.channel === 'dev' ? '开发版' : snapshot.channel === 'stable' ? '正式版' : snapshot.channel === 'pinned' ? '固定版本' : '未知'
-  const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || ['downloading', 'installing', 'cancelling'].includes(snapshot.status) ? 'warning' : 'ok'
-  const updateInProgress = installExpected || ['downloading', 'installing', 'cancelling'].includes(snapshot.status)
+  const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || ['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status) ? 'warning' : 'ok'
+  const updateInProgress = installExpected || ['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status)
   return <section className="settings-card controller-update-card">
     <div className="settings-card-head">
       <div><h3>主控更新</h3><p className="muted">更新通道 · {channelLabel}</p></div>
@@ -2774,7 +2775,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
       targetVersion={snapshot.available?.version || ''}
       connectionInterrupted={installConnectionInterrupted}
       failure={installFailure}
-      canCancel={Boolean(snapshot.can_cancel) && installPhase === 'downloading'}
+      canCancel={Boolean(snapshot.can_cancel) && ['downloading', 'ready'].includes(installPhase)}
       cancelling={working === 'cancel' || installPhase === 'cancelling'}
       onCancel={() => setInstallDialogOpen(false)}
       onInstall={() => void install()}
@@ -2785,7 +2786,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   </section>
 }
 
-type ControllerUpdateInstallPhase = 'confirm' | 'starting' | 'downloading' | 'installing' | 'cancelling' | 'cancelled' | 'stopped' | 'complete' | 'failed'
+type ControllerUpdateInstallPhase = 'confirm' | 'starting' | 'downloading' | 'ready' | 'installing' | 'cancelling' | 'cancelled' | 'stopped' | 'complete' | 'failed'
 
 function isExpectedControllerUpdateDisconnect(error: unknown) {
   if (error instanceof TypeError) return true
@@ -2794,11 +2795,11 @@ function isExpectedControllerUpdateDisconnect(error: unknown) {
 }
 
 function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, onCancel, onInstall, onInterrupt, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; onCancel: () => void; onInstall: () => void; onInterrupt: () => void; onHide: () => void; onReload: () => void }) {
-  const waiting = ['starting', 'downloading', 'installing', 'cancelling'].includes(phase)
-  const title = phase === 'confirm' ? '更新期间面板会暂时离线' : phase === 'starting' ? '正在准备更新' : phase === 'downloading' ? '正在下载更新' : phase === 'installing' ? '正在安装更新' : phase === 'cancelling' ? '正在中断更新' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : phase === 'complete' ? '主控更新已完成' : '主控更新未完成'
-  const activeTitle = phase === 'starting' ? '正在备份数据' : phase === 'downloading' ? '正在下载并检查更新文件' : phase === 'cancelling' ? '正在停止下载' : connectionInterrupted ? '正在重新启动主控' : '正在安装新版本'
-  const activeDescription = phase === 'starting' ? '备份完成后会自动开始下载。' : phase === 'downloading' ? '此阶段可以安全中断，不会改动当前程序。' : phase === 'cancelling' ? '当前程序不会被替换，请稍候。' : connectionInterrupted ? '面板会自动尝试重新连接。' : '安装完成后主控会自动重新启动。'
-  const downloadDone = phase === 'installing'
+  const waiting = ['starting', 'downloading', 'ready', 'installing', 'cancelling'].includes(phase)
+  const title = phase === 'confirm' ? '更新期间面板会暂时离线' : phase === 'starting' ? '正在准备更新' : phase === 'downloading' ? '正在下载更新' : phase === 'ready' ? '更新文件已准备好' : phase === 'installing' ? '正在安装更新' : phase === 'cancelling' ? '正在中断更新' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : phase === 'complete' ? '主控更新已完成' : '主控更新未完成'
+  const activeTitle = phase === 'starting' ? '正在备份数据' : phase === 'downloading' ? '正在下载并检查更新文件' : phase === 'ready' ? '更新文件已经检查完成' : phase === 'cancelling' ? '正在停止更新' : connectionInterrupted ? '正在重新启动主控' : '正在安装新版本'
+  const activeDescription = phase === 'starting' ? '备份完成后会自动开始下载。' : phase === 'downloading' ? '此阶段可以安全中断，不会改动当前程序。' : phase === 'ready' ? '安装即将开始，此时仍可安全中断。' : phase === 'cancelling' ? '当前程序不会被替换，请稍候。' : connectionInterrupted ? '面板会自动尝试重新连接。' : '安装完成后主控会自动重新启动。'
+  const downloadDone = phase === 'ready' || phase === 'installing'
   return <MotionDialogPanel onCancel={waiting ? onHide : onCancel} className="controller-update-install-dialog" system>
     <header className="dialog-head"><div><h2>{title}</h2><p className="muted">{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>{!waiting && <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>}</header>
     <div className="dialog-body controller-update-install-body">
@@ -2810,8 +2811,8 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
       {waiting && <>
         <div className="controller-update-install-state" aria-live="polite"><RefreshCw size={24} className="spin" /><div><strong>{activeTitle}</strong><p>{activeDescription}</p></div></div>
         <div className="controller-update-stages" aria-label="更新进度">
-          <div className={`controller-update-stage ${phase === 'downloading' || phase === 'cancelling' ? 'active' : downloadDone ? 'done' : ''}`}><span>{downloadDone ? <Check size={14} /> : '1'}</span><div><strong>下载更新</strong><small>{downloadDone ? '更新文件已经准备好' : phase === 'cancelling' ? '正在停止下载' : phase === 'downloading' ? '正在下载并检查文件' : '等待开始'}</small></div></div>
-          <div className={`controller-update-stage ${phase === 'installing' ? 'active' : ''}`}><span>2</span><div><strong>安装更新</strong><small>{phase === 'installing' ? connectionInterrupted ? '正在重新启动主控' : '正在安装新版本' : '等待下载完成'}</small></div></div>
+          <div className={`controller-update-stage ${phase === 'downloading' || phase === 'cancelling' ? 'active' : downloadDone ? 'done' : ''}`}><span>{downloadDone ? <Check size={14} /> : '1'}</span><div><strong>下载更新</strong><small>{downloadDone ? '更新文件已经准备好' : phase === 'cancelling' ? '正在停止更新' : phase === 'downloading' ? '正在下载并检查文件' : '等待开始'}</small></div></div>
+          <div className={`controller-update-stage ${phase === 'ready' || phase === 'installing' ? 'active' : ''}`}><span>2</span><div><strong>安装更新</strong><small>{phase === 'ready' ? '即将开始安装' : phase === 'installing' ? connectionInterrupted ? '正在重新启动主控' : '正在安装新版本' : '等待下载完成'}</small></div></div>
         </div>
         <div className="controller-update-install-progress" role="progressbar" aria-label="主控更新进行中"><span /></div>
         <div className="controller-update-install-notice compact"><span>期间出现连接中断、短暂白屏或 502 提示都是正常现象。</span></div>

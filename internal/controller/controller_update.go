@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,12 +26,32 @@ const (
 	controllerBackupRetention    = 7
 )
 
-func (s *Server) ConfigureControllerUpdates(dbPath string) {
+func (s *Server) ConfigureControllerUpdates(dbPath, listenAddress string) {
 	s.controllerUpdatesConfigured = true
+	s.controllerListenAddress = listenAddress
+	s.controllerRuntimeStatePath = filepath.Join(filepath.Dir(dbPath), controllerupdate.RuntimeStateName)
 	if configured := strings.TrimSpace(os.Getenv("OBOARD_BACKUP_DIR")); configured != "" {
 		s.controllerBackupDir = configured
 	} else {
 		s.controllerBackupDir = filepath.Join(filepath.Dir(dbPath), "backups")
+	}
+	s.syncControllerRuntimeState()
+}
+
+func (s *Server) syncControllerRuntimeState() {
+	if strings.TrimSpace(s.controllerRuntimeStatePath) == "" || strings.TrimSpace(s.controllerListenAddress) == "" {
+		return
+	}
+	state := s.basePathState()
+	basePaths := []string{state.Current}
+	if state.MigrationVersion > 0 && state.Previous != state.Current {
+		basePaths = append(basePaths, state.Previous)
+	}
+	if err := controllerupdate.WriteRuntimeState(s.controllerRuntimeStatePath, controllerupdate.RuntimeState{
+		ListenAddress: s.controllerListenAddress,
+		BasePaths:     basePaths,
+	}); err != nil {
+		log.Printf("write Controller runtime state: %v", err)
 	}
 }
 

@@ -84,7 +84,7 @@ func main() {
 		}
 	}
 	app := controller.New(db, *secret, *staticDir, normalizedBasePath, logManager)
-	app.ConfigureControllerUpdates(*dbPath)
+	app.ConfigureControllerUpdates(*dbPath, *addr)
 	app.ConfigureControllerBackups(*dbPath)
 	if err := app.ApplyRuntimeSettings(context.Background()); err != nil {
 		log.Printf("apply runtime settings: %v", err)

@@ -68,6 +68,8 @@ type Server struct {
 	certificateIssues           map[int64]bool
 	controllerUpdater           *controllerupdate.Client
 	controllerBackupDir         string
+	controllerRuntimeStatePath  string
+	controllerListenAddress     string
 	controllerUpdatesConfigured bool
 	controllerUpdateMu          sync.Mutex
 	controllerUpdateRunMu       sync.Mutex
