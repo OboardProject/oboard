@@ -48,8 +48,8 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"不会互相覆盖",
 		"COMPONENT=agent",
 		"INSTALL_DIR_INPUT",
-		"OBOARD_INSTALL_CHOICE",
-		"选择程序安装目录",
+		"install_dir_from_input",
+		"请输入安装目录（留空为/opt/oboard）：",
 		"/opt/oboard",
 		"/usr/local/sbin",
 		"OBOARD_INSTALL_DIR",
@@ -137,7 +137,7 @@ func TestControllerInstallDirectorySelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(content)
-	assertInstallDirectoryChoices(t, script)
+	assertInstallDirectoryInputs(t, script)
 
 	shell, err := exec.LookPath("dash")
 	if err != nil {
@@ -154,7 +154,7 @@ func TestControllerInstallDirectorySelection(t *testing.T) {
 		configured := strings.ReplaceAll(extractShellFunction(t, script, "configured_controller_install_dir"), "/etc/oboard/controller.env", shellQuote(envPath))
 		harness := strings.Join([]string{
 			extractShellFunction(t, script, "valid_install_dir"),
-			extractShellFunction(t, script, "install_dir_for_choice"),
+			extractShellFunction(t, script, "install_dir_from_input"),
 			configured,
 			extractShellFunction(t, script, "choose_install_dir"),
 			extractShellFunction(t, script, "resolve_controller_install_dir"),
@@ -663,7 +663,7 @@ func assertPackageManagerDispatch(t *testing.T, script string) {
 	}
 }
 
-func assertInstallDirectoryChoices(t *testing.T, script string) {
+func assertInstallDirectoryInputs(t *testing.T, script string) {
 	t.Helper()
 	shell, err := exec.LookPath("dash")
 	if err != nil {
@@ -672,24 +672,34 @@ func assertInstallDirectoryChoices(t *testing.T, script string) {
 	if err != nil {
 		t.Skip("a POSIX shell is unavailable")
 	}
-	source := extractShellFunction(t, script, "install_dir_for_choice")
+	source := strings.Join([]string{
+		extractShellFunction(t, script, "valid_install_dir"),
+		extractShellFunction(t, script, "install_dir_from_input"),
+	}, "\n")
 	for _, test := range []struct {
-		choice string
-		want   string
+		name  string
+		input string
+		want  string
 	}{
-		{choice: "1", want: "/usr/local/bin"},
-		{choice: "2", want: "/opt/oboard"},
-		{choice: "3", want: "/usr/local/sbin"},
+		{name: "default", input: "", want: "/opt/oboard"},
+		{name: "local bin", input: "/usr/local/bin", want: "/usr/local/bin"},
+		{name: "opt", input: "/opt/oboard", want: "/opt/oboard"},
+		{name: "local sbin", input: "/usr/local/sbin", want: "/usr/local/sbin"},
 	} {
-		t.Run("choice "+test.choice, func(t *testing.T) {
-			output, err := exec.Command(shell, "-c", source+"\ninstall_dir_for_choice "+test.choice).CombinedOutput()
+		t.Run(test.name, func(t *testing.T) {
+			output, err := exec.Command(shell, "-c", source+"\ninstall_dir_from_input "+shellQuote(test.input)).CombinedOutput()
 			if err != nil || strings.TrimSpace(string(output)) != test.want {
-				t.Fatalf("choice %s = %q, err=%v; want %q", test.choice, output, err, test.want)
+				t.Fatalf("input %q = %q, err=%v; want %q", test.input, output, err, test.want)
 			}
 		})
 	}
-	if output, err := exec.Command(shell, "-c", source+"\ninstall_dir_for_choice 4").CombinedOutput(); err == nil {
-		t.Fatalf("unsupported install directory choice was accepted: %s", output)
+	if output, err := exec.Command(shell, "-c", source+"\ninstall_dir_from_input /tmp/oboard").CombinedOutput(); err == nil {
+		t.Fatalf("unsupported install directory was accepted: %s", output)
+	}
+	for _, old := range []string{"install_dir_for_choice", "OBOARD_INSTALL_CHOICE", "请选择 [1]："} {
+		if strings.Contains(script, old) {
+			t.Fatalf("installer still contains obsolete directory selection %q", old)
+		}
 	}
 }
 

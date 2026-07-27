@@ -9653,13 +9653,10 @@ valid_install_dir() {
   esac
 }
 
-install_dir_for_choice() {
-  case "$1" in
-    ""|1) printf '/usr/local/bin\n' ;;
-    2) printf '/opt/oboard\n' ;;
-    3) printf '/usr/local/sbin\n' ;;
-    *) return 1 ;;
-  esac
+install_dir_from_input() {
+  selected=${1:-/opt/oboard}
+  valid_install_dir "$selected" || return 1
+  printf '%s\n' "$selected"
 }
 
 configured_agent_install_dir() {
@@ -9668,27 +9665,18 @@ configured_agent_install_dir() {
 }
 
 choose_install_dir() {
-  choice=${OBOARD_INSTALL_CHOICE:-}
-  if [ -n "$choice" ]; then
-    install_dir_for_choice "$choice"
-    return
-  fi
   if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
-    install_dir_for_choice 1
+    install_dir_from_input
     return
   fi
   while :; do
-    printf '\n选择 Agent 程序安装目录\n' > /dev/tty
-    printf '  1) /usr/local/bin（推荐，默认）\n' > /dev/tty
-    printf '  2) /opt/oboard\n' > /dev/tty
-    printf '  3) /usr/local/sbin\n' > /dev/tty
-    printf '请选择 [1]：' > /dev/tty
+    printf '请输入安装目录（留空为/opt/oboard）：' > /dev/tty
     IFS= read -r choice < /dev/tty || choice=
-    if selected=$(install_dir_for_choice "$choice"); then
+    if selected=$(install_dir_from_input "$choice"); then
       printf '%s\n' "$selected"
       return 0
     fi
-    printf '请输入 1、2 或 3。\n' > /dev/tty
+    printf '安装目录仅支持 /usr/local/bin、/opt/oboard 或 /usr/local/sbin。\n' > /dev/tty
   done
 }
 
@@ -9721,7 +9709,7 @@ resolve_agent_install_dir() {
     INSTALL_DIR=$existing_dir
   elif [ "$ACTION" = install ]; then
     INSTALL_DIR=$(choose_install_dir) || {
-      echo "安装目录选项无效。" >&2
+      echo "安装目录无效。" >&2
       exit 1
     }
   else

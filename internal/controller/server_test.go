@@ -614,8 +614,8 @@ func TestAgentInstallScriptsUseLowSpaceTempFallback(t *testing.T) {
 				"ACME_SH_SHA256=fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32",
 				"install_pinned_acme_sh",
 				"sha256_file",
-				"OBOARD_INSTALL_CHOICE",
-				"选择 Agent 程序安装目录",
+				"install_dir_from_input",
+				"请输入安装目录（留空为/opt/oboard）：",
 				"INSTALL_ENV_PATH=${OBOARD_AGENT_INSTALL_ENV:-/etc/oboard-agent/install.env}",
 				"persist_agent_install_dir",
 				"resolve_agent_install_dir",
@@ -669,7 +669,7 @@ func TestAgentInstallScriptACMEFallback(t *testing.T) {
 	assertACMEInstallerBehavior(t, script)
 	assertPackageManagerDispatch(t, script)
 	assertInstallToolBootstrap(t, script)
-	assertInstallDirectoryChoices(t, script)
+	assertInstallDirectoryInputs(t, script)
 }
 
 func TestAgentInstallDirectoryPersistence(t *testing.T) {
@@ -698,7 +698,7 @@ func TestAgentInstallDirectoryPersistence(t *testing.T) {
 
 	source := strings.Join([]string{
 		extractShellFunction(t, script, "valid_install_dir"),
-		extractShellFunction(t, script, "install_dir_for_choice"),
+		extractShellFunction(t, script, "install_dir_from_input"),
 		extractShellFunction(t, script, "configured_agent_install_dir"),
 		extractShellFunction(t, script, "choose_install_dir"),
 		extractShellFunction(t, script, "resolve_agent_install_dir"),
