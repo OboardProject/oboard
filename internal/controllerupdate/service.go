@@ -822,6 +822,11 @@ func extractControllerArchive(archivePath, stage string) error {
 		if err != nil {
 			return err
 		}
+		// The updater runs with umask 0077, so restore the allowlisted archive mode explicitly.
+		if err := out.Chmod(mode); err != nil {
+			_ = out.Close()
+			return err
+		}
 		written, copyErr := io.Copy(out, io.LimitReader(reader, header.Size+1))
 		closeErr := out.Close()
 		if copyErr != nil {
@@ -932,7 +937,11 @@ func copyTree(source, destination string) error {
 	}
 	defer destinationParent.Close()
 	// #nosec G301 -- Web/download trees must be readable by the unprivileged Controller.
-	if err := destinationParent.Mkdir(filepath.Base(destination), 0o755); err != nil {
+	destinationName := filepath.Base(destination)
+	if err := destinationParent.Mkdir(destinationName, 0o755); err != nil {
+		return err
+	}
+	if err := destinationParent.Chmod(destinationName, 0o755); err != nil {
 		return err
 	}
 	sourceRoot, err := sourceParent.OpenRoot(filepath.Base(source))
@@ -958,7 +967,10 @@ func copyTree(source, destination string) error {
 		}
 		if info.IsDir() {
 			// #nosec G301 -- Web/download trees must be readable by the Controller.
-			return destinationRoot.MkdirAll(path, 0o755)
+			if err := destinationRoot.MkdirAll(path, 0o755); err != nil {
+				return err
+			}
+			return destinationRoot.Chmod(path, 0o755)
 		}
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("unsupported staged file %s", path)
@@ -975,6 +987,10 @@ func copyRootFile(sourceRoot *os.Root, source string, destinationRoot *os.Root, 
 	defer input.Close()
 	output, err := destinationRoot.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 	if err != nil {
+		return err
+	}
+	if err := output.Chmod(mode); err != nil {
+		_ = output.Close()
 		return err
 	}
 	_, copyErr := io.Copy(output, input)

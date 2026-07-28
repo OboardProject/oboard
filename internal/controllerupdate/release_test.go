@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -96,6 +97,65 @@ func TestExtractControllerArchiveAcceptsSelfUpdatePayload(t *testing.T) {
 		if info, err := os.Stat(filepath.Join(stage, filepath.FromSlash(name))); err != nil || !info.Mode().IsRegular() {
 			t.Fatalf("self-update payload did not extract %s: %v", name, err)
 		}
+	}
+}
+
+func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
+	previousUmask := syscall.Umask(0o077)
+	t.Cleanup(func() { syscall.Umask(previousUmask) })
+
+	archive := filepath.Join(t.TempDir(), "controller.tar.gz")
+	writeTestControllerArchive(t, archive, []archiveEntry{
+		{name: "bin/oboard-controller", content: "controller"},
+		{name: "bin/oboard-controller-updater", content: "updater"},
+		{name: "web/dist/index.html", content: "web"},
+		{name: "web/dist/assets/app.js", content: "asset"},
+		{name: "downloads/release-manifest.json", content: "{}"},
+	})
+	stage := t.TempDir()
+	if err := extractControllerArchive(archive, stage); err != nil {
+		t.Fatal(err)
+	}
+
+	assertFileMode(t, filepath.Join(stage, "bin/oboard-controller"), 0o755)
+	assertFileMode(t, filepath.Join(stage, "bin/oboard-controller-updater"), 0o755)
+	assertFileMode(t, filepath.Join(stage, "web/dist/index.html"), 0o644)
+	assertFileMode(t, filepath.Join(stage, "web/dist/assets/app.js"), 0o644)
+	assertFileMode(t, filepath.Join(stage, "downloads/release-manifest.json"), 0o644)
+
+	installRoot := t.TempDir()
+	for _, item := range []struct {
+		source      string
+		destination string
+	}{
+		{filepath.Join(stage, "bin/oboard-controller"), filepath.Join(installRoot, "oboard-controller")},
+		{filepath.Join(stage, "bin/oboard-controller-updater"), filepath.Join(installRoot, "oboard-controller-updater")},
+		{filepath.Join(stage, "web/dist"), filepath.Join(installRoot, "web")},
+		{filepath.Join(stage, "downloads"), filepath.Join(installRoot, "downloads")},
+	} {
+		if err := copyTree(item.source, item.destination); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	assertFileMode(t, filepath.Join(installRoot, "oboard-controller"), 0o755)
+	assertFileMode(t, filepath.Join(installRoot, "oboard-controller-updater"), 0o755)
+	assertFileMode(t, filepath.Join(installRoot, "web"), 0o755)
+	assertFileMode(t, filepath.Join(installRoot, "web/assets"), 0o755)
+	assertFileMode(t, filepath.Join(installRoot, "web/index.html"), 0o644)
+	assertFileMode(t, filepath.Join(installRoot, "web/assets/app.js"), 0o644)
+	assertFileMode(t, filepath.Join(installRoot, "downloads"), 0o755)
+	assertFileMode(t, filepath.Join(installRoot, "downloads/release-manifest.json"), 0o644)
+}
+
+func assertFileMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("mode of %s = %04o, want %04o", path, got, want)
 	}
 }
 

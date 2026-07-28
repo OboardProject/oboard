@@ -138,6 +138,7 @@ type DNSTransport = 'udp' | 'tcp' | 'dot' | 'doh' | 'doq'
 type DNSListKind = 'encrypted' | 'bootstrap'
 type DNSCandidate = { tag: string; transport: DNSTransport; server: string; port: number; path?: string; tls_name?: string }
 type DNSList = { id: number; name: string; kind: DNSListKind; revision: number; candidates: DNSCandidate[]; enabled: boolean; protected: boolean; usage_count: number; created_at?: string; updated_at?: string }
+type DNSListDraft = { name: string; kind: DNSListKind; enabled: boolean; candidates: string }
 type ServerDNSPolicy = { server_id: number; encrypted_list_id: number; bootstrap_list_id: number; revision: number; strategy: string; auto_test: 'never' | 'first_apply' | 'periodic'; test_interval_seconds: number; encrypted_selected: DNSCandidate[]; bootstrap_selected: DNSCandidate[]; encrypted_selection_revision: number; bootstrap_selection_revision: number; last_attempt_at?: string; last_success_at?: string; last_error: string; needs_benchmark: boolean; updated_at?: string }
 type DNSBenchmarkItem = { tag: string; latency_ms: number; error?: string }
 type DNSBenchmarkGroup = { items: DNSBenchmarkItem[]; best_tags: string[] }
@@ -8980,25 +8981,56 @@ function parseDNSListCandidates(value: string, kind: DNSListKind) {
   return candidates
 }
 
+function DNSListDialog({ draft, setDraft, editing, saving, onCancel, onSave }: {
+  draft: DNSListDraft
+  setDraft: React.Dispatch<React.SetStateAction<DNSListDraft>>
+  editing: DNSList | null
+  saving: boolean
+  onCancel: () => void
+  onSave: () => void
+}) {
+  const update = (patch: Partial<DNSListDraft>) => setDraft(current => ({ ...current, ...patch }))
+  const typeLabel = draft.kind === 'encrypted' ? '加密解析' : '基础解析'
+  return <MotionDialogPanel onCancel={onCancel} className="dns-list-dialog">
+    <header className="dialog-head">
+      <div><h2>{editing ? '编辑解析服务列表' : '新建解析服务列表'}</h2><p className="muted">{editing ? editing.name : typeLabel}</p></div>
+      <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body">
+      <div className="form server-dialog-form labeled-form dns-list-dialog-form">
+        <FormField label="列表名称" required><input value={draft.name} onChange={event => update({ name: event.target.value })} placeholder={draft.kind === 'encrypted' ? '海外加密解析' : '公网基础解析'} autoFocus /></FormField>
+        <FormField label="列表类型" required><Select variant="segmented" value={draft.kind} disabled={Boolean(editing)} onChange={event => update({ kind: event.target.value as DNSListKind, candidates: '' })}><option value="encrypted">加密解析</option><option value="bootstrap">基础解析</option></Select></FormField>
+        <FormField label="解析服务" hint="每行填写：名称 | 服务地址" required><textarea rows={8} value={draft.candidates} onChange={event => update({ candidates: event.target.value })} placeholder={draft.kind === 'encrypted' ? 'Cloudflare | https://cloudflare-dns.com/dns-query\nGoogle | tls://dns.google' : 'Cloudflare | udp://1.1.1.1\nGoogle | tcp://8.8.8.8'} /></FormField>
+        <FormField label="使用状态"><div className="notification-enable-row"><input type="checkbox" checked={draft.enabled} onChange={event => update({ enabled: event.target.checked })} /><span>{draft.enabled ? '列表已启用' : '列表已停用'}</span></div></FormField>
+      </div>
+    </div>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button><button type="button" onClick={onSave} disabled={saving || !draft.name.trim() || !draft.candidates.trim()}>{saving ? '保存中…' : editing ? '保存修改' : '创建列表'}</button></footer>
+  </MotionDialogPanel>
+}
+
 function DNSListSettings({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
   const lists: DNSList[] = data.dns_lists || []
   const [filter, setFilter] = useState<DNSListKind>('encrypted')
   const [editing, setEditing] = useState<DNSList | null>(null)
-  const [draft, setDraft] = useState({ name: '', kind: 'encrypted' as DNSListKind, enabled: true, candidates: '' })
+  const [draft, setDraft] = useState<DNSListDraft>({ name: '', kind: 'encrypted', enabled: true, candidates: '' })
+  const [editorOpen, setEditorOpen] = useState(false)
   const [working, setWorking] = useState('')
-  const reset = (kind = filter) => { setEditing(null); setDraft({ name: '', kind, enabled: true, candidates: '' }) }
-  const edit = (list: DNSList) => { setEditing(list); setDraft({ name: list.name, kind: list.kind, enabled: list.enabled, candidates: serializeDNSListCandidates(list.candidates) }) }
-  const copy = (list: DNSList) => { setEditing(null); setFilter(list.kind); setDraft({ name: `${list.name} 副本`, kind: list.kind, enabled: true, candidates: serializeDNSListCandidates(list.candidates) }) }
+  const openCreate = (kind = filter) => { setEditing(null); setDraft({ name: '', kind, enabled: true, candidates: '' }); setEditorOpen(true) }
+  const edit = (list: DNSList) => { setEditing(list); setDraft({ name: list.name, kind: list.kind, enabled: list.enabled, candidates: serializeDNSListCandidates(list.candidates) }); setEditorOpen(true) }
+  const copy = (list: DNSList) => { setEditing(null); setFilter(list.kind); setDraft({ name: `${list.name} 副本`, kind: list.kind, enabled: true, candidates: serializeDNSListCandidates(list.candidates) }); setEditorOpen(true) }
+  const closeEditor = () => { if (!working) setEditorOpen(false) }
   const save = async () => {
     setWorking('save')
     try {
+      const wasEditing = Boolean(editing)
       const payload = { name: draft.name.trim(), kind: draft.kind, enabled: draft.enabled, candidates: parseDNSListCandidates(draft.candidates, draft.kind) }
       if (!payload.name) throw new Error('请填写服务列表名称')
       await client.request(editing ? `/dns-lists/${editing.id}` : '/dns-lists', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(payload) })
-      reset(draft.kind)
+      setEditorOpen(false)
+      setEditing(null)
       await load()
-      notify?.(editing ? '解析服务列表已更新' : '解析服务列表已创建', 'success')
+      notify?.(wasEditing ? '解析服务列表已更新' : '解析服务列表已创建', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const toggle = async (list: DNSList) => {
@@ -9014,23 +9046,15 @@ function DNSListSettings({ data, client, load, notify }: any) {
   }
   const visible = lists.filter(list => list.kind === filter)
   return <section className="settings-card dns-lists-card">
-    <div className="settings-card-head"><div><h3>解析服务列表</h3><p className="muted">为服务器准备可复用的加密解析和基础解析服务。</p></div><button className="ghost" onClick={() => reset(filter)}><Plus size={14} />新建列表</button></div>
-    <div className="dns-list-toolbar"><Select variant="segmented" value={filter} onChange={event => { const kind = event.target.value as DNSListKind; setFilter(kind); if (!editing) setDraft(old => ({ ...old, kind })) }}><option value="encrypted">加密解析</option><option value="bootstrap">基础解析</option></Select></div>
-    <div className="dns-list-layout">
-      <div className="dns-record-list">{visible.map(list => <div className="dns-record-row dns-list-row" key={list.id}>
+    <div className="settings-card-head"><div><h3>解析服务列表</h3><p className="muted">为服务器准备可复用的加密解析和基础解析服务。</p></div><button type="button" className="ghost" onClick={() => openCreate(filter)}><Plus size={14} />新建列表</button></div>
+    <div className="dns-list-toolbar"><Select variant="segmented" value={filter} onChange={event => setFilter(event.target.value as DNSListKind)}><option value="encrypted">加密解析</option><option value="bootstrap">基础解析</option></Select></div>
+    <div className="dns-record-list">{visible.length ? visible.map(list => <div className="dns-record-row dns-list-row" key={list.id}>
         <span className="record-type">{list.kind === 'encrypted' ? '加密' : '基础'}</span>
         <div className="record-main"><strong>{list.name}</strong><span>{Array.from(new Set(list.candidates.map(candidate => dnsTransportLabel(candidate.transport)))).join(' · ')}</span><small>{list.candidates.length} 个解析服务 · {list.usage_count} 台服务器使用</small></div>
         <span className={`status-pill ${list.enabled ? 'ok' : 'warning'}`}>{list.enabled ? '启用' : '禁用'}</span>
-        <div className="record-actions"><button className="ghost icon-button" onClick={() => copy(list)} title="复制"><Copy size={14} /></button><button className="ghost icon-button" onClick={() => edit(list)} disabled={list.protected} title={list.protected ? '默认列表不能修改' : '编辑'}><Edit3 size={14} /></button><button className="ghost icon-button" onClick={() => void toggle(list)} disabled={list.protected} title={list.enabled ? '禁用' : '启用'}><CheckSquare size={14} /></button><button className="ghost icon-button danger-text" onClick={() => void removeList(list)} disabled={list.protected} title={list.protected ? '默认列表不能删除' : '删除'}><Trash2 size={14} /></button></div>
-      </div>)}</div>
-      <div className="form settings-form dns-list-form">
-        <FormField label="列表名称"><input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder={draft.kind === 'encrypted' ? '海外加密解析' : '公网基础解析'} /></FormField>
-        <FormField label="列表类型"><Select variant="segmented" value={draft.kind} disabled={Boolean(editing)} onChange={event => setDraft({ ...draft, kind: event.target.value as DNSListKind, candidates: '' })}><option value="encrypted">加密解析</option><option value="bootstrap">基础解析</option></Select></FormField>
-        <FormField label="解析服务" hint="每行填写：名称 | 服务地址" full><textarea rows={7} value={draft.candidates} onChange={event => setDraft({ ...draft, candidates: event.target.value })} placeholder={draft.kind === 'encrypted' ? 'Cloudflare | https://cloudflare-dns.com/dns-query\nGoogle | tls://dns.google' : 'Cloudflare | udp://1.1.1.1\nGoogle | tcp://8.8.8.8'} /></FormField>
-        <label className="notification-enable-row"><input type="checkbox" checked={draft.enabled} onChange={event => setDraft({ ...draft, enabled: event.target.checked })} /><span>启用此服务列表</span></label>
-        <div className="settings-actions"><button onClick={() => void save()} disabled={Boolean(working) || !draft.name.trim()}>{working ? '保存中...' : editing ? '保存修改' : '创建列表'}</button>{(editing || draft.name || draft.candidates) && <button className="ghost" onClick={() => reset(draft.kind)}>取消</button>}</div>
-      </div>
-    </div>
+        <div className="record-actions"><button type="button" className="ghost icon-button" onClick={() => copy(list)} aria-label="复制" title="复制"><Copy size={14} /></button><button type="button" className="ghost icon-button" onClick={() => edit(list)} disabled={list.protected} aria-label={list.protected ? '默认列表不能修改' : '编辑'} title={list.protected ? '默认列表不能修改' : '编辑'}><Edit3 size={14} /></button><button type="button" className="ghost icon-button" onClick={() => void toggle(list)} disabled={list.protected} aria-label={list.enabled ? '禁用' : '启用'} title={list.enabled ? '禁用' : '启用'}><CheckSquare size={14} /></button><button type="button" className="ghost icon-button danger-text" onClick={() => void removeList(list)} disabled={list.protected} aria-label={list.protected ? '默认列表不能删除' : '删除'} title={list.protected ? '默认列表不能删除' : '删除'}><Trash2 size={14} /></button></div>
+      </div>) : <div className="empty-inline">暂无{filter === 'encrypted' ? '加密解析' : '基础解析'}列表</div>}</div>
+    <AnimatePresence>{editorOpen && <DNSListDialog draft={draft} setDraft={setDraft} editing={editing} saving={working === 'save'} onCancel={closeEditor} onSave={() => void save()} />}</AnimatePresence>
   </section>
 }
 
