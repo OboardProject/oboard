@@ -78,7 +78,7 @@ func (s *Store) DeleteGoogleEABCredential(ctx context.Context, id int64) error {
 }
 
 // #nosec G101 -- the query text names encrypted columns; it contains no credential material.
-const googleEABCredentialSelect = `select g.id,g.key_id,g.remark,g.hmac_key_encrypted,g.created_at,g.updated_at,count(c.id) from google_eab_credentials g left join certificates c on c.google_eab_credential_id=g.id`
+const googleEABCredentialSelect = `select g.id,g.key_id,g.remark,g.hmac_key_encrypted,g.created_at,g.updated_at,count(c.id)+(select count(*) from app_settings s where s.key='certificate_auto_issue_google_eab_credential_id' and s.value=cast(g.id as text)) from google_eab_credentials g left join certificates c on c.google_eab_credential_id=g.id`
 
 func scanGoogleEABCredentials(rows *sql.Rows) ([]model.GoogleEABCredential, error) {
 	items := []model.GoogleEABCredential{}

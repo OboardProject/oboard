@@ -3389,7 +3389,7 @@ function CertificateLogDialog({ certificate, onClose }: { certificate: Certifica
   </MotionDialogPanel>
 }
 
-function CertificateEABDialog({ keyID, hmacKey, remark, retain, configured, secretRequired, credentials, saving, deletingID, onChange, onSelectCredential, onDeleteCredential, onCancel, onSubmit }: { keyID: string; hmacKey: string; remark: string; retain: boolean; configured: boolean; secretRequired: boolean; credentials: GoogleEABCredential[]; saving: boolean; deletingID: number; onChange: (patch: { keyID?: string; hmacKey?: string; remark?: string; retain?: boolean }) => void; onSelectCredential: (credential: GoogleEABCredential) => void; onDeleteCredential: (credential: GoogleEABCredential) => void; onCancel: () => void; onSubmit: () => void }) {
+function CertificateEABDialog({ keyID, hmacKey, remark, retain, retainLocked = false, configured, secretRequired, credentials, saving, deletingID, onChange, onSelectCredential, onDeleteCredential, onCancel, onSubmit }: { keyID: string; hmacKey: string; remark: string; retain: boolean; retainLocked?: boolean; configured: boolean; secretRequired: boolean; credentials: GoogleEABCredential[]; saving: boolean; deletingID: number; onChange: (patch: { keyID?: string; hmacKey?: string; remark?: string; retain?: boolean }) => void; onSelectCredential: (credential: GoogleEABCredential) => void; onDeleteCredential: (credential: GoogleEABCredential) => void; onCancel: () => void; onSubmit: () => void }) {
   return <MotionDialogPanel onCancel={onCancel} className="certificate-eab-dialog">
     <header className="dialog-head"><div><h2>填写 Google EAB</h2><p className="muted">连接您的 Google Cloud 公共 CA 账号</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body">
@@ -3398,7 +3398,7 @@ function CertificateEABDialog({ keyID, hmacKey, remark, retain, configured, secr
       <div className="form server-dialog-form labeled-form">
         <FormField label="Key ID（密钥编号）" required hint="粘贴 Google 返回的 keyId。"><input value={keyID} onChange={event => onChange({ keyID: event.target.value })} autoComplete="off" spellCheck={false} /></FormField>
         <FormField label="HMAC Key（绑定密钥）" required={secretRequired} hint={retain && configured ? '长期保存需要重新填写 HMAC Key，原密钥无法再次查看。' : configured && !secretRequired ? '已保存。留空则保持当前值。' : configured ? '更换 Key ID 时，需要同时填写新的 HMAC Key。' : '粘贴 Google 返回的 b64MacKey。'}><input type="password" value={hmacKey} onChange={event => onChange({ hmacKey: event.target.value })} autoComplete="new-password" spellCheck={false} placeholder={configured && !secretRequired ? '留空保持当前值' : ''} /></FormField>
-        <label className="check-row"><input type="checkbox" checked={retain} onChange={event => onChange({ retain: event.target.checked })} /><span>保存到 EAB 列表，供以后签发使用</span></label>
+        <label className="check-row"><input type="checkbox" checked={retain} disabled={retainLocked} onChange={event => onChange({ retain: event.target.checked })} /><span>保存到 EAB 列表，供以后签发使用</span></label>
         {retain && <FormField label="备注" hint="只用于区分不同 EAB。"><input value={remark} maxLength={120} onChange={event => onChange({ remark: event.target.value })} placeholder="例如：生产账号" /></FormField>}
       </div>
       <div className="certificate-eab-saved">
@@ -3422,12 +3422,19 @@ function CertificateSettings({ data, client, load, notify }: any) {
   const [eabCredentials, setEABCredentials] = useState<GoogleEABCredential[]>(data.google_eab_credentials || [])
   const [autoMatch, setAutoMatch] = useState(data.settings?.certificate_auto_match_enabled !== false && data.settings?.certificate_auto_match_enabled !== 'false')
   const [preference, setPreference] = useState(data.settings?.certificate_default_preference === 'wildcard' ? 'wildcard' : 'subdomain')
+  const [autoIssueCA, setAutoIssueCA] = useState(String(data.settings?.certificate_auto_issue_acme_ca || 'letsencrypt'))
+  const [autoIssueEABCredentialID, setAutoIssueEABCredentialID] = useState(Number(data.settings?.certificate_auto_issue_google_eab_credential_id || 0))
   const [working, setWorking] = useState('')
   const [importDraft, setImportDraft] = useState({ name: '', certificate_pem: '', fullchain_pem: '', private_key_pem: '' })
-  const [eabTarget, setEABTarget] = useState<'draft' | Certificate | null>(null)
+  const [eabTarget, setEABTarget] = useState<'draft' | 'auto' | Certificate | null>(null)
   const [eabDraft, setEABDraft] = useState({ keyID: '', hmacKey: '', remark: '', retain: false })
   const [logCertificate, setLogCertificate] = useState<Certificate | null>(null)
-  useEffect(() => { setAutoMatch(data.settings?.certificate_auto_match_enabled !== false && data.settings?.certificate_auto_match_enabled !== 'false'); setPreference(data.settings?.certificate_default_preference === 'wildcard' ? 'wildcard' : 'subdomain') }, [data.settings])
+  useEffect(() => {
+    setAutoMatch(data.settings?.certificate_auto_match_enabled !== false && data.settings?.certificate_auto_match_enabled !== 'false')
+    setPreference(data.settings?.certificate_default_preference === 'wildcard' ? 'wildcard' : 'subdomain')
+    setAutoIssueCA(String(data.settings?.certificate_auto_issue_acme_ca || 'letsencrypt'))
+    setAutoIssueEABCredentialID(Number(data.settings?.certificate_auto_issue_google_eab_credential_id || 0))
+  }, [data.settings])
   useEffect(() => { setEABCredentials(data.google_eab_credentials || []) }, [data.google_eab_credentials])
   const createCertificate = async () => {
     const domains = String(draft.domains).split(/[\s,]+/).map(item => item.trim()).filter(Boolean)
@@ -3475,7 +3482,8 @@ function CertificateSettings({ data, client, load, notify }: any) {
     try { await client.request(`/certificates/${certificate.id}`, { method: 'DELETE' }); await load(); notify?.('证书已删除', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
   }
   const saveMatching = async () => {
-    try { await client.request('/settings', { method: 'POST', body: JSON.stringify({ certificate_auto_match_enabled: autoMatch, certificate_default_preference: preference }) }); await load(); notify?.('证书匹配设置已保存', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
+    if (autoIssueCA === 'google' && !autoIssueEABCredentialID) return
+    try { await client.request('/settings', { method: 'POST', body: JSON.stringify({ certificate_auto_match_enabled: autoMatch, certificate_default_preference: preference, certificate_auto_issue_acme_ca: autoIssueCA, certificate_auto_issue_google_eab_credential_id: autoIssueCA === 'google' ? autoIssueEABCredentialID : 0 }) }); await load(); notify?.('证书自动匹配与签发设置已保存', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
   }
   const importCertificate = async () => {
     if (!importDraft.certificate_pem.trim() || !importDraft.private_key_pem.trim()) return
@@ -3485,6 +3493,10 @@ function CertificateSettings({ data, client, load, notify }: any) {
     setEABDraft({ keyID: String(draft.eab_key_id || ''), hmacKey: String(draft.eab_hmac_key || ''), remark: '', retain: false })
     setEABTarget('draft')
   }
+  const openAutoIssueEAB = () => {
+    setEABDraft({ keyID: '', hmacKey: '', remark: '', retain: true })
+    setEABTarget('auto')
+  }
   const openCertificateEAB = (certificate: Certificate) => {
     setEABDraft({ keyID: certificate.google_eab_credential_id ? '' : certificate.eab_key_id || '', hmacKey: '', remark: '', retain: false })
     setEABTarget(certificate)
@@ -3493,11 +3505,17 @@ function CertificateSettings({ data, client, load, notify }: any) {
     setEABTarget(null)
     setEABDraft({ keyID: '', hmacKey: '', remark: '', retain: false })
   }
-  const existingDirectEAB = Boolean(eabTarget && eabTarget !== 'draft' && !eabTarget.google_eab_credential_id && eabTarget.eab_configured)
-  const eabSecretRequired = eabDraft.retain || eabTarget === 'draft' || Boolean(eabTarget && (!existingDirectEAB || eabDraft.keyID !== (eabTarget.eab_key_id || '')))
+  const certificateEABTarget = eabTarget && typeof eabTarget !== 'string' ? eabTarget : null
+  const existingDirectEAB = Boolean(certificateEABTarget && !certificateEABTarget.google_eab_credential_id && certificateEABTarget.eab_configured)
+  const eabSecretRequired = eabDraft.retain || eabTarget === 'draft' || eabTarget === 'auto' || Boolean(certificateEABTarget && (!existingDirectEAB || eabDraft.keyID !== (certificateEABTarget.eab_key_id || '')))
   const selectSavedEAB = async (credential: GoogleEABCredential) => {
     if (eabTarget === 'draft') {
       setDraft((current: any) => ({ ...current, google_eab_credential_id: credential.id, eab_key_id: '', eab_hmac_key: '' }))
+      closeEAB()
+      return
+    }
+    if (eabTarget === 'auto') {
+      setAutoIssueEABCredentialID(credential.id)
       closeEAB()
       return
     }
@@ -3512,10 +3530,10 @@ function CertificateSettings({ data, client, load, notify }: any) {
   }
   const saveEAB = async () => {
     if (!eabDraft.keyID || (eabSecretRequired && !eabDraft.hmacKey)) return
-    setWorking(eabTarget === 'draft' ? 'eab-save-draft' : `eab-save-${eabTarget?.id || 0}`)
+    setWorking(eabTarget === 'draft' ? 'eab-save-draft' : eabTarget === 'auto' ? 'eab-save-auto' : `eab-save-${eabTarget?.id || 0}`)
     try {
       let credentialID = 0
-      if (eabDraft.retain) {
+      if (eabDraft.retain || eabTarget === 'auto') {
         const result = await client.request('/google-eab-credentials', { method: 'POST', body: JSON.stringify({ key_id: eabDraft.keyID, hmac_key: eabDraft.hmacKey, remark: eabDraft.remark }) })
         const credential = result.google_eab_credential as GoogleEABCredential
         credentialID = credential.id
@@ -3527,6 +3545,11 @@ function CertificateSettings({ data, client, load, notify }: any) {
           : { ...current, google_eab_credential_id: 0, eab_key_id: eabDraft.keyID, eab_hmac_key: eabDraft.hmacKey })
         closeEAB()
         if (credentialID) await load(undefined, { background: true })
+        return
+      }
+      if (eabTarget === 'auto') {
+        setAutoIssueEABCredentialID(credentialID)
+        closeEAB()
         return
       }
       if (!eabTarget) return
@@ -3548,6 +3571,7 @@ function CertificateSettings({ data, client, load, notify }: any) {
       await client.request(`/google-eab-credentials/${credential.id}`, { method: 'DELETE' })
       setEABCredentials(current => current.filter(item => item.id !== credential.id))
       setDraft((current: any) => Number(current.google_eab_credential_id || 0) === credential.id ? { ...current, google_eab_credential_id: 0 } : current)
+      setAutoIssueEABCredentialID(current => current === credential.id ? 0 : current)
       await load(undefined, { background: true })
       notify?.('已删除保存的 Google EAB', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
@@ -3580,8 +3604,13 @@ function CertificateSettings({ data, client, load, notify }: any) {
       <details className="advanced-config"><summary>导入现有证书</summary><div className="form settings-form"><FormField label="名称"><input value={importDraft.name} onChange={e => setImportDraft({ ...importDraft, name: e.target.value })} /></FormField><FormField label="证书 PEM"><textarea rows={4} value={importDraft.certificate_pem} onChange={e => setImportDraft({ ...importDraft, certificate_pem: e.target.value })} /></FormField><FormField label="完整链 PEM"><textarea rows={4} value={importDraft.fullchain_pem} onChange={e => setImportDraft({ ...importDraft, fullchain_pem: e.target.value })} /></FormField><FormField label="私钥 PEM"><textarea rows={4} value={importDraft.private_key_pem} onChange={e => setImportDraft({ ...importDraft, private_key_pem: e.target.value })} /></FormField><button onClick={importCertificate}>导入</button></div></details>
     </section>
     <section className="settings-card">
-      <div className="settings-card-head"><div><h3>自动匹配</h3><p className="muted">入口域名的全局默认策略</p></div><button onClick={saveMatching}>保存</button></div>
-      <div className="form settings-form"><label className="check-row"><input type="checkbox" checked={autoMatch} onChange={e => setAutoMatch(e.target.checked)} /><span>启用自动匹配</span></label><FormField label="默认策略"><Select variant="segmented" value={preference} onChange={e => setPreference(e.target.value)}><option value="subdomain">精确子域证书</option><option value="wildcard">泛域名证书</option></Select></FormField></div>
+      <div className="settings-card-head"><div><h3>自动匹配</h3><p className="muted">入口域名的全局默认策略</p></div><button onClick={saveMatching} disabled={autoIssueCA === 'google' && !autoIssueEABCredentialID}>保存</button></div>
+      <div className="form settings-form">
+        <label className="check-row"><input type="checkbox" checked={autoMatch} onChange={e => setAutoMatch(e.target.checked)} /><span>启用自动匹配</span></label>
+        <FormField label="默认策略"><Select variant="segmented" value={preference} onChange={e => setPreference(e.target.value)}><option value="subdomain">精确子域证书</option><option value="wildcard">泛域名证书</option></Select></FormField>
+        <FormField label="自动签发 CA"><Select value={autoIssueCA} onChange={e => { setAutoIssueCA(e.target.value); if (e.target.value !== 'google') setAutoIssueEABCredentialID(0) }}><option value="letsencrypt">Let's Encrypt</option><option value="zerossl">ZeroSSL</option><option value="buypass">Buypass</option><option value="google">Google Trust Services</option></Select></FormField>
+        {autoIssueCA === 'google' && <div className="certificate-eab-row"><div className="certificate-eab-state"><KeyRound size={16} /><span><strong>默认 Google EAB</strong><small>{autoIssueEABCredentialID ? '新建自动证书时使用此 EAB' : 'Google Trust Services 自动签发必须选择 EAB'}</small></span></div><div className="certificate-eab-controls"><Select value={autoIssueEABCredentialID || 0} onChange={event => setAutoIssueEABCredentialID(Number(event.target.value) || 0)}><option value={0}>选择已保存的 EAB</option>{eabCredentials.map(credential => <option key={credential.id} value={credential.id}>{credential.key_id}{credential.remark ? ` · ${credential.remark}` : ''}</option>)}</Select><button type="button" className="ghost" onClick={openAutoIssueEAB}><Plus size={14} />新增 EAB</button></div></div>}
+      </div>
       <div className="dns-record-list certificate-record-list">{certificates.map(certificate => {
         const ready = certificate.status === 'ready'
         const issueAction = ready ? 'renew' : 'issue'
@@ -3603,7 +3632,7 @@ function CertificateSettings({ data, client, load, notify }: any) {
       })}</div>
     </section>
     <AnimatePresence>{logCertificate && <CertificateLogDialog certificate={logCertificate} onClose={() => setLogCertificate(null)} />}</AnimatePresence>
-    <AnimatePresence>{eabTarget && <CertificateEABDialog keyID={eabDraft.keyID} hmacKey={eabDraft.hmacKey} remark={eabDraft.remark} retain={eabDraft.retain} configured={existingDirectEAB} secretRequired={eabSecretRequired} credentials={eabCredentials} saving={working.startsWith('eab-') && !working.startsWith('eab-delete-')} deletingID={working.startsWith('eab-delete-') ? Number(working.slice('eab-delete-'.length)) : 0} onChange={patch => setEABDraft(current => ({ ...current, ...patch }))} onSelectCredential={credential => void selectSavedEAB(credential)} onDeleteCredential={credential => void deleteSavedEAB(credential)} onCancel={closeEAB} onSubmit={() => void saveEAB()} />}</AnimatePresence>
+    <AnimatePresence>{eabTarget && <CertificateEABDialog keyID={eabDraft.keyID} hmacKey={eabDraft.hmacKey} remark={eabDraft.remark} retain={eabDraft.retain} retainLocked={eabTarget === 'auto'} configured={existingDirectEAB} secretRequired={eabSecretRequired} credentials={eabCredentials} saving={working.startsWith('eab-') && !working.startsWith('eab-delete-')} deletingID={working.startsWith('eab-delete-') ? Number(working.slice('eab-delete-'.length)) : 0} onChange={patch => setEABDraft(current => ({ ...current, ...patch }))} onSelectCredential={credential => void selectSavedEAB(credential)} onDeleteCredential={credential => void deleteSavedEAB(credential)} onCancel={closeEAB} onSubmit={() => void saveEAB()} />}</AnimatePresence>
   </div>
 }
 

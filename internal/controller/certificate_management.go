@@ -38,6 +38,11 @@ type certificateRequest struct {
 
 const certificateEABHMACKeyPurpose = "certificate-eab-hmac-key"
 
+const (
+	settingCertificateAutoIssueACMECA              = "certificate_auto_issue_acme_ca"
+	settingCertificateAutoIssueGoogleEABCredential = "certificate_auto_issue_google_eab_credential_id"
+)
+
 var errCertificateProvisioning = errors.New("certificate provisioning in progress")
 
 func (s *Server) certificates(w http.ResponseWriter, r *http.Request) {
@@ -659,7 +664,7 @@ func (s *Server) prepareCertificateInbounds(ctx context.Context, inbounds []mode
 			if selectionMode == model.CertificateModeExplicit {
 				return nil, nil, fmt.Errorf("inbound %d: %w", inbound.ID, err)
 			}
-			if issueErr := s.ensureManagedCertificateIssue(ctx, *inbound, selectionMode, domain, certificates); issueErr != nil {
+			if issueErr := s.ensureManagedCertificateIssue(ctx, *inbound, selectionMode, domain, certificates, settings); issueErr != nil {
 				return nil, nil, fmt.Errorf("inbound %d: %w", inbound.ID, issueErr)
 			}
 			return nil, nil, fmt.Errorf("inbound %d: %w", inbound.ID, errCertificateProvisioning)
@@ -706,7 +711,7 @@ func certificateIssuanceDomain(mode, domain string) (string, error) {
 	return "*." + domain[labelEnd+1:], nil
 }
 
-func (s *Server) ensureManagedCertificateIssue(ctx context.Context, inbound model.Inbound, selectionMode, domain string, certificates []model.Certificate) error {
+func (s *Server) ensureManagedCertificateIssue(ctx context.Context, inbound model.Inbound, selectionMode, domain string, certificates []model.Certificate, settings map[string]string) error {
 	if inbound.DNSCredentialID == nil || *inbound.DNSCredentialID <= 0 {
 		return errors.New("自动申请证书需要入口的域名服务账号")
 	}
@@ -740,12 +745,9 @@ func (s *Server) ensureManagedCertificateIssue(ctx context.Context, inbound mode
 	}
 
 	credentialID := *inbound.DNSCredentialID
-	request := certificateRequest{
-		Name:            "自动证书 " + issuanceDomain,
-		Domains:         []string{issuanceDomain},
-		ChallengeType:   model.CertificateChallengeDNS,
-		DNSCredentialID: &credentialID,
-		ACMECA:          "letsencrypt",
+	request, err := automaticCertificateRequest(settings, issuanceDomain, credentialID)
+	if err != nil {
+		return err
 	}
 	certificate, err := s.buildCertificate(request, nil)
 	if err != nil {
@@ -761,6 +763,43 @@ func (s *Server) ensureManagedCertificateIssue(ctx context.Context, inbound mode
 		return err
 	}
 	return fmt.Errorf("%w: 已自动创建并开始签发 %s", errCertificateProvisioning, issuanceDomain)
+}
+
+func automaticCertificateRequest(settings map[string]string, issuanceDomain string, dnsCredentialID int64) (certificateRequest, error) {
+	acmeCA, googleEABCredentialID, err := automaticCertificateIssuerSettings(settings)
+	if err != nil {
+		return certificateRequest{}, err
+	}
+	request := certificateRequest{
+		Name:            "自动证书 " + issuanceDomain,
+		Domains:         []string{issuanceDomain},
+		ChallengeType:   model.CertificateChallengeDNS,
+		DNSCredentialID: &dnsCredentialID,
+		ACMECA:          acmeCA,
+	}
+	if googleEABCredentialID > 0 {
+		request.GoogleEABCredentialID = &googleEABCredentialID
+	}
+	return request, nil
+}
+
+func automaticCertificateIssuerSettings(settings map[string]string) (string, int64, error) {
+	acmeCA := strings.ToLower(strings.TrimSpace(settings[settingCertificateAutoIssueACMECA]))
+	if acmeCA == "" {
+		acmeCA = "letsencrypt"
+	}
+	switch acmeCA {
+	case "letsencrypt", "zerossl", "buypass":
+		return acmeCA, 0, nil
+	case "google":
+	default:
+		return "", 0, fmt.Errorf("不支持自动签发 ACME CA %q", acmeCA)
+	}
+	credentialID, err := strconv.ParseInt(strings.TrimSpace(settings[settingCertificateAutoIssueGoogleEABCredential]), 10, 64)
+	if err != nil || credentialID <= 0 {
+		return "", 0, errors.New("Google Trust Services 自动签发需要选择默认 EAB")
+	}
+	return acmeCA, credentialID, nil
 }
 
 func containsCertificateDomain(domains []string, want string) bool {

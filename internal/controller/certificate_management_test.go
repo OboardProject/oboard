@@ -69,6 +69,19 @@ func TestCertificateMaterialAndSelection(t *testing.T) {
 	if wildcardDomainMatches("*.example.com", "deep.entry.example.com") {
 		t.Fatal("wildcard matched more than one DNS label")
 	}
+	automaticRequest, err := automaticCertificateRequest(map[string]string{
+		settingCertificateAutoIssueACMECA:              "google",
+		settingCertificateAutoIssueGoogleEABCredential: "42",
+	}, "entry.example.com", 7)
+	if err != nil || automaticRequest.ACMECA != "google" || automaticRequest.GoogleEABCredentialID == nil || *automaticRequest.GoogleEABCredentialID != 42 {
+		t.Fatalf("automatic Google certificate request = %#v, err=%v", automaticRequest, err)
+	}
+	if automaticRequest.DNSCredentialID == nil || *automaticRequest.DNSCredentialID != 7 {
+		t.Fatalf("automatic certificate DNS credential = %#v", automaticRequest.DNSCredentialID)
+	}
+	if _, err := automaticCertificateRequest(map[string]string{settingCertificateAutoIssueACMECA: "google"}, "entry.example.com", 7); err == nil {
+		t.Fatal("automatic Google certificate request accepted no default EAB")
+	}
 }
 
 func TestNormalizeInboundKeepsCustomCertificateDomain(t *testing.T) {
@@ -257,6 +270,22 @@ func TestSavedGoogleEABCredentialAPIAndCertificateSelection(t *testing.T) {
 	if len(listed) != 1 {
 		t.Fatalf("saved Google EAB list = %#v", listed)
 	}
+	request(t, h, http.MethodPost, "/api/v1/settings", token, map[string]any{
+		"certificate_auto_issue_acme_ca": "google",
+	}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/settings", token, map[string]any{
+		"certificate_auto_issue_acme_ca": "google", "certificate_auto_issue_google_eab_credential_id": credentialID + 1,
+	}, http.StatusBadRequest)
+	settingsResponse := request(t, h, http.MethodPost, "/api/v1/settings", token, map[string]any{
+		"certificate_auto_issue_acme_ca": "google", "certificate_auto_issue_google_eab_credential_id": credentialID,
+	}, http.StatusOK)["settings"].(map[string]any)
+	if settingsResponse[settingCertificateAutoIssueACMECA] != "google" || settingsResponse[settingCertificateAutoIssueGoogleEABCredential] != strconv.FormatInt(credentialID, 10) {
+		t.Fatalf("automatic certificate issuer settings = %#v", settingsResponse)
+	}
+	request(t, h, http.MethodDelete, "/api/v1/google-eab-credentials/"+strconv.FormatInt(credentialID, 10), token, nil, http.StatusConflict)
+	request(t, h, http.MethodPost, "/api/v1/settings", token, map[string]any{
+		"certificate_auto_issue_acme_ca": "letsencrypt",
+	}, http.StatusOK)
 
 	createdCertificate := request(t, h, http.MethodPost, "/api/v1/certificates", token, map[string]any{
 		"name": "saved-google-eab", "domains": []string{"saved.example.com"}, "challenge_type": model.CertificateChallengeDNSManual,

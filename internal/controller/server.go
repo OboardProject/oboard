@@ -444,6 +444,8 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			BasePath                *string `json:"base_path"`
 			CertificateAutoMatch    *bool   `json:"certificate_auto_match_enabled"`
 			CertificatePreference   *string `json:"certificate_default_preference"`
+			CertificateAutoIssueCA  *string `json:"certificate_auto_issue_acme_ca"`
+			CertificateAutoIssueEAB *int64  `json:"certificate_auto_issue_google_eab_credential_id"`
 			SubscriptionAgePolicy   *string `json:"subscription_age_policy"`
 			TrafficTimezone         *string `json:"traffic_timezone"`
 			TrafficEnforcementMode  *string `json:"traffic_enforcement_mode"`
@@ -459,6 +461,36 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		if req.BasePath != nil && req.ControllerURL != nil {
 			fail(w, errors.New("base_path and controller_url must be updated separately"), http.StatusBadRequest)
 			return
+		}
+		autoIssueSettings := map[string]string{}
+		if req.CertificateAutoIssueCA != nil || req.CertificateAutoIssueEAB != nil {
+			currentSettings, err := s.store.ListSettings(r.Context())
+			if err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			for key, value := range currentSettings {
+				autoIssueSettings[key] = value
+			}
+			if req.CertificateAutoIssueCA != nil {
+				autoIssueSettings[settingCertificateAutoIssueACMECA] = strings.ToLower(strings.TrimSpace(*req.CertificateAutoIssueCA))
+			}
+			if req.CertificateAutoIssueEAB != nil {
+				autoIssueSettings[settingCertificateAutoIssueGoogleEABCredential] = strconv.FormatInt(*req.CertificateAutoIssueEAB, 10)
+			}
+			acmeCA, eabCredentialID, err := automaticCertificateIssuerSettings(autoIssueSettings)
+			if err != nil {
+				fail(w, err, http.StatusBadRequest)
+				return
+			}
+			autoIssueSettings = map[string]string{settingCertificateAutoIssueACMECA: acmeCA, settingCertificateAutoIssueGoogleEABCredential: "0"}
+			if eabCredentialID > 0 {
+				if _, err := s.store.GetGoogleEABCredential(r.Context(), eabCredentialID); err != nil {
+					fail(w, errors.New("默认 Google EAB 不存在，请重新选择"), http.StatusBadRequest)
+					return
+				}
+				autoIssueSettings[settingCertificateAutoIssueGoogleEABCredential] = strconv.FormatInt(eabCredentialID, 10)
+			}
 		}
 		changed := []string{}
 		redirectPath := ""
@@ -507,6 +539,13 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			changed = append(changed, "certificate_default_preference")
+		}
+		if len(autoIssueSettings) > 0 {
+			if err := s.store.SetSettings(r.Context(), autoIssueSettings); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingCertificateAutoIssueACMECA, settingCertificateAutoIssueGoogleEABCredential)
 		}
 		if req.SubscriptionAgePolicy != nil {
 			policy := strings.TrimSpace(strings.ToLower(*req.SubscriptionAgePolicy))
@@ -637,7 +676,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", "subscription_age_policy": "optional", "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false}
 	for key, value := range items {
 		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting {
 			continue
