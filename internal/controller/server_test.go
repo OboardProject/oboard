@@ -153,9 +153,13 @@ func TestDNSListCRUDValidationAndDefaultProtection(t *testing.T) {
 	if len(defaults) != 2 || defaults[0].(map[string]any)["protected"] != true || defaults[1].(map[string]any)["protected"] != true {
 		t.Fatalf("default dns lists = %#v", defaults)
 	}
-	request(t, h, http.MethodPut, fmt.Sprintf("/api/v1/dns-lists/%d", int64(defaults[0].(map[string]any)["id"].(float64))), token, map[string]any{
-		"name": "changed", "kind": defaults[0].(map[string]any)["kind"], "enabled": true, "candidates": defaults[0].(map[string]any)["candidates"],
-	}, http.StatusConflict)
+	updatedDefault := request(t, h, http.MethodPut, fmt.Sprintf("/api/v1/dns-lists/%d", int64(defaults[0].(map[string]any)["id"].(float64))), token, map[string]any{
+		"name": "changed", "kind": defaults[0].(map[string]any)["kind"], "enabled": false, "candidates": defaults[0].(map[string]any)["candidates"],
+	}, http.StatusOK)["dns_list"].(map[string]any)
+	if updatedDefault["name"] != "changed" || updatedDefault["protected"] != true || updatedDefault["enabled"] != true {
+		t.Fatalf("updated default dns list = %#v", updatedDefault)
+	}
+	request(t, h, http.MethodDelete, fmt.Sprintf("/api/v1/dns-lists/%d", int64(updatedDefault["id"].(float64))), token, nil, http.StatusConflict)
 	request(t, h, http.MethodPost, "/api/v1/dns-lists", token, map[string]any{
 		"name": "invalid bootstrap", "kind": "bootstrap", "candidates": []map[string]any{
 			{"tag": "domain", "transport": "udp", "server": "dns.example", "port": 53},

@@ -7619,6 +7619,10 @@ func (s *Server) dnsLists(w http.ResponseWriter, r *http.Request) {
 		}
 		v.ID = id
 		v.Kind = current.Kind
+		v.Protected = current.Protected
+		if current.Protected {
+			v.Enabled = true
+		}
 		if err := core.ValidateDNSList(v); err != nil {
 			fail(w, err, 400)
 			return

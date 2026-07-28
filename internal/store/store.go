@@ -2976,11 +2976,12 @@ func (s *Store) UpdateDNSList(ctx context.Context, v *model.DNSList) (bool, erro
 	if err := tx.QueryRowContext(ctx, `select protected,candidates_json,revision,kind from dns_lists where id=?`, v.ID).Scan(&protected, &oldCandidates, &oldRevision, &oldKind); err != nil {
 		return false, err
 	}
-	if protected == 1 {
-		return false, errors.New("protected dns list is read-only")
-	}
 	if v.Kind != oldKind {
 		return false, errors.New("dns list kind cannot be changed")
+	}
+	v.Protected = protected == 1
+	if v.Protected {
+		v.Enabled = true
 	}
 	encoded, err := json.Marshal(v.Candidates)
 	if err != nil {

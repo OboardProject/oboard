@@ -833,7 +833,7 @@ func TestDNSListRevisionInvalidatesOnlyReferencedSelection(t *testing.T) {
 	}
 }
 
-func TestDefaultDNSListsAreProtectedAndReferencedDeletionConflicts(t *testing.T) {
+func TestDefaultDNSListsAreEditableAndReferencedDeletionConflicts(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -848,9 +848,13 @@ func TestDefaultDNSListsAreProtectedAndReferencedDeletionConflicts(t *testing.T)
 		if !list.Protected || !list.Enabled {
 			t.Fatalf("default list is not protected: %#v", list)
 		}
+		oldRevision := list.Revision
 		list.Name += " changed"
-		if _, err := s.UpdateDNSList(ctx, &list); err == nil {
-			t.Fatalf("protected list %d was updated", list.ID)
+		list.Candidates[0].Tag += "-changed"
+		list.Enabled = false
+		changed, err := s.UpdateDNSList(ctx, &list)
+		if err != nil || !changed || !list.Protected || !list.Enabled || list.Revision != oldRevision+1 {
+			t.Fatalf("updated default list = %#v, changed=%v, err=%v", list, changed, err)
 		}
 		if err := s.DeleteDNSList(ctx, list.ID); err == nil {
 			t.Fatalf("protected list %d was deleted", list.ID)
