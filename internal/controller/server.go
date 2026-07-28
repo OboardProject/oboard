@@ -1468,7 +1468,7 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("admin already bootstrapped"), 409)
 		return
 	}
-	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &u.ID, Action: "bootstrap", Target: "user", Detail: u.Username, IP: r.RemoteAddr})
+	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &u.ID, Action: "bootstrap", Target: "user", Detail: u.Username, IP: clientIP(r)})
 	write(w, 201, map[string]any{"user": u})
 }
 
@@ -1530,7 +1530,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearSessionCookies(w, r)
-	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &user.ID, Action: "logout", Target: "user", Detail: user.Username, IP: r.RemoteAddr})
+	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &user.ID, Action: "logout", Target: "user", Detail: user.Username, IP: clientIP(r)})
 	write(w, http.StatusOK, map[string]any{"ok": true, "session_revoked": true})
 }
 
@@ -1577,7 +1577,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &user.ID, Action: "change_password", Target: "user", Detail: user.Username, IP: r.RemoteAddr})
+	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &user.ID, Action: "change_password", Target: "user", Detail: user.Username, IP: clientIP(r)})
 	write(w, 200, map[string]any{"ok": true, "session_revoked": true})
 }
 
@@ -1776,10 +1776,15 @@ func requestUsesHTTPS(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
-	if security.EnvBool("OBOARD_TRUST_PROXY", false) {
-		return strings.EqualFold(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]), "https")
+	if trustedProxyRequest(r) {
+		return strings.EqualFold(lastHeaderValue(r.Header.Get("X-Forwarded-Proto")), "https")
 	}
 	return false
+}
+
+func trustedProxyRequest(r *http.Request) bool {
+	peer, ok := requestPeerIP(r)
+	return (ok && peer.IsLoopback()) || security.EnvBool("OBOARD_TRUST_PROXY", false)
 }
 
 func (s *Server) allowRate(w http.ResponseWriter, r *http.Request, key string, limit int, window time.Duration) bool {
@@ -1797,11 +1802,50 @@ func (s *Server) allowRate(w http.ResponseWriter, r *http.Request, key string, l
 }
 
 func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
+	peer, peerValid := requestPeerIP(r)
+	if trustedProxyRequest(r) {
+		if forwarded := normalizedIP(r.Header.Get("X-Real-IP")); forwarded != "" {
+			return forwarded
+		}
+		if forwarded := normalizedIP(lastHeaderValue(r.Header.Get("X-Forwarded-For"))); forwarded != "" {
+			return forwarded
+		}
+	}
+	if peerValid {
+		return peer.String()
 	}
 	return r.RemoteAddr
+}
+
+func requestPeerIP(r *http.Request) (netip.Addr, bool) {
+	value := strings.TrimSpace(r.RemoteAddr)
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	}
+	value = strings.Trim(value, "[]")
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return addr.Unmap(), true
+}
+
+func normalizedIP(value string) string {
+	value = strings.TrimSpace(value)
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	}
+	value = strings.Trim(value, "[]")
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return ""
+	}
+	return addr.Unmap().String()
+}
+
+func lastHeaderValue(value string) string {
+	parts := strings.Split(value, ",")
+	return strings.TrimSpace(parts[len(parts)-1])
 }
 
 func currentRole(r *http.Request) model.Role {
@@ -8877,7 +8921,7 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	_ = s.store.AddAudit(r.Context(), model.AuditLog{Action: "agent_enroll", Target: "server", Detail: server.Name, IP: r.RemoteAddr})
+	_ = s.store.AddAudit(r.Context(), model.AuditLog{Action: "agent_enroll", Target: "server", Detail: server.Name, IP: clientIP(r)})
 	write(w, 200, model.AgentEnrollResponse{ServerID: server.ID, AgentID: agentID, AgentToken: agentToken, ConnectionAuditEnabled: server.ConnectionAuditEnabled})
 }
 
@@ -11354,7 +11398,7 @@ func validJSONObject(raw string) error {
 }
 func auditReq(s *Server, r *http.Request, action, target, detail string) {
 	if claims, ok := r.Context().Value(claimsKey).(security.TokenClaims); ok {
-		_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &claims.Subject, Action: action, Target: target, Detail: detail, IP: r.RemoteAddr})
+		_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &claims.Subject, Action: action, Target: target, Detail: detail, IP: clientIP(r)})
 	}
 }
 

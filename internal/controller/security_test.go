@@ -151,10 +151,49 @@ func TestSessionCookieSecureAttributeFollowsTrustedTransport(t *testing.T) {
 	assertSecure("direct HTTPS", httptest.NewRequest(http.MethodGet, "https://panel.example/", nil), true)
 	assertSecure("local HTTP", httptest.NewRequest(http.MethodGet, "http://localhost/", nil), false)
 
+	localProxy := httptest.NewRequest(http.MethodGet, "http://controller/", nil)
+	localProxy.RemoteAddr = "127.0.0.1:53000"
+	localProxy.Header.Set("X-Forwarded-Proto", "https")
+	assertSecure("local HTTPS proxy", localProxy, true)
+	if !webAuthnSupportedForRequest(localProxy) {
+		t.Fatal("passkeys should be available through a local HTTPS proxy")
+	}
+
+	untrustedProxy := httptest.NewRequest(http.MethodGet, "http://controller/", nil)
+	untrustedProxy.RemoteAddr = "203.0.113.10:53000"
+	untrustedProxy.Header.Set("X-Forwarded-Proto", "https")
+	assertSecure("untrusted proxy header", untrustedProxy, false)
+	if webAuthnSupportedForRequest(untrustedProxy) {
+		t.Fatal("passkeys should not trust HTTPS headers from a direct client")
+	}
+
 	t.Setenv("OBOARD_TRUST_PROXY", "true")
-	proxied := httptest.NewRequest(http.MethodGet, "http://controller/", nil)
-	proxied.Header.Set("X-Forwarded-Proto", "https")
-	assertSecure("trusted HTTPS proxy", proxied, true)
+	assertSecure("configured HTTPS proxy", untrustedProxy, true)
+}
+
+func TestClientIPUsesHeadersOnlyFromTrustedProxy(t *testing.T) {
+	t.Setenv("OBOARD_TRUST_PROXY", "false")
+
+	localProxy := httptest.NewRequest(http.MethodGet, "http://controller/", nil)
+	localProxy.RemoteAddr = "127.0.0.1:53000"
+	localProxy.Header.Set("X-Real-IP", "198.51.100.7")
+	localProxy.Header.Set("X-Forwarded-For", "192.0.2.9, 198.51.100.8")
+	if got := clientIP(localProxy); got != "198.51.100.7" {
+		t.Fatalf("local proxy client IP = %q, want 198.51.100.7", got)
+	}
+
+	localProxy.Header.Del("X-Real-IP")
+	if got := clientIP(localProxy); got != "198.51.100.8" {
+		t.Fatalf("local proxy forwarded client IP = %q, want 198.51.100.8", got)
+	}
+
+	direct := httptest.NewRequest(http.MethodGet, "http://controller/", nil)
+	direct.RemoteAddr = "203.0.113.10:53000"
+	direct.Header.Set("X-Real-IP", "198.51.100.7")
+	direct.Header.Set("X-Forwarded-For", "198.51.100.8")
+	if got := clientIP(direct); got != "203.0.113.10" {
+		t.Fatalf("direct client IP = %q, want 203.0.113.10", got)
+	}
 }
 
 func TestUserDisableAndDirectRoleDemotionRevokeSessions(t *testing.T) {
