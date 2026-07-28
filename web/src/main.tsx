@@ -61,7 +61,7 @@ import { Select } from './components/ui/select'
 import { Toast } from './components/ui/toast'
 import { Dialog } from './components/ui/dialog'
 import { TableSkeleton, CardSkeleton, DashboardSkeleton } from './components/ui/skeleton'
-import { AnimatePresence, LazyMotion, domAnimation, m, motion } from 'motion/react'
+import { AnimatePresence, LazyMotion, domAnimation, m, motion, useReducedMotion } from 'motion/react'
 import { MotionPage, MotionDialogPanel, MotionList, MotionCard } from './components/ui/motion'
 import { CustomSelect } from './components/ui/CustomSelect'
 import { SearchableMultiSelect } from './components/ui/SearchableMultiSelect'
@@ -2563,6 +2563,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   const [installPhase, setInstallPhase] = useState<ControllerUpdateInstallPhase>('confirm')
   const [installConnectionInterrupted, setInstallConnectionInterrupted] = useState(false)
   const [installFailure, setInstallFailure] = useState('')
+  const shouldReduceMotion = useReducedMotion()
   const installExpectedRef = useRef(false)
   const cancelExpectedRef = useRef(false)
   const installRequestPendingRef = useRef(false)
@@ -2745,17 +2746,29 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   const channelLabel = snapshot.channel === 'dev' ? '开发版' : snapshot.channel === 'stable' ? '正式版' : snapshot.channel === 'pinned' ? '固定版本' : '未知'
   const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || ['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status) ? 'warning' : 'ok'
   const updateInProgress = installExpected || ['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status)
+  const updateLayout = shouldReduceMotion ? false : 'position'
+  const updateLayoutTransition = { duration: shouldReduceMotion ? 0 : 0.28, ease: 'easeOut' as const }
   return <section className="settings-card controller-update-card">
-    <div className="settings-card-head">
-      <div><h3>主控更新</h3><p className="muted">更新通道 · {channelLabel}</p></div>
-      <span className={`status-pill ${statusTone}`}>{labels[snapshot.status] || snapshot.status}</span>
-    </div>
-    {snapshot.channel === 'dev' && <div className="controller-update-warning"><Info size={17} /><span><strong>开发版更新频繁</strong><small>可能包含尚未稳定的功能。</small></span></div>}
-    <div className="controller-update-versions">
+    <m.div layout={updateLayout} transition={updateLayoutTransition} className="settings-card-head controller-update-head">
+      <m.div layout={updateLayout} transition={updateLayoutTransition} className="controller-update-heading"><h3>主控更新</h3><p className="muted">更新通道 · {channelLabel}</p></m.div>
+      <AnimatePresence initial={false} mode="popLayout">
+        {snapshot.channel === 'dev' && <m.div
+          layout={updateLayout}
+          initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -4, scale: 0.98 }}
+          transition={updateLayoutTransition}
+          className="controller-update-warning"
+          role="status"
+        ><Info size={17} /><span><strong>开发版更新频繁</strong><small>可能包含尚未稳定的功能。</small></span></m.div>}
+      </AnimatePresence>
+      <m.span layout={updateLayout} transition={updateLayoutTransition} className={`status-pill ${statusTone}`}>{labels[snapshot.status] || snapshot.status}</m.span>
+    </m.div>
+    <m.div layout={updateLayout} transition={updateLayoutTransition} className="controller-update-versions">
       <div><span>当前版本</span><strong>{snapshot.current?.version || '-'}</strong><small>{snapshot.current?.build ? `构建 ${snapshot.current.build}` : '暂无构建信息'}</small></div>
       <ArrowLeftRight size={18} />
       <div><span>最新版本</span><strong>{snapshot.available?.version || '尚未检查'}</strong><small>{snapshot.available?.build ? `构建 ${snapshot.available.build}` : '点击检查更新'}</small></div>
-    </div>
+    </m.div>
     <div className="controller-update-meta">
       <span>上次检查<strong>{snapshot.last_checked_at ? formatDate(snapshot.last_checked_at) : '尚未检查'}</strong></span>
       {snapshot.backup_path && <span>最近备份<strong title={snapshot.backup_path}>{snapshot.backup_path}</strong></span>}

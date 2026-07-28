@@ -4615,7 +4615,14 @@ body:has(.dialog-root) .topbar-actions {
   margin: 0;
 }
 
-.controller-update-card { gap: 16px; }
+.controller-update-card { container-type: inline-size; gap: 16px; }
+.controller-update-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  overflow: hidden;
+}
+.controller-update-heading { flex: 0 0 auto; }
 .controller-update-warning,
 .controller-update-error,
 .controller-update-pinned {
@@ -4628,8 +4635,17 @@ body:has(.dialog-root) .topbar-actions {
   background: var(--warning-soft);
   color: var(--text);
 }
+.controller-update-warning {
+  min-width: min(292px, 100%);
+  max-width: 100%;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-self: start;
+  padding: 8px 11px;
+}
 .controller-update-warning svg { flex: 0 0 auto; color: var(--warning); }
-.controller-update-warning span { display: grid; gap: 2px; }
+.controller-update-warning span { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.controller-update-warning strong { white-space: nowrap; }
 .controller-update-warning small { color: var(--muted); }
 .controller-update-error {
   border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
@@ -4668,6 +4684,13 @@ body:has(.dialog-root) .topbar-actions {
 .controller-update-toggle small { color: var(--muted); }
 .controller-update-actions { justify-content: flex-end; }
 .controller-update-actions button { display: inline-flex; align-items: center; gap: 6px; }
+
+@container (max-width: 560px) {
+  .controller-update-head { grid-template-columns: minmax(0, 1fr) auto; }
+  .controller-update-heading { grid-column: 1; grid-row: 1; }
+  .controller-update-head > .status-pill { grid-column: 2; grid-row: 1; }
+  .controller-update-warning { width: 100%; grid-column: 1 / -1; grid-row: 2; }
+}
 
 .controller-update-install-dialog {
   width: min(600px, calc(100vw - 28px));
