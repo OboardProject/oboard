@@ -1134,6 +1134,56 @@ body:has(.dialog-root) .topbar-actions {
   isolation: isolate;
 }
 
+.server-list {
+  display: grid;
+  gap: 8px;
+  isolation: isolate;
+}
+
+.server-card.server-list-card {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.72fr) minmax(0, 3fr);
+  align-items: stretch;
+  gap: 10px;
+}
+
+.server-list-card .server-card-head {
+  align-items: flex-start;
+  padding: 2px 12px 2px 0;
+  border-right: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.server-list-card .server-meta {
+  grid-template-columns: minmax(150px, 0.7fr) minmax(260px, 1.35fr) minmax(210px, 1fr) !important;
+  align-items: stretch;
+}
+
+.server-list-card .server-meta > div {
+  grid-column: auto !important;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 1180px) {
+  .server-card.server-list-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .server-list-card .server-card-head {
+    align-items: center;
+    padding: 0 0 7px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 720px) {
+  .server-list-card .server-meta {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
 .server-empty { margin: 22px 0 34px; }
 
 .server-card {

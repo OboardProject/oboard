@@ -4112,7 +4112,6 @@ function Servers({ data, client, load, loading, notify }: any) {
     else if (type === 'delete') remove(client, `/servers/${s.id}`, load, dialogs, s)
   }
   const role: Role = data.session?.role || 'viewer'
-  const actions = (s: Server) => <ServerActionsDropdown server={s} role={role} onAction={handleServerAction} />
   const enrolledCount = servers.filter(s => String(s.agent_id || '').trim()).length
   return <section className="panel">
     <div className="panel-body">
@@ -4144,7 +4143,7 @@ function Servers({ data, client, load, loading, notify }: any) {
       ? <p className="muted server-empty">暂无服务器</p>
       : view === 'grid'
 		  ? <MotionList className="server-grid">{servers.map(s => <ServerCard key={s.id} server={s} samples={metricsByServer.get(Number(s.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} onAction={handleServerAction} />)}</MotionList>
-      : <Table rows={compactServerRows(servers)} actions={(r: any) => actions(r._server)} loading={loading} />}
+      : <MotionList className="server-list">{servers.map(s => <ServerCard key={s.id} server={s} samples={metricsByServer.get(Number(s.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} onAction={handleServerAction} layout="list" />)}</MotionList>}
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} />}</AnimatePresence>
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} onCancel={() => setEditServer(null)} onSubmit={updateServer} />}</AnimatePresence>
     <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} onClose={() => setDetailServer(null)} />}</AnimatePresence>
@@ -4785,15 +4784,12 @@ function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: 
           color: 'var(--text-primary)',
           transition: 'all 0.15s'
         }}
-        title="管理操作"
+        title="服务器操作"
+        aria-label="打开服务器操作菜单"
         aria-haspopup="menu"
         aria-expanded={isOpen}
       >
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="1"/>
-          <circle cx="19" cy="12" r="1"/>
-          <circle cx="5" cy="12" r="1"/>
-        </svg>
+        <MoreHorizontal size={16} aria-hidden="true" />
       </button>
       {isOpen && createPortal(
         <div ref={menuRef} className="server-actions-menu action-menu-portal" role="menu" style={{
@@ -4895,13 +4891,13 @@ function serverTrafficPeriodLabel(server: Server) {
   return '自然月重置'
 }
 
-function ServerCard({ server, samples, role, expectedBuild, onAction }: { server: Server; samples: ServerMetricSample[]; role?: Role; expectedBuild?: string; onAction: (type: string, server: Server) => void }) {
+function ServerCard({ server, samples, role, expectedBuild, onAction, layout = 'grid' }: { server: Server; samples: ServerMetricSample[]; role?: Role; expectedBuild?: string; onAction: (type: string, server: Server) => void; layout?: 'grid' | 'list' }) {
   const [updateInfoOpen, setUpdateInfoOpen] = useState(false)
   const outdated = Boolean(expectedBuild && server.agent_build && expectedBuild !== server.agent_build)
   const isOnline = server.status.toLowerCase() === 'online';
 
   return (
-    <MotionCard tag="article" className="server-card" hoverEffect={false}>
+    <MotionCard tag="article" className={`server-card${layout === 'list' ? ' server-list-card' : ''}`} hoverEffect={false}>
       {/* Header */}
       <div className="server-card-head">
         <div className="server-card-title">
@@ -5087,34 +5083,6 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
       <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
     </MotionDialogPanel>
   )
-}
-
-function compactServerRows(servers: Server[]) {
-  return servers.map(s => ({
-    _server: s,
-    name: <span className="server-list-name"><RegionFlag code={serverRegionCode(s)} size={18} /><span>{s.name}</span></span>,
-    region: regionLabel(serverRegionCode(s)),
-    status: s.status,
-    entry_address: s.entry_address || '',
-    entry_ip_mode: labelValue(s.entry_ip_mode || 'auto'),
-    public_ipv4: s.public_ipv4,
-    public_ipv6: s.public_ipv6,
-    listen_ip: s.listen_ip,
-    ip_stack: labelValue(s.ip_stack || 'unknown'),
-    udp_inbound_mode: labelValue(s.udp_inbound_mode || 'unknown'),
-    port_range: portRangeLabel(s),
-    system: serverOSLabel(s),
-    arch: s.arch,
-    cpu_usage: Number.isFinite(s.cpu_usage_percent) ? `${Number(s.cpu_usage_percent).toFixed(1)}%` : '',
-    memory: serverMemoryLabel(s),
-    download_rate: formatByteRate(s.network_download_bps || 0),
-    upload_rate: formatByteRate(s.network_upload_bps || 0),
-    period_traffic: formatBytes((s.traffic_upload_bytes || 0) + (s.traffic_download_bytes || 0)),
-    agent_memory: formatBytes(s.agent_memory_bytes || 0),
-    agent_version: s.agent_version,
-    agent_build: s.agent_build,
-    sing_box_version: s.sing_box_version,
-  }))
 }
 
 function portRangeLabel(s: Server) { return s.port_range_start || s.port_range_end ? `${s.port_range_start || 0}-${s.port_range_end || 0}` : '—' }
