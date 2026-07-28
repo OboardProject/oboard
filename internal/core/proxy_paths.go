@@ -449,6 +449,9 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 		}
 		enabledByInbound[path.InboundID]++
 		ordered := orderedProxyPathSteps(stepsByPath[path.ID])
+		if path.Kind == model.ProxyPathKindDirect && len(ordered) != 0 {
+			return fmt.Errorf("直接出口分支 %s 不能包含路径步骤", path.Name)
+		}
 		transparent, err := validateProxyPathTransportSemantics(path, root, ordered)
 		if err != nil {
 			return err

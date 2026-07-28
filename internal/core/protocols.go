@@ -783,6 +783,23 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 			}
 			return steps[i].Position < steps[j].Position
 		})
+		if path.Kind == model.ProxyPathKindDirect {
+			if len(steps) != 0 {
+				return nil, nil, fmt.Errorf("直接出口分支 %s 不能包含路径步骤", path.Name)
+			}
+			if root.ServerID == server.ID {
+				rule := map[string]any{
+					"inbound":  []string{tag("in", root.ID)},
+					"action":   "route",
+					"outbound": "direct",
+				}
+				if authUsers := proxyPathBranchUsernames(path, root, usersForInbound(root, users, opts.InboundUsers)); len(authUsers) > 0 {
+					rule["auth_user"] = authUsers
+				}
+				rules = append(rules, rule)
+			}
+			continue
+		}
 		if len(steps) == 0 {
 			continue
 		}
@@ -1129,6 +1146,22 @@ func sanitizeTLSForSubscription(value any) any {
 		} else {
 			delete(out, "reality")
 		}
+	}
+	return out
+}
+
+func subscriptionTLSForInbound(inbound model.Inbound, value any) any {
+	tls := sanitizeTLSForSubscription(value)
+	out, ok := tls.(map[string]any)
+	if !ok || inbound.CertificateMode == "" || inbound.CertificateMode == model.CertificateModeExternal {
+		return tls
+	}
+	serverName := strings.TrimSpace(inbound.CertificateDomain)
+	if serverName == "" {
+		serverName = strings.TrimSpace(inbound.DNSDomain)
+	}
+	if serverName != "" {
+		out["server_name"] = serverName
 	}
 	return out
 }
@@ -1563,7 +1596,7 @@ func proxyPathBranchUsersForInbound(inbound model.Inbound, users []model.User, p
 	}
 	out := []model.User{}
 	for _, path := range pathByInbound {
-		if len(stepsByPath[path.ID]) == 0 {
+		if path.Kind != model.ProxyPathKindDirect && len(stepsByPath[path.ID]) == 0 {
 			continue
 		}
 		out = append(out, proxyPathBranchUsersForPath(path, inbound, users)...)
@@ -1843,7 +1876,7 @@ func (a vlessAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 		node["flow"] = flow
 	}
 	if tls, ok := extra["tls"]; ok {
-		node["tls"] = sanitizeTLSForSubscription(tls)
+		node["tls"] = subscriptionTLSForInbound(inbound, tls)
 	}
 	applyAllowed(node, extra, "transport", "network", "multiplex")
 	return node, nil
@@ -1901,7 +1934,7 @@ func (a hy2Adapter) SubscriptionNode(user model.User, inbound model.Inbound, ser
 	extra := parseExtra(inbound.ConfigJSON)
 	node := map[string]any{"type": "hysteria2", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "password": user.ProxyPassword}
 	if tls, ok := extra["tls"]; ok {
-		node["tls"] = sanitizeTLSForSubscription(tls)
+		node["tls"] = subscriptionTLSForInbound(inbound, tls)
 	}
 	applyAllowed(node, extra, "obfs", "up_mbps", "down_mbps", "network", "server_ports", "hop_interval", "hop_interval_max")
 	return node, nil
@@ -1957,7 +1990,7 @@ func (a anyTLSAdapter) SubscriptionNode(user model.User, inbound model.Inbound, 
 	extra := parseExtra(inbound.ConfigJSON)
 	node := map[string]any{"type": "anytls", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "password": user.ProxyPassword}
 	if tls, ok := extra["tls"]; ok {
-		node["tls"] = sanitizeTLSForSubscription(tls)
+		node["tls"] = subscriptionTLSForInbound(inbound, tls)
 	}
 	applyAllowed(node, extra, "padding_scheme")
 	return node, nil

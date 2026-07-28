@@ -124,7 +124,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists subscription_age_keys (user_id integer primary key references users(id) on delete cascade, enabled integer not null default 0, public_key text not null default '', updated_at text not null)`,
 		`create table if not exists user_authentication (user_id integer primary key references users(id) on delete cascade, totp_enabled integer not null default 0, totp_secret_encrypted text not null default '', recovery_code_hashes_json text not null default '[]', totp_last_used_step integer not null default -1, webauthn_user_handle text unique, updated_at text not null)`,
 		`create table if not exists passkey_credentials (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, name text not null, credential_id text not null unique, credential_json text not null, created_at text not null, last_used_at text)`,
-		`create table if not exists auth_challenges (token_hash text primary key, kind text not null, user_id integer not null references users(id) on delete cascade, data_encrypted text not null, expires_at text not null, created_at text not null)`,
+		`create table if not exists auth_challenges (token_hash text primary key, kind text not null, user_id integer references users(id) on delete cascade, data_encrypted text not null, expires_at text not null, created_at text not null)`,
 		`create table if not exists ssh_user_keys (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, name text not null, public_key text not null, fingerprint text not null, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(user_id,fingerprint))`,
 		`create table if not exists servers (id integer primary key autoincrement, name text not null, agent_id text unique, agent_token_hash text, chain_secret text not null, enrollment_hash text, enrollment_expires_at text, entry_address text, public_ipv4 text not null default '', public_ipv6 text not null default '', region_code text not null default '', detected_region_code text not null default '', region_mode text not null default 'auto', entry_ip_mode text not null default 'auto', listen_ip text, ip_stack text not null default 'auto', udp_inbound_mode text not null default 'allow', mtu_mode text not null default 'detect', mtu_value integer not null default 0, mtu_probe_host text not null default '1.1.1.1', mtu_probe_port integer not null default 443, mtu_overhead_bytes integer not null default 0, bbr_enabled integer not null default 0, port_range_start integer not null default 10000, port_range_end integer not null default 20000, ssh_port integer not null default 0, status text not null, os text, distro_id text not null default '', distro_version text not null default '', distro_name text not null default '', libc text not null default '', service_manager text not null default '', package_manager text not null default '', arch text, kernel text, cpu text, memory_bytes integer not null default 0, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, agent_memory_bytes integer not null default 0, disk_bytes integer not null default 0, agent_version text not null default '', agent_build text not null default '', sing_box_version text, connection_audit_enabled integer not null default 0, last_seen_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_credentials (id integer primary key autoincrement, name text not null unique, provider text not null, zone_name text not null, zone_id text not null default '', config_encrypted text not null, enabled integer not null default 1, verified_at text, last_error text not null default '', created_at text not null, updated_at text not null)`,
@@ -142,7 +142,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists routing_rules (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, priority integer not null default 100, match_json text not null default '{}', action text not null, outbound_id integer references outbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, target_server_id integer references servers(id) on delete set null, warp_profile_id integer references warp_profiles(id) on delete set null, outbound_tag text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists external_outbounds (id integer primary key autoincrement, server_id integer references servers(id) on delete set null, name text not null, protocol text not null, scope text not null default 'global', target_address text not null default '', target_port integer not null default 0, config_json text not null default '{}', expose_to_users integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists external_outbound_access_grants (id integer primary key autoincrement, external_outbound_id integer not null references external_outbounds(id) on delete cascade, subject_type text not null, subject_id integer not null, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(external_outbound_id,subject_type,subject_id))`,
-		`create table if not exists proxy_paths (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, name_mode text not null default 'auto', name_template_json text not null default '[]', secret text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists proxy_paths (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, kind text not null default 'chain', name_mode text not null default 'auto', name_template_json text not null default '[]', secret text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_steps (id integer primary key autoincrement, path_id integer not null references proxy_paths(id) on delete cascade, position integer not null, node_type text not null, transport_mode text not null default 'singbox', processing_role integer not null default 0, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, config_json text not null default '{}', created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_port_allocations (id integer primary key autoincrement, kind text not null, scope_key text not null, server_id integer not null references servers(id) on delete cascade, port integer not null, created_at text not null, updated_at text not null, unique(kind,scope_key,server_id))`,
 		`create table if not exists warp_profiles (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, status text not null default 'needed', config_json text not null default '{}', mtu integer not null default 0, dns_strategy text not null default '', last_requested_at text, error text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
@@ -215,6 +215,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 			return err
 		}
 	}
+	if err := s.ensureNullableAuthChallengeUser(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureColumn(ctx, "servers", "connection_audit_enabled", `alter table servers add column connection_audit_enabled integer not null default 0`); err != nil {
 		return err
 	}
@@ -239,6 +242,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureColumn(ctx, "proxy_paths", "name_mode", `alter table proxy_paths add column name_mode text not null default 'auto'`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn(ctx, "proxy_paths", "kind", `alter table proxy_paths add column kind text not null default 'chain'`); err != nil {
+		return err
+	}
 	if err := s.ensureColumn(ctx, "proxy_paths", "name_template_json", `alter table proxy_paths add column name_template_json text not null default '[]'`); err != nil {
 		return err
 	}
@@ -255,6 +261,35 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	return s.ensureDefaultDNSLists(ctx)
+}
+
+func (s *Store) ensureNullableAuthChallengeUser(ctx context.Context) error {
+	var notNull int
+	if err := s.db.QueryRowContext(ctx, `select "notnull" from pragma_table_info('auth_challenges') where name='user_id'`).Scan(&notNull); err != nil {
+		return err
+	}
+	if notNull == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	statements := []string{
+		`drop index if exists idx_auth_challenges_expiry`,
+		`alter table auth_challenges rename to auth_challenges_required_user`,
+		`create table auth_challenges (token_hash text primary key, kind text not null, user_id integer references users(id) on delete cascade, data_encrypted text not null, expires_at text not null, created_at text not null)`,
+		`insert into auth_challenges(token_hash,kind,user_id,data_encrypted,expires_at,created_at) select token_hash,kind,user_id,data_encrypted,expires_at,created_at from auth_challenges_required_user`,
+		`drop table auth_challenges_required_user`,
+		`create index idx_auth_challenges_expiry on auth_challenges(expires_at)`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // ensureProxyPathStepPositions compacts each path's positions to a dense 1..N
@@ -974,6 +1009,25 @@ func (s *Store) GetUserByUsername(ctx context.Context, username string) (*model.
 		if err != nil {
 			return nil, err
 		}
+		return nil, sql.ErrNoRows
+	}
+	return &items[0], nil
+}
+
+func (s *Store) GetUserByPasskey(ctx context.Context, credentialID, userHandle string) (*model.User, error) {
+	rows, err := s.db.QueryContext(ctx, userSelectSQL+` where u.id=(
+		select p.user_id from passkey_credentials p
+		join user_authentication a on a.user_id=p.user_id
+		where p.credential_id=? and a.webauthn_user_handle=?)`, credentialID, userHandle)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items, err := scanUsers(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
 		return nil, sql.ErrNoRows
 	}
 	return &items[0], nil
@@ -2524,7 +2578,7 @@ func (s *Store) CreateProxyPath(ctx context.Context, v *model.ProxyPath) error {
 	if err := encodeProxyPathNameTemplate(v); err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, `insert into proxy_paths(inbound_id,name_mode,name_template_json,secret,enabled,created_at,updated_at) values(?,?,?,?,?,?,?)`, v.InboundID, v.NameMode, v.NameTemplateJSON, v.Secret, boolInt(v.Enabled), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into proxy_paths(inbound_id,kind,name_mode,name_template_json,secret,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?)`, v.InboundID, v.Kind, v.NameMode, v.NameTemplateJSON, v.Secret, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -2536,12 +2590,12 @@ func (s *Store) UpdateProxyPath(ctx context.Context, v *model.ProxyPath) error {
 	if err := encodeProxyPathNameTemplate(v); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `update proxy_paths set inbound_id=?,name_mode=?,name_template_json=?,secret=?,enabled=?,updated_at=? where id=?`, v.InboundID, v.NameMode, v.NameTemplateJSON, v.Secret, boolInt(v.Enabled), now(), v.ID)
+	_, err := s.db.ExecContext(ctx, `update proxy_paths set inbound_id=?,kind=?,name_mode=?,name_template_json=?,secret=?,enabled=?,updated_at=? where id=?`, v.InboundID, v.Kind, v.NameMode, v.NameTemplateJSON, v.Secret, boolInt(v.Enabled), now(), v.ID)
 	return err
 }
 
 func (s *Store) ListProxyPaths(ctx context.Context) ([]model.ProxyPath, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,inbound_id,coalesce(name_mode,'auto'),coalesce(name_template_json,'[]'),coalesce(secret,''),enabled,created_at,updated_at from proxy_paths order by id desc`)
+	rows, err := s.db.QueryContext(ctx, `select id,inbound_id,coalesce(kind,'chain'),coalesce(name_mode,'auto'),coalesce(name_template_json,'[]'),coalesce(secret,''),enabled,created_at,updated_at from proxy_paths order by id desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -2551,7 +2605,7 @@ func (s *Store) ListProxyPaths(ctx context.Context) ([]model.ProxyPath, error) {
 		var v model.ProxyPath
 		var en int
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.InboundID, &v.NameMode, &v.NameTemplateJSON, &v.Secret, &en, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.InboundID, &v.Kind, &v.NameMode, &v.NameTemplateJSON, &v.Secret, &en, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if err := decodeProxyPathNameTemplate(&v); err != nil {
@@ -2566,6 +2620,9 @@ func (s *Store) ListProxyPaths(ctx context.Context) ([]model.ProxyPath, error) {
 }
 
 func encodeProxyPathNameTemplate(v *model.ProxyPath) error {
+	if v.Kind == "" {
+		v.Kind = model.ProxyPathKindChain
+	}
 	if v.NameMode == "" {
 		v.NameMode = model.ProxyPathNameAuto
 	}

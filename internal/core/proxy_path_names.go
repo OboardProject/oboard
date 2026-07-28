@@ -42,7 +42,7 @@ func ResolveProxyPathNames(paths []model.ProxyPath, steps []model.ProxyPathStep,
 
 	activePathByInbound := map[int64]bool{}
 	for _, path := range paths {
-		if path.Enabled && len(stepsByPath[path.ID]) > 0 {
+		if proxyPathIsActive(path, stepsByPath[path.ID]) {
 			activePathByInbound[path.InboundID] = true
 		}
 	}
@@ -77,7 +77,7 @@ func ResolveProxyPathNames(paths []model.ProxyPath, steps []model.ProxyPathStep,
 			route:    route,
 			features: proxyPathNameFeatures(path, pathSteps, inboundByID, externalByID),
 			base:     base,
-			active:   path.Enabled && len(pathSteps) > 0,
+			active:   proxyPathIsActive(path, pathSteps),
 		})
 	}
 
@@ -251,6 +251,9 @@ func proxyPathNameStepsByPath(steps []model.ProxyPathStep) map[int64][]model.Pro
 func proxyPathRouteLabels(path model.ProxyPath, steps []model.ProxyPathStep, servers map[int64]model.Server, inbounds map[int64]model.Inbound, externals map[int64]model.ExternalOutbound) []string {
 	root := inbounds[path.InboundID]
 	labels := []string{proxyPathServerLabel(servers[root.ServerID], root.ServerID)}
+	if path.Kind == model.ProxyPathKindDirect {
+		return append(labels, "直出")
+	}
 	for _, step := range steps {
 		if step.NodeType == model.ProxyPathStepImported && step.ExternalOutboundID != nil {
 			external := externals[*step.ExternalOutboundID]
@@ -268,6 +271,10 @@ func proxyPathRouteLabels(path model.ProxyPath, steps []model.ProxyPathStep, ser
 		}
 	}
 	return labels
+}
+
+func proxyPathIsActive(path model.ProxyPath, steps []model.ProxyPathStep) bool {
+	return path.Enabled && (path.Kind == model.ProxyPathKindDirect || len(steps) > 0)
 }
 
 func proxyPathServerLabel(server model.Server, id int64) string {

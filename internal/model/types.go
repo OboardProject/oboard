@@ -599,6 +599,7 @@ type ExternalOutboundAccessGrant struct {
 
 type ProxyPath struct {
 	ID               int64               `json:"id"`
+	Kind             ProxyPathKind       `json:"kind"`
 	Name             string              `json:"name"`
 	NameMode         ProxyPathNameMode   `json:"name_mode"`
 	NameTemplate     []ProxyPathNamePart `json:"name_template"`
@@ -609,6 +610,13 @@ type ProxyPath struct {
 	CreatedAt        time.Time           `json:"created_at"`
 	UpdatedAt        time.Time           `json:"updated_at"`
 }
+
+type ProxyPathKind string
+
+const (
+	ProxyPathKindChain  ProxyPathKind = "chain"
+	ProxyPathKindDirect ProxyPathKind = "direct"
+)
 
 type ProxyPathNameMode string
 

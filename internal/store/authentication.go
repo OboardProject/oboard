@@ -211,16 +211,24 @@ func (s *Store) CreateAuthChallenge(ctx context.Context, item model.AuthChalleng
 	if created.IsZero() {
 		created = time.Now().UTC()
 	}
-	_, err := s.db.ExecContext(ctx, `insert into auth_challenges(token_hash,kind,user_id,data_encrypted,expires_at,created_at) values(?,?,?,?,?,?)`, item.TokenHash, item.Kind, item.UserID, item.DataEncrypted, item.ExpiresAt.UTC().Format(time.RFC3339Nano), created.UTC().Format(time.RFC3339Nano))
+	var userID any
+	if item.UserID > 0 {
+		userID = item.UserID
+	}
+	_, err := s.db.ExecContext(ctx, `insert into auth_challenges(token_hash,kind,user_id,data_encrypted,expires_at,created_at) values(?,?,?,?,?,?)`, item.TokenHash, item.Kind, userID, item.DataEncrypted, item.ExpiresAt.UTC().Format(time.RFC3339Nano), created.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
 func (s *Store) GetAuthChallenge(ctx context.Context, tokenHash, kind string) (model.AuthChallenge, error) {
 	var item model.AuthChallenge
 	var expires, created string
-	err := s.db.QueryRowContext(ctx, `select token_hash,kind,user_id,data_encrypted,expires_at,created_at from auth_challenges where token_hash=? and kind=?`, tokenHash, kind).Scan(&item.TokenHash, &item.Kind, &item.UserID, &item.DataEncrypted, &expires, &created)
+	var userID sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `select token_hash,kind,user_id,data_encrypted,expires_at,created_at from auth_challenges where token_hash=? and kind=?`, tokenHash, kind).Scan(&item.TokenHash, &item.Kind, &userID, &item.DataEncrypted, &expires, &created)
 	if err != nil {
 		return model.AuthChallenge{}, err
+	}
+	if userID.Valid {
+		item.UserID = userID.Int64
 	}
 	item.ExpiresAt = parseTime(expires)
 	item.CreatedAt = parseTime(created)

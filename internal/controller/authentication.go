@@ -41,6 +41,7 @@ type authChallengePayload struct {
 	RelyingPartyName string                `json:"relying_party_name,omitempty"`
 	Origins          []string              `json:"origins,omitempty"`
 	PasskeyName      string                `json:"passkey_name,omitempty"`
+	Discoverable     bool                  `json:"discoverable,omitempty"`
 }
 
 type webAuthnUser struct {
@@ -642,14 +643,29 @@ func (s *Server) passkeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	user, err := s.store.GetUserByUsername(r.Context(), strings.TrimSpace(req.Username))
-	if err != nil || user.Status != "active" {
-		fail(w, errors.New("该账号无法使用通行密钥"), http.StatusUnauthorized)
-		return
-	}
 	handler, config, err := webAuthnForRequest(r)
 	if err != nil {
 		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		options, session, err := handler.BeginDiscoverableLogin(webauthn.WithUserVerification(protocol.VerificationRequired))
+		if err != nil {
+			fail(w, errors.New("无法创建通行密钥登录请求"), http.StatusBadRequest)
+			return
+		}
+		token, err := s.createAuthChallenge(r, 0, authChallengePayload{Kind: authChallengePasskeyLogin, Discoverable: true, WebAuthnSession: session, RelyingPartyID: config.RPID, RelyingPartyName: config.RPDisplayName, Origins: config.RPOrigins})
+		if err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
+		write(w, http.StatusOK, map[string]any{"options": options, "challenge_token": token})
+		return
+	}
+	user, err := s.store.GetUserByUsername(r.Context(), username)
+	if err != nil || user.Status != "active" {
+		fail(w, errors.New("该账号无法使用通行密钥"), http.StatusUnauthorized)
 		return
 	}
 	webUser, err := s.loadWebAuthnUser(r, *user)
@@ -691,19 +707,9 @@ func (s *Server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.DeleteAuthChallenge(r.Context(), challenge.TokenHash, authChallengePasskeyLogin)
-	user, err := s.store.GetUser(r.Context(), challenge.UserID)
-	if err != nil || user.Status != "active" || user.SessionVersion != payload.SessionVersion {
-		fail(w, errors.New("通行密钥登录请求已失效"), http.StatusUnauthorized)
-		return
-	}
 	handler, err := webAuthnFromChallenge(payload)
 	if err != nil {
 		fail(w, errors.New("通行密钥登录配置无效"), http.StatusBadRequest)
-		return
-	}
-	webUser, err := s.loadWebAuthnUser(r, *user)
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
 		return
 	}
 	parsed, err := protocol.ParseCredentialRequestResponseBytes(req.Credential)
@@ -711,8 +717,35 @@ func (s *Server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("通行密钥响应格式无效"), http.StatusBadRequest)
 		return
 	}
-	credential, err := handler.ValidateLogin(webUser, *payload.WebAuthnSession, parsed)
-	if err != nil {
+	var user *model.User
+	var credential *webauthn.Credential
+	if payload.Discoverable {
+		_, credential, err = handler.ValidatePasskeyLogin(func(rawID, userHandle []byte) (webauthn.User, error) {
+			candidate, lookupErr := s.store.GetUserByPasskey(r.Context(), base64.RawURLEncoding.EncodeToString(rawID), base64.RawURLEncoding.EncodeToString(userHandle))
+			if lookupErr != nil || candidate.Status != "active" {
+				return nil, errors.New("通行密钥不存在")
+			}
+			webUser, loadErr := s.loadWebAuthnUser(r, *candidate)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			user = candidate
+			return webUser, nil
+		}, *payload.WebAuthnSession, parsed)
+	} else {
+		user, err = s.store.GetUser(r.Context(), challenge.UserID)
+		if err == nil && (user.Status != "active" || user.SessionVersion != payload.SessionVersion) {
+			err = errors.New("stale user session")
+		}
+		if err == nil {
+			var webUser *webAuthnUser
+			webUser, err = s.loadWebAuthnUser(r, *user)
+			if err == nil {
+				credential, err = handler.ValidateLogin(webUser, *payload.WebAuthnSession, parsed)
+			}
+		}
+	}
+	if err != nil || user == nil || credential == nil {
 		fail(w, errors.New("通行密钥验证失败"), http.StatusUnauthorized)
 		return
 	}

@@ -34,6 +34,91 @@ func TestOpenRestrictsDatabaseFilePermissions(t *testing.T) {
 	}
 }
 
+func TestPasskeyOwnerLookupRequiresCredentialAndUserHandle(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	user := &model.User{Username: "passkey-owner", PasswordHash: "hash", Role: model.RoleAdmin, Status: "active", ProxyUUID: "uuid", ProxyPassword: "password"}
+	if err := s.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EnsureWebAuthnUserHandle(ctx, user.ID, "user-handle"); err != nil {
+		t.Fatal(err)
+	}
+	credential := &model.PasskeyCredential{UserID: user.ID, Name: "test", CredentialID: "credential-id", CredentialJSON: `{}`}
+	if err := s.CreatePasskeyCredential(ctx, credential); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := s.GetUserByPasskey(ctx, "credential-id", "user-handle")
+	if err != nil || owner.ID != user.ID {
+		t.Fatalf("passkey owner=%#v err=%v", owner, err)
+	}
+	if _, err := s.GetUserByPasskey(ctx, "credential-id", "other-handle"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("mismatched user handle lookup err=%v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestOpenPreservesAuthChallengesWhenUserBecomesOptional(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	user := &model.User{Username: "challenge-owner", PasswordHash: "hash", Role: model.RoleAdmin, Status: "active", ProxyUUID: "uuid", ProxyPassword: "password"}
+	if err := s.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	existing := model.AuthChallenge{TokenHash: "existing", Kind: "test", UserID: user.ID, DataEncrypted: "sealed", ExpiresAt: time.Now().UTC().Add(time.Hour)}
+	if err := s.CreateAuthChallenge(ctx, existing); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`drop index idx_auth_challenges_expiry`,
+		`alter table auth_challenges rename to auth_challenges_optional_user`,
+		`create table auth_challenges (token_hash text primary key, kind text not null, user_id integer not null references users(id) on delete cascade, data_encrypted text not null, expires_at text not null, created_at text not null)`,
+		`insert into auth_challenges select * from auth_challenges_optional_user`,
+		`drop table auth_challenges_optional_user`,
+		`create index idx_auth_challenges_expiry on auth_challenges(expires_at)`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	stored, err := s.GetAuthChallenge(ctx, existing.TokenHash, existing.Kind)
+	if err != nil || stored.UserID != user.ID || stored.DataEncrypted != existing.DataEncrypted {
+		t.Fatalf("migrated challenge=%#v err=%v", stored, err)
+	}
+	anonymous := model.AuthChallenge{TokenHash: "anonymous", Kind: "test", DataEncrypted: "sealed-anonymous", ExpiresAt: time.Now().UTC().Add(time.Hour)}
+	if err := s.CreateAuthChallenge(ctx, anonymous); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = s.GetAuthChallenge(ctx, anonymous.TokenHash, anonymous.Kind)
+	if err != nil || stored.UserID != 0 {
+		t.Fatalf("anonymous challenge=%#v err=%v", stored, err)
+	}
+}
+
 func TestProxyPathLegacyNamesMigrateToAutomaticMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "oboard.sqlite")
 	db, err := sql.Open("sqlite", path)
@@ -65,6 +150,9 @@ func TestProxyPathLegacyNamesMigrateToAutomaticMode(t *testing.T) {
 	created := model.ProxyPath{InboundID: 2, Enabled: true}
 	if err := s.CreateProxyPath(context.Background(), &created); err != nil {
 		t.Fatalf("create path after migration: %v", err)
+	}
+	if created.Kind != model.ProxyPathKindChain {
+		t.Fatalf("default path kind = %q", created.Kind)
 	}
 	var legacyNameColumns int
 	if err := s.db.QueryRow(`select count(*) from pragma_table_info('proxy_paths') where name='name'`).Scan(&legacyNameColumns); err != nil {

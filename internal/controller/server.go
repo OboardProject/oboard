@@ -4653,6 +4653,9 @@ func normalizeInbound(v model.Inbound) model.Inbound {
 		}
 	}
 	v.CertificateDomain = normalizeDomainName(v.CertificateDomain)
+	if v.CertificateMode != model.CertificateModeExternal && v.CertificateDomain == "" {
+		v.CertificateDomain = v.DNSDomain
+	}
 	if v.DDNSInterval == 0 {
 		v.DDNSInterval = 300
 	}
@@ -4717,12 +4720,15 @@ func validateInbound(v model.Inbound) error {
 	switch v.CertificateMode {
 	case model.CertificateModeExternal:
 	case model.CertificateModeAuto, model.CertificateModeExact, model.CertificateModeWildcard:
-		if !isDNSDomainName(v.CertificateDomain) && !isDNSDomainName(v.DNSDomain) {
-			return errors.New("managed certificate mode requires certificate_domain or dns_domain")
+		if !isDNSDomainName(v.CertificateDomain) {
+			return errors.New("托管证书需要有效的 SNI 域名")
 		}
 	case model.CertificateModeExplicit:
+		if !isDNSDomainName(v.CertificateDomain) {
+			return errors.New("指定证书需要有效的 SNI 域名")
+		}
 		if v.CertificateID == nil || *v.CertificateID <= 0 {
-			return errors.New("explicit certificate mode requires certificate_id")
+			return errors.New("指定证书模式需要选择证书")
 		}
 	default:
 		return fmt.Errorf("invalid certificate_mode %q", v.CertificateMode)
@@ -5867,6 +5873,13 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		if v.Enabled && v.Kind == model.ProxyPathKindDirect {
+			if err := s.validateEnabledProxyPathPlan(r.Context(), v.ID); err != nil {
+				_ = s.store.DeleteProxyPath(r.Context(), v.ID)
+				fail(w, err, 400)
+				return
+			}
+		}
 		v = s.resolvedProxyPath(r.Context(), v)
 		auditReq(s, r, "create", "proxy-path", fmt.Sprint(v.ID))
 		write(w, 201, map[string]any{"proxy_path": v})
@@ -5885,6 +5898,10 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		v.ID = id
+		if v.Kind != current.Kind {
+			fail(w, errors.New("代理路径类型不能修改，请删除后重新创建"), 400)
+			return
+		}
 		if strings.TrimSpace(v.Secret) == "" {
 			v.Secret = current.Secret
 		}
@@ -5942,6 +5959,14 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) validateProxyPath(ctx context.Context, v *model.ProxyPath) error {
+	if v.Kind == "" {
+		v.Kind = model.ProxyPathKindChain
+	}
+	switch v.Kind {
+	case model.ProxyPathKindChain, model.ProxyPathKindDirect:
+	default:
+		return errors.New("kind must be chain or direct")
+	}
 	if v.InboundID == 0 {
 		return errors.New("inbound_id required")
 	}
@@ -5960,6 +5985,20 @@ func (s *Server) validateProxyPath(ctx context.Context, v *model.ProxyPath) erro
 	steps, err := s.store.ListProxyPathStepsForPath(ctx, v.ID)
 	if err != nil {
 		return err
+	}
+	if v.Kind == model.ProxyPathKindDirect {
+		if len(steps) != 0 {
+			return errors.New("直接出口分支不能包含路径步骤")
+		}
+		paths, err := s.store.ListProxyPaths(ctx)
+		if err != nil {
+			return err
+		}
+		for _, path := range paths {
+			if path.ID != v.ID && path.InboundID == v.InboundID && path.Kind == model.ProxyPathKindDirect {
+				return errors.New("该入口已经有直接出口分支")
+			}
+		}
 	}
 	servers, err := s.store.ListServers(ctx)
 	if err != nil {
@@ -6235,6 +6274,9 @@ func (s *Server) validateProxyPathStep(ctx context.Context, v *model.ProxyPathSt
 	path, err := s.store.GetProxyPath(ctx, v.PathID)
 	if err != nil {
 		return fmt.Errorf("path_id: %w", err)
+	}
+	if path.Kind == model.ProxyPathKindDirect {
+		return errors.New("直接出口分支不能添加路径步骤")
 	}
 	if v.Position <= 0 {
 		return errors.New("position must be >= 1")
@@ -6676,7 +6718,7 @@ func proxyPathPlanSummary(path model.ProxyPath, steps []model.ProxyPathStep) map
 			"external_outbound_id": step.ExternalOutboundID,
 		})
 	}
-	return map[string]any{"path_id": path.ID, "name": path.Name, "inbound_id": path.InboundID, "enabled": path.Enabled, "steps": items, "warnings": []string{}}
+	return map[string]any{"path_id": path.ID, "kind": path.Kind, "name": path.Name, "inbound_id": path.InboundID, "enabled": path.Enabled, "steps": items, "warnings": []string{}}
 }
 
 func firstNonEmptyString(values ...string) string {
@@ -8614,6 +8656,9 @@ type generatedServerCoreConfig struct {
 func deploymentConfigErrorStatus(err error) int {
 	if errors.Is(err, core.ErrInvalidDesiredState) {
 		return 400
+	}
+	if errors.Is(err, errCertificateProvisioning) {
+		return http.StatusConflict
 	}
 	return 500
 }

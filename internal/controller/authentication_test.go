@@ -155,3 +155,46 @@ func TestPasskeyRegistrationBeginRequiresPasswordAndSealsChallenge(t *testing.T)
 		t.Fatalf("passkey challenge was not sealed: %#v", challenge)
 	}
 }
+
+func TestPasskeyLoginBeginAllowsDiscoverableCredentialWithoutUsername(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-session-secret", "")
+	body, err := json.Marshal(map[string]any{"username": ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "https://panel.example/api/v1/auth/passkey/login/begin", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("discoverable passkey begin: want %d got %d body=%s", http.StatusOK, rr.Code, rr.Body.String())
+	}
+	var result struct {
+		Options        map[string]any `json:"options"`
+		ChallengeToken string         `json:"challenge_token"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	publicKey, ok := result.Options["publicKey"].(map[string]any)
+	if !ok || publicKey["challenge"] == "" {
+		t.Fatalf("discoverable options are incomplete: %#v", result.Options)
+	}
+	if allowed, exists := publicKey["allowCredentials"]; exists && allowed != nil {
+		if items, ok := allowed.([]any); !ok || len(items) != 0 {
+			t.Fatalf("discoverable login unexpectedly restricted credentials: %#v", allowed)
+		}
+	}
+	challenge, payload, err := srv.loadAuthChallenge(httptest.NewRequest(http.MethodGet, "https://panel.example/", nil), result.ChallengeToken, authChallengePasskeyLogin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if challenge.UserID != 0 || !payload.Discoverable || payload.WebAuthnSession == nil || len(payload.WebAuthnSession.UserID) != 0 {
+		t.Fatalf("discoverable challenge was bound to a username: challenge=%#v payload=%#v", challenge, payload)
+	}
+}

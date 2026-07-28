@@ -26,8 +26,11 @@ func TestGenerateSubscriptionWithAssignmentsAndGroups(t *testing.T) {
 	if len(nodes) != 1 {
 		t.Fatalf("nodes = %d, want 1", len(nodes))
 	}
-	if nodes[0].Name != "hk-vless" || nodes[0].Group != "香港" {
+	if nodes[0].Name != "hk" || nodes[0].Group != "香港" {
 		t.Fatalf("node = %#v", nodes[0])
+	}
+	if nodes[0].Raw["tag"] != "hk" {
+		t.Fatalf("node tag = %v", nodes[0].Raw["tag"])
 	}
 
 	sub, err := GenerateSubscriptionWithOptions(user,
@@ -187,21 +190,165 @@ func TestSubscriptionEntryAddressOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := map[string]string{}
+	got := map[int64]string{}
 	for _, node := range nodes {
-		got[node.Name] = node.Raw["server"].(string)
+		got[node.Inbound.ID] = node.Raw["server"].(string)
 	}
-	if got["server-default"] != "2001:db8::1" {
-		t.Fatalf("server-default address = %q", got["server-default"])
+	if got[1] != "2001:db8::1" {
+		t.Fatalf("server-default address = %q", got[1])
 	}
-	if got["force-v4"] != "203.0.113.10" {
-		t.Fatalf("force-v4 address = %q", got["force-v4"])
+	if got[2] != "203.0.113.10" {
+		t.Fatalf("force-v4 address = %q", got[2])
 	}
-	if got["custom"] != "entry.example.com" {
-		t.Fatalf("custom address = %q", got["custom"])
+	if got[3] != "entry.example.com" {
+		t.Fatalf("custom address = %q", got[3])
 	}
-	if got["managed"] != "edge.example.com" {
-		t.Fatalf("managed address = %q", got["managed"])
+	if got[4] != "edge.example.com" {
+		t.Fatalf("managed address = %q", got[4])
+	}
+}
+
+func TestSubscriptionStandaloneNamesUseVisibleServersAndProtocols(t *testing.T) {
+	user := model.User{ID: 7, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	servers := []model.Server{{ID: 20, Name: "香港", PublicIPv4: "203.0.113.20"}, {ID: 10, Name: "香港", PublicIPv4: "203.0.113.10"}, {ID: 30, Name: "东京", PublicIPv4: "203.0.113.30"}}
+	inbounds := []model.Inbound{
+		{ID: 202, ServerID: 20, Name: "ignored-hy2", Protocol: model.ProtocolHY2, Port: 8443, ConfigJSON: `{}`, Enabled: true},
+		{ID: 201, ServerID: 20, Name: "ignored-vless", Protocol: model.ProtocolVLESS, Port: 443, ConfigJSON: `{}`, Enabled: true},
+		{ID: 101, ServerID: 10, Name: "ignored-ss", Protocol: model.ProtocolSS, Port: 8388, ConfigJSON: `{}`, Enabled: true},
+		{ID: 302, ServerID: 30, Name: "ignored-second-vless", Protocol: model.ProtocolVLESS, Port: 9443, ConfigJSON: `{}`, Enabled: true},
+		{ID: 301, ServerID: 30, Name: "ignored-first-vless", Protocol: model.ProtocolVLESS, Port: 443, ConfigJSON: `{}`, Enabled: true},
+	}
+	bindings := make([]model.InboundUser, 0, len(inbounds))
+	for _, inbound := range inbounds {
+		bindings = append(bindings, model.InboundUser{InboundID: inbound.ID, UserID: user.ID, Enabled: true})
+	}
+	nodes, err := BuildSubscriptionNodes(user, servers, inbounds, SubscriptionOptions{InboundUsers: bindings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[int64]string{
+		101: "香港｜01",
+		201: "香港｜02｜VLESS",
+		202: "香港｜02｜HY2",
+		301: "东京｜01",
+		302: "东京｜02",
+	}
+	for _, node := range nodes {
+		if got := node.Name; got != want[node.Inbound.ID] {
+			t.Fatalf("inbound %d name = %q, want %q", node.Inbound.ID, got, want[node.Inbound.ID])
+		}
+		if node.Raw["tag"] != node.Name {
+			t.Fatalf("inbound %d tag = %v, name = %q", node.Inbound.ID, node.Raw["tag"], node.Name)
+		}
+	}
+}
+
+func TestSubscriptionStandaloneNamesUseOnlyVisibleProtocols(t *testing.T) {
+	user := model.User{ID: 7, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	server := model.Server{ID: 1, Name: "香港", PublicIPv4: "203.0.113.1"}
+	inbounds := []model.Inbound{
+		{ID: 1, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, Port: 443, ConfigJSON: `{}`, Enabled: true},
+		{ID: 2, ServerID: 1, Name: "hy2", Protocol: model.ProtocolHY2, Port: 8443, ConfigJSON: `{}`, Enabled: true},
+	}
+	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, inbounds, SubscriptionOptions{InboundUsers: []model.InboundUser{{InboundID: 1, UserID: user.ID, Enabled: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].Name != "香港" {
+		t.Fatalf("nodes = %#v", nodes)
+	}
+}
+
+func TestSubscriptionNamesAvoidPathsAndDisambiguateImportedNodes(t *testing.T) {
+	user := model.User{ID: 7, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	servers := []model.Server{
+		{ID: 1, Name: "入口", PublicIPv4: "203.0.113.1"},
+		{ID: 2, Name: "链路名", PublicIPv4: "203.0.113.2"},
+		{ID: 3, Name: "导入名", PublicIPv4: "203.0.113.3"},
+	}
+	inbounds := []model.Inbound{
+		{ID: 1, ServerID: 1, Name: "path-root", Protocol: model.ProtocolVLESS, Port: 443, ConfigJSON: `{}`, Enabled: true},
+		{ID: 2, ServerID: 2, Name: "path-collision", Protocol: model.ProtocolVLESS, Port: 443, ConfigJSON: `{}`, Enabled: true},
+		{ID: 3, ServerID: 3, Name: "external-collision", Protocol: model.ProtocolVLESS, Port: 443, ConfigJSON: `{}`, Enabled: true},
+	}
+	paths := []model.ProxyPath{{ID: 10, Kind: model.ProxyPathKindDirect, NameMode: model.ProxyPathNameCustom, NameTemplate: []model.ProxyPathNamePart{{Kind: model.ProxyPathNameLiteral, Value: "链路名"}}, InboundID: 1, Enabled: true}}
+	externals := []model.ExternalOutbound{
+		{ID: 30, Name: "重复导入", Protocol: model.ProtocolSocks, TargetAddress: "203.0.113.30", TargetPort: 1080, ConfigJSON: `{}`, ExposeToUsers: true, Enabled: true},
+		{ID: 20, Name: "重复导入", Protocol: model.ProtocolSocks, TargetAddress: "203.0.113.20", TargetPort: 1080, ConfigJSON: `{}`, ExposeToUsers: true, Enabled: true},
+		{ID: 40, Name: "导入名", Protocol: model.ProtocolSocks, TargetAddress: "203.0.113.40", TargetPort: 1080, ConfigJSON: `{}`, ExposeToUsers: true, Enabled: true},
+	}
+	nodes, err := BuildSubscriptionNodes(user, servers, inbounds, SubscriptionOptions{
+		InboundUsers: []model.InboundUser{
+			{InboundID: 1, UserID: user.ID, Enabled: true},
+			{InboundID: 2, UserID: user.ID, Enabled: true},
+			{InboundID: 3, UserID: user.ID, Enabled: true},
+		},
+		ProxyPaths:        paths,
+		ExternalOutbounds: externals,
+		ExternalOutboundAccessGrants: []model.ExternalOutboundAccessGrant{
+			{ExternalOutboundID: 20, SubjectType: model.AccessSubjectUser, SubjectID: user.ID, Enabled: true},
+			{ExternalOutboundID: 30, SubjectType: model.AccessSubjectUser, SubjectID: user.ID, Enabled: true},
+			{ExternalOutboundID: 40, SubjectType: model.AccessSubjectUser, SubjectID: user.ID, Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"链路名":     true,
+		"链路名｜01":  true,
+		"导入名":     true,
+		"导入名｜01":  true,
+		"重复导入｜01": true,
+		"重复导入｜02": true,
+	}
+	seen := map[string]bool{}
+	for _, node := range nodes {
+		if seen[node.Name] {
+			t.Fatalf("duplicate node name %q: %#v", node.Name, nodes)
+		}
+		seen[node.Name] = true
+		if node.Raw["tag"] != node.Name {
+			t.Fatalf("node %q tag = %v", node.Name, node.Raw["tag"])
+		}
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Fatalf("missing name %q: %#v", name, nodes)
+		}
+	}
+}
+
+func TestManagedCertificateDomainOverridesSubscriptionSNI(t *testing.T) {
+	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	server := model.Server{ID: 1, Name: "hk", PublicIPv4: "203.0.113.10"}
+	for _, test := range []struct {
+		name     string
+		protocol model.Protocol
+		config   string
+	}{
+		{name: "vless", protocol: model.ProtocolVLESS, config: `{"tls":{"enabled":true,"server_name":"example.com"}}`},
+		{name: "hy2", protocol: model.ProtocolHY2, config: `{"tls":{"enabled":true,"server_name":"example.com"}}`},
+		{name: "anytls", protocol: model.ProtocolAnyTLS, config: `{"tls":{"enabled":true,"server_name":"example.com"}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inbound := model.Inbound{ID: 1, ServerID: 1, Name: test.name, Protocol: test.protocol, ListenIP: "0.0.0.0", Port: 443, CertificateMode: model.CertificateModeExplicit, CertificateDomain: "entry.example.net", ConfigJSON: test.config, Enabled: true}
+			nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tls, ok := nodes[0].Raw["tls"].(map[string]any)
+			if !ok || tls["server_name"] != "entry.example.net" {
+				t.Fatalf("subscription TLS = %#v", nodes[0].Raw["tls"])
+			}
+			uri, err := shareURIFromNode(nodes[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(uri, "sni=entry.example.net") || strings.Contains(uri, "sni=example.com") {
+				t.Fatalf("subscription URI has wrong SNI: %s", uri)
+			}
+		})
 	}
 }
 

@@ -1707,7 +1707,7 @@ function Login({ theme, toggleTheme, onToken }: { theme: string; toggleTheme: (e
   }
 
   const loginWithPasskey = async () => {
-    if (!username.trim() || isLoading) return
+    if (isLoading) return
     setIsLoading(true)
     setError('')
     try {
@@ -1880,7 +1880,7 @@ $ _`}</pre>
 
             {passkeyAvailable() && (loginStep === 'password' || secondFactorPasskey) && <>
               <div className="login-divider"><span>或者</span></div>
-              <button type="button" className="login-passkey" onClick={() => void loginWithPasskey()} disabled={isLoading || !username.trim()}><Fingerprint size={17} />使用通行密钥</button>
+              <button type="button" className="login-passkey" onClick={() => void loginWithPasskey()} disabled={isLoading}><Fingerprint size={17} />使用通行密钥</button>
             </>}
             {loginStep === 'totp' && <button type="button" className="login-back" onClick={backToPassword} disabled={isLoading}>返回密码登录</button>}
           </form>
@@ -3352,7 +3352,28 @@ function CertificateSettings({ data, client, load, notify }: any) {
     if (!draft.name.trim() || !domains.length) return
     const payload: any = { ...draft, domains, dns_credential_id: draft.challenge_type === 'dns01' ? Number(draft.dns_credential_id || 0) : undefined, issuance_server_id: draft.challenge_type === 'http01' ? Number(draft.issuance_server_id || 0) : undefined }
     setWorking('create')
-    try { await client.request('/certificates', { method: 'POST', body: JSON.stringify(payload) }); setDraft({ ...draft, name: '', domains: '', account_email: '', google_eab_credential_id: 0, eab_key_id: '', eab_hmac_key: '' }); await load(); notify?.('证书申请已创建', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+    try {
+      const result = await client.request('/certificates', { method: 'POST', body: JSON.stringify(payload) })
+      const certificate = result.certificate as Certificate
+      setDraft({ ...draft, name: '', domains: '', account_email: '', google_eab_credential_id: 0, eab_key_id: '', eab_hmac_key: '' })
+      let issueError: any = null
+      try {
+        await client.request(`/certificates/${certificate.id}/issue`, { method: 'POST', body: '{}' })
+      } catch (error: any) {
+        issueError = error
+      }
+      try {
+        await load()
+      } catch (error: any) {
+        notify?.(`证书已创建，但页面刷新失败：${localizeErrorMessage(error?.message || error)}`, 'error')
+        return
+      }
+      if (issueError) {
+        notify?.(`证书已创建，但自动签发失败：${localizeErrorMessage(issueError?.message || issueError)}`, 'error')
+      } else {
+        notify?.('证书已创建，签发已自动开始', 'success')
+      }
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const certificateAction = async (certificate: Certificate, action: 'issue' | 'renew' | 'confirm-dns') => {
     setWorking(`${action}-${certificate.id}`)
@@ -3478,8 +3499,8 @@ function CertificateSettings({ data, client, load, notify }: any) {
     </section>
     <section className="settings-card">
       <div className="settings-card-head"><div><h3>自动匹配</h3><p className="muted">入口域名的全局默认策略</p></div><button onClick={saveMatching}>保存</button></div>
-      <div className="form settings-form"><label className="check-row"><input type="checkbox" checked={autoMatch} onChange={e => setAutoMatch(e.target.checked)} /><span>启用自动匹配</span></label><FormField label="默认优先级"><Select variant="segmented" value={preference} onChange={e => setPreference(e.target.value)}><option value="subdomain">精确子域证书</option><option value="wildcard">泛域名证书</option></Select></FormField></div>
-      <div className="dns-record-list">{certificates.map(certificate => {
+      <div className="form settings-form"><label className="check-row"><input type="checkbox" checked={autoMatch} onChange={e => setAutoMatch(e.target.checked)} /><span>启用自动匹配</span></label><FormField label="默认策略"><Select variant="segmented" value={preference} onChange={e => setPreference(e.target.value)}><option value="subdomain">精确子域证书</option><option value="wildcard">泛域名证书</option></Select></FormField></div>
+      <div className="dns-record-list certificate-record-list">{certificates.map(certificate => {
         const ready = certificate.status === 'ready'
         const issueAction = ready ? 'renew' : 'issue'
         const issueLabel = ready ? '续签证书' : '签发证书'
@@ -3490,11 +3511,11 @@ function CertificateSettings({ data, client, load, notify }: any) {
           <div className="record-main"><strong>{certificate.name}</strong><span>{certificate.domains.join(' · ')}</span><small>{certificate.last_error || (certificate.not_after ? `有效至 ${formatTableTime(certificate.not_after)}` : certificateLabelValue(certificate.challenge_type))}</small>{certificate.status === 'awaiting_dns' && (certificate.validation_records || []).map(record => <code key={`${record.name}-${record.content}`}>{record.name} TXT {record.content}</code>)}</div>
           <span className={`status-pill ${ready ? 'ok' : certificate.status === 'failed' ? 'warning' : ''}`}>{certificateLabelValue(certificate.status)}</span>
           <div className="record-actions">
-            <button type="button" className="ghost icon-button" onClick={() => void refreshCertificateStatus(certificate)} disabled={refreshWorking} title="刷新证书状态" aria-label="刷新证书状态"><RefreshCw size={14} className={refreshWorking ? 'spin' : ''} /></button>
-            <button type="button" className="ghost icon-button" onClick={() => setLogCertificate(certificate)} title="查看签发日志" aria-label="查看签发日志"><FileText size={14} /></button>
-            {certificate.acme_ca === 'google' && <button type="button" className="ghost icon-button" onClick={() => openCertificateEAB(certificate)} title={certificate.eab_configured ? '更新 Google EAB' : '填写 Google EAB'} aria-label={certificate.eab_configured ? '更新 Google EAB' : '填写 Google EAB'}><KeyRound size={14} /></button>}
-            {certificate.status === 'awaiting_dns' ? <button type="button" className="ghost" onClick={() => void certificateAction(certificate, 'confirm-dns')} disabled={working === `confirm-dns-${certificate.id}`}>已解析</button> : certificate.challenge_type !== 'imported' ? <button type="button" className="ghost icon-button" onClick={() => void certificateAction(certificate, issueAction)} disabled={issueWorking || certificate.status === 'issuing'} title={issueLabel} aria-label={issueLabel}>{ready ? <CalendarSync size={14} className={issueWorking ? 'spin' : ''} /> : <BadgeCheck size={14} />}</button> : null}
-            <button type="button" className="ghost icon-button danger-text" onClick={() => void deleteCertificate(certificate)} title="删除证书" aria-label="删除证书"><Trash2 size={14} /></button>
+            <button type="button" className="ghost icon-button tooltip-button" onClick={() => void refreshCertificateStatus(certificate)} disabled={refreshWorking} data-tooltip="刷新证书状态" aria-label="刷新证书状态"><RefreshCw size={14} className={refreshWorking ? 'spin' : ''} /></button>
+            <button type="button" className="ghost icon-button tooltip-button" onClick={() => setLogCertificate(certificate)} data-tooltip="查看签发日志" aria-label="查看签发日志"><FileText size={14} /></button>
+            {certificate.acme_ca === 'google' && <button type="button" className="ghost icon-button tooltip-button" onClick={() => openCertificateEAB(certificate)} data-tooltip={certificate.eab_configured ? '更新 Google EAB' : '填写 Google EAB'} aria-label={certificate.eab_configured ? '更新 Google EAB' : '填写 Google EAB'}><KeyRound size={14} /></button>}
+            {certificate.status === 'awaiting_dns' ? <button type="button" className="ghost" onClick={() => void certificateAction(certificate, 'confirm-dns')} disabled={working === `confirm-dns-${certificate.id}`}>已解析</button> : certificate.challenge_type !== 'imported' ? <button type="button" className="ghost icon-button tooltip-button" onClick={() => void certificateAction(certificate, issueAction)} disabled={issueWorking || certificate.status === 'issuing'} data-tooltip={issueLabel} aria-label={issueLabel}>{ready ? <CalendarSync size={14} className={issueWorking ? 'spin' : ''} /> : <BadgeCheck size={14} />}</button> : null}
+            <button type="button" className="ghost icon-button tooltip-button danger-text" onClick={() => void deleteCertificate(certificate)} data-tooltip="删除证书" aria-label="删除证书"><Trash2 size={14} /></button>
           </div>
         </div>
       })}</div>
@@ -4592,14 +4613,35 @@ function MTUSettingsDialog({ draft, onCancel, onSave, nested = true }: { draft: 
 }
 
 function FormField({ label, hint, required, children, className = '', full = false }: { label: string; hint?: string; required?: boolean; children: React.ReactNode; className?: string; full?: boolean }) {
+  const [hintOpen, setHintOpen] = useState(false)
+  const hintID = React.useId()
+  const useHintPopover = Boolean(hint && hint.length > 16)
   return (
     <label className={`form-field${full ? ' form-field-full' : ''}${className ? ` ${className}` : ''}`.trim()}>
       <div className="form-field-meta">
         <span className="form-field-label">
           {label}
           {required ? <em aria-label="必填">*</em> : null}
+          {useHintPopover ? (
+            <button
+              type="button"
+              className="form-field-help"
+              aria-label={`${label}说明`}
+              aria-describedby={hintID}
+              aria-expanded={hintOpen}
+              onClick={event => {
+                event.preventDefault()
+                event.stopPropagation()
+                setHintOpen(open => !open)
+              }}
+              onBlur={() => setHintOpen(false)}
+            >
+              <HelpCircle size={14} aria-hidden="true" />
+              <span id={hintID} role="tooltip" className="form-field-help-popover" data-open={hintOpen || undefined}>{hint}</span>
+            </button>
+          ) : null}
         </span>
-        {hint ? <small className="form-field-hint">{hint}</small> : null}
+        {hint && !useHintPopover ? <small className="form-field-hint">{hint}</small> : null}
       </div>
       <div className="form-field-control">{children}</div>
     </label>
@@ -5172,7 +5214,7 @@ type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_
 type RoutingDraft = { server_id: number; name: string; priority: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; warp_profile_id: number; interface_name: string; enabled: boolean }
 type TransportMode = 'port-forward' | 'tunnel'
 type TransportDraft = { mode: TransportMode; name: string; source_server_id: number; target_server_id: number; listen_ip: string; listen_port: number; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; type: TunnelType; priority: number; config_json: string; enabled: boolean }
-type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step'; id: number; label: string; path_id?: number; node_id?: string }
+type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step'; id: number; label: string; path_id?: number; node_id?: string }
 type ImportedNodeDraft = { content: string; scope: 'global' | 'server'; server_id: number; expose_to_users: boolean; position?: GraphPosition | null }
 type CanvasServerInstance = { instance_id: string; server_id: number }
 type TransportDialogRequest = {
@@ -5589,6 +5631,16 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  await load()
 	  return createdStep
 	}
+	const createDirectPathFromEntry = async (entry: Inbound, reload = true): Promise<ProxyPath | null> => {
+	  const existing = ((data.proxy_paths || []) as ProxyPath[]).find(path => path.enabled !== false && path.inbound_id === entry.id && path.kind === 'direct')
+	  if (existing) {
+	    await dialogs.alert({ title: '已经启用直接出口', message: `${entry.name || `入口 ${entry.id}`} 已有直接出口分支。` })
+	    return null
+	  }
+	  const result = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ kind: 'direct', name_mode: 'auto', name_template: [], inbound_id: entry.id, enabled: true }) }) as { proxy_path?: ProxyPath }
+	  if (reload) await load()
+	  return result.proxy_path || null
+	}
 	const appendPathAfterStep = async (stepID: number, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
 	  const steps: ProxyPathStep[] = data.proxy_path_steps || []
 	  const step = steps.find(x => x.id === stepID)
@@ -5623,6 +5675,39 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  if (!conn.source || !conn.target) return
 	  const sourceEntity = graphEntity(conn.source)
 	  const targetEntity = graphEntity(conn.target)
+	  if (targetEntity?.type === 'direct') {
+	    if (pathStepIDFromHandle(conn.sourceHandle)) {
+	      return dialogs.alert({ title: '无需追加直接出口', message: '代理路径会从最后一台服务器直接出口；此节点用于给一级入口增加可选的本机直出分支。' })
+	    }
+	    const sourceHandleInboundID = inboundIDFromServerHandle(conn.sourceHandle)
+	    const sourceEntry = sourceEntity?.type === 'entry'
+	      ? entries.find(entry => entry.id === sourceEntity.id)
+	      : sourceHandleInboundID
+	        ? entries.find(entry => entry.id === sourceHandleInboundID && entry.server_id === sourceEntity?.id)
+	        : undefined
+	    if (sourceEntry) {
+	      await createDirectPathFromEntry(sourceEntry)
+	      return
+	    }
+	    if (sourceEntity?.type === 'server' && conn.sourceHandle === 'server-shared') {
+	      const existingInboundIDs = new Set(((data.proxy_paths || []) as ProxyPath[]).filter(path => path.enabled !== false && path.kind === 'direct').map(path => path.inbound_id))
+	      const candidates = entries.filter(entry => entry.server_id === sourceEntity.id && entry.enabled !== false && !existingInboundIDs.has(entry.id))
+	      if (!candidates.length) return dialogs.alert({ title: '已经启用直接出口', message: '这台服务器的可用入口都已有直接出口分支。' })
+	      if (candidates.length > 1 && !await dialogs.confirm({ title: '添加直接出口', message: `会为 ${candidates.length} 个入口分别增加可选的本机直出分支。`, confirmText: '添加' })) return
+	      const failures: string[] = []
+	      for (const entry of candidates) {
+	        try {
+	          await createDirectPathFromEntry(entry, false)
+	        } catch (error: any) {
+	          failures.push(`${entry.name || `入口 ${entry.id}`}：${localizeErrorMessage(error?.message || error)}`)
+	        }
+	      }
+	      await load()
+	      if (failures.length) await dialogs.alert({ title: '部分直接出口未添加', message: failures.join('\n') })
+	      return
+	    }
+	    return dialogs.alert({ title: '请选择入口连接点', message: '直接出口需要连接一级入口节点或一级服务器上的具体入口点。' })
+	  }
 	  if (sourceEntity?.type === 'server' && conn.sourceHandle === 'server-shared') {
 	    const target = await targetStepForGraphTarget(conn.target)
 	    if (!target) return
@@ -5734,6 +5819,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     ...entry,
     __edit: true,
     __graphPosition: null,
+    __custom_sni: Boolean(entry.certificate_domain && entry.certificate_domain !== entry.dns_domain),
     access_scope: 'inbound' as AccessScopeType,
     access_user_ids: [] as number[],
     access_group_ids: [] as number[],
@@ -5744,7 +5830,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     if (!server) return dialogs.alert({ title: '无法添加入口', message: '请先添加服务器。' })
     const preset = inboundPreset(defaultInboundPreset('vless'))
     const port = nextAvailableInboundPort(data, server, preset.protocol, preset.defaultPort)
-    setEntryDraft({ __graphPosition: position || null, __port_manual: false, access_scope: 'inbound' as AccessScopeType, access_user_ids: [] as number[], access_group_ids: [] as number[], server_id: server.id, name: autoInboundName(server, preset.protocol, port), protocol: preset.protocol, listen_ip: server.listen_ip || '0.0.0.0', port, entry_ip_mode: 'auto' as EntryIPMode, external_ip: '', dns_sync_enabled: false, dns_credential_id: undefined, dns_domain: '', dns_proxy_enabled: false, dns_record_types: 'a' as DNSRecordTypes, ddns_enabled: false, ddns_interval_seconds: 300, tls: presetRequiresCertificate(preset.id), certificate_mode: presetRequiresCertificate(preset.id) ? 'auto' : 'external', certificate_domain: presetRequiresCertificate(preset.id) ? 'example.com' : '', certificate_id: undefined, config_json: buildInboundPresetConfig(preset.id), enabled: true })
+    setEntryDraft({ __graphPosition: position || null, __port_manual: false, __custom_sni: false, access_scope: 'inbound' as AccessScopeType, access_user_ids: [] as number[], access_group_ids: [] as number[], server_id: server.id, name: autoInboundName(server, preset.protocol, port), protocol: preset.protocol, listen_ip: server.listen_ip || '0.0.0.0', port, entry_ip_mode: 'auto' as EntryIPMode, external_ip: '', dns_sync_enabled: false, dns_credential_id: undefined, dns_domain: '', dns_proxy_enabled: false, dns_record_types: 'a' as DNSRecordTypes, ddns_enabled: false, ddns_interval_seconds: 300, tls: presetRequiresCertificate(preset.id), certificate_mode: presetRequiresCertificate(preset.id) ? 'auto' : 'external', certificate_domain: '', certificate_id: undefined, config_json: buildInboundPresetConfig(preset.id), enabled: true })
   }
   const submitEntryDraft = async () => {
     if (!entryDraft) return
@@ -5755,7 +5841,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         if (!confirmed) return
         finalDraft = { ...finalDraft, config_json: JSON.stringify({ ...(parseConfig(finalDraft.config_json) || {}), exposure_confirmed: true, exposure_confirmation_version: 'ssh-inbound-v1', access_mode: 'restricted_proxy' }) }
       }
-      const { __graphPosition, __port_manual, access_scope, access_user_ids, access_group_ids, ...body } = finalDraft
+      const { __graphPosition, __port_manual, __custom_sni, access_scope, access_user_ids, access_group_ids, ...body } = finalDraft
       const result = await client.request('/inbounds', { method: 'POST', body: JSON.stringify(body) }) as { inbound?: Inbound }
       if (result.inbound?.id) {
         placeGraphNode(`entry-${result.inbound.id}`, __graphPosition || nextEntryGraphPosition(data, positions, Number(body.server_id), selected?.id || Number(body.server_id)))
@@ -5776,7 +5862,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         if (!confirmed) return
         finalDraft = { ...finalDraft, config_json: JSON.stringify({ ...(parseConfig(finalDraft.config_json) || {}), exposure_confirmed: true, exposure_confirmation_version: 'ssh-inbound-v1', access_mode: 'restricted_proxy' }) }
       }
-      const { __edit, __graphPosition, __port_manual, access_scope, access_user_ids, access_group_ids, ...body } = finalDraft
+      const { __edit, __graphPosition, __port_manual, __custom_sni, access_scope, access_user_ids, access_group_ids, ...body } = finalDraft
       await client.request(`/inbounds/${body.id}`, { method: 'PATCH', body: JSON.stringify(body) })
       setEditEntry(null)
       await load()
@@ -5887,11 +5973,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    server: { name: '服务器', path: `/servers/${entity.id}` },
 	    entry: { name: '入口节点', path: `/inbounds/${entity.id}` },
 	    imported: { name: '导入节点', path: `/external-outbounds/${entity.id}` },
+	    direct: { name: '直接出口', path: '' },
 	    'port-forward': { name: '端口转发', path: `/port-forwards/${entity.id}` },
 	    tunnel: { name: '隧道', path: `/tunnels/${entity.id}` },
 	    'proxy-path': { name: '代理路径', path: `/proxy-paths/${entity.id}` },
 	    'proxy-path-step': { name: '路径步骤', path: `/proxy-path-steps/${entity.id}` },
 	  }
+	  if (entity.type === 'direct') return
     const item = meta[entity.type]
     const cascading = entity.type === 'proxy-path-step'
     // Deleting a server or an entry cuts every path that traverses it, including
@@ -6004,7 +6092,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   }
   const onNodeContextMenu = (e: React.MouseEvent, node: Node) => {
     const entity = node.data?.entity as GraphEntity | undefined
-    if (!entity) return
+    if (!entity || entity.type === 'direct') return
     e.preventDefault()
     e.stopPropagation()
     openGraphContextMenu(e.clientX, e.clientY, entity)
@@ -6163,7 +6251,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
           <strong title={activeGraphEntity.label}>{activeGraphEntity.label}</strong>
 		  {activeGraphEntity.type === 'proxy-path-step' && <button type="button" className="ghost" onClick={() => editProxyPathNameForEntity(activeGraphEntity)}><Edit3 size={13} />链路命名</button>}
           {activeGraphActionLabel && <button type="button" className="ghost" onClick={() => void openActiveGraphEntity()}><Edit3 size={13} />{activeGraphActionLabel}</button>}
-          <button type="button" className="ghost danger-text" onClick={() => void deleteActiveGraphEntity()}><Trash2 size={13} />{activeGraphEntity.node_id?.startsWith('canvas-server-') ? '移出画布' : activeGraphEntity.type === 'proxy-path-step' ? '断开后续' : '删除'}</button>
+		  {activeGraphEntity.type !== 'direct' && <button type="button" className="ghost danger-text" onClick={() => void deleteActiveGraphEntity()}><Trash2 size={13} />{activeGraphEntity.node_id?.startsWith('canvas-server-') ? '移出画布' : activeGraphEntity.type === 'proxy-path-step' ? '断开后续' : '删除'}</button>}
           <button type="button" className="ghost icon-button" onClick={() => setActiveGraphEntity(null)} aria-label="取消选择" title="取消选择"><X size={13} /></button>
         </div>}
         {!nodes.length && <div className="graph-empty-state"><ServerIcon size={22} /><strong>还没有服务器</strong><span>添加服务器后即可创建入口和代理链路。</span><button onClick={() => addServer()}>添加服务器</button></div>}
@@ -6766,6 +6854,19 @@ async function createEntryAccessGrants(client: any, inbound: Inbound, scope: Acc
   }
 }
 
+function certificateCoversSNI(certificate: Certificate, serverName: string) {
+  const normalized = serverName.trim().toLowerCase().replace(/\.$/, '')
+  if (!normalized) return false
+  return certificate.domains.some(domain => {
+    const pattern = domain.trim().toLowerCase().replace(/\.$/, '')
+    if (pattern === normalized) return true
+    if (!pattern.startsWith('*.')) return false
+    const suffix = pattern.slice(2)
+    const prefix = normalized.endsWith(`.${suffix}`) ? normalized.slice(0, -suffix.length - 1) : ''
+    return Boolean(prefix) && !prefix.includes('.')
+  })
+}
+
 type RealityKeyPair = { private_key: string; public_key: string; short_id: string }
 
 function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, client, onCancel, onSubmit }: { mode?: 'create' | 'edit'; draft: any; setDraft: React.Dispatch<React.SetStateAction<any | null>>; data: any; servers: Server[]; client: ReturnType<typeof api>; onCancel: () => void; onSubmit: () => Promise<void> }) {
@@ -6783,9 +6884,29 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   const dnsCredentials: DNSCredential[] = data.dns_credentials || []
   const certificates: Certificate[] = data.certificates || []
   const selectedDNSCredential = dnsCredentials.find(item => item.id === Number(draft.dns_credential_id || 0))
+  const selectedCertificate = certificates.find(item => item.id === Number(draft.certificate_id || 0))
+  const dnsZoneOptions = (selectedDNSCredential?.zones || [])
+    .filter(zone => zone.server_id == null || zone.server_id === server?.id)
+    .sort((left, right) => Number(right.server_id === server?.id) - Number(left.server_id === server?.id) || left.zone_name.localeCompare(right.zone_name))
+    .filter((zone, index, zones) => zones.findIndex(item => item.zone_name === zone.zone_name) === index)
+  const selectedDNSZone = [...dnsZoneOptions]
+    .sort((left, right) => right.zone_name.length - left.zone_name.length)
+    .find(zone => draft.dns_domain === zone.zone_name || String(draft.dns_domain || '').endsWith(`.${zone.zone_name}`)) || dnsZoneOptions[0]
+  const selectedDNSZoneName = selectedDNSZone?.zone_name || ''
+  const dnsPrefix = selectedDNSZoneName && String(draft.dns_domain || '').endsWith(`.${selectedDNSZoneName}`)
+    ? String(draft.dns_domain).slice(0, -selectedDNSZoneName.length - 1)
+    : draft.dns_domain === selectedDNSZoneName ? '' : String(draft.dns_domain || '')
   const certificateRequired = presetRequiresCertificate(presetID)
   const entryMode = (draft.entry_ip_mode || 'auto') as EntryIPMode
   const entryAddress = draft.dns_sync_enabled && draft.dns_domain ? draft.dns_domain : entryAddressByMode(server, entryMode, draft.external_ip || '')
+  const suggestedSNI = (certificate: Certificate | null | undefined = selectedCertificate, dnsDomain = String(draft.dns_domain || ''), externalIP = String(draft.external_ip || '')) => {
+    const entryDomains = [dnsDomain, isDomainLike(externalIP) ? externalIP : ''].filter(Boolean)
+    if (!certificate) return dnsDomain
+    const coveredEntry = entryDomains.find(domain => certificateCoversSNI(certificate, domain))
+    if (coveredEntry) return coveredEntry
+    return certificate.domains.find(domain => !domain.startsWith('*.')) || ''
+  }
+  const followedSNI = suggestedSNI()
   const update = (patch: any) => setDraft((old: any) => old ? { ...old, ...patch } : old)
   const generateRealityKeypair = async (silent = false) => {
     if (realityKeyLoading) return
@@ -6819,7 +6940,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
         config_json: buildInboundPresetConfig(preset.id),
         tls: presetRequiresCertificate(preset.id),
         certificate_mode: presetRequiresCertificate(preset.id) ? (previousRequiresCertificate ? (old.certificate_mode || 'auto') : 'auto') : 'external',
-        certificate_domain: presetRequiresCertificate(preset.id) ? (old.certificate_domain || 'example.com') : '',
+        certificate_domain: presetRequiresCertificate(preset.id) ? (old.__custom_sni ? old.certificate_domain : suggestedSNI(old.certificate_id ? selectedCertificate : null, old.dns_domain, old.external_ip)) : '',
         certificate_id: presetRequiresCertificate(preset.id) ? old.certificate_id : undefined,
       }
     })
@@ -6832,7 +6953,10 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     const nextPort = keepManualPort ? currentPort : nextAvailableInboundPort(data, nextServer, protocol, currentPort, draft.id)
     const oldName = autoInboundName(server, protocol, currentPort)
     const shouldRename = !draft.name || draft.name === oldName || /^.+-(vless|hy2|anytls|shadowsocks|ssh)-\d+$/.test(String(draft.name))
-    update({ server_id: serverID, listen_ip: nextServer?.listen_ip || '0.0.0.0', port: nextPort, name: shouldRename ? autoInboundName(nextServer, protocol, nextPort) : draft.name })
+    const nextZones = (selectedDNSCredential?.zones || []).filter(zone => zone.server_id == null || zone.server_id === serverID)
+    const nextZone = nextZones.find(zone => zone.server_id === serverID) || nextZones.find(zone => zone.zone_name === selectedDNSZoneName) || nextZones[0]
+    const dnsDomain = draft.dns_sync_enabled ? domainWithZone(dnsPrefix, nextZone?.zone_name || '') : draft.dns_domain
+    update({ server_id: serverID, listen_ip: nextServer?.listen_ip || '0.0.0.0', port: nextPort, name: shouldRename ? autoInboundName(nextServer, protocol, nextPort) : draft.name, dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? suggestedSNI(selectedCertificate, dnsDomain, draft.external_ip) : draft.certificate_domain })
   }
   const chooseAutoPort = () => {
     const nextPort = autoPortFor(server, protocol, inboundPreset(presetID).defaultPort)
@@ -6843,6 +6967,26 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     update({ port: nextPort, __port_manual: manual, name: draft.name === oldName ? autoInboundName(server, protocol, nextPort) : draft.name })
   }
   const changeEntryMode = (nextMode: EntryIPMode) => update(nextMode === 'custom' ? { entry_ip_mode: nextMode, ddns_enabled: false } : { entry_ip_mode: nextMode })
+  const changeExternalIP = (externalIP: string) => update({ external_ip: externalIP, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? suggestedSNI(selectedCertificate, draft.dns_domain, externalIP) : draft.certificate_domain })
+  const domainWithZone = (prefix: string, zoneName: string) => {
+    const normalizedPrefix = prefix.trim().replace(/^\.+|\.+$/g, '')
+    return normalizedPrefix && zoneName ? `${normalizedPrefix}.${zoneName}` : ''
+  }
+  const changeDNSCredential = (credentialID: number) => {
+    const credential = dnsCredentials.find(item => item.id === credentialID)
+    const zones = (credential?.zones || []).filter(zone => zone.server_id == null || zone.server_id === server?.id)
+    const zone = zones.find(item => item.server_id === server?.id) || zones[0]
+    const dnsDomain = domainWithZone(dnsPrefix, zone?.zone_name || '')
+    update({ dns_credential_id: credentialID || undefined, dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? suggestedSNI(selectedCertificate, dnsDomain, draft.external_ip) : draft.certificate_domain, dns_proxy_enabled: credential?.provider === 'cloudflare' ? Boolean(draft.dns_proxy_enabled) : false })
+  }
+  const changeDNSZone = (zoneName: string) => {
+    const dnsDomain = domainWithZone(dnsPrefix, zoneName)
+    update({ dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? suggestedSNI(selectedCertificate, dnsDomain, draft.external_ip) : draft.certificate_domain })
+  }
+  const changeDNSPrefix = (prefix: string) => {
+    const dnsDomain = domainWithZone(prefix, selectedDNSZoneName)
+    update({ dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? suggestedSNI(selectedCertificate, dnsDomain, draft.external_ip) : draft.certificate_domain })
+  }
   const updateConfig = (patch: Record<string, any>) => update({ config_json: JSON.stringify({ ...cfg, ...patch }, null, 2) })
   const toggleDraftID = (key: 'access_user_ids' | 'access_group_ids', id: number) => {
     const current = new Set<number>(draft[key] || [])
@@ -6878,7 +7022,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             <Select value={entryMode} onChange={e => changeEntryMode(e.target.value as EntryIPMode)}>{entryIPModes.map(x => <option key={x} value={x}>{entryAddressModeLabel(x, server)}</option>)}</Select>
           </FormField>
           {entryMode === 'custom' && <FormField label="自定义入口地址" required hint="可填写域名、IPv4 或 IPv6。">
-            <input value={draft.external_ip || ''} onChange={e => update({ external_ip: e.target.value })} placeholder="例如 1.2.3.4 或 origin.example.net" />
+            <input value={draft.external_ip || ''} onChange={e => changeExternalIP(e.target.value)} placeholder="例如 1.2.3.4 或 origin.example.net" />
           </FormField>}
           <div className="managed-entry-box">
             <label className="check-row">
@@ -6887,10 +7031,15 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             </label>
             {draft.dns_sync_enabled && <>
               <FormField label="域名服务账号" required>
-                <Select value={Number(draft.dns_credential_id || 0)} onChange={e => { const id = Number(e.target.value); const credential = dnsCredentials.find(item => item.id === id); update({ dns_credential_id: id || undefined, dns_proxy_enabled: credential?.provider === 'cloudflare' ? Boolean(draft.dns_proxy_enabled) : false }) }}><option value={0}>选择凭据</option>{dnsCredentials.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name} · {dnsProviderLabels[item.provider]}</option>)}</Select>
+                <Select value={Number(draft.dns_credential_id || 0)} onChange={e => changeDNSCredential(Number(e.target.value))}><option value={0}>选择凭据</option>{dnsCredentials.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name} · {dnsProviderLabels[item.provider]}</option>)}</Select>
               </FormField>
               <FormField label="解析域名" required hint="客户端连接使用的域名。">
-                <input value={draft.dns_domain || ''} onChange={e => update({ dns_domain: e.target.value })} placeholder="entry.example.com" />
+                <div className="dns-domain-input">
+                  <input value={dnsPrefix} onChange={e => changeDNSPrefix(e.target.value)} placeholder="例如 entry" aria-label="解析域名前缀" disabled={!selectedDNSZoneName} />
+                  {dnsZoneOptions.length > 1
+                    ? <Select value={selectedDNSZoneName} onChange={e => changeDNSZone(e.target.value)} aria-label="解析域名后缀">{dnsZoneOptions.map(zone => <option key={zone.id} value={zone.zone_name}>.{zone.zone_name}</option>)}</Select>
+                    : <span className="dns-domain-suffix">{selectedDNSZoneName ? `.${selectedDNSZoneName}` : '请先选择域名账号'}</span>}
+                </div>
               </FormField>
               <FormField label="地址类型" hint={entryMode === 'custom' && isDomainLike(draft.external_ip || '') ? '域名目标会创建 CNAME。' : '选择要创建的解析记录。'}>
                 <Select variant="segmented" value={draft.dns_record_types === 'auto' ? 'a' : (draft.dns_record_types || 'a')} onChange={e => update({ dns_record_types: e.target.value as DNSRecordTypes })} disabled={entryMode === 'custom' && isDomainLike(draft.external_ip || '')}>
@@ -6907,16 +7056,21 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             </>}
           </div>
           {certificateRequired && <div className="managed-entry-box">
-            <FormField label="证书模式"><Select value={draft.certificate_mode || 'auto'} onChange={e => update({ certificate_mode: e.target.value as CertificateMode, certificate_id: e.target.value === 'explicit' ? draft.certificate_id : undefined })}><option value="auto">自动匹配</option><option value="exact">仅精确子域证书</option><option value="wildcard">仅泛域名证书</option><option value="explicit">指定证书</option><option value="external">Agent 外部路径</option></Select></FormField>
-            {draft.certificate_mode !== 'external' && <FormField label="证书域名" required><input value={draft.certificate_domain || ''} onChange={e => update({ certificate_domain: e.target.value })} placeholder="entry.example.com" /></FormField>}
-            {draft.certificate_mode === 'explicit' && <FormField label="指定证书" required><Select value={Number(draft.certificate_id || 0)} onChange={e => update({ certificate_id: Number(e.target.value) || undefined })}><option value={0}>选择证书</option>{certificates.filter(item => item.status === 'ready').map(item => <option key={item.id} value={item.id}>{item.name} · {item.domains.join(', ')}</option>)}</Select></FormField>}
-            {draft.certificate_mode === 'external' && <><FormField label="证书路径" required><input value={String(tlsForReality.certificate_path || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, certificate_path: e.target.value } })} placeholder="/etc/ssl/example/fullchain.pem" /></FormField><FormField label="私钥路径" required><input value={String(tlsForReality.key_path || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, key_path: e.target.value } })} placeholder="/etc/ssl/example/privkey.pem" /></FormField></>}
+            <FormField label="证书模式"><Select value={draft.certificate_mode || 'auto'} onChange={e => { const certificateMode = e.target.value as CertificateMode; update({ certificate_mode: certificateMode, certificate_domain: certificateMode === 'external' ? '' : (draft.__custom_sni ? draft.certificate_domain : suggestedSNI(certificateMode === 'explicit' ? selectedCertificate : null)), certificate_id: certificateMode === 'explicit' ? draft.certificate_id : undefined }) }}><option value="auto">自动匹配</option><option value="exact">仅精确子域证书</option><option value="wildcard">仅泛域名证书</option><option value="explicit">指定证书</option><option value="external">Agent 外部路径</option></Select></FormField>
+            {draft.certificate_mode === 'explicit' && <FormField label="指定证书" required><Select value={Number(draft.certificate_id || 0)} onChange={e => { const certificateID = Number(e.target.value) || undefined; const certificate = certificates.find(item => item.id === certificateID); update({ certificate_id: certificateID, certificate_domain: draft.__custom_sni ? draft.certificate_domain : suggestedSNI(certificate || null) }) }}><option value={0}>选择证书</option>{certificates.filter(item => item.status === 'ready').map(item => <option key={item.id} value={item.id}>{item.name} · {item.domains.join(', ')}</option>)}</Select></FormField>}
+            {draft.certificate_mode !== 'external' && <>
+              <FormField label="SNI 设置" hint="默认使用证书匹配的入口域名；需要连接其他域名时可自定义。"><Select variant="segmented" value={draft.__custom_sni ? 'custom' : 'certificate'} onChange={e => update({ __custom_sni: e.target.value === 'custom', certificate_domain: e.target.value === 'custom' ? draft.certificate_domain : followedSNI })}><option value="certificate">跟随证书域名</option><option value="custom">自定义 SNI</option></Select></FormField>
+              {draft.__custom_sni
+                ? <FormField label="自定义 SNI" required hint="该域名必须包含在所选证书中。"><input value={draft.certificate_domain || ''} onChange={e => update({ certificate_domain: e.target.value })} placeholder="例如 entry.example.com" autoCapitalize="none" /></FormField>
+                : <div className="access-note compact"><strong>当前 SNI</strong><span>{followedSNI || '选择解析域名或指定证书后自动填写。'}</span></div>}
+            </>}
+            {draft.certificate_mode === 'external' && <><FormField label="SNI 域名" required hint="填写外部证书覆盖的域名。"><input value={String(tlsForReality.server_name || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, server_name: e.target.value } })} placeholder="例如 entry.example.com" autoCapitalize="none" /></FormField><FormField label="证书路径" required><input value={String(tlsForReality.certificate_path || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, certificate_path: e.target.value } })} placeholder="/etc/ssl/example/fullchain.pem" /></FormField><FormField label="私钥路径" required><input value={String(tlsForReality.key_path || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, key_path: e.target.value } })} placeholder="/etc/ssl/example/privkey.pem" /></FormField></>}
           </div>}
           <div className="access-note compact"><strong>当前入口地址</strong><span>{entryAddress ? formatHostPort(entryAddress, Number(draft.port) || 0) : '待 Agent 检测或填写自定义地址。'}</span></div>
           <FormField label="监听 IP"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" /></FormField>
           <FormField label="监听端口" required><div className="inline-field-action"><input value={draft.port} onChange={e => changePort(Number(e.target.value))} inputMode="numeric" /><button type="button" className="ghost" onClick={chooseAutoPort}>自动选择</button></div><small className="field-hint">{draft.__port_manual ? '已手动指定。' : '从服务器端口池自动选择。'}</small></FormField>
           <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
-          {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} onGenerateRealityKeypair={() => generateRealityKeypair(false)} realityKeyLoading={realityKeyLoading} />}
+          {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onGenerateRealityKeypair={() => generateRealityKeypair(false)} realityKeyLoading={realityKeyLoading} />}
           {mode === 'create' && <details className="entry-access-settings">
             <summary>用户权限与授权范围</summary>
             <div className="entry-access-settings-body">
@@ -6951,7 +7105,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   </MotionDialogPanel>
 }
 
-function InboundPresetFields({ presetID, config, updateConfig, onGenerateRealityKeypair, realityKeyLoading }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; onGenerateRealityKeypair?: () => void; realityKeyLoading?: boolean }) {
+function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName = true, onGenerateRealityKeypair, realityKeyLoading }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; showTLSServerName?: boolean; onGenerateRealityKeypair?: () => void; realityKeyLoading?: boolean }) {
   const tls = objectConfig(config.tls)
   const transport = objectConfig(config.transport)
   const headers = objectConfig(transport.headers)
@@ -6975,13 +7129,13 @@ function InboundPresetFields({ presetID, config, updateConfig, onGenerateReality
   </div>
   if (presetID === 'vless-ws') return <div className="preset-fields">
     <div className="form-section-title">WebSocket / TLS 设置</div>
-    <FormField label="SNI 域名"><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="example.com" /></FormField>
+    {showTLSServerName && <FormField label="SNI 域名"><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
     <FormField label="WebSocket 路径"><input value={String(transport.path || '')} onChange={e => setTransport({ path: e.target.value })} placeholder="/vless" /></FormField>
     <FormField label="Host 头"><input value={String(headers.Host || '')} onChange={e => setTransport({ headers: { ...headers, Host: e.target.value } })} placeholder="example.com" /></FormField>
   </div>
   if (presetID === 'vless-tls-vision' || presetID === 'hy2-tls' || presetID === 'anytls-basic') return <div className="preset-fields">
     <div className="form-section-title">TLS 设置</div>
-    <FormField label="SNI 域名"><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="example.com" /></FormField>
+    {showTLSServerName && <FormField label="SNI 域名"><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
     {presetID === 'hy2-tls' && <>
       <FormField label="上传带宽 Mbps"><input value={Number(config.up_mbps || 100)} onChange={e => updateConfig({ up_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
       <FormField label="下载带宽 Mbps"><input value={Number(config.down_mbps || 100)} onChange={e => updateConfig({ down_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
@@ -7312,7 +7466,7 @@ function ServerBranchTree({ data, server, onManageEntry }: { data: any; server: 
   </div>
 }
 
-type GraphTransportKind = 'singbox' | 'port_forward' | 'wireguard' | 'ssh'
+type GraphTransportKind = 'direct' | 'singbox' | 'port_forward' | 'wireguard' | 'ssh'
 type GraphTransportEdgeData = {
   entity?: GraphEntity
   kind: GraphTransportKind
@@ -7369,7 +7523,7 @@ function ProxyGraphEdge({
         style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
       >
         <span className="graph-edge-label-icon">
-          {kind === 'port_forward' ? <ArrowLeftRight size={12} /> : kind === 'wireguard' ? <Shield size={12} /> : kind === 'ssh' ? <Lock size={12} /> : <Workflow size={12} />}
+          {kind === 'direct' ? <LogOut size={12} /> : kind === 'port_forward' ? <ArrowLeftRight size={12} /> : kind === 'wireguard' ? <Shield size={12} /> : kind === 'ssh' ? <Lock size={12} /> : <Workflow size={12} />}
         </span>
         <span className="graph-edge-label-copy">
           <strong>{data?.title || '链式代理'}</strong>
@@ -7400,6 +7554,7 @@ function ProxyGraphLegend() {
         <span><i className="legend-node legend-gateway" /><em>一级服务器</em></span>
         <span><i className="legend-node legend-relay" /><em>链路服务器</em></span>
         <span><i className="legend-node legend-imported" /><em>第三方代理</em></span>
+        <span><i className="legend-node legend-direct" /><em>直接出口</em></span>
       </div>
       <div className="proxy-graph-legend-section">
         <strong>传递方式</strong>
@@ -7407,6 +7562,7 @@ function ProxyGraphLegend() {
         <span><i className="legend-line legend-forward" /><em>端口转发</em></span>
         <span><i className="legend-line legend-wg" /><em>WireGuard 组网</em></span>
         <span><i className="legend-line legend-ssh" /><em>SSH 隧道</em></span>
+        <span><i className="legend-line legend-direct" /><em>本机直接出口</em></span>
       </div>
     </div>
   </details>
@@ -7470,6 +7626,7 @@ function proxyPathTransportPresentation(step: Pick<ProxyPathStep, 'transport_mod
 
 function graphTransportColor(kind: GraphTransportKind, unhealthy = false) {
   if (unhealthy) return 'var(--graph-unhealthy)'
+  if (kind === 'direct') return 'var(--graph-direct)'
   if (kind === 'port_forward') return 'var(--graph-forward)'
   if (kind === 'wireguard') return 'var(--graph-wireguard)'
   if (kind === 'ssh') return 'var(--graph-ssh)'
@@ -7594,6 +7751,23 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     serverWidths.set(s.id, serverWidth)
     nodes.push({ id, className: 'graph-node server-graph-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: s.id, label: s.name || `服务器 ${s.id}` } as GraphEntity, label: <GraphNode kind={s.id === rootID ? '一级服务器' : '服务器'} title={s.name} meta={`${labelValue(s.status || 'unknown')} · ${serverDefaultEntryAddress(s) || '无公网 IP'}`} entryHandles={serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))} pathHandles={continuationByNode.get(id) || []} role={displayRole(s.id, s.id === rootID)} status={s.status} ipv4={s.public_ipv4 || '未检测'} cpu={Math.round(s.cpu_usage_percent || 0)} memory={s.memory_total_bytes ? Math.round((s.memory_used_bytes / s.memory_total_bytes) * 100) : 0} /> } })
   })
+  if (rootID) {
+    const id = directExitNodeID(rootID)
+    const rootPosition = serverPositions.get(rootID) || defaultServerGraphPosition(0)
+    const rootWidth = serverWidths.get(rootID) || GRAPH_ENTRY_NODE_WIDTH
+    const directPaths = visiblePaths.filter(path => path.kind === 'direct')
+    const position = positions[id] || { x: rootPosition.x + rootWidth + 120, y: rootPosition.y + 36 }
+    nodes.push({
+      id,
+      className: 'graph-node direct-exit-graph-node',
+      position,
+      style: { width: 220 },
+      data: {
+        entity: { type: 'direct', id: rootID, label: '直接出口' } as GraphEntity,
+        label: <DirectExitGraphNode branchCount={directPaths.length} />,
+      },
+    })
+  }
   canvasServerInstances.forEach((instance, index) => {
     const server = (data.servers || []).find((item: Server) => item.id === instance.server_id) as Server | undefined
     if (!server) return
@@ -7661,6 +7835,21 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const root = inboundByID.get(path.inbound_id)
     if (!root) return
     const pathSteps = (stepsByPath.get(path.id) || []).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
+    if (path.kind === 'direct') {
+      edges.push(graphTransportEdge(
+        `proxy-path-direct-${path.id}`,
+        `server-${root.server_id}`,
+        directExitNodeID(root.server_id),
+        {
+          entity: { type: 'proxy-path', id: path.id, label: path.name || `${root.name || `入口 ${root.id}`} / 直接出口` },
+          kind: 'direct',
+          title: '直接出口',
+          detail: path.name || root.name || `入口 ${root.id}`,
+        },
+        { sourceHandle: serverEntryHandleID(root.id), targetHandle: 'target-left', animated: false },
+      ))
+      return
+    }
     let source = `server-${root.server_id}`
     let sourceHandle: string | undefined = serverEntryHandleID(root.id)
     pathSteps.forEach((step, index) => {
@@ -7767,6 +7956,10 @@ function canvasServerNodeID(instance: CanvasServerInstance) {
   return `canvas-server-${instance.instance_id}`
 }
 
+function directExitNodeID(serverID: number) {
+  return `direct-exit-${serverID}`
+}
+
 function reachableServerIds(data: any, rootServerId: number) {
   const seen = new Set<number>([rootServerId])
   let changed = true
@@ -7813,6 +8006,17 @@ function pathStepIDFromHandle(handle?: string | null) {
 
 type GraphEntryHandle = { id: number; label: string; title: string }
 type GraphPathHandle = { step_id: number; label: string; title: string }
+
+function DirectExitGraphNode({ branchCount }: { branchCount: number }) {
+  return <div className="direct-exit-card">
+    <Handle id="target-top" className="connect-handle connect-target connect-target-top" type="target" position={Position.Top} />
+    <Handle id="target-left" className="connect-handle connect-target connect-target-left" type="target" position={Position.Left} />
+    <Handle id="target-right" className="connect-handle connect-target connect-target-right" type="target" position={Position.Right} />
+    <span className="direct-exit-icon"><LogOut size={18} /></span>
+    <span className="direct-exit-copy"><small>可选出口</small><strong>直接出口</strong></span>
+    <span className={`direct-exit-state${branchCount ? ' enabled' : ''}`}>{branchCount ? `${branchCount} 条分支` : '未启用'}</span>
+  </div>
+}
 
 function GraphNode({ 
   kind, 
@@ -8029,6 +8233,7 @@ function autoLayoutProxyGraphPositions(
   // Calculate hop depth across both controlled servers and imported proxies so
   // mixed paths such as A -> SOCKS -> B stay in one vertical sequence.
   const rootNodeID = `server-${rootID}`
+  addLayoutHop(rootNodeID, directExitNodeID(rootID))
   const depth = new Map<string, number>([[rootNodeID, 0]])
   const queue = [rootNodeID]
   while (queue.length) {
@@ -8060,6 +8265,7 @@ function autoLayoutProxyGraphPositions(
   const SIBLING_GAP = 100
   const positions: Record<string, GraphPosition> = {}
   const nodeWidth = (nodeID: string) => {
+    if (nodeID === directExitNodeID(rootID)) return 220
     if (nodeID.startsWith('proxy-imported-step-') || nodeID.startsWith('imported-')) return GRAPH_ENTRY_NODE_WIDTH
     const serverID = graphNodeServerId(nodeID, data, canvasServerInstances)
     if (!serverID) return GRAPH_ENTRY_NODE_WIDTH
@@ -8068,6 +8274,7 @@ function autoLayoutProxyGraphPositions(
     return graphServerNodeWidth(Math.max(1, entryCount))
   }
   const nodeLabel = (nodeID: string) => {
+    if (nodeID === directExitNodeID(rootID)) return '直接出口'
     const serverID = graphNodeServerId(nodeID, data, canvasServerInstances)
     if (serverID) {
       return servers.find(server => server.id === serverID)?.name || nodeID
@@ -8087,6 +8294,10 @@ function autoLayoutProxyGraphPositions(
       const width = widths[index]
       const nodePosition = snapGraphPosition({ x: cursorX, y: ORIGIN_Y + layer * LAYER_GAP })
       cursorX += width + SIBLING_GAP
+      if (nodeID === directExitNodeID(rootID)) {
+        positions[nodeID] = nodePosition
+        return
+      }
       if (nodeID.startsWith('imported-') || nodeID.startsWith('proxy-imported-step-')) {
         positions[nodeID] = nodePosition
         return
@@ -10827,7 +11038,7 @@ function buildInboundPresetConfig(id: string) {
   }
   if (preset.id === 'vless-tls-vision') {
     cfg.flow = 'xtls-rprx-vision'
-    cfg.tls = { enabled: true, server_name: 'example.com' }
+    cfg.tls = { enabled: true }
   }
   if (preset.id === 'vless-reality') {
     cfg.flow = 'xtls-rprx-vision'
@@ -10844,15 +11055,15 @@ function buildInboundPresetConfig(id: string) {
     }
   }
   if (preset.id === 'vless-ws') {
-    cfg.tls = { enabled: true, server_name: 'example.com' }
-    cfg.transport = { type: 'ws', path: '/vless', headers: { Host: 'example.com' } }
+    cfg.tls = { enabled: true }
+    cfg.transport = { type: 'ws', path: '/vless', headers: {} }
   }
   if (preset.id === 'hy2-tls') {
-    cfg.tls = { enabled: true, server_name: 'example.com' }
+    cfg.tls = { enabled: true }
     cfg.up_mbps = 100
     cfg.down_mbps = 100
   }
-  if (preset.id === 'anytls-basic') cfg.tls = { enabled: true, server_name: 'example.com' }
+  if (preset.id === 'anytls-basic') cfg.tls = { enabled: true }
   return JSON.stringify(cfg, null, 2)
 }
 

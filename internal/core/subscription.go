@@ -39,6 +39,21 @@ type SubscriptionNode struct {
 	Raw      map[string]any `json:"raw"`
 }
 
+type subscriptionNodeNameKind uint8
+
+const (
+	subscriptionNodeNameProxyPath subscriptionNodeNameKind = iota
+	subscriptionNodeNameExternal
+	subscriptionNodeNameStandalone
+)
+
+type subscriptionNodeNameRef struct {
+	index      int
+	kind       subscriptionNodeNameKind
+	resourceID int64
+	serverID   int64
+}
+
 func GenerateSubscriptionWithOptions(user model.User, servers []model.Server, inbounds []model.Inbound, opts SubscriptionOptions) (string, error) {
 	format := normalizeSubscriptionFormat(opts.Format)
 	nodes, err := BuildSubscriptionNodes(user, servers, inbounds, opts)
@@ -88,6 +103,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		defaultGroup = strings.TrimSpace(opts.Profile.GroupName)
 	}
 	nodes := []SubscriptionNode{}
+	nameRefs := []subscriptionNodeNameRef{}
 	for _, inbound := range inbounds {
 		// SSH uses a public key held by the user, not a credential that can be
 		// safely embedded in a proxy subscription. The panel exposes it as a
@@ -113,10 +129,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		if strings.TrimSpace(server.EntryAddress) == "" {
 			continue
 		}
-		name := strings.TrimSpace(inbound.Name)
-		if name == "" {
-			name = fmt.Sprintf("%s-%d", inbound.Protocol, inbound.ID)
-		}
+		standaloneName := proxyPathServerLabel(server, server.ID)
 		group := defaultGroup
 		if strings.TrimSpace(assignment.GroupName) != "" {
 			group = strings.TrimSpace(assignment.GroupName)
@@ -131,9 +144,9 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 			if err != nil {
 				return nil, err
 			}
-			raw["tag"] = name
 			raw["oboard_group"] = group
-			nodes = append(nodes, SubscriptionNode{Name: name, Group: group, ServerID: server.ID, Inbound: inbound, Server: server, Raw: raw})
+			nodes = append(nodes, SubscriptionNode{Name: standaloneName, Group: group, ServerID: server.ID, Inbound: inbound, Server: server, Raw: raw})
+			nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameStandalone, resourceID: inbound.ID, serverID: server.ID})
 			continue
 		}
 		for _, path := range branches {
@@ -144,11 +157,11 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 			}
 			branchName := strings.TrimSpace(path.Name)
 			if branchName == "" {
-				branchName = fmt.Sprintf("%s 分支 %d", name, path.ID)
+				branchName = fmt.Sprintf("%s 分支 %d", standaloneName, path.ID)
 			}
-			raw["tag"] = branchName
 			raw["oboard_group"] = group
 			nodes = append(nodes, SubscriptionNode{Name: branchName, Group: group, ServerID: server.ID, Inbound: inbound, Server: server, Raw: raw})
+			nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameProxyPath, resourceID: path.ID, serverID: server.ID})
 		}
 	}
 	for _, external := range opts.ExternalOutbounds {
@@ -167,10 +180,11 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 			name = fmt.Sprintf("%s-%d", external.Protocol, external.ID)
 		}
 		group := defaultGroup
-		raw["tag"] = name
 		raw["oboard_group"] = group
 		nodes = append(nodes, SubscriptionNode{Name: name, Group: group, Raw: raw})
+		nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameExternal, resourceID: external.ID})
 	}
+	resolveSubscriptionNodeNames(nodes, nameRefs)
 	sort.SliceStable(nodes, func(i, j int) bool {
 		if nodes[i].Group == nodes[j].Group {
 			return nodes[i].Name < nodes[j].Name
@@ -180,8 +194,126 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 	return nodes, nil
 }
 
+func resolveSubscriptionNodeNames(nodes []SubscriptionNode, refs []subscriptionNodeNameRef) {
+	serverNames := map[int64]string{}
+	serverProtocols := map[int64]map[model.Protocol]bool{}
+	for _, ref := range refs {
+		if ref.kind != subscriptionNodeNameStandalone {
+			continue
+		}
+		node := nodes[ref.index]
+		serverNames[ref.serverID] = proxyPathServerLabel(node.Server, ref.serverID)
+		if serverProtocols[ref.serverID] == nil {
+			serverProtocols[ref.serverID] = map[model.Protocol]bool{}
+		}
+		serverProtocols[ref.serverID][node.Inbound.Protocol] = true
+	}
+
+	serversByName := map[string][]int64{}
+	for serverID, name := range serverNames {
+		serversByName[name] = append(serversByName[name], serverID)
+	}
+	usedServerNames := map[string]bool{}
+	duplicateServerNames := []string{}
+	for name, serverIDs := range serversByName {
+		if len(serverIDs) == 1 {
+			usedServerNames[name] = true
+			continue
+		}
+		duplicateServerNames = append(duplicateServerNames, name)
+	}
+	sort.Strings(duplicateServerNames)
+	for _, name := range duplicateServerNames {
+		serverIDs := serversByName[name]
+		sort.Slice(serverIDs, func(i, j int) bool { return serverIDs[i] < serverIDs[j] })
+		ordinal := 1
+		for _, serverID := range serverIDs {
+			for {
+				candidate := fmt.Sprintf("%s%s%02d", name, proxyPathNameSeparator, ordinal)
+				ordinal++
+				if usedServerNames[candidate] {
+					continue
+				}
+				serverNames[serverID] = candidate
+				usedServerNames[candidate] = true
+				break
+			}
+		}
+	}
+
+	for _, ref := range refs {
+		if ref.kind != subscriptionNodeNameStandalone {
+			continue
+		}
+		name := serverNames[ref.serverID]
+		if len(serverProtocols[ref.serverID]) > 1 {
+			name += proxyPathNameSeparator + proxyProtocolName(nodes[ref.index].Inbound.Protocol)
+		}
+		nodes[ref.index].Name = name
+	}
+
+	disambiguateSubscriptionNodeNames(nodes, refs, subscriptionNodeNameExternal)
+	disambiguateSubscriptionNodeNames(nodes, refs, subscriptionNodeNameStandalone)
+	for _, ref := range refs {
+		nodes[ref.index].Raw["tag"] = nodes[ref.index].Name
+	}
+}
+
+func disambiguateSubscriptionNodeNames(nodes []SubscriptionNode, refs []subscriptionNodeNameRef, target subscriptionNodeNameKind) {
+	counts := map[string]int{}
+	reserved := map[string]bool{}
+	for _, ref := range refs {
+		name := nodes[ref.index].Name
+		if ref.kind < target {
+			reserved[name] = true
+		}
+		if ref.kind == target {
+			counts[name]++
+		}
+	}
+
+	used := map[string]bool{}
+	for name := range reserved {
+		used[name] = true
+	}
+	conflicts := []subscriptionNodeNameRef{}
+	bases := map[int]string{}
+	for _, ref := range refs {
+		if ref.kind != target {
+			continue
+		}
+		name := nodes[ref.index].Name
+		if counts[name] > 1 || reserved[name] {
+			conflicts = append(conflicts, ref)
+			bases[ref.index] = name
+			continue
+		}
+		used[name] = true
+	}
+	sort.Slice(conflicts, func(i, j int) bool {
+		if target == subscriptionNodeNameStandalone && conflicts[i].serverID != conflicts[j].serverID {
+			return conflicts[i].serverID < conflicts[j].serverID
+		}
+		return conflicts[i].resourceID < conflicts[j].resourceID
+	})
+	nextOrdinal := map[string]int{}
+	for _, ref := range conflicts {
+		base := bases[ref.index]
+		for {
+			nextOrdinal[base]++
+			candidate := fmt.Sprintf("%s%s%02d", base, proxyPathNameSeparator, nextOrdinal[base])
+			if used[candidate] {
+				continue
+			}
+			nodes[ref.index].Name = candidate
+			used[candidate] = true
+			break
+		}
+	}
+}
+
 func subscriptionBranchesForInbound(inbound model.Inbound, paths []model.ProxyPath, steps []model.ProxyPathStep) []model.ProxyPath {
-	if len(paths) == 0 || len(steps) == 0 {
+	if len(paths) == 0 {
 		return nil
 	}
 	hasStep := map[int64]bool{}
@@ -190,7 +322,7 @@ func subscriptionBranchesForInbound(inbound model.Inbound, paths []model.ProxyPa
 	}
 	out := []model.ProxyPath{}
 	for _, path := range paths {
-		if path.Enabled && path.InboundID == inbound.ID && hasStep[path.ID] {
+		if path.Enabled && path.InboundID == inbound.ID && (path.Kind == model.ProxyPathKindDirect || hasStep[path.ID]) {
 			out = append(out, path)
 		}
 	}

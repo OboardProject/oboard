@@ -49,8 +49,71 @@ func TestCertificateMaterialAndSelection(t *testing.T) {
 	if err != nil || selected.ID != wildcard.ID {
 		t.Fatalf("wildcard preference selected %#v, err=%v", selected, err)
 	}
+	if mode := certificateSelectionMode(model.CertificateModeAuto, "wildcard"); mode != model.CertificateModeWildcard {
+		t.Fatalf("automatic wildcard preference resolved to %q", mode)
+	}
+	if _, err := selectCertificate([]model.Certificate{exact}, certificateSelectionMode(model.CertificateModeAuto, "wildcard"), nil, "entry.example.com", "wildcard", now); err == nil {
+		t.Fatal("automatic wildcard strategy fell back to an exact certificate")
+	}
+	if mode := certificateSelectionMode(model.CertificateModeAuto, "subdomain"); mode != model.CertificateModeExact {
+		t.Fatalf("automatic exact preference resolved to %q", mode)
+	}
+	wildcardDomain, err := certificateIssuanceDomain(model.CertificateModeWildcard, "entry.example.com")
+	if err != nil || wildcardDomain != "*.example.com" {
+		t.Fatalf("wildcard issuance domain = %q, err=%v", wildcardDomain, err)
+	}
+	exactDomain, err := certificateIssuanceDomain(model.CertificateModeExact, "entry.example.com")
+	if err != nil || exactDomain != "entry.example.com" {
+		t.Fatalf("exact issuance domain = %q, err=%v", exactDomain, err)
+	}
 	if wildcardDomainMatches("*.example.com", "deep.entry.example.com") {
 		t.Fatal("wildcard matched more than one DNS label")
+	}
+}
+
+func TestNormalizeInboundKeepsCustomCertificateDomain(t *testing.T) {
+	custom := normalizeInbound(model.Inbound{DNSDomain: "Entry.Example.COM.", CertificateMode: model.CertificateModeExplicit, CertificateDomain: "TLS.Example.NET."})
+	if custom.DNSDomain != "entry.example.com" || custom.CertificateDomain != "tls.example.net" {
+		t.Fatalf("custom certificate domain was not preserved: %#v", custom)
+	}
+	following := normalizeInbound(model.Inbound{DNSDomain: "Entry.Example.COM.", CertificateMode: model.CertificateModeAuto})
+	if following.CertificateDomain != following.DNSDomain {
+		t.Fatalf("empty certificate domain did not follow DNS domain: %#v", following)
+	}
+}
+
+func TestInjectManagedCertificateOverridesStaleSNI(t *testing.T) {
+	raw, err := injectManagedCertificate(`{"tls":{"enabled":true,"server_name":"example.com"}}`, 9, "entry.example.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		t.Fatal(err)
+	}
+	tls := config["tls"].(map[string]any)
+	if tls["server_name"] != "entry.example.net" {
+		t.Fatalf("managed TLS SNI = %#v", tls["server_name"])
+	}
+}
+
+func TestCustomEntryAcceptsExplicitCertificateSNI(t *testing.T) {
+	certificateID := int64(9)
+	inbound := normalizeInbound(model.Inbound{
+		ServerID:          1,
+		Name:              "custom-anytls",
+		Protocol:          model.ProtocolAnyTLS,
+		Port:              443,
+		EntryIPMode:       model.EntryIPModeCustom,
+		ExternalIP:        "203.0.113.10",
+		CertificateMode:   model.CertificateModeExplicit,
+		CertificateID:     &certificateID,
+		CertificateDomain: "entry.example.net",
+		ConfigJSON:        `{"tls":{"enabled":true}}`,
+		Enabled:           true,
+	})
+	if err := validateInbound(inbound); err != nil {
+		t.Fatalf("custom entry with explicit certificate SNI was rejected: %v", err)
 	}
 }
 

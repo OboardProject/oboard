@@ -38,6 +38,8 @@ type certificateRequest struct {
 
 const certificateEABHMACKeyPurpose = "certificate-eab-hmac-key"
 
+var errCertificateProvisioning = errors.New("certificate provisioning in progress")
+
 func (s *Server) certificates(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -612,8 +614,12 @@ func (s *Server) validateInboundManagedReferences(ctx context.Context, inbound m
 		}
 	}
 	if inbound.CertificateMode == model.CertificateModeExplicit && inbound.CertificateID != nil {
-		if _, err := s.store.GetCertificate(ctx, *inbound.CertificateID); err != nil {
-			return errors.New("certificate is unavailable")
+		certificate, err := s.store.GetCertificate(ctx, *inbound.CertificateID)
+		if err != nil {
+			return errors.New("所选证书不可用")
+		}
+		if !certificateDomainCovered(certificate.Domains, inbound.CertificateDomain) {
+			return fmt.Errorf("所选证书不包含 SNI 域名 %s", inbound.CertificateDomain)
 		}
 	}
 	return nil
@@ -647,9 +653,16 @@ func (s *Server) prepareCertificateInbounds(ctx context.Context, inbounds []mode
 		if inbound.CertificateMode == model.CertificateModeAuto && !autoEnabled {
 			return nil, nil, fmt.Errorf("automatic certificate matching is disabled for inbound %d", inbound.ID)
 		}
-		certificate, err := selectCertificate(certificates, inbound.CertificateMode, inbound.CertificateID, domain, preference, time.Now())
+		selectionMode := certificateSelectionMode(inbound.CertificateMode, preference)
+		certificate, err := selectCertificate(certificates, selectionMode, inbound.CertificateID, domain, preference, time.Now())
 		if err != nil {
-			return nil, nil, fmt.Errorf("inbound %d: %w", inbound.ID, err)
+			if selectionMode == model.CertificateModeExplicit {
+				return nil, nil, fmt.Errorf("inbound %d: %w", inbound.ID, err)
+			}
+			if issueErr := s.ensureManagedCertificateIssue(ctx, *inbound, selectionMode, domain, certificates); issueErr != nil {
+				return nil, nil, fmt.Errorf("inbound %d: %w", inbound.ID, issueErr)
+			}
+			return nil, nil, fmt.Errorf("inbound %d: %w", inbound.ID, errCertificateProvisioning)
 		}
 		inbound.CertificateID = &certificate.ID
 		inbound.CertificateDomain = domain
@@ -669,6 +682,94 @@ func (s *Server) prepareCertificateInbounds(ctx context.Context, inbounds []mode
 	}
 	sort.Slice(assets, func(i, j int) bool { return assets[i].ID < assets[j].ID })
 	return out, assets, nil
+}
+
+func certificateSelectionMode(mode, preference string) string {
+	if mode != model.CertificateModeAuto {
+		return mode
+	}
+	if preference == "wildcard" {
+		return model.CertificateModeWildcard
+	}
+	return model.CertificateModeExact
+}
+
+func certificateIssuanceDomain(mode, domain string) (string, error) {
+	domain = normalizeDomainName(domain)
+	if mode != model.CertificateModeWildcard {
+		return domain, nil
+	}
+	labelEnd := strings.IndexByte(domain, '.')
+	if labelEnd <= 0 || labelEnd == len(domain)-1 {
+		return "", fmt.Errorf("cannot derive wildcard certificate domain from %s", domain)
+	}
+	return "*." + domain[labelEnd+1:], nil
+}
+
+func (s *Server) ensureManagedCertificateIssue(ctx context.Context, inbound model.Inbound, selectionMode, domain string, certificates []model.Certificate) error {
+	if inbound.DNSCredentialID == nil || *inbound.DNSCredentialID <= 0 {
+		return errors.New("自动申请证书需要入口的域名服务账号")
+	}
+	issuanceDomain, err := certificateIssuanceDomain(selectionMode, domain)
+	if err != nil {
+		return err
+	}
+	for i := range certificates {
+		certificate := &certificates[i]
+		if certificate.ChallengeType != model.CertificateChallengeDNS || certificate.DNSCredentialID == nil || *certificate.DNSCredentialID != *inbound.DNSCredentialID || !containsCertificateDomain(certificate.Domains, issuanceDomain) {
+			continue
+		}
+		switch certificate.Status {
+		case model.CertificateStatusPending:
+			if err := s.startCertificateIssue(ctx, certificate, false, false); err != nil {
+				return err
+			}
+			return fmt.Errorf("%w: 已开始签发 %s", errCertificateProvisioning, issuanceDomain)
+		case model.CertificateStatusIssuing:
+			return fmt.Errorf("%w: %s 正在签发", errCertificateProvisioning, issuanceDomain)
+		case model.CertificateStatusFailed:
+			return fmt.Errorf("证书 %s 自动签发失败：%s", issuanceDomain, certificate.LastError)
+		case model.CertificateStatusReady:
+			if err := s.startCertificateIssue(ctx, certificate, true, false); err != nil {
+				return err
+			}
+			return fmt.Errorf("%w: 已开始续签 %s", errCertificateProvisioning, issuanceDomain)
+		default:
+			return fmt.Errorf("%w: %s 当前状态为 %s", errCertificateProvisioning, issuanceDomain, certificate.Status)
+		}
+	}
+
+	credentialID := *inbound.DNSCredentialID
+	request := certificateRequest{
+		Name:            "自动证书 " + issuanceDomain,
+		Domains:         []string{issuanceDomain},
+		ChallengeType:   model.CertificateChallengeDNS,
+		DNSCredentialID: &credentialID,
+		ACMECA:          "letsencrypt",
+	}
+	certificate, err := s.buildCertificate(request, nil)
+	if err != nil {
+		return err
+	}
+	if err := s.validateCertificateReferences(ctx, *certificate); err != nil {
+		return err
+	}
+	if err := s.store.CreateCertificate(ctx, certificate); err != nil {
+		return err
+	}
+	if err := s.startCertificateIssue(ctx, certificate, false, false); err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: 已自动创建并开始签发 %s", errCertificateProvisioning, issuanceDomain)
+}
+
+func containsCertificateDomain(domains []string, want string) bool {
+	for _, domain := range domains {
+		if strings.EqualFold(strings.TrimSpace(domain), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func selectCertificate(certificates []model.Certificate, mode string, explicitID *int64, domain, preference string, now time.Time) (model.Certificate, error) {
@@ -777,9 +878,7 @@ func injectManagedCertificate(configJSON string, certificateID int64, domain str
 		tls = map[string]any{}
 	}
 	tls["enabled"] = true
-	if _, exists := tls["server_name"]; !exists {
-		tls["server_name"] = domain
-	}
+	tls["server_name"] = domain
 	base := "oboard-asset://certificate/" + strconv.FormatInt(certificateID, 10) + "/"
 	tls["certificate_path"] = base + "fullchain.pem"
 	tls["key_path"] = base + "privkey.pem"

@@ -1462,6 +1462,13 @@ func TestImportedNodeURIProxyPathAndGrantAPI(t *testing.T) {
 	if len(steps) != 1 || int64(steps[0].(map[string]any)["server_id"].(float64)) != server2ID {
 		t.Fatalf("server-only path plan missing target server: %#v", plan)
 	}
+	direct := request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"kind": "direct", "name_mode": "auto", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
+	directID := int64(direct["id"].(float64))
+	if direct["kind"] != "direct" || direct["name"] != "s1｜直出" {
+		t.Fatalf("bad direct path: %#v", direct)
+	}
+	request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"kind": "direct", "inbound_id": inboundID, "enabled": true}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": directID, "position": 1, "node_type": "server_inbound", "server_id": server2ID}, http.StatusBadRequest)
 	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": serverPathID, "position": 2, "node_type": "server_inbound", "server_id": serverID}, http.StatusBadRequest)
 }
 
@@ -1601,6 +1608,7 @@ func TestProxyPathTransportCanChangeAndDeleteCascades(t *testing.T) {
 	if changed["proxy_path_step"].(map[string]any)["processing_role"] != true {
 		t.Fatalf("last transparent step must become processor: %#v", changed)
 	}
+	request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"kind": "direct", "inbound_id": inboundID, "enabled": true}, http.StatusBadRequest)
 	second := request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusCreated)
 	secondID := int64(second["proxy_path_step"].(map[string]any)["id"].(float64))
 

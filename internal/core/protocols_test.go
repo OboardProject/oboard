@@ -528,13 +528,14 @@ func TestProxyPathBranchesUseAuthUserRoutesAndSubscriptionNodes(t *testing.T) {
 	externalB := model.ExternalOutbound{ID: 31, Name: "socks-b", Protocol: model.ProtocolSocks, TargetAddress: "socks-b.example.com", TargetPort: 1080, ConfigJSON: `{"type":"socks","server":"socks-b.example.com","server_port":1080}`, Enabled: true}
 	pathA := model.ProxyPath{ID: 40, NameMode: model.ProxyPathNameCustom, NameTemplate: []model.ProxyPathNamePart{{Kind: model.ProxyPathNameLiteral, Value: "branch-a"}}, InboundID: inbound.ID, Secret: "path-a", Enabled: true}
 	pathB := model.ProxyPath{ID: 41, NameMode: model.ProxyPathNameCustom, NameTemplate: []model.ProxyPathNamePart{{Kind: model.ProxyPathNameLiteral, Value: "branch-b"}}, InboundID: inbound.ID, Secret: "path-b", Enabled: true}
+	pathDirect := model.ProxyPath{ID: 42, Kind: model.ProxyPathKindDirect, NameMode: model.ProxyPathNameCustom, NameTemplate: []model.ProxyPathNamePart{{Kind: model.ProxyPathNameLiteral, Value: "branch-direct"}}, InboundID: inbound.ID, Secret: "path-direct", Enabled: true}
 	extAID, extBID := externalA.ID, externalB.ID
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
 	opts := ConfigOptions{
 		Servers:           []model.Server{server},
 		Inbounds:          []model.Inbound{inbound},
 		ExternalOutbounds: []model.ExternalOutbound{externalA, externalB},
-		ProxyPaths:        []model.ProxyPath{pathA, pathB},
+		ProxyPaths:        []model.ProxyPath{pathA, pathB, pathDirect},
 		ProxyPathSteps: []model.ProxyPathStep{
 			{ID: 1, PathID: pathA.ID, Position: 1, NodeType: model.ProxyPathStepImported, ExternalOutboundID: &extAID},
 			{ID: 2, PathID: pathB.ID, Position: 1, NodeType: model.ProxyPathStepImported, ExternalOutboundID: &extBID},
@@ -552,10 +553,10 @@ func TestProxyPathBranchesUseAuthUserRoutesAndSubscriptionNodes(t *testing.T) {
 	if strings.Contains(config, `"name": "alice"`) {
 		t.Fatalf("base user should be replaced by branch users when paths exist: %s", config)
 	}
-	if !strings.Contains(config, "alice__oboard_path_40") || !strings.Contains(config, "alice__oboard_path_41") {
+	if !strings.Contains(config, "alice__oboard_path_40") || !strings.Contains(config, "alice__oboard_path_41") || !strings.Contains(config, "alice__oboard_path_42") {
 		t.Fatalf("branch users missing: %s", config)
 	}
-	var routeA, routeB bool
+	var routeA, routeB, routeDirect bool
 	for _, rule := range mapList(parsed.Route["rules"]) {
 		users := stringList(rule["auth_user"])
 		if rule["outbound"] == "path-40-step-1" && len(users) == 1 && users[0] == "alice__oboard_path_40" {
@@ -564,16 +565,19 @@ func TestProxyPathBranchesUseAuthUserRoutesAndSubscriptionNodes(t *testing.T) {
 		if rule["outbound"] == "path-41-step-1" && len(users) == 1 && users[0] == "alice__oboard_path_41" {
 			routeB = true
 		}
+		if rule["outbound"] == "direct" && len(users) == 1 && users[0] == "alice__oboard_path_42" {
+			routeDirect = true
+		}
 	}
-	if !routeA || !routeB {
-		t.Fatalf("branch auth_user routes missing: routeA=%v routeB=%v config=%s", routeA, routeB, config)
+	if !routeA || !routeB || !routeDirect {
+		t.Fatalf("branch auth_user routes missing: routeA=%v routeB=%v routeDirect=%v config=%s", routeA, routeB, routeDirect, config)
 	}
 	sub, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{InboundUsers: opts.InboundUsers, ProxyPaths: opts.ProxyPaths, ProxyPathSteps: opts.ProxyPathSteps})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(sub, "branch-a") || !strings.Contains(sub, "branch-b") {
-		t.Fatalf("subscription should expose both branches: %s", sub)
+	if !strings.Contains(sub, "branch-a") || !strings.Contains(sub, "branch-b") || !strings.Contains(sub, "branch-direct") {
+		t.Fatalf("subscription should expose chain and direct branches: %s", sub)
 	}
 }
 
