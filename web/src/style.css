@@ -4095,6 +4095,65 @@ body:has(.dialog-root) .topbar-actions {
   min-width: 0;
 }
 
+.dns-record-filter-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.dns-record-search {
+  min-width: min(300px, 100%);
+  min-height: var(--control-height);
+  flex: 2 1 300px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+
+.dns-record-search:focus-within {
+  border-color: color-mix(in srgb, var(--primary) 66%, var(--border));
+  box-shadow: 0 0 0 3px var(--primary-soft);
+  background: var(--surface-solid);
+}
+
+.dns-record-search svg { flex: 0 0 auto; color: var(--muted); }
+.dns-record-search input { min-width: 0; padding: 0; border: 0; background: transparent; box-shadow: none; }
+.dns-record-search input:focus { outline: 0; box-shadow: none; }
+.dns-record-filter-toolbar > .searchable-multi-select { min-width: 145px; max-width: 210px; flex: 1 1 145px; }
+.dns-record-filter-clear { flex: 0 0 var(--control-height); }
+.dns-record-filter-count {
+  min-width: 54px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.record-badges {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.status-pill.managed {
+  border-color: color-mix(in srgb, var(--primary) 24%, var(--border));
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
 .controller-logs-card {
   display: grid;
   gap: 14px;
@@ -5390,6 +5449,10 @@ body:has(.dialog-root) .topbar-actions {
 .spin { animation: refresh-spin .8s linear infinite; }
 
 @media (max-width: 640px) {
+  .dns-record-filter-toolbar > .searchable-multi-select { min-width: calc(50% - 4px); max-width: none; }
+  .dns-record-filter-toolbar .searchable-multi-select-menu { width: 100%; }
+  .dns-record-search { flex-basis: 100%; }
+  .dns-record-filter-count { margin-left: 0; }
   .dns-zone-editor-row { grid-template-columns: minmax(0, 1fr); }
   .dns-zone-editor-head { grid-column: 1; }
   .dns-record-row {
@@ -5408,9 +5471,15 @@ body:has(.dialog-root) .topbar-actions {
   }
 
   .record-main,
+  .record-badges,
   .dns-record-row > .status-pill,
   .record-actions {
     grid-column: 2;
+  }
+
+  .record-badges {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .dns-record-row > .status-pill {
@@ -11142,6 +11211,137 @@ button.ui-btn-ghost:hover {
   cursor: not-allowed;
   opacity: 0.55;
 }
+
+.searchable-multi-select {
+  position: relative;
+  min-width: 0;
+  z-index: 1;
+}
+
+.searchable-multi-select.open { z-index: 45; }
+
+.searchable-multi-select-trigger {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 11px 9px 13px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-strong);
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 550;
+  text-align: left;
+}
+
+.searchable-multi-select-trigger:hover {
+  border-color: color-mix(in srgb, var(--border-strong) 80%, var(--primary) 20%);
+  background: var(--surface-solid);
+  transform: none;
+}
+
+.searchable-multi-select.open .searchable-multi-select-trigger,
+.searchable-multi-select-trigger:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 66%, var(--border));
+  box-shadow: 0 0 0 3px var(--primary-soft);
+  background: var(--surface-solid);
+}
+
+.searchable-multi-select-trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchable-multi-select-trigger .placeholder { color: var(--muted); }
+.searchable-multi-select-trigger svg { flex: 0 0 auto; color: var(--muted); transition: transform 0.16s ease; }
+.searchable-multi-select.open .searchable-multi-select-trigger svg { transform: rotate(180deg); }
+
+.searchable-multi-select-menu {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 0;
+  width: max(100%, 240px);
+  overflow: hidden;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-md);
+  z-index: 1700;
+  animation: popover-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.searchable-multi-select-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 8px;
+  padding: 0 9px;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.searchable-multi-select-search svg { flex: 0 0 auto; color: var(--muted); }
+.searchable-multi-select-search input { min-width: 0; padding: 0; border: 0; background: transparent; box-shadow: none; font-size: 13px; }
+.searchable-multi-select-search input:focus { outline: 0; box-shadow: none; }
+
+.searchable-multi-select-options {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 0 4px 4px;
+}
+
+.searchable-multi-select-options > button {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-strong);
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.searchable-multi-select-options > button:hover { background: var(--surface-2); transform: none; }
+.searchable-multi-select-options > button.selected { color: var(--primary); background: var(--primary-soft); font-weight: 650; }
+.searchable-multi-select-check {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+.searchable-multi-select-options > button.selected .searchable-multi-select-check { border-color: var(--primary); background: var(--primary); color: var(--primary-contrast); }
+.searchable-multi-select-empty { display: block; padding: 15px 10px; color: var(--muted); font-size: 12px; text-align: center; }
+.searchable-multi-select-clear {
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  font-size: 12px;
+}
+.searchable-multi-select-clear:hover { color: var(--text-strong); background: var(--surface-2); transform: none; }
 
 .ui-segmented-select {
   position: relative;

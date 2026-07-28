@@ -1222,6 +1222,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 	case "dns-records":
 		if err = require(model.RoleAdmin); err == nil {
+			err = addServers()
+		}
+		if err == nil {
 			out["inbounds"], err = s.store.ListInbounds(ctx)
 		}
 		if err == nil {

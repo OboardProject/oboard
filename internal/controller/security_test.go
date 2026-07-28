@@ -312,7 +312,7 @@ func TestDNSPagesKeepResolverAndDomainRecordsSeparate(t *testing.T) {
 
 	request(t, h, http.MethodGet, "/api/v1/page-data?page=dns-records", operatorToken, nil, http.StatusForbidden)
 	recordsPage := request(t, h, http.MethodGet, "/api/v1/page-data?page=dns-records", adminToken, nil, http.StatusOK)
-	for _, key := range []string{"dns_credentials", "inbounds"} {
+	for _, key := range []string{"dns_credentials", "inbounds", "servers"} {
 		if _, ok := recordsPage[key]; !ok {
 			t.Fatalf("domain records page missing %s: %#v", key, recordsPage)
 		}

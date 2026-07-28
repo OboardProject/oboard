@@ -64,6 +64,7 @@ import { TableSkeleton, CardSkeleton, DashboardSkeleton } from './components/ui/
 import { AnimatePresence, LazyMotion, domAnimation, m, motion } from 'motion/react'
 import { MotionPage, MotionDialogPanel, MotionList, MotionCard } from './components/ui/motion'
 import { CustomSelect } from './components/ui/CustomSelect'
+import { SearchableMultiSelect } from './components/ui/SearchableMultiSelect'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
 import clashMetaClientIcon from './assets/subscription-clients/clash-meta.png'
 import stashClientIcon from './assets/subscription-clients/stash.jpg'
@@ -3120,6 +3121,10 @@ function emptyDNSRecordDraft() {
   return { type: 'A', name: '', content: '', comment: '', ttl: 300, proxied: false }
 }
 
+function isOBoardDNSRecord(record: DNSRecord) {
+  return Boolean(record.server_id || record.inbound_id || record.comment?.trim().toLocaleLowerCase().startsWith('oboard:'))
+}
+
 function ManagedDNSSettings({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
   const credentials: DNSCredential[] = data.dns_credentials || []
@@ -3135,9 +3140,56 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
   const [records, setRecords] = useState<DNSRecord[]>([])
   const [recordDraft, setRecordDraft] = useState(emptyDNSRecordDraft())
   const [working, setWorking] = useState('')
+  const [recordQuery, setRecordQuery] = useState('')
+  const [recordTypeFilters, setRecordTypeFilters] = useState<string[]>([])
+  const [recordSourceFilters, setRecordSourceFilters] = useState<string[]>([])
+  const [recordServerFilters, setRecordServerFilters] = useState<string[]>([])
+  const [recordProxyFilters, setRecordProxyFilters] = useState<string[]>([])
+  const serverNames = useMemo(() => new Map(servers.map(server => [server.id, server.name])), [servers])
+  const recordTypeOptions = useMemo(() => {
+    const types = Array.from(new Set(['A', 'AAAA', 'CNAME', ...records.map(record => record.type.trim().toUpperCase()).filter(Boolean)]))
+    const priority = new Map(['A', 'AAAA', 'CNAME'].map((type, index) => [type, index]))
+    return types.sort((left, right) => (priority.get(left) ?? 99) - (priority.get(right) ?? 99) || left.localeCompare(right)).map(type => ({ value: type, label: type }))
+  }, [records])
+  const recordServerOptions = useMemo(() => Array.from(new Set(records.map(record => record.server_id).filter((id): id is number => Boolean(id && serverNames.has(id)))))
+    .map(id => ({ value: String(id), label: serverNames.get(id) || `服务器 ${id}` }))
+    .sort((left, right) => left.label.localeCompare(right.label, 'zh-CN')), [records, serverNames])
+  const visibleRecords = useMemo(() => {
+    const terms = recordQuery.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
+    const types = new Set(recordTypeFilters)
+    const sources = new Set(recordSourceFilters)
+    const serverIDs = new Set(recordServerFilters)
+    const proxyStates = new Set(recordProxyFilters)
+    return records.filter(record => {
+      const oboardManaged = isOBoardDNSRecord(record)
+      const source = oboardManaged ? 'oboard' : 'other'
+      const proxyState = record.proxied ? 'proxied' : 'dns-only'
+      const server = record.server_id ? serverNames.get(record.server_id) || '' : ''
+      const searchable = [record.type, record.name, record.content, record.comment || '', server, oboardManaged ? 'OBoard 管理' : '其他来源'].join(' ').toLocaleLowerCase()
+      return (!types.size || types.has(record.type.trim().toUpperCase()))
+        && (!sources.size || sources.has(source))
+        && (!serverIDs.size || Boolean(record.server_id && serverIDs.has(String(record.server_id))))
+        && (!proxyStates.size || proxyStates.has(proxyState))
+        && terms.every(term => searchable.includes(term))
+    })
+  }, [recordProxyFilters, recordQuery, recordServerFilters, recordSourceFilters, recordTypeFilters, records, serverNames])
+  const hasRecordFilters = Boolean(recordQuery.trim() || recordTypeFilters.length || recordSourceFilters.length || recordServerFilters.length || recordProxyFilters.length)
+  const clearRecordFilters = () => {
+    setRecordQuery('')
+    setRecordTypeFilters([])
+    setRecordSourceFilters([])
+    setRecordServerFilters([])
+    setRecordProxyFilters([])
+  }
   useEffect(() => {
     if (!zoneOptions.some(item => item.zone.id === selectedZoneID)) setSelectedZoneID(Number(zoneOptions[0]?.zone.id || 0))
   }, [zoneOptions, selectedZoneID])
+  useEffect(() => {
+    const availableTypes = new Set(recordTypeOptions.map(option => option.value))
+    setRecordTypeFilters(current => current.every(value => availableTypes.has(value)) ? current : current.filter(value => availableTypes.has(value)))
+    const availableServers = new Set(recordServerOptions.map(option => option.value))
+    setRecordServerFilters(current => current.every(value => availableServers.has(value)) ? current : current.filter(value => availableServers.has(value)))
+  }, [recordServerOptions, recordTypeOptions])
   const resetDraft = () => { setEditingID(0); setDraft(emptyDNSCredentialDraft()) }
   const openCreateCredential = () => {
     resetDraft()
@@ -3227,7 +3279,7 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
     try { await client.request(`/dns-records?dns_zone_id=${selectedZoneID}&id=${encodeURIComponent(record.id)}`, { method: 'DELETE' }); await loadRecords(); notify?.('解析记录已删除', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
   }
   const selectedOption = zoneOptions.find(item => item.zone.id === selectedZoneID)
-  const serverName = (id?: number) => servers.find(server => server.id === id)?.name || ''
+  const serverName = (id?: number) => id ? serverNames.get(id) || '' : ''
   return <div className="settings-grid dns-management">
     <div className="settings-tabs dns-management-tabs" role="tablist" aria-label="域名解析视图">
       <button type="button" className={activeTab === 'records' ? 'active' : ''} onClick={() => setActiveTab('records')} role="tab" aria-selected={activeTab === 'records'}><Globe size={15} />域名记录</button>
@@ -3238,7 +3290,20 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
       <div className="form settings-form">
         <FormField label="域名"><Select value={selectedZoneID} onChange={e => setSelectedZoneID(Number(e.target.value))}><option value={0}>选择域名</option>{zoneOptions.map(({ credential, zone }) => <option key={zone.id} value={zone.id}>{zone.zone_name} · {credential.name}{zone.server_id ? ` · ${serverName(zone.server_id)}` : ''}</option>)}</Select></FormField>
       </div>
-      {records.length ? <div className="dns-record-list">{records.map(record => <div className="dns-record-row" key={record.id}><span className="record-type">{record.type}</span><div className="record-main"><strong>{record.name}</strong><span>{record.content}</span><small>{record.comment || `TTL ${record.ttl}`}</small></div><span className={`status-pill ${record.proxied ? 'warning' : ''}`}>{record.proxied ? '已开启代理' : '仅域名解析'}</span><div className="record-actions"><button className="ghost icon-button" onClick={() => editRecord(record)} title="编辑"><Edit3 size={14} /></button><button className="ghost icon-button danger-text" onClick={() => deleteRecord(record)} title="删除"><Trash2 size={14} /></button></div></div>)}</div> : <div className="dns-credential-empty">{selectedZoneID ? '该域名当前没有解析记录。' : '请先选择一个域名。'}</div>}
+      {records.length > 0 && <div className="dns-record-filter-toolbar">
+        <label className="dns-record-search"><Search size={15} /><input value={recordQuery} onChange={event => setRecordQuery(event.target.value)} placeholder="搜索域名、记录值或服务器" aria-label="搜索解析记录" /></label>
+        <SearchableMultiSelect value={recordTypeFilters} onChange={setRecordTypeFilters} options={recordTypeOptions} placeholder="记录类型" searchPlaceholder="搜索记录类型" />
+        <SearchableMultiSelect value={recordSourceFilters} onChange={setRecordSourceFilters} options={[{ value: 'oboard', label: 'OBoard 管理' }, { value: 'other', label: '其他来源' }]} placeholder="记录来源" searchPlaceholder="搜索记录来源" />
+        <SearchableMultiSelect value={recordServerFilters} onChange={setRecordServerFilters} options={recordServerOptions} placeholder="关联服务器" searchPlaceholder="搜索服务器" />
+        <SearchableMultiSelect value={recordProxyFilters} onChange={setRecordProxyFilters} options={[{ value: 'proxied', label: '已开启代理' }, { value: 'dns-only', label: '仅域名解析' }]} placeholder="代理状态" searchPlaceholder="搜索代理状态" />
+        {hasRecordFilters && <button type="button" className="ghost icon-button dns-record-filter-clear" onClick={clearRecordFilters} aria-label="清除筛选" title="清除筛选"><Eraser size={15} /></button>}
+        <span className="dns-record-filter-count">{visibleRecords.length} / {records.length}</span>
+      </div>}
+      {visibleRecords.length ? <div className="dns-record-list">{visibleRecords.map(record => {
+        const linkedServerName = record.server_id ? serverName(record.server_id) : ''
+        const detail = record.comment || `TTL ${record.ttl}`
+        return <div className="dns-record-row" key={record.id}><span className="record-type">{record.type}</span><div className="record-main"><strong>{record.name}</strong><span>{record.content}</span><small>{detail}{linkedServerName && !detail.toLocaleLowerCase().includes(linkedServerName.toLocaleLowerCase()) ? ` · 服务器 ${linkedServerName}` : ''}</small></div><div className="record-badges"><span className={`status-pill ${isOBoardDNSRecord(record) ? 'managed' : ''}`}>{isOBoardDNSRecord(record) ? 'OBoard 管理' : '其他来源'}</span><span className={`status-pill ${record.proxied ? 'warning' : ''}`}>{record.proxied ? '已开启代理' : '仅域名解析'}</span></div><div className="record-actions"><button className="ghost icon-button" onClick={() => editRecord(record)} title="编辑"><Edit3 size={14} /></button><button className="ghost icon-button danger-text" onClick={() => deleteRecord(record)} title="删除"><Trash2 size={14} /></button></div></div>
+      })}</div> : <div className="dns-credential-empty">{!selectedZoneID ? '请先选择一个域名。' : records.length ? '没有符合条件的解析记录。' : '该域名当前没有解析记录。'}</div>}
     </section> : <section className="settings-card dns-management-card">
       <div className="settings-card-head"><div><h3>域名与解析服务商</h3><p className="muted">一个账号可以管理多个域名，并分别关联服务器。</p></div><button className="ghost" onClick={openCreateCredential}><Plus size={14} />新建账号</button></div>
       {credentials.length ? <div className="dns-record-list">{credentials.map(credential => <div className="dns-record-row" key={credential.id}><span className="record-type">{dnsProviderLabels[credential.provider]}</span><div className="record-main"><strong>{credential.name}</strong><span>{(credential.zones || []).map(zone => `${zone.zone_name}${zone.server_id ? `（${serverName(zone.server_id)}）` : ''}`).join(' · ')}</span><small>{credential.last_error || (credential.verified_at ? `${credential.zones.length} 个域名 · 已验证 ${formatTableTime(credential.verified_at)}` : `${credential.zones.length} 个域名 · 待验证`)}</small></div><span className={`status-pill ${credential.verified_at ? 'ok' : credential.last_error ? 'warning' : ''}`}>{credential.verified_at ? '可用' : '待验证'}</span><div className="record-actions"><button className="ghost icon-button" onClick={() => verifyCredential(credential)} title="验证"><RefreshCw size={14} className={working === `verify-${credential.id}` ? 'spin' : ''} /></button><button className="ghost icon-button" onClick={() => editCredential(credential)} title="编辑"><Edit3 size={14} /></button><button className="ghost icon-button danger-text" onClick={() => deleteCredential(credential)} title="删除"><Trash2 size={14} /></button></div></div>)}</div> : <div className="dns-credential-empty">还没有解析服务账号。</div>}
