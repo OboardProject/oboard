@@ -18,6 +18,7 @@ func TestAgentInstallScriptBBRIsInstallOnly(t *testing.T) {
 	for _, want := range []string{
 		"OBOARD_INSTALL_BBR",
 		"enable_bbr_fq",
+		"try_enable_bbr_fq",
 		"net.core.default_qdisc = fq",
 		"net.ipv4.tcp_congestion_control = bbr",
 		"安装程序不会自动更换内核",
@@ -27,14 +28,14 @@ func TestAgentInstallScriptBBRIsInstallOnly(t *testing.T) {
 		}
 	}
 	installCase := shellCaseBranch(t, script, "install)", "update)")
-	if !strings.Contains(installCase, "enable_bbr_fq") {
+	if !strings.Contains(installCase, "try_enable_bbr_fq") {
 		t.Fatal("Agent install branch does not enable requested BBR + FQ")
 	}
-	if strings.Index(installCase, "enable_bbr_fq") > strings.Index(installCase, "-enroll-only") {
-		t.Fatal("Agent installer consumes the enrollment token before BBR + FQ succeeds")
+	if strings.Index(installCase, "try_enable_bbr_fq") > strings.Index(installCase, "-enroll-only") {
+		t.Fatal("Agent installer consumes the enrollment token before attempting BBR + FQ")
 	}
 	updateCase := shellCaseBranch(t, script, "update)", "uninstall)")
-	if strings.Contains(updateCase, "enable_bbr_fq") {
+	if strings.Contains(updateCase, "try_enable_bbr_fq") {
 		t.Fatal("Agent update branch repeats BBR + FQ configuration")
 	}
 	for _, shellName := range []string{"bash", "dash"} {
@@ -47,6 +48,38 @@ func TestAgentInstallScriptBBRIsInstallOnly(t *testing.T) {
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("Agent installer %s syntax error: %v\n%s", shellName, err, output)
 		}
+	}
+}
+
+func TestAgentInstallScriptContinuesWhenBBRFQIsUnavailable(t *testing.T) {
+	script := testAgentInstallScript(t)
+	shell := testPOSIXShell(t)
+	root := t.TempDir()
+	available := filepath.Join(root, "available")
+	writeTestFile(t, available, "reno cubic bbr\n")
+
+	harness := strings.Join([]string{
+		"set -eu",
+		"INSTALL_BBR=1",
+		"BBR_AVAILABLE_PATH=" + shellQuote(available),
+		"BBR_CONGESTION_PATH=" + shellQuote(filepath.Join(root, "missing-congestion")),
+		"BBR_QDISC_PATH=" + shellQuote(filepath.Join(root, "missing-qdisc")),
+		"BBR_CONFIG_PATH=" + shellQuote(filepath.Join(root, "99-oboard-bbr.conf")),
+		extractShellFunction(t, script, "bbr_requested"),
+		extractShellFunction(t, script, "bbr_available"),
+		extractShellFunction(t, script, "persist_bbr_fq"),
+		extractShellFunction(t, script, "enable_bbr_fq"),
+		extractShellFunction(t, script, "try_enable_bbr_fq"),
+		"try_enable_bbr_fq",
+		"echo install-continued",
+	}, "\n")
+	output, err := exec.Command(shell, "-c", harness).CombinedOutput()
+	if err != nil {
+		t.Fatalf("unavailable BBR stopped installation: %v\n%s", err, output)
+	}
+	text := string(output)
+	if !strings.Contains(text, "常见于受限容器") || !strings.Contains(text, "Agent 安装将继续") || !strings.Contains(text, "install-continued") {
+		t.Fatalf("unexpected unavailable BBR output:\n%s", output)
 	}
 }
 

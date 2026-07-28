@@ -10004,11 +10004,11 @@ enable_bbr_fq() {
   echo "正在启用 BBR + FQ..."
   if ! bbr_available; then
     if ! command -v modprobe >/dev/null 2>&1; then
-      echo "当前系统没有可用的 BBR 模块，也缺少 modprobe。请关闭 BBR 选项后重试，或先安装支持 BBR 的内核。" >&2
+      echo "未能加载 BBR：当前系统没有可用的 BBR 模块，也缺少 modprobe。" >&2
       return 1
     fi
     if ! modprobe tcp_bbr 2>/dev/null || ! bbr_available; then
-      echo "当前内核不支持 BBR。安装程序不会自动更换内核，请关闭 BBR 选项后重试。" >&2
+      echo "未能加载 BBR：当前内核不支持 BBR，安装程序不会自动更换内核。" >&2
       return 1
     fi
   fi
@@ -10016,7 +10016,7 @@ enable_bbr_fq() {
     modprobe sch_fq 2>/dev/null || true
   fi
   if [ ! -r "$BBR_CONGESTION_PATH" ] || [ ! -w "$BBR_CONGESTION_PATH" ] || [ ! -r "$BBR_QDISC_PATH" ] || [ ! -w "$BBR_QDISC_PATH" ]; then
-    echo "当前环境不允许修改 BBR + FQ，常见于受限容器。请关闭 BBR 选项后重试。" >&2
+    echo "未能启用 BBR + FQ：当前环境不允许修改内核网络参数，常见于受限容器。" >&2
     return 1
   fi
   previous_bbr=$(cat "$BBR_CONGESTION_PATH" 2>/dev/null || true)
@@ -10024,13 +10024,13 @@ enable_bbr_fq() {
   if ! printf '%s\n' fq > "$BBR_QDISC_PATH" || ! printf '%s\n' bbr > "$BBR_CONGESTION_PATH"; then
     [ -n "$previous_qdisc" ] && printf '%s\n' "$previous_qdisc" > "$BBR_QDISC_PATH" 2>/dev/null || true
     [ -n "$previous_bbr" ] && printf '%s\n' "$previous_bbr" > "$BBR_CONGESTION_PATH" 2>/dev/null || true
-    echo "当前环境拒绝启用 BBR + FQ。请关闭 BBR 选项后重试。" >&2
+    echo "未能启用 BBR + FQ：当前环境拒绝修改内核网络参数。" >&2
     return 1
   fi
   if [ "$(cat "$BBR_QDISC_PATH" 2>/dev/null)" != fq ] || [ "$(cat "$BBR_CONGESTION_PATH" 2>/dev/null)" != bbr ]; then
     [ -n "$previous_qdisc" ] && printf '%s\n' "$previous_qdisc" > "$BBR_QDISC_PATH" 2>/dev/null || true
     [ -n "$previous_bbr" ] && printf '%s\n' "$previous_bbr" > "$BBR_CONGESTION_PATH" 2>/dev/null || true
-    echo "内核没有接受 BBR + FQ 设置。请关闭 BBR 选项后重试。" >&2
+    echo "未能启用 BBR + FQ：内核没有接受新的网络参数。" >&2
     return 1
   fi
   if ! persist_bbr_fq; then
@@ -10040,6 +10040,14 @@ enable_bbr_fq() {
     return 1
   fi
   echo "BBR + FQ 已启用，并会在重启后继续生效。"
+}
+
+try_enable_bbr_fq() {
+  if enable_bbr_fq; then
+    return 0
+  fi
+  echo "提示：BBR + FQ 未能启用，Agent 安装将继续，其他功能不受影响。你可以稍后在宿主机确认内核支持和参数权限。" >&2
+  return 0
 }
 
 json_value() {
@@ -10664,7 +10672,7 @@ case "$ACTION" in
     persist_agent_install_dir
     write_units
     resolve_update_policy
-    enable_bbr_fq
+    try_enable_bbr_fq
     OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$INSTALL_DIR/oboard-agent" \
       -config "$CONFIG_PATH" \
       -controller "$BASE_URL" \

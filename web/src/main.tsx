@@ -2486,7 +2486,7 @@ function SettingsPage({ data, client, load, notify }: any) {
               {mtuModes.map(mode => <option value={mode} key={mode}>{labelValue(mode)}</option>)}
             </Select>
           </FormField>
-          <FormField label="BBR + FQ" hint="首次安装 Agent 时启用。">
+          <FormField label="BBR + FQ" hint="首次安装 Agent 时尝试启用，失败不影响安装。">
             <label className="notification-enable-row"><input type="checkbox" checked={serverDefaultBBREnabled} onChange={event => setServerDefaultBBREnabled(event.target.checked)} aria-label="新服务器默认启用 BBR + FQ" /></label>
           </FormField>
           <div className="settings-actions"><button onClick={() => void saveServerDefaults()} disabled={Boolean(saving)}>{saving === 'server-defaults' ? '保存中...' : '保存默认值'}</button></div>
@@ -4206,7 +4206,7 @@ function AgentInstallDialog({ server, token, controllerURL, onClose }: { server:
   const [action, setAction] = useState<'install' | 'update' | 'uninstall'>(isOnline ? 'update' : 'install')
   const actionTitle = action === 'install' ? '安装' : action === 'update' ? '更新' : '卸载'
   const actionDescription = action === 'install'
-    ? `安装 Agent 和内核并连接当前面板${server.bbr_enabled ? '，同时启用 BBR + FQ' : ''}。`
+    ? `安装 Agent 和内核并连接当前面板${server.bbr_enabled ? '，同时尝试启用 BBR + FQ' : ''}。`
     : action === 'update'
       ? '从当前面板更新 Agent 和内核，保留配置。'
       : '移除 Agent、内核和本机配置。'
@@ -4415,7 +4415,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: Re
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。">
             <UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} />
           </FormField>
-          <FormField label="BBR + FQ" hint="首次安装 Agent 时启用。">
+          <FormField label="BBR + FQ" hint="首次安装 Agent 时尝试启用，失败不影响安装。">
             <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.bbr_enabled)} onChange={e => update({ bbr_enabled: e.target.checked })} aria-label="安装时启用 BBR + FQ" /></label>
           </FormField>
           <FormField label="端口范围" hint="100-65535" full>
@@ -4486,7 +4486,7 @@ function ServerEditDialog({ server, onCancel, onSubmit }: { server: Server; onCa
           <div className="form-section-title">网络策略</div>
           <FormField label="出口解析策略"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
-          <FormField label="BBR + FQ" hint="下次重新安装 Agent 时生效。"><label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.bbr_enabled)} onChange={e => update({ bbr_enabled: e.target.checked })} aria-label="安装时启用 BBR + FQ" /></label></FormField>
+          <FormField label="BBR + FQ" hint="下次重新安装 Agent 时尝试启用，失败不影响安装。"><label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.bbr_enabled)} onChange={e => update({ bbr_enabled: e.target.checked })} aria-label="安装时尝试启用 BBR + FQ" /></label></FormField>
           <FormField label="端口范围" hint="100-65535" full><PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} /></FormField>
           <div className="form-section-title">监控与流量</div>
           <FormField label="回报模式" hint="轻量 20 秒，标准 10 秒。">
@@ -5022,7 +5022,7 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
             <ServerDetailItem label="UDP 模式" value={labelValue(server.udp_inbound_mode || 'unknown')} />
             <ServerDetailItem label="端口范围" value={portRangeLabel(server)} />
 			<ServerDetailItem label="SSH 端口" value={server.ssh_port ? String(server.ssh_port) : '未设置'} />
-            <ServerDetailItem label="安装时 BBR + FQ" value={server.bbr_enabled ? '启用' : '不启用'} />
+            <ServerDetailItem label="安装时尝试 BBR + FQ" value={server.bbr_enabled ? '是' : '否'} />
             <ServerDetailItem label="公网可访问性" value={connectivityLabel} />
           </dl>
         </section>
