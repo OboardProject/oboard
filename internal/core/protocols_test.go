@@ -232,6 +232,64 @@ func TestProxyPathServerOnlyMultiHopUsesSharedShadowsocksInbounds(t *testing.T) 
 	}
 }
 
+func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
+	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
+	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
+	serverC := model.Server{ID: 3, Name: "C", PublicIPv4: "203.0.113.3", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 32000, PortRangeEnd: 32100}
+	rootInbound := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	chain := model.ProxyPath{ID: 50, Name: "A-B-C", InboundID: rootInbound.ID, Secret: "chain-secret", Enabled: true}
+	direct := model.ProxyPath{ID: 51, Kind: model.ProxyPathKindDirect, Name: "A-B-Direct", InboundID: rootInbound.ID, Secret: "direct-secret", Enabled: true}
+	serverBID, serverCID := serverB.ID, serverC.ID
+	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	opts := ConfigOptions{
+		Servers:    []model.Server{serverA, serverB, serverC},
+		Inbounds:   []model.Inbound{rootInbound},
+		ProxyPaths: []model.ProxyPath{chain, direct},
+		ProxyPathSteps: []model.ProxyPathStep{
+			{ID: 1, PathID: chain.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID},
+			{ID: 2, PathID: chain.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverCID},
+			{ID: 3, PathID: direct.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID},
+		},
+		InboundUsers: []model.InboundUser{{InboundID: rootInbound.ID, UserID: user.ID, Enabled: true}},
+	}
+
+	configA := mustServerConfig(t, serverA, []model.Inbound{rootInbound}, []model.User{user}, opts)
+	if !hasRoute(configA, "in-10", "path-50-step-1") || !hasRoute(configA, "in-10", "path-51-step-1") {
+		t.Fatalf("A should preserve both downstream branches: %s", configA)
+	}
+
+	configB := mustServerConfig(t, serverB, []model.Inbound{rootInbound}, nil, opts)
+	sharedTag := proxyPathChainServiceTag(DefaultProxyPathChainMethod)
+	if !hasInbound(configB, sharedTag, "__oboard_path_50_step_1") || !hasInbound(configB, sharedTag, "__oboard_path_51_step_1") {
+		t.Fatalf("B should accept both branch identities: %s", configB)
+	}
+	parsed := parseSingBoxConfig(t, configB)
+	var chainRoute, directRoute bool
+	for _, rule := range mapList(parsed.Route["rules"]) {
+		users := stringList(rule["auth_user"])
+		if rule["outbound"] == "path-50-step-2" && len(users) == 1 && users[0] == "__oboard_path_50_step_1" {
+			chainRoute = true
+		}
+		if rule["outbound"] == "direct" && len(users) == 1 && users[0] == "__oboard_path_51_step_1" {
+			directRoute = true
+		}
+	}
+	if !chainRoute || !directRoute {
+		t.Fatalf("B should route the chain onward and the copied branch directly: chain=%v direct=%v config=%s", chainRoute, directRoute, configB)
+	}
+	subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{serverA, serverB, serverC}, []model.Inbound{rootInbound}, SubscriptionOptions{
+		InboundUsers:   opts.InboundUsers,
+		ProxyPaths:     opts.ProxyPaths,
+		ProxyPathSteps: opts.ProxyPathSteps,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(subscription, "A｜C") || !strings.Contains(subscription, "A｜B｜直出") {
+		t.Fatalf("subscription should preserve both chain and direct branches: %s", subscription)
+	}
+}
+
 func TestTransparentPortForwardMovesUserProtocolToProcessingServer(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "YT", PublicIPv4: "199.30.91.70", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 55777, PortRangeEnd: 55780}
 	serverB := model.Server{ID: 2, Name: "WAWO", PublicIPv4: "2.27.109.100", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 443, PortRangeEnd: 20000}

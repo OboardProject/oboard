@@ -783,28 +783,14 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 			}
 			return steps[i].Position < steps[j].Position
 		})
-		if path.Kind == model.ProxyPathKindDirect {
-			if len(steps) != 0 {
-				return nil, nil, fmt.Errorf("直接出口分支 %s 不能包含路径步骤", path.Name)
-			}
-			if root.ServerID == server.ID {
-				rule := map[string]any{
-					"inbound":  []string{tag("in", root.ID)},
-					"action":   "route",
-					"outbound": "direct",
-				}
-				if authUsers := proxyPathBranchUsernames(path, root, usersForInbound(root, users, opts.InboundUsers)); len(authUsers) > 0 {
-					rule["auth_user"] = authUsers
-				}
-				rules = append(rules, rule)
-			}
+		isDirect := path.Kind == model.ProxyPathKindDirect
+		if !isDirect && len(steps) == 0 {
 			continue
 		}
-		if len(steps) == 0 {
-			continue
-		}
-		if err := validateProxyPathForConfig(path, root, steps); err != nil {
-			return nil, nil, err
+		if len(steps) > 0 {
+			if err := validateProxyPathForConfig(path, root, steps); err != nil {
+				return nil, nil, err
+			}
 		}
 		activeServerID := root.ServerID
 		activeInboundTag := tag("in", root.ID)
@@ -869,6 +855,19 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 					previousTag = ""
 				}
 			}
+		}
+		if isDirect {
+			if previousTag != "" {
+				return nil, nil, fmt.Errorf("直接出口分支 %s 必须结束于可控服务器", path.Name)
+			}
+			if activeServerID == server.ID {
+				rule := map[string]any{"inbound": []string{activeInboundTag}, "action": "route", "outbound": "direct"}
+				if len(activeAuthUsers) > 0 {
+					rule["auth_user"] = activeAuthUsers
+				}
+				rules = append(rules, rule)
+			}
+			continue
 		}
 		if previousTag != "" && activeServerID == server.ID {
 			rule := map[string]any{"inbound": []string{activeInboundTag}, "action": "route", "outbound": previousTag}

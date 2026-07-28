@@ -66,18 +66,23 @@ func ResolveProxyPathNames(paths []model.ProxyPath, steps []model.ProxyPathStep,
 	for _, path := range paths {
 		pathSteps := stepsByPath[path.ID]
 		route := proxyPathRouteLabels(path, pathSteps, serverByID, inboundByID, externalByID)
-		base := automaticProxyPathName(route, 0)
+		middleDepth := 0
+		if path.Kind == model.ProxyPathKindDirect {
+			middleDepth = max(0, len(route)-2)
+		}
+		base := automaticProxyPathName(route, middleDepth)
 		if path.NameMode == model.ProxyPathNameCustom {
 			if rendered, err := renderProxyPathNameTemplate(path.NameTemplate, serverByID, externalByID); err == nil && strings.TrimSpace(rendered) != "" {
 				base = strings.TrimSpace(rendered)
 			}
 		}
 		states = append(states, proxyPathNameState{
-			path:     path,
-			route:    route,
-			features: proxyPathNameFeatures(path, pathSteps, inboundByID, externalByID),
-			base:     base,
-			active:   proxyPathIsActive(path, pathSteps),
+			path:        path,
+			route:       route,
+			middleDepth: middleDepth,
+			features:    proxyPathNameFeatures(path, pathSteps, inboundByID, externalByID),
+			base:        base,
+			active:      proxyPathIsActive(path, pathSteps),
 		})
 	}
 
@@ -251,9 +256,6 @@ func proxyPathNameStepsByPath(steps []model.ProxyPathStep) map[int64][]model.Pro
 func proxyPathRouteLabels(path model.ProxyPath, steps []model.ProxyPathStep, servers map[int64]model.Server, inbounds map[int64]model.Inbound, externals map[int64]model.ExternalOutbound) []string {
 	root := inbounds[path.InboundID]
 	labels := []string{proxyPathServerLabel(servers[root.ServerID], root.ServerID)}
-	if path.Kind == model.ProxyPathKindDirect {
-		return append(labels, "直出")
-	}
 	for _, step := range steps {
 		if step.NodeType == model.ProxyPathStepImported && step.ExternalOutboundID != nil {
 			external := externals[*step.ExternalOutboundID]
@@ -269,6 +271,9 @@ func proxyPathRouteLabels(path model.ProxyPath, steps []model.ProxyPathStep, ser
 		if serverID != 0 {
 			labels = append(labels, proxyPathServerLabel(servers[serverID], serverID))
 		}
+	}
+	if path.Kind == model.ProxyPathKindDirect {
+		labels = append(labels, "直出")
 	}
 	return labels
 }

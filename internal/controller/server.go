@@ -5798,6 +5798,14 @@ func (s *Server) validateExternalOutboundAccessGrant(ctx context.Context, v *mod
 func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/proxy-paths/")
 	parts := pathParts(r.URL.Path, "/api/v1/proxy-paths/")
+	if len(parts) > 0 && parts[0] == "direct-branches" {
+		if r.Method != http.MethodPost {
+			method(w)
+			return
+		}
+		s.createDirectProxyPathBranch(w, r)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		if id != 0 && len(parts) > 1 && parts[1] == "plan" {
@@ -5861,6 +5869,10 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &v) {
 			return
 		}
+		if v.BranchSourceStepID != nil {
+			fail(w, errors.New("branch_source_step_id 只能由直接出口分支接口设置"), 400)
+			return
+		}
 		if strings.TrimSpace(v.Secret) == "" {
 			secret, err := security.RandomToken(24)
 			if err != nil {
@@ -5904,6 +5916,10 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 		v.ID = id
 		if v.Kind != current.Kind {
 			fail(w, errors.New("代理路径类型不能修改，请删除后重新创建"), 400)
+			return
+		}
+		if !sameOptionalInt64(v.BranchSourceStepID, current.BranchSourceStepID) {
+			fail(w, errors.New("代理路径分支来源不能修改"), 400)
 			return
 		}
 		if strings.TrimSpace(v.Secret) == "" {
@@ -5962,6 +5978,143 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type directProxyPathBranchRequest struct {
+	InboundID    int64 `json:"inbound_id"`
+	SourceStepID int64 `json:"source_step_id"`
+}
+
+func (s *Server) createDirectProxyPathBranch(w http.ResponseWriter, r *http.Request) {
+	var request directProxyPathBranchRequest
+	if !decode(w, r, &request) {
+		return
+	}
+	if (request.InboundID == 0) == (request.SourceStepID == 0) {
+		fail(w, errors.New("inbound_id 和 source_step_id 必须且只能提供一个"), 400)
+		return
+	}
+
+	inboundID := request.InboundID
+	var branchSourceStepID *int64
+	prefix := []model.ProxyPathStep{}
+	if request.SourceStepID != 0 {
+		sourceStep, err := s.store.GetProxyPathStep(r.Context(), request.SourceStepID)
+		if err != nil {
+			fail(w, fmt.Errorf("source_step_id: %w", err), 404)
+			return
+		}
+		if sourceStep.NodeType != model.ProxyPathStepServerInbound || ((sourceStep.ServerID == nil || *sourceStep.ServerID == 0) && (sourceStep.InboundID == nil || *sourceStep.InboundID == 0)) {
+			fail(w, errors.New("直接出口只能从可控服务器节点创建"), 400)
+			return
+		}
+		sourcePath, err := s.store.GetProxyPath(r.Context(), sourceStep.PathID)
+		if err != nil {
+			fail(w, fmt.Errorf("source path: %w", err), 404)
+			return
+		}
+		if !sourcePath.Enabled || sourcePath.Kind != model.ProxyPathKindChain {
+			fail(w, errors.New("直接出口只能从已启用的普通代理路径创建"), 400)
+			return
+		}
+		inboundID = sourcePath.InboundID
+		steps, err := s.store.ListProxyPathStepsForPath(r.Context(), sourcePath.ID)
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		found := false
+		for _, step := range steps {
+			if step.Position > sourceStep.Position {
+				break
+			}
+			prefix = append(prefix, step)
+			if step.ID == sourceStep.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			fail(w, errors.New("source_step_id 不属于有效路径前缀"), 400)
+			return
+		}
+		branchSourceStepID = &request.SourceStepID
+	}
+
+	secret, err := security.RandomToken(24)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	path := model.ProxyPath{
+		Kind:               model.ProxyPathKindDirect,
+		BranchSourceStepID: branchSourceStepID,
+		NameMode:           model.ProxyPathNameAuto,
+		NameTemplate:       []model.ProxyPathNamePart{},
+		InboundID:          inboundID,
+		Secret:             secret,
+		Enabled:            false,
+	}
+	if err := s.validateProxyPath(r.Context(), &path); err != nil {
+		fail(w, err, 400)
+		return
+	}
+	if err := s.store.CreateProxyPath(r.Context(), &path); err != nil {
+		fail(w, err, 500)
+		return
+	}
+	cleanup := func() { _ = s.store.DeleteProxyPath(r.Context(), path.ID) }
+	for index, source := range prefix {
+		step := source
+		step.ID = 0
+		step.PathID = path.ID
+		step.Position = index + 1
+		step.ProcessingRole = false
+		step.CreatedAt = time.Time{}
+		step.UpdatedAt = time.Time{}
+		if err := s.store.CreateProxyPathStep(r.Context(), &step); err != nil {
+			cleanup()
+			fail(w, err, 500)
+			return
+		}
+	}
+	path.Enabled = true
+	if err := s.validateProxyPath(r.Context(), &path); err != nil {
+		cleanup()
+		fail(w, err, 400)
+		return
+	}
+	if err := s.store.UpdateProxyPath(r.Context(), &path); err != nil {
+		cleanup()
+		fail(w, err, 500)
+		return
+	}
+	if err := s.validateEnabledProxyPathPlan(r.Context(), path.ID); err != nil {
+		cleanup()
+		fail(w, err, 400)
+		return
+	}
+	if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
+		cleanup()
+		fail(w, err, 500)
+		return
+	}
+	path = s.resolvedProxyPath(r.Context(), path)
+	steps, err := s.store.ListProxyPathStepsForPath(r.Context(), path.ID)
+	if err != nil {
+		cleanup()
+		fail(w, err, 500)
+		return
+	}
+	auditReq(s, r, "create", "proxy-path", fmt.Sprint(path.ID))
+	write(w, http.StatusCreated, map[string]any{"proxy_path": path, "proxy_path_steps": publicProxyPathSteps(steps)})
+}
+
+func sameOptionalInt64(left, right *int64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
 func (s *Server) validateProxyPath(ctx context.Context, v *model.ProxyPath) error {
 	if v.Kind == "" {
 		v.Kind = model.ProxyPathKindChain
@@ -5970,6 +6123,9 @@ func (s *Server) validateProxyPath(ctx context.Context, v *model.ProxyPath) erro
 	case model.ProxyPathKindChain, model.ProxyPathKindDirect:
 	default:
 		return errors.New("kind must be chain or direct")
+	}
+	if v.Kind == model.ProxyPathKindChain && v.BranchSourceStepID != nil {
+		return errors.New("普通代理路径不能设置 branch_source_step_id")
 	}
 	if v.InboundID == 0 {
 		return errors.New("inbound_id required")
@@ -5990,18 +6146,17 @@ func (s *Server) validateProxyPath(ctx context.Context, v *model.ProxyPath) erro
 	if err != nil {
 		return err
 	}
-	if v.Kind == model.ProxyPathKindDirect {
-		if len(steps) != 0 {
-			return errors.New("直接出口分支不能包含路径步骤")
-		}
-		paths, err := s.store.ListProxyPaths(ctx)
+	if v.BranchSourceStepID != nil {
+		source, err := s.store.GetProxyPathStep(ctx, *v.BranchSourceStepID)
 		if err != nil {
-			return err
+			return fmt.Errorf("branch_source_step_id: %w", err)
 		}
-		for _, path := range paths {
-			if path.ID != v.ID && path.InboundID == v.InboundID && path.Kind == model.ProxyPathKindDirect {
-				return errors.New("该入口已经有直接出口分支")
-			}
+		sourcePath, err := s.store.GetProxyPath(ctx, source.PathID)
+		if err != nil {
+			return fmt.Errorf("branch source path: %w", err)
+		}
+		if sourcePath.InboundID != v.InboundID || source.ID == 0 {
+			return errors.New("branch_source_step_id 必须属于同一根入口")
 		}
 	}
 	servers, err := s.store.ListServers(ctx)
@@ -6145,6 +6300,10 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if err := s.store.ClearProxyPathBranchSource(r.Context(), v.PathID); err != nil {
+			fail(w, err, 500)
+			return
+		}
 		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
 			fail(w, err, 500)
 			return
@@ -6184,6 +6343,14 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			_ = s.store.UpdateProxyPathStep(r.Context(), current)
 			_ = s.normalizeProxyPathProcessingRoles(r.Context(), current.PathID)
 			fail(w, err, 400)
+			return
+		}
+		if err := s.store.ClearProxyPathBranchSourcesFromPosition(r.Context(), current.PathID, current.Position); err != nil {
+			fail(w, err, 500)
+			return
+		}
+		if err := s.store.ClearProxyPathBranchSource(r.Context(), current.PathID); err != nil {
+			fail(w, err, 500)
 			return
 		}
 		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
@@ -6245,6 +6412,10 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 				fail(w, err, 500)
 				return
 			}
+			if err := s.store.ClearProxyPathBranchSource(r.Context(), current.PathID); err != nil {
+				fail(w, err, 500)
+				return
+			}
 		}
 		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
 			fail(w, err, 500)
@@ -6278,9 +6449,6 @@ func (s *Server) validateProxyPathStep(ctx context.Context, v *model.ProxyPathSt
 	path, err := s.store.GetProxyPath(ctx, v.PathID)
 	if err != nil {
 		return fmt.Errorf("path_id: %w", err)
-	}
-	if path.Kind == model.ProxyPathKindDirect {
-		return errors.New("直接出口分支不能添加路径步骤")
 	}
 	if v.Position <= 0 {
 		return errors.New("position must be >= 1")

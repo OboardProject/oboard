@@ -1446,6 +1446,7 @@ func TestImportedNodeURIProxyPathAndGrantAPI(t *testing.T) {
 	if step["proxy_path_step"].(map[string]any)["id"] == nil {
 		t.Fatalf("step missing id: %#v", step)
 	}
+	importedStepID := int64(step["proxy_path_step"].(map[string]any)["id"].(float64))
 	listed := request(t, h, http.MethodGet, "/api/v1/proxy-paths", token, nil, http.StatusOK)
 	if len(listed["proxy_paths"].([]any)) != 1 {
 		t.Fatalf("proxy path not listed: %#v", listed)
@@ -1454,7 +1455,9 @@ func TestImportedNodeURIProxyPathAndGrantAPI(t *testing.T) {
 	serverPath := request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"name": "via-server", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	serverPathID := int64(serverPath["proxy_path"].(map[string]any)["id"].(float64))
 	serverStep := request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": serverPathID, "position": 1, "node_type": "server_inbound", "server_id": server2ID}, http.StatusCreated)
-	if got := serverStep["proxy_path_step"].(map[string]any)["server_id"]; int64(got.(float64)) != server2ID {
+	serverStepValue := serverStep["proxy_path_step"].(map[string]any)
+	serverStepID := int64(serverStepValue["id"].(float64))
+	if got := serverStepValue["server_id"]; int64(got.(float64)) != server2ID {
 		t.Fatalf("server-only step did not persist target server: %#v", serverStep)
 	}
 	plan := request(t, h, http.MethodGet, "/api/v1/proxy-paths/"+itoa(serverPathID)+"/plan", token, nil, http.StatusOK)
@@ -1462,13 +1465,33 @@ func TestImportedNodeURIProxyPathAndGrantAPI(t *testing.T) {
 	if len(steps) != 1 || int64(steps[0].(map[string]any)["server_id"].(float64)) != server2ID {
 		t.Fatalf("server-only path plan missing target server: %#v", plan)
 	}
-	direct := request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"kind": "direct", "name_mode": "auto", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
-	directID := int64(direct["id"].(float64))
+	direct := request(t, h, http.MethodPost, "/api/v1/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)["proxy_path"].(map[string]any)
 	if direct["kind"] != "direct" || direct["name"] != "s1｜直出" {
 		t.Fatalf("bad direct path: %#v", direct)
 	}
-	request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"kind": "direct", "inbound_id": inboundID, "enabled": true}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": directID, "position": 1, "node_type": "server_inbound", "server_id": server2ID}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusBadRequest)
+	branched := request(t, h, http.MethodPost, "/api/v1/proxy-paths/direct-branches", token, map[string]any{"source_step_id": serverStepID}, http.StatusCreated)
+	branchedPath := branched["proxy_path"].(map[string]any)
+	if branchedPath["kind"] != "direct" || branchedPath["name"] != "s1｜s2｜直出" || int64(branchedPath["branch_source_step_id"].(float64)) != serverStepID {
+		t.Fatalf("bad intermediate direct branch: %#v", branched)
+	}
+	branchedSteps := branched["proxy_path_steps"].([]any)
+	if len(branchedSteps) != 1 || int64(branchedSteps[0].(map[string]any)["server_id"].(float64)) != server2ID {
+		t.Fatalf("intermediate direct branch did not copy its prefix: %#v", branched)
+	}
+	branchedStepID := int64(branchedSteps[0].(map[string]any)["id"].(float64))
+	plan = request(t, h, http.MethodGet, "/api/v1/proxy-paths/"+itoa(serverPathID)+"/plan", token, nil, http.StatusOK)
+	if got := len(plan["plan"].(map[string]any)["steps"].([]any)); got != 1 {
+		t.Fatalf("creating direct branch changed original chain: %#v", plan)
+	}
+	request(t, h, http.MethodPost, "/api/v1/proxy-paths/direct-branches", token, map[string]any{"source_step_id": serverStepID}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/proxy-paths/direct-branches", token, map[string]any{"source_step_id": importedStepID}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"kind": "direct", "inbound_id": inboundID, "branch_source_step_id": serverStepID, "enabled": false}, http.StatusBadRequest)
+	request(t, h, http.MethodPatch, "/api/v1/proxy-path-steps/"+itoa(branchedStepID), token, map[string]any{"config_json": `{}`}, http.StatusOK)
+	updatedBranch := request(t, h, http.MethodGet, "/api/v1/proxy-paths/"+itoa(int64(branchedPath["id"].(float64))), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	if _, ok := updatedBranch["branch_source_step_id"]; ok {
+		t.Fatalf("edited direct branch retained stale source reference: %#v", updatedBranch)
+	}
 	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": serverPathID, "position": 2, "node_type": "server_inbound", "server_id": serverID}, http.StatusBadRequest)
 }
 
@@ -1497,7 +1520,8 @@ func TestProxyPathServerOnlyStepsPlanAndValidation(t *testing.T) {
 
 	path := request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"name": "A-B-C-P", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(path["proxy_path"].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "port_forward"}, http.StatusCreated)
+	transparentStep := request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "port_forward"}, http.StatusCreated)
+	transparentStepID := int64(transparentStep["proxy_path_step"].(map[string]any)["id"].(float64))
 	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "port_forward", "processing_role": true}, http.StatusCreated)
 	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 3, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "singbox"}, http.StatusCreated)
 
@@ -1505,6 +1529,11 @@ func TestProxyPathServerOnlyStepsPlanAndValidation(t *testing.T) {
 	steps := plan["plan"].(map[string]any)["steps"].([]any)
 	if len(steps) != 3 || int64(steps[0].(map[string]any)["server_id"].(float64)) != serverBID || int64(steps[1].(map[string]any)["server_id"].(float64)) != serverCID {
 		t.Fatalf("bad proxy path plan: %#v", plan)
+	}
+	request(t, h, http.MethodPost, "/api/v1/proxy-paths/direct-branches", token, map[string]any{"source_step_id": transparentStepID}, http.StatusBadRequest)
+	listed := request(t, h, http.MethodGet, "/api/v1/proxy-paths", token, nil, http.StatusOK)
+	if got := len(listed["proxy_paths"].([]any)); got != 1 {
+		t.Fatalf("failed transparent direct branch left partial path: %#v", listed)
 	}
 
 	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 4, "node_type": "server_inbound", "server_id": serverAID, "transport_mode": "singbox"}, http.StatusBadRequest)

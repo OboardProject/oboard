@@ -598,17 +598,18 @@ type ExternalOutboundAccessGrant struct {
 }
 
 type ProxyPath struct {
-	ID               int64               `json:"id"`
-	Kind             ProxyPathKind       `json:"kind"`
-	Name             string              `json:"name"`
-	NameMode         ProxyPathNameMode   `json:"name_mode"`
-	NameTemplate     []ProxyPathNamePart `json:"name_template"`
-	NameTemplateJSON string              `json:"-"`
-	InboundID        int64               `json:"inbound_id"`
-	Secret           string              `json:"-"`
-	Enabled          bool                `json:"enabled"`
-	CreatedAt        time.Time           `json:"created_at"`
-	UpdatedAt        time.Time           `json:"updated_at"`
+	ID                 int64               `json:"id"`
+	Kind               ProxyPathKind       `json:"kind"`
+	BranchSourceStepID *int64              `json:"branch_source_step_id,omitempty"`
+	Name               string              `json:"name"`
+	NameMode           ProxyPathNameMode   `json:"name_mode"`
+	NameTemplate       []ProxyPathNamePart `json:"name_template"`
+	NameTemplateJSON   string              `json:"-"`
+	InboundID          int64               `json:"inbound_id"`
+	Secret             string              `json:"-"`
+	Enabled            bool                `json:"enabled"`
+	CreatedAt          time.Time           `json:"created_at"`
+	UpdatedAt          time.Time           `json:"updated_at"`
 }
 
 type ProxyPathKind string

@@ -3337,16 +3337,6 @@ body:has(.dialog-root) .topbar-actions {
   height: 36px;
   border-radius: 999px;
 }
-.flow .react-flow__handle.connect-target-left,
-.flow .react-flow__handle.connect-target-right {
-  top: 50%;
-  width: 34px;
-  height: calc(100% + 18px);
-  border-radius: 999px;
-  transform: translateY(-50%);
-}
-.flow .react-flow__handle.connect-target-left { left: -17px; }
-.flow .react-flow__handle.connect-target-right { right: -17px; }
 .flow .react-flow__handle.connect-source-bottom {
   bottom: -16px;
   width: 34px;

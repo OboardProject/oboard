@@ -1611,6 +1611,45 @@ func TestDeleteProxyPathsForInboundTruncatesLaterSteps(t *testing.T) {
 	}
 }
 
+func TestProxyPathBranchSourceClearsWhenSourceStepIsDeleted(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	pathID, _, sourceStepID, _ := proxyPathTruncationFixture(t, s)
+	paths, err := s.ListProxyPaths(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inboundID int64
+	for _, path := range paths {
+		if path.ID == pathID {
+			inboundID = path.InboundID
+			break
+		}
+	}
+	direct := &model.ProxyPath{Kind: model.ProxyPathKindDirect, BranchSourceStepID: &sourceStepID, InboundID: inboundID, Secret: "direct", Enabled: true}
+	if err := s.CreateProxyPath(ctx, direct); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GetProxyPath(ctx, direct.ID)
+	if err != nil || stored.BranchSourceStepID == nil || *stored.BranchSourceStepID != sourceStepID {
+		t.Fatalf("stored direct branch=%#v err=%v", stored, err)
+	}
+	if err := s.DeleteProxyPathStepsFromPosition(ctx, pathID, 1); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = s.GetProxyPath(ctx, direct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.BranchSourceStepID != nil {
+		t.Fatalf("branch source survived deleted step: %#v", stored)
+	}
+}
+
 func TestDeleteProxyPathStepsForExternalTruncatesLaterSteps(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

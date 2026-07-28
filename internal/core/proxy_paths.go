@@ -439,6 +439,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int64][]model.ProxyPathStep, inboundByID map[int64]model.Inbound) error {
 	enabledByInbound := map[int64]int{}
 	transparentByInbound := map[int64]int{}
+	directSignatures := map[string]bool{}
 	for _, path := range paths {
 		if !path.Enabled {
 			continue
@@ -449,8 +450,21 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 		}
 		enabledByInbound[path.InboundID]++
 		ordered := orderedProxyPathSteps(stepsByPath[path.ID])
-		if path.Kind == model.ProxyPathKindDirect && len(ordered) != 0 {
-			return fmt.Errorf("直接出口分支 %s 不能包含路径步骤", path.Name)
+		if path.Kind == model.ProxyPathKindDirect {
+			if len(ordered) > 0 {
+				last := ordered[len(ordered)-1]
+				if last.NodeType != model.ProxyPathStepServerInbound {
+					return fmt.Errorf("直接出口分支 %s 的最后一个节点必须是可控服务器", path.Name)
+				}
+				if _, _, ok := proxyPathStepTargetServer(last, inboundByID); !ok {
+					return fmt.Errorf("直接出口分支 %s 的出口服务器不存在", path.Name)
+				}
+			}
+			signature := directProxyPathSignature(path.InboundID, ordered)
+			if directSignatures[signature] {
+				return fmt.Errorf("入口 %d 已存在相同位置的直接出口分支", path.InboundID)
+			}
+			directSignatures[signature] = true
 		}
 		transparent, err := validateProxyPathTransportSemantics(path, root, ordered)
 		if err != nil {
@@ -466,6 +480,30 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 		}
 	}
 	return nil
+}
+
+func directProxyPathSignature(inboundID int64, steps []model.ProxyPathStep) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d", inboundID)
+	for _, step := range steps {
+		mode := step.TransportMode
+		if mode == "" {
+			mode = model.ProxyPathTransportSingBox
+		}
+		fmt.Fprintf(&b, "|%s:%s:", step.NodeType, mode)
+		if step.ServerID != nil {
+			fmt.Fprintf(&b, "s%d", *step.ServerID)
+		}
+		if step.InboundID != nil {
+			fmt.Fprintf(&b, "i%d", *step.InboundID)
+		}
+		if step.ExternalOutboundID != nil {
+			fmt.Fprintf(&b, "e%d", *step.ExternalOutboundID)
+		}
+		b.WriteString(":")
+		b.WriteString(strings.TrimSpace(step.ConfigJSON))
+	}
+	return b.String()
 }
 
 func orderedProxyPathSteps(steps []model.ProxyPathStep) []model.ProxyPathStep {

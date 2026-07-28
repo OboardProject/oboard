@@ -3,11 +3,13 @@
 // are per-browser preferences, so clearing them never changes a stored path.
 
 export type GraphPosition = { x: number; y: number }
+export type GraphDirectExitInstance = { instance_id: string; root_server_id: number }
 
 export const GRAPH_ENTRY_NODE_WIDTH = 260
 
 const POSITIONS_KEY = 'oboard.proxyGraph.positions.v5'
 const TOOLBOX_KEY = 'oboard.proxyGraph.toolboxPosition.v1'
+const DIRECT_EXITS_KEY = 'oboard.proxyGraph.directExitInstances.v1'
 
 export function loadGraphPositions(): Record<string, GraphPosition> {
   try {
@@ -32,6 +34,20 @@ export function loadGraphToolboxPosition(): GraphPosition {
 
 export function saveGraphToolboxPosition(position: GraphPosition) {
   localStorage.setItem(TOOLBOX_KEY, JSON.stringify(position))
+}
+
+export function loadGraphDirectExitInstances(): GraphDirectExitInstance[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(DIRECT_EXITS_KEY) || '[]')
+    if (!Array.isArray(value)) return []
+    return value.filter(item => typeof item?.instance_id === 'string' && Number.isFinite(item?.root_server_id))
+  } catch {
+    return []
+  }
+}
+
+export function saveGraphDirectExitInstances(instances: GraphDirectExitInstance[]) {
+  localStorage.setItem(DIRECT_EXITS_KEY, JSON.stringify(instances))
 }
 
 export function snapGraphPosition(position: GraphPosition): GraphPosition {

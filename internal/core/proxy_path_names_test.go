@@ -27,6 +27,17 @@ func TestResolveProxyPathNamesUsesEndpointsAndDynamicResourceNames(t *testing.T)
 	}
 }
 
+func TestResolveProxyPathNamesIncludesIntermediateDirectExit(t *testing.T) {
+	servers := []model.Server{{ID: 1, Name: "A"}, {ID: 2, Name: "B"}}
+	inbounds := []model.Inbound{{ID: 10, ServerID: 1, Name: "entry", Protocol: model.ProtocolVLESS, Enabled: true}}
+	paths := []model.ProxyPath{{ID: 100, Kind: model.ProxyPathKindDirect, NameMode: model.ProxyPathNameAuto, InboundID: 10, Enabled: true}}
+	steps := []model.ProxyPathStep{{ID: 1, PathID: 100, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: int64Ptr(2)}}
+	resolved := ResolveProxyPathNames(paths, steps, servers, inbounds, nil)
+	if got := resolved[0].Name; got != "A｜B｜直出" {
+		t.Fatalf("direct branch name = %q", got)
+	}
+}
+
 func TestResolveProxyPathNamesAddsDistinguishingMiddleNodes(t *testing.T) {
 	servers := []model.Server{{ID: 1, Name: "香港"}, {ID: 2, Name: "东京"}, {ID: 3, Name: "新加坡"}, {ID: 4, Name: "首尔"}, {ID: 5, Name: "洛杉矶"}}
 	inbounds := []model.Inbound{{ID: 10, ServerID: 1, Protocol: model.ProtocolVLESS, Enabled: true}}

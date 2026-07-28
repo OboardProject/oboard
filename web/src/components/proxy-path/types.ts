@@ -115,6 +115,7 @@ export type ProxyPathNamePart =
 export type ProxyPath = {
   id: number
   kind: 'chain' | 'direct'
+  branch_source_step_id?: number
   name: string
   name_mode: 'auto' | 'custom'
   name_template: ProxyPathNamePart[]
