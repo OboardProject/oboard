@@ -52,7 +52,7 @@ import {
   Zap, Sliders, Menu, X, Sun, Moon, RefreshCw, ChevronDown, ChevronRight, Check, Info,
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
-  KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck
+  KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -10125,6 +10125,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
   const [announcementAll, setAnnouncementAll] = useState(true)
   const [announcementUserIDs, setAnnouncementUserIDs] = useState<number[]>([])
   const [sendingAnnouncement, setSendingAnnouncement] = useState(false)
+  const [announcementOpen, setAnnouncementOpen] = useState(false)
 
   const openCreate = () => setEditor(emptyNotificationDraft(defaultTemplates, eventOptions, isAdmin, ownerUserID))
   const openEdit = (channel: NotificationChannel) => setEditor(notificationDraftFromChannel(channel, defaultTemplates))
@@ -10204,6 +10205,8 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
       setAnnouncementTitle('')
       setAnnouncementBody('')
       setAnnouncementUserIDs([])
+      setAnnouncementAll(true)
+      setAnnouncementOpen(false)
       await load()
       notify?.(`管理员通知已加入发送队列 · ${Number(result.queued_count || 0)} 条推送`, 'success')
     } catch (error: any) {
@@ -10214,42 +10217,13 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
   }
 
   return <Panel title="通知" className="notifications-panel">
-    {isAdmin && <section className="notification-announcement-section">
-      <div className="notification-announcement-head">
-        <div><h3>发送管理员通知</h3><p className="muted">消息会发送到用户已配置且勾选“管理员通知”的通道。</p></div>
-        <span className="notification-type-pill telegram">管理员</span>
-      </div>
-      <div className="notification-announcement-form">
-        <FormField label="标题" required><input value={announcementTitle} onChange={event => setAnnouncementTitle(event.target.value)} maxLength={120} placeholder="例如：线路维护通知" /></FormField>
-        <FormField label="内容" required><textarea value={announcementBody} onChange={event => setAnnouncementBody(event.target.value)} maxLength={3000} rows={4} placeholder="写清楚影响范围和预计恢复时间" /></FormField>
-        <FormField label="接收用户">
-          <div className="notification-audience-picker">
-            <Select variant="segmented" value={announcementAll ? 'all' : 'selected'} onChange={event => setAnnouncementAll(event.target.value === 'all')} aria-label="通知范围">
-              <option value="all">全部普通用户</option>
-              <option value="selected">指定用户</option>
-            </Select>
-            {!announcementAll && <div className="notification-user-options">
-              {users.filter(user => user.id !== ownerUserID && user.status === 'active').map(user => {
-                const active = announcementUserIDs.includes(user.id)
-                return <button key={user.id} type="button" className={`sub-chip ${active ? 'active' : ''}`} onClick={() => setAnnouncementUserIDs(current => active ? current.filter(id => id !== user.id) : [...current, user.id])}>{user.nickname || user.username}</button>
-              })}
-              {!users.some(user => user.id !== ownerUserID && user.status === 'active') && <span className="muted">暂无可选用户</span>}
-            </div>}
-          </div>
-        </FormField>
-        <div className="notification-announcement-actions"><button type="button" onClick={() => void sendAnnouncement()} disabled={sendingAnnouncement}>{sendingAnnouncement ? '发送中…' : '发送通知'}</button></div>
-      </div>
-      {announcements.length > 0 && <div className="notification-announcement-history">
-        <strong>最近发送</strong>
-        {announcements.slice(0, 5).map(item => <div key={item.id}><span>{item.title}</span><small>{item.user_ids.length} 位用户 · {item.queued_count} 条推送 · {formatTableTime(item.created_at)}</small></div>)}
-      </div>}
-    </section>}
     <div className="section-toolbar">
       <div>
         <h3>通知通道</h3>
         <p className="muted">{isAdmin ? '接收服务器、证书、备份、域名、任务和用户风险提醒。' : '接收自己的流量、异常使用和管理员消息。'} 支持 Telegram 与 Bark。</p>
       </div>
       <div className="section-actions">
+        {isAdmin && <button type="button" className="ghost" onClick={() => setAnnouncementOpen(true)}><Send size={15} /><span>发送通知</span></button>}
         <button type="button" onClick={openCreate}><Plus size={15} /><span>新建通道</span></button>
       </div>
     </div>
@@ -10298,6 +10272,22 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
     )}
 
     <AnimatePresence>
+      {announcementOpen && <NotificationAnnouncementDialog
+        title={announcementTitle}
+        setTitle={setAnnouncementTitle}
+        body={announcementBody}
+        setBody={setAnnouncementBody}
+        allUsers={announcementAll}
+        setAllUsers={setAnnouncementAll}
+        selectedUserIDs={announcementUserIDs}
+        setSelectedUserIDs={setAnnouncementUserIDs}
+        users={users}
+        ownerUserID={ownerUserID}
+        announcements={announcements}
+        sending={sendingAnnouncement}
+        onCancel={() => { if (!sendingAnnouncement) setAnnouncementOpen(false) }}
+        onSend={() => void sendAnnouncement()}
+      />}
       {editor && (
         <NotificationChannelDialog
           draft={editor}
@@ -10316,6 +10306,83 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
       )}
     </AnimatePresence>
   </Panel>
+}
+
+function NotificationAnnouncementDialog({
+  title,
+  setTitle,
+  body,
+  setBody,
+  allUsers,
+  setAllUsers,
+  selectedUserIDs,
+  setSelectedUserIDs,
+  users,
+  ownerUserID,
+  announcements,
+  sending,
+  onCancel,
+  onSend,
+}: {
+  title: string
+  setTitle: (value: string) => void
+  body: string
+  setBody: (value: string) => void
+  allUsers: boolean
+  setAllUsers: (value: boolean) => void
+  selectedUserIDs: number[]
+  setSelectedUserIDs: React.Dispatch<React.SetStateAction<number[]>>
+  users: User[]
+  ownerUserID: number
+  announcements: NotificationAnnouncement[]
+  sending: boolean
+  onCancel: () => void
+  onSend: () => void
+}) {
+  const availableUsers = users.filter(user => user.id !== ownerUserID && user.status === 'active')
+
+  return <MotionDialogPanel onCancel={onCancel} className="notification-announcement-dialog">
+    <header className="dialog-head">
+      <div>
+        <h2 id="notification-announcement-title">发送通知</h2>
+        <p className="muted">把重要消息发送给已开启“管理员通知”的用户。</p>
+      </div>
+      <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} disabled={sending} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body">
+      <div className="form notification-announcement-form">
+        <FormField label="标题" required>
+          <input value={title} onChange={event => setTitle(event.target.value)} maxLength={120} placeholder="例如：线路维护通知" autoFocus />
+        </FormField>
+        <FormField label="内容" required>
+          <textarea value={body} onChange={event => setBody(event.target.value)} maxLength={3000} rows={5} placeholder="说明影响范围和预计恢复时间" />
+        </FormField>
+        <FormField label="接收用户">
+          <div className="notification-audience-picker">
+            <Select variant="segmented" value={allUsers ? 'all' : 'selected'} onChange={event => setAllUsers(event.target.value === 'all')} aria-label="接收用户">
+              <option value="all">全部普通用户</option>
+              <option value="selected">指定用户</option>
+            </Select>
+            {!allUsers && <div className="notification-user-options">
+              {availableUsers.map(user => {
+                const active = selectedUserIDs.includes(user.id)
+                return <button key={user.id} type="button" className={`sub-chip ${active ? 'active' : ''}`} aria-pressed={active} onClick={() => setSelectedUserIDs(current => active ? current.filter(id => id !== user.id) : [...current, user.id])}>{user.nickname || user.username}</button>
+              })}
+              {!availableUsers.length && <span className="muted">暂无可选用户</span>}
+            </div>}
+          </div>
+        </FormField>
+      </div>
+      {announcements.length > 0 && <div className="notification-announcement-history">
+        <strong>最近发送</strong>
+        {announcements.slice(0, 5).map(item => <div key={item.id}><span>{item.title}</span><small>{item.user_ids.length} 位用户 · {item.queued_count} 条推送 · {formatTableTime(item.created_at)}</small></div>)}
+      </div>}
+    </div>
+    <footer className="dialog-actions notification-announcement-actions">
+      <button type="button" className="ghost" onClick={onCancel} disabled={sending}>取消</button>
+      <button type="button" onClick={onSend} disabled={sending}><Send size={15} /><span>{sending ? '发送中…' : '发送通知'}</span></button>
+    </footer>
+  </MotionDialogPanel>
 }
 
 function NotificationChannelDialog({
