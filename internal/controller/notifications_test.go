@@ -605,7 +605,11 @@ func TestConnectionAuditRiskNotificationTargetsUserAndAdmin(t *testing.T) {
 	now := time.Now().UTC()
 	reports := make([]model.ConnectionAuditReport, 0, 15)
 	for i := 1; i <= 15; i++ {
-		reports = append(reports, model.ConnectionAuditReport{ReportID: fmt.Sprintf("risk-%d", i), ServerID: server.ID, UserID: viewerID, SourceIP: fmt.Sprintf("198.51.%d.1", i), Network: "tcp", ConnectionCount: 1, ActivePeak: 1, StartedAt: now.Add(-time.Minute), EndedAt: now})
+		province := "广东"
+		if i%2 == 0 {
+			province = "北京"
+		}
+		reports = append(reports, model.ConnectionAuditReport{ReportID: fmt.Sprintf("risk-%d", i), ServerID: server.ID, UserID: viewerID, SourceIP: fmt.Sprintf("11.%d.0.1", i), SourceCountryCode: "CN", SourceCountry: "中国", SourceProvince: province, GeoDatabaseRevision: "test", Network: "tcp", ConnectionCount: 1, ActivePeak: 1, StartedAt: now.Add(-time.Minute), EndedAt: now})
 	}
 	if _, err := db.AddConnectionAuditReports(context.Background(), reports); err != nil {
 		t.Fatal(err)

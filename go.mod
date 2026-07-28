@@ -5,6 +5,7 @@ go 1.25.12
 require (
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/gorilla/websocket v1.5.3
+	github.com/lionsoul2014/ip2region/binding/golang v0.0.0-20260709160242-cd40e3a1d532
 	github.com/metacubex/age v0.0.0-20260603010618-28d156b4ea78
 	github.com/pquerna/otp v1.5.0
 	golang.org/x/crypto v0.53.0

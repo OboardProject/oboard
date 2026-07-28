@@ -5,8 +5,11 @@ CONTROLLER_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 BUILD_DIR=$(mktemp -d)
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
+echo "==> Verifying pinned IP geolocation databases"
+"$CONTROLLER_DIR/scripts/fetch-ip2region.sh" "$BUILD_DIR/geoip"
+
 echo "==> Testing Controller"
-go -C "$CONTROLLER_DIR" test ./...
+OBOARD_TEST_GEOIP_DIR="$BUILD_DIR/geoip" go -C "$CONTROLLER_DIR" test ./...
 
 echo "==> Building Web UI"
 (

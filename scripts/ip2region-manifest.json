@@ -1,0 +1,13 @@
+{
+  "provider": "ip2region",
+  "version": "v3.17.0",
+  "revision": "cd40e3a1d532d645697999d646cf0e10481cef33",
+  "ipv4": {
+    "name": "ip2region_v4.xdb",
+    "sha256": "6307a9696f5711f84bcb8b25f07894de68a64a0ed4a1cc7e990562dd3084f210"
+  },
+  "ipv6": {
+    "name": "ip2region_v6.xdb",
+    "sha256": "5b93da35ac28bc316dccc54a758381f7a874ae0461dd51ff5df5e34815586f11"
+  }
+}

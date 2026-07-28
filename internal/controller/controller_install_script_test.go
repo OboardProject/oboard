@@ -53,6 +53,7 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"请输入安装目录（留空为/opt/oboard）：",
 		"/opt/oboard",
 		"OBOARD_INSTALL_DIR",
+		"OBOARD_GEOIP_DIR",
 		"CONTROLLER_CONFIG_DIR",
 		"CONTROLLER_DATA_DIR",
 		"configure_controller_paths",

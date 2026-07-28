@@ -88,12 +88,15 @@ func TestExtractControllerArchiveAcceptsSelfUpdatePayload(t *testing.T) {
 		{name: "bin/oboard-controller-updater", content: "updater"},
 		{name: "web/dist/index.html", content: "web"},
 		{name: "downloads/release-manifest.json", content: "{}"},
+		{name: "downloads/geoip/manifest.json", content: "{}"},
+		{name: "downloads/geoip/ip2region_v4.xdb", content: "v4"},
+		{name: "downloads/geoip/ip2region_v6.xdb", content: "v6"},
 	})
 	stage := t.TempDir()
 	if err := extractControllerArchive(archive, stage); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "web/dist/index.html", "downloads/release-manifest.json"} {
+	for _, name := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "web/dist/index.html", "downloads/release-manifest.json", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb"} {
 		if info, err := os.Stat(filepath.Join(stage, filepath.FromSlash(name))); err != nil || !info.Mode().IsRegular() {
 			t.Fatalf("self-update payload did not extract %s: %v", name, err)
 		}
@@ -111,6 +114,9 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 		{name: "web/dist/index.html", content: "web"},
 		{name: "web/dist/assets/app.js", content: "asset"},
 		{name: "downloads/release-manifest.json", content: "{}"},
+		{name: "downloads/geoip/manifest.json", content: "{}"},
+		{name: "downloads/geoip/ip2region_v4.xdb", content: "v4"},
+		{name: "downloads/geoip/ip2region_v6.xdb", content: "v6"},
 	})
 	stage := t.TempDir()
 	if err := extractControllerArchive(archive, stage); err != nil {
@@ -122,6 +128,7 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 	assertFileMode(t, filepath.Join(stage, "web/dist/index.html"), 0o644)
 	assertFileMode(t, filepath.Join(stage, "web/dist/assets/app.js"), 0o644)
 	assertFileMode(t, filepath.Join(stage, "downloads/release-manifest.json"), 0o644)
+	assertFileMode(t, filepath.Join(stage, "downloads/geoip/ip2region_v4.xdb"), 0o644)
 
 	installRoot := t.TempDir()
 	for _, item := range []struct {

@@ -1345,41 +1345,80 @@ type TrafficReport struct {
 }
 
 type ConnectionAuditReport struct {
-	ReportID        string    `json:"report_id"`
-	ServerID        int64     `json:"server_id"`
-	UserID          int64     `json:"user_id"`
-	InboundID       *int64    `json:"inbound_id,omitempty"`
-	PathID          *int64    `json:"path_id,omitempty"`
-	SourceIP        string    `json:"source_ip"`
-	SourceGeoCode   string    `json:"source_geo_code,omitempty"`
-	Network         string    `json:"network"`
-	Destination     string    `json:"destination,omitempty"`
-	DestinationPort int       `json:"destination_port,omitempty"`
-	OutboundTag     string    `json:"outbound_tag,omitempty"`
-	OutboundType    string    `json:"outbound_type,omitempty"`
-	ConnectionCount int64     `json:"connection_count"`
-	ActivePeak      int64     `json:"active_peak"`
-	ActiveAtEnd     int64     `json:"active_at_end"`
-	StartedAt       time.Time `json:"started_at"`
-	EndedAt         time.Time `json:"ended_at"`
-	CreatedAt       time.Time `json:"created_at"`
+	ReportID            string    `json:"report_id"`
+	ServerID            int64     `json:"server_id"`
+	UserID              int64     `json:"user_id"`
+	InboundID           *int64    `json:"inbound_id,omitempty"`
+	PathID              *int64    `json:"path_id,omitempty"`
+	SourceIP            string    `json:"source_ip"`
+	SourceGeoCode       string    `json:"source_geo_code,omitempty"`
+	SourceCountryCode   string    `json:"source_country_code,omitempty"`
+	SourceCountry       string    `json:"source_country,omitempty"`
+	SourceProvince      string    `json:"source_province,omitempty"`
+	SourceCity          string    `json:"source_city,omitempty"`
+	SourceISP           string    `json:"source_isp,omitempty"`
+	GeoDatabaseRevision string    `json:"geo_database_revision,omitempty"`
+	Network             string    `json:"network"`
+	Destination         string    `json:"destination,omitempty"`
+	DestinationPort     int       `json:"destination_port,omitempty"`
+	OutboundTag         string    `json:"outbound_tag,omitempty"`
+	OutboundType        string    `json:"outbound_type,omitempty"`
+	ConnectionCount     int64     `json:"connection_count"`
+	ActivePeak          int64     `json:"active_peak"`
+	ActiveAtEnd         int64     `json:"active_at_end"`
+	StartedAt           time.Time `json:"started_at"`
+	EndedAt             time.Time `json:"ended_at"`
+	CreatedAt           time.Time `json:"created_at"`
+}
+
+type IPGeography struct {
+	CountryCode string `json:"country_code,omitempty"`
+	Country     string `json:"country,omitempty"`
+	Province    string `json:"province,omitempty"`
+	City        string `json:"city,omitempty"`
+	ISP         string `json:"isp,omitempty"`
+	Revision    string `json:"revision,omitempty"`
+}
+
+type GeoDatabaseStatus struct {
+	Available bool   `json:"available"`
+	Provider  string `json:"provider"`
+	Version   string `json:"version,omitempty"`
+	Revision  string `json:"revision,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+type ConnectionAuditRiskEvent struct {
+	Level         string    `json:"level"`
+	Score         int       `json:"score"`
+	SourceIPCount int       `json:"source_ip_count"`
+	RegionCount   int       `json:"region_count"`
+	Regions       []string  `json:"regions"`
+	StartedAt     time.Time `json:"started_at"`
+	EndedAt       time.Time `json:"ended_at"`
 }
 
 type ConnectionAuditUserSummary struct {
-	UserID              int64     `json:"user_id"`
-	Username            string    `json:"username"`
-	Nickname            string    `json:"nickname"`
-	RiskLevel           string    `json:"risk_level"`
-	RiskScore           int       `json:"risk_score"`
-	RiskSignals         []string  `json:"risk_signals"`
-	SourceIPCount       int       `json:"source_ip_count"`
-	SourceSubnetCount   int       `json:"source_subnet_count"`
-	SharedSourceIPCount int       `json:"shared_source_ip_count"`
-	ServerCount         int       `json:"server_count"`
-	ConnectionCount     int64     `json:"connection_count"`
-	ActivePeak          int64     `json:"active_peak"`
-	ReportCount         int64     `json:"report_count"`
-	LastSeenAt          time.Time `json:"last_seen_at"`
+	UserID              int64      `json:"user_id"`
+	Username            string     `json:"username"`
+	Nickname            string     `json:"nickname"`
+	RiskLevel           string     `json:"risk_level"`
+	RiskScore           int        `json:"risk_score"`
+	RiskSignals         []string   `json:"risk_signals"`
+	SourceIPCount       int        `json:"source_ip_count"`
+	SourceSubnetCount   int        `json:"source_subnet_count"`
+	SharedSourceIPCount int        `json:"shared_source_ip_count"`
+	SourceRegionCount   int        `json:"source_region_count"`
+	RiskSourceIPCount   int        `json:"risk_source_ip_count"`
+	RiskRegionCount     int        `json:"risk_region_count"`
+	RiskRegions         []string   `json:"risk_regions"`
+	RiskWindowStartedAt *time.Time `json:"risk_window_started_at,omitempty"`
+	RiskWindowEndedAt   *time.Time `json:"risk_window_ended_at,omitempty"`
+	ServerCount         int        `json:"server_count"`
+	ConnectionCount     int64      `json:"connection_count"`
+	ActivePeak          int64      `json:"active_peak"`
+	ReportCount         int64      `json:"report_count"`
+	LastSeenAt          time.Time  `json:"last_seen_at"`
 }
 
 type ConnectionAuditDimension struct {
@@ -1393,7 +1432,9 @@ type ConnectionAuditDimension struct {
 
 type ConnectionAuditOverview struct {
 	WindowHours        int                          `json:"window_hours"`
+	RiskWindowMinutes  int                          `json:"risk_window_minutes"`
 	GeneratedAt        time.Time                    `json:"generated_at"`
+	GeoDatabase        GeoDatabaseStatus            `json:"geo_database"`
 	EnabledServerCount int                          `json:"enabled_server_count"`
 	ReportingUserCount int                          `json:"reporting_user_count"`
 	ElevatedRiskCount  int                          `json:"elevated_risk_count"`
@@ -1409,6 +1450,7 @@ type ConnectionAuditUserDetail struct {
 	Outbounds    []ConnectionAuditDimension `json:"outbounds"`
 	Servers      []ConnectionAuditDimension `json:"servers"`
 	Recent       []ConnectionAuditReport    `json:"recent"`
+	RiskEvents   []ConnectionAuditRiskEvent `json:"risk_events"`
 }
 
 type TrafficRuntimePolicy struct {

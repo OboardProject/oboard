@@ -73,10 +73,10 @@ func TestConnectionAuditReportsAreIdempotentAndRiskIsAggregated(t *testing.T) {
 		t.Fatalf("unexpected overview: %#v", overview)
 	}
 	got := overview.Users[0]
-	if got.RiskLevel != "critical" || got.RiskScore < 75 || got.SourceSubnetCount != 15 {
+	if got.RiskLevel != "medium" || got.RiskScore != 45 || got.SourceSubnetCount != 15 {
 		t.Fatalf("unexpected risk summary: %#v", got)
 	}
-	if len(got.RiskSignals) == 0 || got.RiskSignals[0] != "当前窗口内来源 IP 达 15 个" {
+	if len(got.RiskSignals) == 0 || got.RiskSignals[0] != "连接并发峰值达到 20" {
 		t.Fatalf("unexpected risk signals: %#v", got.RiskSignals)
 	}
 	detail, err := s.ConnectionAuditUserDetail(ctx, user.ID, 24)
@@ -99,13 +99,99 @@ func TestConnectionAuditRiskAdaptsToWindow(t *testing.T) {
 		ConnectionCount:   1500,
 		ActivePeak:        20,
 	}
-	shortScore, shortLevel, shortSignals := connectionAuditRisk(item, 24)
-	longScore, longLevel, longSignals := connectionAuditRisk(item, 30*24)
-	if shortScore <= longScore || shortLevel != "critical" || longLevel != "high" {
+	shortScore, shortLevel, shortSignals := connectionAuditRisk(item, 24, nil)
+	longScore, longLevel, longSignals := connectionAuditRisk(item, 30*24, nil)
+	if shortScore <= longScore || shortLevel != "high" || longLevel != "medium" {
 		t.Fatalf("window-adjusted risk = short %d/%s, long %d/%s", shortScore, shortLevel, longScore, longLevel)
 	}
 	if len(shortSignals) <= len(longSignals) {
 		t.Fatalf("long window did not reduce transient signals: short=%#v long=%#v", shortSignals, longSignals)
+	}
+}
+
+func TestConnectionAuditCrossRegionRiskUsesFifteenMinuteWindow(t *testing.T) {
+	base := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	observations := []connectionAuditGeoObservation{
+		{SourceIP: "1.1.1.1", RegionKey: "CN/广东", RegionLabel: "广东", At: base},
+		{SourceIP: "2.2.2.2", RegionKey: "CN/北京", RegionLabel: "北京", At: base.Add(15 * time.Minute)},
+	}
+	events := buildConnectionAuditRiskEvents(observations)
+	if len(events) != 1 || events[0].Level != "high" || events[0].SourceIPCount != 2 || events[0].RegionCount != 2 {
+		t.Fatalf("two-region event = %#v", events)
+	}
+	observations = append(observations, connectionAuditGeoObservation{SourceIP: "3.3.3.3", RegionKey: "COUNTRY/US", RegionLabel: "美国", At: base.Add(15 * time.Minute)})
+	events = buildConnectionAuditRiskEvents(observations)
+	if len(events) != 1 || events[0].Level != "critical" || events[0].RegionCount != 3 {
+		t.Fatalf("three-region event = %#v", events)
+	}
+	observations[1].At = base.Add(15*time.Minute + time.Nanosecond)
+	observations[2].At = observations[1].At
+	events = buildConnectionAuditRiskEvents(observations[:2])
+	if len(events) != 0 {
+		t.Fatalf("event outside 15-minute window = %#v", events)
+	}
+}
+
+func TestConnectionAuditMultipleIPsInOneProvinceDoNotAddRisk(t *testing.T) {
+	base := time.Now().UTC()
+	events := buildConnectionAuditRiskEvents([]connectionAuditGeoObservation{
+		{SourceIP: "1.1.1.1", RegionKey: "CN/广东", RegionLabel: "广东", At: base},
+		{SourceIP: "2.2.2.2", RegionKey: "CN/广东", RegionLabel: "广东", At: base.Add(time.Minute)},
+	})
+	if len(events) != 0 {
+		t.Fatalf("same-province IPs created risk: %#v", events)
+	}
+	item := model.ConnectionAuditUserSummary{SourceIPCount: 50, SourceSubnetCount: 50}
+	score, level, signals := connectionAuditRisk(item, 24, nil)
+	if score != 0 || level != "low" || len(signals) != 0 {
+		t.Fatalf("IP and subnet counts still add risk: %d %s %#v", score, level, signals)
+	}
+}
+
+func TestConnectionAuditRiskIgnoresNonPublicSources(t *testing.T) {
+	for _, raw := range []string{"10.0.0.1", "100.64.0.1", "192.0.2.1", "198.51.100.1", "203.0.113.1", "2001:db8::1"} {
+		if connectionAuditPublicSourceIP(raw) {
+			t.Fatalf("%s was accepted as a public risk source", raw)
+		}
+	}
+}
+
+func TestConnectionAuditOverviewKeepsHistoricalCrossRegionEvent(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	server := &model.Server{Name: "geo-risk-node", ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "geo-risk-user", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "geo-risk-uuid", ProxyPassword: "secret"}
+	if err := s.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-2 * time.Hour)
+	reports := []model.ConnectionAuditReport{
+		{ReportID: "geo-guangdong", ServerID: server.ID, UserID: user.ID, SourceIP: "1.1.1.1", SourceCountryCode: "CN", SourceCountry: "中国", SourceProvince: "广东", GeoDatabaseRevision: "test", Network: "tcp", ConnectionCount: 1, StartedAt: base, EndedAt: base},
+		{ReportID: "geo-beijing", ServerID: server.ID, UserID: user.ID, SourceIP: "2.2.2.2", SourceCountryCode: "CN", SourceCountry: "中国", SourceProvince: "北京", GeoDatabaseRevision: "test", Network: "tcp", ConnectionCount: 1, StartedAt: base.Add(10 * time.Minute), EndedAt: base.Add(10 * time.Minute)},
+	}
+	if _, err := s.AddConnectionAuditReports(ctx, reports); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := s.ConnectionAuditOverview(ctx, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Users) != 1 || overview.Users[0].RiskLevel != "high" || overview.Users[0].RiskRegionCount != 2 || overview.Users[0].RiskWindowEndedAt == nil {
+		t.Fatalf("historical geo risk = %#v", overview.Users)
+	}
+	detail, err := s.ConnectionAuditUserDetail(ctx, user.ID, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.RiskEvents) != 1 || detail.RiskEvents[0].Level != "high" {
+		t.Fatalf("historical risk events = %#v", detail.RiskEvents)
 	}
 }
 

@@ -839,7 +839,7 @@ func extractControllerArchive(archivePath, stage string) error {
 			return fmt.Errorf("truncated controller archive entry %q", name)
 		}
 	}
-	for _, required := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "web/dist/index.html"} {
+	for _, required := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "web/dist/index.html", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb"} {
 		if info, err := stageRoot.Stat(filepath.FromSlash(required)); err != nil || !info.Mode().IsRegular() {
 			return fmt.Errorf("controller package is missing %s", required)
 		}

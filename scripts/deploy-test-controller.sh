@@ -223,6 +223,7 @@ OBOARD_INSTALL_DIR=/opt/oboard
 OBOARD_DB=/opt/oboard/data/oboard.sqlite
 OBOARD_STATIC=/opt/oboard/web/dist
 OBOARD_DOWNLOADS=/opt/oboard/downloads
+OBOARD_GEOIP_DIR=/opt/oboard/downloads/geoip
 OBOARD_BACKUP_DIR=/opt/oboard/data/backups
 OBOARD_LOG_FILE=/opt/oboard/data/logs/controller.log
 OBOARD_ACME_HOME=/opt/oboard/data/acme

@@ -573,6 +573,7 @@ configure_controller_paths() {
   set_controller_env_value OBOARD_DB "$CONTROLLER_DATA_DIR/oboard.sqlite"
   set_controller_env_value OBOARD_STATIC "$CONTROLLER_WEB_DIR/dist"
   set_controller_env_value OBOARD_DOWNLOADS "$CONTROLLER_DOWNLOADS_DIR"
+  set_controller_env_value OBOARD_GEOIP_DIR "$CONTROLLER_DOWNLOADS_DIR/geoip"
   set_controller_env_value OBOARD_BACKUP_DIR "$CONTROLLER_DATA_DIR/backups"
   set_controller_env_value OBOARD_LOG_FILE "$CONTROLLER_DATA_DIR/logs/controller.log"
   set_controller_env_value OBOARD_ACME_SH "$ACME_SH_INSTALL_PATH"

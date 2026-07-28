@@ -8302,6 +8302,10 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 .audit-recent-head { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
 .audit-recent-head span { color: var(--muted); font-size: 11px; }
+.audit-risk-events { display: grid; }
+.audit-risk-events > div:not(.audit-recent-head) { display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
+.audit-risk-events strong { overflow: hidden; color: var(--text-strong); text-overflow: ellipsis; white-space: nowrap; }
+.audit-risk-events time { color: var(--muted); white-space: nowrap; }
 .audit-recent-list { max-height: 310px; overflow: auto; }
 .audit-recent-list > div { display: grid; grid-template-columns: minmax(115px, .8fr) 46px minmax(180px, 1.5fr) minmax(90px, .7fr) minmax(90px, .7fr) 130px; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: 11px; }
 .audit-recent-list code,
@@ -8461,6 +8465,8 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .audit-detail-risk { display: grid; }
   .audit-recent-list > div { grid-template-columns: minmax(100px, 1fr) 42px minmax(150px, 1.4fr); }
   .audit-recent-list > div > :nth-child(n+4) { display: none; }
+  .audit-risk-events > div:not(.audit-recent-head) { grid-template-columns: 76px minmax(0, 1fr); }
+  .audit-risk-events time { grid-column: 2; }
 }
 
 .flow .react-flow__node.graph-node { overflow: visible; }

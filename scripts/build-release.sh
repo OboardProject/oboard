@@ -9,6 +9,7 @@ DATE_VALUE=${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
 BUILD_VALUE=${BUILD:-${BUILD_NUMBER:-$(date -u +%Y%m%d%H%M%S)}}
 OUT_DIR=${OUT_DIR:-$WORKSPACE_DIR/dist/controller/release}
 WEB_OUT_DIR=${WEB_OUT_DIR:-$WORKSPACE_DIR/dist/controller/web}
+GEOIP_OUT_DIR=${GEOIP_OUT_DIR:-$WORKSPACE_DIR/dist/controller/geoip}
 PLATFORMS=${OBOARD_PLATFORMS:-"linux/amd64 linux/arm64"}
 if [ -n "${OBOARD_RELEASE_CHANNEL:-}" ]; then
   RELEASE_CHANNEL=$OBOARD_RELEASE_CHANNEL
@@ -60,6 +61,10 @@ fi
 rm -rf "$WEB_OUT_DIR"
 npm run build -- --outDir "$WEB_OUT_DIR" --emptyOutDir
 
+echo "==> Fetching pinned ip2region databases"
+rm -rf "$GEOIP_OUT_DIR"
+"$CONTROLLER_DIR/scripts/fetch-ip2region.sh" "$GEOIP_OUT_DIR"
+
 package_controller() {
   local os=$1 arch=$2 source=$3
   local stage
@@ -77,7 +82,8 @@ package_controller() {
 
   mkdir -p "$stage/web"
   cp -R "$WEB_OUT_DIR" "$stage/web/dist"
-  mkdir -p "$stage/downloads"
+  mkdir -p "$stage/downloads/geoip"
+  cp -R "$GEOIP_OUT_DIR"/. "$stage/downloads/geoip/"
   for f in "release-manifest.json" "release-manifest.json.sig"; do
     if [ -f "$OUT_DIR/agent-release/$f" ]; then cp "$OUT_DIR/agent-release/$f" "$stage/downloads/$f"; fi
   done

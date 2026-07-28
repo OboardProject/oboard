@@ -1088,46 +1088,98 @@ func (s *Server) notifyConnectionAuditRisks(ctx context.Context, userIDs []int64
 	if len(userIDs) == 0 {
 		return
 	}
-	overview, err := s.store.ConnectionAuditOverview(ctx, 24)
-	if err != nil {
-		log.Printf("connection audit notification: %v", err)
-		return
-	}
-	targets := map[int64]bool{}
+	s.connectionAuditNotificationMu.Lock()
+	defer s.connectionAuditNotificationMu.Unlock()
+	settings, _ := s.store.ListSettings(ctx)
+	nowTime := time.Now().UTC()
+	seen := map[int64]bool{}
 	for _, userID := range userIDs {
-		targets[userID] = true
-	}
-	for _, summary := range overview.Users {
-		if !targets[summary.UserID] || (summary.RiskLevel != "high" && summary.RiskLevel != "critical") {
+		if userID <= 0 || seen[userID] {
 			continue
 		}
-		name := strings.TrimSpace(summary.Nickname)
+		seen[userID] = true
+		event, err := s.store.ConnectionAuditCurrentRisk(ctx, userID, nowTime)
+		if err != nil {
+			log.Printf("connection audit notification: %v", err)
+			continue
+		}
+		if event == nil {
+			continue
+		}
+		settingKey := fmt.Sprintf("connection_audit.notification.%d", userID)
+		state := connectionAuditNotificationState{}
+		_ = json.Unmarshal([]byte(settings[settingKey]), &state)
+		sameEvent := !state.ActiveEndedAt.IsZero() && !event.StartedAt.After(state.ActiveEndedAt.Add(15*time.Minute))
+		if !sameEvent {
+			state.ActiveStartedAt = event.StartedAt
+			state.NotifiedLevel = ""
+			state.Pending = true
+		}
+		state.ActiveEndedAt = event.EndedAt
+		if auditRiskRank(event.Level) > auditRiskRank(state.NotifiedLevel) {
+			state.Pending = true
+		}
+		if !state.Pending || (!state.LastNotifiedAt.IsZero() && nowTime.Sub(state.LastNotifiedAt) < time.Hour) {
+			if encoded, marshalErr := json.Marshal(state); marshalErr == nil {
+				_ = s.store.SetSetting(ctx, settingKey, string(encoded))
+			}
+			continue
+		}
+		user, err := s.store.GetUser(ctx, userID)
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSpace(user.Nickname)
 		if name == "" {
-			name = summary.Username
+			name = user.Username
 		}
 		riskLevel := "高风险"
-		if summary.RiskLevel == "critical" {
+		if event.Level == "critical" {
 			riskLevel = "严重风险"
 		}
-		signals := strings.Join(summary.RiskSignals, "；")
-		if signals == "" {
-			signals = "连接来源或并发明显偏离日常使用"
-		}
-		s.enqueueNotificationEvent(ctx, notificationEvent{
+		signals := fmt.Sprintf("15 分钟内 %d 个来源 IP 跨 %s", event.SourceIPCount, strings.Join(event.Regions, "、"))
+		queued := s.enqueueNotificationEvent(ctx, notificationEvent{
 			Name:         notificationUserRisk,
-			Key:          fmt.Sprintf("user:%d:risk:%s:%s", summary.UserID, summary.RiskLevel, summary.LastSeenAt.UTC().Format("2006-01-02")),
-			TargetUserID: summary.UserID,
+			Key:          fmt.Sprintf("user:%d:geo-risk:%s:%s", userID, event.Level, nowTime.Format("2006010215")),
+			TargetUserID: userID,
 			Data: map[string]string{
 				"UserName":      name,
-				"UserID":        fmt.Sprint(summary.UserID),
+				"UserID":        fmt.Sprint(userID),
 				"RiskLevel":     riskLevel,
-				"RiskScore":     fmt.Sprint(summary.RiskScore),
+				"RiskScore":     fmt.Sprint(event.Score),
 				"Signals":       signals,
-				"SourceIPCount": fmt.Sprint(summary.SourceIPCount),
-				"ActivePeak":    fmt.Sprint(summary.ActivePeak),
+				"SourceIPCount": fmt.Sprint(event.SourceIPCount),
+				"ActivePeak":    "0",
 				"Time":          s.notificationNow(ctx),
 			},
 		})
+		if queued > 0 {
+			state.LastNotifiedAt = nowTime
+			state.NotifiedLevel = event.Level
+			state.Pending = false
+		}
+		if encoded, marshalErr := json.Marshal(state); marshalErr == nil {
+			_ = s.store.SetSetting(ctx, settingKey, string(encoded))
+		}
+	}
+}
+
+type connectionAuditNotificationState struct {
+	ActiveStartedAt time.Time `json:"active_started_at"`
+	ActiveEndedAt   time.Time `json:"active_ended_at"`
+	LastNotifiedAt  time.Time `json:"last_notified_at"`
+	NotifiedLevel   string    `json:"notified_level"`
+	Pending         bool      `json:"pending"`
+}
+
+func auditRiskRank(level string) int {
+	switch level {
+	case "critical":
+		return 2
+	case "high":
+		return 1
+	default:
+		return 0
 	}
 }
 

@@ -168,11 +168,13 @@ type SubscriptionAssignment = { id: number; profile_id: number; user_id: number;
 type AuditLog = { id: number; actor_id?: number; action: string; target: string; detail: string; ip: string; created_at: string }
 type AuditTone = 'success' | 'warning' | 'danger' | 'neutral'
 type AuditRiskLevel = 'low' | 'medium' | 'high' | 'critical'
-type ConnectionAuditUser = { user_id: number; username: string; nickname: string; risk_level: AuditRiskLevel; risk_score: number; risk_signals: string[]; source_ip_count: number; source_subnet_count: number; shared_source_ip_count: number; server_count: number; connection_count: number; active_peak: number; report_count: number; last_seen_at: string }
-type ConnectionAuditOverview = { window_hours: number; generated_at: string; enabled_server_count: number; reporting_user_count: number; elevated_risk_count: number; total_connections: number; unique_source_ips: number; users: ConnectionAuditUser[] }
+type GeoDatabaseStatus = { available: boolean; provider: string; version?: string; revision?: string; error?: string }
+type ConnectionAuditRiskEvent = { level: AuditRiskLevel; score: number; source_ip_count: number; region_count: number; regions: string[]; started_at: string; ended_at: string }
+type ConnectionAuditUser = { user_id: number; username: string; nickname: string; risk_level: AuditRiskLevel; risk_score: number; risk_signals: string[]; source_ip_count: number; source_subnet_count: number; shared_source_ip_count: number; source_region_count: number; risk_source_ip_count: number; risk_region_count: number; risk_regions: string[]; risk_window_started_at?: string; risk_window_ended_at?: string; server_count: number; connection_count: number; active_peak: number; report_count: number; last_seen_at: string }
+type ConnectionAuditOverview = { window_hours: number; risk_window_minutes: number; generated_at: string; geo_database: GeoDatabaseStatus; enabled_server_count: number; reporting_user_count: number; elevated_risk_count: number; total_connections: number; unique_source_ips: number; users: ConnectionAuditUser[] }
 type ConnectionAuditDimension = { key: string; label: string; secondary?: string; connection_count: number; active_peak: number; last_seen_at: string }
-type ConnectionAuditReport = { report_id: string; server_id: number; user_id: number; inbound_id?: number; path_id?: number; source_ip: string; source_geo_code?: string; network: string; destination?: string; destination_port?: number; outbound_tag?: string; outbound_type?: string; connection_count: number; active_peak: number; active_at_end: number; started_at: string; ended_at: string }
-type ConnectionAuditUserDetail = { summary: ConnectionAuditUser; sources: ConnectionAuditDimension[]; destinations: ConnectionAuditDimension[]; outbounds: ConnectionAuditDimension[]; servers: ConnectionAuditDimension[]; recent: ConnectionAuditReport[] }
+type ConnectionAuditReport = { report_id: string; server_id: number; user_id: number; inbound_id?: number; path_id?: number; source_ip: string; source_geo_code?: string; source_country_code?: string; source_country?: string; source_province?: string; source_city?: string; source_isp?: string; network: string; destination?: string; destination_port?: number; outbound_tag?: string; outbound_type?: string; connection_count: number; active_peak: number; active_at_end: number; started_at: string; ended_at: string }
+type ConnectionAuditUserDetail = { summary: ConnectionAuditUser; sources: ConnectionAuditDimension[]; destinations: ConnectionAuditDimension[]; outbounds: ConnectionAuditDimension[]; servers: ConnectionAuditDimension[]; recent: ConnectionAuditReport[]; risk_events: ConnectionAuditRiskEvent[] }
 type LimitMode = 'inherit' | 'custom'
 type SessionUser = Pick<User, 'id' | 'username' | 'nickname' | 'role' | 'status' | 'totp_enabled' | 'passkey_count'>
 type UserDraft = { username: string; nickname: string; password?: string; role: Role; status: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; limit_mode: LimitMode }
@@ -3723,6 +3725,7 @@ function AuditConsole({ data, client, loading }: any) {
     }
   }
   const enabled = Number(overview?.enabled_server_count || 0)
+  const geoAvailable = overview?.geo_database?.available !== false
   return <Panel title="审计台" className="audit-console-panel">
     <div className="audit-console-tabs" role="tablist" aria-label="审计视图">
       <button type="button" role="tab" aria-selected={view === 'connections'} className={view === 'connections' ? 'active' : ''} onClick={() => setView('connections')}><Shield size={15} />连接风险</button>
@@ -3731,7 +3734,7 @@ function AuditConsole({ data, client, loading }: any) {
     {view === 'operations' ? <AuditLogs data={data} loading={loading} embedded /> : <>
       <div className="audit-overview-grid">
         <div><span>启用服务器</span><strong>{enabled}</strong><small>{enabled ? '正在接收摘要' : '全部关闭'}</small></div>
-        <div><span>活跃用户</span><strong>{overview?.reporting_user_count || 0}</strong><small>{windowHours} 小时窗口</small></div>
+        <div><span>活跃用户</span><strong>{overview?.reporting_user_count || 0}</strong><small>{windowHours} 小时历史范围</small></div>
         <div><span>高风险用户</span><strong>{overview?.elevated_risk_count || 0}</strong><small>高风险与严重</small></div>
         <div><span>来源 IP</span><strong>{overview?.unique_source_ips || 0}</strong><small>{formatCompactAuditNumber(overview?.total_connections || 0)} 次连接</small></div>
       </div>
@@ -3742,13 +3745,14 @@ function AuditConsole({ data, client, loading }: any) {
         <button type="button" className="ghost icon-button" onClick={() => setRefreshRevision(value => value + 1)} disabled={refreshing} aria-label="刷新审计数据" title="刷新"><RefreshCw size={15} className={refreshing ? 'spin' : ''} /></button>
       </div>
       {loadError ? <p className="form-error">{loadError}</p> : null}
+	  {!geoAvailable ? <div className="audit-paused-notice"><Shield size={16} /><span>IP 归属库不可用，跨地域风险判定已暂停。{overview?.geo_database?.error ? ` ${overview.geo_database.error}` : ''}</span></div> : null}
 	  {!enabled && (overview?.reporting_user_count || 0) > 0 ? <div className="audit-paused-notice"><Shield size={16} /><span>当前没有服务器继续采集，以下为已保存的历史摘要。</span></div> : null}
 	  {refreshing && !overview ? <TableSkeleton /> : !enabled && !(overview?.reporting_user_count || 0) ? <div className="audit-disabled-state"><Shield size={24} /><strong>连接审计未启用</strong><span>可在创建或编辑服务器时开启。</span></div> : !users.length ? <p className="muted">当前筛选条件下暂无连接审计数据</p> : <div className="audit-user-table-wrap">
         <table className="audit-user-table"><thead><tr><th>用户</th><th>风险</th><th>来源</th><th>服务器</th><th>连接 / 峰值</th><th>最后活动</th><th aria-label="操作" /></tr></thead><tbody>
           {users.map(user => <tr key={user.user_id}>
             <td><strong>{user.nickname || user.username}</strong><span>{user.nickname ? user.username : `用户 #${user.user_id}`}</span></td>
             <td><span className={`audit-risk-pill ${user.risk_level}`}>{auditRiskLabel(user.risk_level)} · {user.risk_score}</span>{user.risk_signals?.[0] ? <small>{user.risk_signals[0]}</small> : null}</td>
-            <td><strong>{user.source_ip_count}</strong><span>{user.source_subnet_count} 个网段</span>{user.shared_source_ip_count ? <small>{user.shared_source_ip_count} 个共享出口 IP</small> : null}</td>
+            <td><strong>{user.source_ip_count}</strong><span>{user.source_region_count || 0} 个地域 · {user.source_subnet_count} 个网段</span>{user.shared_source_ip_count ? <small>{user.shared_source_ip_count} 个共享出口 IP</small> : null}</td>
             <td><strong>{user.server_count}</strong><span>台</span></td>
             <td><strong>{formatCompactAuditNumber(user.connection_count)}</strong><span>峰值 {user.active_peak}</span></td>
             <td>{formatTableTime(user.last_seen_at)}</td>
@@ -3775,6 +3779,7 @@ function ConnectionAuditUserDialog({ detail, onClose }: { detail: ConnectionAudi
     <header className="dialog-head"><div><h2>{user.nickname || user.username}</h2><p className="muted">{user.username} · {user.connection_count} 次连接 · 并发峰值 {user.active_peak}</p></div><button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body audit-detail-body">
       <div className="audit-detail-risk"><span className={`audit-risk-pill ${user.risk_level}`}>{auditRiskLabel(user.risk_level)} · {user.risk_score}</span><div>{user.risk_signals?.length ? user.risk_signals.map(signal => <span key={signal}>{signal}</span>) : <span>当前窗口未发现显著共享特征</span>}</div></div>
+	  {(detail.risk_events || []).length ? <div className="audit-risk-events"><div className="audit-recent-head"><h3>跨地域风险事件</h3><span>15 分钟滑动窗口</span></div>{detail.risk_events.map((event, index) => <div key={`${event.started_at}-${index}`}><span className={`audit-risk-pill ${event.level}`}>{auditRiskLabel(event.level)}</span><strong>{event.source_ip_count} 个 IP · {event.regions.join('、')}</strong><time>{formatTableTime(event.started_at)} - {formatTableTime(event.ended_at)}</time></div>)}</div> : null}
       <div className="audit-dimension-grid">
         <AuditDimensionList title="来源 IP" items={detail.sources} />
         <AuditDimensionList title="目标" items={detail.destinations} />
@@ -3782,7 +3787,7 @@ function ConnectionAuditUserDialog({ detail, onClose }: { detail: ConnectionAudi
         <AuditDimensionList title="服务器" items={detail.servers} />
       </div>
       <div className="audit-recent-head"><h3>最近连接摘要</h3><span>{detail.recent?.length || 0} 条</span></div>
-      <div className="audit-recent-list">{(detail.recent || []).map(item => <div key={item.report_id}><code>{item.source_ip}</code><span>{item.network.toUpperCase()}</span><strong>{item.destination || '未知目标'}{item.destination_port ? `:${item.destination_port}` : ''}</strong><span>{item.outbound_tag || item.outbound_type || 'direct'}</span><span>{item.connection_count} 次 · 峰值 {item.active_peak}</span><time>{formatTableTime(item.ended_at)}</time></div>)}</div>
+      <div className="audit-recent-list">{(detail.recent || []).map(item => <div key={item.report_id}><code title={[item.source_country, item.source_province, item.source_city, item.source_isp].filter(Boolean).join(' / ')}>{item.source_ip}</code><span>{item.network.toUpperCase()}</span><strong>{item.destination || '未知目标'}{item.destination_port ? `:${item.destination_port}` : ''}</strong><span>{item.source_province || item.source_country || item.outbound_tag || item.outbound_type || '未知地域'}</span><span>{item.connection_count} 次 · 峰值 {item.active_peak}</span><time>{formatTableTime(item.ended_at)}</time></div>)}</div>
     </div>
   </MotionDialogPanel>
 }

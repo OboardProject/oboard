@@ -33,6 +33,7 @@ import (
 	"github.com/OboardProject/oboard/internal/backup"
 	"github.com/OboardProject/oboard/internal/controllerupdate"
 	"github.com/OboardProject/oboard/internal/core"
+	oboardgeoip "github.com/OboardProject/oboard/internal/geoip"
 	oboardlog "github.com/OboardProject/oboard/internal/logging"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
@@ -51,39 +52,48 @@ type Server struct {
 	staticDir     string
 	// basePath is the immutable startup fallback for direct test constructors.
 	// Runtime request handling reads basePaths instead.
-	basePath                    string
-	basePaths                   atomic.Pointer[basePathState]
-	basePathMigrationMu         sync.Mutex
-	allowedOrigins              map[string]bool
-	dnsEndpoints                dnsProviderEndpoints
-	acmeCommand                 string
-	acmeHome                    string
-	logs                        *oboardlog.Manager
-	upgrader                    websocket.Upgrader
-	probeMu                     sync.Mutex
-	activeProbes                map[int64]bool
-	notificationMu              sync.Mutex
-	notificationWG              sync.WaitGroup
-	notificationSender          func(context.Context, model.NotificationChannel, string, string) error
-	certificateIssueMu          sync.Mutex
-	certificateIssues           map[int64]bool
-	controllerUpdater           *controllerupdate.Client
-	controllerBackupDir         string
-	controllerRuntimeStatePath  string
-	controllerListenAddress     string
-	controllerUpdatesConfigured bool
-	controllerUpdateMu          sync.Mutex
-	controllerUpdateRunMu       sync.Mutex
-	controllerLastLoginCheck    time.Time
-	backupManager               *backup.Manager
-	backupConfigured            bool
-	backupMu                    sync.Mutex
-	backupRestart               func()
+	basePath                      string
+	basePaths                     atomic.Pointer[basePathState]
+	basePathMigrationMu           sync.Mutex
+	allowedOrigins                map[string]bool
+	dnsEndpoints                  dnsProviderEndpoints
+	acmeCommand                   string
+	acmeHome                      string
+	logs                          *oboardlog.Manager
+	upgrader                      websocket.Upgrader
+	probeMu                       sync.Mutex
+	activeProbes                  map[int64]bool
+	notificationMu                sync.Mutex
+	connectionAuditNotificationMu sync.Mutex
+	notificationWG                sync.WaitGroup
+	notificationSender            func(context.Context, model.NotificationChannel, string, string) error
+	certificateIssueMu            sync.Mutex
+	certificateIssues             map[int64]bool
+	controllerUpdater             *controllerupdate.Client
+	controllerBackupDir           string
+	controllerRuntimeStatePath    string
+	controllerListenAddress       string
+	controllerUpdatesConfigured   bool
+	controllerUpdateMu            sync.Mutex
+	controllerUpdateRunMu         sync.Mutex
+	controllerLastLoginCheck      time.Time
+	backupManager                 *backup.Manager
+	backupConfigured              bool
+	backupMu                      sync.Mutex
+	backupRestart                 func()
 	// deploymentMu serializes deployment preparation. Preparing a deployment
 	// repairs stored topology, refreshes derived roles and allocates one
 	// monotonic config version, so two concurrent applies would interleave those
 	// writes and hand overlapping desired state to the same Agents.
 	deploymentMu sync.Mutex
+	geoIP        connectionAuditGeoResolver
+	geoIPStatus  model.GeoDatabaseStatus
+}
+
+type connectionAuditGeoResolver interface {
+	Lookup(string) (model.IPGeography, error)
+	Status() model.GeoDatabaseStatus
+	Close()
 }
 
 func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *oboardlog.Manager) *Server {
@@ -96,10 +106,30 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 		acmeHome = "./data/acme"
 	}
 	socketPath := strings.TrimSpace(os.Getenv("OBOARD_CONTROLLER_UPDATER_SOCKET"))
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath)}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}}
 	s.restoreBasePathState(context.Background(), basePath)
 	s.upgrader = websocket.Upgrader{CheckOrigin: s.checkOrigin, ReadBufferSize: 4096, WriteBufferSize: 4096}
 	return s
+}
+
+func (s *Server) ConfigureGeoIP(dir string) error {
+	database, err := oboardgeoip.Open(dir)
+	if err != nil {
+		s.geoIPStatus = model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库缺失或校验失败"}
+		return err
+	}
+	if s.geoIP != nil {
+		s.geoIP.Close()
+	}
+	s.geoIP = database
+	s.geoIPStatus = database.Status()
+	return s.refreshConnectionAuditGeography(context.Background())
+}
+
+func (s *Server) Close() {
+	if s.geoIP != nil {
+		s.geoIP.Close()
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -1325,6 +1355,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			var overview model.ConnectionAuditOverview
 			overview, err = s.store.ConnectionAuditOverview(ctx, intQuery(r, "window_hours", 24))
 			if err == nil {
+				overview.GeoDatabase = s.geoIPStatus
 				out["connection_audit"] = overview
 			}
 		}

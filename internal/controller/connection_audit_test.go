@@ -15,6 +15,23 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
+type fakeConnectionAuditGeoResolver struct{ geo model.IPGeography }
+
+func (f *fakeConnectionAuditGeoResolver) Lookup(string) (model.IPGeography, error) { return f.geo, nil }
+func (f *fakeConnectionAuditGeoResolver) Status() model.GeoDatabaseStatus {
+	return model.GeoDatabaseStatus{Available: true, Provider: "test", Revision: f.geo.Revision}
+}
+func (f *fakeConnectionAuditGeoResolver) Close() {}
+
+func TestConnectionAuditReportIsEnrichedByControllerGeoDatabase(t *testing.T) {
+	srv := &Server{geoIP: &fakeConnectionAuditGeoResolver{geo: model.IPGeography{CountryCode: "CN", Country: "中国", Province: "广东", City: "广州", ISP: "测试运营商", Revision: "test-revision"}}}
+	report := model.ConnectionAuditReport{SourceIP: "1.1.1.1"}
+	srv.enrichConnectionAuditReport(&report)
+	if report.SourceCountryCode != "CN" || report.SourceProvince != "广东" || report.SourceCity != "广州" || report.GeoDatabaseRevision != "test-revision" {
+		t.Fatalf("enriched report = %#v", report)
+	}
+}
+
 func TestValidateConnectionAuditItem(t *testing.T) {
 	nowTime := time.Now().UTC()
 	item := connectionAuditReportItem{

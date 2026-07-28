@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/netip"
@@ -167,6 +168,7 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 		}
 		report.InboundID = item.InboundID
 		report.PathID = item.PathID
+		s.enrichConnectionAuditReport(&report)
 		reports = append(reports, report)
 	}
 	stored, err := s.store.AddConnectionAuditReports(r.Context(), reports)
@@ -250,6 +252,7 @@ func (s *Server) connectionAuditOverview(w http.ResponseWriter, r *http.Request)
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
+	overview.GeoDatabase = s.geoIPStatus
 	write(w, http.StatusOK, map[string]any{"connection_audit": overview})
 }
 
@@ -269,4 +272,40 @@ func (s *Server) connectionAuditUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, http.StatusOK, map[string]any{"connection_audit_user": detail})
+}
+
+func (s *Server) enrichConnectionAuditReport(report *model.ConnectionAuditReport) {
+	if report == nil || s.geoIP == nil {
+		return
+	}
+	geo, err := s.geoIP.Lookup(report.SourceIP)
+	if err != nil {
+		return
+	}
+	report.SourceCountryCode = geo.CountryCode
+	report.SourceCountry = geo.Country
+	report.SourceProvince = geo.Province
+	report.SourceCity = geo.City
+	report.SourceISP = geo.ISP
+	report.GeoDatabaseRevision = geo.Revision
+}
+
+func (s *Server) refreshConnectionAuditGeography(ctx context.Context) error {
+	if s.geoIP == nil || !s.geoIPStatus.Available || s.geoIPStatus.Revision == "" {
+		return nil
+	}
+	items, err := s.store.ConnectionAuditSourceIPsForGeoRevision(ctx, s.geoIPStatus.Revision)
+	if err != nil {
+		return err
+	}
+	for _, sourceIP := range items {
+		geo, lookupErr := s.geoIP.Lookup(sourceIP)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		if err := s.store.UpdateConnectionAuditSourceGeography(ctx, sourceIP, geo); err != nil {
+			return err
+		}
+	}
+	return nil
 }
