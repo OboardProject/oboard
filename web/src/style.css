@@ -11681,10 +11681,9 @@ button.ui-btn-ghost:hover {
   color: var(--text-strong);
 }
 
-/* Selection / empty states stay readable on both themes. */
+/* Preserve each element's foreground so inverse controls stay readable. */
 ::selection {
   background: color-mix(in srgb, var(--primary) 22%, transparent);
-  color: var(--text-strong);
 }
 
 .empty,
