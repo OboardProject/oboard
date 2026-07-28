@@ -136,11 +136,13 @@ func (s *Server) runScheduledControllerBackup(ctx context.Context) {
 			values[controllerBackupLastSuccessSetting] = time.Now().UTC().Format(time.RFC3339Nano)
 		}
 		_ = s.store.SetSettings(ctx, values)
+		s.notifyBackupFailure(ctx, period, "自动备份", err.Error())
 		return
 	}
 	lastError := ""
 	if item.RemoteStatus == "failed" {
 		lastError = "本地自动备份已完成，但第三方上传失败：" + item.RemoteError
+		s.notifyBackupFailure(ctx, period, "第三方上传", item.RemoteError)
 	}
 	_ = s.store.SetSettings(ctx, map[string]string{controllerBackupLastPeriodSetting: period, controllerBackupLastSuccessSetting: time.Now().UTC().Format(time.RFC3339Nano), controllerBackupLastErrorSetting: lastError})
 }

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/controllerupdate"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
@@ -98,7 +99,7 @@ func TestNotificationTemplateValidationIsEventScoped(t *testing.T) {
 	if err := json.Unmarshal([]byte(channel.TemplatesJSON), &templates); err != nil {
 		t.Fatal(err)
 	}
-	if len(templates) != 2 || templates[notificationAdminAnnouncement].Title == "" {
+	if len(templates) != 3 || templates[notificationAdminAnnouncement].Title == "" || templates[notificationUserRisk].Title == "" {
 		t.Fatalf("viewer default template set = %#v", templates)
 	}
 }
@@ -303,14 +304,14 @@ func TestNotificationChannelRoleScopeOwnershipAndTemplates(t *testing.T) {
 	page := request(t, h, http.MethodGet, "/api/v1/page-data?page=notifications", viewerToken, nil, http.StatusOK)
 	config := page["notification_config"].(map[string]any)
 	events := config["events"].([]any)
-	if len(events) != 2 {
+	if len(events) != 3 {
 		t.Fatalf("viewer events = %#v", events)
 	}
 	seenEvents := map[string]bool{}
 	for _, item := range events {
 		seenEvents[item.(map[string]any)["value"].(string)] = true
 	}
-	if !seenEvents[notificationTrafficQuota] || !seenEvents[notificationAdminAnnouncement] {
+	if !seenEvents[notificationTrafficQuota] || !seenEvents[notificationUserRisk] || !seenEvents[notificationAdminAnnouncement] {
 		t.Fatalf("viewer event scope = %#v", seenEvents)
 	}
 
@@ -322,12 +323,16 @@ func TestNotificationChannelRoleScopeOwnershipAndTemplates(t *testing.T) {
 		"name": "wrong-user", "type": "telegram", "enabled": true, "events": notificationTrafficQuota,
 		"user_ids": []int64{adminID}, "config_json": `{"bot_token":"viewer-token","chat_id":"100"}`,
 	}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/notification-channels", viewerToken, map[string]any{
+		"name": "wrong-risk-user", "type": "telegram", "enabled": true, "events": notificationUserRisk,
+		"user_ids": []int64{adminID}, "config_json": `{"bot_token":"viewer-token","chat_id":"100"}`,
+	}, http.StatusBadRequest)
 
 	customTemplates := map[string]model.NotificationTemplate{
 		notificationTrafficQuota: {Title: "额度用完 · {{.UserName}}", Body: "{{.Used}} / {{.Limit}}，{{.ResetAt}} 重置"},
 	}
 	createdViewerChannel := request(t, h, http.MethodPost, "/api/v1/notification-channels", viewerToken, map[string]any{
-		"name": "viewer-bark", "type": "bark", "enabled": true, "events": notificationTrafficQuota + "," + notificationAdminAnnouncement,
+		"name": "viewer-bark", "type": "bark", "enabled": true, "events": notificationTrafficQuota + "," + notificationUserRisk + "," + notificationAdminAnnouncement,
 		"config_json": `{"device_key":"viewer-key"}`, "templates_json": mustJSON(t, customTemplates),
 	}, http.StatusCreated)
 	viewerChannel := createdViewerChannel["notification_channel"].(map[string]any)
@@ -351,7 +356,7 @@ func TestNotificationChannelRoleScopeOwnershipAndTemplates(t *testing.T) {
 	}
 	createdAdminChannel := request(t, h, http.MethodPost, "/api/v1/notification-channels", adminToken, map[string]any{
 		"name": "admin-tg", "type": "telegram", "enabled": true,
-		"events":   notificationServerOffline + "," + notificationServerOnline + "," + notificationTrafficQuota + "," + notificationTaskFailed + "," + notificationTaskTimeout,
+		"events":   notificationServerOffline + "," + notificationServerOnline + "," + notificationTrafficQuota + "," + notificationUserRisk + "," + notificationTaskFailed + "," + notificationTaskTimeout,
 		"user_ids": []int64{adminID, viewerID}, "config_json": `{"bot_token":"admin-token","chat_id":"200"}`,
 	}, http.StatusCreated)
 	adminChannel := createdAdminChannel["notification_channel"].(map[string]any)
@@ -447,7 +452,7 @@ func TestNotificationDispatchScopeTemplatesAndDedupe(t *testing.T) {
 	}
 }
 
-func TestGoogleCertificateFailureNotificationRedactsEABSecret(t *testing.T) {
+func TestCertificateFailureNotificationCoversAllIssuersAndRedactsEABSecret(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -488,7 +493,7 @@ func TestGoogleCertificateFailureNotificationRedactsEABSecret(t *testing.T) {
 	sentMu.Lock()
 	message := sent[0]
 	sentMu.Unlock()
-	if !strings.Contains(message.title, "Google 证书签发失败") || !strings.Contains(message.body, "notify-key-id") || !strings.Contains(message.body, "externalAccountRequired") {
+	if !strings.Contains(message.title, "证书签发失败") || !strings.Contains(message.body, "Google Trust Services") || !strings.Contains(message.body, "notify-key-id") || !strings.Contains(message.body, "externalAccountRequired") {
 		t.Fatalf("Google certificate failure message = %#v", message)
 	}
 	if strings.Contains(message.body, hmacKey) {
@@ -500,6 +505,285 @@ func TestGoogleCertificateFailureNotificationRedactsEABSecret(t *testing.T) {
 	}
 	if strings.Contains(stored.LastError, hmacKey) || !strings.Contains(stored.LastError, "[已隐藏]") {
 		t.Fatalf("stored certificate error was not redacted: %q", stored.LastError)
+	}
+	created = request(t, h, http.MethodPost, "/api/v1/certificates", token, map[string]any{
+		"name": "letsencrypt-notify", "domains": []string{"le.example.com"}, "challenge_type": model.CertificateChallengeDNSManual,
+		"acme_ca": "letsencrypt",
+	}, http.StatusCreated)["certificate"].(map[string]any)
+	certificate, err = db.GetCertificate(context.Background(), int64(created["id"].(float64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hServer.markCertificateIssueFailed(context.Background(), certificate, errors.New("DNS validation failed"))
+	waitNotificationCount(t, &sentMu, &sent, 2)
+	sentMu.Lock()
+	message = sent[1]
+	sentMu.Unlock()
+	if !strings.Contains(message.body, "Let's Encrypt") || !strings.Contains(message.body, "DNS validation failed") {
+		t.Fatalf("Let's Encrypt failure message = %#v", message)
+	}
+}
+
+func TestHTTPCertificateTaskFailureQueuesCertificateNotification(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/notification-channels", token, map[string]any{
+		"name": "certificate", "type": "telegram", "enabled": true, "events": notificationCertificateFailed,
+		"config_json": `{"bot_token":"admin","chat_id":"1"}`,
+	}, http.StatusCreated)
+	server := model.Server{Name: "issue-node", AgentID: "issue-agent", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010}
+	if err := db.CreateServer(context.Background(), &server); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	certificate := model.Certificate{Name: "HTTP 证书", PrimaryDomain: "http.example.com", Domains: []string{"http.example.com"}, ChallengeType: model.CertificateChallengeHTTP, IssuanceServerID: &server.ID, ACMECA: "letsencrypt", Status: model.CertificateStatusIssuing, LastRenewalAttemptAt: &now}
+	if err := db.CreateCertificate(context.Background(), &certificate); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(model.IssueCertificateHTTPTaskPayload{CertificateID: certificate.ID, Domains: certificate.Domains, ACMECA: certificate.ACMECA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeIssueCertificateHTTP, PayloadJSON: string(payload), Status: "pending", ResultJSON: "{}", ConfigVersion: 1, Nonce: "certificate-task"}
+	if err := db.CreateTask(context.Background(), &task); err != nil {
+		t.Fatal(err)
+	}
+	var sentMu sync.Mutex
+	sent := []string{}
+	srv.notificationSender = func(_ context.Context, _ model.NotificationChannel, title, body string) error {
+		sentMu.Lock()
+		defer sentMu.Unlock()
+		sent = append(sent, title+"\n"+body)
+		return nil
+	}
+	if err := srv.completeTaskWithNotification(context.Background(), task.ID, "failed", `{"error":"HTTP-01 验证未通过"}`); err != nil {
+		t.Fatal(err)
+	}
+	waitNotificationCount(t, &sentMu, &sent, 1)
+	stored, err := db.GetCertificate(context.Background(), certificate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != model.CertificateStatusFailed || !strings.Contains(stored.LastError, "HTTP-01 验证未通过") {
+		t.Fatalf("certificate failure state = %#v", stored)
+	}
+	sentMu.Lock()
+	defer sentMu.Unlock()
+	if !strings.Contains(sent[0], "证书签发失败 · HTTP 证书") || !strings.Contains(sent[0], "HTTP-01 验证未通过") {
+		t.Fatalf("certificate notification = %q", sent[0])
+	}
+}
+
+func TestConnectionAuditRiskNotificationTargetsUserAndAdmin(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	adminToken := adminLogin["token"].(string)
+	createdUser := request(t, h, http.MethodPost, "/api/v1/users", adminToken, map[string]any{"username": "viewer", "nickname": "小王", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	viewerID := int64(createdUser["user"].(map[string]any)["id"].(float64))
+	viewerToken := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/notification-channels", viewerToken, map[string]any{"name": "viewer-risk", "type": "telegram", "enabled": true, "events": notificationUserRisk, "config_json": `{"bot_token":"viewer","chat_id":"1"}`}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/notification-channels", adminToken, map[string]any{"name": "admin-risk", "type": "telegram", "enabled": true, "events": notificationUserRisk, "user_ids": []int64{viewerID}, "config_json": `{"bot_token":"admin","chat_id":"2"}`}, http.StatusCreated)
+
+	server := model.Server{Name: "risk-node", AgentID: "risk-agent", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010}
+	if err := db.CreateServer(context.Background(), &server); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	reports := make([]model.ConnectionAuditReport, 0, 15)
+	for i := 1; i <= 15; i++ {
+		reports = append(reports, model.ConnectionAuditReport{ReportID: fmt.Sprintf("risk-%d", i), ServerID: server.ID, UserID: viewerID, SourceIP: fmt.Sprintf("198.51.%d.1", i), Network: "tcp", ConnectionCount: 1, ActivePeak: 1, StartedAt: now.Add(-time.Minute), EndedAt: now})
+	}
+	if _, err := db.AddConnectionAuditReports(context.Background(), reports); err != nil {
+		t.Fatal(err)
+	}
+	var sentMu sync.Mutex
+	sent := []string{}
+	srv.notificationSender = func(_ context.Context, _ model.NotificationChannel, title, body string) error {
+		sentMu.Lock()
+		defer sentMu.Unlock()
+		sent = append(sent, title+"\n"+body)
+		return nil
+	}
+	srv.notifyConnectionAuditRisks(context.Background(), []int64{viewerID})
+	waitNotificationCount(t, &sentMu, &sent, 2)
+	sentMu.Lock()
+	for _, message := range sent {
+		if !strings.Contains(message, "异常使用提醒 · 小王") || !strings.Contains(message, "高风险") {
+			t.Fatalf("risk notification = %q", message)
+		}
+	}
+	sentMu.Unlock()
+	srv.notifyConnectionAuditRisks(context.Background(), []int64{viewerID})
+	time.Sleep(50 * time.Millisecond)
+	sentMu.Lock()
+	defer sentMu.Unlock()
+	if len(sent) != 2 {
+		t.Fatalf("duplicate risk notifications = %#v", sent)
+	}
+}
+
+func TestOperationalNotificationEventsUseAdminScope(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/notification-channels", token, map[string]any{
+		"name": "operations", "type": "telegram", "enabled": true,
+		"events":      notificationCertificateExpiry + "," + notificationBackupFailed + "," + notificationUpdateFailed + "," + notificationDNSSyncFailed,
+		"config_json": `{"bot_token":"admin","chat_id":"1"}`,
+	}, http.StatusCreated)
+	var sentMu sync.Mutex
+	sent := []string{}
+	srv.notificationSender = func(_ context.Context, _ model.NotificationChannel, title, body string) error {
+		sentMu.Lock()
+		defer sentMu.Unlock()
+		sent = append(sent, title+"\n"+body)
+		return nil
+	}
+	notAfter := time.Now().UTC().Add(10 * 24 * time.Hour)
+	srv.notifyCertificateExpiring(context.Background(), &model.Certificate{ID: 7, Name: "入口证书", Domains: []string{"edge.example.com"}, ACMECA: "letsencrypt", NotAfter: &notAfter})
+	srv.notifyBackupFailure(context.Background(), "2026-07-28", "第三方上传", "WebDAV 无法连接")
+	srv.notifyControllerUpdateFailure(context.Background(), "安装更新", "dev-next", "更新器返回失败")
+	srv.notifyDNSSyncFailure(context.Background(), model.Inbound{ID: 9, ServerID: 2, Name: "主入口", DNSDomain: "edge.example.com"}, "香港节点", errors.New("DNS 服务暂时不可用"))
+	waitNotificationCount(t, &sentMu, &sent, 4)
+	sentMu.Lock()
+	defer sentMu.Unlock()
+	joined := strings.Join(sent, "\n")
+	for _, expected := range []string{"证书到期提醒", "自动备份失败", "主控自动更新失败", "域名自动更新失败"} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("missing %s in notifications: %s", expected, joined)
+		}
+	}
+}
+
+func TestScheduledUpdateFailureNotifiesOnlyWhenAutomaticUpdatesEnabled(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	srv.controllerUpdater = controllerupdate.NewClient(filepath.Join(t.TempDir(), "missing-updater.sock"))
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/notification-channels", token, map[string]any{
+		"name": "updates", "type": "telegram", "enabled": true, "events": notificationUpdateFailed,
+		"config_json": `{"bot_token":"admin","chat_id":"1"}`,
+	}, http.StatusCreated)
+	var sentMu sync.Mutex
+	sent := []string{}
+	srv.notificationSender = func(_ context.Context, _ model.NotificationChannel, title, body string) error {
+		sentMu.Lock()
+		defer sentMu.Unlock()
+		sent = append(sent, title+"\n"+body)
+		return nil
+	}
+
+	srv.runScheduledControllerUpdate(context.Background())
+	sentMu.Lock()
+	if len(sent) != 0 {
+		t.Fatalf("automatic updates are disabled, notifications = %#v", sent)
+	}
+	sentMu.Unlock()
+
+	if err := db.SetSetting(context.Background(), controllerAutoUpdateSetting, "true"); err != nil {
+		t.Fatal(err)
+	}
+	srv.runScheduledControllerUpdate(context.Background())
+	waitNotificationCount(t, &sentMu, &sent, 1)
+	sentMu.Lock()
+	defer sentMu.Unlock()
+	if !strings.Contains(sent[0], "主控自动更新失败") || !strings.Contains(sent[0], "主控更新器不可用") {
+		t.Fatalf("automatic update failure notification = %q", sent[0])
+	}
+}
+
+func TestCertificateRenewalExpiryNotificationRequiresUserAction(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/notification-channels", token, map[string]any{
+		"name": "certificates", "type": "telegram", "enabled": true, "events": notificationCertificateExpiry,
+		"config_json": `{"bot_token":"admin","chat_id":"1"}`,
+	}, http.StatusCreated)
+	server := model.Server{Name: "renewal-node", AgentID: "renewal-agent", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010}
+	if err := db.CreateServer(context.Background(), &server); err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().UTC().Add(10 * 24 * time.Hour)
+	manual := model.Certificate{Name: "手动证书", PrimaryDomain: "manual.example.com", Domains: []string{"manual.example.com"}, ChallengeType: "imported", ACMECA: "letsencrypt", Status: model.CertificateStatusReady, NotAfter: &expiresAt}
+	automatic := model.Certificate{Name: "自动证书", PrimaryDomain: "automatic.example.com", Domains: []string{"automatic.example.com"}, ChallengeType: model.CertificateChallengeHTTP, IssuanceServerID: &server.ID, ACMECA: "letsencrypt", Status: model.CertificateStatusReady, NotAfter: &expiresAt, AutoRenew: true}
+	if err := db.CreateCertificate(context.Background(), &manual); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateCertificate(context.Background(), &automatic); err != nil {
+		t.Fatal(err)
+	}
+	var sentMu sync.Mutex
+	sent := []string{}
+	srv.notificationSender = func(_ context.Context, _ model.NotificationChannel, title, body string) error {
+		sentMu.Lock()
+		defer sentMu.Unlock()
+		sent = append(sent, title+"\n"+body)
+		return nil
+	}
+
+	srv.renewCertificates(context.Background())
+	waitNotificationCount(t, &sentMu, &sent, 1)
+	time.Sleep(50 * time.Millisecond)
+	sentMu.Lock()
+	if len(sent) != 1 || !strings.Contains(sent[0], "手动证书") || strings.Contains(sent[0], "自动证书") {
+		t.Fatalf("certificate expiry notifications = %#v", sent)
+	}
+	sentMu.Unlock()
+	storedAutomatic, err := db.GetCertificate(context.Background(), automatic.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedAutomatic.Status != model.CertificateStatusIssuing {
+		t.Fatalf("automatic certificate status = %q", storedAutomatic.Status)
+	}
+}
+
+func TestNotificationDNSErrorTextUsesUserFacingReasons(t *testing.T) {
+	tests := map[string]string{
+		"DNS credential is not selected":                   "未选择域名服务凭据",
+		"DNS credential is unavailable":                    "域名服务凭据不可用",
+		"DNS credential is not verified":                   "域名服务凭据尚未验证",
+		"DNS proxy is only supported by Cloudflare":        "当前域名服务不支持代理加速",
+		"inbound server not found":                         "入口绑定的服务器不存在",
+		"server 3 has no address for DNS record mode both": "服务器没有可用于更新域名记录的公网地址",
+	}
+	for input, expected := range tests {
+		if actual := notificationDNSErrorText(input); actual != expected {
+			t.Errorf("notificationDNSErrorText(%q) = %q, want %q", input, actual, expected)
+		}
 	}
 }
 

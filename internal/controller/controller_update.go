@@ -93,25 +93,36 @@ func (s *Server) TriggerControllerUpdateCheck(ctx context.Context) {
 func (s *Server) runScheduledControllerUpdate(ctx context.Context) {
 	s.controllerUpdateRunMu.Lock()
 	defer s.controllerUpdateRunMu.Unlock()
+	settings, settingsErr := s.store.ListSettings(ctx)
+	autoUpdateEnabled := settingsErr == nil && settingBool(settings, controllerAutoUpdateSetting, false)
 	status, err := s.controllerUpdater.Check(ctx)
-	if err != nil || !status.UpdateAvailable || status.Channel == "pinned" {
+	if err != nil {
+		if autoUpdateEnabled {
+			publicErr := controllerUpdateOperationError("检查可用更新失败", status, err)
+			s.notifyControllerUpdateFailure(ctx, "检查可用更新", status.Available.Version, publicErr.Error())
+		}
 		return
 	}
-	settings, err := s.store.ListSettings(ctx)
-	if err != nil || !settingBool(settings, controllerAutoUpdateSetting, false) {
+	if !status.UpdateAvailable || status.Channel == "pinned" || !autoUpdateEnabled {
 		return
 	}
 	backup, err := s.createControllerBackup(ctx)
 	if err != nil {
-		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "创建自动更新备份失败: "+err.Error())
+		message := "创建自动更新备份失败: " + err.Error()
+		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, message)
+		s.notifyControllerUpdateFailure(ctx, "更新前备份", status.Available.Version, message)
 		return
 	}
 	if err := s.store.SetSetting(ctx, controllerBackupSetting, backup); err != nil {
-		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "记录自动更新备份失败: "+err.Error())
+		message := "记录自动更新备份失败: " + err.Error()
+		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, message)
+		s.notifyControllerUpdateFailure(ctx, "更新前备份", status.Available.Version, message)
 		return
 	}
 	if installStatus, err := s.controllerUpdater.Install(ctx); err != nil {
-		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, controllerUpdateOperationError("启动自动更新失败", installStatus, err).Error())
+		publicErr := controllerUpdateOperationError("启动自动更新失败", installStatus, err)
+		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, publicErr.Error())
+		s.notifyControllerUpdateFailure(ctx, "安装更新", status.Available.Version, publicErr.Error())
 		return
 	}
 	_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")

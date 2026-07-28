@@ -174,6 +174,15 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
+	riskUserIDs := make([]int64, 0, len(reports))
+	seenRiskUsers := map[int64]bool{}
+	for _, report := range reports {
+		if !seenRiskUsers[report.UserID] {
+			seenRiskUsers[report.UserID] = true
+			riskUserIDs = append(riskUserIDs, report.UserID)
+		}
+	}
+	s.notifyConnectionAuditRisks(r.Context(), riskUserIDs)
 	accepted = append(accepted, stored...)
 	write(w, http.StatusOK, map[string]any{"ok": true, "accepted_report_ids": accepted})
 }

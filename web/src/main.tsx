@@ -9804,28 +9804,36 @@ function Subscriptions({ data, client, load, notify }: any) {
 }
 
 const fallbackNotificationEventOptions: NotificationEventDefinition[] = [
-  { value: 'server_offline', label: '服务器离线', description: '心跳超时时提醒', variables: ['ServerName', 'ServerID', 'LastSeen', 'Time'] },
-  { value: 'server_online', label: '服务器上线', description: '恢复连接时提醒', variables: ['ServerName', 'ServerID', 'Time'] },
-  { value: 'traffic_quota_exceeded', label: '流量已用完', description: '额度用完时提醒', variables: ['UserName', 'UserID', 'Used', 'Limit', 'ResetAt', 'Time'] },
-  { value: 'task_failed', label: '任务失败', description: '任务失败时提醒', variables: ['TaskType', 'TaskID', 'ServerName', 'Error', 'Time'] },
-  { value: 'task_timeout', label: '任务超时', description: '任务超时时提醒', variables: ['TaskType', 'TaskID', 'ServerName', 'Error', 'Time'] },
-  { value: 'certificate_issuance_failed', label: 'Google 证书签发失败', description: 'EAB 失效或签发失败时提醒', variables: ['CertificateName', 'Domains', 'EABKeyID', 'Error', 'Time'] },
-  { value: 'admin_announcement', label: '管理员通知', description: '接收管理员消息', variables: ['Title', 'Message', 'Sender', 'Time'] },
+  { value: 'server_offline', label: '服务器失联', description: '服务器超过两分钟未连接时提醒', variables: ['ServerName', 'ServerID', 'LastSeen', 'Time'] },
+  { value: 'server_online', label: '服务器恢复', description: '失联服务器重新连接时提醒', variables: ['ServerName', 'ServerID', 'Time'] },
+  { value: 'traffic_quota_exceeded', label: '流量达到上限', description: '所选用户的周期流量达到上限时提醒', variables: ['UserName', 'UserID', 'Used', 'Limit', 'ResetAt', 'Time'] },
+  { value: 'user_risk_detected', label: '异常使用', description: '已开启连接审计的服务器发现所选用户大量来源 IP、跨网段或异常并发时提醒', variables: ['UserName', 'UserID', 'RiskLevel', 'RiskScore', 'Signals', 'SourceIPCount', 'ActivePeak', 'Time'] },
+  { value: 'task_failed', label: '任务失败', description: '配置下发、更新或检测任务失败时提醒', variables: ['TaskType', 'TaskID', 'ServerName', 'Error', 'Time'] },
+  { value: 'task_timeout', label: '任务超时', description: '任务等待或执行超过五分钟时提醒', variables: ['TaskType', 'TaskID', 'ServerName', 'Error', 'Time'] },
+  { value: 'certificate_issuance_failed', label: '证书签发失败', description: '证书首次签发或自动续期失败时提醒', variables: ['CertificateName', 'Domains', 'Issuer', 'EABKeyID', 'Error', 'Time'] },
+  { value: 'certificate_expiring', label: '证书到期', description: '证书有效期不足三十天或已经到期时提醒', variables: ['CertificateName', 'Domains', 'Issuer', 'ExpiresAt', 'ExpiryStatus', 'Time'] },
+  { value: 'backup_failed', label: '自动备份失败', description: '本地自动备份或第三方上传未完成时提醒', variables: ['Stage', 'Error', 'Time'] },
+  { value: 'controller_update_failed', label: '主控自动更新失败', description: '自动检查、备份或安装主控更新失败时提醒', variables: ['Stage', 'CurrentVersion', 'TargetVersion', 'Error', 'Time'] },
+  { value: 'dns_sync_failed', label: '域名自动更新失败', description: '入口域名记录自动更新失败时提醒', variables: ['InboundName', 'Domain', 'ServerName', 'Error', 'Time'] },
+  { value: 'admin_announcement', label: '管理员通知', description: '管理员向你发送消息时提醒', variables: ['Title', 'Message', 'Sender', 'Time'] },
 ]
 
-const notificationEventDescriptions: Record<string, string> = Object.fromEntries(
-  fallbackNotificationEventOptions.map(option => [option.value, option.description]),
-)
-
 const fallbackNotificationTemplates: Record<string, NotificationTemplate> = {
-  server_offline: { title: '服务器离线 · {{.ServerName}}', body: '{{.ServerName}} 已离线\n最后在线：{{.LastSeen}}\n时间：{{.Time}}' },
-  server_online: { title: '服务器上线 · {{.ServerName}}', body: '{{.ServerName}} 已恢复在线\n时间：{{.Time}}' },
-  traffic_quota_exceeded: { title: '流量已用完 · {{.UserName}}', body: '{{.UserName}} 本周期流量已用完\n已用：{{.Used}} / {{.Limit}}\n重置：{{.ResetAt}}' },
+  server_offline: { title: '服务器失联 · {{.ServerName}}', body: '{{.ServerName}} 已失去连接\n最后在线：{{.LastSeen}}\n时间：{{.Time}}' },
+  server_online: { title: '服务器恢复 · {{.ServerName}}', body: '{{.ServerName}} 已恢复在线\n时间：{{.Time}}' },
+  traffic_quota_exceeded: { title: '流量达到上限 · {{.UserName}}', body: '{{.UserName}} 本周期流量已达到上限\n已用：{{.Used}} / {{.Limit}}\n重置：{{.ResetAt}}' },
+  user_risk_detected: { title: '异常使用提醒 · {{.UserName}}', body: '{{.UserName}} 的连接行为达到{{.RiskLevel}}\n风险分：{{.RiskScore}}\n异常表现：{{.Signals}}\n来源 IP：{{.SourceIPCount}} 个\n并发峰值：{{.ActivePeak}}\n时间：{{.Time}}' },
   task_failed: { title: '任务失败 · {{.TaskType}}', body: '服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}' },
   task_timeout: { title: '任务超时 · {{.TaskType}}', body: '服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}' },
-  certificate_issuance_failed: { title: 'Google 证书签发失败 · {{.CertificateName}}', body: '证书：{{.CertificateName}}\n域名：{{.Domains}}\nEAB Key ID：{{.EABKeyID}}\n原因：{{.Error}}\n\nGoogle EAB 可能已经失效，请在证书设置中更换后重试。\n时间：{{.Time}}' },
+  certificate_issuance_failed: { title: '证书签发失败 · {{.CertificateName}}', body: '证书：{{.CertificateName}}\n域名：{{.Domains}}\n签发机构：{{.Issuer}}\n外部账号：{{.EABKeyID}}\n原因：{{.Error}}\n时间：{{.Time}}' },
+  certificate_expiring: { title: '证书到期提醒 · {{.CertificateName}}', body: '证书：{{.CertificateName}}\n域名：{{.Domains}}\n签发机构：{{.Issuer}}\n状态：{{.ExpiryStatus}}\n到期时间：{{.ExpiresAt}}' },
+  backup_failed: { title: '自动备份失败 · {{.Stage}}', body: '{{.Stage}}未完成\n原因：{{.Error}}\n时间：{{.Time}}' },
+  controller_update_failed: { title: '主控自动更新失败 · {{.Stage}}', body: '当前版本：{{.CurrentVersion}}\n目标版本：{{.TargetVersion}}\n阶段：{{.Stage}}\n原因：{{.Error}}\n时间：{{.Time}}' },
+  dns_sync_failed: { title: '域名自动更新失败 · {{.Domain}}', body: '服务器：{{.ServerName}}\n入口：{{.InboundName}}\n域名：{{.Domain}}\n原因：{{.Error}}\n时间：{{.Time}}' },
   admin_announcement: { title: '{{.Title}}', body: '{{.Message}}\n\n来自：{{.Sender}}' },
 }
+
+const userScopedNotificationEvents = new Set(['traffic_quota_exceeded', 'user_risk_detected'])
 
 type NotificationDraft = {
   id: number
@@ -9847,15 +9855,13 @@ function mergedNotificationTemplates(raw: string | undefined, defaults: Record<s
   return Object.fromEntries(Object.entries(defaults).map(([event, value]) => [event, { ...value, ...(parsed[event] || {}) }]))
 }
 
-function emptyNotificationDraft(defaults: Record<string, NotificationTemplate>, isAdmin: boolean, ownerUserID: number, type: 'telegram' | 'bark' = 'telegram'): NotificationDraft {
+function emptyNotificationDraft(defaults: Record<string, NotificationTemplate>, eventOptions: NotificationEventDefinition[], isAdmin: boolean, ownerUserID: number, type: 'telegram' | 'bark' = 'telegram'): NotificationDraft {
   return {
     id: 0,
     name: '',
     type,
     enabled: true,
-    events: isAdmin
-      ? ['server_offline', 'server_online', 'traffic_quota_exceeded', 'task_failed', 'task_timeout', 'certificate_issuance_failed']
-      : ['traffic_quota_exceeded', 'admin_announcement'],
+    events: eventOptions.filter(option => !isAdmin || option.value !== 'admin_announcement').map(option => option.value),
     bot_token: '',
     chat_id: '',
     server_url: 'https://api.day.app',
@@ -9905,7 +9911,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
   const users: User[] = data.users || []
   const announcements: NotificationAnnouncement[] = data.notification_announcements || []
   const isAdmin = sessionUser?.role === 'admin'
-  const eventOptions: NotificationEventDefinition[] = data.notification_config?.events || fallbackNotificationEventOptions.filter(option => isAdmin || ['traffic_quota_exceeded', 'admin_announcement'].includes(option.value))
+  const eventOptions: NotificationEventDefinition[] = data.notification_config?.events || fallbackNotificationEventOptions.filter(option => isAdmin || ['traffic_quota_exceeded', 'user_risk_detected', 'admin_announcement'].includes(option.value))
   const defaultTemplates: Record<string, NotificationTemplate> = data.notification_config?.templates || fallbackNotificationTemplates
   const ownerUserID = Number(sessionUser?.id || data.current_user?.id || 0)
   const [editor, setEditor] = useState<NotificationDraft | null>(null)
@@ -9917,7 +9923,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
   const [announcementUserIDs, setAnnouncementUserIDs] = useState<number[]>([])
   const [sendingAnnouncement, setSendingAnnouncement] = useState(false)
 
-  const openCreate = () => setEditor(emptyNotificationDraft(defaultTemplates, isAdmin, ownerUserID))
+  const openCreate = () => setEditor(emptyNotificationDraft(defaultTemplates, eventOptions, isAdmin, ownerUserID))
   const openEdit = (channel: NotificationChannel) => setEditor(notificationDraftFromChannel(channel, defaultTemplates))
 
   const saveChannel = async () => {
@@ -10038,7 +10044,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
     <div className="section-toolbar">
       <div>
         <h3>通知通道</h3>
-        <p className="muted">{isAdmin ? '接收服务器、用户流量和任务状态提醒。' : '接收自己的流量用完提醒和管理员消息。'} 支持 Telegram 与 Bark。</p>
+        <p className="muted">{isAdmin ? '接收服务器、证书、备份、域名、任务和用户风险提醒。' : '接收自己的流量、异常使用和管理员消息。'} 支持 Telegram 与 Bark。</p>
       </div>
       <div className="section-actions">
         <button type="button" onClick={openCreate}><Plus size={15} /><span>新建通道</span></button>
@@ -10072,7 +10078,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
                     <span key={event} className="notification-event-chip">{eventOptions.find(x => x.value === event)?.label || event}</span>
                   )) : <span className="muted">未选择事件</span>}
                 </div>
-                {events.includes('traffic_quota_exceeded') && <small className="notification-target-summary">流量用户：{isAdmin ? (channel.user_ids || []).map(id => users.find(user => user.id === id)?.nickname || users.find(user => user.id === id)?.username || `#${id}`).join('、') || '本人' : '本人'}</small>}
+                {events.some(event => userScopedNotificationEvents.has(event)) && <small className="notification-target-summary">关注用户：{isAdmin ? (channel.user_ids || []).map(id => users.find(user => user.id === id)?.nickname || users.find(user => user.id === id)?.username || `#${id}`).join('、') || '本人' : '本人'}</small>}
               </div>
             </div>
             <div className="notification-channel-actions">
@@ -10181,14 +10187,14 @@ function NotificationChannelDialog({
                 <input type="checkbox" checked={draft.events.includes(option.value)} onChange={() => toggleEvent(option.value)} />
                 <span>
                   <strong>{option.label}</strong>
-                  <small>{notificationEventDescriptions[option.value] || option.description}</small>
+                  <small>{option.description}</small>
                 </span>
               </label>
             ))}
           </div>
         </FormField>
 
-        {draft.events.includes('traffic_quota_exceeded') && <FormField label="流量通知用户" required hint={isAdmin ? '选择要关注的用户。' : '仅可选择本人。'}>
+        {draft.events.some(event => userScopedNotificationEvents.has(event)) && <FormField label="关注用户" required hint={isAdmin ? '流量和异常使用提醒会发送这些用户的情况。' : '只接收与你本人有关的提醒。'}>
           <div className="notification-user-options">
             {(isAdmin ? users.filter(user => user.status === 'active') : users.filter(user => user.id === ownerUserID)).map(user => {
               const active = draft.user_ids.includes(user.id)

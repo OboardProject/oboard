@@ -81,9 +81,7 @@ func (s *Server) markCertificateIssueFailed(ctx context.Context, certificate *mo
 	if err := s.store.UpdateCertificate(ctx, certificate); err != nil {
 		log.Printf("certificate %d: persist issuance failure: %v", certificate.ID, err)
 	}
-	if certificate.ACMECA == "google" {
-		s.notifyGoogleCertificateIssueFailure(ctx, certificate)
-	}
+	s.notifyCertificateIssueFailure(ctx, certificate)
 }
 
 func (s *Server) runDNSCertificateIssue(ctx context.Context, certificate *model.Certificate, renew, resumeManual bool) error {
@@ -345,7 +343,11 @@ func (s *Server) renewCertificates(ctx context.Context) {
 	deadline := time.Now().Add(30 * 24 * time.Hour)
 	for i := range certificates {
 		certificate := &certificates[i]
-		if !certificate.AutoRenew || certificate.Status != model.CertificateStatusReady || certificate.NotAfter == nil || certificate.NotAfter.After(deadline) || certificate.ChallengeType == model.CertificateChallengeDNSManual || certificate.ChallengeType == "imported" {
+		if certificate.Status != model.CertificateStatusReady || certificate.NotAfter == nil || certificate.NotAfter.After(deadline) {
+			continue
+		}
+		if !certificate.AutoRenew || certificate.ChallengeType == model.CertificateChallengeDNSManual || certificate.ChallengeType == "imported" {
+			s.notifyCertificateExpiring(ctx, certificate)
 			continue
 		}
 		if err := s.startACMECertificateIssue(ctx, certificate, true, false); err != nil {

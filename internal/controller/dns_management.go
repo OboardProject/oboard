@@ -551,6 +551,11 @@ func (s *Server) syncDNSInbounds(ctx context.Context, servers []model.Server, in
 		now := time.Now().UTC()
 		if syncErr != nil {
 			_ = s.store.UpdateInboundDNSSyncResult(ctx, inbound.ID, "同步失败", syncErr.Error(), nil)
+			serverName := ""
+			if server, ok := serverByID[inbound.ServerID]; ok {
+				serverName = server.Name
+			}
+			s.notifyDNSSyncFailure(ctx, inbound, serverName, syncErr)
 			return results, fmt.Errorf("DNS sync for inbound %d: %w", inbound.ID, syncErr)
 		}
 		if err := s.store.UpdateInboundDNSSyncResult(ctx, inbound.ID, status, "", &now); err != nil {

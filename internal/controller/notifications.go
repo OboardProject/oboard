@@ -3,6 +3,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/version"
 )
 
 const offlineAfter = 2 * time.Minute
@@ -26,9 +28,14 @@ const (
 	notificationServerOffline     = "server_offline"
 	notificationServerOnline      = "server_online"
 	notificationTrafficQuota      = "traffic_quota_exceeded"
+	notificationUserRisk          = "user_risk_detected"
 	notificationTaskFailed        = "task_failed"
 	notificationTaskTimeout       = "task_timeout"
 	notificationCertificateFailed = "certificate_issuance_failed"
+	notificationCertificateExpiry = "certificate_expiring"
+	notificationBackupFailed      = "backup_failed"
+	notificationUpdateFailed      = "controller_update_failed"
+	notificationDNSSyncFailed     = "dns_sync_failed"
 	notificationAdminAnnouncement = "admin_announcement"
 )
 
@@ -47,27 +54,36 @@ type notificationEventDefinition struct {
 }
 
 var notificationEventDefinitions = []notificationEventDefinition{
-	{notificationServerOffline, "服务器离线", "Agent 心跳超时后通知", []string{"ServerName", "ServerID", "LastSeen", "Time"}},
-	{notificationServerOnline, "服务器上线", "离线服务器恢复连接时通知", []string{"ServerName", "ServerID", "Time"}},
-	{notificationTrafficQuota, "流量已用完", "所选用户本周期达到流量额度时通知", []string{"UserName", "UserID", "Used", "Limit", "ResetAt", "Time"}},
-	{notificationTaskFailed, "任务失败", "Agent 更新、配置下发等任务失败时通知", []string{"TaskType", "TaskID", "ServerName", "Error", "Time"}},
-	{notificationTaskTimeout, "任务超时", "任务等待或执行超过五分钟时通知", []string{"TaskType", "TaskID", "ServerName", "Error", "Time"}},
-	{notificationCertificateFailed, "Google 证书签发失败", "Google EAB 失效或证书签发失败时通知", []string{"CertificateName", "Domains", "EABKeyID", "Error", "Time"}},
-	{notificationAdminAnnouncement, "管理员通知", "管理员发送给你的消息", []string{"Title", "Message", "Sender", "Time"}},
+	{notificationServerOffline, "服务器失联", "服务器超过两分钟未连接时提醒", []string{"ServerName", "ServerID", "LastSeen", "Time"}},
+	{notificationServerOnline, "服务器恢复", "失联服务器重新连接时提醒", []string{"ServerName", "ServerID", "Time"}},
+	{notificationTrafficQuota, "流量达到上限", "所选用户的周期流量达到上限时提醒", []string{"UserName", "UserID", "Used", "Limit", "ResetAt", "Time"}},
+	{notificationUserRisk, "异常使用", "已开启连接审计的服务器发现所选用户大量来源 IP、跨网段或异常并发时提醒", []string{"UserName", "UserID", "RiskLevel", "RiskScore", "Signals", "SourceIPCount", "ActivePeak", "Time"}},
+	{notificationTaskFailed, "任务失败", "配置下发、更新或检测任务失败时提醒", []string{"TaskType", "TaskID", "ServerName", "Error", "Time"}},
+	{notificationTaskTimeout, "任务超时", "任务等待或执行超过五分钟时提醒", []string{"TaskType", "TaskID", "ServerName", "Error", "Time"}},
+	{notificationCertificateFailed, "证书签发失败", "证书首次签发或自动续期失败时提醒", []string{"CertificateName", "Domains", "Issuer", "EABKeyID", "Error", "Time"}},
+	{notificationCertificateExpiry, "证书到期", "证书有效期不足三十天或已经到期时提醒", []string{"CertificateName", "Domains", "Issuer", "ExpiresAt", "ExpiryStatus", "Time"}},
+	{notificationBackupFailed, "自动备份失败", "本地自动备份或第三方上传未完成时提醒", []string{"Stage", "Error", "Time"}},
+	{notificationUpdateFailed, "主控自动更新失败", "自动检查、备份或安装主控更新失败时提醒", []string{"Stage", "CurrentVersion", "TargetVersion", "Error", "Time"}},
+	{notificationDNSSyncFailed, "域名自动更新失败", "入口域名记录自动更新失败时提醒", []string{"InboundName", "Domain", "ServerName", "Error", "Time"}},
+	{notificationAdminAnnouncement, "管理员通知", "管理员向你发送消息时提醒", []string{"Title", "Message", "Sender", "Time"}},
 }
 
 var defaultNotificationTemplates = map[string]model.NotificationTemplate{
 	notificationServerOffline: {
-		Title: "服务器离线 · {{.ServerName}}",
-		Body:  "{{.ServerName}} 已离线\n最后在线：{{.LastSeen}}\n时间：{{.Time}}",
+		Title: "服务器失联 · {{.ServerName}}",
+		Body:  "{{.ServerName}} 已失去连接\n最后在线：{{.LastSeen}}\n时间：{{.Time}}",
 	},
 	notificationServerOnline: {
-		Title: "服务器上线 · {{.ServerName}}",
+		Title: "服务器恢复 · {{.ServerName}}",
 		Body:  "{{.ServerName}} 已恢复在线\n时间：{{.Time}}",
 	},
 	notificationTrafficQuota: {
-		Title: "流量已用完 · {{.UserName}}",
-		Body:  "{{.UserName}} 本周期流量已用完\n已用：{{.Used}} / {{.Limit}}\n重置：{{.ResetAt}}",
+		Title: "流量达到上限 · {{.UserName}}",
+		Body:  "{{.UserName}} 本周期流量已达到上限\n已用：{{.Used}} / {{.Limit}}\n重置：{{.ResetAt}}",
+	},
+	notificationUserRisk: {
+		Title: "异常使用提醒 · {{.UserName}}",
+		Body:  "{{.UserName}} 的连接行为达到{{.RiskLevel}}\n风险分：{{.RiskScore}}\n异常表现：{{.Signals}}\n来源 IP：{{.SourceIPCount}} 个\n并发峰值：{{.ActivePeak}}\n时间：{{.Time}}",
 	},
 	notificationTaskFailed: {
 		Title: "任务失败 · {{.TaskType}}",
@@ -78,8 +94,24 @@ var defaultNotificationTemplates = map[string]model.NotificationTemplate{
 		Body:  "服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}",
 	},
 	notificationCertificateFailed: {
-		Title: "Google 证书签发失败 · {{.CertificateName}}",
-		Body:  "证书：{{.CertificateName}}\n域名：{{.Domains}}\nEAB Key ID：{{.EABKeyID}}\n原因：{{.Error}}\n\nGoogle EAB 可能已经失效，请在证书设置中更换后重试。\n时间：{{.Time}}",
+		Title: "证书签发失败 · {{.CertificateName}}",
+		Body:  "证书：{{.CertificateName}}\n域名：{{.Domains}}\n签发机构：{{.Issuer}}\n外部账号：{{.EABKeyID}}\n原因：{{.Error}}\n时间：{{.Time}}",
+	},
+	notificationCertificateExpiry: {
+		Title: "证书到期提醒 · {{.CertificateName}}",
+		Body:  "证书：{{.CertificateName}}\n域名：{{.Domains}}\n签发机构：{{.Issuer}}\n状态：{{.ExpiryStatus}}\n到期时间：{{.ExpiresAt}}",
+	},
+	notificationBackupFailed: {
+		Title: "自动备份失败 · {{.Stage}}",
+		Body:  "{{.Stage}}未完成\n原因：{{.Error}}\n时间：{{.Time}}",
+	},
+	notificationUpdateFailed: {
+		Title: "主控自动更新失败 · {{.Stage}}",
+		Body:  "当前版本：{{.CurrentVersion}}\n目标版本：{{.TargetVersion}}\n阶段：{{.Stage}}\n原因：{{.Error}}\n时间：{{.Time}}",
+	},
+	notificationDNSSyncFailed: {
+		Title: "域名自动更新失败 · {{.Domain}}",
+		Body:  "服务器：{{.ServerName}}\n入口：{{.InboundName}}\n域名：{{.Domain}}\n原因：{{.Error}}\n时间：{{.Time}}",
 	},
 	notificationAdminAnnouncement: {
 		Title: "{{.Title}}",
@@ -431,6 +463,7 @@ func normalizeNotificationEvents(raw string, role model.Role) ([]string, error) 
 func allowedNotificationEventSet(role model.Role) map[string]bool {
 	allowed := map[string]bool{
 		notificationTrafficQuota:      true,
+		notificationUserRisk:          true,
 		notificationAdminAnnouncement: true,
 	}
 	if roleAllows(role, model.RoleAdmin) {
@@ -439,6 +472,10 @@ func allowedNotificationEventSet(role model.Role) map[string]bool {
 		allowed[notificationTaskFailed] = true
 		allowed[notificationTaskTimeout] = true
 		allowed[notificationCertificateFailed] = true
+		allowed[notificationCertificateExpiry] = true
+		allowed[notificationBackupFailed] = true
+		allowed[notificationUpdateFailed] = true
+		allowed[notificationDNSSyncFailed] = true
 	}
 	return allowed
 }
@@ -521,14 +558,14 @@ func executeNotificationTemplate(name, source string, data map[string]string) (s
 }
 
 func (s *Server) validateNotificationTargets(ctx context.Context, channel *model.NotificationChannel, ownerUserID int64, role model.Role) error {
-	if !notificationEventEnabled(channel.Events, notificationTrafficQuota) {
+	if !notificationEventsTargetUsers(channel.Events) {
 		channel.UserIDs = nil
 		return nil
 	}
 	if !roleAllows(role, model.RoleAdmin) {
 		for _, userID := range channel.UserIDs {
 			if userID != ownerUserID {
-				return errors.New("普通用户只能接收自己的流量通知")
+				return errors.New("普通用户只能关注本人")
 			}
 		}
 		channel.UserIDs = []int64{ownerUserID}
@@ -560,6 +597,10 @@ func (s *Server) validateNotificationTargets(ctx context.Context, channel *model
 	}
 	channel.UserIDs = targets
 	return nil
+}
+
+func notificationEventsTargetUsers(events string) bool {
+	return notificationEventEnabled(events, notificationTrafficQuota) || notificationEventEnabled(events, notificationUserRisk)
 }
 
 func notificationEventEnabled(events, event string) bool {
@@ -704,9 +745,9 @@ func (s *Server) enqueueNotificationEvent(ctx context.Context, event notificatio
 
 func notificationChannelEligible(channel model.NotificationChannel, ownerRole model.Role, event notificationEvent) bool {
 	switch event.Name {
-	case notificationServerOffline, notificationServerOnline, notificationTaskFailed, notificationTaskTimeout, notificationCertificateFailed:
+	case notificationServerOffline, notificationServerOnline, notificationTaskFailed, notificationTaskTimeout, notificationCertificateFailed, notificationCertificateExpiry, notificationBackupFailed, notificationUpdateFailed, notificationDNSSyncFailed:
 		return roleAllows(ownerRole, model.RoleAdmin)
-	case notificationTrafficQuota:
+	case notificationTrafficQuota, notificationUserRisk:
 		if channel.OwnerUserID == event.TargetUserID {
 			return true
 		}
@@ -918,6 +959,9 @@ func (s *Server) notifyTaskFailure(ctx context.Context, task model.AgentTask) {
 	if len(errorText) > 600 {
 		errorText = errorText[:600]
 	}
+	if task.Type == model.AgentTaskTypeIssueCertificateHTTP {
+		s.notifyHTTPCertificateTaskFailure(ctx, task, errorText)
+	}
 	s.enqueueNotificationEvent(ctx, notificationEvent{
 		Name: eventName,
 		Key:  fmt.Sprintf("task:%d:%s", task.ID, eventName),
@@ -931,7 +975,28 @@ func (s *Server) notifyTaskFailure(ctx context.Context, task model.AgentTask) {
 	})
 }
 
-func (s *Server) notifyGoogleCertificateIssueFailure(ctx context.Context, certificate *model.Certificate) {
+func (s *Server) notifyHTTPCertificateTaskFailure(ctx context.Context, task model.AgentTask, errorText string) {
+	var payload model.IssueCertificateHTTPTaskPayload
+	if json.Unmarshal([]byte(task.PayloadJSON), &payload) != nil || payload.CertificateID <= 0 {
+		return
+	}
+	certificate, err := s.store.GetCertificate(ctx, payload.CertificateID)
+	if err != nil {
+		return
+	}
+	certificate.Status = model.CertificateStatusFailed
+	certificate.LastError = notificationErrorText(errorText)
+	if certificate.LastRenewalAttemptAt == nil {
+		now := time.Now().UTC()
+		certificate.LastRenewalAttemptAt = &now
+	}
+	if err := s.store.UpdateCertificate(ctx, certificate); err != nil {
+		log.Printf("certificate %d: persist HTTP-01 failure: %v", certificate.ID, err)
+	}
+	s.notifyCertificateIssueFailure(ctx, certificate)
+}
+
+func (s *Server) notifyCertificateIssueFailure(ctx context.Context, certificate *model.Certificate) {
 	keyID := certificate.EABKeyID
 	if certificate.GoogleEABCredentialID != nil {
 		if credential, err := s.store.GetGoogleEABCredential(ctx, *certificate.GoogleEABCredentialID); err == nil {
@@ -939,11 +1004,11 @@ func (s *Server) notifyGoogleCertificateIssueFailure(ctx context.Context, certif
 		}
 	}
 	if strings.TrimSpace(keyID) == "" {
-		keyID = "未找到"
+		keyID = "无需配置"
 	}
 	errorText := strings.TrimSpace(certificate.LastError)
 	if errorText == "" {
-		errorText = "Google Trust Services 未返回具体原因"
+		errorText = "签发服务未返回具体原因"
 	}
 	if len(errorText) > 1000 {
 		errorText = errorText[len(errorText)-1000:]
@@ -957,12 +1022,197 @@ func (s *Server) notifyGoogleCertificateIssueFailure(ctx context.Context, certif
 		Key:  fmt.Sprintf("certificate:%d:failed:%s", certificate.ID, attempt.Format(time.RFC3339Nano)),
 		Data: map[string]string{
 			"CertificateName": certificate.Name,
-			"Domains":         strings.Join(certificate.Domains, ", "),
+			"Domains":         notificationCertificateDomains(certificate),
+			"Issuer":          notificationCertificateIssuer(certificate.ACMECA),
 			"EABKeyID":        keyID,
 			"Error":           errorText,
 			"Time":            s.notificationNow(ctx),
 		},
 	})
+}
+
+func (s *Server) notifyCertificateExpiring(ctx context.Context, certificate *model.Certificate) {
+	if certificate == nil || certificate.NotAfter == nil {
+		return
+	}
+	notAfter := certificate.NotAfter.UTC()
+	remaining := time.Until(notAfter)
+	status := "剩余 " + strconv.Itoa(max(0, int(remaining.Hours()/24))) + " 天"
+	if remaining <= 0 {
+		status = "已过期 " + strconv.Itoa(max(0, int(-remaining.Hours()/24))) + " 天"
+	}
+	settings, _ := s.store.ListSettings(ctx)
+	s.enqueueNotificationEvent(ctx, notificationEvent{
+		Name: notificationCertificateExpiry,
+		Key:  fmt.Sprintf("certificate:%d:expires:%s", certificate.ID, notAfter.Format(time.RFC3339Nano)),
+		Data: map[string]string{
+			"CertificateName": certificate.Name,
+			"Domains":         notificationCertificateDomains(certificate),
+			"Issuer":          notificationCertificateIssuer(certificate.ACMECA),
+			"ExpiresAt":       notAfter.In(trafficLocation(settings)).Format("2006-01-02 15:04 MST"),
+			"ExpiryStatus":    status,
+			"Time":            s.notificationNow(ctx),
+		},
+	})
+}
+
+func notificationCertificateDomains(certificate *model.Certificate) string {
+	domains := strings.Join(certificate.Domains, ", ")
+	if strings.TrimSpace(domains) == "" {
+		domains = certificate.PrimaryDomain
+	}
+	return domains
+}
+
+func notificationCertificateIssuer(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "letsencrypt":
+		return "Let's Encrypt"
+	case "zerossl":
+		return "ZeroSSL"
+	case "buypass":
+		return "Buypass"
+	case "google":
+		return "Google Trust Services"
+	default:
+		if strings.TrimSpace(value) == "" {
+			return "证书签发机构"
+		}
+		return value
+	}
+}
+
+func (s *Server) notifyConnectionAuditRisks(ctx context.Context, userIDs []int64) {
+	if len(userIDs) == 0 {
+		return
+	}
+	overview, err := s.store.ConnectionAuditOverview(ctx, 24)
+	if err != nil {
+		log.Printf("connection audit notification: %v", err)
+		return
+	}
+	targets := map[int64]bool{}
+	for _, userID := range userIDs {
+		targets[userID] = true
+	}
+	for _, summary := range overview.Users {
+		if !targets[summary.UserID] || (summary.RiskLevel != "high" && summary.RiskLevel != "critical") {
+			continue
+		}
+		name := strings.TrimSpace(summary.Nickname)
+		if name == "" {
+			name = summary.Username
+		}
+		riskLevel := "高风险"
+		if summary.RiskLevel == "critical" {
+			riskLevel = "严重风险"
+		}
+		signals := strings.Join(summary.RiskSignals, "；")
+		if signals == "" {
+			signals = "连接来源或并发明显偏离日常使用"
+		}
+		s.enqueueNotificationEvent(ctx, notificationEvent{
+			Name:         notificationUserRisk,
+			Key:          fmt.Sprintf("user:%d:risk:%s:%s", summary.UserID, summary.RiskLevel, summary.LastSeenAt.UTC().Format("2006-01-02")),
+			TargetUserID: summary.UserID,
+			Data: map[string]string{
+				"UserName":      name,
+				"UserID":        fmt.Sprint(summary.UserID),
+				"RiskLevel":     riskLevel,
+				"RiskScore":     fmt.Sprint(summary.RiskScore),
+				"Signals":       signals,
+				"SourceIPCount": fmt.Sprint(summary.SourceIPCount),
+				"ActivePeak":    fmt.Sprint(summary.ActivePeak),
+				"Time":          s.notificationNow(ctx),
+			},
+		})
+	}
+}
+
+func (s *Server) notifyBackupFailure(ctx context.Context, eventKey, stage, errorText string) {
+	s.enqueueNotificationEvent(ctx, notificationEvent{
+		Name: notificationBackupFailed,
+		Key:  "backup:" + eventKey + ":" + notificationValueKey(errorText),
+		Data: map[string]string{"Stage": stage, "Error": notificationErrorText(errorText), "Time": s.notificationNow(ctx)},
+	})
+}
+
+func (s *Server) notifyControllerUpdateFailure(ctx context.Context, stage, targetVersion, errorText string) {
+	if strings.TrimSpace(targetVersion) == "" {
+		targetVersion = "尚未确定"
+	}
+	s.enqueueNotificationEvent(ctx, notificationEvent{
+		Name: notificationUpdateFailed,
+		Key:  "controller-update:" + time.Now().UTC().Format("2006-01-02") + ":" + notificationValueKey(stage+"\x00"+targetVersion+"\x00"+errorText),
+		Data: map[string]string{
+			"Stage":          stage,
+			"CurrentVersion": version.Version,
+			"TargetVersion":  targetVersion,
+			"Error":          notificationErrorText(errorText),
+			"Time":           s.notificationNow(ctx),
+		},
+	})
+}
+
+func (s *Server) notifyDNSSyncFailure(ctx context.Context, inbound model.Inbound, serverName string, syncErr error) {
+	lastSuccess := "never"
+	if inbound.DNSLastSyncedAt != nil {
+		lastSuccess = inbound.DNSLastSyncedAt.UTC().Format(time.RFC3339Nano)
+	}
+	errorText := "域名记录未能更新"
+	if syncErr != nil {
+		errorText = notificationDNSErrorText(syncErr.Error())
+	}
+	if strings.TrimSpace(serverName) == "" {
+		serverName = fmt.Sprintf("服务器 #%d", inbound.ServerID)
+	}
+	s.enqueueNotificationEvent(ctx, notificationEvent{
+		Name: notificationDNSSyncFailed,
+		Key:  fmt.Sprintf("dns:%d:%s:%s", inbound.ID, lastSuccess, notificationValueKey(errorText)),
+		Data: map[string]string{
+			"InboundName": inbound.Name,
+			"Domain":      normalizeDomainName(inbound.DNSDomain),
+			"ServerName":  serverName,
+			"Error":       notificationErrorText(errorText),
+			"Time":        s.notificationNow(ctx),
+		},
+	})
+}
+
+func notificationDNSErrorText(value string) string {
+	switch strings.TrimSpace(value) {
+	case "DNS credential is not selected":
+		return "未选择域名服务凭据"
+	case "DNS credential is unavailable":
+		return "域名服务凭据不可用"
+	case "DNS credential is not verified":
+		return "域名服务凭据尚未验证"
+	case "DNS proxy is only supported by Cloudflare":
+		return "当前域名服务不支持代理加速"
+	case "inbound server not found":
+		return "入口绑定的服务器不存在"
+	default:
+		if strings.Contains(value, "has no address for DNS record mode") {
+			return "服务器没有可用于更新域名记录的公网地址"
+		}
+		return notificationErrorText(value)
+	}
+}
+
+func notificationErrorText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "未返回具体原因"
+	}
+	if len(value) > 1000 {
+		value = value[len(value)-1000:]
+	}
+	return value
+}
+
+func notificationValueKey(value string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
+	return fmt.Sprintf("%x", sum[:8])
 }
 
 func taskTypeNotificationLabel(taskType string) string {
