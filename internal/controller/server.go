@@ -2462,7 +2462,7 @@ func (s *Server) enqueueAgentUpdateWithVersion(ctx context.Context, server *mode
 	}
 	task, err := s.queueAgentTask(ctx, server.ID, model.AgentTaskTypeUpdateAgent, model.UpdateAgentTaskPayload{
 		ControllerURL: controllerURL,
-		ExpectedBuild: version.Build,
+		ExpectedBuild: version.AgentBuild,
 		Source:        source,
 		GitHubRepo:    repo,
 	}, configVersion)

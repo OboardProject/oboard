@@ -23,6 +23,7 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
+	"github.com/OboardProject/oboard/internal/version"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -1132,6 +1133,12 @@ func TestQuickOneTimeSubscriptionDoesNotChangePersistentPolicy(t *testing.T) {
 }
 
 func TestAgentUpdateAllowedForSelfUpdateCapableOlderBuild(t *testing.T) {
+	originalBuild, originalAgentBuild := version.Build, version.AgentBuild
+	t.Cleanup(func() {
+		version.Build, version.AgentBuild = originalBuild, originalAgentBuild
+	})
+	version.Build, version.AgentBuild = "controller-build", "agent-build"
+
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -1160,10 +1167,17 @@ func TestAgentUpdateAllowedForSelfUpdateCapableOlderBuild(t *testing.T) {
 	}
 
 	res := request(t, h, http.MethodPost, "/api/v1/servers/"+itoa(serverID)+"/agent-update", token, map[string]any{}, http.StatusAccepted)
-	if res["task"].(map[string]any)["type"] != "update_agent" {
+	task := res["task"].(map[string]any)
+	if task["type"] != "update_agent" {
 		t.Fatalf("unexpected update response: %#v", res)
 	}
-
+	var payload model.UpdateAgentTaskPayload
+	if err := json.Unmarshal([]byte(task["payload_json"].(string)), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.ExpectedBuild != version.AgentBuild {
+		t.Fatalf("update task expected build = %q, want Agent build %q", payload.ExpectedBuild, version.AgentBuild)
+	}
 }
 
 func TestAgentReconnectCompletesInterruptedUpdateTask(t *testing.T) {
