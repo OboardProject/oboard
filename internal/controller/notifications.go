@@ -734,7 +734,9 @@ func (s *Server) enqueueNotificationEvent(ctx context.Context, event notificatio
 		}
 	}
 	if queued > 0 {
+		s.notificationWG.Add(1)
 		go func(parent context.Context) {
+			defer s.notificationWG.Done()
 			deliveryCtx, cancel := context.WithTimeout(parent, 30*time.Second)
 			defer cancel()
 			s.deliverPendingNotifications(deliveryCtx)

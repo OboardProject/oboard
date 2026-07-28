@@ -431,7 +431,7 @@ func TestNotificationDispatchScopeTemplatesAndDedupe(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitNotificationCount(t, &sentMu, &sent, 5)
+	waitNotificationCount(t, hServer, &sentMu, &sent, 5)
 	if duplicate := hServer.enqueueNotificationEvent(context.Background(), notificationEvent{Name: notificationServerOffline, Key: "server:offline:1", Data: map[string]string{"ServerName": server.Name, "ServerID": fmt.Sprint(server.ID), "LastSeen": "刚刚", "Time": "现在"}}); duplicate != 0 {
 		t.Fatalf("duplicate event queued = %d", duplicate)
 	}
@@ -488,7 +488,7 @@ func TestCertificateFailureNotificationCoversAllIssuersAndRedactsEABSecret(t *te
 		return nil
 	}
 	hServer.markCertificateIssueFailed(context.Background(), certificate, errors.New("externalAccountRequired: "+hmacKey))
-	waitNotificationCount(t, &sentMu, &sent, 1)
+	waitNotificationCount(t, hServer, &sentMu, &sent, 1)
 
 	sentMu.Lock()
 	message := sent[0]
@@ -515,7 +515,7 @@ func TestCertificateFailureNotificationCoversAllIssuersAndRedactsEABSecret(t *te
 		t.Fatal(err)
 	}
 	hServer.markCertificateIssueFailed(context.Background(), certificate, errors.New("DNS validation failed"))
-	waitNotificationCount(t, &sentMu, &sent, 2)
+	waitNotificationCount(t, hServer, &sentMu, &sent, 2)
 	sentMu.Lock()
 	message = sent[1]
 	sentMu.Unlock()
@@ -566,7 +566,7 @@ func TestHTTPCertificateTaskFailureQueuesCertificateNotification(t *testing.T) {
 	if err := srv.completeTaskWithNotification(context.Background(), task.ID, "failed", `{"error":"HTTP-01 验证未通过"}`); err != nil {
 		t.Fatal(err)
 	}
-	waitNotificationCount(t, &sentMu, &sent, 1)
+	waitNotificationCount(t, srv, &sentMu, &sent, 1)
 	stored, err := db.GetCertificate(context.Background(), certificate.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -619,7 +619,7 @@ func TestConnectionAuditRiskNotificationTargetsUserAndAdmin(t *testing.T) {
 		return nil
 	}
 	srv.notifyConnectionAuditRisks(context.Background(), []int64{viewerID})
-	waitNotificationCount(t, &sentMu, &sent, 2)
+	waitNotificationCount(t, srv, &sentMu, &sent, 2)
 	sentMu.Lock()
 	for _, message := range sent {
 		if !strings.Contains(message, "异常使用提醒 · 小王") || !strings.Contains(message, "高风险") {
@@ -664,7 +664,7 @@ func TestOperationalNotificationEventsUseAdminScope(t *testing.T) {
 	srv.notifyBackupFailure(context.Background(), "2026-07-28", "第三方上传", "WebDAV 无法连接")
 	srv.notifyControllerUpdateFailure(context.Background(), "安装更新", "dev-next", "更新器返回失败")
 	srv.notifyDNSSyncFailure(context.Background(), model.Inbound{ID: 9, ServerID: 2, Name: "主入口", DNSDomain: "edge.example.com"}, "香港节点", errors.New("DNS 服务暂时不可用"))
-	waitNotificationCount(t, &sentMu, &sent, 4)
+	waitNotificationCount(t, srv, &sentMu, &sent, 4)
 	sentMu.Lock()
 	defer sentMu.Unlock()
 	joined := strings.Join(sent, "\n")
@@ -710,7 +710,7 @@ func TestScheduledUpdateFailureNotifiesOnlyWhenAutomaticUpdatesEnabled(t *testin
 		t.Fatal(err)
 	}
 	srv.runScheduledControllerUpdate(context.Background())
-	waitNotificationCount(t, &sentMu, &sent, 1)
+	waitNotificationCount(t, srv, &sentMu, &sent, 1)
 	sentMu.Lock()
 	defer sentMu.Unlock()
 	if !strings.Contains(sent[0], "主控自动更新失败") || !strings.Contains(sent[0], "主控更新器不可用") {
@@ -755,7 +755,7 @@ func TestCertificateRenewalExpiryNotificationRequiresUserAction(t *testing.T) {
 	}
 
 	srv.renewCertificates(context.Background())
-	waitNotificationCount(t, &sentMu, &sent, 1)
+	waitNotificationCount(t, srv, &sentMu, &sent, 1)
 	time.Sleep(50 * time.Millisecond)
 	sentMu.Lock()
 	if len(sent) != 1 || !strings.Contains(sent[0], "手动证书") || strings.Contains(sent[0], "自动证书") {
@@ -825,14 +825,14 @@ func TestTaskTimeoutAndAdminAnnouncementQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv.expireTimedOutTasks(context.Background())
-	waitNotificationCount(t, &sentMu, &sent, 1)
+	waitNotificationCount(t, srv, &sentMu, &sent, 1)
 
 	request(t, h, http.MethodPost, "/api/v1/notification-announcements", viewerToken, map[string]any{"title": "no", "body": "no", "user_ids": []int64{viewerID}}, http.StatusForbidden)
 	announcement := request(t, h, http.MethodPost, "/api/v1/notification-announcements", adminToken, map[string]any{"title": "维护", "body": "今晚维护", "user_ids": []int64{viewerID}}, http.StatusAccepted)
 	if announcement["queued_count"].(float64) != 1 {
 		t.Fatalf("announcement queued = %#v", announcement)
 	}
-	waitNotificationCount(t, &sentMu, &sent, 2)
+	waitNotificationCount(t, srv, &sentMu, &sent, 2)
 	history := request(t, h, http.MethodGet, "/api/v1/notification-announcements", adminToken, nil, http.StatusOK)
 	if len(history["notification_announcements"].([]any)) != 1 {
 		t.Fatalf("announcement history = %#v", history)
@@ -848,7 +848,7 @@ func mustJSON(t *testing.T, value any) string {
 	return string(encoded)
 }
 
-func waitNotificationCount[T any](t *testing.T, mu *sync.Mutex, items *[]T, count int) {
+func waitNotificationCount[T any](t *testing.T, server *Server, mu *sync.Mutex, items *[]T, count int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -856,6 +856,7 @@ func waitNotificationCount[T any](t *testing.T, mu *sync.Mutex, items *[]T, coun
 		current := len(*items)
 		mu.Unlock()
 		if current >= count {
+			server.notificationWG.Wait()
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

@@ -63,6 +63,7 @@ type Server struct {
 	probeMu                     sync.Mutex
 	activeProbes                map[int64]bool
 	notificationMu              sync.Mutex
+	notificationWG              sync.WaitGroup
 	notificationSender          func(context.Context, model.NotificationChannel, string, string) error
 	certificateIssueMu          sync.Mutex
 	certificateIssues           map[int64]bool
