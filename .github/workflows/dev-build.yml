@@ -68,15 +68,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CONTROLLER_RELEASE_DIR: ${{ runner.temp }}/oboard/controller/release
         run: |
-          if gh release view dev >/dev/null 2>&1; then
-            gh release delete dev --yes --cleanup-tag
-          fi
           git tag -f dev "$GITHUB_SHA"
           git push --force origin refs/tags/dev
-          gh release create dev \
-            "$CONTROLLER_RELEASE_DIR"/*.tar.gz \
-            "$CONTROLLER_RELEASE_DIR"/sha256sums.txt \
-            "$CONTROLLER_RELEASE_DIR"/controller-release-manifest.json \
-            --title "OBoard development build" \
-            --prerelease \
-            --notes "Mutable development build from $GITHUB_SHA."
+          if gh release view dev >/dev/null 2>&1; then
+            gh release upload dev \
+              "$CONTROLLER_RELEASE_DIR"/*.tar.gz \
+              "$CONTROLLER_RELEASE_DIR"/sha256sums.txt \
+              "$CONTROLLER_RELEASE_DIR"/controller-release-manifest.json \
+              --clobber
+            gh release edit dev \
+              --title "OBoard development build" \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --notes "Mutable development build from $GITHUB_SHA."
+          else
+            gh release create dev \
+              "$CONTROLLER_RELEASE_DIR"/*.tar.gz \
+              "$CONTROLLER_RELEASE_DIR"/sha256sums.txt \
+              "$CONTROLLER_RELEASE_DIR"/controller-release-manifest.json \
+              --title "OBoard development build" \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --notes "Mutable development build from $GITHUB_SHA."
+          fi
