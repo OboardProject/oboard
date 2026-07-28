@@ -22,6 +22,12 @@ func TestAgentInstallScriptBBRIsInstallOnly(t *testing.T) {
 		"net.core.default_qdisc = fq",
 		"net.ipv4.tcp_congestion_control = bbr",
 		"安装程序不会自动更换内核",
+		"[1/4] 检查运行环境",
+		"[2/4] 下载 Agent 组件",
+		"[3/4] 校验并安装组件",
+		"[4/4] 注册并启动 Agent 服务",
+		"详细日志：$INSTALL_LOG",
+		"管理 Agent：$management_command",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("Agent installer is missing %q", want)

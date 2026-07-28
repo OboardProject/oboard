@@ -9998,6 +9998,8 @@ INSTALL_ENV_PATH=${OBOARD_AGENT_INSTALL_ENV:-/etc/oboard-agent/install.env}
 INSTALL_DIR=
 CONFIG_PATH=${OBOARD_AGENT_CONFIG:-/etc/oboard-agent/config.json}
 STATE_DIR=${OBOARD_AGENT_STATE:-/var/lib/oboard-agent}
+INSTALL_LOG=
+UPDATE_TMP=
 AGENT_RESTART=${OBOARD_AGENT_RESTART:-delayed}
 DEFAULT_BASE_URL=__BASE_URL__
 BASE_URL=${OBOARD_CONTROLLER_URL:-$DEFAULT_BASE_URL}
@@ -10101,7 +10103,6 @@ resolve_agent_install_dir() {
     INSTALL_DIR=/usr/local/bin
   fi
   export INSTALL_DIR
-  echo "Agent 程序安装目录：$INSTALL_DIR"
 }
 
 persist_agent_install_dir() {
@@ -10109,6 +10110,32 @@ persist_agent_install_dir() {
   printf 'OBOARD_INSTALL_DIR=%s\n' "$INSTALL_DIR" > "$INSTALL_ENV_PATH.new"
   chmod 0600 "$INSTALL_ENV_PATH.new"
   mv -f "$INSTALL_ENV_PATH.new" "$INSTALL_ENV_PATH"
+}
+
+finish_install() {
+  status=$?
+  [ -z "$UPDATE_TMP" ] || rm -rf "$UPDATE_TMP"
+  if [ "$status" -ne 0 ] && [ -n "$INSTALL_LOG" ] && [ -f "$INSTALL_LOG" ]; then
+    echo "" >&2
+    echo "OBoard Agent 操作未完成。" >&2
+    echo "请根据上方提示处理后重试；详细日志：$INSTALL_LOG" >&2
+  fi
+  trap - EXIT
+  exit "$status"
+}
+
+prepare_install_log() {
+  local log_dir log_tmp
+  INSTALL_LOG=${OBOARD_AGENT_INSTALL_LOG:-$STATE_DIR/install.log}
+  case "$INSTALL_LOG" in
+    */*) log_dir=${INSTALL_LOG%/*}; [ -n "$log_dir" ] || log_dir=/ ;;
+    *) log_dir=. ;;
+  esac
+  mkdir -p "$STATE_DIR" "$log_dir"
+  chmod 0700 "$STATE_DIR"
+  log_tmp=$(mktemp "$log_dir/.oboard-agent-install-log.XXXXXX")
+  chmod 0600 "$log_tmp"
+  mv -f "$log_tmp" "$INSTALL_LOG"
 }
 
 resolve_agent_install_dir
@@ -10165,7 +10192,7 @@ PY
     return 0
   fi
   printf '\n127.0.1.1 %s\n' "$host_name" >> /etc/hosts
-  echo "已修复本机 hostname 解析：$host_name"
+  echo "已修复本机 hostname 解析：$host_name" >> "${INSTALL_LOG:-/dev/null}"
 }
 
 bbr_requested() {
@@ -10215,7 +10242,6 @@ persist_bbr_fq() {
 
 enable_bbr_fq() {
   bbr_requested || {
-    echo "BBR + FQ：未启用"
     return 0
   }
   echo "正在启用 BBR + FQ..."
@@ -10288,27 +10314,28 @@ PY
 }
 
 pkg_install() {
+  local log_file=${INSTALL_LOG:-/dev/null}
   # Install packages with the host package manager. Supports Debian/Ubuntu,
   # Alpine, RHEL/CentOS/Rocky/Alma (dnf/yum), openSUSE (zypper), Arch (pacman).
   if [ "$#" -eq 0 ]; then
     return 0
   fi
   if command -v apk >/dev/null 2>&1; then
-    apk add --no-cache "$@"
+    apk add --no-cache "$@" >> "$log_file" 2>&1
   elif command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y
-    apt-get install -y --no-install-recommends "$@"
+    apt-get update -y >> "$log_file" 2>&1
+    apt-get install -y --no-install-recommends "$@" >> "$log_file" 2>&1
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y "$@"
+    dnf install -y "$@" >> "$log_file" 2>&1
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y "$@"
+    yum install -y "$@" >> "$log_file" 2>&1
   elif command -v microdnf >/dev/null 2>&1; then
-    microdnf install -y "$@"
+    microdnf install -y "$@" >> "$log_file" 2>&1
   elif command -v zypper >/dev/null 2>&1; then
-    zypper --non-interactive install -y "$@"
+    zypper --non-interactive install -y "$@" >> "$log_file" 2>&1
   elif command -v pacman >/dev/null 2>&1; then
-    pacman -Sy --noconfirm "$@"
+    pacman -Sy --noconfirm "$@" >> "$log_file" 2>&1
   else
     echo "未找到支持的包管理器（apk/apt/dnf/yum/zypper/pacman），无法自动安装：$*" >&2
     return 1
@@ -10329,7 +10356,7 @@ ensure_base_tools() {
   if [ "$need_curl$need_ca$need_install" = "000" ]; then
     return 0
   fi
-  echo "正在安装基础依赖（curl / CA 证书 / install）..."
+  echo "  正在补齐系统所需组件..."
   packages=""
   if [ "$need_curl" = 1 ]; then
     packages="$packages curl"
@@ -10356,7 +10383,7 @@ ensure_release_verifier() {
   if command -v python3 >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
     return 0
   fi
-  echo "正在安装 release 验签依赖（python3 / openssl）..."
+  echo "  正在准备安装包校验组件..."
   packages=""
   command -v python3 >/dev/null 2>&1 || packages="$packages python3"
   command -v openssl >/dev/null 2>&1 || packages="$packages openssl"
@@ -10419,7 +10446,7 @@ ensure_acme_sh() {
   command -v openssl >/dev/null 2>&1 || packages="$packages openssl"
   command -v socat >/dev/null 2>&1 || packages="$packages socat"
   if [ -n "$packages" ]; then
-    echo "正在安装 HTTP-01 证书签发依赖（openssl / socat）..."
+    echo "  正在准备证书签发组件..."
     # shellcheck disable=SC2086
     if ! pkg_install $packages; then
       echo "HTTP-01 证书签发依赖安装失败，请手动安装 openssl 和 socat 后重试。" >&2
@@ -10434,12 +10461,12 @@ ensure_acme_sh() {
   if command -v acme.sh >/dev/null 2>&1; then
     return 0
   fi
-  echo "正在通过系统软件包安装 acme.sh..."
+  echo "  正在准备证书签发工具..."
   if pkg_install acme.sh && command -v acme.sh >/dev/null 2>&1; then
     return 0
   fi
 
-  echo "系统仓库未提供 acme.sh，正在安装经过校验的固定版本 $ACME_SH_VERSION..."
+  echo "  正在安装经过校验的证书签发工具..."
   if ! install_pinned_acme_sh || [ ! -x "$ACME_SH_INSTALL_PATH" ]; then
     echo "acme.sh 安装失败。" >&2
     exit 1
@@ -10541,7 +10568,7 @@ load_target_version() {
   TARGET_KERNEL_BUILD=$(printf '%s' "$version_json" | json_value kernel_build 2>/dev/null || true)
   TARGET_DEV=$(printf '%s' "$version_json" | json_value dev 2>/dev/null || true)
   if [ -n "$TARGET_VERSION$TARGET_BUILD" ]; then
-    echo "目标版本：Agent ${TARGET_VERSION:-unknown} build ${TARGET_BUILD:-unknown}，内核 build ${TARGET_KERNEL_BUILD:-$TARGET_BUILD}"
+    echo "目标版本：Agent ${TARGET_VERSION:-unknown} build ${TARGET_BUILD:-unknown}，内核 build ${TARGET_KERNEL_BUILD:-$TARGET_BUILD}" >> "${INSTALL_LOG:-/dev/null}"
   fi
 }
 
@@ -10566,16 +10593,16 @@ resolve_update_policy() {
 }
 
 print_installed_versions() {
-  echo "当前二进制版本："
+  echo "当前二进制版本：" >> "${INSTALL_LOG:-/dev/null}"
   if [ -x "$INSTALL_DIR/oboard-agent" ]; then
-    echo "- Agent: $($INSTALL_DIR/oboard-agent -version 2>/dev/null || true)"
+    echo "- Agent: $($INSTALL_DIR/oboard-agent -version 2>/dev/null || true)" >> "${INSTALL_LOG:-/dev/null}"
   else
-    echo "- Agent: 未安装"
+    echo "- Agent: 未安装" >> "${INSTALL_LOG:-/dev/null}"
   fi
   if [ -x "$INSTALL_DIR/oboard-sb" ]; then
-    echo "- 内核: $($INSTALL_DIR/oboard-sb -version 2>/dev/null | head -n1 || true)"
+    echo "- 内核: $($INSTALL_DIR/oboard-sb -version 2>/dev/null | head -n1 || true)" >> "${INSTALL_LOG:-/dev/null}"
   else
-    echo "- 内核: 未安装"
+    echo "- 内核: 未安装" >> "${INSTALL_LOG:-/dev/null}"
   fi
 }
 
@@ -10636,7 +10663,15 @@ if [ "$OS_VALUE" != linux ] || [ "$ARCH_VALUE" = unsupported ]; then
   echo "当前系统暂不支持：$(uname -s)/$(uname -m)" >&2
   exit 1
 fi
-echo "环境：linux/$ARCH_VALUE 服务管理器=$SERVICE_MANAGER 虚拟化=$VIRT_HINT"
+prepare_install_log
+trap finish_install EXIT
+echo "OBoard Agent"
+echo "------------"
+echo "主控地址：$BASE_URL"
+echo "安装目录：$INSTALL_DIR"
+echo ""
+echo "[1/4] 检查运行环境"
+printf '环境：linux/%s 服务管理器=%s 虚拟化=%s\n' "$ARCH_VALUE" "$SERVICE_MANAGER" "$VIRT_HINT" >> "$INSTALL_LOG"
 ensure_base_tools
 ensure_acme_sh
 fix_hostname_resolution
@@ -10668,22 +10703,19 @@ make_update_tmp() {
 
 download_binaries() {
   need_base_url
-  echo ""
-  echo "[1/4] 准备下载 Agent 组件"
+  echo "[2/4] 下载 Agent 组件"
   tmp=$(make_update_tmp)
-  trap 'rm -rf "$tmp"' EXIT
+  UPDATE_TMP=$tmp
   agent_name="oboard-agent-${OS_VALUE}-${ARCH_VALUE}"
   core_name="oboard-sb-${OS_VALUE}-${ARCH_VALUE}"
   agent_url="${BASE_URL}/downloads/${agent_name}"
   core_url="${BASE_URL}/downloads/${core_name}"
-  echo "- 正在下载 Agent"
   curl -fsSL "$agent_url" -o "$tmp/$agent_name"
-  echo "- 正在下载 oboard-sb 内核"
   curl -fsSL "$core_url" -o "$tmp/$core_name"
-  echo "[2/4] 校验下载文件"
+  echo "[3/4] 校验并安装组件"
   curl -fsSL "${BASE_URL}/downloads/release-manifest.json" -o "$tmp/release-manifest.json"
   curl -fsSL "${BASE_URL}/downloads/release-manifest.json.sig" -o "$tmp/release-manifest.json.sig"
-  verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name"
+  verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name" >> "$INSTALL_LOG" 2>&1
   chmod 0755 "$tmp/$agent_name" "$tmp/$core_name"
   install -d -m 0755 -o root -g root "$INSTALL_DIR"
   # Do not truncate an executable that may currently be running. Write beside it
@@ -10695,7 +10727,6 @@ download_binaries() {
   mv -f "$INSTALL_DIR/oboard-sb.new" "$INSTALL_DIR/oboard-sb"
   rm -f "$INSTALL_DIR/obag"
   ln -s "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/obag"
-  echo "[3/4] Agent 组件已写入 $INSTALL_DIR"
 }
 
 print_management_help() {
@@ -10703,21 +10734,13 @@ print_management_help() {
   management_command=obag
   command -v obag >/dev/null 2>&1 || management_command="$INSTALL_DIR/obag"
   echo ""
-  echo "========================================"
   echo "OBoard Agent $result_title"
-  echo "========================================"
-  echo "以后通过 SSH 登录本机，直接输入以下命令："
-  echo ""
-  echo "  $management_command"
-  echo ""
-  echo "即可打开中文管理菜单，查看状态、控制服务、读取日志和检查主控连接。"
-  echo ""
-  echo "常用快捷命令："
-  echo "  $management_command status       查看运行状态"
-  echo "  $management_command check        检查与主控的连接"
-  echo "  $management_command logs agent   查看 Agent 日志"
-  echo "  $management_command logs core    查看 oboard-sb 日志"
-  echo "========================================"
+  echo "------------------------"
+  echo "管理 Agent：$management_command"
+  echo "查看状态：$management_command status"
+  echo "检查连接：$management_command check"
+  echo "Agent 日志：$management_command logs agent"
+  echo "内核日志：$management_command logs core"
 }
 
 write_systemd_units() {
@@ -10790,9 +10813,9 @@ LimitNOFILE=1048576
 [Install]
 WantedBy=multi-user.target
 UNIT
-  systemctl daemon-reload
-  systemctl enable oboard-sb >/dev/null
-  systemctl enable oboard-agent >/dev/null
+  systemctl daemon-reload >> "$INSTALL_LOG" 2>&1
+  systemctl enable oboard-sb >> "$INSTALL_LOG" 2>&1
+  systemctl enable oboard-agent >> "$INSTALL_LOG" 2>&1
 }
 
 write_openrc_units() {
@@ -10844,8 +10867,8 @@ start_pre() {
 }
 OPENRC
   chmod 0755 /etc/init.d/oboard-sb /etc/init.d/oboard-agent
-  rc-update add oboard-sb default >/dev/null
-  rc-update add oboard-agent default >/dev/null
+  rc-update add oboard-sb default >> "$INSTALL_LOG" 2>&1
+  rc-update add oboard-agent default >> "$INSTALL_LOG" 2>&1
 }
 
 write_units() {
@@ -10861,9 +10884,9 @@ write_units() {
 
 restart_after_install() {
   if [ "$SERVICE_MANAGER" = systemd ]; then
-    systemctl restart oboard-agent
+    systemctl restart oboard-agent >> "$INSTALL_LOG" 2>&1
   elif [ "$SERVICE_MANAGER" = openrc ]; then
-    rc-service oboard-agent restart
+    rc-service oboard-agent restart >> "$INSTALL_LOG" 2>&1
   else
     echo "请手动运行：$INSTALL_DIR/oboard-agent -config $CONFIG_PATH" >&2
   fi
@@ -10871,26 +10894,26 @@ restart_after_install() {
 
 restart_after_update() {
   if [ "$SERVICE_MANAGER" = systemd ]; then
-    systemctl daemon-reload
-    if [ -s "$STATE_DIR/sing-box.json" ]; then systemctl restart oboard-sb || true; fi
-    systemctl restart oboard-agent || true
+    systemctl daemon-reload >> "$INSTALL_LOG" 2>&1
+    if [ -s "$STATE_DIR/sing-box.json" ]; then systemctl restart oboard-sb >> "$INSTALL_LOG" 2>&1 || true; fi
+    systemctl restart oboard-agent >> "$INSTALL_LOG" 2>&1 || true
   elif [ "$SERVICE_MANAGER" = openrc ]; then
-    if [ -s "$STATE_DIR/sing-box.json" ]; then rc-service oboard-sb restart || true; fi
-    rc-service oboard-agent restart || true
+    if [ -s "$STATE_DIR/sing-box.json" ]; then rc-service oboard-sb restart >> "$INSTALL_LOG" 2>&1 || true; fi
+    rc-service oboard-agent restart >> "$INSTALL_LOG" 2>&1 || true
   fi
 }
 
 case "$ACTION" in
   install)
-    echo "正在安装 OBoard Agent，请稍候..."
     need_base_url
     : "${OBOARD_ENROLL_TOKEN:?缺少 OBOARD_ENROLL_TOKEN}"
     download_binaries
     persist_agent_install_dir
     write_units
+    echo "[4/4] 注册并启动 Agent 服务"
     resolve_update_policy
     try_enable_bbr_fq
-    OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$INSTALL_DIR/oboard-agent" \
+    if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$INSTALL_DIR/oboard-agent" \
       -config "$CONFIG_PATH" \
       -controller "$BASE_URL" \
       -state-dir "$STATE_DIR" \
@@ -10899,22 +10922,23 @@ case "$ACTION" in
       -update-source "$UPDATE_SOURCE" \
       -allow-panel-update="$ALLOW_PANEL_UPDATE_BOOL" \
       -update-repo "$UPDATE_REPO" \
-      -enroll-only
+      -enroll-only >> "$INSTALL_LOG" 2>&1; then
+      echo "Agent 未能连接主控完成注册，请确认主控地址和安装令牌后重试。" >&2
+      exit 1
+    fi
     unset OBOARD_ENROLL_TOKEN
     restart_after_install
-    echo "[4/4] Agent 服务已启动"
     verify_installed_versions || true
     print_management_help "安装完成"
     echo "提示：oboard-sb 会在面板首次下发配置后自动启动。"
     ;;
   update)
-    echo "正在更新 OBoard Agent，请稍候..."
     need_base_url
     download_binaries
     persist_agent_install_dir
     write_units
+    echo "[4/4] 刷新 Agent 服务"
     restart_after_update
-    echo "[4/4] Agent 和 oboard-sb 服务已刷新"
     verify_installed_versions || true
     print_management_help "更新完成"
     ;;

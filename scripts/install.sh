@@ -6,7 +6,7 @@ REPO=${OBOARD_REPO:-OboardProject/oboard}
 # Refuse obviously malicious repo values used in download URLs.
 case "$REPO" in
   [A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*) ;;
-  *) echo "OBOARD_REPO must look like owner/name" >&2; exit 1 ;;
+  *) echo "主控更新仓库格式无效，请使用 owner/name 格式。" >&2; exit 1 ;;
 esac
 VERSION_INPUT=${VERSION:-}
 VERSION_VALUE=${VERSION_INPUT:-latest}
@@ -23,6 +23,7 @@ ACTION_INPUT=${OBOARD_ACTION:-}
 ACTION=install
 INSTALLATION_EXISTS=0
 TMP_DIR=
+INSTALL_LOG=
 CONTROLLER_DATA_EXISTED=0
 ADMIN_USERNAME_INPUT=${OBOARD_ADMIN_USERNAME:-}
 ADMIN_PASSWORD_INPUT=${OBOARD_ADMIN_PASSWORD:-}
@@ -177,10 +178,34 @@ resolve_controller_install_dir() {
   ACME_SH_INSTALL_PATH=$INSTALL_DIR/tools/acme.sh
   export CONTROLLER_CONFIG_DIR CONTROLLER_ENV CONTROLLER_DATA_DIR CONTROLLER_WEB_DIR CONTROLLER_DOWNLOADS_DIR ACME_SH_INSTALL_PATH
   [ -s "$CONTROLLER_DATA_DIR/oboard.sqlite" ] && CONTROLLER_DATA_EXISTED=1
-  echo "OBoard 安装根目录：$INSTALL_DIR"
+  return 0
 }
 
-cleanup() { [ -z "$TMP_DIR" ] || rm -rf "$TMP_DIR"; }
+cleanup() {
+  status=$?
+  [ -z "$TMP_DIR" ] || rm -rf "$TMP_DIR"
+  if [ "$status" -ne 0 ] && [ -n "$INSTALL_LOG" ] && [ -f "$INSTALL_LOG" ]; then
+    echo "" >&2
+    echo "OBoard 主控操作未完成。" >&2
+    echo "请根据上方提示处理后重试；详细日志：$INSTALL_LOG" >&2
+  fi
+  trap - EXIT
+  exit "$status"
+}
+
+prepare_install_log() {
+  local log_dir log_tmp
+  INSTALL_LOG=${OBOARD_INSTALL_LOG:-$CONTROLLER_DATA_DIR/logs/install.log}
+  case "$INSTALL_LOG" in
+    */*) log_dir=${INSTALL_LOG%/*}; [ -n "$log_dir" ] || log_dir=/ ;;
+    *) log_dir=. ;;
+  esac
+  mkdir -p "$log_dir"
+  [ "$log_dir" != "$CONTROLLER_DATA_DIR/logs" ] || chmod 0700 "$log_dir"
+  log_tmp=$(mktemp "$log_dir/.oboard-install-log.XXXXXX")
+  chmod 0600 "$log_tmp"
+  mv -f "$log_tmp" "$INSTALL_LOG"
+}
 
 drain_piped_script() {
   if [ ! -t 0 ]; then
@@ -196,25 +221,26 @@ need_root() {
 }
 
 pkg_install() {
+  local log_file=${INSTALL_LOG:-/dev/null}
   if [ "$#" -eq 0 ]; then
     return 0
   fi
   if command -v apk >/dev/null 2>&1; then
-    apk add --no-cache "$@"
+    apk add --no-cache "$@" >> "$log_file" 2>&1
   elif command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y
-    apt-get install -y --no-install-recommends "$@"
+    apt-get update -y >> "$log_file" 2>&1
+    apt-get install -y --no-install-recommends "$@" >> "$log_file" 2>&1
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y "$@"
+    dnf install -y "$@" >> "$log_file" 2>&1
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y "$@"
+    yum install -y "$@" >> "$log_file" 2>&1
   elif command -v microdnf >/dev/null 2>&1; then
-    microdnf install -y "$@"
+    microdnf install -y "$@" >> "$log_file" 2>&1
   elif command -v zypper >/dev/null 2>&1; then
-    zypper --non-interactive install -y "$@"
+    zypper --non-interactive install -y "$@" >> "$log_file" 2>&1
   elif command -v pacman >/dev/null 2>&1; then
-    pacman -Sy --noconfirm "$@"
+    pacman -Sy --noconfirm "$@" >> "$log_file" 2>&1
   else
     echo "未找到支持的包管理器，无法自动安装：$*" >&2
     return 1
@@ -239,7 +265,7 @@ ensure_base_tools() {
   if [ "$need_curl$need_ca$need_tar$need_sha$need_install" = "00000" ]; then
     return 0
   fi
-  echo "正在安装所需组件（curl / CA 证书 / tar / 校验工具 / install）..."
+  echo "  正在补齐系统所需组件..."
   packages=""
   [ "$need_curl" = 1 ] && packages="$packages curl"
   [ "$need_ca" = 1 ] && packages="$packages ca-certificates"
@@ -307,7 +333,7 @@ ensure_acme_sh() {
   command -v openssl >/dev/null 2>&1 || packages="$packages openssl"
   command -v socat >/dev/null 2>&1 || packages="$packages socat"
   if [ -n "$packages" ]; then
-    echo "正在安装证书签发依赖（openssl / socat）..."
+    echo "  正在准备证书签发组件..."
     # shellcheck disable=SC2086
     if ! pkg_install $packages; then
       echo "证书签发依赖安装失败，请手动安装 openssl 和 socat 后重试。" >&2
@@ -325,7 +351,7 @@ ensure_acme_sh() {
       return 0
     fi
   fi
-  echo "正在安装经过校验的 acme.sh $ACME_SH_VERSION..."
+  echo "  正在准备证书签发工具..."
   if ! install_pinned_acme_sh || [ ! -x "$ACME_SH_INSTALL_PATH" ]; then
     echo "acme.sh 安装失败。" >&2
     exit 1
@@ -702,10 +728,11 @@ print_controller_urls() {
 }
 
 print_controller_help() {
+  local result_title=安装完成
+  [ "$ACTION" = update ] && result_title=更新完成
   echo ""
-  echo "========================================"
-  echo "OBoard 主控安装 / 更新完成"
-  echo "========================================"
+  echo "OBoard 主控$result_title"
+  echo "------------------------"
   echo "安装根目录：$INSTALL_DIR"
   echo "面板地址："
   print_controller_urls
@@ -726,12 +753,11 @@ print_controller_help() {
     echo ""
     echo "未识别服务管理器，请手动启动 oboard-controller。"
   fi
-  echo "========================================"
 }
 
 install_agent_from_controller() {
   local action=${OBOARD_AGENT_ACTION:-install}
-  local controller_url=${OBOARD_CONTROLLER_URL:-}
+  local controller_url=${OBOARD_CONTROLLER_URL:-} agent_script
   if [ -z "$controller_url" ]; then
     controller_url=$(controller_agent_url)
   fi
@@ -742,14 +768,15 @@ install_agent_from_controller() {
     echo "Controller 与 Agent 可以安装在同一台机器上，不会互相覆盖。" >&2
     exit 1
   fi
-  echo ""
-  echo "OBoard Agent 独立安装"
-  echo "===================="
-  echo "主控地址：$controller_url"
+  agent_script="$TMP_DIR/agent-install.sh"
+  if ! curl -fsSL "$controller_url/install/agent.sh" -o "$agent_script"; then
+    echo "无法从主控下载安装程序，请确认主控地址和网络连接后重试。" >&2
+    return 1
+  fi
   if [ "$action" = update ]; then
-    curl -fsSL "$controller_url/install/agent.sh" | sh -s -- update
+    OBOARD_ACTION=update OBOARD_CONTROLLER_URL="$controller_url" sh "$agent_script"
   else
-    curl -fsSL "$controller_url/install/agent.sh" | OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" sh
+    OBOARD_ACTION=install OBOARD_CONTROLLER_URL="$controller_url" OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" sh "$agent_script"
   fi
 }
 
@@ -849,12 +876,12 @@ verify_checksum() {
     exit 1
   fi
   if command -v sha256sum >/dev/null 2>&1; then
-    if ! (cd "$TMP_DIR" && sha256sum -c "$name.sha256"); then
+    if ! (cd "$TMP_DIR" && sha256sum -c "$name.sha256" >> "$INSTALL_LOG" 2>&1); then
       echo "安装包校验失败，请重新下载安装。" >&2
       exit 1
     fi
   elif command -v shasum >/dev/null 2>&1; then
-    if ! (cd "$TMP_DIR" && shasum -a 256 -c "$name.sha256"); then
+    if ! (cd "$TMP_DIR" && shasum -a 256 -c "$name.sha256" >> "$INSTALL_LOG" 2>&1); then
       echo "安装包校验失败，请重新下载安装。" >&2
       exit 1
     fi
@@ -877,11 +904,11 @@ wait_for_controller_updater() {
   done
   echo "主控更新器未就绪：无法通过 /run/oboard/controller-updater.sock 访问状态接口。" >&2
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl --no-pager --full status oboard-controller-updater >&2 || true
-    journalctl -u oboard-controller-updater -n 40 --no-pager >&2 || true
+    systemctl --no-pager --full status oboard-controller-updater >> "$INSTALL_LOG" 2>&1 || true
+    journalctl -u oboard-controller-updater -n 40 --no-pager >> "$INSTALL_LOG" 2>&1 || true
   elif command -v rc-service >/dev/null 2>&1; then
-    rc-service oboard-controller-updater status >&2 || true
-    [ ! -f /var/log/oboard-controller-updater.log ] || tail -n 40 /var/log/oboard-controller-updater.log >&2 || true
+    rc-service oboard-controller-updater status >> "$INSTALL_LOG" 2>&1 || true
+    [ ! -f /var/log/oboard-controller-updater.log ] || tail -n 40 /var/log/oboard-controller-updater.log >> "$INSTALL_LOG" 2>&1 || true
   fi
   return 1
 }
@@ -919,8 +946,7 @@ start_controller_systemd() {
     echo "已按 OBOARD_START_SERVICE=0 跳过主控启动。" >&2
     return 0
   fi
-  systemctl restart oboard-controller
-  echo "主控服务已启动。"
+  systemctl restart oboard-controller >> "$INSTALL_LOG" 2>&1
 }
 
 start_controller_openrc() {
@@ -928,8 +954,7 @@ start_controller_openrc() {
     echo "已按 OBOARD_START_SERVICE=0 跳过主控启动。" >&2
     return 0
   fi
-  rc-service oboard-controller restart
-  echo "主控服务已启动。"
+  rc-service oboard-controller restart >> "$INSTALL_LOG" 2>&1
 }
 
 resolve_purge_data() {
@@ -1002,7 +1027,7 @@ uninstall_controller() {
     /etc/init.d/oboard-controller \
     /etc/init.d/oboard-controller-updater
   if [ "$service_manager" = systemd ]; then
-    systemctl daemon-reload
+    systemctl daemon-reload >/dev/null 2>&1
     systemctl reset-failed oboard-controller.service oboard-controller-updater.service >/dev/null 2>&1 || true
   fi
   rm -f "$INSTALL_DIR/oboard-controller" \
@@ -1080,19 +1105,18 @@ install_component() {
   local url="https://github.com/$REPO/releases/download/$release_tag/$archive"
   local work="$TMP_DIR/$component"
 
-  echo ""
-  echo "[1/4] 下载 OBoard $component $version"
+  echo "[2/4] 下载主控安装包"
   mkdir -p "$work"
   if ! download_file "$url" "$TMP_DIR/$archive"; then
     echo "安装包下载失败：$archive" >&2
     echo "请检查服务器是否可以访问 GitHub，然后稍后重试。" >&2
     return 1
   fi
-  echo "[2/4] 校验安装包"
+  echo "[3/4] 校验安装包"
   verify_checksum "$TMP_DIR/$archive" "$version" "$archive"
   verify_archive_paths "$TMP_DIR/$archive"
-  tar -xzf "$TMP_DIR/$archive" -C "$work"
-  echo "[3/4] 安装程序文件"
+  tar -xzf "$TMP_DIR/$archive" -C "$work" >> "$INSTALL_LOG" 2>&1
+  echo "[4/4] 配置并启动主控服务"
   install -d -m 0755 -o root -g root "$INSTALL_DIR"
   install_file_atomic "$work/bin/oboard-$component" "$INSTALL_DIR/oboard-$component" 0755
   if [ "$component" = controller ]; then
@@ -1120,24 +1144,24 @@ install_component() {
         render_service_file "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/oboard-controller.service
         render_service_file "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/oboard-controller-updater.service
         prepare_controller_updater_runtime
-        systemctl daemon-reload
-        systemctl enable oboard-controller-updater
-        systemctl restart oboard-controller-updater
+        systemctl daemon-reload >> "$INSTALL_LOG" 2>&1
+        systemctl enable oboard-controller-updater >> "$INSTALL_LOG" 2>&1
+        systemctl restart oboard-controller-updater >> "$INSTALL_LOG" 2>&1
         wait_for_controller_updater
-        systemctl enable oboard-controller
+        systemctl enable oboard-controller >> "$INSTALL_LOG" 2>&1
         start_controller_systemd
         clear_bootstrap_admin_password
         ;;
       agent)
         install -d -m 0700 /etc/oboard-agent /var/lib/oboard-agent
         cp "$work/deploy/systemd/oboard-agent.service" /etc/systemd/system/
-        systemctl daemon-reload
-        systemctl enable oboard-agent
+        systemctl daemon-reload >> "$INSTALL_LOG" 2>&1
+        systemctl enable oboard-agent >> "$INSTALL_LOG" 2>&1
         ;;
       sb)
         cp "$work/deploy/systemd/oboard-sb.service" /etc/systemd/system/
-        systemctl daemon-reload
-        systemctl enable oboard-sb
+        systemctl daemon-reload >> "$INSTALL_LOG" 2>&1
+        systemctl enable oboard-sb >> "$INSTALL_LOG" 2>&1
         ;;
     esac
   elif [ "$os" = linux ] && [ "$service_manager" = openrc ] && [ -d "$work/deploy/openrc" ]; then
@@ -1161,10 +1185,10 @@ install_component() {
         render_service_file "$work/deploy/openrc/oboard-controller" /etc/init.d/oboard-controller 0755
         render_service_file "$work/deploy/openrc/oboard-controller-updater" /etc/init.d/oboard-controller-updater 0755
         prepare_controller_updater_runtime
-        rc-update add oboard-controller-updater default
-        rc-service oboard-controller-updater restart
+        rc-update add oboard-controller-updater default >> "$INSTALL_LOG" 2>&1
+        rc-service oboard-controller-updater restart >> "$INSTALL_LOG" 2>&1
         wait_for_controller_updater
-        rc-update add oboard-controller default
+        rc-update add oboard-controller default >> "$INSTALL_LOG" 2>&1
         start_controller_openrc
         clear_bootstrap_admin_password
         ;;
@@ -1172,17 +1196,17 @@ install_component() {
         install -d -m 0700 /etc/oboard-agent /var/lib/oboard-agent
         cp "$work/deploy/openrc/oboard-agent" /etc/init.d/oboard-agent
         chmod 0755 /etc/init.d/oboard-agent
-        rc-update add oboard-agent default
+        rc-update add oboard-agent default >> "$INSTALL_LOG" 2>&1
         ;;
       sb)
         install -d -m 0700 /var/lib/oboard-agent
         cp "$work/deploy/openrc/oboard-sb" /etc/init.d/oboard-sb
         chmod 0755 /etc/init.d/oboard-sb
-        rc-update add oboard-sb default
+        rc-update add oboard-sb default >> "$INSTALL_LOG" 2>&1
         ;;
     esac
   elif [ "$os" = linux ]; then
-    echo "==> Installed binary only: no supported service manager detected. Debian/Ubuntu use systemd; Alpine uses OpenRC." >&2
+    echo "未识别可用的服务管理器，目前只安装了程序文件；请手动配置并启动服务。" >&2
   fi
 }
 
@@ -1213,35 +1237,39 @@ fi
 
 TMP_DIR=$(make_install_tmp)
 trap cleanup EXIT
-
-echo "OBoard 安装程序"
-echo "==============="
 case "$COMPONENT" in
   controller|controller-agent|all)
+    prepare_install_log
+    echo "OBoard 主控"
+    echo "-----------"
     if [ "$ACTION" = update ]; then
-      echo "检测到已安装的二进制主控，将保留现有数据和设置并更新。"
+      echo "正在更新，现有账号、配置和数据将保留。"
     else
-      echo "正在安装 OBoard 主控。"
+      echo "正在开始安装。"
     fi
+    echo "安装目录：$INSTALL_DIR"
+    echo ""
+    echo "[1/4] 检查运行环境"
     ;;
+  *) INSTALL_LOG="$TMP_DIR/bootstrap.log" ;;
 esac
 OS_VALUE=$(detect_os)
 ARCH_VALUE=$(detect_arch)
 DISTRO_VALUE=$(detect_distro)
 SERVICE_MANAGER=$(detect_service_manager)
 VIRT_HINT=$(detect_virt_hint)
-echo "系统：$DISTRO_VALUE / $ARCH_VALUE / $SERVICE_MANAGER / virt=$VIRT_HINT"
+printf '系统：%s / %s / %s / %s\n' "$DISTRO_VALUE" "$ARCH_VALUE" "$SERVICE_MANAGER" "$VIRT_HINT" >> "$INSTALL_LOG"
 if [ "$OS_VALUE" = unsupported ] || [ "$ARCH_VALUE" = unsupported ]; then
-  echo "Unsupported platform: $(uname -s)/$(uname -m)" >&2
+  echo "当前系统架构暂不支持：$(uname -s)/$(uname -m)" >&2
   exit 1
 fi
 if [ "$OS_VALUE" != linux ]; then
-  echo "OBoard production packages support Linux only. Detected: $(uname -s)" >&2
+  echo "OBoard 主控仅支持 Linux，当前系统为 $(uname -s)。" >&2
   exit 1
 fi
 case "$DISTRO_VALUE" in
   debian|ubuntu|alpine|centos|rhel|rocky|almalinux|fedora|amzn|ol|opensuse*|sles|arch|manjaro|linux) ;;
-  *) echo "==> Distro $DISTRO_VALUE is not a primary target; continuing with generic Linux service detection." >&2 ;;
+  *) echo "当前 Linux 发行版不在主要支持列表中，将尝试使用通用方式安装。" ;;
 esac
 ensure_base_tools
 
@@ -1270,7 +1298,7 @@ if [ -z "$VERSION_VALUE" ]; then
   exit 1
 fi
 VERSION_VALUE=${VERSION_VALUE#v}
-echo "目标：$COMPONENT $VERSION_VALUE"
+printf '目标版本：%s %s\n' "$COMPONENT" "$VERSION_VALUE" >> "$INSTALL_LOG"
 
 case "$COMPONENT" in
   controller)
@@ -1296,7 +1324,6 @@ case "$COMPONENT" in
     ;;
 esac
 
-echo "[4/4] OBoard $COMPONENT $VERSION_VALUE 已安装"
 case "$COMPONENT" in
   controller|controller-agent|all) print_controller_help ;;
 esac

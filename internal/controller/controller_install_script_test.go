@@ -26,7 +26,7 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 	for _, want := range []string{
 		"#!/bin/sh",
 		`COMPONENT=${COMPONENT:-${1:-controller}}`,
-		"OBoard 主控安装 / 更新完成",
+		`echo "OBoard 主控$result_title"`,
 		"面板地址",
 		"设置超级管理员",
 		"超级管理员账号：",
@@ -90,6 +90,11 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"当前无法交互确认，已保留",
 		"当前暂无可用的稳定版，将安装最新开发版",
 		"安装包下载失败",
+		"[1/4] 检查运行环境",
+		"[2/4] 下载主控安装包",
+		"[3/4] 校验安装包",
+		"[4/4] 配置并启动主控服务",
+		"详细日志：$INSTALL_LOG",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("controller installer missing %q", want)
