@@ -341,6 +341,9 @@ func TestTransparentPortForwardMovesUserProtocolToProcessingServer(t *testing.T)
 	if forward.ListenPort != 55778 || forward.TargetPort != 557 || forward.Protocol != model.ForwardProtocolTCP {
 		t.Fatalf("forward = %#v, want YT:55778 TCP -> WAWO:557", forward)
 	}
+	if forward.TrustedForward == nil || forward.TrustedForward.Version != 1 || forward.TrustedForward.Key == "" {
+		t.Fatalf("transparent entry forward omitted trusted sender: %#v", forward)
+	}
 
 	configB := mustServerConfig(t, serverB, []model.Inbound{rootInbound}, []model.User{user}, opts)
 	var parsedB SingBoxConfig
@@ -355,8 +358,15 @@ func TestTransparentPortForwardMovesUserProtocolToProcessingServer(t *testing.T)
 			break
 		}
 	}
-	if processing == nil || processing["type"] != "vless" || intFromAny(processing["listen_port"]) != 557 {
-		t.Fatalf("processing server missing cloned VLESS inbound on 557: %s", configB)
+	if processing == nil || processing["type"] != "vless" || processing["listen"] != "127.0.0.1" || intFromAny(processing["listen_port"]) == 557 {
+		t.Fatalf("processing server missing loopback-only cloned VLESS inbound: %s", configB)
+	}
+	if parsedB.OBoard == nil || parsedB.OBoard.TrustedForward == nil || len(parsedB.OBoard.TrustedForward.Receivers) != 1 {
+		t.Fatalf("processing server missing trusted receiver: %s", configB)
+	}
+	receiver := parsedB.OBoard.TrustedForward.Receivers[0]
+	if receiver.ListenPort != forward.TargetPort || receiver.TargetPort != intFromAny(processing["listen_port"]) || receiver.Key != forward.TrustedForward.Key {
+		t.Fatalf("trusted receiver does not bridge forward to processing inbound: receiver=%#v forward=%#v inbound=%#v", receiver, forward, processing)
 	}
 	tls, _ := processing["tls"].(map[string]any)
 	reality, _ := tls["reality"].(map[string]any)
@@ -458,19 +468,29 @@ func TestTransparentProcessingClonesEverySupportedInboundProtocol(t *testing.T) 
 			if len(plans[0].PortForwards) != 1 || plans[0].PortForwards[0].Protocol != tc.wantForward {
 				t.Fatalf("forward plan = %#v, want protocol %s", plans[0].PortForwards, tc.wantForward)
 			}
+			if plans[0].PortForwards[0].TrustedForward == nil {
+				t.Fatalf("forward plan omitted trusted sender: %#v", plans[0].PortForwards)
+			}
 			targetConfig := parseSingBoxConfig(t, mustServerConfig(t, target, []model.Inbound{root}, []model.User{user}, opts))
 			processingTag := proxyPathInternalInboundTag(path.ID, step.Position)
 			found := false
 			for _, inbound := range targetConfig.Inbounds {
 				if inbound["tag"] == processingTag {
 					found = true
-					if inbound["type"] != tc.wantType || intFromAny(inbound["listen_port"]) != plans[0].PortForwards[0].TargetPort {
+					if inbound["type"] != tc.wantType || inbound["listen"] != "127.0.0.1" || intFromAny(inbound["listen_port"]) == plans[0].PortForwards[0].TargetPort {
 						t.Fatalf("processing inbound = %#v", inbound)
 					}
 				}
 			}
 			if !found {
 				t.Fatalf("target missing processing inbound %s: %#v", processingTag, targetConfig.Inbounds)
+			}
+			if targetConfig.OBoard == nil || targetConfig.OBoard.TrustedForward == nil || len(targetConfig.OBoard.TrustedForward.Receivers) != 1 {
+				t.Fatalf("target missing trusted receiver: %#v", targetConfig.OBoard)
+			}
+			receiver := targetConfig.OBoard.TrustedForward.Receivers[0]
+			if receiver.Network != string(tc.wantForward) || receiver.ListenPort != plans[0].PortForwards[0].TargetPort || receiver.Key != plans[0].PortForwards[0].TrustedForward.Key {
+				t.Fatalf("trusted receiver = %#v, forward = %#v", receiver, plans[0].PortForwards[0])
 			}
 		})
 	}

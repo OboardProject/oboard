@@ -38,6 +38,16 @@ func proxyPathTunnelKeyMaterial(source, target model.Server, reuseKey, label str
 	return mac.Sum(nil)
 }
 
+func proxyPathTrustedForwardKey(source, target model.Server, pathID, processingStepID int64) string {
+	reuseKey := fmt.Sprintf("%d:%d", pathID, processingStepID)
+	material := proxyPathTunnelKeyMaterial(source, target, reuseKey, "trusted-forward-v1")
+	return base64.RawStdEncoding.EncodeToString(material[:32])
+}
+
+func proxyPathTrustedForwardReceiverID(pathID, processingStepID int64) string {
+	return fmt.Sprintf("path-%d-step-%d", pathID, processingStepID)
+}
+
 func proxyPathSSHKeyPair(source, target model.Server, reuseKey string) (string, string, error) {
 	seed := proxyPathTunnelKeyMaterial(source, target, reuseKey, "ssh-ed25519")
 	privateKey := ed25519.NewKeyFromSeed(seed[:ed25519.SeedSize])

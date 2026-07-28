@@ -2182,6 +2182,7 @@ func (s *Server) serverTasks(w http.ResponseWriter, r *http.Request, id int64) {
 
 const (
 	agentBuildMinDiagnosticsTask = "20260706000116"
+	agentBuildMinTrustedForward  = "20260729000000"
 	// Pending and running tasks both expire after 5 minutes so the panel does
 	// not keep "waiting" forever for dead Agents or stuck executions.
 	agentTaskPendingTimeout = 5 * time.Minute
@@ -2861,9 +2862,10 @@ func scrubManagedTunnelSecretsValue(value any) {
 	switch node := value.(type) {
 	case map[string]any:
 		wireGuardConfig := strings.EqualFold(strings.TrimSpace(fmt.Sprint(node["type"])), string(model.TunnelTypeWireGuard))
+		trustedForwardConfig := node["max_clock_skew_seconds"] != nil && (node["receiver_id"] != nil || node["target_port"] != nil)
 		for key, child := range node {
 			lowerKey := strings.ToLower(key)
-			if secretKeys[lowerKey] || (wireGuardConfig && (lowerKey == "private_key" || lowerKey == "peer_public_key")) {
+			if secretKeys[lowerKey] || (wireGuardConfig && (lowerKey == "private_key" || lowerKey == "peer_public_key")) || (trustedForwardConfig && lowerKey == "key") {
 				node[key] = "<redacted>"
 				continue
 			}
@@ -2917,6 +2919,9 @@ func publicProxyPathSteps(steps []model.ProxyPathStep) []model.ProxyPathStep {
 }
 
 func publicProxyPathPlan(plan model.ProxyPathPlan) model.ProxyPathPlan {
+	for i := range plan.PortForwards {
+		plan.PortForwards[i].TrustedForward = nil
+	}
 	for i := range plan.Tunnels {
 		plan.Tunnels[i].ConfigJSON = scrubManagedTunnelSecretsJSON(plan.Tunnels[i].ConfigJSON)
 	}
@@ -8102,6 +8107,7 @@ func normalizePortForward(v *model.PortForward) {
 	if v.ConfigJSON == "" {
 		v.ConfigJSON = "{}"
 	}
+	v.TrustedForward = nil
 }
 
 func validatePortForward(v model.PortForward) error {
@@ -8375,6 +8381,15 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	resolveRoutingProxyPathNames(&data)
 	servers, in := data.Servers, data.Inbounds
+	trustedServers := core.TrustedForwardServerIDs(data.ProxyPaths, data.ProxyPathSteps, in)
+	if err := validateTrustedForwardAgentBuilds(servers, trustedServers); err != nil {
+		fail(w, err, http.StatusConflict)
+		return
+	}
+	if err := validateTrustedForwardDeploymentScope(request.ServerID, trustedServers); err != nil {
+		fail(w, err, http.StatusConflict)
+		return
+	}
 	forwards, err := s.store.ListPortForwards(r.Context())
 	if err != nil {
 		fail(w, err, 500)
@@ -8582,6 +8597,22 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	auditReq(s, r, "apply", "deployment", fmt.Sprint(version))
 	write(w, 202, map[string]any{"config_version": version, "tasks": sanitizeTasksForRole(tasks, currentRole(r)), "summary": taskSummary(tasks)})
+}
+
+func validateTrustedForwardAgentBuilds(servers []model.Server, required map[int64]bool) error {
+	for _, server := range servers {
+		if required[server.ID] && !agentBuildSupportsTask(server.AgentBuild, agentBuildMinTrustedForward) {
+			return fmt.Errorf("服务器 %s 的 Agent 不支持可信透明转发；请先更新所有相关 Agent 后重试", server.Name)
+		}
+	}
+	return nil
+}
+
+func validateTrustedForwardDeploymentScope(selectedServerID int64, required map[int64]bool) error {
+	if selectedServerID != 0 && required[selectedServerID] {
+		return errors.New("可信透明转发涉及多台服务器；请执行完整部署，不能仅部署其中一台服务器")
+	}
+	return nil
 }
 
 // buildSSHInboundPlan turns the regular inbound permissions into a dedicated
@@ -8854,6 +8885,11 @@ type generatedServerCoreConfig struct {
 	TrafficPolicies map[int64]model.TrafficRuntimePolicy
 }
 
+type trustedForwardDeploymentFootprint struct {
+	Senders   []string `json:"senders,omitempty"`
+	Receivers []string `json:"receivers,omitempty"`
+}
+
 // deploymentConfigErrorStatus separates desired state the operator can correct
 // from genuine server faults, so a listener conflict does not surface as a 500.
 func deploymentConfigErrorStatus(err error) int {
@@ -8913,7 +8949,8 @@ func (s *Server) queueCoreConfigRefreshForUserRemoval(ctx context.Context, userI
 	if err != nil {
 		return err
 	}
-	version, err := s.store.NextConfigVersion(ctx)
+	ledger := core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
+	derivedForwards, err := core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger)
 	if err != nil {
 		return err
 	}
@@ -8926,12 +8963,33 @@ func (s *Server) queueCoreConfigRefreshForUserRemoval(ctx context.Context, userI
 		if strings.TrimSpace(server.AgentID) == "" {
 			continue
 		}
-		generated, err := s.generateServerCoreConfig(ctx, server, data)
+		generated, err := s.generateServerCoreConfigWithLedger(ctx, server, data, ledger)
 		if err != nil {
+			return err
+		}
+		unchanged, err := s.serverConfigUnchanged(ctx, server.ID, generated.Config)
+		if err != nil {
+			return err
+		}
+		if unchanged {
+			continue
+		}
+		forwardPlan, err := core.BuildPortForwardPlan(0, server, data.Servers, derivedForwards)
+		if err != nil {
+			return err
+		}
+		if err := s.requireTrustedForwardDeploymentBaseline(ctx, server, generated.Config, forwardPlan); err != nil {
 			return err
 		}
 		payload := model.ApplyCoreConfigTaskPayload{Config: generated.Config, Reason: reason, PrunedUserID: userID, Assets: generated.Assets}
 		prepared = append(prepared, preparedCoreRefresh{serverID: server.ID, payload: payload})
+	}
+	if len(prepared) == 0 {
+		return nil
+	}
+	version, err := s.store.NextConfigVersion(ctx)
+	if err != nil {
+		return err
 	}
 	for _, item := range prepared {
 		if _, err := s.queueAgentTask(ctx, item.serverID, model.AgentTaskTypeApplyCoreConfig, item.payload, version); err != nil {
@@ -8939,6 +8997,87 @@ func (s *Server) queueCoreConfigRefreshForUserRemoval(ctx context.Context, userI
 		}
 	}
 	return nil
+}
+
+func (s *Server) requireTrustedForwardDeploymentBaseline(ctx context.Context, server model.Server, config string, forwardPlan model.PortForwardPlan) error {
+	expected, required, err := trustedForwardFootprint(config, forwardPlan)
+	if err != nil || !required {
+		return err
+	}
+	last, err := s.store.LastSuccessfulTaskByServerType(ctx, server.ID, model.AgentTaskTypeApplyDeployment)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("服务器 %s 的可信透明转发尚未完成首次完整部署；请先执行完整部署", server.Name)
+		}
+		return err
+	}
+	var payload model.DeploymentTaskPayload
+	if err := json.Unmarshal([]byte(last.PayloadJSON), &payload); err != nil {
+		return fmt.Errorf("服务器 %s 的可信透明转发缺少有效的完整部署基线；请重新执行完整部署", server.Name)
+	}
+	actual, _, err := trustedForwardFootprint(payload.Config.Config, payload.PortForwards)
+	if err != nil || actual != expected {
+		return fmt.Errorf("服务器 %s 的可信透明转发已变更；请先执行完整部署再刷新核心配置", server.Name)
+	}
+	return nil
+}
+
+func trustedForwardFootprint(config string, forwardPlan model.PortForwardPlan) (string, bool, error) {
+	footprint := trustedForwardDeploymentFootprint{}
+	for _, rule := range forwardPlan.Rules {
+		if rule.TrustedForward == nil {
+			continue
+		}
+		signature, err := json.Marshal(struct {
+			RuleID        int64                       `json:"rule_id"`
+			ListenIP      string                      `json:"listen_ip"`
+			ListenPort    int                         `json:"listen_port"`
+			TargetAddress string                      `json:"target_address"`
+			TargetPort    int                         `json:"target_port"`
+			Protocol      model.ForwardProtocol       `json:"protocol"`
+			Sender        *model.TrustedForwardSender `json:"sender"`
+		}{rule.ID, rule.ListenIP, rule.ListenPort, rule.TargetAddress, rule.TargetPort, rule.Protocol, rule.TrustedForward})
+		if err != nil {
+			return "", false, err
+		}
+		footprint.Senders = append(footprint.Senders, string(signature))
+	}
+	if strings.TrimSpace(config) != "" {
+		var runtime struct {
+			OBoard struct {
+				TrustedForward struct {
+					Receivers []struct {
+						Version             int    `json:"version"`
+						ID                  string `json:"id"`
+						PathID              int64  `json:"path_id"`
+						InboundTag          string `json:"inbound_tag"`
+						Network             string `json:"network"`
+						Listen              string `json:"listen"`
+						ListenPort          int    `json:"listen_port"`
+						Target              string `json:"target"`
+						TargetPort          int    `json:"target_port"`
+						Key                 string `json:"key"`
+						MaxClockSkewSeconds int    `json:"max_clock_skew_seconds"`
+					} `json:"receivers"`
+				} `json:"trusted_forward"`
+			} `json:"_oboard"`
+		}
+		if err := json.Unmarshal([]byte(config), &runtime); err != nil {
+			return "", false, err
+		}
+		for _, receiver := range runtime.OBoard.TrustedForward.Receivers {
+			signature, err := json.Marshal(receiver)
+			if err != nil {
+				return "", false, err
+			}
+			footprint.Receivers = append(footprint.Receivers, string(signature))
+		}
+	}
+	sort.Strings(footprint.Senders)
+	sort.Strings(footprint.Receivers)
+	required := len(footprint.Senders) > 0 || len(footprint.Receivers) > 0
+	encoded, err := json.Marshal(footprint)
+	return string(encoded), required, err
 }
 
 func findWARPProfile(items []model.WARPProfile, id int64) (model.WARPProfile, bool) {
@@ -9766,7 +9905,12 @@ func (s *Server) queueDNSBenchmarkCoreApply(ctx context.Context, server model.Se
 	if err != nil {
 		return err
 	}
-	generated, err := s.generateServerCoreConfig(ctx, server, data)
+	ledger := core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
+	derivedForwards, err := core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger)
+	if err != nil {
+		return err
+	}
+	generated, err := s.generateServerCoreConfigWithLedger(ctx, server, data, ledger)
 	if err != nil {
 		return err
 	}
@@ -9776,6 +9920,13 @@ func (s *Server) queueDNSBenchmarkCoreApply(ctx context.Context, server model.Se
 	}
 	if unchanged {
 		return s.store.UpdateDNSBenchmarkRunApply(ctx, requestID, nil, "applied", "")
+	}
+	forwardPlan, err := core.BuildPortForwardPlan(0, server, data.Servers, derivedForwards)
+	if err != nil {
+		return err
+	}
+	if err := s.requireTrustedForwardDeploymentBaseline(ctx, server, generated.Config, forwardPlan); err != nil {
+		return err
 	}
 	version, err := s.store.NextConfigVersion(ctx)
 	if err != nil {

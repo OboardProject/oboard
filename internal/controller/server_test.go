@@ -2621,3 +2621,67 @@ func TestDeploymentPersistsAndReusesGeneratedPorts(t *testing.T) {
 		t.Fatalf("allocation survived removal of its only consumer: %#v", released)
 	}
 }
+
+func TestTrustedForwardAgentBuildGateAndSecretScrubbing(t *testing.T) {
+	servers := []model.Server{
+		{ID: 1, Name: "entry", AgentBuild: agentBuildMinTrustedForward},
+		{ID: 2, Name: "processor", AgentBuild: "20260728000000"},
+	}
+	if err := validateTrustedForwardAgentBuilds(servers, map[int64]bool{1: true, 2: true}); err == nil {
+		t.Fatal("old processing Agent passed trusted-forward build gate")
+	}
+	servers[1].AgentBuild = agentBuildMinTrustedForward
+	if err := validateTrustedForwardAgentBuilds(servers, map[int64]bool{1: true, 2: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTrustedForwardDeploymentScope(1, map[int64]bool{1: true, 2: true}); err == nil {
+		t.Fatal("single-server deployment was allowed for a trusted transparent prefix")
+	}
+	if err := validateTrustedForwardDeploymentScope(3, map[int64]bool{1: true, 2: true}); err != nil {
+		t.Fatalf("unrelated single-server deployment was rejected: %v", err)
+	}
+	if err := validateTrustedForwardDeploymentScope(0, map[int64]bool{1: true, 2: true}); err != nil {
+		t.Fatalf("full deployment was rejected: %v", err)
+	}
+
+	raw := `{"port_forwards":{"rules":[{"trusted_forward":{"version":1,"receiver_id":"one","key":"sender-secret","max_clock_skew_seconds":120}}]},"config":"{\"_oboard\":{\"trusted_forward\":{\"receivers\":[{\"version\":1,\"id\":\"one\",\"target_port\":1234,\"key\":\"receiver-secret\",\"max_clock_skew_seconds\":120}]}}}"}`
+	scrubbed := scrubManagedTunnelSecretsJSON(raw)
+	if strings.Contains(scrubbed, "sender-secret") || strings.Contains(scrubbed, "receiver-secret") || strings.Count(scrubbed, "redacted") < 2 {
+		t.Fatalf("trusted-forward secrets were not scrubbed: %s", scrubbed)
+	}
+}
+
+func TestTrustedForwardCoreRefreshRequiresMatchingFullDeployment(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "entry", AgentID: "agent-1", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	sender := &model.TrustedForwardSender{Version: 1, ReceiverID: "path-1", Key: "0123456789012345678901234567890123456789012", MaxClockSkewSeconds: 120}
+	plan := model.PortForwardPlan{Rules: []model.PortForward{{ID: -1, ListenIP: "0.0.0.0", ListenPort: 443, TargetAddress: "203.0.113.2", TargetPort: 31000, Protocol: model.ForwardProtocolTCP, TrustedForward: sender}}}
+	srv := newTestServer(db, "test-secret", "")
+	if err := srv.requireTrustedForwardDeploymentBaseline(ctx, *server, `{}`, plan); err == nil {
+		t.Fatal("trusted core refresh passed without a full deployment baseline")
+	}
+	payload, err := json.Marshal(model.DeploymentTaskPayload{Config: model.ApplyCoreConfigTaskPayload{Config: `{}`}, PortForwards: plan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateTask(ctx, &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: string(payload), Status: "succeeded", ResultJSON: `{}`, ConfigVersion: 1, Nonce: "trusted-baseline"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.requireTrustedForwardDeploymentBaseline(ctx, *server, `{}`, plan); err != nil {
+		t.Fatal(err)
+	}
+	changed := plan
+	changed.Rules = append([]model.PortForward(nil), plan.Rules...)
+	changed.Rules[0].TrustedForward = &model.TrustedForwardSender{Version: 1, ReceiverID: "path-2", Key: sender.Key, MaxClockSkewSeconds: 120}
+	if err := srv.requireTrustedForwardDeploymentBaseline(ctx, *server, `{}`, changed); err == nil {
+		t.Fatal("trusted core refresh passed with a stale full deployment baseline")
+	}
+}

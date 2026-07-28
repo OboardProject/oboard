@@ -29,6 +29,25 @@ type SingBoxConfig struct {
 type OBoardRuntimeMetadata struct {
 	RateLimits      OBoardRateLimits       `json:"rate_limits,omitempty"`
 	ConnectionAudit *OBoardConnectionAudit `json:"connection_audit,omitempty"`
+	TrustedForward  *OBoardTrustedForward  `json:"trusted_forward,omitempty"`
+}
+
+type OBoardTrustedForward struct {
+	Receivers []OBoardTrustedForwardReceiver `json:"receivers,omitempty"`
+}
+
+type OBoardTrustedForwardReceiver struct {
+	Version             int    `json:"version"`
+	ID                  string `json:"id"`
+	PathID              int64  `json:"path_id"`
+	InboundTag          string `json:"inbound_tag"`
+	Network             string `json:"network"`
+	Listen              string `json:"listen"`
+	ListenPort          int    `json:"listen_port"`
+	Target              string `json:"target"`
+	TargetPort          int    `json:"target_port"`
+	Key                 string `json:"key"`
+	MaxClockSkewSeconds int    `json:"max_clock_skew_seconds"`
 }
 
 type OBoardConnectionAudit struct {
@@ -605,6 +624,13 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 	for _, inbound := range opts.Inbounds {
 		inboundByID[inbound.ID] = inbound
 	}
+	for id, inbound := range plannedInbounds {
+		inboundByID[id] = inbound
+	}
+	serverByID := map[int64]model.Server{server.ID: server}
+	for _, item := range opts.Servers {
+		serverByID[item.ID] = item
+	}
 	serviceKeys := make([]proxyPathChainServiceKey, 0, len(chainServices))
 	for key, service := range chainServices {
 		inboundByID[service.Inbound.ID] = service.Inbound
@@ -681,12 +707,16 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 				// that port and decrypt the user protocol too early.
 				continue
 			}
+			outerInbound := internal
+			outerReservation := outerInbound
+			outerReservation.ID = internal.ID - (int64(1) << 44)
+			inboundByID[outerReservation.ID] = outerReservation
 			processingInbound := root
 			processingInbound.ID = internal.ID
 			processingInbound.ServerID = server.ID
 			processingInbound.Name = fmt.Sprintf("%s / 处理加解密", firstNonEmpty(path.Name, root.Name))
-			processingInbound.ListenIP = firstNonEmpty(server.ListenIP, "0.0.0.0")
-			processingInbound.Port = internal.Port
+			processingInbound = proxyPathTrustedInnerInbound(path, step, server, processingInbound, inboundByID, opts.PortLedger)
+			inboundByID[processingInbound.ID] = processingInbound
 			baseUsers := usersForInbound(root, users, opts.InboundUsers)
 			processingUsers := proxyPathBranchUsersForPath(path, root, baseUsers)
 			if len(processingUsers) == 0 {
@@ -710,6 +740,29 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 			item["tag"] = key
 			applyServerNetworkPolicy(item, server, processingInbound.Protocol, true)
 			addRuntimeLimitsForInboundTag(config, root, processingUsers, opts, key)
+			entryServer, ok := serverByID[root.ServerID]
+			if !ok {
+				return nil, fmt.Errorf("proxy path %s entry server %d does not exist", path.Name, root.ServerID)
+			}
+			if config.OBoard == nil {
+				config.OBoard = &OBoardRuntimeMetadata{}
+			}
+			if config.OBoard.TrustedForward == nil {
+				config.OBoard.TrustedForward = &OBoardTrustedForward{}
+			}
+			config.OBoard.TrustedForward.Receivers = append(config.OBoard.TrustedForward.Receivers, OBoardTrustedForwardReceiver{
+				Version:             1,
+				ID:                  proxyPathTrustedForwardReceiverID(path.ID, step.ID),
+				PathID:              path.ID,
+				InboundTag:          key,
+				Network:             string(transparentForwardProtocol(root)),
+				Listen:              firstNonEmpty(outerInbound.ListenIP, server.ListenIP, "0.0.0.0"),
+				ListenPort:          outerInbound.Port,
+				Target:              "127.0.0.1",
+				TargetPort:          processingInbound.Port,
+				Key:                 proxyPathTrustedForwardKey(entryServer, server, path.ID, step.ID),
+				MaxClockSkewSeconds: 120,
+			})
 			out = append(out, item)
 		}
 	}
@@ -946,6 +999,15 @@ func proxyPathInternalInbound(path model.ProxyPath, step model.ProxyPathStep, se
 		listenIP = "127.0.0.1"
 	}
 	return model.Inbound{ID: proxyPathInternalOutboundID(path.ID, step.Position), ServerID: server.ID, Name: fmt.Sprintf("%s / 第%d跳内部入口", firstNonEmpty(path.Name, "代理路径"), step.Position), Protocol: model.ProtocolVLESS, ListenIP: listenIP, Port: port, ConfigJSON: `{}`, Enabled: true}
+}
+
+func proxyPathTrustedInnerInbound(path model.ProxyPath, step model.ProxyPathStep, server model.Server, outer model.Inbound, inboundByID map[int64]model.Inbound, ledger *ProxyPathPortLedger) model.Inbound {
+	inner := outer
+	inner.ListenIP = "127.0.0.1"
+	inner.Port = ledger.resolve(model.ProxyPathPortKindTrustedInner, fmt.Sprintf("%d:%d", path.ID, step.Position), server.ID, func() int {
+		return proxyPathAvailablePort(server, path.ID*193, step.Position*37, server.PortRangeStart, server.PortRangeEnd, inboundByID)
+	})
+	return inner
 }
 
 func proxyPathInternalUser(path model.ProxyPath, step model.ProxyPathStep) model.User {

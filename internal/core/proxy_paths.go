@@ -430,6 +430,26 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 			}
 		}
 		_ = processingCount // processing_role is an internal marker for a transparent prefix.
+		if path.Enabled && processingCount == 1 && len(plan.PortForwards) > 0 {
+			for _, step := range pathSteps {
+				if !step.ProcessingRole {
+					continue
+				}
+				processingServerID, _, ok := proxyPathStepTargetServer(step, inboundByID)
+				entryServer, entryOK := serverByID[root.ServerID]
+				processingServer, processingOK := serverByID[processingServerID]
+				if !ok || !entryOK || !processingOK {
+					return nil, nil, fmt.Errorf("代理路径 %s 无法生成可信转发凭据", path.Name)
+				}
+				plan.PortForwards[0].TrustedForward = &model.TrustedForwardSender{
+					Version:             1,
+					ReceiverID:          proxyPathTrustedForwardReceiverID(path.ID, step.ID),
+					Key:                 proxyPathTrustedForwardKey(entryServer, processingServer, path.ID, step.ID),
+					MaxClockSkewSeconds: 120,
+				}
+				break
+			}
+		}
 		out = append(out, plan)
 	}
 	ledger.markProjectionComplete()
@@ -616,6 +636,53 @@ func IsProxyPathAccountingLocation(serverID, inboundID, pathID int64, paths []mo
 	}
 	accountingServerID, ok := ProxyPathAccountingServerID(selected, pathSteps, inbounds)
 	return ok && accountingServerID == serverID
+}
+
+func TrustedForwardServerIDs(paths []model.ProxyPath, steps []model.ProxyPathStep, inbounds []model.Inbound) map[int64]bool {
+	inboundByID := make(map[int64]model.Inbound, len(inbounds))
+	for _, inbound := range inbounds {
+		inboundByID[inbound.ID] = inbound
+	}
+	stepsByPath := map[int64][]model.ProxyPathStep{}
+	for _, step := range steps {
+		stepsByPath[step.PathID] = append(stepsByPath[step.PathID], step)
+	}
+	required := map[int64]bool{}
+	for _, path := range paths {
+		root, ok := inboundByID[path.InboundID]
+		if !path.Enabled || !ok || !root.Enabled {
+			continue
+		}
+		ordered := orderedProxyPathSteps(stepsByPath[path.ID])
+		usesTrustedForward := false
+		pathServers := map[int64]bool{root.ServerID: true}
+		for _, step := range ordered {
+			mode := step.TransportMode
+			if mode == "" {
+				mode = model.ProxyPathTransportSingBox
+			}
+			if mode != model.ProxyPathTransportPortForward {
+				break
+			}
+			if step.ServerID != nil && *step.ServerID > 0 {
+				pathServers[*step.ServerID] = true
+			} else if step.InboundID != nil {
+				if inbound, exists := inboundByID[*step.InboundID]; exists {
+					pathServers[inbound.ServerID] = true
+				}
+			}
+			if step.ProcessingRole {
+				usesTrustedForward = true
+				break
+			}
+		}
+		if usesTrustedForward {
+			for id := range pathServers {
+				required[id] = true
+			}
+		}
+	}
+	return required
 }
 
 // ProxyPathRequiresAccountingPathID reports whether traffic for an inbound can

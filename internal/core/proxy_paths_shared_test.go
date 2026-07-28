@@ -403,8 +403,16 @@ func TestTransparentPathForwardTargetsGeneratedProcessingPort(t *testing.T) {
 	if processing == nil {
 		t.Fatalf("processing inbound missing on back server: %s", configBack)
 	}
-	if got := intFromAny(processing["listen_port"]); got != forwards[0].TargetPort {
-		t.Fatalf("forward target %d does not match generated listener %d", forwards[0].TargetPort, got)
+	var parsed SingBoxConfig
+	if err := json.Unmarshal([]byte(configBack), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.OBoard == nil || parsed.OBoard.TrustedForward == nil || len(parsed.OBoard.TrustedForward.Receivers) != 1 {
+		t.Fatalf("trusted receiver missing from processing server: %s", configBack)
+	}
+	receiver := parsed.OBoard.TrustedForward.Receivers[0]
+	if receiver.ListenPort != forwards[0].TargetPort || receiver.TargetPort != intFromAny(processing["listen_port"]) {
+		t.Fatalf("forward target %d does not match trusted receiver %#v and inner listener %#v", forwards[0].TargetPort, receiver, processing)
 	}
 	// The front server must not keep a user-protocol listener on that port.
 	if front := mustServerConfig(t, front, opts.Inbounds, users, opts); findInbound(front, tag("in", root.ID)) != nil {
@@ -616,5 +624,32 @@ func TestSSHTunnelIdentityStaysStableWhenTargetGainsInbound(t *testing.T) {
 	}
 	if before[0].ListenPort != after[0].ListenPort {
 		t.Fatalf("loopback listener moved: %d -> %d", before[0].ListenPort, after[0].ListenPort)
+	}
+}
+
+func TestTrustedForwardIsEmittedOnlyByPublicEntryHop(t *testing.T) {
+	entry := model.Server{ID: 1, Name: "entry", ChainSecret: "entry-secret", PublicIPv4: "198.51.100.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
+	relay := model.Server{ID: 2, Name: "relay", ChainSecret: "relay-secret", PublicIPv4: "198.51.100.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
+	processor := model.Server{ID: 3, Name: "processor", ChainSecret: "processor-secret", PublicIPv4: "198.51.100.3", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 32000, PortRangeEnd: 32100}
+	root := model.Inbound{ID: 10, ServerID: entry.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 20, Name: "entry-relay-processor", InboundID: root.ID, Enabled: true}
+	relayID, processorID := relay.ID, processor.ID
+	steps := []model.ProxyPathStep{
+		{ID: 21, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &relayID, TransportMode: model.ProxyPathTransportPortForward},
+		{ID: 22, PathID: path.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, ServerID: &processorID, TransportMode: model.ProxyPathTransportPortForward, ProcessingRole: true},
+	}
+	plans, err := BuildProxyPathPlans([]model.ProxyPath{path}, steps, []model.Server{entry, relay, processor}, []model.Inbound{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || len(plans[0].PortForwards) != 2 {
+		t.Fatalf("plans = %#v", plans)
+	}
+	if plans[0].PortForwards[0].TrustedForward == nil || plans[0].PortForwards[1].TrustedForward != nil {
+		t.Fatalf("trusted sender must exist only on public entry hop: %#v", plans[0].PortForwards)
+	}
+	required := TrustedForwardServerIDs([]model.ProxyPath{path}, steps, []model.Inbound{root})
+	if !required[entry.ID] || !required[relay.ID] || !required[processor.ID] || len(required) != 3 {
+		t.Fatalf("trusted forward build gate servers = %#v", required)
 	}
 }
