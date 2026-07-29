@@ -1323,7 +1323,7 @@ func TestAgentTaskResultCannotCrossServer(t *testing.T) {
 	}
 }
 
-func TestRoutingExternalOutboundAndWARPPublicAPI(t *testing.T) {
+func TestRoutingExternalOutboundAndWARPPathPublicAPI(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -1354,16 +1354,17 @@ func TestRoutingExternalOutboundAndWARPPublicAPI(t *testing.T) {
 	outbound := request(t, h, http.MethodPost, "/api/v1/outbounds", token, map[string]any{"server_id": serverID, "name": "local-vless", "protocol": "vless", "target_address": "next.example.com", "target_port": 443, "config_json": "{}", "enabled": true}, http.StatusCreated)
 	outboundID := int64(outbound["outbound"].(map[string]any)["id"].(float64))
 
-	request(t, h, http.MethodPost, "/api/v1/routing-rules", token, map[string]any{"server_id": serverID, "name": "direct-lan", "priority": 10, "match_json": `{"domain_suffix":["lan"]}`, "action": "direct", "enabled": true}, http.StatusCreated)
+	directRule := request(t, h, http.MethodPost, "/api/v1/routing-rules", token, map[string]any{"server_id": serverID, "name": "direct-lan", "priority": 10, "match_json": `{"domain_suffix":["lan"]}`, "action": "direct", "enabled": true}, http.StatusCreated)
 	request(t, h, http.MethodPost, "/api/v1/routing-rules", token, map[string]any{"server_id": serverID, "name": "local-out", "priority": 20, "match_json": `{"domain_suffix":["example.org"]}`, "action": "outbound", "outbound_id": outboundID, "enabled": true}, http.StatusCreated)
 	request(t, h, http.MethodPost, "/api/v1/routing-rules", token, map[string]any{"server_id": serverID, "name": "imported-out", "priority": 30, "match_json": `{"domain_suffix":["example.net"]}`, "action": "external", "external_outbound_id": externalID, "enabled": true}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v1/routing-rules", token, map[string]any{"server_id": serverID, "name": "warp-out", "priority": 40, "match_json": `{"domain_suffix":["cloudflare.com"]}`, "action": "warp", "enabled": true}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/routing-rules", token, map[string]any{"server_id": serverID, "name": "warp-out", "priority": 40, "match_json": `{"domain_suffix":["cloudflare.com"]}`, "action": "warp", "enabled": true}, http.StatusBadRequest)
+	directRuleID := int64(directRule["routing_rule"].(map[string]any)["id"].(float64))
+	request(t, h, http.MethodPatch, "/api/v1/routing-rules/"+strconv.FormatInt(directRuleID, 10), token, map[string]any{"server_id": serverID, "name": "warp-out", "priority": 40, "match_json": `{"domain_suffix":["cloudflare.com"]}`, "action": "warp", "enabled": true}, http.StatusBadRequest)
 	warps := request(t, h, http.MethodGet, "/api/v1/warp-profiles", token, nil, http.StatusOK)
 	warpItems := warps["warp_profiles"].([]any)
-	if len(warpItems) != 1 || int64(warpItems[0].(map[string]any)["server_id"].(float64)) != serverID {
-		t.Fatalf("server WARP singleton was not created: %#v", warps)
+	if len(warpItems) != 0 {
+		t.Fatalf("routing rule created WARP state: %#v", warps)
 	}
-	warpProfileID := int64(warpItems[0].(map[string]any)["id"].(float64))
 	request(t, h, http.MethodPost, "/api/v1/warp-profiles", token, map[string]any{"server_id": serverID}, http.StatusMethodNotAllowed)
 	inboundResult := request(t, h, http.MethodPost, "/api/v1/inbounds", token, map[string]any{"server_id": serverID, "name": "warp-entry", "protocol": "vless", "listen_ip": "::", "port": 10005, "config_json": "{}", "enabled": true}, http.StatusCreated)
 	inboundID := int64(inboundResult["inbound"].(map[string]any)["id"].(float64))
@@ -1375,15 +1376,17 @@ func TestRoutingExternalOutboundAndWARPPublicAPI(t *testing.T) {
 	}
 	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "singbox", "config_json": "{}"}, http.StatusBadRequest)
 	warps = request(t, h, http.MethodGet, "/api/v1/warp-profiles", token, nil, http.StatusOK)
-	if len(warps["warp_profiles"].([]any)) != 1 {
-		t.Fatalf("routing and proxy path did not share one WARP profile: %#v", warps)
+	warpItems = warps["warp_profiles"].([]any)
+	if len(warpItems) != 1 || int64(warpItems[0].(map[string]any)["server_id"].(float64)) != serverID {
+		t.Fatalf("WARP path did not create the exit server profile: %#v", warps)
 	}
+	warpProfileID := int64(warpItems[0].(map[string]any)["id"].(float64))
 	request(t, h, http.MethodPost, "/api/v1/routing-rules", token, map[string]any{"server_id": serverID, "name": "ssh-via-wan6", "priority": 45, "match_json": `{"port":[22]}`, "action": "interface", "interface_name": "eth1", "enabled": true}, http.StatusCreated)
 	request(t, h, http.MethodPost, "/api/v1/routing-rules", token, map[string]any{"server_id": serverID, "name": "bad-port", "priority": 50, "match_json": `{"port":[0]}`, "action": "direct", "enabled": true}, http.StatusBadRequest)
 	request(t, h, http.MethodPost, "/api/v1/routing-rules", token, map[string]any{"server_id": serverID, "name": "bad-interface", "priority": 50, "match_json": `{"port":[443]}`, "action": "interface", "interface_name": "eth1;id", "enabled": true}, http.StatusBadRequest)
 
 	listedRules := request(t, h, http.MethodGet, "/api/v1/routing-rules", token, nil, http.StatusOK)
-	if len(listedRules["routing_rules"].([]any)) != 5 {
+	if len(listedRules["routing_rules"].([]any)) != 4 {
 		t.Fatalf("routing rules missing: %#v", listedRules)
 	}
 	foundInterface := false

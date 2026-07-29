@@ -5155,12 +5155,6 @@ func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		if v.Action == model.RouteActionWARP {
-			if _, err := s.store.EnsureWARPProfileForServer(r.Context(), v.ServerID); err != nil {
-				fail(w, err, 500)
-				return
-			}
-		}
 		if err := s.store.CreateRoutingRule(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
@@ -5180,12 +5174,6 @@ func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
 		if err := s.validateRoutingRule(r.Context(), &v); err != nil {
 			fail(w, err, 400)
 			return
-		}
-		if v.Action == model.RouteActionWARP {
-			if _, err := s.store.EnsureWARPProfileForServer(r.Context(), v.ServerID); err != nil {
-				fail(w, err, 500)
-				return
-			}
 		}
 		if err := s.store.UpdateRoutingRule(r.Context(), &v); err != nil {
 			fail(w, err, 500)
@@ -5260,8 +5248,6 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 			return errors.New("server-scoped external outbound must belong to the same server")
 		}
 		return core.ValidateAddressForIPStack(server.IPStack, ext.TargetAddress)
-	case model.RouteActionWARP:
-		return nil
 	case model.RouteActionInterface:
 		v.InterfaceName = strings.TrimSpace(v.InterfaceName)
 		if v.InterfaceName == "" {
@@ -8420,11 +8406,6 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 400)
 		return
 	}
-	for _, rule := range data.RoutingRules {
-		if rule.Enabled && rule.Action == model.RouteActionWARP {
-			warpServerIDs[rule.ServerID] = true
-		}
-	}
 	for serverID := range warpServerIDs {
 		if _, err := s.store.EnsureWARPProfileForServer(r.Context(), serverID); err != nil {
 			fail(w, err, 500)
@@ -9037,11 +9018,6 @@ func requireReadyWARPForFocusedApply(data store.FullRoutingConfig, serverID int6
 	serverIDs, err := core.ProxyPathWARPServerIDs(data.ProxyPaths, data.ProxyPathSteps, data.Inbounds)
 	if err != nil {
 		return err
-	}
-	for _, rule := range data.RoutingRules {
-		if rule.Enabled && rule.Action == model.RouteActionWARP {
-			serverIDs[rule.ServerID] = true
-		}
 	}
 	if !serverIDs[serverID] {
 		return nil

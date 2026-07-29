@@ -1035,13 +1035,21 @@ func TestGeneratedWARPAndRouteConfigPassesOfficialSingBoxCheck(t *testing.T) {
 		t.Skip("set SING_BOX_BIN to run official sing-box check")
 	}
 	warpID := int64(30)
+	server := model.Server{ID: 1, Name: "edge", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, MTUValue: 1280}
+	inbound := model.Inbound{ID: 10, ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 20, Name: "edge｜WARP", InboundID: inbound.ID, Enabled: true}
+	step := model.ProxyPathStep{ID: 21, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepWARP, TransportMode: model.ProxyPathTransportSingBox}
 	config, err := GenerateServerConfigWithOptions(
-		model.Server{ID: 1, Name: "edge", IPStack: model.IPStackPreferIPv4, MTUValue: 1280},
+		server,
+		[]model.Inbound{inbound},
 		nil,
 		nil,
-		nil,
-		nil,
-		ConfigOptions{WARPProfiles: []model.WARPProfile{{ID: warpID, ServerID: 1, Name: "warp", Status: model.WARPStatusReady, ConfigJSON: `{"type":"wireguard","address":["172.16.0.2/32","2606:4700:110:abcd::2/128"],"private_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","peers":[{"address":"engage.cloudflareclient.com","port":2408,"public_key":"bmXOC+F1sQvdD4mp8yt3l7wY6/3mpYBvn04zP65yzM8=","reserved":[1,2,3],"allowed_ips":["0.0.0.0/0","::/0"]}]}`, Enabled: true}}, RoutingRules: []model.RoutingRule{{ID: 1, ServerID: 1, Name: "warp", Priority: 10, MatchJSON: `{"domain_suffix":["cloudflare.com"]}`, Action: model.RouteActionWARP, Enabled: true}, {ID: 2, ServerID: 1, Name: "ssh-via-eth1", Priority: 20, MatchJSON: `{"port":[22]}`, Action: model.RouteActionInterface, InterfaceName: "eth1", Enabled: true}}},
+		[]model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111"}},
+		ConfigOptions{
+			Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound}, ProxyPaths: []model.ProxyPath{path}, ProxyPathSteps: []model.ProxyPathStep{step},
+			WARPProfiles: []model.WARPProfile{{ID: warpID, ServerID: 1, Name: "warp", Status: model.WARPStatusReady, ConfigJSON: `{"type":"wireguard","address":["172.16.0.2/32","2606:4700:110:abcd::2/128"],"private_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","peers":[{"address":"engage.cloudflareclient.com","port":2408,"public_key":"bmXOC+F1sQvdD4mp8yt3l7wY6/3mpYBvn04zP65yzM8=","reserved":[1,2,3],"allowed_ips":["0.0.0.0/0","::/0"]}]}`, Enabled: true}},
+			RoutingRules: []model.RoutingRule{{ID: 2, ServerID: 1, Name: "ssh-via-eth1", Priority: 20, MatchJSON: `{"port":[22]}`, Action: model.RouteActionInterface, InterfaceName: "eth1", Enabled: true}},
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1274,7 +1282,7 @@ func TestHY2LatestFieldsPassThrough(t *testing.T) {
 	}
 }
 
-func TestGenerateServerConfigWithRoutingRulesExternalAndWARP(t *testing.T) {
+func TestGenerateServerConfigWithRoutingRulesIgnoresUnreferencedWARP(t *testing.T) {
 	outboundID := int64(10)
 	externalID := int64(20)
 	warpID := int64(30)
@@ -1291,7 +1299,6 @@ func TestGenerateServerConfigWithRoutingRulesExternalAndWARP(t *testing.T) {
 				{ID: 1, ServerID: 1, Name: "direct-local", Priority: 10, MatchJSON: `{"domain_suffix":["lan"]}`, Action: model.RouteActionDirect, Enabled: true},
 				{ID: 2, ServerID: 1, Name: "paid", Priority: 20, MatchJSON: `{"domain_suffix":["example.org"]}`, Action: model.RouteActionOutbound, OutboundID: &outboundID, Enabled: true},
 				{ID: 3, ServerID: 1, Name: "external", Priority: 30, MatchJSON: `{"domain_suffix":["example.net"]}`, Action: model.RouteActionExternal, ExternalOutboundID: &externalID, Enabled: true},
-				{ID: 4, ServerID: 1, Name: "warp", Priority: 40, MatchJSON: `{"domain_suffix":["cloudflare.com"]}`, Action: model.RouteActionWARP, Enabled: true},
 				{ID: 6, ServerID: 1, Name: "ssh-via-wan6", Priority: 45, MatchJSON: `{"port":[22]}`, Action: model.RouteActionInterface, InterfaceName: "eth1", Enabled: true},
 			},
 		},
@@ -1306,14 +1313,8 @@ func TestGenerateServerConfigWithRoutingRulesExternalAndWARP(t *testing.T) {
 	if len(parsed.Outbounds) != 4 {
 		t.Fatalf("outbounds = %d, want direct/block + normal + external", len(parsed.Outbounds))
 	}
-	if len(parsed.Endpoints) != 1 {
-		t.Fatalf("endpoints = %d, want ready WARP endpoint", len(parsed.Endpoints))
-	}
-	if _, ok := parsed.Endpoints[0]["local_address"]; ok {
-		t.Fatalf("WARP endpoint should not emit deprecated local_address: %#v", parsed.Endpoints[0])
-	}
-	if _, ok := parsed.Endpoints[0]["server"]; ok {
-		t.Fatalf("WARP endpoint should not emit deprecated outbound server: %#v", parsed.Endpoints[0])
+	if len(parsed.Endpoints) != 0 {
+		t.Fatalf("unreferenced WARP profile emitted endpoints: %#v", parsed.Endpoints)
 	}
 	rules, ok := parsed.Route["rules"].([]any)
 	if !ok {
@@ -1323,10 +1324,10 @@ func TestGenerateServerConfigWithRoutingRulesExternalAndWARP(t *testing.T) {
 			}
 		}
 	}
-	if len(rules) != 5 {
-		t.Fatalf("route rules = %d, want direct/outbound/external/WARP/interface: %#v", len(rules), parsed.Route["rules"])
+	if len(rules) != 4 {
+		t.Fatalf("route rules = %d, want direct/outbound/external/interface: %#v", len(rules), parsed.Route["rules"])
 	}
-	want := []string{"direct", tag("out", outboundID), tag("ext", externalID), tag("warp", warpID)}
+	want := []string{"direct", tag("out", outboundID), tag("ext", externalID)}
 	for i, outbound := range want {
 		rule := rules[i].(map[string]any)
 		if rule["action"] != "route" {
@@ -1336,13 +1337,30 @@ func TestGenerateServerConfigWithRoutingRulesExternalAndWARP(t *testing.T) {
 			t.Fatalf("rule %d outbound = %v, want %s; rules=%#v", i, rule["outbound"], outbound, rules)
 		}
 	}
-	interfaceRule := rules[4].(map[string]any)
+	interfaceRule := rules[3].(map[string]any)
 	if interfaceRule["action"] != "direct" || interfaceRule["bind_interface"] != "eth1" {
 		t.Fatalf("interface route = %#v, want direct action bound to eth1", interfaceRule)
 	}
 	ports, ok := interfaceRule["port"].([]any)
 	if !ok || len(ports) != 1 || ports[0].(float64) != 22 {
 		t.Fatalf("interface route ports = %#v, want [22]", interfaceRule["port"])
+	}
+}
+
+func TestGenerateServerConfigRejectsLegacyWARPRoutingAction(t *testing.T) {
+	_, err := GenerateServerConfigWithOptions(
+		model.Server{ID: 1, Name: "edge", IPStack: model.IPStackDualStack},
+		nil,
+		nil,
+		nil,
+		nil,
+		ConfigOptions{
+			WARPProfiles: []model.WARPProfile{{ID: 7, ServerID: 1, Status: model.WARPStatusReady, ConfigJSON: `{}`, Enabled: true}},
+			RoutingRules: []model.RoutingRule{{ID: 1, ServerID: 1, Name: "legacy-warp", Action: model.RouteAction("warp"), OutboundTag: "warp-7", Enabled: true}},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), `unsupported route action "warp"`) {
+		t.Fatalf("expected legacy WARP routing action rejection, got %v", err)
 	}
 }
 

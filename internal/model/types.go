@@ -105,7 +105,6 @@ const (
 	RouteActionBlock     RouteAction = "block"
 	RouteActionOutbound  RouteAction = "outbound"
 	RouteActionExternal  RouteAction = "external"
-	RouteActionWARP      RouteAction = "warp"
 	RouteActionInterface RouteAction = "interface"
 )
 

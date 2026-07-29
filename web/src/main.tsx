@@ -158,7 +158,7 @@ type NotificationTemplate = { title: string; body: string }
 type NotificationEventDefinition = { value: string; label: string; description: string; variables: string[] }
 type NotificationChannel = { id: number; owner_user_id: number; owner_username?: string; name: string; type: 'telegram' | 'bark'; enabled: boolean; events: string; config_json: string; templates_json: string; user_ids: number[] }
 type NotificationAnnouncement = { id: number; actor_user_id: number; actor_name: string; title: string; body: string; user_ids: number[]; queued_count: number; created_at: string }
-type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'warp' | 'interface'
+type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'interface'
 type RoutingRule = { id: number; server_id: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; enabled: boolean }
 type ExternalOutboundAccessGrant = { id: number; external_outbound_id: number; subject_type: AccessSubjectType; subject_id: number; enabled: boolean }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
@@ -244,7 +244,7 @@ function trafficTimezoneLabel(timezone: string) {
     return timezone
   }
 }
-const routeActions: RouteAction[] = ['direct', 'block', 'outbound', 'external', 'warp', 'interface']
+const routeActions: RouteAction[] = ['direct', 'block', 'outbound', 'external', 'interface']
 const outboundScopes = ['global', 'server']
 
 const qureRegionFlags: Record<string, string> = {
@@ -507,7 +507,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   'proxy-paths': { label: '代理链路', desc: '管理入口、服务器跳点、第三方出口和传递路径。', group: '代理编排' },
   inbounds: { label: '入口', desc: '统一编排 sing-box 入站监听、协议和端口。', group: '代理' },
   outbounds: { label: '出口', desc: '配置服务器出口、下一跳和协议认证参数。', group: '代理' },
-  routing: { label: '分流规则', desc: '为任意服务器配置分流规则、直连、链路、WARP 或导入节点。', group: '流量' },
+  routing: { label: '分流规则', desc: '为任意服务器配置分流规则、直连、链路或导入节点。', group: '流量' },
   'external-outbounds': { label: '导入节点', desc: '导入第三方 SS、SOCKS、VLESS 等节点。', group: '流量' },
   users: { label: '用户', desc: '多用户、凭据、限速、流量额度和订阅令牌。', group: '访问控制' },
   dns: { label: 'DNS 设置', desc: '为服务器选择解析服务并检查解析速度。', group: '网络' },

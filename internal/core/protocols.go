@@ -300,12 +300,6 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		return "", err
 	}
 	warpReferenced := pathWARPServers[server.ID]
-	for _, rule := range opts.RoutingRules {
-		if rule.ServerID == server.ID && rule.Enabled && rule.Action == model.RouteActionWARP {
-			warpReferenced = true
-			break
-		}
-	}
 	config := SingBoxConfig{
 		Log:       map[string]any{"level": "warn", "timestamp": true},
 		Inbounds:  []map[string]any{},
@@ -426,7 +420,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		}
 		config.Endpoints = append(config.Endpoints, item)
 	}
-	rules, err := buildRouteRules(server, opts.RoutingRules, outbounds, opts.ExternalOutbounds, opts.WARPProfiles)
+	rules, err := buildRouteRules(server, opts.RoutingRules, outbounds, opts.ExternalOutbounds)
 	if err != nil {
 		return "", err
 	}
@@ -1440,7 +1434,7 @@ func applyDialDomainResolver(item map[string]any, defaultStrategy string) {
 	item["domain_resolver"] = map[string]any{"server": "bootstrap-primary", "strategy": defaultStrategy}
 }
 
-func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds []model.Outbound, external []model.ExternalOutbound, warp []model.WARPProfile) ([]map[string]any, error) {
+func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds []model.Outbound, external []model.ExternalOutbound) ([]map[string]any, error) {
 	filtered := make([]model.RoutingRule, 0, len(rules))
 	for _, rule := range rules {
 		if rule.ServerID == server.ID && rule.Enabled {
@@ -1467,7 +1461,7 @@ func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds [
 			out = append(out, item)
 			continue
 		}
-		tag, ok, err := routeRuleOutboundTag(rule, server, outbounds, external, warp)
+		tag, ok, err := routeRuleOutboundTag(rule, server, outbounds, external)
 		if err != nil {
 			return nil, fmt.Errorf("routing rule %s: %w", rule.Name, err)
 		}
@@ -1481,10 +1475,7 @@ func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds [
 	return out, nil
 }
 
-func routeRuleOutboundTag(rule model.RoutingRule, server model.Server, outbounds []model.Outbound, external []model.ExternalOutbound, warp []model.WARPProfile) (string, bool, error) {
-	if rule.OutboundTag != "" {
-		return rule.OutboundTag, true, nil
-	}
+func routeRuleOutboundTag(rule model.RoutingRule, server model.Server, outbounds []model.Outbound, external []model.ExternalOutbound) (string, bool, error) {
 	switch rule.Action {
 	case model.RouteActionDirect:
 		return "direct", true, nil
@@ -1510,12 +1501,6 @@ func routeRuleOutboundTag(rule model.RoutingRule, server model.Server, outbounds
 			}
 		}
 		return "", false, fmt.Errorf("external outbound %d is not available on server %d", *rule.ExternalOutboundID, server.ID)
-	case model.RouteActionWARP:
-		profile, ok := warpProfileForServer(warp, server.ID)
-		if ok && profile.Enabled {
-			return tag("warp", profile.ID), true, nil
-		}
-		return "", false, fmt.Errorf("WARP is not available on server %d", server.ID)
 	default:
 		return "", false, fmt.Errorf("unsupported route action %q", rule.Action)
 	}
