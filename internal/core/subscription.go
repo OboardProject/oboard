@@ -697,6 +697,9 @@ func clashProxyFromNode(node SubscriptionNode) (string, error) {
 		b.WriteString("\n    password: ")
 		b.WriteString(yamlQuote(stringFromAny(raw["password"])))
 		b.WriteString("\n")
+		if udpOverTCPEnabled(raw["udp_over_tcp"]) {
+			b.WriteString("    udp: true\n    udp-over-tcp: true\n")
+		}
 	case "socks":
 		b.WriteString("    type: socks5\n")
 		b.WriteString("    server: ")
@@ -718,6 +721,16 @@ func clashProxyFromNode(node SubscriptionNode) (string, error) {
 		return "", errors.New("unsupported clash proxy type " + typ)
 	}
 	return b.String(), nil
+}
+
+func udpOverTCPEnabled(value any) bool {
+	if enabled, ok := value.(bool); ok {
+		return enabled
+	}
+	if options, ok := value.(map[string]any); ok {
+		return boolValue(options["enabled"])
+	}
+	return false
 }
 
 func applyClashTLS(b *strings.Builder, raw map[string]any) {

@@ -107,6 +107,29 @@ func TestShadowsocks2022SubscriptionUsesServerAndUserPassword(t *testing.T) {
 	}
 }
 
+func TestShadowsocksUoTSubscriptionConfiguresClientOutbound(t *testing.T) {
+	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "user-pass"}
+	server := model.Server{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1", UDPInboundMode: model.UDPInboundUoT}
+	inbound := model.Inbound{ID: 1, ServerID: 1, Name: "ss", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: `{"method":"chacha20-ietf-poly1305"}`, Enabled: true}
+	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || !udpOverTCPEnabled(nodes[0].Raw["udp_over_tcp"]) {
+		t.Fatalf("UoT client option missing: %#v", nodes)
+	}
+
+	clash, err := renderClashMetaSubscription(nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"udp: true", "udp-over-tcp: true"} {
+		if !strings.Contains(clash, want) {
+			t.Fatalf("Clash UoT subscription missing %q:\n%s", want, clash)
+		}
+	}
+}
+
 func TestVLESSRealitySubscriptionUsesTCPRealityVision(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "user-pass"}
 	nodes, err := BuildSubscriptionNodes(user,

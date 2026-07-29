@@ -134,7 +134,10 @@ func TestGenerateServerConfigRejectsHY2WhenUDPInboundBlocked(t *testing.T) {
 func TestUoTPolicyDefaultsVLESSAndSS(t *testing.T) {
 	config, err := GenerateServerConfig(
 		model.Server{ID: 1, Name: "s1", UDPInboundMode: model.UDPInboundUoT},
-		[]model.Inbound{{ID: 1, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
+		[]model.Inbound{
+			{ID: 1, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true},
+			{ID: 2, ServerID: 1, Name: "ss", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: `{"udp_over_tcp":{"enabled":true}}`, Enabled: true},
+		},
 		[]model.Outbound{{ID: 2, ServerID: 1, Name: "ss", Protocol: model.ProtocolSS, TargetAddress: "example.com", TargetPort: 8388, ConfigJSON: `{}`, Enabled: true}},
 		nil,
 		[]model.User{{Username: "u", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass"}},
@@ -149,8 +152,34 @@ func TestUoTPolicyDefaultsVLESSAndSS(t *testing.T) {
 	if _, ok := parsed.Inbounds[0]["packet_encoding"]; ok {
 		t.Fatalf("vless inbound must not include packet_encoding: %#v", parsed.Inbounds[0])
 	}
-	if _, ok := parsed.Outbounds[2]["udp_over_tcp"].(map[string]any); !ok {
-		t.Fatalf("ss udp_over_tcp missing: %#v", parsed.Outbounds[2])
+	if parsed.Inbounds[1]["network"] != "tcp" {
+		t.Fatalf("UoT shadowsocks inbound must be TCP-only: %#v", parsed.Inbounds[1])
+	}
+	if _, ok := parsed.Inbounds[1]["udp_over_tcp"]; ok {
+		t.Fatalf("shadowsocks inbound must not include outbound-only udp_over_tcp: %#v", parsed.Inbounds[1])
+	}
+	if _, ok := parsed.Outbounds[2]["udp_over_tcp"]; ok {
+		t.Fatalf("server UDP inbound policy must not change unrelated outbounds: %#v", parsed.Outbounds[2])
+	}
+}
+
+func TestBlockedUDPUsesTCPOnlyShadowsocksInbound(t *testing.T) {
+	config, err := GenerateServerConfig(
+		model.Server{ID: 1, Name: "s1", UDPInboundMode: model.UDPInboundBlock},
+		[]model.Inbound{{ID: 1, ServerID: 1, Name: "ss", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: `{"network":"udp"}`, Enabled: true}},
+		nil,
+		nil,
+		[]model.User{{Username: "u", Status: "active", ProxyPassword: "pass"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed SingBoxConfig
+	if err := json.Unmarshal([]byte(config), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Inbounds[0]["network"] != "tcp" {
+		t.Fatalf("blocked UDP policy did not override shadowsocks inbound: %#v", parsed.Inbounds[0])
 	}
 }
 

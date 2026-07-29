@@ -991,6 +991,21 @@ func TestValidateGeneratedSingBoxConfigRejectsBadDNSDetour(t *testing.T) {
 	}
 }
 
+func TestValidateGeneratedSingBoxConfigRejectsUoTOnInbound(t *testing.T) {
+	config := SingBoxConfig{
+		DNS: map[string]any{"servers": []map[string]any{
+			{"type": "udp", "tag": "remote", "server": "1.1.1.1", "server_port": 53},
+		}, "final": "remote"},
+		Inbounds:  []map[string]any{{"type": "shadowsocks", "tag": "ss-in", "listen": "0.0.0.0", "listen_port": 8388, "method": "chacha20-ietf-poly1305", "password": "pass", "udp_over_tcp": map[string]any{"enabled": true}}},
+		Outbounds: []map[string]any{{"type": "direct", "tag": "direct"}, {"type": "block", "tag": "block"}},
+		Route:     map[string]any{"final": "direct"},
+	}
+	err := ValidateGeneratedSingBoxConfig(config)
+	if err == nil || !strings.Contains(err.Error(), "udp_over_tcp is outbound-only") {
+		t.Fatalf("error = %v, want inbound UoT rejection", err)
+	}
+}
+
 func TestGeneratedConfigPassesOfficialSingBoxCheck(t *testing.T) {
 	bin := os.Getenv("SING_BOX_BIN")
 	if bin == "" {

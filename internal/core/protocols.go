@@ -541,19 +541,10 @@ func validateServerUDPForInbound(server model.Server, inbound model.Inbound) err
 func applyServerNetworkPolicy(item map[string]any, server model.Server, protocol model.Protocol, inbound bool) {
 	if !inbound {
 		applyDialDomainResolver(item, normalizeDNSStrategy("", server.IPStack))
-	}
-	if server.UDPInboundMode != model.UDPInboundUoT {
 		return
 	}
-	switch protocol {
-	case model.ProtocolVLESS:
-		if !inbound {
-			item["packet_encoding"] = "xudp"
-		}
-	case model.ProtocolSS:
-		if _, ok := item["udp_over_tcp"]; !ok {
-			item["udp_over_tcp"] = map[string]any{"enabled": true}
-		}
+	if protocol == model.ProtocolSS && (server.UDPInboundMode == model.UDPInboundBlock || server.UDPInboundMode == model.UDPInboundUoT) {
+		item["network"] = "tcp"
 	}
 }
 
@@ -2090,7 +2081,7 @@ func (a ssAdapter) Inbound(v model.Inbound, users []model.User) (map[string]any,
 		pass = users[0].ProxyPassword
 	}
 	item := map[string]any{"type": "shadowsocks", "tag": tag("in", v.ID), "listen": v.ListenIP, "listen_port": v.Port, "method": method, "password": pass, "users": ssPasswordUsers(users, method)}
-	applyAllowed(item, extra, "network", "multiplex", "managed", "udp_over_tcp", "destinations")
+	applyAllowed(item, extra, "network", "multiplex", "managed", "destinations")
 	if !supportsUsers {
 		delete(item, "users")
 	}
@@ -2123,7 +2114,11 @@ func (a ssAdapter) SubscriptionNode(user model.User, inbound model.Inbound, serv
 	if serverPassword := stringValue(extra, "password", ""); serverPassword != "" && shadowsocksMethodSupportsUsers(method) {
 		password = normalizeSS2022Key(serverPassword, method) + ":" + normalizeSS2022Key(user.ProxyPassword, method)
 	}
-	return map[string]any{"type": "shadowsocks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "method": method, "password": password}, nil
+	node := map[string]any{"type": "shadowsocks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "method": method, "password": password}
+	if server.UDPInboundMode == model.UDPInboundUoT {
+		node["udp_over_tcp"] = map[string]any{"enabled": true}
+	}
+	return node, nil
 }
 
 func tag(prefix string, id int64) string { return prefix + "-" + strconv.FormatInt(id, 10) }

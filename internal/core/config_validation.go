@@ -303,6 +303,9 @@ func (v *configValidator) validatePasswordUserInbound(path, typ string, inbound 
 }
 
 func (v *configValidator) validateShadowsocksInbound(path string, inbound map[string]any) {
+	if _, exists := inbound["udp_over_tcp"]; exists {
+		v.addf("%s udp_over_tcp is outbound-only", path)
+	}
 	method := stringFromAny(inbound["method"])
 	if !supportedShadowsocksMethod(method) {
 		v.addf("%s unsupported shadowsocks method %q", path, method)
