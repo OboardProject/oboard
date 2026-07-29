@@ -10600,24 +10600,7 @@ ensure_base_tools() {
   fi
 }
 
-ensure_release_verifier() {
-  if command -v python3 >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
-    return 0
-  fi
-  echo "  正在准备安装包校验组件..."
-  packages=""
-  command -v python3 >/dev/null 2>&1 || packages="$packages python3"
-  command -v openssl >/dev/null 2>&1 || packages="$packages openssl"
-  # shellcheck disable=SC2086
-  if ! pkg_install $packages; then
-    echo "缺少 python3 和 openssl，且自动安装失败。请手动安装后重试。" >&2
-    exit 1
-  fi
-  if ! command -v python3 >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
-    echo "安装后仍缺少 python3 或 openssl。" >&2
-    exit 1
-  fi
-}
+__AGENT_RELEASE_VERIFIER__
 
 sha256_file() {
   local path=$1
@@ -10751,7 +10734,7 @@ if len(raw) != 32:
     raise SystemExit('invalid Ed25519 public key length')
 open(sys.argv[2], 'wb').write(bytes.fromhex('302a300506032b6570032100') + raw)
 PY
-  openssl pkeyutl -verify -pubin -inkey "$base_dir/release-public.der" -rawin -in "$manifest" -sigfile "$base_dir/release.sig" >/dev/null
+  verify_ed25519_signature "$base_dir/release-public.raw" "$base_dir/release-public.der" "$manifest" "$base_dir/release.sig"
   python3 - "$manifest" "$base_dir" "$os_value" "$arch_value" "$@" <<'PY'
 import hashlib, json, pathlib, sys
 manifest=json.load(open(sys.argv[1]))
@@ -11175,8 +11158,75 @@ esac
 `
 	script = strings.ReplaceAll(script, "__BASE_URL__", shellSingleQuote(baseURL))
 	script = strings.ReplaceAll(script, "__RELEASE_PUBLIC_KEY__", shellSingleQuote(version.ReleasePublicKey))
+	script = strings.ReplaceAll(script, "__AGENT_RELEASE_VERIFIER__", agentReleaseVerifierShell)
 	_, _ = w.Write([]byte(script))
 }
+
+const agentReleaseVerifierShell = `ensure_release_verifier() {
+  need_tools=0
+  if ! command -v python3 >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
+    need_tools=1
+  fi
+  if [ "$need_tools" = 1 ]; then
+    echo "正在准备安装包校验组件..."
+  fi
+  packages=""
+  command -v python3 >/dev/null 2>&1 || packages="$packages python3"
+  command -v openssl >/dev/null 2>&1 || packages="$packages openssl"
+  # shellcheck disable=SC2086
+  if [ -n "$packages" ] && ! pkg_install $packages; then
+    echo "缺少 python3 和 openssl，且自动安装失败。请手动安装后重试。" >&2
+    exit 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
+    echo "安装后仍缺少 python3 或 openssl。" >&2
+    exit 1
+  fi
+  if openssl_supports_ed25519 || python_supports_ed25519; then
+    return 0
+  fi
+  echo "当前 OpenSSL 不支持 Ed25519，正在安装兼容验签组件..."
+  if ! install_python_cryptography || ! python_supports_ed25519; then
+    echo "无法准备 Ed25519 验签组件。请安装系统 Python cryptography 包后重试。" >&2
+    exit 1
+  fi
+}
+
+openssl_supports_ed25519() {
+  openssl pkeyutl -help 2>&1 | grep -q -- '-rawin'
+}
+
+python_supports_ed25519() {
+  python3 -c 'from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey' >/dev/null 2>&1
+}
+
+install_python_cryptography() {
+  if command -v apk >/dev/null 2>&1; then
+    pkg_install py3-cryptography
+  elif command -v pacman >/dev/null 2>&1; then
+    pkg_install python-cryptography
+  else
+    pkg_install python3-cryptography
+  fi
+}
+
+verify_ed25519_signature() {
+  public_raw=$1
+  public_der=$2
+  message=$3
+  signature=$4
+  if openssl_supports_ed25519; then
+    openssl pkeyutl -verify -pubin -inkey "$public_der" -rawin -in "$message" -sigfile "$signature" >/dev/null
+    return
+  fi
+  python3 - "$public_raw" "$message" "$signature" <<'PY'
+import sys
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+public_key = Ed25519PublicKey.from_public_bytes(open(sys.argv[1], 'rb').read())
+public_key.verify(open(sys.argv[3], 'rb').read(), open(sys.argv[2], 'rb').read())
+PY
+}`
 
 func (s *Server) agentSelfUpdateScript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -11361,24 +11411,7 @@ ensure_base_tools() {
   fi
 }
 
-ensure_release_verifier() {
-  if command -v python3 >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
-    return 0
-  fi
-  echo "正在安装 release 验签依赖（python3 / openssl）..."
-  packages=""
-  command -v python3 >/dev/null 2>&1 || packages="$packages python3"
-  command -v openssl >/dev/null 2>&1 || packages="$packages openssl"
-  # shellcheck disable=SC2086
-  if ! pkg_install $packages; then
-    echo "缺少 python3 和 openssl，且自动安装失败。请手动安装后重试。" >&2
-    exit 1
-  fi
-  if ! command -v python3 >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
-    echo "安装后仍缺少 python3 或 openssl。" >&2
-    exit 1
-  fi
-}
+__AGENT_RELEASE_VERIFIER__
 
 detect_virt_hint() {
   # Best-effort virtualization/container hint for install logs and service tweaks.
@@ -11437,7 +11470,7 @@ if len(raw) != 32:
     raise SystemExit('invalid Ed25519 public key length')
 open(sys.argv[2], 'wb').write(bytes.fromhex('302a300506032b6570032100') + raw)
 PY
-  openssl pkeyutl -verify -pubin -inkey "$base_dir/release-public.der" -rawin -in "$manifest" -sigfile "$base_dir/release.sig" >/dev/null
+  verify_ed25519_signature "$base_dir/release-public.raw" "$base_dir/release-public.der" "$manifest" "$base_dir/release.sig"
   python3 - "$manifest" "$base_dir" "$os_value" "$arch_value" "$@" <<'PY'
 import hashlib, json, pathlib, sys
 manifest=json.load(open(sys.argv[1]))
@@ -11727,6 +11760,7 @@ verify_installed_versions || true
 print_management_help
 `, "__BASE_URL__", shellSingleQuote(baseURL))
 	script = strings.ReplaceAll(script, "__RELEASE_PUBLIC_KEY__", shellSingleQuote(version.ReleasePublicKey))
+	script = strings.ReplaceAll(script, "__AGENT_RELEASE_VERIFIER__", agentReleaseVerifierShell)
 	_, _ = w.Write([]byte(script))
 }
 

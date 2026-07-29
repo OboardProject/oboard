@@ -158,6 +158,100 @@ func TestAgentInstallScriptRollsBackBBRWhenPersistenceFails(t *testing.T) {
 	assertTestFile(t, qdisc, "fq_codel\n")
 }
 
+func TestAgentReleaseVerifierSupportsOldAndNewOpenSSL(t *testing.T) {
+	scripts := map[string]string{
+		"installer":   testAgentInstallScript(t),
+		"self-update": testAgentSelfUpdateScript(t),
+	}
+	for name, script := range scripts {
+		t.Run(name, func(t *testing.T) {
+			for _, want := range []string{"py3-cryptography", "python3-cryptography", "python-cryptography"} {
+				if !strings.Contains(script, want) {
+					t.Fatalf("release verifier is missing %q", want)
+				}
+			}
+			assertAgentReleaseVerifierBehavior(t, script)
+		})
+	}
+}
+
+func assertAgentReleaseVerifierBehavior(t *testing.T, script string) {
+	t.Helper()
+	shell := testPOSIXShell(t)
+	source := strings.Join([]string{
+		extractShellFunction(t, script, "openssl_supports_ed25519"),
+		extractShellFunction(t, script, "verify_ed25519_signature"),
+	}, "\n")
+
+	t.Run("cryptography fallback", func(t *testing.T) {
+		root := t.TempDir()
+		bin := filepath.Join(root, "bin")
+		if err := os.Mkdir(bin, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		opensslLog := filepath.Join(root, "openssl.log")
+		pythonLog := filepath.Join(root, "python.log")
+		writeExecutable(t, filepath.Join(bin, "openssl"), `#!/bin/sh
+if [ "$1" = pkeyutl ] && [ "$2" = -help ]; then
+  exit 0
+fi
+printf '%s\n' "$*" > "$OPENSSL_LOG"
+exit 91
+`)
+		writeExecutable(t, filepath.Join(bin, "python3"), `#!/bin/sh
+printf '%s\n' "$*" > "$PYTHON_LOG"
+payload=$(cat)
+case "$payload" in
+  *Ed25519PublicKey.from_public_bytes*) ;;
+  *) exit 92 ;;
+esac
+exit "${PYTHON_VERIFY_EXIT:-0}"
+`)
+		harness := strings.Join([]string{
+			source,
+			"verify_ed25519_signature public.raw public.der manifest.json release.sig",
+		}, "\n")
+		cmd := exec.Command(shell, "-c", harness)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "OPENSSL_LOG="+opensslLog, "PYTHON_LOG="+pythonLog)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("cryptography fallback failed: %v\n%s", err, output)
+		}
+		assertTestFile(t, pythonLog, "- public.raw manifest.json release.sig\n")
+		if _, err := os.Stat(opensslLog); !os.IsNotExist(err) {
+			t.Fatalf("old OpenSSL was used for Ed25519 verification: %v", err)
+		}
+
+		cmd = exec.Command(shell, "-c", harness)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "OPENSSL_LOG="+opensslLog, "PYTHON_LOG="+pythonLog, "PYTHON_VERIFY_EXIT=1")
+		if output, err := cmd.CombinedOutput(); err == nil {
+			t.Fatalf("invalid signature was accepted\n%s", output)
+		}
+	})
+
+	t.Run("OpenSSL 3", func(t *testing.T) {
+		root := t.TempDir()
+		bin := filepath.Join(root, "bin")
+		if err := os.Mkdir(bin, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		opensslLog := filepath.Join(root, "openssl.log")
+		writeExecutable(t, filepath.Join(bin, "openssl"), `#!/bin/sh
+if [ "$1" = pkeyutl ] && [ "$2" = -help ]; then
+  echo '-rawin'
+  exit 0
+fi
+printf '%s\n' "$*" > "$OPENSSL_LOG"
+`)
+		writeExecutable(t, filepath.Join(bin, "python3"), "#!/bin/sh\nexit 93\n")
+		cmd := exec.Command(shell, "-c", source+"\nverify_ed25519_signature public.raw public.der manifest.json release.sig")
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "OPENSSL_LOG="+opensslLog)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("OpenSSL 3 verifier failed: %v\n%s", err, output)
+		}
+		assertTestFile(t, opensslLog, "pkeyutl -verify -pubin -inkey public.der -rawin -in manifest.json -sigfile release.sig\n")
+	})
+}
+
 func testAgentInstallScript(t *testing.T) string {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
@@ -174,6 +268,31 @@ func testAgentInstallScript(t *testing.T) string {
 		t.Fatalf("Agent installer status=%d body=%s", response.Code, response.Body.String())
 	}
 	return response.Body.String()
+}
+
+func testAgentSelfUpdateScript(t *testing.T) string {
+	t.Helper()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	New(db, "test-secret", "", "", nil).Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/install/agent-self-update.sh", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("Agent self-update installer status=%d body=%s", response.Code, response.Body.String())
+	}
+	return response.Body.String()
+}
+
+func writeExecutable(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func shellCaseBranch(t *testing.T, script, start, end string) string {
