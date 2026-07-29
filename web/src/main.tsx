@@ -159,7 +159,7 @@ type NotificationEventDefinition = { value: string; label: string; description: 
 type NotificationChannel = { id: number; owner_user_id: number; owner_username?: string; name: string; type: 'telegram' | 'bark'; enabled: boolean; events: string; config_json: string; templates_json: string; user_ids: number[] }
 type NotificationAnnouncement = { id: number; actor_user_id: number; actor_name: string; title: string; body: string; user_ids: number[]; queued_count: number; created_at: string }
 type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'warp' | 'interface'
-type RoutingRule = { id: number; server_id: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; warp_profile_id?: number; outbound_tag: string; interface_name?: string; enabled: boolean }
+type RoutingRule = { id: number; server_id: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; enabled: boolean }
 type ExternalOutboundAccessGrant = { id: number; external_outbound_id: number; subject_type: AccessSubjectType; subject_id: number; enabled: boolean }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
 type SubscriptionFormat = 'plain-json' | 'stash' | 'clash-meta' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'v2ray' | 'v2ray-uri' | 'clash'
@@ -246,7 +246,6 @@ function trafficTimezoneLabel(timezone: string) {
 }
 const routeActions: RouteAction[] = ['direct', 'block', 'outbound', 'external', 'warp', 'interface']
 const outboundScopes = ['global', 'server']
-const warpStatuses = ['needed', 'requested', 'ready', 'failed']
 
 const qureRegionFlags: Record<string, string> = {
   AR: 'Argentina.png', AU: 'Australia.png', BR: 'Brazil.png', CA: 'Canada.png', CN: 'China.png',
@@ -510,7 +509,6 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   outbounds: { label: '出口', desc: '配置服务器出口、下一跳和协议认证参数。', group: '代理' },
   routing: { label: '分流规则', desc: '为任意服务器配置分流规则、直连、链路、WARP 或导入节点。', group: '流量' },
   'external-outbounds': { label: '导入节点', desc: '导入第三方 SS、SOCKS、VLESS 等节点。', group: '流量' },
-  warp: { label: 'WARP', desc: '按服务器申请和管理独立 WARP 配置。', group: '流量' },
   users: { label: '用户', desc: '多用户、凭据、限速、流量额度和订阅令牌。', group: '访问控制' },
   dns: { label: 'DNS 设置', desc: '为服务器选择解析服务并检查解析速度。', group: '网络' },
   'dns-records': { label: '域名解析', desc: '管理云服务商账号和域名解析记录。', group: '网络' },
@@ -623,7 +621,7 @@ function getTabIcon(x: string) {
 }
 
 const fieldLabels: Record<string, string> = {
-  id: 'ID', server_id: '服务器', source_server_id: '源服务器', target_server_id: '目标服务器', next_server_id: '下一跳服务器', user_id: '用户', group_id: '用户组', subject_id: '授权对象', profile_id: '订阅配置', inbound_id: '入口', inbound_users: '入口用户', outbound_id: '出口', external_outbound_id: '导入节点', external_outbound_access_grants: '导入节点授权', warp_profile_id: 'WARP 配置',
+  id: 'ID', server_id: '服务器', source_server_id: '源服务器', target_server_id: '目标服务器', next_server_id: '下一跳服务器', user_id: '用户', group_id: '用户组', subject_id: '授权对象', profile_id: '订阅配置', inbound_id: '入口', inbound_users: '入口用户', outbound_id: '出口', external_outbound_id: '导入节点', external_outbound_access_grants: '导入节点授权',
   name: '名称', region: '地区', region_code: '地区代码', region_mode: '地区来源', username: '用户名', nickname: '昵称', password: '密码', role: '角色', status: '状态', enabled: '启用', expose_to_users: '显示到订阅', protocol: '协议', type: '类型', scope: '作用域', action: '动作', priority: '优先级',
   entry_address: '入口地址', public_ipv4: '检测 IPv4', public_ipv6: '检测 IPv6', entry_ip_mode: '入口地址策略', external_ip: '自定义入口地址', listen_ip: '监听 IP', listen_port: '监听端口', port: '端口', port_range: '端口范围', port_range_start: '端口范围起点', port_range_end: '端口范围终点', target_address: '目标地址', target_port: '目标端口', target_endpoint: '目标端点',
   dns_sync_enabled: '域名解析', dns_credential_id: '域名服务账号', dns_domain: '解析域名', dns_proxy_enabled: '代理访问', dns_record_types: '解析记录', ddns_enabled: '自动更新地址', ddns_interval_seconds: '更新间隔', dns_sync_status: '同步状态', dns_sync_error: '同步错误', dns_last_synced_at: '同步时间',
@@ -1915,7 +1913,6 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'outbounds') return <Outbounds data={data} client={client} load={load} />
   if (tab === 'routing') return <RoutingRules data={data} client={client} load={load} />
   if (tab === 'external-outbounds') return <ExternalOutbounds data={data} client={client} load={load} />
-  if (tab === 'warp') return <WARPProfiles data={data} client={client} load={load} />
   if (tab === 'users') return <UserManagement data={data} client={client} load={load} />
   if (tab === 'dns') return <DNS data={data} client={client} load={load} notify={notify} />
   if (tab === 'dns-records') return <ManagedDNSSettings data={data} client={client} load={load} notify={notify} />
@@ -5239,7 +5236,7 @@ function inboundEntryAddress(data: any, entry: Inbound) {
   return entryAddressByMode(server, entry.entry_ip_mode || 'auto', entry.external_ip || '')
 }
 
-type ProxyToolAction = 'server' | 'entry' | 'imported' | 'routing' | 'transport'
+type ProxyToolAction = 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'transport'
 const proxyToolDragType = 'application/oboard-proxy-tool'
 
 function ProxyPathsWorkspace({ data, client, load, loading }: any) {
@@ -5293,14 +5290,19 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
 }
 
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
-type RoutingDraft = { server_id: number; name: string; priority: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; warp_profile_id: number; interface_name: string; enabled: boolean }
+type RoutingDraft = { server_id: number; name: string; priority: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; interface_name: string; enabled: boolean }
 type TransportMode = 'port-forward' | 'tunnel'
 type TransportDraft = { mode: TransportMode; name: string; source_server_id: number; target_server_id: number; listen_ip: string; listen_port: number; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; type: TunnelType; priority: number; config_json: string; enabled: boolean }
-type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step'; id: number; label: string; path_id?: number; node_id?: string }
+type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step'; id: number; label: string; path_id?: number; node_id?: string }
 type ImportedNodeDraft = { content: string; scope: 'global' | 'server'; server_id: number; expose_to_users: boolean; position?: GraphPosition | null }
 type CanvasServerInstance = { instance_id: string; server_id: number }
+type CanvasWARPInstance = { instance_id: string; root_server_id: number }
 
 function newCanvasDirectExitInstance(rootServerID: number, sequence: number): GraphDirectExitInstance {
+  return { instance_id: `${Date.now().toString(36)}-${sequence.toString(36)}`, root_server_id: rootServerID }
+}
+
+function newCanvasWARPInstance(rootServerID: number, sequence: number): CanvasWARPInstance {
   return { instance_id: `${Date.now().toString(36)}-${sequence.toString(36)}`, root_server_id: rootServerID }
 }
 type TransportDialogRequest = {
@@ -5332,9 +5334,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const [canvasImportedIDs, setCanvasImportedIDs] = useState<number[]>([])
 	const [canvasServerInstances, setCanvasServerInstances] = useState<CanvasServerInstance[]>([])
 	const [canvasDirectExitInstances, setCanvasDirectExitInstances] = useState<GraphDirectExitInstance[]>(() => loadGraphDirectExitInstances())
+	const [canvasWARPInstances, setCanvasWARPInstances] = useState<CanvasWARPInstance[]>([])
 	const canvasServerSequence = useRef(0)
 	const canvasDirectExitSequence = useRef(0)
-	const builtFlow = useMemo(() => editableProxyFlow(data, positions, selected?.id || 0, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances), [data.servers, data.inbounds, data.external_outbounds, data.proxy_paths, data.proxy_path_steps, data.port_forwards, data.tunnels, positions, selected?.id, canvasImportedIDs.join(','), canvasServerInstances.map(item => `${item.instance_id}:${item.server_id}`).join(','), canvasDirectExitInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(',')])
+	const canvasWARPSequence = useRef(0)
+	const builtFlow = useMemo(() => editableProxyFlow(data, positions, selected?.id || 0, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances), [data.servers, data.inbounds, data.external_outbounds, data.warp_profiles, data.proxy_paths, data.proxy_path_steps, data.port_forwards, data.tunnels, positions, selected?.id, canvasImportedIDs.join(','), canvasServerInstances.map(item => `${item.instance_id}:${item.server_id}`).join(','), canvasDirectExitInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasWARPInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(',')])
   const [nodes, setNodes] = useState<Node[]>(builtFlow.nodes)
   const [edges, setEdges] = useState<Edge[]>(builtFlow.edges)
   const [serverDraft, setServerDraft] = useState<ReturnType<typeof defaultServerDraft> | null>(null)
@@ -5527,7 +5531,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     setIsToolbarCollapsed(value => !value)
   }
   const autoArrangeGraph = () => {
-    const laidOut = autoLayoutProxyGraphPositions(data, selected?.id || 0, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances)
+    const laidOut = autoLayoutProxyGraphPositions(data, selected?.id || 0, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances)
     if (!Object.keys(laidOut).length) return
     const next = { ...positions, ...laidOut }
     setPositions(next)
@@ -5537,7 +5541,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const selectEntryServer = (value: string | number) => {
     const nextServerID = Number(value)
     if (!nextServerID || nextServerID === selected?.id) return
-    const laidOut = autoLayoutProxyGraphPositions(data, nextServerID, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances)
+    const laidOut = autoLayoutProxyGraphPositions(data, nextServerID, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances)
     if (Object.keys(laidOut).length) {
       const next = { ...positions, ...laidOut }
       setPositions(next)
@@ -5713,7 +5717,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }
 	  return true
 	}
-	const createPathFromEntry = async (entry: Inbound, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
+	const createPathFromEntry = async (entry: Inbound, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
 	  if (target.transport_mode === 'port_forward' && !await ensureTransparentPathExclusive(0, entry.id)) return null
 	  const result = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: entry.id, enabled: true }) }) as { proxy_path?: ProxyPath }
 	  if (!result.proxy_path?.id) return null
@@ -5732,7 +5736,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const result = await client.request('/proxy-paths/direct-branches', { method: 'POST', body: JSON.stringify(request) }) as { proxy_path?: ProxyPath }
 	  return result.proxy_path || null
 	}
-	const appendPathAfterStep = async (stepID: number, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
+	const appendPathAfterStep = async (stepID: number, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
 	  const steps: ProxyPathStep[] = data.proxy_path_steps || []
 	  const step = steps.find(x => x.id === stepID)
 	  if (!step) {
@@ -5781,10 +5785,64 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    return next
 	  })
 	}
+	const consumeCanvasWARPTarget = (targetID: string, createdSteps: ProxyPathStep[]) => {
+	  if (!targetID.startsWith('warp-canvas-') || !createdSteps.length) return
+	  const instanceID = targetID.slice('warp-canvas-'.length)
+	  setCanvasWARPInstances(items => items.filter(item => item.instance_id !== instanceID))
+	  setPositions(current => {
+	    const sourcePosition = current[targetID]
+	    const next = { ...current }
+	    delete next[targetID]
+	    createdSteps.forEach((step, index) => {
+	      if (sourcePosition) next[proxyPathStepNodeID(step)] = { x: sourcePosition.x + index * 260, y: sourcePosition.y }
+	    })
+	    saveGraphPositions(next)
+	    return next
+	  })
+	}
 	const connect = async (conn: Connection) => {
 	  if (!conn.source || !conn.target) return
 	  const sourceEntity = graphEntity(conn.source)
 	  const targetEntity = graphEntity(conn.target)
+	  if (targetEntity?.type === 'warp') {
+	    const target = { node_type: 'warp' as const, transport_mode: 'singbox' as const, config_json: '{}' }
+	    const sourcePathStepID = pathStepIDFromHandle(conn.sourceHandle)
+	    if (sourcePathStepID) {
+	      const sourceStep = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === sourcePathStepID)
+	      if (!sourceStep || sourceStep.node_type !== 'server_inbound') return dialogs.alert({ title: '无法连接 WARP', message: 'WARP 必须直接连接在可控服务器之后。' })
+	      const created = await appendPathAfterStep(sourcePathStepID, target)
+	      if (created) consumeCanvasWARPTarget(conn.target, [created])
+	      return
+	    }
+	    const sourceHandleInboundID = inboundIDFromServerHandle(conn.sourceHandle)
+	    const sourceEntry = sourceEntity?.type === 'entry'
+	      ? entries.find(entry => entry.id === sourceEntity.id)
+	      : sourceHandleInboundID
+	        ? entries.find(entry => entry.id === sourceHandleInboundID && entry.server_id === sourceEntity?.id)
+	        : undefined
+	    if (sourceEntry) {
+	      const created = await createPathFromEntry(sourceEntry, target)
+	      if (created) consumeCanvasWARPTarget(conn.target, [created])
+	      return
+	    }
+	    if (sourceEntity?.type === 'server' && conn.sourceHandle === 'server-shared') {
+	      const allSteps = (data.proxy_path_steps || []) as ProxyPathStep[]
+	      const terminalSteps = allSteps.filter(step => step.node_type === 'server_inbound' && proxyPathStepNodeID(step) === conn.source && !allSteps.some(other => other.path_id === step.path_id && other.position > step.position))
+	      if (terminalSteps.length) {
+	        if (!await confirmSharedAppend(terminalSteps.length, 'WARP')) return
+	        const created = await runSharedAppends(terminalSteps, step => `路径 ${step.path_id}`, step => appendPathAfterStep(step.id, target))
+	        consumeCanvasWARPTarget(conn.target, created)
+	        return
+	      }
+	      const serverEntries = entries.filter(entry => entry.server_id === sourceEntity.id && entry.enabled !== false)
+	      if (!serverEntries.length) return dialogs.alert({ title: '没有可用入口', message: '这台服务器还没有可连接到 WARP 的入口。' })
+	      if (!await confirmSharedAppend(serverEntries.length, 'WARP', serverEntries.map(entry => entry.name || `入口 ${entry.id}`), 'create')) return
+	      const created = await runSharedAppends(serverEntries, entry => entry.name || `入口 ${entry.id}`, entry => createPathFromEntry(entry, target))
+	      consumeCanvasWARPTarget(conn.target, created)
+	      return
+	    }
+	    return dialogs.alert({ title: '请选择服务器连接点', message: '从一级入口、服务器入口点或路径中的服务器继续连接点拖线到 WARP。' })
+	  }
 	  if (targetEntity?.type === 'direct') {
 	    if (targetEntity.path_id) {
 	      return dialogs.alert({ title: '直接出口已连接', message: '请复制一个空白直接出口区块后再连接。' })
@@ -6013,7 +6071,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       }
       if (routingDraft.action === 'outbound' && routingDraft.outbound_id) body.outbound_id = routingDraft.outbound_id
       if (routingDraft.action === 'external' && routingDraft.external_outbound_id) body.external_outbound_id = routingDraft.external_outbound_id
-      if (routingDraft.action === 'warp' && routingDraft.warp_profile_id) body.warp_profile_id = routingDraft.warp_profile_id
       if (routingDraft.action === 'interface') body.interface_name = routingDraft.interface_name.trim()
       await client.request('/routing-rules', { method: 'POST', body: JSON.stringify(body) })
       setRoutingDraft(null)
@@ -6084,6 +6141,17 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     }
   }
 	  const deleteGraphEntity = async (entity: GraphEntity) => {
+		  if (entity.node_id?.startsWith('warp-canvas-')) {
+		    const instanceID = entity.node_id.slice('warp-canvas-'.length)
+		    setCanvasWARPInstances(items => items.filter(item => item.instance_id !== instanceID))
+		    setPositions(current => {
+		      const next = { ...current }
+		      delete next[entity.node_id!]
+		      saveGraphPositions(next)
+		      return next
+		    })
+		    return
+		  }
 		  if (entity.node_id?.startsWith('direct-exit-canvas-')) {
 		    const instanceID = entity.node_id.slice('direct-exit-canvas-'.length)
 		    setCanvasDirectExitInstances(items => {
@@ -6113,6 +6181,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    server: { name: '服务器', path: `/servers/${entity.id}` },
 	    entry: { name: '入口节点', path: `/inbounds/${entity.id}` },
 	    imported: { name: '导入节点', path: `/external-outbounds/${entity.id}` },
+	    warp: { name: 'WARP 出口', path: '' },
 		    direct: { name: '直接出口', path: `/proxy-paths/${entity.path_id || entity.id}` },
 	    'port-forward': { name: '端口转发', path: `/port-forwards/${entity.id}` },
 	    tunnel: { name: '隧道', path: `/tunnels/${entity.id}` },
@@ -6174,7 +6243,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  if (!entity || entity.type !== 'proxy-path-step') return
 	  const step = (data.proxy_path_steps || []).find((x: ProxyPathStep) => x.id === entity.id)
 	  if (!step) return
-	  if (step.node_type !== 'server_inbound') return dialogs.alert({ title: '无法更改', message: '导入节点必须使用 sing-box 出站链。' })
+	  if (step.node_type !== 'server_inbound') return dialogs.alert({ title: '无法更改', message: step.node_type === 'warp' ? 'WARP 是服务器本地终点，不需要传递方式。' : '导入节点必须使用 sing-box 出站链。' })
 	  const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === step.path_id)
 	  const transport = await chooseTransportForTarget(step, step, proxyPathStepUpstreamLabel(data, step))
 	  if (!transport) return
@@ -6207,6 +6276,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  if (action === 'server') return void addServer(position)
 	  if (action === 'entry') return void addEntry(position)
 	  if (action === 'imported') return void openImportNode(position)
+    if (action === 'warp') {
+      if (!selected?.id) return
+      const instance = newCanvasWARPInstance(selected.id, canvasWARPSequence.current++)
+      setCanvasWARPInstances(items => [...items, instance])
+      placeGraphNode(canvasWARPNodeID(instance), position || defaultImportedGraphPosition(canvasWARPInstances.length))
+      return
+    }
     if (action === 'routing') return void openRouting()
     if (action === 'transport') return void openTransport()
   }
@@ -6283,8 +6359,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     setGraphMenu(null)
     if (entity) await deleteGraphEntity(entity)
   }
+  const activeGraphStep = activeGraphEntity?.type === 'proxy-path-step' ? ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === activeGraphEntity.id) : undefined
   const activeGraphActionLabel = activeGraphEntity?.type === 'proxy-path-step'
-    ? '传递方式'
+    ? activeGraphStep?.node_type === 'warp' ? '' : '传递方式'
     : activeGraphEntity?.type === 'entry'
       ? '编辑入口'
       : activeGraphEntity?.type === 'imported'
@@ -6413,7 +6490,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			  {activeGraphEntity.type === 'proxy-path-step' && <button type="button" className="ghost" onClick={() => editProxyPathNameForEntity(activeGraphEntity)}><Edit3 size={13} />链路命名</button>}
 	          {activeGraphActionLabel && <button type="button" className="ghost" onClick={() => void openActiveGraphEntity()}><Edit3 size={13} />{activeGraphActionLabel}</button>}
 			  {activeGraphEntity.type === 'direct' && <button type="button" className="ghost" onClick={() => copyDirectExit(activeGraphEntity)}><Copy size={13} />复制直接出口</button>}
-			  <button type="button" className="ghost danger-text" onClick={() => void deleteActiveGraphEntity()}><Trash2 size={13} />{activeGraphEntity.node_id?.startsWith('canvas-server-') ? '移出画布' : activeGraphEntity.node_id?.startsWith('direct-exit-canvas-') ? '移出画布' : activeGraphEntity.type === 'proxy-path-step' ? '断开后续' : '删除'}</button>
+			  <button type="button" className="ghost danger-text" onClick={() => void deleteActiveGraphEntity()}><Trash2 size={13} />{activeGraphEntity.node_id?.startsWith('canvas-server-') || activeGraphEntity.node_id?.startsWith('direct-exit-canvas-') || activeGraphEntity.node_id?.startsWith('warp-canvas-') ? '移出画布' : activeGraphEntity.type === 'proxy-path-step' ? '断开后续' : '删除'}</button>
           <button type="button" className="ghost icon-button" onClick={() => setActiveGraphEntity(null)} aria-label="取消选择" title="取消选择"><X size={13} /></button>
         </div>}
         {!nodes.length && <div className="graph-empty-state"><ServerIcon size={22} /><strong>还没有服务器</strong><span>添加服务器后即可创建入口和代理链路。</span><button onClick={() => addServer()}>添加服务器</button></div>}
@@ -6421,9 +6498,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         {graphMenu && <div className="graph-context-menu" style={{ left: graphMenu.x, top: graphMenu.y }} onContextMenu={e => e.preventDefault()}>
           <div className="graph-context-menu-title">{graphMenu.entity.label}</div>
 			  {graphMenu.entity.type === 'proxy-path-step' && <button onClick={editProxyPathName}><Edit3 size={14} />链路命名</button>}
-			  {graphMenu.entity.type === 'proxy-path-step' && <button onClick={editProxyPathTransport}><ArrowLeftRight size={14} />更改传递方式</button>}
+			  {graphMenu.entity.type === 'proxy-path-step' && ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === graphMenu.entity.id)?.node_type !== 'warp' && <button onClick={editProxyPathTransport}><ArrowLeftRight size={14} />更改传递方式</button>}
 			  {graphMenu.entity.type === 'direct' && <button onClick={copyGraphMenuDirectExit}><Copy size={14} />复制直接出口</button>}
-			  <button className="danger-text" onClick={deleteGraphMenuEntity}><Trash2 size={14} />{graphMenu.entity.node_id?.startsWith('canvas-server-') || graphMenu.entity.node_id?.startsWith('direct-exit-canvas-') ? '从画布移除' : graphMenu.entity.type === 'proxy-path-step' ? '取消此处及后续节点' : '删除'}</button>
+			  <button className="danger-text" onClick={deleteGraphMenuEntity}><Trash2 size={14} />{graphMenu.entity.node_id?.startsWith('canvas-server-') || graphMenu.entity.node_id?.startsWith('direct-exit-canvas-') || graphMenu.entity.node_id?.startsWith('warp-canvas-') ? '从画布移除' : graphMenu.entity.type === 'proxy-path-step' ? '取消此处及后续节点' : '删除'}</button>
         </div>}
         </div>
         {inspectorOpen && <aside className="graph-inspector open">
@@ -6602,6 +6679,7 @@ const proxyTools: Array<{ id: ProxyToolAction; label: string; desc: string }> = 
   { id: 'server', label: '添加服务器', desc: '登记一台主机' },
   { id: 'entry', label: '入口节点', desc: '新建协议入口' },
   { id: 'imported', label: '导入节点', desc: 'SS / SOCKS / VLESS' },
+  { id: 'warp', label: 'WARP 出口', desc: '由末端服务器自动申请' },
   { id: 'routing', label: '分流出口', desc: '规则与出口' },
   { id: 'transport', label: '独立转发', desc: '端口转发或隧道' },
 ]
@@ -6750,12 +6828,13 @@ function ProxyToolIcon({ kind }: { kind: ProxyToolAction }) {
 	if (kind === 'server') return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="2" /><rect x="4" y="14" width="16" height="6" rx="2" /><path d="M8 7h.01M8 17h.01M12 10v4" /></svg>
 	if (kind === 'entry') return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h11" /><path d="m11 8 4 4-4 4" /><circle cx="18" cy="12" r="2.5" /></svg>
 	if (kind === 'imported') return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z" /><path d="M3 12h4M17 12h4" /><path d="M12 3v4M12 17v4" /><circle cx="12" cy="12" r="2" /></svg>
+	if (kind === 'warp') return <Zap size={15} />
   if (kind === 'routing') return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9" /><path d="M4 17h9" /><path d="m14 4 3 3-3 3" /><path d="m14 14 3 3-3 3" /><path d="M17 7h3" /><path d="M17 17h3" /></svg>
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h8a4 4 0 0 1 0 8H9" /><path d="m9 11-4 4 4 4" /><path d="M18 5v4" /><path d="M16 7h4" /></svg>
 }
 
 function defaultRoutingDraft(server: Server): RoutingDraft {
-  return { server_id: server.id, name: `${server.name || 'server'}-route`, priority: 100, match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, warp_profile_id: 0, interface_name: '', enabled: true }
+  return { server_id: server.id, name: `${server.name || 'server'}-route`, priority: 100, match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, interface_name: '', enabled: true }
 }
 
 function routingMatchJSON(kind: RoutingMatchKind, value: string) {
@@ -6816,7 +6895,6 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, onCancel, onSubmit }: {
   const update = (patch: Partial<RoutingDraft>) => setDraft(old => old ? { ...old, ...patch } : old)
   const serverOutbounds = (data.outbounds || []).filter((x: Outbound) => x.server_id === Number(draft.server_id))
   const externalOutbounds = (data.external_outbounds || []).filter((x: ExternalOutbound) => x.scope === 'global' || !x.server_id || x.server_id === Number(draft.server_id))
-  const warpProfiles = (data.warp_profiles || []).filter((x: WARPProfile) => x.server_id === Number(draft.server_id))
   return <MotionDialogPanel onCancel={onCancel} className="graph-form-dialog">
       <header className="dialog-head">
         <div><h2 id="routing-dialog-title">添加分流出口</h2><p className="muted">设置匹配条件和处理方式。</p></div>
@@ -6824,7 +6902,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, onCancel, onSubmit }: {
       </header>
       <div className="dialog-body">
         <div className="form graph-dialog-form">
-          <FormField label="服务器" required><Select value={draft.server_id} onChange={e => update({ server_id: Number(e.target.value), outbound_id: 0, warp_profile_id: 0 })}><option value={0}>选择服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField>
+          <FormField label="服务器" required><Select value={draft.server_id} onChange={e => update({ server_id: Number(e.target.value), outbound_id: 0 })}><option value={0}>选择服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField>
           <FormField label="名称" required><input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="例如 google-direct" /></FormField>
           <FormField label="优先级"><input value={draft.priority} onChange={e => update({ priority: Number(e.target.value) })} inputMode="numeric" /></FormField>
           <FormField label="匹配类型"><Select value={draft.match_kind} onChange={e => update({ match_kind: e.target.value as RoutingMatchKind, match_value: e.target.value === 'port' ? '22' : e.target.value === 'port_range' ? '10000:20000' : draft.match_value })}><option value="domain_suffix">域名后缀</option><option value="domain">完整域名</option><option value="ip_cidr">IP / CIDR</option><option value="port">目标端口</option><option value="port_range">目标端口范围</option><option value="geosite">Geosite</option><option value="geoip">GeoIP</option><option value="all">全部流量</option></Select></FormField>
@@ -6832,7 +6910,6 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, onCancel, onSubmit }: {
           <FormField label="处理方式"><Select value={draft.action} onChange={e => update({ action: e.target.value as RouteAction })}>{routeActions.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           {draft.action === 'outbound' && <FormField label="本机出口" required><Select value={draft.outbound_id} onChange={e => update({ outbound_id: Number(e.target.value) })}><option value={0}>选择出口</option>{serverOutbounds.map((x: Outbound) => <option value={x.id} key={x.id}>{x.name}</option>)}</Select></FormField>}
           {draft.action === 'external' && <FormField label="导入节点" required><Select value={draft.external_outbound_id} onChange={e => update({ external_outbound_id: Number(e.target.value) })}><option value={0}>选择导入节点</option>{externalOutbounds.map((x: ExternalOutbound) => <option value={x.id} key={x.id}>{x.name}</option>)}</Select></FormField>}
-          {draft.action === 'warp' && <FormField label="WARP" required><Select value={draft.warp_profile_id} onChange={e => update({ warp_profile_id: Number(e.target.value) })}><option value={0}>选择 WARP</option>{warpProfiles.map((x: WARPProfile) => <option value={x.id} key={x.id}>{x.name}（{labelValue(x.status)}）</option>)}</Select></FormField>}
           {draft.action === 'interface' && <FormField label="出口网卡" required hint="填写 Agent 主机上的网卡名，例如 eth1、ens6。"><input value={draft.interface_name} onChange={e => update({ interface_name: e.target.value })} placeholder="eth1" autoComplete="off" /></FormField>}
           <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
         </div>
@@ -7629,7 +7706,7 @@ function ServerBranchTree({ data, server, onManageEntry }: { data: any; server: 
   </div>
 }
 
-type GraphTransportKind = 'direct' | 'singbox' | 'port_forward' | 'wireguard' | 'ssh'
+type GraphTransportKind = 'direct' | 'warp' | 'singbox' | 'port_forward' | 'wireguard' | 'ssh'
 type GraphTransportEdgeData = {
   entity?: GraphEntity
   kind: GraphTransportKind
@@ -7718,6 +7795,7 @@ function ProxyGraphLegend() {
         <span><i className="legend-node legend-relay" /><em>链路服务器</em></span>
         <span><i className="legend-node legend-imported" /><em>第三方代理</em></span>
         <span><i className="legend-node legend-direct" /><em>直接出口</em></span>
+        <span><i className="legend-node legend-warp" /><em>WARP 出口</em></span>
       </div>
       <div className="proxy-graph-legend-section">
         <strong>传递方式</strong>
@@ -7726,6 +7804,7 @@ function ProxyGraphLegend() {
         <span><i className="legend-line legend-wg" /><em>WireGuard 组网</em></span>
         <span><i className="legend-line legend-ssh" /><em>SSH 隧道</em></span>
         <span><i className="legend-line legend-direct" /><em>本机直接出口</em></span>
+        <span><i className="legend-line legend-wg" /><em>WARP 出口</em></span>
       </div>
     </div>
   </details>
@@ -7773,7 +7852,8 @@ function graphStepServerID(step: ProxyPathStep, inboundByID: Map<number, Inbound
   return step.inbound_id ? inboundByID.get(step.inbound_id)?.server_id || 0 : 0
 }
 
-function proxyPathTransportPresentation(step: Pick<ProxyPathStep, 'transport_mode' | 'config_json' | 'inbound_id'>) {
+function proxyPathTransportPresentation(step: Pick<ProxyPathStep, 'node_type' | 'transport_mode' | 'config_json' | 'inbound_id'>) {
+  if (step.node_type === 'warp') return { kind: 'warp' as const, title: 'WARP 出口' }
   const mode = step.transport_mode || 'singbox'
   if (mode === 'port_forward') return { kind: 'port_forward' as const, title: '端口转发' }
   if (mode === 'tunnel') {
@@ -7790,6 +7870,7 @@ function proxyPathTransportPresentation(step: Pick<ProxyPathStep, 'transport_mod
 function graphTransportColor(kind: GraphTransportKind, unhealthy = false) {
   if (unhealthy) return 'var(--graph-unhealthy)'
   if (kind === 'direct') return 'var(--graph-direct)'
+  if (kind === 'warp') return 'var(--graph-wireguard)'
   if (kind === 'port_forward') return 'var(--graph-forward)'
   if (kind === 'wireguard') return 'var(--graph-wireguard)'
   if (kind === 'ssh') return 'var(--graph-ssh)'
@@ -7818,7 +7899,7 @@ function graphTransportEdge(
   }
 }
 
-function editableProxyFlow(data: any, positions: Record<string, { x: number; y: number }>, rootServerId = 0, canvasImportedIDs: number[] = [], canvasServerInstances: CanvasServerInstance[] = [], canvasDirectExitInstances: GraphDirectExitInstance[] = []) {
+function editableProxyFlow(data: any, positions: Record<string, { x: number; y: number }>, rootServerId = 0, canvasImportedIDs: number[] = [], canvasServerInstances: CanvasServerInstance[] = [], canvasDirectExitInstances: GraphDirectExitInstance[] = [], canvasWARPInstances: CanvasWARPInstance[] = []) {
   const nodes: Node[] = []
   const edges: Edge[] = []
   const entries: Inbound[] = data.inbounds || []
@@ -7900,6 +7981,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   visiblePaths.forEach(path => {
     if (collapsedDirectSourceByPath.has(path.id)) return
     ;(stepsByPath.get(path.id) || []).forEach(step => {
+      if (step.node_type === 'warp') return
       const nodeID = proxyPathStepNodeID(step)
       if (nodeID) addContinuation(nodeID, step, path)
     })
@@ -7976,6 +8058,14 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       const stepIndex = pathStepNodeIndex++
       const position = positions[id] || defaultServerGraphPosition(visibleServers.length + canvasServerInstances.length + stepIndex)
       const entity = { type: 'proxy-path-step', id: step.id, path_id: path.id, label: `${path.name || `代理路径 ${path.id}`} / 第 ${step.position} 跳` } as GraphEntity
+      if (step.node_type === 'warp') {
+        const serverID = graphWARPServerID(path, pathSteps, step, inboundByID)
+        const server = (data.servers || []).find((item: Server) => item.id === serverID) as Server | undefined
+        const profile = (data.warp_profiles || []).find((item: WARPProfile) => item.server_id === serverID) as WARPProfile | undefined
+        const status = profile?.status || 'needed'
+        nodes.push({ id, className: `graph-node warp-graph-node proxy-path-instance-node status-${status}`, position, style: { width: 220 }, data: { entity, label: <WARPGraphNode connected title="WARP" meta={`${server?.name || `服务器 ${serverID}`} · ${labelValue(status)}`} /> } })
+        return
+      }
       if (step.node_type === 'imported' && step.external_outbound_id) {
         const imported = (data.external_outbounds || []).find((item: ExternalOutbound) => item.id === step.external_outbound_id) as ExternalOutbound | undefined
         if (!imported) return
@@ -8029,6 +8119,12 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
         label: <DirectExitGraphNode title="直接出口" meta="未连接" />,
       },
     })
+  })
+  canvasWARPInstances.filter(instance => instance.root_server_id === rootID).forEach((instance, index) => {
+    const id = canvasWARPNodeID(instance)
+    const rootPosition = serverPositions.get(rootID) || defaultServerGraphPosition(0)
+    const position = positions[id] || { x: rootPosition.x + index * 240, y: rootPosition.y + 300 }
+    nodes.push({ id, className: 'graph-node warp-graph-node canvas-warp-node', position, style: { width: 220 }, data: { entity: { type: 'warp', id: 0, label: 'WARP 出口', node_id: id } as GraphEntity, label: <WARPGraphNode title="WARP" meta="未连接" /> } })
   })
   visiblePaths.forEach(path => {
     const root = inboundByID.get(path.inbound_id)
@@ -8146,7 +8242,17 @@ function proxyPathStepUpstreamLabel(data: any, step: ProxyPathStep) {
   return rootServer?.name || root?.name || '入口'
 }
 
+function graphWARPServerID(path: ProxyPath, steps: ProxyPathStep[], warpStep: ProxyPathStep, inboundByID: Map<number, Inbound>) {
+  let serverID = inboundByID.get(path.inbound_id)?.server_id || 0
+  for (const step of steps) {
+    if (step.id === warpStep.id) break
+    if (step.node_type === 'server_inbound') serverID = step.server_id || inboundByID.get(step.inbound_id || 0)?.server_id || serverID
+  }
+  return serverID
+}
+
 function proxyPathStepNodeID(step: ProxyPathStep) {
+	if (step.node_type === 'warp') return `proxy-warp-step-${step.id}`
   if (step.node_type === 'imported' && step.external_outbound_id) return `proxy-imported-step-${step.id}`
   if (step.node_type === 'server_inbound' && (step.inbound_id || step.server_id)) return `proxy-server-step-${step.id}`
   return ''
@@ -8162,6 +8268,10 @@ function directExitPathNodeID(pathID: number) {
 
 function canvasDirectExitNodeID(instance: GraphDirectExitInstance) {
   return `direct-exit-canvas-${instance.instance_id}`
+}
+
+function canvasWARPNodeID(instance: CanvasWARPInstance) {
+  return `warp-canvas-${instance.instance_id}`
 }
 
 function reachableServerIds(data: any, rootServerId: number) {
@@ -8217,6 +8327,15 @@ function DirectExitGraphNode({ connected = false, title, meta }: { connected?: b
     <span className="direct-exit-icon"><LogOut size={18} /></span>
     <span className="direct-exit-copy"><small>{connected ? '出口分支' : '可选出口'}</small><strong>{title}</strong></span>
     <span className={`direct-exit-state${connected ? ' enabled' : ''}`}>{meta}</span>
+  </div>
+}
+
+function WARPGraphNode({ connected = false, title, meta }: { connected?: boolean; title: string; meta: string }) {
+  return <div className="warp-exit-card">
+    <Handle id="target-top" className="connect-handle connect-target connect-target-top" type="target" position={Position.Top} isConnectable={!connected} />
+    <span className="warp-exit-icon"><Zap size={18} /></span>
+    <span className="warp-exit-copy"><small>{connected ? '链路出口' : '可选出口'}</small><strong>{title}</strong></span>
+    <span className={`warp-exit-state${connected ? ' enabled' : ''}`}>{meta}</span>
   </div>
 }
 
@@ -8385,6 +8504,7 @@ function autoLayoutProxyGraphPositions(
   canvasImportedIDs: number[] = [],
   canvasServerInstances: CanvasServerInstance[] = [],
   canvasDirectExitInstances: GraphDirectExitInstance[] = [],
+  canvasWARPInstances: CanvasWARPInstance[] = [],
 ): Record<string, GraphPosition> {
   const servers: Server[] = data.servers || []
   const entries: Inbound[] = data.inbounds || []
@@ -8447,6 +8567,9 @@ function autoLayoutProxyGraphPositions(
 	canvasDirectExitInstances
 	  .filter(instance => instance.root_server_id === rootID)
 	  .forEach(instance => addLayoutHop(rootNodeID, canvasDirectExitNodeID(instance)))
+	canvasWARPInstances
+	  .filter(instance => instance.root_server_id === rootID)
+	  .forEach(instance => addLayoutHop(rootNodeID, canvasWARPNodeID(instance)))
   const depth = new Map<string, number>([[rootNodeID, 0]])
   const queue = [rootNodeID]
   while (queue.length) {
@@ -8478,7 +8601,7 @@ function autoLayoutProxyGraphPositions(
   const SIBLING_GAP = 100
   const positions: Record<string, GraphPosition> = {}
   const nodeWidth = (nodeID: string) => {
-	if (nodeID.startsWith('direct-exit-path-') || nodeID.startsWith('direct-exit-canvas-')) return 220
+	if (nodeID.startsWith('direct-exit-path-') || nodeID.startsWith('direct-exit-canvas-') || nodeID.startsWith('proxy-warp-step-') || nodeID.startsWith('warp-canvas-')) return 220
     if (nodeID.startsWith('proxy-imported-step-') || nodeID.startsWith('imported-')) return GRAPH_ENTRY_NODE_WIDTH
     const serverID = graphNodeServerId(nodeID, data, canvasServerInstances)
     if (!serverID) return GRAPH_ENTRY_NODE_WIDTH
@@ -8635,16 +8758,31 @@ function Outbounds({ data, client, load }: any) {
 
 function RoutingRules({ data, client, load }: any) {
   const dialogs = useDialogs()
-  const [f, setF] = useState({ server_id: 0, name: 'route-google', priority: 100, match_json: '{"domain_suffix":["google.com"]}', action: 'direct' as RouteAction, outbound_id: 0, external_outbound_id: 0, warp_profile_id: 0, outbound_tag: '', interface_name: '', enabled: true })
+  const [f, setF] = useState({ server_id: 0, name: 'route-google', priority: 100, match_json: '{"domain_suffix":["google.com"]}', action: 'direct' as RouteAction, outbound_id: 0, external_outbound_id: 0, outbound_tag: '', interface_name: '', enabled: true })
   const payload = () => {
     const body: any = { server_id: f.server_id, name: f.name, priority: f.priority, match_json: f.match_json, action: f.action, outbound_tag: f.outbound_tag, enabled: f.enabled }
     if (f.action === 'outbound' && f.outbound_id) body.outbound_id = f.outbound_id
     if (f.action === 'external' && f.external_outbound_id) body.external_outbound_id = f.external_outbound_id
-    if (f.action === 'warp' && f.warp_profile_id) body.warp_profile_id = f.warp_profile_id
 		if (f.action === 'interface') body.interface_name = f.interface_name.trim()
     return body
   }
-  return <Panel title="分流规则"><p className="muted">规则会生成到所选服务器的 sing-box route.rules 中。目标端口可使用 <code>{'{"port":[22]}'}</code>，端口段可使用 <code>{'{"port_range":["10000:20000"]}'}</code>。</p><div className="form"><Select value={f.server_id} onChange={e => setF({ ...f, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="名称" /><input value={f.priority} onChange={e => setF({ ...f, priority: Number(e.target.value) })} placeholder="优先级" /><Select value={f.action} onChange={e => setF({ ...f, action: e.target.value as RouteAction })}>{routeActions.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select><input value={f.match_json} onChange={e => setF({ ...f, match_json: e.target.value })} placeholder='匹配 JSON，例如 {"port":[22]}' />{f.action === 'outbound' && <Select value={f.outbound_id} onChange={e => setF({ ...f, outbound_id: Number(e.target.value) })}><option value={0}>选择出口</option>{(data.outbounds || []).filter((x: Outbound) => !f.server_id || x.server_id === f.server_id).map((x: Outbound) => <option value={x.id} key={x.id}>{x.name}</option>)}</Select>}{f.action === 'external' && <Select value={f.external_outbound_id} onChange={e => setF({ ...f, external_outbound_id: Number(e.target.value) })}><option value={0}>选择导入节点</option>{(data.external_outbounds || []).map((x: ExternalOutbound) => <option value={x.id} key={x.id}>{x.name}</option>)}</Select>}{f.action === 'warp' && <Select value={f.warp_profile_id} onChange={e => setF({ ...f, warp_profile_id: Number(e.target.value) })}><option value={0}>选择 WARP 配置</option>{(data.warp_profiles || []).filter((x: WARPProfile) => !f.server_id || x.server_id === f.server_id).map((x: WARPProfile) => <option value={x.id} key={x.id}>{x.name}（{labelValue(x.status)}）</option>)}</Select>}{f.action === 'interface' && <input value={f.interface_name} onChange={e => setF({ ...f, interface_name: e.target.value })} placeholder="出口网卡，例如 eth1" />}<input value={f.outbound_tag} onChange={e => setF({ ...f, outbound_tag: e.target.value })} placeholder="出口标签覆盖，可选" /><Select variant="segmented" value={String(f.enabled)} onChange={e => setF({ ...f, enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select><button onClick={async () => { await client.request('/routing-rules', { method: 'POST', body: JSON.stringify(payload()) }); await load() }}>创建</button></div><Table rows={data.routing_rules || []} actions={(r: RoutingRule) => <button onClick={() => remove(client, `/routing-rules/${r.id}`, load, dialogs, r)}>删除</button>} /></Panel>
+  return <Panel title="分流规则">
+    <p className="muted">规则会生成到所选服务器的 sing-box route.rules 中。</p>
+    <div className="form">
+      <Select value={f.server_id} onChange={e => setF({ ...f, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select>
+      <input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="名称" />
+      <input value={f.priority} onChange={e => setF({ ...f, priority: Number(e.target.value) })} placeholder="优先级" />
+      <Select value={f.action} onChange={e => setF({ ...f, action: e.target.value as RouteAction })}>{routeActions.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
+      <input value={f.match_json} onChange={e => setF({ ...f, match_json: e.target.value })} placeholder='匹配 JSON，例如 {"port":[22]}' />
+      {f.action === 'outbound' && <Select value={f.outbound_id} onChange={e => setF({ ...f, outbound_id: Number(e.target.value) })}><option value={0}>选择出口</option>{(data.outbounds || []).filter((x: Outbound) => !f.server_id || x.server_id === f.server_id).map((x: Outbound) => <option value={x.id} key={x.id}>{x.name}</option>)}</Select>}
+      {f.action === 'external' && <Select value={f.external_outbound_id} onChange={e => setF({ ...f, external_outbound_id: Number(e.target.value) })}><option value={0}>选择导入节点</option>{(data.external_outbounds || []).map((x: ExternalOutbound) => <option value={x.id} key={x.id}>{x.name}</option>)}</Select>}
+      {f.action === 'interface' && <input value={f.interface_name} onChange={e => setF({ ...f, interface_name: e.target.value })} placeholder="出口网卡，例如 eth1" />}
+      <input value={f.outbound_tag} onChange={e => setF({ ...f, outbound_tag: e.target.value })} placeholder="出口标签覆盖，可选" />
+      <Select variant="segmented" value={String(f.enabled)} onChange={e => setF({ ...f, enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select>
+      <button onClick={async () => { await client.request('/routing-rules', { method: 'POST', body: JSON.stringify(payload()) }); await load() }}>创建</button>
+    </div>
+    <Table rows={data.routing_rules || []} actions={(r: RoutingRule) => <button onClick={() => remove(client, `/routing-rules/${r.id}`, load, dialogs, r)}>删除</button>} />
+  </Panel>
 }
 
 function ExternalOutbounds({ data, client, load }: any) {
@@ -8681,12 +8819,6 @@ function ExternalOutbounds({ data, client, load }: any) {
     <button onClick={async () => { await client.request('/external-outbounds/import', { method: 'POST', body: JSON.stringify(importPayload()) }); await load() }}>导入</button>
     <Table rows={(data.external_outbounds || []).map((x: ExternalOutbound) => ({ id: x.id, name: x.name, protocol: x.protocol, scope: x.scope, target_address: x.target_address, target_port: x.target_port, expose_to_users: x.expose_to_users, enabled: x.enabled, _raw: x }))} actions={(r: any) => <><button onClick={() => dialogs.alert({ title: r.name, message: <CopyBlock value={safePrettyJSON(r._raw.config_json)} /> })}>查看配置</button><button onClick={() => remove(client, `/external-outbounds/${r.id}`, load, dialogs, r)}>删除</button></>} />
   </Panel>
-}
-
-function WARPProfiles({ data, client, load }: any) {
-  const dialogs = useDialogs()
-  const [f, setF] = useState({ server_id: 0, name: 'warp-1', status: 'needed', config_json: '{}', mtu: 0, dns_strategy: 'auto', enabled: true })
-  return <Panel title="WARP 配置"><p className="muted">每个 WARP 配置只能绑定一台服务器。如果 JSON 配置为空，下一次部署会由该服务器 Agent 准备 WARP 配置并随部署结果回传；再次部署会启用 WireGuard 出口和分流规则。</p><div className="form"><Select value={f.server_id} onChange={e => setF({ ...f, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="名称" /><Select value={f.status} onChange={e => setF({ ...f, status: e.target.value })}>{warpStatuses.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select><input value={f.mtu} onChange={e => setF({ ...f, mtu: Number(e.target.value) })} placeholder="MTU，0 为自动" /><input value={f.dns_strategy} onChange={e => setF({ ...f, dns_strategy: e.target.value })} placeholder="DNS 策略：auto 为自动，ipv6_only 为仅 IPv6" /><input value={f.config_json} onChange={e => setF({ ...f, config_json: e.target.value })} placeholder="就绪后的 sing-box WireGuard 出口 JSON" /><Select variant="segmented" value={String(f.enabled)} onChange={e => setF({ ...f, enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select><button onClick={async () => { await client.request('/warp-profiles', { method: 'POST', body: JSON.stringify(f) }); await load() }}>创建</button></div><Table rows={data.warp_profiles || []} actions={(r: WARPProfile) => <button onClick={() => remove(client, `/warp-profiles/${r.id}`, load, dialogs, r)}>删除</button>} /></Panel>
 }
 
 function defaultUserDraft(): UserDraft {

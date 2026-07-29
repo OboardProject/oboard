@@ -295,6 +295,17 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 	if err := validateProxyPathTransportSet(opts.ProxyPaths, pathStepsByPath, pathInboundByID); err != nil {
 		return "", err
 	}
+	pathWARPServers, err := ProxyPathWARPServerIDs(opts.ProxyPaths, opts.ProxyPathSteps, opts.Inbounds)
+	if err != nil {
+		return "", err
+	}
+	warpReferenced := pathWARPServers[server.ID]
+	for _, rule := range opts.RoutingRules {
+		if rule.ServerID == server.ID && rule.Enabled && rule.Action == model.RouteActionWARP {
+			warpReferenced = true
+			break
+		}
+	}
 	config := SingBoxConfig{
 		Log:       map[string]any{"level": "warn", "timestamp": true},
 		Inbounds:  []map[string]any{},
@@ -402,7 +413,11 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 	}
 	config.Outbounds = append(config.Outbounds, pathOutbounds...)
 	for _, profile := range opts.WARPProfiles {
-		if profile.ServerID != server.ID || !profile.Enabled || profile.Status != model.WARPStatusReady || strings.TrimSpace(profile.ConfigJSON) == "" {
+		if !warpReferenced || profile.ServerID != server.ID || !profile.Enabled {
+			continue
+		}
+		if profile.Status != model.WARPStatusReady || strings.TrimSpace(profile.ConfigJSON) == "" || strings.TrimSpace(profile.ConfigJSON) == "{}" {
+			config.Endpoints = append(config.Endpoints, map[string]any{"type": "wireguard", "tag": tag("warp", profile.ID), "_oboard_warp_pending": profile.ID})
 			continue
 		}
 		item, err := warpProfileToSingBox(profile, server)
@@ -852,6 +867,20 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 				}
 				continue
 			}
+			if step.NodeType == model.ProxyPathStepWARP {
+				if activeServerID != server.ID {
+					continue
+				}
+				profile, ok := warpProfileForServer(opts.WARPProfiles, server.ID)
+				if !ok || !profile.Enabled {
+					return nil, nil, fmt.Errorf("proxy path %s requires WARP on server %d", path.Name, server.ID)
+				}
+				if previousTag != "" {
+					return nil, nil, fmt.Errorf("proxy path %s must connect WARP directly after a controlled server", path.Name)
+				}
+				previousTag = tag("warp", profile.ID)
+				continue
+			}
 			if activeServerID != server.ID {
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
@@ -1259,6 +1288,19 @@ func warpProfileToSingBox(v model.WARPProfile, server model.Server) (map[string]
 	return raw, nil
 }
 
+func WARPOutboundTag(profileID int64) string {
+	return tag("warp", profileID)
+}
+
+func warpProfileForServer(items []model.WARPProfile, serverID int64) (model.WARPProfile, bool) {
+	for _, item := range items {
+		if item.ServerID == serverID {
+			return item, true
+		}
+	}
+	return model.WARPProfile{}, false
+}
+
 func normalizeWireGuardEndpoint(raw map[string]any) {
 	if raw == nil {
 		return
@@ -1469,18 +1511,11 @@ func routeRuleOutboundTag(rule model.RoutingRule, server model.Server, outbounds
 		}
 		return "", false, fmt.Errorf("external outbound %d is not available on server %d", *rule.ExternalOutboundID, server.ID)
 	case model.RouteActionWARP:
-		if rule.WARPProfileID == nil {
-			return "", false, errors.New("warp_profile_id required")
+		profile, ok := warpProfileForServer(warp, server.ID)
+		if ok && profile.Enabled {
+			return tag("warp", profile.ID), true, nil
 		}
-		for _, profile := range warp {
-			if profile.ID == *rule.WARPProfileID && profile.ServerID == server.ID && profile.Enabled {
-				if profile.Status == model.WARPStatusReady && strings.TrimSpace(profile.ConfigJSON) != "" {
-					return tag("warp", profile.ID), true, nil
-				}
-				return "", false, nil
-			}
-		}
-		return "", false, fmt.Errorf("warp profile %d is not available on server %d", *rule.WARPProfileID, server.ID)
+		return "", false, fmt.Errorf("WARP is not available on server %d", server.ID)
 	default:
 		return "", false, fmt.Errorf("unsupported route action %q", rule.Action)
 	}

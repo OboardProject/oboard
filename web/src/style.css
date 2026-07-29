@@ -8638,6 +8638,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .legend-relay { color: var(--graph-relay); }
 .legend-imported { color: var(--graph-imported); border-style: dashed; }
 .legend-direct { color: var(--graph-direct); }
+.legend-warp { color: var(--graph-wireguard); }
 .legend-line { width: 17px; height: 0; display: block; border-top: 2px solid currentColor; }
 .legend-chain { color: var(--graph-chain); }
 .legend-forward { color: var(--graph-forward); border-top-style: dashed; }
@@ -8692,6 +8693,51 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   border-style: solid;
   border-color: var(--graph-direct);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--graph-direct) 14%, transparent), 0 12px 30px rgba(15, 23, 42, .11);
+}
+
+.warp-exit-card {
+  position: relative;
+  width: 100%;
+  min-height: 82px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 12px;
+  color: var(--text-primary);
+  border: 1px dashed color-mix(in srgb, var(--graph-wireguard) 58%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-solid) 94%, var(--graph-wireguard));
+  box-shadow: 0 8px 22px rgba(15, 23, 42, .08);
+}
+.warp-exit-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  color: var(--graph-wireguard);
+  border: 1px solid color-mix(in srgb, var(--graph-wireguard) 28%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--graph-wireguard) 10%, var(--surface-solid));
+}
+.warp-exit-copy { min-width: 0; display: grid; gap: 2px; }
+.warp-exit-copy small { color: var(--graph-wireguard); font-size: 9px; font-weight: 800; }
+.warp-exit-copy strong { color: var(--text-primary); font-size: 13px; }
+.warp-exit-state {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.warp-exit-state.enabled { color: var(--graph-wireguard); }
+.flow .react-flow__node.warp-graph-node:hover .warp-exit-card,
+.flow .react-flow__node.warp-graph-node.selected .warp-exit-card {
+  border-style: solid;
+  border-color: var(--graph-wireguard);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--graph-wireguard) 14%, transparent), 0 12px 30px rgba(15, 23, 42, .11);
 }
 
 @media (max-width: 820px) {

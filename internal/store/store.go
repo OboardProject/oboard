@@ -139,13 +139,13 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists user_group_members (id integer primary key autoincrement, group_id integer not null references user_groups(id) on delete cascade, user_id integer not null references users(id) on delete cascade, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(group_id,user_id))`,
 		`create table if not exists inbound_access_grants (id integer primary key autoincrement, subject_type text not null, subject_id integer not null, scope_type text not null, server_id integer references servers(id) on delete cascade, inbound_id integer references inbounds(id) on delete cascade, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(subject_type,subject_id,scope_type,server_id,inbound_id))`,
 		`create table if not exists outbounds (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, next_server_id integer references servers(id) on delete set null, name text not null, protocol text not null, target_address text not null, target_port integer not null, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
-		`create table if not exists routing_rules (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, priority integer not null default 100, match_json text not null default '{}', action text not null, outbound_id integer references outbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, target_server_id integer references servers(id) on delete set null, warp_profile_id integer references warp_profiles(id) on delete set null, outbound_tag text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists routing_rules (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, priority integer not null default 100, match_json text not null default '{}', action text not null, outbound_id integer references outbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, target_server_id integer references servers(id) on delete set null, outbound_tag text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists external_outbounds (id integer primary key autoincrement, server_id integer references servers(id) on delete set null, name text not null, protocol text not null, scope text not null default 'global', target_address text not null default '', target_port integer not null default 0, config_json text not null default '{}', expose_to_users integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists external_outbound_access_grants (id integer primary key autoincrement, external_outbound_id integer not null references external_outbounds(id) on delete cascade, subject_type text not null, subject_id integer not null, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(external_outbound_id,subject_type,subject_id))`,
 		`create table if not exists proxy_paths (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, kind text not null default 'chain', branch_source_step_id integer references proxy_path_steps(id) on delete set null, name_mode text not null default 'auto', name_template_json text not null default '[]', secret text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_steps (id integer primary key autoincrement, path_id integer not null references proxy_paths(id) on delete cascade, position integer not null, node_type text not null, transport_mode text not null default 'singbox', processing_role integer not null default 0, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, config_json text not null default '{}', created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_port_allocations (id integer primary key autoincrement, kind text not null, scope_key text not null, server_id integer not null references servers(id) on delete cascade, port integer not null, created_at text not null, updated_at text not null, unique(kind,scope_key,server_id))`,
-		`create table if not exists warp_profiles (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, status text not null default 'needed', config_json text not null default '{}', mtu integer not null default 0, dns_strategy text not null default '', last_requested_at text, error text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists warp_profiles (id integer primary key autoincrement, server_id integer not null unique references servers(id) on delete cascade, name text not null, status text not null default 'needed', config_json text not null default '{}', mtu integer not null default 0, dns_strategy text not null default '', last_requested_at text, error text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_lists (id integer primary key autoincrement, name text not null unique, kind text not null, revision integer not null default 1, candidates_json text not null, enabled integer not null default 1, protected integer not null default 0, created_at text not null, updated_at text not null)`,
 		`create table if not exists server_dns_policies (server_id integer primary key references servers(id) on delete cascade, encrypted_list_id integer not null references dns_lists(id) on delete restrict, bootstrap_list_id integer not null references dns_lists(id) on delete restrict, revision integer not null default 1, strategy text not null default 'auto', auto_test text not null default 'first_apply', test_interval_seconds integer not null default 3600, encrypted_selected_json text not null default '[]', bootstrap_selected_json text not null default '[]', encrypted_selection_revision integer not null default 0, bootstrap_selection_revision integer not null default 0, last_attempt_at text, last_success_at text, last_error text not null default '', needs_benchmark integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists port_forwards (id integer primary key autoincrement, name text not null, source_server_id integer not null references servers(id) on delete cascade, target_server_id integer not null references servers(id) on delete cascade, listen_ip text not null default '', listen_port integer not null, target_address text not null default '', target_port integer not null, protocol text not null default 'tcp', backend text not null default 'auto', probe_mode text not null default 'apply', probe_interval_seconds integer not null default 300, sample_rate real not null default 0, priority integer not null default 100, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
@@ -2399,7 +2399,7 @@ func (s *Store) CreateRoutingRule(ctx context.Context, v *model.RoutingRule) err
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into routing_rules(server_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_server_id,warp_profile_id,outbound_tag,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetServerID, v.WARPProfileID, v.OutboundTag, boolInt(v.Enabled), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into routing_rules(server_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_server_id,outbound_tag,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetServerID, v.OutboundTag, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -2411,12 +2411,12 @@ func (s *Store) UpdateRoutingRule(ctx context.Context, v *model.RoutingRule) err
 	if v.Action == model.RouteActionInterface && v.InterfaceName != "" {
 		v.OutboundTag = v.InterfaceName
 	}
-	_, err := s.db.ExecContext(ctx, `update routing_rules set server_id=?,name=?,priority=?,match_json=?,action=?,outbound_id=?,external_outbound_id=?,target_server_id=?,warp_profile_id=?,outbound_tag=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetServerID, v.WARPProfileID, v.OutboundTag, boolInt(v.Enabled), now(), v.ID)
+	_, err := s.db.ExecContext(ctx, `update routing_rules set server_id=?,name=?,priority=?,match_json=?,action=?,outbound_id=?,external_outbound_id=?,target_server_id=?,outbound_tag=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetServerID, v.OutboundTag, boolInt(v.Enabled), now(), v.ID)
 	return err
 }
 
 func (s *Store) ListRoutingRules(ctx context.Context) ([]model.RoutingRule, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,server_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_server_id,warp_profile_id,outbound_tag,enabled,created_at,updated_at from routing_rules order by priority asc,id asc`)
+	rows, err := s.db.QueryContext(ctx, `select id,server_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_server_id,outbound_tag,enabled,created_at,updated_at from routing_rules order by priority asc,id asc`)
 	if err != nil {
 		return nil, err
 	}
@@ -2424,10 +2424,10 @@ func (s *Store) ListRoutingRules(ctx context.Context) ([]model.RoutingRule, erro
 	var out []model.RoutingRule
 	for rows.Next() {
 		var v model.RoutingRule
-		var outboundID, externalID, targetID, warpID sql.NullInt64
+		var outboundID, externalID, targetID sql.NullInt64
 		var en int
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.ServerID, &v.Name, &v.Priority, &v.MatchJSON, &v.Action, &outboundID, &externalID, &targetID, &warpID, &v.OutboundTag, &en, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.ServerID, &v.Name, &v.Priority, &v.MatchJSON, &v.Action, &outboundID, &externalID, &targetID, &v.OutboundTag, &en, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if outboundID.Valid {
@@ -2438,9 +2438,6 @@ func (s *Store) ListRoutingRules(ctx context.Context) ([]model.RoutingRule, erro
 		}
 		if targetID.Valid {
 			v.TargetServerID = &targetID.Int64
-		}
-		if warpID.Valid {
-			v.WARPProfileID = &warpID.Int64
 		}
 		if v.Action == model.RouteActionInterface {
 			v.InterfaceName = v.OutboundTag
@@ -3006,6 +3003,44 @@ func (s *Store) GetWARPProfile(ctx context.Context, id int64) (*model.WARPProfil
 		}
 	}
 	return nil, sql.ErrNoRows
+}
+
+func (s *Store) GetWARPProfileForServer(ctx context.Context, serverID int64) (*model.WARPProfile, error) {
+	items, err := s.ListWARPProfiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if items[i].ServerID == serverID {
+			return &items[i], nil
+		}
+	}
+	return nil, sql.ErrNoRows
+}
+
+func (s *Store) EnsureWARPProfileForServer(ctx context.Context, serverID int64) (*model.WARPProfile, error) {
+	profile, err := s.GetWARPProfileForServer(ctx, serverID)
+	if err == nil {
+		return profile, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	profile = &model.WARPProfile{
+		ServerID:   serverID,
+		Name:       fmt.Sprintf("WARP / server-%d", serverID),
+		Status:     model.WARPStatusNeeded,
+		ConfigJSON: "{}",
+		Enabled:    true,
+	}
+	if err := s.CreateWARPProfile(ctx, profile); err != nil {
+		// A concurrent rule/path write may have created the server singleton.
+		if existing, getErr := s.GetWARPProfileForServer(ctx, serverID); getErr == nil {
+			return existing, nil
+		}
+		return nil, err
+	}
+	return profile, nil
 }
 
 func (s *Store) ApplyWARPReport(ctx context.Context, report model.WARPConfigReport) error {

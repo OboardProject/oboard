@@ -470,6 +470,23 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 		}
 		enabledByInbound[path.InboundID]++
 		ordered := orderedProxyPathSteps(stepsByPath[path.ID])
+		for index, step := range ordered {
+			if step.NodeType != model.ProxyPathStepWARP {
+				continue
+			}
+			if path.Kind != "" && path.Kind != model.ProxyPathKindChain {
+				return fmt.Errorf("WARP 只能作为普通代理链路的出口")
+			}
+			if index != len(ordered)-1 {
+				return fmt.Errorf("代理路径 %s 的 WARP 必须是最后一个节点", path.Name)
+			}
+			if step.TransportMode != "" && step.TransportMode != model.ProxyPathTransportSingBox {
+				return fmt.Errorf("代理路径 %s 的 WARP 只能使用 sing-box 出站", path.Name)
+			}
+			if index > 0 && ordered[index-1].NodeType != model.ProxyPathStepServerInbound {
+				return fmt.Errorf("代理路径 %s 的 WARP 必须直接连接在可控服务器之后", path.Name)
+			}
+		}
 		if path.Kind == model.ProxyPathKindDirect {
 			if len(ordered) > 0 {
 				last := ordered[len(ordered)-1]
@@ -500,6 +517,50 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 		}
 	}
 	return nil
+}
+
+// ProxyPathWARPServerIDs resolves every enabled WARP terminal to the controlled
+// server immediately before it. The same derivation drives config generation,
+// deployment requests, and UI status so ownership cannot drift between layers.
+func ProxyPathWARPServerIDs(paths []model.ProxyPath, steps []model.ProxyPathStep, inbounds []model.Inbound) (map[int64]bool, error) {
+	inboundByID := make(map[int64]model.Inbound, len(inbounds))
+	for _, inbound := range inbounds {
+		inboundByID[inbound.ID] = inbound
+	}
+	stepsByPath := map[int64][]model.ProxyPathStep{}
+	for _, step := range steps {
+		stepsByPath[step.PathID] = append(stepsByPath[step.PathID], step)
+	}
+	out := map[int64]bool{}
+	for _, path := range paths {
+		if !path.Enabled {
+			continue
+		}
+		root, ok := inboundByID[path.InboundID]
+		if !ok {
+			return nil, fmt.Errorf("代理路径 %s 的入口不存在", path.Name)
+		}
+		currentServerID := root.ServerID
+		ordered := orderedProxyPathSteps(stepsByPath[path.ID])
+		for index, step := range ordered {
+			switch step.NodeType {
+			case model.ProxyPathStepServerInbound:
+				serverID, _, ok := proxyPathStepTargetServer(step, inboundByID)
+				if ok {
+					currentServerID = serverID
+				}
+			case model.ProxyPathStepWARP:
+				if index != len(ordered)-1 || (index > 0 && ordered[index-1].NodeType != model.ProxyPathStepServerInbound) {
+					return nil, fmt.Errorf("代理路径 %s 的 WARP 必须直接连接在最后一台可控服务器之后", path.Name)
+				}
+				if currentServerID == 0 {
+					return nil, fmt.Errorf("代理路径 %s 无法确定 WARP 出口服务器", path.Name)
+				}
+				out[currentServerID] = true
+			}
+		}
+	}
+	return out, nil
 }
 
 func directProxyPathSignature(inboundID int64, steps []model.ProxyPathStep) string {

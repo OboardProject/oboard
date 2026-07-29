@@ -5155,6 +5155,12 @@ func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if v.Action == model.RouteActionWARP {
+			if _, err := s.store.EnsureWARPProfileForServer(r.Context(), v.ServerID); err != nil {
+				fail(w, err, 500)
+				return
+			}
+		}
 		if err := s.store.CreateRoutingRule(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
@@ -5174,6 +5180,12 @@ func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
 		if err := s.validateRoutingRule(r.Context(), &v); err != nil {
 			fail(w, err, 400)
 			return
+		}
+		if v.Action == model.RouteActionWARP {
+			if _, err := s.store.EnsureWARPProfileForServer(r.Context(), v.ServerID); err != nil {
+				fail(w, err, 500)
+				return
+			}
 		}
 		if err := s.store.UpdateRoutingRule(r.Context(), &v); err != nil {
 			fail(w, err, 500)
@@ -5249,16 +5261,6 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 		}
 		return core.ValidateAddressForIPStack(server.IPStack, ext.TargetAddress)
 	case model.RouteActionWARP:
-		if v.WARPProfileID == nil {
-			return errors.New("warp_profile_id required")
-		}
-		profile, err := s.store.GetWARPProfile(ctx, *v.WARPProfileID)
-		if err != nil {
-			return fmt.Errorf("warp_profile %d: %w", *v.WARPProfileID, err)
-		}
-		if profile.ServerID != v.ServerID {
-			return errors.New("warp profile is single-server only and must belong to this server")
-		}
 		return nil
 	case model.RouteActionInterface:
 		v.InterfaceName = strings.TrimSpace(v.InterfaceName)
@@ -5268,8 +5270,6 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 		if err := core.ValidateNetworkInterfaceName(v.InterfaceName); err != nil {
 			return fmt.Errorf("interface_name: %w", err)
 		}
-		// Reuse the existing outbound_tag storage column so this remains
-		// compatible with databases created by earlier OBoard versions.
 		v.OutboundTag = v.InterfaceName
 		return nil
 	default:
@@ -6029,6 +6029,12 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 				fail(w, err, 400)
 				return
 			}
+			if err := s.ensureWARPProfilesForProxyPaths(r.Context()); err != nil {
+				restore := *current
+				_ = s.store.UpdateProxyPath(r.Context(), &restore)
+				fail(w, err, 500)
+				return
+			}
 		}
 		v = s.resolvedProxyPath(r.Context(), v)
 		auditReq(s, r, "update", "proxy-path", fmt.Sprint(id))
@@ -6329,6 +6335,23 @@ func (s *Server) validateEnabledProxyPathPlan(ctx context.Context, pathID int64)
 	return err
 }
 
+func (s *Server) ensureWARPProfilesForProxyPaths(ctx context.Context) error {
+	data, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		return err
+	}
+	serverIDs, err := core.ProxyPathWARPServerIDs(data.ProxyPaths, data.ProxyPathSteps, data.Inbounds)
+	if err != nil {
+		return err
+	}
+	for serverID := range serverIDs {
+		if _, err := s.store.EnsureWARPProfileForServer(ctx, serverID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/proxy-path-steps/")
 	switch r.Method {
@@ -6375,6 +6398,12 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if err := s.ensureWARPProfilesForProxyPaths(r.Context()); err != nil {
+			_ = s.store.Delete(r.Context(), "proxy_path_steps", v.ID)
+			_ = s.normalizeProxyPathProcessingRoles(r.Context(), v.PathID)
+			fail(w, err, 500)
+			return
+		}
 		if err := s.store.ClearProxyPathBranchSource(r.Context(), v.PathID); err != nil {
 			fail(w, err, 500)
 			return
@@ -6418,6 +6447,12 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			_ = s.store.UpdateProxyPathStep(r.Context(), current)
 			_ = s.normalizeProxyPathProcessingRoles(r.Context(), current.PathID)
 			fail(w, err, 400)
+			return
+		}
+		if err := s.ensureWARPProfilesForProxyPaths(r.Context()); err != nil {
+			_ = s.store.UpdateProxyPathStep(r.Context(), current)
+			_ = s.normalizeProxyPathProcessingRoles(r.Context(), current.PathID)
+			fail(w, err, 500)
 			return
 		}
 		if err := s.store.ClearProxyPathBranchSourcesFromPosition(r.Context(), current.PathID, current.Position); err != nil {
@@ -6546,6 +6581,15 @@ func (s *Server) validateProxyPathStep(ctx context.Context, v *model.ProxyPathSt
 	}
 	v.ProcessingRole = false // Derived from the leading transparent-forward segment.
 	switch v.NodeType {
+	case model.ProxyPathStepWARP:
+		if v.TransportMode != model.ProxyPathTransportSingBox {
+			return errors.New("WARP 只能作为 sing-box 链路出口")
+		}
+		v.ServerID = nil
+		v.InboundID = nil
+		v.ExternalOutboundID = nil
+		v.ConfigJSON = "{}"
+		v.ProcessingRole = false
 	case model.ProxyPathStepImported:
 		if v.TransportMode != model.ProxyPathTransportSingBox {
 			return errors.New("导入节点只能使用 sing-box 出站链，端口转发和隧道需要连接到可控服务器")
@@ -6606,7 +6650,7 @@ func (s *Server) validateProxyPathStep(ctx context.Context, v *model.ProxyPathSt
 			}
 		}
 	default:
-		return errors.New("node_type must be imported or server_inbound")
+		return errors.New("node_type must be imported, server_inbound or warp")
 	}
 	steps, err := s.store.ListProxyPathStepsForPath(ctx, v.PathID)
 	if err != nil {
@@ -6996,55 +7040,6 @@ func (s *Server) warpProfiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		write(w, 200, map[string]any{"warp_profiles": publicWARPProfiles(items)})
-	case http.MethodPost:
-		var v model.WARPProfile
-		if !decode(w, r, &v) {
-			return
-		}
-		if err := s.validateWARPProfile(r.Context(), &v); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.store.CreateWARPProfile(r.Context(), &v); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		write(w, 201, map[string]any{"warp_profile": publicWARPProfile(v)})
-	case http.MethodPatch:
-		if id == 0 {
-			fail(w, errors.New("missing id"), 400)
-			return
-		}
-		var v model.WARPProfile
-		if !decode(w, r, &v) {
-			return
-		}
-		v.ID = id
-		// Responses redact private_key, so a client that edits a profile it
-		// just read would otherwise write the placeholder back and destroy the
-		// node's WireGuard key. Keep the stored key when it was not replaced.
-		if current, err := s.store.GetWARPProfile(r.Context(), id); err == nil {
-			v.ConfigJSON = restoreWARPPrivateKey(v.ConfigJSON, current.ConfigJSON)
-		}
-		if err := s.validateWARPProfile(r.Context(), &v); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.store.UpdateWARPProfile(r.Context(), &v); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		write(w, 200, map[string]any{"warp_profile": publicWARPProfile(v)})
-	case http.MethodDelete:
-		if id == 0 {
-			fail(w, errors.New("missing id"), 400)
-			return
-		}
-		if err := s.store.Delete(r.Context(), "warp_profiles", id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		write(w, 200, map[string]any{"deleted": true})
 	default:
 		method(w)
 	}
@@ -8420,6 +8415,27 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	resolveRoutingProxyPathNames(&data)
 	servers, in := data.Servers, data.Inbounds
+	warpServerIDs, err := core.ProxyPathWARPServerIDs(data.ProxyPaths, data.ProxyPathSteps, in)
+	if err != nil {
+		fail(w, err, 400)
+		return
+	}
+	for _, rule := range data.RoutingRules {
+		if rule.Enabled && rule.Action == model.RouteActionWARP {
+			warpServerIDs[rule.ServerID] = true
+		}
+	}
+	for serverID := range warpServerIDs {
+		if _, err := s.store.EnsureWARPProfileForServer(r.Context(), serverID); err != nil {
+			fail(w, err, 500)
+			return
+		}
+	}
+	data.WARPProfiles, err = s.store.ListWARPProfiles(r.Context())
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
 	trustedServers := core.TrustedForwardServerIDs(data.ProxyPaths, data.ProxyPathSteps, in)
 	if err := validateTrustedForwardAgentBuilds(servers, trustedServers); err != nil {
 		fail(w, err, http.StatusConflict)
@@ -8491,20 +8507,15 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		warpRequests := make([]model.WARPRequestPlan, 0)
-		for i := range data.RoutingRules {
-			rule := data.RoutingRules[i]
-			if rule.ServerID != server.ID || !rule.Enabled || rule.Action != model.RouteActionWARP || rule.WARPProfileID == nil {
-				continue
-			}
-			profile, ok := findWARPProfile(data.WARPProfiles, *rule.WARPProfileID)
-			if !ok || profile.ServerID != server.ID || !profile.Enabled {
-				fail(w, fmt.Errorf("routing rule %s references unavailable warp profile", rule.Name), 400)
+		if warpServerIDs[server.ID] {
+			profile, ok := findWARPProfileForServer(data.WARPProfiles, server.ID)
+			if !ok || !profile.Enabled {
+				fail(w, fmt.Errorf("server %s requires an unavailable WARP profile", server.Name), 400)
 				return
 			}
 			if profile.Status == model.WARPStatusReady && strings.TrimSpace(profile.ConfigJSON) != "" {
-				continue
-			}
-			if profile.Status != model.WARPStatusRequested {
+				// The complete endpoint is already generated into the Controller config.
+			} else {
 				now := time.Now().UTC()
 				profile.Status = model.WARPStatusRequested
 				profile.LastRequestedAt = &now
@@ -8514,15 +8525,15 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				data.WARPProfiles = replaceWARPProfile(data.WARPProfiles, profile)
+				plan := model.WARPRequestPlan{Version: version, ServerID: server.ID, ProfileID: profile.ID, OutboundTag: core.WARPOutboundTag(profile.ID), IPStack: server.IPStack, MTU: server.MTUValue, DNSStrategy: string(server.IPStack)}
+				if plan.DNSStrategy == string(model.IPStackAuto) || plan.DNSStrategy == string(model.IPStackDualStack) {
+					plan.DNSStrategy = "auto"
+				}
+				if plan.MTU == 0 && server.IPStack == model.IPStackIPv6Only {
+					plan.MTU = 1280
+				}
+				warpRequests = append(warpRequests, plan)
 			}
-			plan := model.WARPRequestPlan{Version: version, ServerID: server.ID, ProfileID: profile.ID, Name: profile.Name, IPStack: server.IPStack, MTU: profile.MTU, DNSStrategy: profile.DNSStrategy}
-			if plan.MTU == 0 && server.MTUValue > 0 {
-				plan.MTU = server.MTUValue
-			}
-			if plan.MTU == 0 && server.IPStack == model.IPStackIPv6Only {
-				plan.MTU = 1280
-			}
-			warpRequests = append(warpRequests, plan)
 		}
 
 		generated, err := s.generateServerCoreConfigWithLedger(r.Context(), server, data, ledger)
@@ -8720,6 +8731,13 @@ func (s *Server) serverConfigUnchanged(ctx context.Context, serverID int64, cfg 
 	}
 	switch last.Type {
 	case model.AgentTaskTypeApplyDeployment:
+		if effective := effectiveConfigSHA256FromDeploymentResult(last.ResultJSON); effective != "" {
+			digest, err := canonicalConfigSHA256(cfg)
+			if err != nil {
+				return false, err
+			}
+			return digest == effective, nil
+		}
 		var payload model.DeploymentTaskPayload
 		if json.Unmarshal([]byte(last.PayloadJSON), &payload) == nil && strings.TrimSpace(payload.Config.Config) != "" {
 			return payload.Config.Config == cfg, nil
@@ -8731,6 +8749,38 @@ func (s *Server) serverConfigUnchanged(ctx context.Context, serverID int64, cfg 
 		}
 	}
 	return false, nil
+}
+
+func effectiveConfigSHA256FromDeploymentResult(raw string) string {
+	var result struct {
+		Steps []struct {
+			Key    string `json:"key"`
+			Result struct {
+				EffectiveConfigSHA256 string `json:"effective_config_sha256"`
+			} `json:"result"`
+		} `json:"steps"`
+	}
+	if json.Unmarshal([]byte(raw), &result) != nil {
+		return ""
+	}
+	for _, step := range result.Steps {
+		if step.Key == "config" {
+			return strings.TrimSpace(step.Result.EffectiveConfigSHA256)
+		}
+	}
+	return ""
+}
+
+func canonicalConfigSHA256(config string) (string, error) {
+	var value any
+	if err := json.Unmarshal([]byte(config), &value); err != nil {
+		return "", err
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(canonical)), nil
 }
 
 func (s *Server) shouldRunDeploymentMTU(ctx context.Context, plan model.MTUDetectionPlan) (bool, error) {
@@ -8983,6 +9033,26 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 	return generatedServerCoreConfig{Config: config, Assets: assets, Inbounds: inbounds, TrafficPolicies: trafficPolicies}, nil
 }
 
+func requireReadyWARPForFocusedApply(data store.FullRoutingConfig, serverID int64) error {
+	serverIDs, err := core.ProxyPathWARPServerIDs(data.ProxyPaths, data.ProxyPathSteps, data.Inbounds)
+	if err != nil {
+		return err
+	}
+	for _, rule := range data.RoutingRules {
+		if rule.Enabled && rule.Action == model.RouteActionWARP {
+			serverIDs[rule.ServerID] = true
+		}
+	}
+	if !serverIDs[serverID] {
+		return nil
+	}
+	profile, ok := findWARPProfileForServer(data.WARPProfiles, serverID)
+	if !ok || profile.Status != model.WARPStatusReady || strings.TrimSpace(profile.ConfigJSON) == "" {
+		return errors.New("WARP 配置尚未就绪，请先执行完整下发")
+	}
+	return nil
+}
+
 func (s *Server) queueCoreConfigRefreshForUserRemoval(ctx context.Context, userID int64, reason string) error {
 	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
@@ -9001,6 +9071,9 @@ func (s *Server) queueCoreConfigRefreshForUserRemoval(ctx context.Context, userI
 	for _, server := range data.Servers {
 		if strings.TrimSpace(server.AgentID) == "" {
 			continue
+		}
+		if err := requireReadyWARPForFocusedApply(data, server.ID); err != nil {
+			return err
 		}
 		generated, err := s.generateServerCoreConfigWithLedger(ctx, server, data, ledger)
 		if err != nil {
@@ -9122,6 +9195,15 @@ func trustedForwardFootprint(config string, forwardPlan model.PortForwardPlan) (
 func findWARPProfile(items []model.WARPProfile, id int64) (model.WARPProfile, bool) {
 	for _, item := range items {
 		if item.ID == id {
+			return item, true
+		}
+	}
+	return model.WARPProfile{}, false
+}
+
+func findWARPProfileForServer(items []model.WARPProfile, serverID int64) (model.WARPProfile, bool) {
+	for _, item := range items {
+		if item.ServerID == serverID {
 			return item, true
 		}
 	}
@@ -9947,6 +10029,9 @@ func (s *Server) queueDNSBenchmarkCoreApply(ctx context.Context, server model.Se
 	ledger := core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
 	derivedForwards, err := core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger)
 	if err != nil {
+		return err
+	}
+	if err := requireReadyWARPForFocusedApply(data, server.ID); err != nil {
 		return err
 	}
 	generated, err := s.generateServerCoreConfigWithLedger(ctx, server, data, ledger)
