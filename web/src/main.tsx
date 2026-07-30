@@ -54,7 +54,8 @@ import {
   Zap, Sliders, Menu, X, Sun, Moon, RefreshCw, ChevronDown, ChevronRight, Check, Info,
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
-  KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send
+  KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
+  PanelLeftClose, PanelLeftOpen
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -502,7 +503,7 @@ const subscriptionFormats: { value: SubscriptionFormat; label: string }[] = [
 ]
 const tabMeta: Record<string, { label: string; desc: string; group: string }> = {
   dashboard: { label: '总览', desc: '全局健康、版本、部署状态和关键指标。', group: '总览' },
-  account: { label: '我的账户', desc: '查看个人订阅并维护昵称和登录密码。', group: '账户' },
+  account: { label: '我的账户', desc: '维护个人信息、登录安全和订阅加密。', group: '账户' },
   servers: { label: '服务器管理', desc: '管理服务器、Agent、IP 栈、UDP 入站和端口范围。', group: '基础设施' },
   'proxy-paths': { label: '代理链路', desc: '管理入口、服务器跳点、第三方出口和传递路径。', group: '代理编排' },
   inbounds: { label: '入口', desc: '统一编排 sing-box 入站监听、协议和端口。', group: '代理' },
@@ -1189,7 +1190,16 @@ function App() {
   }, [])
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => localStorage.getItem('oboard.sidebar.collapsed') === 'true')
   const [isMobile, setIsMobile] = useState(false)
+
+  const toggleDesktopSidebar = () => {
+    setIsSidebarCollapsed(collapsed => {
+      const next = !collapsed
+      localStorage.setItem('oboard.sidebar.collapsed', String(next))
+      return next
+    })
+  }
 
   useEffect(() => {
     const checkMobile = () => {
@@ -1546,7 +1556,7 @@ function App() {
           )}
         </AnimatePresence>
 
-        <div className="app">
+        <div className={`app${!isMobile && isSidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
           <TopToast toast={toast} onClose={() => setToast(null)} />
           <DialogHost dialog={dialog} onClose={() => setDialog(null)} />
           {isMobile && (
@@ -1569,6 +1579,19 @@ function App() {
               <div className="brand-text">
                 <h1>OBoard</h1>
               </div>
+              {!isMobile && (
+                <button
+                  className="ghost icon-button sidebar-collapse-toggle"
+                  onClick={toggleDesktopSidebar}
+                  type="button"
+                  aria-label={isSidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
+                  aria-expanded={!isSidebarCollapsed}
+                  aria-controls="sidebar"
+                  title={isSidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
+                >
+                  {isSidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+                </button>
+              )}
               {isMobile && (
                 <button
                   className="ghost icon-button sidebar-close"
@@ -1586,6 +1609,8 @@ function App() {
                   className={tab === x ? 'nav-item active' : 'nav-item'}
                   onClick={() => navigateTab(x)}
                   key={x}
+                  title={!isMobile && isSidebarCollapsed ? tabMeta[x]?.label || x : undefined}
+                  aria-label={!isMobile && isSidebarCollapsed ? tabMeta[x]?.label || x : undefined}
                 >
                   <span>{getTabIcon(x)}</span>
                   <span>{tabMeta[x]?.label || x}</span>
@@ -1593,11 +1618,11 @@ function App() {
               </div>)}
             </nav>
             <div className="sidebar-footer">
-              <button className="sidebar-footer-btn" onClick={(e) => toggleTheme(e)} type="button" aria-label="切换主题">
+              <button className="sidebar-footer-btn" onClick={(e) => toggleTheme(e)} type="button" aria-label="切换主题" title={!isMobile && isSidebarCollapsed ? (theme === 'dark' ? '浅色主题' : '深色主题') : undefined}>
                 {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
                 <span>{theme === 'dark' ? '浅色主题' : '深色主题'}</span>
               </button>
-              <button className="sidebar-footer-btn danger" onClick={handleLogout} type="button">
+              <button className="sidebar-footer-btn danger" onClick={handleLogout} type="button" aria-label="退出登录" title={!isMobile && isSidebarCollapsed ? '退出登录' : undefined}>
                 <LogOut size={16} />
                 <span>退出登录</span>
               </button>
@@ -1977,8 +2002,6 @@ function AccountPage({ data, client, load, notify }: any) {
   const [nickname, setNickname] = useState(user?.nickname || '')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
-  const [format, setFormat] = useState<SubscriptionFormat>('sing-box')
-  const [iconsReady, setIconsReady] = useState(false)
   const [ageEnabled, setAgeEnabled] = useState(Boolean(user?.subscription_age_enabled))
   const [agePublicKey, setAgePublicKey] = useState(user?.subscription_age_public_key || '')
   const [authentication, setAuthentication] = useState<AuthenticationStatus>({
@@ -1996,12 +2019,6 @@ function AccountPage({ data, client, load, notify }: any) {
     setAgeEnabled(Boolean(user?.subscription_age_enabled))
     setAgePublicKey(user?.subscription_age_public_key || '')
   }, [user?.subscription_age_enabled, user?.subscription_age_public_key])
-  useEffect(() => {
-    let active = true
-    preloadSubscriptionClientIcons().then(() => { if (active) setIconsReady(true) })
-    return () => { active = false }
-  }, [])
-
   const refreshAuthentication = async () => {
     const result = await client.request('/me/authentication') as AuthenticationStatus
     setAuthentication(result)
@@ -2013,32 +2030,9 @@ function AccountPage({ data, client, load, notify }: any) {
     return () => { active = false }
   }, [user?.id])
 
-  const formats: Array<{ id: SubscriptionFormat; name: string }> = [
-    { id: 'sing-box', name: 'sing-box' },
-    { id: 'clash-meta', name: 'Clash.Meta' },
-    { id: 'mihomo', name: 'Mihomo' },
-    { id: 'stash', name: 'Stash' },
-    { id: 'shadowrocket', name: 'Shadowrocket' },
-    { id: 'qx', name: 'Quantumult X' },
-    { id: 'loon', name: 'Loon' },
-    { id: 'surge', name: 'Surge' },
-  ]
-
   const agePolicy = user?.subscription_age_policy || 'optional'
   const ageRequired = agePolicy === 'required'
-  const ageCapable = isAgeSubscriptionFormat(format)
   const ageReady = Boolean(user?.subscription_age_public_key) && (ageRequired || Boolean(user?.subscription_age_enabled))
-
-  const copySubscription = async (encrypted = false) => {
-    if (!user) return
-    const useAge = ageCapable && (encrypted || ageRequired)
-    if (useAge && !ageReady) {
-      notify?.('请先保存有效的 Age 公钥', 'warning')
-      return
-    }
-    const ok = await copyText(subscriptionURLForUser(user, format, useAge))
-    notify?.(ok ? useAge ? 'Age 加密订阅链接已复制' : '普通订阅链接已复制' : '复制失败，请手动复制', ok ? 'success' : 'error')
-  }
 
   const saveProfile = async () => {
     await client.request('/me', { method: 'PATCH', body: JSON.stringify({ nickname }) })
@@ -2206,22 +2200,6 @@ function AccountPage({ data, client, load, notify }: any) {
 
   return <><Panel title="我的账户" className="account-panel">
     <div className="account-layout">
-      <section className="sub-section account-subscription-section">
-        <div className="sub-section-head"><div><h3><LinkIcon size={16} />我的订阅</h3><p className="muted">选择客户端格式后复制自己的订阅链接。</p></div></div>
-        {!iconsReady ? <div className="subscription-page-loading compact"><RefreshCw /><span>正在加载客户端图标</span></div> : <div className="sub-format-grid account-format-grid">
-          {formats.map(item => <button key={item.id} type="button" className={`sub-format-card ${format === item.id ? 'active' : ''}`} onClick={() => setFormat(item.id)}>
-            <div className="subscription-client-icon-shell">{renderFormatIcon(item.id)}</div><strong>{item.name}</strong>
-          </button>)}
-        </div>}
-        <div className="account-subscription-action">
-          <span>当前格式：{formats.find(item => item.id === format)?.name}</span>
-          <div className="account-subscription-buttons">
-            {(!ageCapable || !ageRequired) && <button onClick={() => void copySubscription(false)} disabled={!user?.subscription_token}><Copy size={15} />复制普通订阅</button>}
-            {ageCapable && <button onClick={() => void copySubscription(true)} disabled={!user?.subscription_token || !ageReady}><Shield size={15} />复制 Age 订阅</button>}
-          </div>
-        </div>
-      </section>
-
       <div className="account-settings-grid">
         <section className="sub-section account-login-security">
           <div className="sub-section-head"><div><h3><ShieldCheck size={16} />登录安全</h3><p className="muted">管理双重认证、恢复码和通行密钥。</p></div></div>
@@ -2906,6 +2884,7 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
   const [webdavUsername, setWebdavUsername] = useState('')
   const [webdavPassword, setWebdavPassword] = useState('')
   const [uploadPassword, setUploadPassword] = useState('')
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
   const [working, setWorking] = useState('')
   const uploadRef = useRef<HTMLInputElement>(null)
   const refresh = async (quiet = false) => {
@@ -2923,6 +2902,10 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
   useEffect(() => { void refresh() }, [])
   const saveSettings = async () => {
     if (working) return
+    if (draft.destination?.enabled && !draft.destination.provider) {
+      notify?.('请选择第三方备份的存储类型', 'error')
+      return
+    }
     if (recoveryPassword && recoveryPassword !== recoveryPasswordConfirm) {
       notify?.('两次输入的恢复密码不一致', 'error')
       return
@@ -2959,6 +2942,7 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
       setWebdavUsername('')
       setWebdavPassword('')
       notify?.('备份设置已保存', 'success')
+      setSettingsDialogOpen(false)
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -3088,42 +3072,53 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
       if (!restoreStarted) setWorking('')
     }
   }
+  const clearSettingsSecrets = () => {
+    setRecoveryPassword('')
+    setRecoveryPasswordConfirm('')
+    setS3AccessKey('')
+    setS3SecretKey('')
+    setWebdavUsername('')
+    setWebdavPassword('')
+  }
+  const openSettingsDialog = () => {
+    const settings = snapshot.settings || emptySettings
+    setDraft({ ...settings, destination: { ...(settings.destination || emptySettings.destination) } })
+    clearSettingsSecrets()
+    setSettingsDialogOpen(true)
+  }
+  const closeSettingsDialog = () => {
+    if (working) return
+    const settings = snapshot.settings || emptySettings
+    setDraft({ ...settings, destination: { ...(settings.destination || emptySettings.destination) } })
+    clearSettingsSecrets()
+    setSettingsDialogOpen(false)
+  }
   const updateDestination = (patch: Partial<BackupDestination>) => setDraft(current => ({ ...current, destination: { ...current.destination, ...patch } }))
   const destination = draft.destination || emptySettings.destination
   const weekdayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+  const savedSettings = snapshot.settings || emptySettings
+  const savedDestination = savedSettings.destination || emptySettings.destination
+  const savedDestinationName = savedDestination.provider === 's3' ? 'S3 兼容存储' : savedDestination.provider === 'webdav' ? 'WebDAV' : '第三方存储'
+  const scheduleDescription = savedSettings.enabled
+    ? `${savedSettings.schedule === 'weekly' ? `每${weekdayNames[savedSettings.weekday] || '周日'}` : '每天'} ${savedSettings.time || '03:00'} 自动创建，本地保留 ${savedSettings.local_retention || 1} 份。`
+    : '当前只会在您点击“创建备份”时备份。'
   const backupStatus = (item: ControllerBackup) => item.remote_status === 'failed'
     ? (item.local_status === 'available' ? '本地可用，远端失败' : '副本不可用')
     : item.local_status === 'available' && item.remote_status === 'available' ? '本地和远端可用'
       : item.local_status === 'available' ? '本地可用'
         : item.remote_retrievable ? '可从第三方取回'
           : item.remote_status === 'available' ? '保留在旧目标' : '副本不可用'
-  return <section className="settings-card controller-backup-card">
+  return <>
+  <section className="settings-card controller-backup-card">
     <div className="settings-card-head">
       <div><h3>主控数据备份</h3><p className="muted">备份数据库、证书续期状态和受保护配置；日志、下载缓存和程序文件不包含在内。</p></div>
-      <span className={`status-pill ${snapshot.settings?.last_error ? 'danger' : 'ok'}`}>{snapshot.settings?.last_error ? '需要处理' : '已就绪'}</span>
+      <div className="backup-card-head-actions"><span className={`status-pill ${snapshot.settings?.last_error ? 'danger' : 'ok'}`}>{working === 'load' ? '正在读取' : snapshot.settings?.last_error ? '需要处理' : '已就绪'}</span><button type="button" className="ghost" onClick={openSettingsDialog} disabled={Boolean(working)}><Settings2 size={15} />自动备份设置</button></div>
     </div>
     {snapshot.settings?.last_error && <div className="controller-update-error" role="alert">{snapshot.settings.last_error}</div>}
-    <div className="backup-policy-grid">
-      <label className="check-row backup-enabled"><input type="checkbox" checked={draft.enabled} onChange={event => setDraft(current => ({ ...current, enabled: event.target.checked }))} /><span><strong>自动备份</strong><small>按设定时间创建加密备份，并在启用第三方目标后自动上传。</small></span></label>
-      <FormField label="备份频率"><Select value={draft.schedule} onChange={event => setDraft(current => ({ ...current, schedule: event.target.value as 'daily' | 'weekly' }))}><option value="daily">每天</option><option value="weekly">每周</option></Select></FormField>
-      {draft.schedule === 'weekly' && <FormField label="每周日期"><Select value={draft.weekday} onChange={event => setDraft(current => ({ ...current, weekday: Number(event.target.value) }))}>{weekdayNames.map((label, index) => <option key={label} value={index}>{label}</option>)}</Select></FormField>}
-      <FormField label="执行时间" hint="使用流量控制中设置的时区"><input type="time" value={draft.time} onChange={event => setDraft(current => ({ ...current, time: event.target.value || '03:00' }))} /></FormField>
-      <FormField label="本地保留数量" hint="手动、自动和上传备份共用此数量"><input type="number" min={1} max={100} value={draft.local_retention} onChange={event => setDraft(current => ({ ...current, local_retention: Math.max(1, Math.min(100, Number(event.target.value) || 1)) }))} /></FormField>
-      <FormField label="远端保留数量" hint="远端副本独立滚动"><input type="number" min={1} max={365} value={draft.remote_retention} onChange={event => setDraft(current => ({ ...current, remote_retention: Math.max(1, Math.min(365, Number(event.target.value) || 1)) }))} /></FormField>
-      <FormField label={draft.password_configured ? '更换恢复密码' : '恢复密码'} hint={draft.password_configured ? '留空表示保持当前密码；旧备份仍使用创建时的原密码。' : '用于加密备份并在新主控恢复数据。至少 12 个字符。'}><input type="password" autoComplete="new-password" value={recoveryPassword} onChange={event => setRecoveryPassword(event.target.value)} /></FormField>
-      {(recoveryPassword || !draft.password_configured) && <FormField label="确认恢复密码"><input type="password" autoComplete="new-password" value={recoveryPasswordConfirm} onChange={event => setRecoveryPasswordConfirm(event.target.value)} /></FormField>}
+    <div className="backup-settings-summary">
+      <span className={`backup-settings-summary-icon${savedSettings.enabled ? ' active' : ''}`}><CalendarSync size={18} /></span>
+      <div><strong>{savedSettings.enabled ? '自动备份已开启' : '自动备份未开启'}</strong><span>{scheduleDescription}</span><small>{savedDestination.enabled ? `新备份会同时上传到${savedDestinationName}，远端保留 ${savedSettings.remote_retention || 1} 份。` : '第三方备份未启用，新备份只保存在本机。'}</small></div>
     </div>
-    <section className="backup-destination">
-      <div className="backup-destination-head"><div><h3>第三方备份目标</h3><p className="muted">一次可启用一个 S3 兼容存储或 WebDAV 目标。第三方副本同样使用恢复密码加密；更换目标后，旧目标中的文件不会被自动删除。</p></div><label className="check-row"><input type="checkbox" checked={destination.enabled} onChange={event => updateDestination({ enabled: event.target.checked })} /><span>启用</span></label></div>
-      <div className="backup-policy-grid">
-        <FormField label="类型"><Select value={destination.provider} onChange={event => updateDestination({ provider: event.target.value as BackupDestination['provider'] })} disabled={!destination.enabled}><option value="">选择目标</option><option value="s3">S3 兼容存储</option><option value="webdav">WebDAV</option></Select></FormField>
-        <FormField label={destination.provider === 'webdav' ? 'WebDAV 地址' : '终端地址'} hint="生产环境请使用 HTTPS。"><input value={destination.endpoint || ''} disabled={!destination.enabled} onChange={event => updateDestination({ endpoint: event.target.value })} placeholder={destination.provider === 'webdav' ? 'https://dav.example.com/oboard' : 'https://s3.example.com'} /></FormField>
-        <FormField label="目录前缀" hint="只会管理该前缀下由主控创建的备份。"><input value={destination.prefix || ''} disabled={!destination.enabled} onChange={event => updateDestination({ prefix: event.target.value })} placeholder="oboard-backups" /></FormField>
-        {destination.provider === 's3' && <><FormField label="存储桶"><input value={destination.bucket || ''} disabled={!destination.enabled} onChange={event => updateDestination({ bucket: event.target.value })} /></FormField><FormField label="区域"><input value={destination.region || ''} disabled={!destination.enabled} onChange={event => updateDestination({ region: event.target.value })} placeholder="us-east-1" /></FormField><label className="check-row"><input type="checkbox" checked={Boolean(destination.force_path_style)} disabled={!destination.enabled} onChange={event => updateDestination({ force_path_style: event.target.checked })} /><span>使用路径风格地址</span></label><FormField label="访问密钥"><input type="password" value={s3AccessKey} disabled={!destination.enabled} onChange={event => setS3AccessKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><FormField label="访问密钥密码"><input type="password" value={s3SecretKey} disabled={!destination.enabled} onChange={event => setS3SecretKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField></>}
-        {destination.provider === 'webdav' && <><FormField label="用户名"><input value={webdavUsername} disabled={!destination.enabled} onChange={event => setWebdavUsername(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><FormField label="密码"><input type="password" value={webdavPassword} disabled={!destination.enabled} onChange={event => setWebdavPassword(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField></>}
-      </div>
-      <div className="settings-actions"><button onClick={() => void saveSettings()} disabled={Boolean(working)}>{working === 'save' ? '保存中...' : '保存备份设置'}</button><button className="ghost" onClick={() => void testDestination()} disabled={Boolean(working) || !destination.enabled}>{working === 'test' ? '测试中...' : '测试连接'}</button></div>
-    </section>
     <div className="backup-actions"><div><strong>立即备份</strong><span>本地备份完成后，会上传到已启用的第三方目标。</span></div><button onClick={() => void createBackup()} disabled={Boolean(working) || !draft.password_configured}><Database size={15} />{working === 'create' ? '备份中...' : '创建备份'}</button></div>
     <section className="backup-import">
       <div><h3>导入与恢复密码</h3><p className="muted">这里的密码也用于恢复列表中的备份。上传时会先验证密码和完整性。</p></div>
@@ -3134,6 +3129,43 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
       {snapshot.backups?.length ? <div className="backup-record-list">{snapshot.backups.map(item => <div className="backup-record" key={item.id}><div className="backup-record-main"><strong>{item.origin === 'automatic' ? '自动备份' : item.origin === 'uploaded' ? '上传备份' : item.origin === 'pre_restore' ? '恢复前保护备份' : '手动备份'}</strong><span>{formatDate(item.created_at)} · {formatBytes(Number(item.size_bytes || 0))} · 来源 {item.source_version || '-'}</span>{item.remote_error && <small>{item.remote_error}</small>}</div><span className={`status-pill ${item.remote_status === 'failed' || (item.local_status !== 'available' && !item.remote_retrievable) ? 'danger' : item.protected ? 'warning' : 'ok'}`}>{backupStatus(item)}</span><div className="backup-record-actions">{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost icon-button" title={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} aria-label={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} onClick={() => void downloadBackup(item)} disabled={Boolean(working)}><Download size={15} /></button>}{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost" onClick={() => void restoreBackup(item, uploadPassword)} disabled={Boolean(working)}>{item.local_status === 'available' ? '恢复' : '取回并恢复'}</button>}<button type="button" className="ghost icon-button danger-text" title="删除备份" aria-label="删除备份" onClick={() => void removeBackup(item)} disabled={Boolean(working)}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">尚未创建备份。</p>}
     </section>
   </section>
+  <AnimatePresence>{settingsDialogOpen && <MotionDialogPanel onCancel={closeSettingsDialog} className="backup-settings-dialog">
+    <header className="dialog-head"><div><h2>自动备份设置</h2><p className="muted">设置创建时间、保留数量和第三方备份位置。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={closeSettingsDialog} disabled={Boolean(working)} aria-label="关闭" title="关闭"><XIcon /></button></header>
+    <div className="dialog-body backup-settings-dialog-body">
+      <form id="backup-settings-form" className="backup-settings-form" onSubmit={event => { event.preventDefault(); void saveSettings() }}>
+        <section className="backup-form-section">
+          <div className="backup-form-section-head"><div><strong>定时创建</strong><span>开启后，主控会按设定时间创建加密备份。</span></div><label className="check-row"><input type="checkbox" checked={draft.enabled} onChange={event => setDraft(current => ({ ...current, enabled: event.target.checked }))} /><span>启用自动备份</span></label></div>
+          <div className="backup-dialog-grid">
+            <FormField label="备份频率"><Select value={draft.schedule} disabled={!draft.enabled} onChange={event => setDraft(current => ({ ...current, schedule: event.target.value as 'daily' | 'weekly' }))}><option value="daily">每天</option><option value="weekly">每周</option></Select></FormField>
+            {draft.schedule === 'weekly' && <FormField label="每周日期"><Select value={draft.weekday} disabled={!draft.enabled} onChange={event => setDraft(current => ({ ...current, weekday: Number(event.target.value) }))}>{weekdayNames.map((label, index) => <option key={label} value={index}>{label}</option>)}</Select></FormField>}
+            <FormField label="执行时间" hint="按照流量控制中设置的时区执行"><input type="time" value={draft.time} disabled={!draft.enabled} onChange={event => setDraft(current => ({ ...current, time: event.target.value || '03:00' }))} /></FormField>
+            <FormField label="本地保留数量" hint="手动、自动和上传的备份共用此数量"><input type="number" min={1} max={100} value={draft.local_retention} onChange={event => setDraft(current => ({ ...current, local_retention: Math.max(1, Math.min(100, Number(event.target.value) || 1)) }))} /></FormField>
+          </div>
+        </section>
+        <section className="backup-form-section">
+          <div className="backup-form-section-head"><div><strong>恢复密码</strong><span>备份文件只有使用创建时的密码才能恢复，请妥善保存。</span></div>{draft.password_configured && <span className="status-pill ok">已设置</span>}</div>
+          <div className="backup-dialog-grid">
+            <FormField label={draft.password_configured ? '更换恢复密码' : '设置恢复密码'} hint={draft.password_configured ? '留空表示保持当前密码；已有备份仍使用原密码。' : '至少 12 个字符，恢复到新主控时也需要使用。'}><input type="password" minLength={12} autoComplete="new-password" value={recoveryPassword} onChange={event => setRecoveryPassword(event.target.value)} placeholder={draft.password_configured ? '留空保持当前密码' : '至少 12 个字符'} /></FormField>
+            {(recoveryPassword || !draft.password_configured) && <FormField label="确认恢复密码"><input type="password" minLength={12} autoComplete="new-password" value={recoveryPasswordConfirm} onChange={event => setRecoveryPasswordConfirm(event.target.value)} placeholder="再次输入恢复密码" /></FormField>}
+          </div>
+        </section>
+        <section className="backup-form-section">
+          <div className="backup-form-section-head"><div><strong>第三方备份</strong><span>启用后，新备份会同时上传一份到您自己的存储中。</span></div><label className="check-row"><input type="checkbox" checked={destination.enabled} onChange={event => updateDestination({ enabled: event.target.checked })} /><span>启用第三方备份</span></label></div>
+          {destination.enabled && <div className="backup-dialog-grid">
+            <FormField label="存储类型"><Select value={destination.provider} onChange={event => updateDestination({ provider: event.target.value as BackupDestination['provider'] })}><option value="">请选择</option><option value="s3">S3 兼容存储</option><option value="webdav">WebDAV</option></Select></FormField>
+            <FormField label="远端保留数量" hint="达到数量后，只清理当前目标中的旧备份"><input type="number" min={1} max={365} value={draft.remote_retention} onChange={event => setDraft(current => ({ ...current, remote_retention: Math.max(1, Math.min(365, Number(event.target.value) || 1)) }))} /></FormField>
+            {destination.provider && <><FormField label={destination.provider === 'webdav' ? 'WebDAV 地址' : '终端地址'} hint="建议使用 HTTPS 地址"><input required value={destination.endpoint || ''} onChange={event => updateDestination({ endpoint: event.target.value })} placeholder={destination.provider === 'webdav' ? 'https://dav.example.com/oboard' : 'https://s3.example.com'} /></FormField>
+            <FormField label="目录前缀" hint="主控只会管理该目录下由自己创建的备份"><input value={destination.prefix || ''} onChange={event => updateDestination({ prefix: event.target.value })} placeholder="oboard-backups" /></FormField></>}
+            {destination.provider === 's3' && <><FormField label="存储桶"><input required value={destination.bucket || ''} onChange={event => updateDestination({ bucket: event.target.value })} /></FormField><FormField label="区域"><input value={destination.region || ''} onChange={event => updateDestination({ region: event.target.value })} placeholder="us-east-1" /></FormField><FormField label="访问密钥"><input type="password" autoComplete="new-password" value={s3AccessKey} onChange={event => setS3AccessKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><FormField label="访问密钥密码"><input type="password" autoComplete="new-password" value={s3SecretKey} onChange={event => setS3SecretKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><label className="check-row backup-path-style"><input type="checkbox" checked={Boolean(destination.force_path_style)} onChange={event => updateDestination({ force_path_style: event.target.checked })} /><span><strong>使用路径风格地址</strong><small>存储服务要求存储桶名称出现在地址路径中时开启。</small></span></label></>}
+            {destination.provider === 'webdav' && <><FormField label="用户名"><input value={webdavUsername} autoComplete="username" onChange={event => setWebdavUsername(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><FormField label="密码"><input type="password" autoComplete="new-password" value={webdavPassword} onChange={event => setWebdavPassword(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField></>}
+          </div>}
+          {destination.enabled && <p className="backup-destination-note">更换存储位置后，旧位置中的备份不会被自动删除。</p>}
+        </section>
+      </form>
+    </div>
+    <footer className="dialog-actions backup-settings-dialog-actions"><button type="button" className="ghost" onClick={() => void testDestination()} disabled={Boolean(working) || !destination.enabled || !destination.provider}>{working === 'test' ? '测试中…' : '测试连接'}</button><span /><button type="button" className="ghost" onClick={closeSettingsDialog} disabled={Boolean(working)}>取消</button><button type="submit" form="backup-settings-form" disabled={Boolean(working)}>{working === 'save' ? '保存中…' : '保存设置'}</button></footer>
+  </MotionDialogPanel>}</AnimatePresence>
+  </>
 }
 
 const dnsProviderLabels: Record<DNSProvider, string> = {
@@ -3428,8 +3460,8 @@ function CertificateLogDialog({ certificate, onClose }: { certificate: Certifica
   </MotionDialogPanel>
 }
 
-function CertificateEABDialog({ keyID, hmacKey, remark, retain, retainLocked = false, configured, secretRequired, credentials, saving, deletingID, onChange, onSelectCredential, onDeleteCredential, onCancel, onSubmit }: { keyID: string; hmacKey: string; remark: string; retain: boolean; retainLocked?: boolean; configured: boolean; secretRequired: boolean; credentials: GoogleEABCredential[]; saving: boolean; deletingID: number; onChange: (patch: { keyID?: string; hmacKey?: string; remark?: string; retain?: boolean }) => void; onSelectCredential: (credential: GoogleEABCredential) => void; onDeleteCredential: (credential: GoogleEABCredential) => void; onCancel: () => void; onSubmit: () => void }) {
-  return <MotionDialogPanel onCancel={onCancel} className="certificate-eab-dialog">
+function CertificateEABDialog({ keyID, hmacKey, remark, retain, retainLocked = false, configured, secretRequired, credentials, saving, deletingID, nested = false, onChange, onSelectCredential, onDeleteCredential, onCancel, onSubmit }: { keyID: string; hmacKey: string; remark: string; retain: boolean; retainLocked?: boolean; configured: boolean; secretRequired: boolean; credentials: GoogleEABCredential[]; saving: boolean; deletingID: number; nested?: boolean; onChange: (patch: { keyID?: string; hmacKey?: string; remark?: string; retain?: boolean }) => void; onSelectCredential: (credential: GoogleEABCredential) => void; onDeleteCredential: (credential: GoogleEABCredential) => void; onCancel: () => void; onSubmit: () => void }) {
+  return <MotionDialogPanel onCancel={onCancel} className="certificate-eab-dialog" nested={nested}>
     <header className="dialog-head"><div><h2>填写 Google EAB</h2><p className="muted">连接您的 Google Cloud 公共 CA 账号</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body">
       <div className="certificate-eab-guide"><KeyRound size={20} /><div><strong>需要从 Google 获取两项信息</strong><p>Google Trust Services 要求先完成外部账号绑定。请打开 Google 官方页面，按页面指引获取 Key ID 和 HMAC Key。</p><a href="https://cloud.google.com/certificate-manager/docs/public-ca-tutorial?hl=zh-cn#request-key-hmac" target="_blank" rel="noreferrer">打开 Google 官方获取页面<ExternalLink size={14} /></a></div></div>
@@ -3465,6 +3497,7 @@ function CertificateSettings({ data, client, load, notify }: any) {
   const [autoIssueEABCredentialID, setAutoIssueEABCredentialID] = useState(Number(data.settings?.certificate_auto_issue_google_eab_credential_id || 0))
   const [working, setWorking] = useState('')
   const [importDraft, setImportDraft] = useState({ name: '', certificate_pem: '', fullchain_pem: '', private_key_pem: '' })
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [eabTarget, setEABTarget] = useState<'draft' | 'auto' | Certificate | null>(null)
   const [eabDraft, setEABDraft] = useState({ keyID: '', hmacKey: '', remark: '', retain: false })
   const [logCertificate, setLogCertificate] = useState<Certificate | null>(null)
@@ -3484,6 +3517,7 @@ function CertificateSettings({ data, client, load, notify }: any) {
       const result = await client.request('/certificates', { method: 'POST', body: JSON.stringify(payload) })
       const certificate = result.certificate as Certificate
       setDraft({ ...draft, name: '', domains: '', account_email: '', google_eab_credential_id: 0, eab_key_id: '', eab_hmac_key: '' })
+      setCreateDialogOpen(false)
       let issueError: any = null
       try {
         await client.request(`/certificates/${certificate.id}/issue`, { method: 'POST', body: '{}' })
@@ -3619,27 +3653,20 @@ function CertificateSettings({ data, client, load, notify }: any) {
   const draftEABConfigured = Boolean(Number(draft.google_eab_credential_id || 0) > 0 || draftDirectEABConfigured)
   const draftEABSelection = Number(draft.google_eab_credential_id || 0) > 0 ? String(draft.google_eab_credential_id) : draftDirectEABConfigured ? 'direct' : ''
   const googleHTTPUnsupported = draft.acme_ca === 'google' && draft.challenge_type === 'http01'
+  const createBlocked = !String(draft.name || '').trim()
+    || !String(draft.domains || '').trim()
+    || (draft.challenge_type === 'dns01' && !Number(draft.dns_credential_id || 0))
+    || (draft.challenge_type === 'http01' && !Number(draft.issuance_server_id || 0))
+    || googleHTTPUnsupported
+    || (draft.acme_ca === 'google' && !draftEABConfigured)
+  const challengeGuide = draft.challenge_type === 'dns01'
+    ? 'OBoard 会通过所选域名服务账号自动添加并清理验证记录，适合普通域名和泛域名。'
+    : draft.challenge_type === 'dns01_manual'
+      ? '提交后请按证书列表中的提示添加 TXT 记录，解析生效后点击“已解析”继续签发。'
+      : '域名需要已解析到所选服务器，服务器会通过 80 端口完成验证；泛域名不能使用此方式。'
   return <div className="settings-grid">
     <section className="settings-card">
-      <div className="settings-card-head"><div><h3>申请证书</h3><p className="muted">HTTP-01、面板 DNS 或手动 DNS</p></div></div>
-      <div className="form settings-form">
-        <FormField label="名称"><input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} /></FormField>
-        <FormField label="域名" hint="多个域名用逗号分隔"><input value={draft.domains} onChange={e => { const domains = e.target.value; const previousDefault = defaultCertificateAccountEmail(draft.domains); setDraft({ ...draft, domains, account_email: !draft.account_email || draft.account_email === previousDefault ? defaultCertificateAccountEmail(domains) : draft.account_email }) }} placeholder="example.com, *.example.com" /></FormField>
-        <FormField label="验证方式"><Select value={draft.challenge_type} onChange={e => setDraft({ ...draft, challenge_type: e.target.value })}><option value="dns01">面板 DNS-01</option><option value="dns01_manual">手动 DNS-01</option><option value="http01">Agent HTTP-01</option></Select></FormField>
-        {draft.challenge_type === 'dns01' && <FormField label="域名服务账号"><Select value={draft.dns_credential_id} onChange={e => setDraft({ ...draft, dns_credential_id: Number(e.target.value) })}><option value={0}>选择账号</option>{credentials.filter(item => item.verified_at).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
-        {draft.challenge_type === 'http01' && <FormField label="签发服务器"><Select value={draft.issuance_server_id} onChange={e => setDraft({ ...draft, issuance_server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map(server => <option key={server.id} value={server.id}>{server.name}</option>)}</Select></FormField>}
-        <FormField label="ACME CA"><Select value={draft.acme_ca} onChange={e => { const acmeCA = e.target.value; setDraft({ ...draft, acme_ca: acmeCA, ...(acmeCA === 'google' ? {} : { google_eab_credential_id: 0, eab_key_id: '', eab_hmac_key: '' }) }) }}><option value="letsencrypt">Let's Encrypt</option><option value="zerossl">ZeroSSL</option><option value="buypass">Buypass</option><option value="google">Google Trust Services</option></Select></FormField>
-        {draft.acme_ca === 'google' && <div className="certificate-eab-row"><div className="certificate-eab-state"><KeyRound size={16} /><span><strong>Google EAB</strong><small>{draftEABConfigured ? '已配置，可用于本次签发' : '请选择已保存的 EAB，或填写新的 EAB'}</small></span></div><div className="certificate-eab-controls"><Select value={draftEABSelection} onChange={event => {
-          const value = event.target.value
-          if (value === 'direct') setDraft({ ...draft, google_eab_credential_id: 0 })
-          else if (Number(value) > 0) setDraft({ ...draft, google_eab_credential_id: Number(value), eab_key_id: '', eab_hmac_key: '' })
-          else setDraft({ ...draft, google_eab_credential_id: 0, eab_key_id: '', eab_hmac_key: '' })
-        }}><option value="">选择已保存的 EAB</option>{draftDirectEABConfigured && <option value="direct">{draft.eab_key_id} · 仅本次使用</option>}{eabCredentials.map(credential => <option key={credential.id} value={credential.id}>{credential.key_id}{credential.remark ? ` · ${credential.remark}` : ''}</option>)}</Select><button type="button" className="ghost" onClick={openDraftEAB}><Plus size={14} />新增 EAB</button></div></div>}
-        {googleHTTPUnsupported && <div className="certificate-eab-warning">Google EAB 暂不支持 Agent HTTP-01，请选择面板 DNS-01 或手动 DNS-01。</div>}
-        <FormField label="账户邮箱"><input type="email" value={draft.account_email} onChange={e => setDraft({ ...draft, account_email: e.target.value })} placeholder={defaultCertificateAccountEmail(draft.domains) || 'admin@example.com'} /></FormField>
-        <label className="check-row"><input type="checkbox" checked={draft.auto_renew} onChange={e => setDraft({ ...draft, auto_renew: e.target.checked })} /><span>自动续期</span></label>
-        <button onClick={createCertificate} disabled={working === 'create' || googleHTTPUnsupported || (draft.acme_ca === 'google' && !draftEABConfigured)}>{working === 'create' ? '创建中...' : '创建申请'}</button>
-      </div>
+      <div className="settings-card-head certificate-apply-head"><div><h3>手动申请</h3><p className="muted">需要立即为指定域名签发证书时使用，提交后可在下方查看签发进度。</p></div><button type="button" onClick={() => setCreateDialogOpen(true)}><Plus size={14} />手动申请</button></div>
       <details className="advanced-config"><summary>导入现有证书</summary><div className="form settings-form"><FormField label="名称"><input value={importDraft.name} onChange={e => setImportDraft({ ...importDraft, name: e.target.value })} /></FormField><FormField label="证书 PEM"><textarea rows={4} value={importDraft.certificate_pem} onChange={e => setImportDraft({ ...importDraft, certificate_pem: e.target.value })} /></FormField><FormField label="完整链 PEM"><textarea rows={4} value={importDraft.fullchain_pem} onChange={e => setImportDraft({ ...importDraft, fullchain_pem: e.target.value })} /></FormField><FormField label="私钥 PEM"><textarea rows={4} value={importDraft.private_key_pem} onChange={e => setImportDraft({ ...importDraft, private_key_pem: e.target.value })} /></FormField><button onClick={importCertificate}>导入</button></div></details>
     </section>
     <section className="settings-card">
@@ -3670,8 +3697,32 @@ function CertificateSettings({ data, client, load, notify }: any) {
         </div>
       })}</div>
     </section>
+    <AnimatePresence>{createDialogOpen && <MotionDialogPanel onCancel={() => setCreateDialogOpen(false)} className="certificate-create-dialog">
+      <header className="dialog-head"><div><h2>手动申请证书</h2><p className="muted">填写域名与验证方式，提交后会立即开始签发。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => setCreateDialogOpen(false)} aria-label="关闭" title="关闭"><XIcon /></button></header>
+      <form id="certificate-create-form" className="dialog-body certificate-create-form" onSubmit={event => { event.preventDefault(); if (!createBlocked) void createCertificate() }}>
+        <div className="form server-dialog-form labeled-form">
+          <FormField label="名称" required hint="仅用于在面板中识别这张证书。"><input required autoFocus value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} placeholder="例如：网站主证书" /></FormField>
+          <FormField label="域名" required hint="可填写多个域名，使用逗号或空格分隔。"><input required value={draft.domains} onChange={e => { const domains = e.target.value; const previousDefault = defaultCertificateAccountEmail(draft.domains); setDraft({ ...draft, domains, account_email: !draft.account_email || draft.account_email === previousDefault ? defaultCertificateAccountEmail(domains) : draft.account_email }) }} placeholder="example.com, *.example.com" autoCapitalize="none" spellCheck={false} /></FormField>
+          <FormField label="验证方式" required><Select required value={draft.challenge_type} onChange={e => setDraft({ ...draft, challenge_type: e.target.value })}><option value="dns01">面板 DNS-01</option><option value="dns01_manual">手动 DNS-01</option><option value="http01">Agent HTTP-01</option></Select></FormField>
+          <div className="certificate-challenge-guide"><Info size={17} /><span>{challengeGuide}</span></div>
+          {draft.challenge_type === 'dns01' && <FormField label="域名服务账号" required hint="用于自动完成域名所有权验证。"><Select required value={draft.dns_credential_id} onChange={e => setDraft({ ...draft, dns_credential_id: Number(e.target.value) })}><option value={0}>选择已验证的账号</option>{credentials.filter(item => item.verified_at).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
+          {draft.challenge_type === 'http01' && <FormField label="签发服务器" required hint="域名需要已解析到这台服务器。"><Select required value={draft.issuance_server_id} onChange={e => setDraft({ ...draft, issuance_server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map(server => <option key={server.id} value={server.id}>{server.name}</option>)}</Select></FormField>}
+          <FormField label="证书颁发机构" required><Select required value={draft.acme_ca} onChange={e => { const acmeCA = e.target.value; setDraft({ ...draft, acme_ca: acmeCA, ...(acmeCA === 'google' ? {} : { google_eab_credential_id: 0, eab_key_id: '', eab_hmac_key: '' }) }) }}><option value="letsencrypt">Let's Encrypt</option><option value="zerossl">ZeroSSL</option><option value="buypass">Buypass</option><option value="google">Google Trust Services</option></Select></FormField>
+          {draft.acme_ca === 'google' && <div className="certificate-eab-row"><div className="certificate-eab-state"><KeyRound size={16} /><span><strong>Google EAB</strong><small>{draftEABConfigured ? '已配置，可用于本次签发' : '请选择已保存的 EAB，或填写新的 EAB'}</small></span></div><div className="certificate-eab-controls"><Select value={draftEABSelection} onChange={event => {
+            const value = event.target.value
+            if (value === 'direct') setDraft({ ...draft, google_eab_credential_id: 0 })
+            else if (Number(value) > 0) setDraft({ ...draft, google_eab_credential_id: Number(value), eab_key_id: '', eab_hmac_key: '' })
+            else setDraft({ ...draft, google_eab_credential_id: 0, eab_key_id: '', eab_hmac_key: '' })
+          }}><option value="">选择已保存的 EAB</option>{draftDirectEABConfigured && <option value="direct">{draft.eab_key_id} · 仅本次使用</option>}{eabCredentials.map(credential => <option key={credential.id} value={credential.id}>{credential.key_id}{credential.remark ? ` · ${credential.remark}` : ''}</option>)}</Select><button type="button" className="ghost" onClick={openDraftEAB}><Plus size={14} />新增 EAB</button></div></div>}
+          {googleHTTPUnsupported && <div className="certificate-eab-warning">Google Trust Services 暂不支持通过 Agent HTTP-01 验证，请改用面板 DNS-01 或手动 DNS-01。</div>}
+          <FormField label="账户邮箱" hint="用于证书颁发机构发送账户和到期通知。"><input type="email" value={draft.account_email} onChange={e => setDraft({ ...draft, account_email: e.target.value })} placeholder={defaultCertificateAccountEmail(draft.domains) || 'admin@example.com'} /></FormField>
+          <label className="check-row certificate-renew-row"><input type="checkbox" checked={draft.auto_renew} onChange={e => setDraft({ ...draft, auto_renew: e.target.checked })} /><span>到期前自动续期</span></label>
+        </div>
+      </form>
+      <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setCreateDialogOpen(false)}>取消</button><button type="submit" form="certificate-create-form" disabled={working === 'create' || createBlocked}>{working === 'create' ? '申请中...' : '开始申请'}</button></footer>
+    </MotionDialogPanel>}</AnimatePresence>
     <AnimatePresence>{logCertificate && <CertificateLogDialog certificate={logCertificate} onClose={() => setLogCertificate(null)} />}</AnimatePresence>
-    <AnimatePresence>{eabTarget && <CertificateEABDialog keyID={eabDraft.keyID} hmacKey={eabDraft.hmacKey} remark={eabDraft.remark} retain={eabDraft.retain} retainLocked={eabTarget === 'auto'} configured={existingDirectEAB} secretRequired={eabSecretRequired} credentials={eabCredentials} saving={working.startsWith('eab-') && !working.startsWith('eab-delete-')} deletingID={working.startsWith('eab-delete-') ? Number(working.slice('eab-delete-'.length)) : 0} onChange={patch => setEABDraft(current => ({ ...current, ...patch }))} onSelectCredential={credential => void selectSavedEAB(credential)} onDeleteCredential={credential => void deleteSavedEAB(credential)} onCancel={closeEAB} onSubmit={() => void saveEAB()} />}</AnimatePresence>
+    <AnimatePresence>{eabTarget && <CertificateEABDialog keyID={eabDraft.keyID} hmacKey={eabDraft.hmacKey} remark={eabDraft.remark} retain={eabDraft.retain} retainLocked={eabTarget === 'auto'} configured={existingDirectEAB} secretRequired={eabSecretRequired} credentials={eabCredentials} saving={working.startsWith('eab-') && !working.startsWith('eab-delete-')} deletingID={working.startsWith('eab-delete-') ? Number(working.slice('eab-delete-'.length)) : 0} nested={eabTarget === 'draft'} onChange={patch => setEABDraft(current => ({ ...current, ...patch }))} onSelectCredential={credential => void selectSavedEAB(credential)} onDeleteCredential={credential => void deleteSavedEAB(credential)} onCancel={closeEAB} onSubmit={() => void saveEAB()} />}</AnimatePresence>
   </div>
 }
 
@@ -3868,10 +3919,17 @@ function AuditLogs({ data, loading, embedded = false }: any) {
   const dialogs = useDialogs()
   const rows: AuditLog[] = data.audit_logs || []
   const showRaw = (log: AuditLog) => dialogs.alert({
-    title: `原始日志 #${log.id}`,
+    title: `技术详情 #${log.id}`,
     message: <div className="raw-log-copy"><CopyBlock value={JSON.stringify(log, null, 2)} /></div>,
   })
   const content = <>
+    <div className="audit-log-intro">
+      <div>
+        <strong>管理操作记录</strong>
+        <span>记录登录、安全设置和配置变更，便于追溯谁在何时从哪里执行了操作。</span>
+      </div>
+      <span className="status-pill">最多 100 条</span>
+    </div>
     {loading && !rows.length ? <TableSkeleton /> : !rows.length ? <p className="muted">暂无数据</p> : <MotionList className="audit-timeline">
       {rows.map(log => {
         const item = describeAuditLog(log, data)
@@ -3885,14 +3943,14 @@ function AuditLogs({ data, loading, embedded = false }: any) {
                   <strong>{item.title}</strong>
                 </div>
                 <div className="audit-meta">
-                  <span>{formatTableTime(String(log.created_at || ''))}</span>
-                  <span>操作者：{item.actor}</span>
-                  <span>来源：{item.ip}</span>
-                  <span>{item.targetType}：{item.targetLabel}</span>
-                  {item.detail && <span>详情：{item.detail}</span>}
+                  <span><small>时间</small>{formatTableTime(String(log.created_at || ''))}</span>
+                  <span><small>操作者</small>{item.actor}</span>
+                  <span><small>来源 IP</small>{item.ip}</span>
+                  <span><small>操作对象</small>{item.targetType} · {item.targetLabel}</span>
+                  {item.detail && <span><small>变更内容</small>{item.detail}</span>}
                 </div>
               </div>
-              <button className="ghost" onClick={() => showRaw(log)}>查看原始日志</button>
+              <button className="ghost" onClick={() => showRaw(log)}>技术详情</button>
             </div>
           </div>
         </MotionCard>
@@ -8970,16 +9028,9 @@ function QuickOneTimeSubscriptionButton({ user, client, format = 'sing-box', enc
 function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPassword, onDelete }: any) {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (ref.current && !ref.current.contains(event.target as any)) {
-        setIsOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null)
 
   const items = [
     { label: '基础设置', action: 'edit' },
@@ -8990,6 +9041,51 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPasswo
     { label: '注销所有会话', action: 'revoke-sessions', danger: true },
     ...(!user.protected ? [{ label: '删除用户', action: 'delete', danger: true }] : []),
   ];
+
+  const placeMenu = () => {
+    const rect = buttonRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const viewportPadding = 8
+    const gap = 6
+    const width = 148
+    const estimatedHeight = Math.min(items.length * 32 + 12, window.innerHeight - viewportPadding * 2)
+    const height = menuRef.current?.offsetHeight || estimatedHeight
+    const roomBelow = window.innerHeight - rect.bottom - viewportPadding - gap
+    const roomAbove = rect.top - viewportPadding - gap
+    const openBelow = roomBelow >= height || roomBelow >= roomAbove
+    const left = Math.max(viewportPadding, Math.min(window.innerWidth - width - viewportPadding, rect.right - width))
+    const top = openBelow
+      ? Math.min(rect.bottom + gap, window.innerHeight - height - viewportPadding)
+      : Math.max(viewportPadding, rect.top - height - gap)
+    setMenuStyle({ position: 'fixed', top, left, width, maxHeight: window.innerHeight - viewportPadding * 2 })
+  }
+
+  useEffect(() => {
+    if (!isOpen) return
+    placeMenu()
+    const frame = window.requestAnimationFrame(placeMenu)
+    const handleClickOutside = (event: PointerEvent) => {
+      const target = event.target as globalThis.Node
+      if (ref.current?.contains(target) || menuRef.current?.contains(target)) return
+      setIsOpen(false)
+    }
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setIsOpen(false)
+      buttonRef.current?.focus()
+    }
+    window.addEventListener('resize', placeMenu)
+    window.addEventListener('scroll', placeMenu, true)
+    document.addEventListener('pointerdown', handleClickOutside)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('resize', placeMenu)
+      window.removeEventListener('scroll', placeMenu, true)
+      document.removeEventListener('pointerdown', handleClickOutside)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [isOpen, items.length])
 
   const handleActionClick = async (action: string) => {
     setIsOpen(false);
@@ -9010,63 +9106,36 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPasswo
   return (
     <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
       <button
+        ref={buttonRef}
         onClick={(e) => {
           e.stopPropagation();
+          if (!isOpen) placeMenu()
           setIsOpen(!isOpen);
         }}
         className="btn-custom btn-secondary user-row-icon-button"
         style={{ backgroundColor: isOpen ? 'var(--bg-control)' : 'transparent', color: 'var(--text-secondary)' }}
         title="更多操作"
         aria-label="更多操作"
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
       >
         <MoreHorizontal size={16} />
       </button>
-      {isOpen && (
-        <div style={{
-          position: 'absolute',
-          top: '100%',
-          right: 0,
-          marginTop: '4px',
-          zIndex: 50,
-          minWidth: '120px',
-          backgroundColor: 'var(--bg-card)',
-          border: '1.5px solid var(--border-color)',
-          borderRadius: 'var(--radius-md)',
-          boxShadow: 'var(--shadow-lg)',
-          padding: '6px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '2px',
-          textAlign: 'left'
-        }}>
+      {isOpen && menuStyle && createPortal(
+        <div ref={menuRef} className="user-actions-menu action-menu-popover action-menu-portal" role="menu" style={menuStyle}>
           {items.map(item => (
             <button
               key={item.action}
+              type="button"
+              role="menuitem"
               onClick={() => handleActionClick(item.action)}
-              style={{
-                width: '100%',
-                padding: '6px 10px',
-                border: 'none',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '12px',
-                fontWeight: 600,
-                textAlign: 'left',
-                cursor: 'pointer',
-                backgroundColor: 'transparent',
-                color: item.danger ? 'var(--color-danger)' : 'var(--text-primary)',
-                transition: 'background-color 0.15s'
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.backgroundColor = item.danger ? 'var(--color-danger-bg)' : 'var(--bg-control)';
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.backgroundColor = 'transparent';
-              }}
+              className={item.danger ? 'danger' : ''}
             >
               {item.label}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -9160,12 +9229,12 @@ function UserManagement({ data, client, load }: any) {
       <div className="user-table-scroll">
         <table className="user-data-table">
           <colgroup>
-            <col style={{ width: '22%' }} />
-            <col style={{ width: '12%' }} />
-            <col style={{ width: '15%' }} />
             <col style={{ width: '20%' }} />
-            <col style={{ width: '23%' }} />
-            <col style={{ width: '8%' }} />
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '13%' }} />
+            <col style={{ width: '18%' }} />
+            <col style={{ width: '27%' }} />
+            <col style={{ width: '11%' }} />
           </colgroup>
           <thead>
             <tr style={{ borderBottom: '1.5px solid var(--border-color)', color: 'var(--text-muted)' }}>
@@ -11878,7 +11947,9 @@ function auditTitle(log: AuditLog, actor: string, target: { type: string; label:
   if (action === 'login') return `${actor} 登录成功`
   if (action === 'login_totp') return `${actor} 通过双重认证登录成功`
   if (action === 'login_passkey') return `${actor} 使用通行密钥登录成功`
+  if (action === 'logout') return `${actor} 退出了登录`
   if (action === 'bootstrap') return `${actor} 创建了首个管理员`
+  if (action === 'auto_admin') return '系统自动创建了管理员账户'
   if (action === 'change_password') return `${actor} 修改了登录密码`
   if (action === 'enable' && log.target === 'totp') return `${actor} 开启了双重认证`
   if (action === 'disable' && log.target === 'totp') return `${actor} 停用了双重认证`
@@ -11953,7 +12024,7 @@ function auditDetailText(log: AuditLog, targetLabel: string) {
 
 function auditActionLabel(action: string) {
   const labels: Record<string, string> = {
-    bootstrap: '初始化', login: '登录', login_totp: '双重认证登录', login_passkey: '通行密钥登录', change_password: '改密',
+    bootstrap: '初始化', auto_admin: '初始化', login: '登录', login_totp: '双重认证登录', login_passkey: '通行密钥登录', logout: '退出', change_password: '改密',
     create: '创建', update: '更新', delete: '删除',
     grant: '授权', revoke: '撤销', rotate: '轮换', enable: '开启', disable: '停用',
     apply: '下发', dismiss: '忽略', diagnose: '诊断', detect: '检测',
@@ -11968,7 +12039,7 @@ function auditActionVerb(action: string) {
     grant: '授权了', revoke: '撤销了', rotate: '轮换了',
     apply: '下发了', dismiss: '忽略了', diagnose: '诊断了', detect: '检测了',
     notify: '通知了', notify_failed: '通知失败：',
-    bootstrap: '初始化了', login: '登录了', login_totp: '登录了', login_passkey: '登录了', change_password: '修改了', enable: '开启了', disable: '停用了',
+    bootstrap: '初始化了', auto_admin: '初始化了', login: '登录了', login_totp: '登录了', login_passkey: '登录了', logout: '退出了', change_password: '修改了', enable: '开启了', disable: '停用了',
   }
   return verbs[action] || `${auditActionLabel(action)}了`
 }
@@ -11976,7 +12047,7 @@ function auditActionVerb(action: string) {
 function auditActionTone(action: string): AuditTone {
   if (['delete', 'notify_failed'].includes(action)) return 'danger'
   if (['update', 'apply', 'dismiss', 'diagnose', 'detect', 'rotate', 'revoke', 'disable'].includes(action)) return 'warning'
-  if (['create', 'grant', 'bootstrap', 'login', 'login_totp', 'login_passkey', 'enable', 'agent_enroll', 'notify'].includes(action)) return 'success'
+  if (['create', 'grant', 'bootstrap', 'auto_admin', 'login', 'login_totp', 'login_passkey', 'logout', 'enable', 'agent_enroll', 'notify'].includes(action)) return 'success'
   return 'neutral'
 }
 
