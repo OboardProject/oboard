@@ -14,7 +14,8 @@ export const GRAPH_LAYER_SECONDARY_OFFSET_Y = 190
 
 const POSITIONS_KEY = 'oboard.proxyGraph.positions.v5'
 const TOOLBOX_KEY = 'oboard.proxyGraph.toolboxPosition.v1'
-const DIRECT_EXITS_KEY = 'oboard.proxyGraph.directExitInstances.v1'
+const DIRECT_EXITS_KEY = 'oboard.proxyGraph.directExitInstances.v2'
+const LEGACY_DIRECT_EXITS_KEY = 'oboard.proxyGraph.directExitInstances.v1'
 
 export function loadGraphPositions(): Record<string, GraphPosition> {
   try {
@@ -43,6 +44,7 @@ export function saveGraphToolboxPosition(position: GraphPosition) {
 
 export function loadGraphDirectExitInstances(): GraphDirectExitInstance[] {
   try {
+    localStorage.removeItem(LEGACY_DIRECT_EXITS_KEY)
     const value = JSON.parse(localStorage.getItem(DIRECT_EXITS_KEY) || '[]')
     if (!Array.isArray(value)) return []
     return value.filter(item => typeof item?.instance_id === 'string' && Number.isFinite(item?.root_server_id))

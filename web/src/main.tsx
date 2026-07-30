@@ -5337,7 +5337,7 @@ function inboundEntryAddress(data: any, entry: Inbound) {
   return entryAddressByMode(server, entry.entry_ip_mode || 'auto', entry.external_ip || '')
 }
 
-type ProxyToolAction = 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'transport'
+type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'routing' | 'transport'
 const proxyToolDragType = 'application/oboard-proxy-tool'
 
 function ProxyPathsWorkspace({ data, client, load, loading }: any) {
@@ -5456,15 +5456,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const [graphMenu, setGraphMenu] = useState<{ x: number; y: number; entity: GraphEntity } | null>(null)
   const [activeGraphEntity, setActiveGraphEntity] = useState<GraphEntity | null>(null)
   useEffect(() => { setNodes(builtFlow.nodes); setEdges(builtFlow.edges) }, [builtFlow])
-  useEffect(() => {
-    if (!selected?.id || canvasDirectExitInstances.some(instance => instance.root_server_id === selected.id)) return
-    const instance = newCanvasDirectExitInstance(selected.id, canvasDirectExitSequence.current++)
-    setCanvasDirectExitInstances(current => {
-      const next = [...current, instance]
-      saveGraphDirectExitInstances(next)
-      return next
-    })
-  }, [selected?.id, canvasDirectExitInstances])
   useEffect(() => {
     if (!selectedServer && servers[0]) setSelectedServer(servers[0].id)
     if (selectedServer && !servers.some(s => s.id === selectedServer) && servers[0]) setSelectedServer(servers[0].id)
@@ -6377,6 +6368,21 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  if (action === 'server') return void addServer(position)
 	  if (action === 'entry') return void addEntry(position)
 	  if (action === 'imported') return void openImportNode(position)
+    if (action === 'direct') {
+      if (!selected?.id) return
+      const instance = newCanvasDirectExitInstance(selected.id, canvasDirectExitSequence.current++)
+      const rootNodeID = `server-${selected.id}`
+      const rootPosition = positions[rootNodeID] || nodes.find(node => node.id === rootNodeID)?.position || defaultServerGraphPosition(0)
+      const directIndex = canvasDirectExitInstances.filter(item => item.root_server_id === selected.id).length
+      setCanvasDirectExitInstances(items => {
+        const next = [...items, instance]
+        saveGraphDirectExitInstances(next)
+        return next
+      })
+      placeGraphNode(canvasDirectExitNodeID(instance), position || { x: rootPosition.x + directIndex * 250, y: rootPosition.y + 300 })
+      window.setTimeout(() => fitGraphToSafeArea(220), 40)
+      return
+    }
     if (action === 'warp') {
       if (!selected?.id) return
       const instance = newCanvasWARPInstance(selected.id, canvasWARPSequence.current++)
@@ -6780,6 +6786,7 @@ const proxyTools: Array<{ id: ProxyToolAction; label: string; desc: string }> = 
   { id: 'server', label: '添加服务器', desc: '登记一台主机' },
   { id: 'entry', label: '入口节点', desc: '新建协议入口' },
   { id: 'imported', label: '导入节点', desc: 'SS / SOCKS / VLESS' },
+  { id: 'direct', label: '直接出口', desc: '添加本机直出目标' },
   { id: 'warp', label: 'WARP 出口', desc: '由末端服务器自动申请' },
   { id: 'routing', label: '分流出口', desc: '规则与出口' },
   { id: 'transport', label: '独立转发', desc: '端口转发或隧道' },
@@ -6929,6 +6936,7 @@ function ProxyToolIcon({ kind }: { kind: ProxyToolAction }) {
 	if (kind === 'server') return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="2" /><rect x="4" y="14" width="16" height="6" rx="2" /><path d="M8 7h.01M8 17h.01M12 10v4" /></svg>
 	if (kind === 'entry') return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h11" /><path d="m11 8 4 4-4 4" /><circle cx="18" cy="12" r="2.5" /></svg>
 	if (kind === 'imported') return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z" /><path d="M3 12h4M17 12h4" /><path d="M12 3v4M12 17v4" /><circle cx="12" cy="12" r="2" /></svg>
+	if (kind === 'direct') return <LogOut size={15} />
 	if (kind === 'warp') return <Zap size={15} />
   if (kind === 'routing') return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9" /><path d="M4 17h9" /><path d="m14 4 3 3-3 3" /><path d="m14 14 3 3-3 3" /><path d="M17 7h3" /><path d="M17 17h3" /></svg>
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h8a4 4 0 0 1 0 8H9" /><path d="m9 11-4 4 4 4" /><path d="M18 5v4" /><path d="M16 7h4" /></svg>
