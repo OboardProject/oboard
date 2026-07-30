@@ -41,6 +41,7 @@ func main() {
 	repo := flag.String("repo", "OboardProject/oboard-agent", "expected release repository")
 	channel := flag.String("channel", "stable", "stable, prerelease, or dev")
 	expectedVersion := flag.String("expected-version", "", "exact expected version for immutable releases")
+	expectedCommit := flag.String("expected-commit", "", "exact expected commit for development releases")
 	flag.Parse()
 	if *dir == "" || *publicKey == "" {
 		fatal(errors.New("--dir and --public-key are required"))
@@ -79,6 +80,17 @@ func main() {
 	}
 	if *expectedVersion != "" && release.Version != *expectedVersion {
 		fatal(fmt.Errorf("manifest version %q does not match %q", release.Version, *expectedVersion))
+	}
+	if *expectedCommit != "" {
+		if len(*expectedCommit) != 40 {
+			fatal(errors.New("expected Agent commit must be a full 40-character SHA"))
+		}
+		if _, err := hex.DecodeString(*expectedCommit); err != nil {
+			fatal(errors.New("expected Agent commit must be hexadecimal"))
+		}
+		if release.Commit != *expectedCommit {
+			fatal(fmt.Errorf("manifest commit %q does not match %q", release.Commit, *expectedCommit))
+		}
 	}
 	if *channel == "dev" && !strings.Contains(strings.ToLower(release.Version), "dev") {
 		fatal(fmt.Errorf("development channel requires a development manifest version, got %q", release.Version))

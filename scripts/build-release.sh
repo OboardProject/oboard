@@ -41,18 +41,6 @@ create_tar_archive() {
   fi
 }
 
-echo "==> Fetching signed Agent release assets"
-OBOARD_AGENT_RELEASE_TARGET="$OUT_DIR/agent-release" VERSION="$VERSION_VALUE" "$CONTROLLER_DIR/scripts/fetch-agent-release.sh"
-
-read -r AGENT_VERSION AGENT_BUILD AGENT_COMMIT AGENT_DATE < <(python3 - "$OUT_DIR/agent-release/release-metadata.json" <<'PY'
-import json, sys
-m = json.load(open(sys.argv[1]))
-print(m["version"], m["build"], m["commit"], m["date"])
-PY
-)
-RELEASE_PUBLIC_KEY=${OBOARD_RELEASE_PUBLIC_KEY:?OBOARD_RELEASE_PUBLIC_KEY must contain the Agent release Ed25519 public key}
-CONTROLLER_LDFLAGS="-s -w -X github.com/OboardProject/oboard/internal/version.Version=$VERSION_VALUE -X github.com/OboardProject/oboard/internal/version.Build=$BUILD_VALUE -X github.com/OboardProject/oboard/internal/version.Commit=$COMMIT_VALUE -X github.com/OboardProject/oboard/internal/version.Date=$DATE_VALUE -X github.com/OboardProject/oboard/internal/version.ReleasePublicKey=$RELEASE_PUBLIC_KEY -X github.com/OboardProject/oboard/internal/version.AgentVersion=$AGENT_VERSION -X github.com/OboardProject/oboard/internal/version.AgentBuild=$AGENT_BUILD -X github.com/OboardProject/oboard/internal/version.AgentCommit=$AGENT_COMMIT -X github.com/OboardProject/oboard/internal/version.AgentDate=$AGENT_DATE -X github.com/OboardProject/oboard/internal/version.KernelVersion=$AGENT_VERSION -X github.com/OboardProject/oboard/internal/version.KernelBuild=$AGENT_BUILD"
-
 echo "==> Building web assets"
 cd "$CONTROLLER_DIR/web"
 if [ ! -d node_modules ]; then
@@ -64,6 +52,18 @@ npm run build -- --outDir "$WEB_OUT_DIR" --emptyOutDir
 echo "==> Fetching pinned ip2region databases"
 rm -rf "$GEOIP_OUT_DIR"
 "$CONTROLLER_DIR/scripts/fetch-ip2region.sh" "$GEOIP_OUT_DIR"
+
+echo "==> Fetching signed Agent release assets"
+OBOARD_AGENT_RELEASE_TARGET="$OUT_DIR/agent-release" VERSION="$VERSION_VALUE" "$CONTROLLER_DIR/scripts/fetch-agent-release.sh"
+
+read -r AGENT_VERSION AGENT_BUILD AGENT_COMMIT AGENT_DATE < <(python3 - "$OUT_DIR/agent-release/release-metadata.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+print(m["version"], m["build"], m["commit"], m["date"])
+PY
+)
+RELEASE_PUBLIC_KEY=${OBOARD_RELEASE_PUBLIC_KEY:?OBOARD_RELEASE_PUBLIC_KEY must contain the Agent release Ed25519 public key}
+CONTROLLER_LDFLAGS="-s -w -X github.com/OboardProject/oboard/internal/version.Version=$VERSION_VALUE -X github.com/OboardProject/oboard/internal/version.Build=$BUILD_VALUE -X github.com/OboardProject/oboard/internal/version.Commit=$COMMIT_VALUE -X github.com/OboardProject/oboard/internal/version.Date=$DATE_VALUE -X github.com/OboardProject/oboard/internal/version.ReleasePublicKey=$RELEASE_PUBLIC_KEY -X github.com/OboardProject/oboard/internal/version.AgentVersion=$AGENT_VERSION -X github.com/OboardProject/oboard/internal/version.AgentBuild=$AGENT_BUILD -X github.com/OboardProject/oboard/internal/version.AgentCommit=$AGENT_COMMIT -X github.com/OboardProject/oboard/internal/version.AgentDate=$AGENT_DATE -X github.com/OboardProject/oboard/internal/version.KernelVersion=$AGENT_VERSION -X github.com/OboardProject/oboard/internal/version.KernelBuild=$AGENT_BUILD"
 
 package_controller() {
   local os=$1 arch=$2 source=$3

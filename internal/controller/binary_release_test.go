@@ -22,9 +22,9 @@ func TestBinaryOnlyControllerReleaseAssets(t *testing.T) {
 		"scripts/build-release.sh":         {"create_tar_archive \"$stage\" \"$archive\" bin web downloads", "${arch}_install.tar.gz", "deploy/systemd", "deploy/openrc"},
 		"scripts/install.sh":               {"OBOARD_UPDATE_CHANNEL", "oboard-controller-updater", "install_component controller", "prepare_controller_updater_runtime", "uninstall_controller", "OBOARD_PURGE_DATA", "resolve_purge_data", "drain_piped_script"},
 		"scripts/verify-release.sh":        {"Testing Controller", "Building Web UI", "Building current-platform binaries", "cmd/controller-updater"},
-		"scripts/fetch-agent-release.sh":   {"OBOARD_RELEASE_PUBLIC_KEY", "release-manifest.json.sig", "OBOARD_AGENT_CHANNEL"},
+		"scripts/fetch-agent-release.sh":   {"OBOARD_RELEASE_PUBLIC_KEY", "release-manifest.json.sig", "OBOARD_AGENT_CHANNEL", "OBOARD_AGENT_EXPECTED_COMMIT"},
 		".github/workflows/ci.yml":         {"contents: read", "Test Controller and release build inputs"},
-		".github/workflows/dev-build.yml":  {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "OBOARD_AGENT_CHANNEL: dev", "controller-release-manifest.json", "gh release upload dev", "gh release edit dev", "gh release create dev", "--clobber"},
+		".github/workflows/dev-build.yml":  {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "gh api repos/OboardProject/oboard-agent/commits/main", "OBOARD_AGENT_CHANNEL: dev", "OBOARD_AGENT_EXPECTED_COMMIT", "controller-release-manifest.json", "gh release upload dev", "gh release edit dev", "gh release create dev", "--clobber"},
 		".github/workflows/prerelease.yml": {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "OBOARD_AGENT_CHANNEL: release", "gh release create"},
 		".github/workflows/release.yml":    {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "OBOARD_AGENT_CHANNEL: release", "gh release create"},
 	}

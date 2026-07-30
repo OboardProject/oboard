@@ -45,11 +45,24 @@ jobs:
             echo "build=$(date -u +%Y%m%d%H%M%S)"
             echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_OUTPUT"
+      - name: Resolve Agent development commit
+        id: agent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.agent-token.outputs.token }}
+        run: |
+          commit=$(gh api repos/OboardProject/oboard-agent/commits/main --jq .sha)
+          if [[ ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Unable to resolve the Agent main commit" >&2
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
       - name: Build Controller with latest Agent development release
         env:
           GH_TOKEN: ${{ steps.agent-token.outputs.token }}
           OBOARD_RELEASE_PUBLIC_KEY: ${{ vars.OBOARD_RELEASE_PUBLIC_KEY }}
           OBOARD_AGENT_CHANNEL: dev
+          OBOARD_AGENT_EXPECTED_COMMIT: ${{ steps.agent.outputs.commit }}
           OBOARD_RELEASE_CHANNEL: dev
           OBOARD_ARTIFACT_VERSION: dev
           VERSION: ${{ steps.meta.outputs.version }}
