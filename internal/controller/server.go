@@ -141,6 +141,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/auth/totp/verify", s.verifyTOTPLogin)
 	mux.HandleFunc("/api/v1/auth/passkey/login/begin", s.passkeyLoginBegin)
 	mux.HandleFunc("/api/v1/auth/passkey/login/finish", s.passkeyLoginFinish)
+	mux.HandleFunc("/api/v1/auth/session", s.auth(s.restoreSession, model.RoleViewer))
 	mux.HandleFunc("/api/v1/auth/logout", s.auth(s.logout, model.RoleViewer))
 	mux.HandleFunc("/api/v1/auth/password", s.auth(s.changePassword, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me", s.auth(s.me, model.RoleViewer))
@@ -824,13 +825,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{"version": s.currentVersionInfo(), "session": map[string]any{"role": role}}
 	if user := currentUser(r); user != nil {
-		out["current_user"] = map[string]any{
-			"id":       user.ID,
-			"username": user.Username,
-			"nickname": user.Nickname,
-			"role":     role,
-			"status":   user.Status,
-		}
+		out["current_user"] = sessionUserResponse(*user, role)
 	}
 	ctx := r.Context()
 	addServers := func() error {
@@ -1551,7 +1546,10 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 // same duration as a real check.
 const loginDummyPasswordHash = "argon2id$v=19$m=65536,t=1,p=4$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" // #nosec G101 -- deliberately invalid dummy verifier input, never an account credential.
 
-const sessionCookieName = "oboard_session"
+const (
+	sessionCookieName = "oboard_session"
+	sessionLifetime   = 24 * time.Hour
+)
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1606,6 +1604,23 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	s.clearSessionCookies(w, r)
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &user.ID, Action: "logout", Target: "user", Detail: user.Username, IP: clientIP(r)})
 	write(w, http.StatusOK, map[string]any{"ok": true, "session_revoked": true})
+}
+
+func (s *Server) restoreSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		method(w)
+		return
+	}
+	user := currentUser(r)
+	sessionToken := currentSessionToken(r)
+	if user == nil || sessionToken == "" {
+		fail(w, errors.New("invalid session"), http.StatusUnauthorized)
+		return
+	}
+	write(w, http.StatusOK, map[string]any{
+		"csrf_token": s.csrfTokenForSession(sessionToken),
+		"user":       sessionUserResponse(*user, currentRole(r)),
+	})
 }
 
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
@@ -1759,10 +1774,21 @@ func selfUserResponse(ctx context.Context, st *store.Store, user model.User, rol
 	}
 }
 
+func sessionUserResponse(user model.User, role model.Role) map[string]any {
+	return map[string]any{
+		"id":       user.ID,
+		"username": user.Username,
+		"nickname": user.Nickname,
+		"role":     role,
+		"status":   user.Status,
+	}
+}
+
 type ctxKey string
 
 const claimsKey ctxKey = "claims"
 const userKey ctxKey = "user"
+const sessionTokenKey ctxKey = "session-token"
 
 func (s *Server) auth(next http.HandlerFunc, min model.Role) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1783,15 +1809,31 @@ func (s *Server) auth(next http.HandlerFunc, min model.Role) http.HandlerFunc {
 		}
 		claims, err := security.VerifySession(s.sessionSecret, token)
 		if err != nil {
+			if cookieSession {
+				s.clearSessionCookies(w, r)
+			}
 			fail(w, err, 401)
+			return
+		}
+		if !hmac.Equal([]byte(claims.ClientBinding), []byte(s.sessionBindingForRequest(r))) {
+			if cookieSession {
+				s.clearSessionCookies(w, r)
+			}
+			fail(w, errors.New("invalid session"), http.StatusUnauthorized)
 			return
 		}
 		u, err := s.store.GetUser(r.Context(), claims.Subject)
 		if err != nil || u.Status != "active" {
+			if cookieSession {
+				s.clearSessionCookies(w, r)
+			}
 			fail(w, errors.New("invalid session"), 401)
 			return
 		}
 		if claims.SessionVersion != u.SessionVersion {
+			if cookieSession {
+				s.clearSessionCookies(w, r)
+			}
 			fail(w, errors.New("session revoked"), 401)
 			return
 		}
@@ -1811,6 +1853,7 @@ func (s *Server) auth(next http.HandlerFunc, min model.Role) http.HandlerFunc {
 		}
 		ctx := context.WithValue(r.Context(), claimsKey, claims)
 		ctx = context.WithValue(ctx, userKey, u)
+		ctx = context.WithValue(ctx, sessionTokenKey, token)
 		next(w, r.WithContext(ctx))
 	}
 }
@@ -1836,14 +1879,25 @@ func (s *Server) csrfTokenForSession(sessionToken string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, sessionToken string) {
+func (s *Server) sessionBindingForRequest(r *http.Request) string {
+	return sessionClientBinding(s.sessionSecret, r.UserAgent())
+}
+
+func sessionClientBinding(secret, userAgent string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = io.WriteString(mac, "oboard-session-client-v1\x00")
+	_, _ = io.WriteString(mac, userAgent)
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, sessionToken string, expiresAt time.Time) {
 	secure := requestUsesHTTPS(r)
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: sessionToken, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode}) // #nosec G124 -- Secure follows direct TLS or an explicitly trusted proxy; localhost HTTP remains supported for development.
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: sessionToken, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, Expires: expiresAt.UTC(), MaxAge: int(sessionLifetime / time.Second)}) // #nosec G124 -- Secure follows direct TLS or an explicitly trusted proxy; localhost HTTP remains supported for development.
 }
 
 func (s *Server) clearSessionCookies(w http.ResponseWriter, r *http.Request) {
 	secure := requestUsesHTTPS(r)
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: -1}) // #nosec G124 -- deletion must match the dynamically secured development or production cookie.
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, Expires: time.Unix(1, 0).UTC(), MaxAge: -1}) // #nosec G124 -- deletion must match the dynamically secured development or production cookie.
 }
 
 func requestUsesHTTPS(r *http.Request) bool {
@@ -1938,6 +1992,12 @@ func currentUser(r *http.Request) *model.User {
 	}
 	return nil
 }
+
+func currentSessionToken(r *http.Request) string {
+	token, _ := r.Context().Value(sessionTokenKey).(string)
+	return token
+}
+
 func roleAllows(got, min model.Role) bool {
 	rank := map[model.Role]int{model.RoleViewer: 1, model.RoleOperator: 2, model.RoleAdmin: 3}
 	return rank[got] >= rank[min]

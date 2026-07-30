@@ -232,6 +232,7 @@ type TokenClaims struct {
 	Subject        int64
 	Role           string
 	SessionVersion int64
+	ClientBinding  string
 	Expiry         time.Time
 }
 
@@ -239,8 +240,12 @@ func SignSession(secret string, claims TokenClaims) (string, error) {
 	if secret == "" {
 		return "", errors.New("empty session secret")
 	}
-	// Payload includes session version so password changes can revoke tokens.
-	payload := fmt.Sprintf("%d|%s|%d|%d", claims.Subject, claims.Role, claims.SessionVersion, claims.Expiry.Unix())
+	if claims.ClientBinding == "" {
+		return "", errors.New("empty client binding")
+	}
+	// Payload includes session version so password changes can revoke tokens and
+	// a client binding so callers can reject a different user agent.
+	payload := fmt.Sprintf("%d|%s|%d|%s|%d", claims.Subject, claims.Role, claims.SessionVersion, claims.ClientBinding, claims.Expiry.Unix())
 	sig := sign(secret, payload)
 	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sig, nil
 }
@@ -259,7 +264,7 @@ func VerifySession(secret, token string) (TokenClaims, error) {
 		return TokenClaims{}, errors.New("invalid signature")
 	}
 	fields := strings.Split(payload, "|")
-	if len(fields) != 4 {
+	if len(fields) != 5 {
 		return TokenClaims{}, errors.New("invalid claims")
 	}
 	subject, err := strconv.ParseInt(fields[0], 10, 64)
@@ -270,11 +275,14 @@ func VerifySession(secret, token string) (TokenClaims, error) {
 	if err != nil {
 		return TokenClaims{}, err
 	}
-	expiryUnix, err := strconv.ParseInt(fields[3], 10, 64)
+	if fields[3] == "" {
+		return TokenClaims{}, errors.New("invalid client binding")
+	}
+	expiryUnix, err := strconv.ParseInt(fields[4], 10, 64)
 	if err != nil {
 		return TokenClaims{}, err
 	}
-	claims := TokenClaims{Subject: subject, Role: fields[1], SessionVersion: version, Expiry: time.Unix(expiryUnix, 0)}
+	claims := TokenClaims{Subject: subject, Role: fields[1], SessionVersion: version, ClientBinding: fields[3], Expiry: time.Unix(expiryUnix, 0)}
 	if time.Now().After(claims.Expiry) {
 		return TokenClaims{}, errors.New("expired token")
 	}

@@ -189,7 +189,7 @@ func TestViewerCannotReadConnectionAudit(t *testing.T) {
 	if err := db.CreateUser(context.Background(), viewer); err != nil {
 		t.Fatal(err)
 	}
-	token, err := security.SignSession("test-secret", security.TokenClaims{Subject: viewer.ID, Role: string(model.RoleViewer), Expiry: time.Now().Add(time.Hour)})
+	token, err := security.SignSession("test-secret", security.TokenClaims{Subject: viewer.ID, Role: string(model.RoleViewer), ClientBinding: sessionClientBinding("test-secret", ""), Expiry: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}

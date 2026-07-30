@@ -1085,6 +1085,37 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
   return { request, download, upload }
 }
 
+function PortalLoader({ loading }: { loading: boolean }) {
+  return (
+    <motion.div
+      className="portal-loader"
+      initial={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+    >
+      <div className="portal-loader-mark" aria-hidden="true">
+        <span className="portal-loader-ring portal-loader-ring-outer" />
+        <span className="portal-loader-ring portal-loader-ring-inner" />
+        <span className="portal-loader-badge">O</span>
+      </div>
+      <div className="portal-loader-copy">
+        <h2>OBoard 控制台</h2>
+        <AnimatePresence mode="wait">
+          <motion.span
+            key={loading ? 'loading' : 'preparing'}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {loading ? '正在加载当前页面...' : '正在准备控制台...'}
+          </motion.span>
+        </AnimatePresence>
+      </div>
+    </motion.div>
+  )
+}
+
 function App() {
   const [token, setToken] = useState(sessionStorage.getItem('oboard.token') || '')
   const activeTokenRef = useRef(token)
@@ -1095,6 +1126,8 @@ function App() {
   const [toast, setToast] = useState<ToastState>(null)
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<any>({})
+  const [restoringSession, setRestoringSession] = useState(() => !sessionStorage.getItem('oboard.token'))
+  const [restoreError, setRestoreError] = useState('')
   const [, setAttentionDismissRevision] = useState(0)
   const loadSeq = useRef(0)
   // Per-tab page-data cache so tab switches can crossfade into last-known content
@@ -1121,6 +1154,39 @@ function App() {
   }), [token])
 
   const [showPortalLoader, setShowPortalLoader] = useState(Boolean(token))
+
+  useEffect(() => {
+    if (!restoringSession) return
+    let cancelled = false
+    const restore = async () => {
+      try {
+        const response = await fetch(appPath('/api/v1/auth/session'), { credentials: 'same-origin' })
+        const result = await response.json().catch(() => ({})) as { csrf_token?: string; user?: SessionUser; error?: string }
+        if (cancelled) return
+        if (response.status === 401) {
+          sessionStorage.removeItem('oboard.token')
+          sessionStorage.removeItem('oboard.user')
+          sessionStorage.removeItem('oboard.csrf')
+          return
+        }
+        if (!response.ok) throw new Error(localizeErrorMessage(result.error || response.statusText))
+        if (!result.user || !result.csrf_token) throw new Error('登录恢复响应无效')
+        activeTokenRef.current = 'cookie'
+        sessionStorage.setItem('oboard.token', 'cookie')
+        sessionStorage.setItem('oboard.user', JSON.stringify(result.user))
+        sessionStorage.setItem('oboard.csrf', result.csrf_token)
+        setSessionUser(result.user)
+        setShowPortalLoader(true)
+        setToken('cookie')
+      } catch (error: any) {
+        if (!cancelled) setRestoreError(`无法恢复登录状态：${localizeErrorMessage(error?.message || error)}`)
+      } finally {
+        if (!cancelled) setRestoringSession(false)
+      }
+    }
+    void restore()
+    return () => { cancelled = true }
+  }, [])
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
@@ -1355,7 +1421,9 @@ function App() {
     }
   }
 
-  if (!token) return <Login theme={theme} toggleTheme={(e) => toggleTheme(e)} onToken={(v, user, csrfToken) => {
+  if (restoringSession) return <PortalLoader loading={false} />
+
+  if (!token) return <Login theme={theme} toggleTheme={(e) => toggleTheme(e)} initialError={restoreError} onToken={(v, user, csrfToken) => {
     activeTokenRef.current = v
     loadSeq.current++
     sessionStorage.setItem('oboard.token', v)
@@ -1474,33 +1542,7 @@ function App() {
       <LoadingContext.Provider value={loading}>
         <AnimatePresence>
           {showPortalLoader && (
-            <motion.div
-              key="portal-loader"
-              className="portal-loader"
-              initial={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-            >
-              <div className="portal-loader-mark" aria-hidden="true">
-                <span className="portal-loader-ring portal-loader-ring-outer" />
-                <span className="portal-loader-ring portal-loader-ring-inner" />
-                <span className="portal-loader-badge">O</span>
-              </div>
-              <div className="portal-loader-copy">
-                <h2>OBoard 控制台</h2>
-                <AnimatePresence mode="wait">
-                  <motion.span
-                    key={loading ? 'loading' : 'preparing'}
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -4 }}
-                    transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                  >
-                    {loading ? '正在加载当前页面...' : '正在准备控制台...'}
-                  </motion.span>
-                </AnimatePresence>
-              </div>
-            </motion.div>
+            <PortalLoader key="portal-loader" loading={loading} />
           )}
         </AnimatePresence>
 
@@ -1670,7 +1712,7 @@ function App() {
   )
 }
 
-function Login({ theme, toggleTheme, onToken }: { theme: string; toggleTheme: (event?: React.MouseEvent<HTMLElement>) => void; onToken: (token: string, user: SessionUser, csrfToken: string) => void }) {
+function Login({ theme, toggleTheme, initialError, onToken }: { theme: string; toggleTheme: (event?: React.MouseEvent<HTMLElement>) => void; initialError?: string; onToken: (token: string, user: SessionUser, csrfToken: string) => void }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
@@ -1678,7 +1720,7 @@ function Login({ theme, toggleTheme, onToken }: { theme: string; toggleTheme: (e
   const [loginStep, setLoginStep] = useState<'password' | 'totp'>('password')
   const [secondFactorPasskey, setSecondFactorPasskey] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(initialError || '')
   const [isLoading, setIsLoading] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {

@@ -108,13 +108,31 @@ func TestCookieSessionsRequireCSRFForWrites(t *testing.T) {
 	if sessionCookie == nil || !sessionCookie.HttpOnly || sessionCookie.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("unexpected session cookies: %#v", loginResponse.Result().Cookies())
 	}
+	if sessionCookie.MaxAge != int(sessionLifetime/time.Second) || time.Until(sessionCookie.Expires) < sessionLifetime-time.Minute || time.Until(sessionCookie.Expires) > sessionLifetime+time.Minute {
+		t.Fatalf("session cookie is not persistent for 24 hours: %#v", sessionCookie)
+	}
 
-	readRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	readRequest := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
 	readRequest.AddCookie(sessionCookie)
 	readResponse := httptest.NewRecorder()
 	h.ServeHTTP(readResponse, readRequest)
 	if readResponse.Code != http.StatusOK {
 		t.Fatalf("cookie-authenticated read status = %d body=%s", readResponse.Code, readResponse.Body.String())
+	}
+	var restored struct {
+		CSRFToken string         `json:"csrf_token"`
+		User      map[string]any `json:"user"`
+	}
+	if err := json.Unmarshal(readResponse.Body.Bytes(), &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.CSRFToken != loginPayload.CSRFToken || restored.User["username"] != "admin" || restored.User["role"] != "admin" {
+		t.Fatalf("unexpected restored session: %#v", restored)
+	}
+	for _, sensitive := range []string{"proxy_uuid", "proxy_password", "subscription_token"} {
+		if _, ok := restored.User[sensitive]; ok {
+			t.Fatalf("restored session leaked %s: %#v", sensitive, restored.User)
+		}
 	}
 
 	logoutRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
@@ -133,6 +151,43 @@ func TestCookieSessionsRequireCSRFForWrites(t *testing.T) {
 	if logoutResponse.Code != http.StatusOK {
 		t.Fatalf("cookie-authenticated write with CSRF status = %d body=%s", logoutResponse.Code, logoutResponse.Body.String())
 	}
+	cleared := logoutResponse.Result().Cookies()
+	if len(cleared) != 1 || cleared[0].Name != sessionCookieName || cleared[0].MaxAge >= 0 || !cleared[0].Expires.Before(time.Now()) {
+		t.Fatalf("logout did not clear persistent session cookie: %#v", cleared)
+	}
+}
+
+func TestCookieSessionRejectsChangedUserAgent(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin","password":"very-secure-password"}`))
+	loginRequest.Header.Set("Content-Type", "application/json")
+	loginRequest.Header.Set("User-Agent", "OBoard-Browser/1")
+	loginResponse := httptest.NewRecorder()
+	h.ServeHTTP(loginResponse, loginRequest)
+	if loginResponse.Code != http.StatusOK {
+		t.Fatalf("cookie login status = %d body=%s", loginResponse.Code, loginResponse.Body.String())
+	}
+	sessionCookie := loginResponse.Result().Cookies()[0]
+
+	restoreRequest := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
+	restoreRequest.Header.Set("User-Agent", "OBoard-Browser/2")
+	restoreRequest.AddCookie(sessionCookie)
+	restoreResponse := httptest.NewRecorder()
+	h.ServeHTTP(restoreResponse, restoreRequest)
+	if restoreResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("changed user agent status = %d body=%s", restoreResponse.Code, restoreResponse.Body.String())
+	}
+	cleared := restoreResponse.Result().Cookies()
+	if len(cleared) != 1 || cleared[0].Name != sessionCookieName || cleared[0].MaxAge >= 0 {
+		t.Fatalf("changed user agent did not clear session cookie: %#v", cleared)
+	}
 }
 
 func TestSessionCookieSecureAttributeFollowsTrustedTransport(t *testing.T) {
@@ -140,10 +195,10 @@ func TestSessionCookieSecureAttributeFollowsTrustedTransport(t *testing.T) {
 	assertSecure := func(name string, request *http.Request, want bool) {
 		t.Helper()
 		response := httptest.NewRecorder()
-		srv.setSessionCookie(response, request, "session-token")
+		srv.setSessionCookie(response, request, "session-token", time.Now().Add(sessionLifetime))
 		cookies := response.Result().Cookies()
-		if len(cookies) != 1 || cookies[0].Secure != want || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
-			t.Fatalf("%s cookie = %#v, want secure=%v with HttpOnly and SameSite=Strict", name, cookies, want)
+		if len(cookies) != 1 || cookies[0].Secure != want || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode || cookies[0].MaxAge != int(sessionLifetime/time.Second) {
+			t.Fatalf("%s cookie = %#v, want secure=%v with persistent HttpOnly and SameSite=Strict", name, cookies, want)
 		}
 	}
 
@@ -247,7 +302,7 @@ func TestViewerCannotReadTasks(t *testing.T) {
 	if err := db.CreateTask(context.Background(), task); err != nil {
 		t.Fatal(err)
 	}
-	token, err := security.SignSession("test-secret", security.TokenClaims{Subject: viewer.ID, Role: string(model.RoleViewer), Expiry: time.Now().Add(24 * time.Hour)})
+	token, err := security.SignSession("test-secret", security.TokenClaims{Subject: viewer.ID, Role: string(model.RoleViewer), ClientBinding: sessionClientBinding("test-secret", ""), Expiry: time.Now().Add(24 * time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +321,7 @@ func TestPageDataIncludesMinimalCurrentUser(t *testing.T) {
 	if err := db.CreateUser(context.Background(), viewer); err != nil {
 		t.Fatal(err)
 	}
-	token, err := security.SignSession("test-secret", security.TokenClaims{Subject: viewer.ID, Role: string(model.RoleViewer), Expiry: time.Now().Add(time.Hour)})
+	token, err := security.SignSession("test-secret", security.TokenClaims{Subject: viewer.ID, Role: string(model.RoleViewer), ClientBinding: sessionClientBinding("test-secret", ""), Expiry: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -854,7 +909,7 @@ func TestDiagnosticRoutesRequireOperator(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenFor := func(u *model.User) string {
-		token, err := security.SignSession("test-secret", security.TokenClaims{Subject: u.ID, Role: string(u.Role), Expiry: time.Now().Add(time.Hour)})
+		token, err := security.SignSession("test-secret", security.TokenClaims{Subject: u.ID, Role: string(u.Role), ClientBinding: sessionClientBinding("test-secret", ""), Expiry: time.Now().Add(time.Hour)})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -91,12 +91,19 @@ func (s *Server) newSessionPayload(w http.ResponseWriter, r *http.Request, user 
 		return nil, err
 	}
 	user.Role = effectiveRole
-	token, err := security.SignSession(s.sessionSecret, security.TokenClaims{Subject: user.ID, Role: string(user.Role), SessionVersion: user.SessionVersion, Expiry: time.Now().Add(24 * time.Hour)})
+	expiresAt := time.Now().Add(sessionLifetime)
+	token, err := security.SignSession(s.sessionSecret, security.TokenClaims{
+		Subject:        user.ID,
+		Role:           string(user.Role),
+		SessionVersion: user.SessionVersion,
+		ClientBinding:  s.sessionBindingForRequest(r),
+		Expiry:         expiresAt,
+	})
 	if err != nil {
 		return nil, err
 	}
 	csrfToken := s.csrfTokenForSession(token)
-	s.setSessionCookie(w, r, token)
+	s.setSessionCookie(w, r, token, expiresAt)
 	return map[string]any{"token": token, "csrf_token": csrfToken, "user": user}, nil
 }
 

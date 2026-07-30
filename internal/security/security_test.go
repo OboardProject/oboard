@@ -28,7 +28,10 @@ func TestPasswordHashAndVerify(t *testing.T) {
 }
 
 func TestSessionToken(t *testing.T) {
-	token, err := SignSession("secret", TokenClaims{Subject: 7, Role: "admin", Expiry: time.Now().Add(time.Minute)})
+	if _, err := SignSession("secret", TokenClaims{Subject: 7, Role: "admin", Expiry: time.Now().Add(time.Minute)}); err == nil {
+		t.Fatal("missing client binding should fail")
+	}
+	token, err := SignSession("secret", TokenClaims{Subject: 7, Role: "admin", ClientBinding: "ua-binding", Expiry: time.Now().Add(time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +39,7 @@ func TestSessionToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claims.Subject != 7 || claims.Role != "admin" {
+	if claims.Subject != 7 || claims.Role != "admin" || claims.ClientBinding != "ua-binding" {
 		t.Fatalf("bad claims: %#v", claims)
 	}
 	if _, err := VerifySession("other", token); err == nil {
