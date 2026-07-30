@@ -982,7 +982,7 @@ func proxyPathManagedPortForward(path model.ProxyPath, step model.ProxyPathStep,
 func proxyPathReachableServerAddress(source, target model.Server) (string, error) {
 	candidate := ResolveServerEntryAddress(target)
 	if candidate != "" && candidate != "0.0.0.0" && candidate != "::" {
-		if err := ValidateAddressForIPStack(source.IPStack, candidate); err == nil {
+		if err := ValidateAddressForIPStack(EffectiveIPStack(source), candidate); err == nil {
 			return candidate, nil
 		}
 	}

@@ -1057,6 +1057,24 @@ func TestGeneratedWARPAndRouteConfigPassesOfficialSingBoxCheck(t *testing.T) {
 	runSingBoxCheck(t, bin, config)
 }
 
+func TestReadyWARPInfersIPv6ResolverAndMTUForAutoServer(t *testing.T) {
+	endpoint, err := warpProfileToSingBox(model.WARPProfile{
+		ID:          30,
+		DNSStrategy: "auto",
+		ConfigJSON:  `{"type":"wireguard","address":["172.16.0.2/32","2606:4700:110::2/128"],"private_key":"private","peers":[{"address":"engage.cloudflareclient.com","port":2408,"public_key":"public","allowed_ips":["0.0.0.0/0","::/0"]}]}`,
+	}, model.Server{IPStack: model.IPStackAuto, PublicIPv6: "2001:db8::10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver, ok := endpoint["domain_resolver"].(map[string]any)
+	if !ok || resolver["strategy"] != "ipv6_only" {
+		t.Fatalf("WARP domain_resolver = %#v", endpoint["domain_resolver"])
+	}
+	if endpoint["mtu"] != 1280 {
+		t.Fatalf("WARP MTU = %#v, want 1280", endpoint["mtu"])
+	}
+}
+
 func TestProxyPathWARPUsesLastControlledServer(t *testing.T) {
 	warpID := int64(30)
 	server := model.Server{ID: 1, Name: "edge", ListenIP: "0.0.0.0", IPStack: model.IPStackDualStack}

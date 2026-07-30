@@ -79,7 +79,7 @@ func BuildDNSConfig(server model.Server, state *DNSConfigState) (map[string]any,
 	return map[string]any{
 		"servers":  servers,
 		"final":    "remote-primary",
-		"strategy": normalizeDNSStrategy(state.Policy.Strategy, server.IPStack),
+		"strategy": normalizeDNSStrategy(state.Policy.Strategy, EffectiveIPStack(server)),
 	}, nil
 }
 
@@ -286,6 +286,24 @@ func normalizeDNSStrategy(strategy string, stack model.IPStack) string {
 		return "prefer_ipv6"
 	default:
 		return "prefer_ipv4"
+	}
+}
+
+func EffectiveIPStack(server model.Server) model.IPStack {
+	if server.IPStack != "" && server.IPStack != model.IPStackAuto {
+		return server.IPStack
+	}
+	hasIPv4 := strings.TrimSpace(server.PublicIPv4) != ""
+	hasIPv6 := strings.TrimSpace(server.PublicIPv6) != ""
+	switch {
+	case hasIPv4 && hasIPv6:
+		return model.IPStackDualStack
+	case hasIPv6:
+		return model.IPStackIPv6Only
+	case hasIPv4:
+		return model.IPStackIPv4Only
+	default:
+		return model.IPStackAuto
 	}
 }
 

@@ -3172,9 +3172,10 @@ func mtuPlanFromServer(version int64, srv model.Server, mode model.MTUMode) mode
 	if mode == "" {
 		mode = model.MTUModeDetect
 	}
+	effectiveStack := core.EffectiveIPStack(srv)
 	host := srv.MTUProbeHost
-	if strings.TrimSpace(host) == "" || core.ValidateAddressForIPStack(srv.IPStack, host) != nil {
-		host = core.DefaultBootstrapForIPStack(srv.IPStack)
+	if strings.TrimSpace(host) == "" || core.ValidateAddressForIPStack(effectiveStack, host) != nil {
+		host = core.DefaultBootstrapForIPStack(effectiveStack)
 	}
 	port := srv.MTUProbePort
 	if port == 0 {
@@ -5124,7 +5125,7 @@ func (s *Server) validateOutboundAddress(ctx context.Context, v model.Outbound) 
 	if err != nil {
 		return err
 	}
-	return core.ValidateAddressForIPStack(server.IPStack, v.TargetAddress)
+	return core.ValidateAddressForIPStack(core.EffectiveIPStack(*server), v.TargetAddress)
 }
 
 func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
@@ -5235,7 +5236,7 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 		if out.ServerID != v.ServerID {
 			return errors.New("outbound must belong to the same server as the routing rule")
 		}
-		return core.ValidateAddressForIPStack(server.IPStack, out.TargetAddress)
+		return core.ValidateAddressForIPStack(core.EffectiveIPStack(*server), out.TargetAddress)
 	case model.RouteActionExternal:
 		if v.ExternalOutboundID == nil {
 			return errors.New("external_outbound_id required")
@@ -5247,7 +5248,7 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 		if ext.Scope == model.ExternalOutboundScopeServer && (ext.ServerID == nil || *ext.ServerID != v.ServerID) {
 			return errors.New("server-scoped external outbound must belong to the same server")
 		}
-		return core.ValidateAddressForIPStack(server.IPStack, ext.TargetAddress)
+		return core.ValidateAddressForIPStack(core.EffectiveIPStack(*server), ext.TargetAddress)
 	case model.RouteActionInterface:
 		v.InterfaceName = strings.TrimSpace(v.InterfaceName)
 		if v.InterfaceName == "" {
@@ -5401,7 +5402,7 @@ func (s *Server) validateExternalOutbound(ctx context.Context, v *model.External
 		if err != nil {
 			return err
 		}
-		return core.ValidateAddressForIPStack(server.IPStack, v.TargetAddress)
+		return core.ValidateAddressForIPStack(core.EffectiveIPStack(*server), v.TargetAddress)
 	}
 	return nil
 }
@@ -8506,11 +8507,12 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				data.WARPProfiles = replaceWARPProfile(data.WARPProfiles, profile)
-				plan := model.WARPRequestPlan{Version: version, ServerID: server.ID, ProfileID: profile.ID, OutboundTag: core.WARPOutboundTag(profile.ID), IPStack: server.IPStack, MTU: server.MTUValue, DNSStrategy: string(server.IPStack)}
+				effectiveStack := core.EffectiveIPStack(server)
+				plan := model.WARPRequestPlan{Version: version, ServerID: server.ID, ProfileID: profile.ID, OutboundTag: core.WARPOutboundTag(profile.ID), IPStack: effectiveStack, MTU: server.MTUValue, DNSStrategy: string(effectiveStack)}
 				if plan.DNSStrategy == string(model.IPStackAuto) || plan.DNSStrategy == string(model.IPStackDualStack) {
 					plan.DNSStrategy = "auto"
 				}
-				if plan.MTU == 0 && server.IPStack == model.IPStackIPv6Only {
+				if plan.MTU == 0 && effectiveStack == model.IPStackIPv6Only {
 					plan.MTU = 1280
 				}
 				warpRequests = append(warpRequests, plan)

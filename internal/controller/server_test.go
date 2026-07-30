@@ -500,6 +500,20 @@ func TestDeploymentMTURunsOnlyOnFirstUseOrPolicyChange(t *testing.T) {
 	}
 }
 
+func TestMTUPlanInfersIPv6TargetForAutoServer(t *testing.T) {
+	server := model.Server{
+		ID:           8,
+		IPStack:      model.IPStackAuto,
+		PublicIPv6:   "2001:db8::8",
+		MTUProbeHost: "1.1.1.1",
+		MTUProbePort: 443,
+	}
+	plan := mtuPlanFromServer(100, server, model.MTUModeApply)
+	if plan.TargetHost != "2606:4700:4700::1111" {
+		t.Fatalf("MTU target = %q, want IPv6 Cloudflare resolver", plan.TargetHost)
+	}
+}
+
 func TestServerCreationDefaultsAndExplicitOverrides(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
@@ -1336,7 +1350,7 @@ func TestRoutingExternalOutboundAndWARPPathPublicAPI(t *testing.T) {
 	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	createdServer := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "v6-edge", "listen_ip": "::", "ip_stack": "ipv6_only", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	createdServer := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "v6-edge", "listen_ip": "::", "ip_stack": "auto", "public_ipv6": "2001:db8::8", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
 
 	badExternal := request(t, h, http.MethodPost, "/api/v1/external-outbounds", token, map[string]any{"server_id": serverID, "scope": "server", "name": "bad-v4", "protocol": "vless", "target_address": "1.1.1.1", "target_port": 443, "config_json": "{}", "enabled": true}, http.StatusBadRequest)
@@ -1408,6 +1422,10 @@ func TestRoutingExternalOutboundAndWARPPathPublicAPI(t *testing.T) {
 		}
 		var payload model.DeploymentTaskPayload
 		if json.Unmarshal([]byte(task["payload_json"].(string)), &payload) == nil && len(payload.WARPRequests) == 1 && payload.WARPRequests[0].ProfileID == warpProfileID {
+			plan := payload.WARPRequests[0]
+			if plan.IPStack != model.IPStackIPv6Only || plan.DNSStrategy != "ipv6_only" || plan.MTU != 1280 {
+				t.Fatalf("auto IPv6 WARP plan = %#v", plan)
+			}
 			foundWARPRequest = true
 		}
 	}

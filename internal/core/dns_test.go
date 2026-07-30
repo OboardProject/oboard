@@ -29,6 +29,38 @@ func TestBuildDNSConfigUsesBootstrapForDomainDoH(t *testing.T) {
 	}
 }
 
+func TestEffectiveIPStack(t *testing.T) {
+	tests := []struct {
+		name   string
+		server model.Server
+		want   model.IPStack
+	}{
+		{name: "unknown", server: model.Server{IPStack: model.IPStackAuto}, want: model.IPStackAuto},
+		{name: "ipv4", server: model.Server{IPStack: model.IPStackAuto, PublicIPv4: "198.51.100.10"}, want: model.IPStackIPv4Only},
+		{name: "ipv6", server: model.Server{IPStack: model.IPStackAuto, PublicIPv6: "2001:db8::10"}, want: model.IPStackIPv6Only},
+		{name: "dual", server: model.Server{IPStack: model.IPStackAuto, PublicIPv4: "198.51.100.10", PublicIPv6: "2001:db8::10"}, want: model.IPStackDualStack},
+		{name: "explicit", server: model.Server{IPStack: model.IPStackPreferIPv6, PublicIPv4: "198.51.100.10"}, want: model.IPStackPreferIPv6},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := EffectiveIPStack(tt.server); got != tt.want {
+				t.Fatalf("EffectiveIPStack() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildDNSConfigInfersIPv6OnlyFromDetectedAddress(t *testing.T) {
+	server := model.Server{ID: 1, IPStack: model.IPStackAuto, PublicIPv6: "2001:db8::10"}
+	dns, err := BuildDNSConfig(server, testDNSState(server.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dns["strategy"] != "ipv6_only" {
+		t.Fatalf("strategy = %v, want ipv6_only", dns["strategy"])
+	}
+}
+
 func TestBuildDNSConfigIncludesSelectedPrimaryAndSecondary(t *testing.T) {
 	serverID := int64(7)
 	state := testDNSState(serverID)

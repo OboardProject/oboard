@@ -374,7 +374,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		if outbound.ServerID != server.ID || !outbound.Enabled {
 			continue
 		}
-		if err := ValidateAddressForIPStack(server.IPStack, outbound.TargetAddress); err != nil {
+		if err := ValidateAddressForIPStack(EffectiveIPStack(server), outbound.TargetAddress); err != nil {
 			return "", fmt.Errorf("outbound %s: %w", outbound.Name, err)
 		}
 		adapter, err := AdapterFor(outbound.Protocol)
@@ -392,7 +392,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		if !external.Enabled || !externalUsableOnServer(external, server.ID) {
 			continue
 		}
-		if err := ValidateAddressForIPStack(server.IPStack, external.TargetAddress); err != nil {
+		if err := ValidateAddressForIPStack(EffectiveIPStack(server), external.TargetAddress); err != nil {
 			return "", fmt.Errorf("external outbound %s: %w", external.Name, err)
 		}
 		item, err := externalOutboundToSingBox(external, server, firstActiveUser(users))
@@ -549,7 +549,7 @@ func validateServerUDPForInbound(server model.Server, inbound model.Inbound) err
 
 func applyServerNetworkPolicy(item map[string]any, server model.Server, protocol model.Protocol, inbound bool) {
 	if !inbound {
-		applyDialDomainResolver(item, normalizeDNSStrategy("", server.IPStack))
+		applyDialDomainResolver(item, normalizeDNSStrategy("", EffectiveIPStack(server)))
 		return
 	}
 	if protocol == model.ProtocolSS && (server.UDPInboundMode == model.UDPInboundBlock || server.UDPInboundMode == model.UDPInboundUoT) {
@@ -1053,7 +1053,7 @@ func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourc
 		if !externalUsableOnServer(external, sourceServer.ID) {
 			return nil, fmt.Errorf("imported node %s is not available on server %d", external.Name, sourceServer.ID)
 		}
-		if err := ValidateAddressForIPStack(sourceServer.IPStack, external.TargetAddress); err != nil {
+		if err := ValidateAddressForIPStack(EffectiveIPStack(sourceServer), external.TargetAddress); err != nil {
 			return nil, err
 		}
 		return externalOutboundToSingBoxWithTag(external, sourceServer, firstActiveUser(users), outboundTag)
@@ -1091,7 +1091,7 @@ func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourc
 		if strings.TrimSpace(address) == "" {
 			return nil, fmt.Errorf("target inbound %s has no reachable entry address", inbound.Name)
 		}
-		if err := ValidateAddressForIPStack(sourceServer.IPStack, address); err != nil {
+		if err := ValidateAddressForIPStack(EffectiveIPStack(sourceServer), address); err != nil {
 			return nil, err
 		}
 		targetServer.EntryAddress = address
@@ -1272,13 +1272,13 @@ func warpProfileToSingBox(v model.WARPProfile, server model.Server) (map[string]
 	if mtu <= 0 {
 		mtu = server.MTUValue
 	}
-	if mtu <= 0 && server.IPStack == model.IPStackIPv6Only {
+	if mtu <= 0 && EffectiveIPStack(server) == model.IPStackIPv6Only {
 		mtu = 1280
 	}
 	if mtu > 0 {
 		raw["mtu"] = mtu
 	}
-	applyDialDomainResolver(raw, normalizeDNSStrategy(v.DNSStrategy, server.IPStack))
+	applyDialDomainResolver(raw, normalizeDNSStrategy(v.DNSStrategy, EffectiveIPStack(server)))
 	return raw, nil
 }
 
@@ -1383,7 +1383,7 @@ func normalizeWireGuardPeer(peer map[string]any) map[string]any {
 
 func defaultDomainResolver(dns map[string]any, server model.Server) any {
 	resolver := preferredDNSResolverTag(dns)
-	strategy := normalizeDNSStrategy("", server.IPStack)
+	strategy := normalizeDNSStrategy("", EffectiveIPStack(server))
 	if strategy == "" {
 		return resolver
 	}
