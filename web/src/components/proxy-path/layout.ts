@@ -4,8 +4,13 @@
 
 export type GraphPosition = { x: number; y: number }
 export type GraphDirectExitInstance = { instance_id: string; root_server_id: number }
+export type GraphLayerNode = { id: string; width: number; terminal: boolean }
+export type GraphLayerLayout = { positions: Record<string, GraphPosition>; extraHeight: number }
 
 export const GRAPH_ENTRY_NODE_WIDTH = 260
+export const GRAPH_LAYER_SIBLING_GAP = 100
+export const GRAPH_LAYER_COMPACT_WIDTH = GRAPH_ENTRY_NODE_WIDTH * 4 + GRAPH_LAYER_SIBLING_GAP * 3
+export const GRAPH_LAYER_SECONDARY_OFFSET_Y = 190
 
 const POSITIONS_KEY = 'oboard.proxyGraph.positions.v5'
 const TOOLBOX_KEY = 'oboard.proxyGraph.toolboxPosition.v1'
@@ -52,6 +57,80 @@ export function saveGraphDirectExitInstances(instances: GraphDirectExitInstance[
 
 export function snapGraphPosition(position: GraphPosition): GraphPosition {
   return { x: Math.round(position.x), y: Math.round(position.y) }
+}
+
+function graphLayerRowWidth(nodes: GraphLayerNode[], siblingGap: number) {
+  return nodes.reduce((sum, node) => sum + node.width, 0) + Math.max(0, nodes.length - 1) * siblingGap
+}
+
+function placeGraphLayerRow(nodes: GraphLayerNode[], centerX: number, y: number, siblingGap: number) {
+  const positions: Record<string, GraphPosition> = {}
+  let cursorX = centerX - graphLayerRowWidth(nodes, siblingGap) / 2
+  nodes.forEach(node => {
+    positions[node.id] = snapGraphPosition({ x: cursorX, y })
+    cursorX += node.width + siblingGap
+  })
+  return positions
+}
+
+export function layoutGraphLayer(
+  nodes: GraphLayerNode[],
+  centerX: number,
+  y: number,
+  siblingGap = GRAPH_LAYER_SIBLING_GAP,
+  compactWidth = GRAPH_LAYER_COMPACT_WIDTH,
+): GraphLayerLayout {
+  const totalWidth = graphLayerRowWidth(nodes, siblingGap)
+  const terminalCount = nodes.filter(node => node.terminal).length
+  if (totalWidth <= compactWidth || terminalCount < 2) {
+    return { positions: placeGraphLayerRow(nodes, centerX, y, siblingGap), extraHeight: 0 }
+  }
+
+  const primaryIDs = new Set(nodes.filter(node => !node.terminal).map(node => node.id))
+  let primaryWidth = graphLayerRowWidth(nodes.filter(node => primaryIDs.has(node.id)), siblingGap)
+  let primaryCount = primaryIDs.size
+  let secondaryWidth = 0
+  let secondaryCount = 0
+
+  nodes.filter(node => node.terminal).forEach(node => {
+    const nextPrimaryWidth = primaryWidth + (primaryCount ? siblingGap : 0) + node.width
+    const nextSecondaryWidth = secondaryWidth + (secondaryCount ? siblingGap : 0) + node.width
+    if (nextPrimaryWidth <= nextSecondaryWidth) {
+      primaryIDs.add(node.id)
+      primaryWidth = nextPrimaryWidth
+      primaryCount++
+      return
+    }
+    secondaryWidth = nextSecondaryWidth
+    secondaryCount++
+  })
+
+  const primary = nodes.filter(node => primaryIDs.has(node.id))
+  const secondary = nodes.filter(node => !primaryIDs.has(node.id))
+  if (!secondary.length) {
+    return { positions: placeGraphLayerRow(nodes, centerX, y, siblingGap), extraHeight: 0 }
+  }
+
+  const staggerX = primary.length % 2 === secondary.length % 2
+    ? (GRAPH_ENTRY_NODE_WIDTH + siblingGap) / 2
+    : 0
+  const positions = {
+    ...placeGraphLayerRow(primary, centerX, y, siblingGap),
+    ...placeGraphLayerRow(secondary, centerX + staggerX, y + GRAPH_LAYER_SECONDARY_OFFSET_Y, siblingGap),
+  }
+  let minX = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  nodes.forEach(node => {
+    const position = positions[node.id]
+    minX = Math.min(minX, position.x)
+    maxX = Math.max(maxX, position.x + node.width)
+  })
+  const shiftX = centerX - (minX + maxX) / 2
+  Object.keys(positions).forEach(nodeID => {
+    positions[nodeID] = snapGraphPosition({ x: positions[nodeID].x + shiftX, y: positions[nodeID].y })
+  })
+
+  return { positions, extraHeight: GRAPH_LAYER_SECONDARY_OFFSET_Y }
 }
 
 // A server card widens with its entry count so every entry handle keeps a

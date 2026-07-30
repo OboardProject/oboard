@@ -7,7 +7,7 @@ import {
   normalizeTheme,
   toggleThemeWithTransition,
 } from './theme'
-import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, MarkerType, Node, NodeChange, PanOnScrollMode, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getStraightPath, getViewportForBounds } from 'reactflow'
+import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, MarkerType, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getStraightPath, getViewportForBounds } from 'reactflow'
 import type { EdgeProps, ReactFlowInstance } from 'reactflow'
 import 'reactflow/dist/style.css'
 import type {
@@ -35,6 +35,7 @@ import {
   graphEntryHandleRatio,
   graphPathHandleLeft,
   graphServerNodeWidth,
+  layoutGraphLayer,
   loadGraphDirectExitInstances,
   loadGraphPositions,
   loadGraphToolboxPosition,
@@ -6566,8 +6567,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
           onPaneClick={closeGraphMenu} 
           onMoveStart={closeGraphMenu} 
           onConnect={onConnect}
-          panOnScroll
-          zoomOnScroll={false}
+          panOnScroll={false}
+          zoomOnScroll
           zoomOnPinch 
           preventScrolling
           panOnDrag 
@@ -8698,7 +8699,6 @@ function autoLayoutProxyGraphPositions(
   const CENTER_X = 760
   const ORIGIN_Y = 300
   const LAYER_GAP = 370
-  const SIBLING_GAP = 100
   const positions: Record<string, GraphPosition> = {}
   const nodeWidth = (nodeID: string) => {
 	if (nodeID.startsWith('direct-exit-path-') || nodeID.startsWith('direct-exit-canvas-') || nodeID.startsWith('proxy-warp-step-') || nodeID.startsWith('warp-canvas-')) return 220
@@ -8721,36 +8721,32 @@ function autoLayoutProxyGraphPositions(
     return (data.external_outbounds || []).find((outbound: ExternalOutbound) => outbound.id === importedID)?.name || nodeID
   }
 
-  layers.forEach((nodeIDs, layer) => {
+  let layerY = ORIGIN_Y
+  Array.from(layers.entries()).sort((a, b) => a[0] - b[0]).forEach(([, nodeIDs]) => {
     const ordered = nodeIDs.slice().sort((a, b) => nodeLabel(a).localeCompare(nodeLabel(b), 'zh') || a.localeCompare(b))
-    const widths = ordered.map(nodeWidth)
-    const totalWidth = widths.reduce((sum, width) => sum + width, 0) + Math.max(0, ordered.length - 1) * SIBLING_GAP
-    let cursorX = CENTER_X - totalWidth / 2
-    ordered.forEach((nodeID, index) => {
-      const width = widths[index]
-      const nodePosition = snapGraphPosition({ x: cursorX, y: ORIGIN_Y + layer * LAYER_GAP })
-      cursorX += width + SIBLING_GAP
-	  if (nodeID.startsWith('direct-exit-path-') || nodeID.startsWith('direct-exit-canvas-')) {
-        positions[nodeID] = nodePosition
-        return
-      }
-      if (nodeID.startsWith('imported-') || nodeID.startsWith('proxy-imported-step-')) {
-        positions[nodeID] = nodePosition
-        return
-      }
+    const widths = new Map(ordered.map(nodeID => [nodeID, nodeWidth(nodeID)]))
+    const layerLayout = layoutGraphLayer(
+      ordered.map(nodeID => ({ id: nodeID, width: widths.get(nodeID) || GRAPH_ENTRY_NODE_WIDTH, terminal: !(layoutEdges.get(nodeID)?.size) })),
+      CENTER_X,
+      layerY,
+    )
+    ordered.forEach(nodeID => {
+      const width = widths.get(nodeID) || GRAPH_ENTRY_NODE_WIDTH
+      const nodePosition = layerLayout.positions[nodeID]
+      positions[nodeID] = nodePosition
       const serverID = graphNodeServerId(nodeID, data, canvasServerInstances)
       if (!serverID) return
       const serverEntries = entries
         .filter(x => x.server_id === serverID && x.enabled !== false)
         .slice()
         .sort((a, b) => (a.port - b.port) || (a.id - b.id))
-      positions[nodeID] = nodePosition
       if (!nodeID.startsWith('server-')) return
       serverEntries.forEach((entry, entryIndex) => {
         if (entry.server_id !== rootID) return
         positions[`entry-${entry.id}`] = defaultEntryGraphPosition(nodePosition, entryIndex, Math.max(1, serverEntries.length), width)
       })
     })
+    layerY += LAYER_GAP + layerLayout.extraHeight
   })
 
   return positions
