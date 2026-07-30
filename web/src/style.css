@@ -7415,6 +7415,11 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   border-radius: var(--radius-md);
 }
 
+.user-management-panel {
+  container-name: user-management;
+  container-type: inline-size;
+}
+
 .user-management-panel .user-table-card {
   padding: 0;
   gap: 0;
@@ -7510,17 +7515,17 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .user-subscription-actions {
+  width: 100%;
   min-width: 0;
-  display: flex;
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(112px, 1fr));
   align-items: center;
   gap: 6px;
 }
 
 .user-subscription-button {
-  flex: 1 0 auto;
-  width: auto;
-  min-width: max-content;
+  width: 100%;
+  min-width: 0;
   min-height: 34px;
   height: 34px;
   padding: 6px 8px;
@@ -7604,7 +7609,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 /* The full table is compact on wide desktops. On narrower workspaces rows
    become readable cards, avoiding a horizontal scrollbar beside the sidebar. */
-@media (max-width: 1280px) {
+@container user-management (max-width: 1000px) {
   .user-management-panel .user-table-card {
     overflow: visible;
     border: 0;
@@ -7670,7 +7675,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .user-data-table .user-col-subscription .user-subscription-actions { max-width: 440px; }
 }
 
-@media (max-width: 620px) {
+@container user-management (max-width: 600px) {
   .user-data-table tbody tr { gap: 9px 12px; padding: 12px; }
   .user-data-table .user-col-limit { grid-column: 1 / -1; grid-row: 2; }
   .user-data-table .user-col-groups { grid-column: 1 / -1; grid-row: 3; justify-content: flex-start; }
@@ -7678,6 +7683,10 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .user-data-table .user-col-subscription { grid-row: 5; display: grid; align-items: stretch; }
   .user-data-table .user-col-subscription::before { margin-bottom: 2px; }
   .user-data-table .user-col-subscription .user-subscription-actions { max-width: none; }
+}
+
+@container user-management (max-width: 360px) {
+  .user-subscription-actions { grid-template-columns: minmax(0, 1fr); }
 }
 
 .user-form-dialog {
