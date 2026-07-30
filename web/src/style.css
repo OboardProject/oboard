@@ -8272,9 +8272,12 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 .task-server-list {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 8px;
 }
 .task-server-row {
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-solid);
@@ -8302,6 +8305,11 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 .task-group-body > .task-detail-list {
   padding: 0;
+}
+@media (max-width: 820px) {
+  .task-server-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .task-detail-card {
   border: 1px solid var(--border);
