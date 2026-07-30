@@ -10945,26 +10945,27 @@ fix_hostname_resolution
 load_target_version
 
 make_update_tmp() {
-  for cleanup_root in /run /tmp "$STATE_DIR"; do
+  for cleanup_root in "${OBOARD_TMPDIR:-}" /var/tmp "$STATE_DIR" /tmp /run; do
+    [ -n "$cleanup_root" ] || continue
     [ -d "$cleanup_root" ] || continue
     find "$cleanup_root" -maxdepth 1 -type d \( -name 'oboard-agent-update.*' -o -name 'oboard-self-update.*' \) -mtime +0 -exec rm -rf {} + 2>/dev/null || true
   done
-  for base in "${OBOARD_TMPDIR:-}" /run "$STATE_DIR" /tmp; do
+  for base in "${OBOARD_TMPDIR:-}" /var/tmp "$STATE_DIR" /tmp /run; do
     [ -n "$base" ] || continue
     mkdir -p "$base" 2>/dev/null || continue
     candidate=$(mktemp -d "$base/oboard-agent-update.XXXXXX" 2>/dev/null || true)
     [ -n "$candidate" ] || continue
     available_kb=$(df -Pk "$candidate" 2>/dev/null | awk 'NR==2 {print $4}')
-    if [ -n "$available_kb" ] && [ "$available_kb" -ge 32768 ]; then
+    if [ -n "$available_kb" ] && [ "$available_kb" -ge 65536 ]; then
       printf '%s\n' "$candidate"
       return 0
     fi
     rm -rf "$candidate"
   done
-  echo "没有可用的更新临时目录，需要至少 32 MB 可用空间。" >&2
-  echo "请清理 /tmp、/run 或 $STATE_DIR 后重试；也可通过 OBOARD_TMPDIR 指定其他目录。" >&2
-  df -h / /tmp /run "$STATE_DIR" 2>/dev/null >&2 || true
-  df -i / /tmp /run "$STATE_DIR" 2>/dev/null >&2 || true
+  echo "没有可用的更新临时目录，需要至少 64 MB 可用空间。" >&2
+  echo "请清理 /var/tmp、$STATE_DIR、/tmp 或 /run 后重试；也可通过 OBOARD_TMPDIR 指定其他目录。" >&2
+  df -h / /var/tmp "$STATE_DIR" /tmp /run 2>/dev/null >&2 || true
+  df -i / /var/tmp "$STATE_DIR" /tmp /run 2>/dev/null >&2 || true
   return 1
 }
 
@@ -11649,26 +11650,27 @@ fix_hostname_resolution
 load_target_version
 
 make_update_tmp() {
-  for cleanup_root in /run /tmp "$STATE_DIR"; do
+  for cleanup_root in "${OBOARD_TMPDIR:-}" /var/tmp "$STATE_DIR" /tmp /run; do
+    [ -n "$cleanup_root" ] || continue
     [ -d "$cleanup_root" ] || continue
     find "$cleanup_root" -maxdepth 1 -type d \( -name 'oboard-agent-update.*' -o -name 'oboard-self-update.*' \) -mtime +0 -exec rm -rf {} + 2>/dev/null || true
   done
-  for base in "${OBOARD_TMPDIR:-}" /run "$STATE_DIR" /tmp; do
+  for base in "${OBOARD_TMPDIR:-}" /var/tmp "$STATE_DIR" /tmp /run; do
     [ -n "$base" ] || continue
     mkdir -p "$base" 2>/dev/null || continue
     candidate=$(mktemp -d "$base/oboard-self-update.XXXXXX" 2>/dev/null || true)
     [ -n "$candidate" ] || continue
     available_kb=$(df -Pk "$candidate" 2>/dev/null | awk 'NR==2 {print $4}')
-    if [ -n "$available_kb" ] && [ "$available_kb" -ge 32768 ]; then
+    if [ -n "$available_kb" ] && [ "$available_kb" -ge 65536 ]; then
       printf '%s\n' "$candidate"
       return 0
     fi
     rm -rf "$candidate"
   done
-  echo "没有可用的更新临时目录，需要至少 32 MB 可用空间。" >&2
-  echo "请清理 /tmp、/run 或 $STATE_DIR 后重试；也可通过 OBOARD_TMPDIR 指定其他目录。" >&2
-  df -h / /tmp /run "$STATE_DIR" 2>/dev/null >&2 || true
-  df -i / /tmp /run "$STATE_DIR" 2>/dev/null >&2 || true
+  echo "没有可用的更新临时目录，需要至少 64 MB 可用空间。" >&2
+  echo "请清理 /var/tmp、$STATE_DIR、/tmp 或 /run 后重试；也可通过 OBOARD_TMPDIR 指定其他目录。" >&2
+  df -h / /var/tmp "$STATE_DIR" /tmp /run 2>/dev/null >&2 || true
+  df -i / /var/tmp "$STATE_DIR" /tmp /run 2>/dev/null >&2 || true
   return 1
 }
 

@@ -690,13 +690,17 @@ func TestAgentInstallScriptsUseLowSpaceTempFallback(t *testing.T) {
 			}
 		}
 		for _, want := range []string{
-			"make_update_tmp", "OBOARD_TMPDIR", "/run", "32768", "df -i",
+			"make_update_tmp", "OBOARD_TMPDIR", "/var/tmp", "/run", "65536", "df -i",
 			"pkg_install", "ensure_base_tools", "ensure_release_verifier",
 			"detect_virt_hint", "ca-certificates", "coreutils", "command -v install", "microdnf", "zypper", "pacman",
 		} {
 			if !strings.Contains(script, want) {
 				t.Fatalf("%s missing %q", path, want)
 			}
+		}
+		candidateOrder := `for base in "${OBOARD_TMPDIR:-}" /var/tmp "$STATE_DIR" /tmp /run; do`
+		if !strings.Contains(script, candidateOrder) {
+			t.Fatalf("%s does not prefer disk-backed update directories: missing %q", path, candidateOrder)
 		}
 		if path == "/install/agent.sh" {
 			for _, want := range []string{

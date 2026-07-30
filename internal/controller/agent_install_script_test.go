@@ -158,6 +158,118 @@ func TestAgentInstallScriptRollsBackBBRWhenPersistenceFails(t *testing.T) {
 	assertTestFile(t, qdisc, "fq_codel\n")
 }
 
+func TestAgentScriptsSelectUpdateTempWithSystemdReserve(t *testing.T) {
+	scripts := map[string]string{
+		"installer":   testAgentInstallScript(t),
+		"self-update": testAgentSelfUpdateScript(t),
+	}
+	for name, script := range scripts {
+		t.Run(name, func(t *testing.T) {
+			testAgentUpdateTempSelection(t, script)
+		})
+	}
+}
+
+func testAgentUpdateTempSelection(t *testing.T, script string) {
+	t.Helper()
+	shell := testPOSIXShell(t)
+	function := extractShellFunction(t, script, "make_update_tmp")
+	originalCleanup := `for cleanup_root in "${OBOARD_TMPDIR:-}" /var/tmp "$STATE_DIR" /tmp /run; do`
+	originalCandidates := `for base in "${OBOARD_TMPDIR:-}" /var/tmp "$STATE_DIR" /tmp /run; do`
+	if !strings.Contains(function, originalCleanup) || !strings.Contains(function, originalCandidates) {
+		t.Fatal("make_update_tmp does not contain the expected cleanup and candidate order")
+	}
+	function = strings.Replace(function, originalCleanup, `for cleanup_root in "${OBOARD_TMPDIR:-}" "$TEST_VAR_TMP" "$STATE_DIR" "$TEST_TMP" "$TEST_RUN"; do`, 1)
+	function = strings.Replace(function, originalCandidates, `for base in "${OBOARD_TMPDIR:-}" "$TEST_VAR_TMP" "$STATE_DIR" "$TEST_TMP" "$TEST_RUN"; do`, 1)
+
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, filepath.Join(bin, "df"), `#!/bin/sh
+target=${2:-}
+available=0
+case "$target" in
+  */custom/*) available=${CUSTOM_AVAILABLE_KB:-0} ;;
+  */var-tmp/*) available=${VAR_TMP_AVAILABLE_KB:-0} ;;
+  */state/*) available=${STATE_AVAILABLE_KB:-0} ;;
+  */tmp/*) available=${TMP_AVAILABLE_KB:-0} ;;
+  */run/*) available=${RUN_AVAILABLE_KB:-0} ;;
+esac
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+printf 'fake 999999 0 %s 0%% /\n' "$available"
+`)
+
+	custom := filepath.Join(root, "custom")
+	varTmp := filepath.Join(root, "var-tmp")
+	state := filepath.Join(root, "state")
+	tmp := filepath.Join(root, "tmp")
+	run := filepath.Join(root, "run")
+	for _, dir := range []string{custom, varTmp, state, tmp, run} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	runSelection := func(t *testing.T, customDir string, availability ...string) ([]byte, error) {
+		t.Helper()
+		harness := strings.Join([]string{
+			"set -eu",
+			"OBOARD_TMPDIR=" + shellQuote(customDir),
+			"TEST_VAR_TMP=" + shellQuote(varTmp),
+			"STATE_DIR=" + shellQuote(state),
+			"TEST_TMP=" + shellQuote(tmp),
+			"TEST_RUN=" + shellQuote(run),
+			function,
+			"make_update_tmp",
+		}, "\n")
+		cmd := exec.Command(shell, "-c", harness)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+		cmd.Env = append(cmd.Env, availability...)
+		return cmd.CombinedOutput()
+	}
+
+	t.Run("prefers disk-backed directory over small run", func(t *testing.T) {
+		output, err := runSelection(t, "",
+			"VAR_TMP_AVAILABLE_KB=8388608",
+			"STATE_AVAILABLE_KB=8388608",
+			"TMP_AVAILABLE_KB=8388608",
+			"RUN_AVAILABLE_KB=47104",
+		)
+		if err != nil {
+			t.Fatalf("make_update_tmp failed: %v\n%s", err, output)
+		}
+		if selected := strings.TrimSpace(string(output)); !strings.HasPrefix(selected, varTmp+string(os.PathSeparator)) {
+			t.Fatalf("selected %q, want a directory under %s", selected, varTmp)
+		}
+	})
+
+	t.Run("honors explicit directory first", func(t *testing.T) {
+		output, err := runSelection(t, custom,
+			"CUSTOM_AVAILABLE_KB=65536",
+			"VAR_TMP_AVAILABLE_KB=8388608",
+			"RUN_AVAILABLE_KB=47104",
+		)
+		if err != nil {
+			t.Fatalf("make_update_tmp failed: %v\n%s", err, output)
+		}
+		if selected := strings.TrimSpace(string(output)); !strings.HasPrefix(selected, custom+string(os.PathSeparator)) {
+			t.Fatalf("selected %q, want a directory under %s", selected, custom)
+		}
+	})
+
+	t.Run("rejects run below reserve threshold", func(t *testing.T) {
+		output, err := runSelection(t, "", "RUN_AVAILABLE_KB=47104")
+		if err == nil {
+			t.Fatalf("make_update_tmp accepted a 47 MB /run candidate: %s", output)
+		}
+		if !strings.Contains(string(output), "至少 64 MB 可用空间") {
+			t.Fatalf("unexpected low-space error:\n%s", output)
+		}
+	})
+}
+
 func TestAgentReleaseVerifierSupportsOldAndNewOpenSSL(t *testing.T) {
 	scripts := map[string]string{
 		"installer":   testAgentInstallScript(t),
