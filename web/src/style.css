@@ -4992,6 +4992,7 @@ body:has(.dialog-root) .topbar-actions {
   color: var(--muted);
   font-size: 12px;
 }
+.backup-settings-dialog-actions { flex: 0 0 auto; }
 .backup-settings-dialog-actions > span { flex: 1 1 auto; }
 .backup-policy-grid {
   display: grid;
@@ -5027,6 +5028,7 @@ body:has(.dialog-root) .topbar-actions {
 .backup-actions button,
 .backup-import-actions button,
 .backup-record-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.backup-import-actions button { white-space: nowrap; }
 .backup-import { align-items: flex-start; }
 .backup-import-actions { display: flex; flex: 1 1 auto; justify-content: flex-end; gap: 8px; }
 .backup-import-actions input[type="file"] { display: none; }
