@@ -395,6 +395,8 @@ func proxyProtocolName(protocol model.Protocol) string {
 		return "AnyTLS"
 	case model.ProtocolSS:
 		return "SS"
+	case model.ProtocolMieru:
+		return "Mieru"
 	case model.ProtocolSocks:
 		return "SOCKS"
 	case model.ProtocolSSH:

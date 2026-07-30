@@ -136,7 +136,7 @@ func (v *configValidator) validateOutbounds(outbounds []map[string]any) {
 		}
 		switch typ {
 		case "direct", "block":
-		case "vless", "hysteria2", "anytls", "shadowsocks", "socks":
+		case "vless", "hysteria2", "anytls", "shadowsocks", "mieru", "socks":
 			v.validateRemoteAdapter(path, typ, outbound)
 		default:
 			v.addf("%s unsupported outbound type %q", path, typ)
@@ -180,17 +180,28 @@ func (v *configValidator) validateInbounds(inbounds []map[string]any) {
 		if err := ValidateListenIP(listen); err != nil {
 			v.addf("%s invalid listen ip: %v", path, err)
 		}
-		port := intFromAny(inbound["listen_port"])
-		if !validPort(port) {
-			v.addf("%s invalid listen_port %d", path, port)
-		}
-		resource := listenResource{address: listen, port: port, protocol: singBoxInboundListenTransport(inbound), owner: path}
-		for _, previous := range v.listens {
-			if resource.conflicts(previous) {
-				v.addf("%s listen resource %s:%d (%s) conflicts with %s", path, listen, port, listenTransportName(resource.protocol&previous.protocol), previous.owner)
+		ports := []int{intFromAny(inbound["listen_port"])}
+		if typ == "mieru" {
+			var err error
+			ports, err = mieruPortsFromValue(ports[0], inbound["listen_ports"])
+			if err != nil {
+				v.addf("%s invalid mieru listen ports: %v", path, err)
+				ports = nil
 			}
 		}
-		v.listens = append(v.listens, resource)
+		for _, port := range ports {
+			if !validPort(port) {
+				v.addf("%s invalid listen_port %d", path, port)
+				continue
+			}
+			resource := listenResource{address: listen, port: port, protocol: singBoxInboundListenTransport(inbound), owner: path}
+			for _, previous := range v.listens {
+				if resource.conflicts(previous) {
+					v.addf("%s listen resource %s:%d (%s) conflicts with %s", path, listen, port, listenTransportName(resource.protocol&previous.protocol), previous.owner)
+				}
+			}
+			v.listens = append(v.listens, resource)
+		}
 		switch typ {
 		case "vless":
 			v.validateVLESSInbound(path, inbound)
@@ -198,6 +209,8 @@ func (v *configValidator) validateInbounds(inbounds []map[string]any) {
 			v.validatePasswordUserInbound(path, typ, inbound)
 		case "shadowsocks":
 			v.validateShadowsocksInbound(path, inbound)
+		case "mieru":
+			v.validateMieruInbound(path, inbound)
 		default:
 			v.addf("%s unsupported inbound type %q", path, typ)
 		}
@@ -230,8 +243,14 @@ func (v *configValidator) validateRemoteAdapter(path, typ string, item map[strin
 	if server := strings.TrimSpace(stringFromAny(item["server"])); server == "" {
 		v.addf("%s missing server", path)
 	}
-	if port := intFromAny(item["server_port"]); !validPort(port) {
+	port := intFromAny(item["server_port"])
+	if !validPort(port) {
 		v.addf("%s invalid server_port %d", path, port)
+	}
+	if typ == "mieru" {
+		if _, err := mieruPortsFromValue(port, item["server_ports"]); err != nil {
+			v.addf("%s invalid mieru server ports: %v", path, err)
+		}
 	}
 	switch typ {
 	case "vless":
@@ -251,8 +270,56 @@ func (v *configValidator) validateRemoteAdapter(path, typ string, item map[strin
 		if strings.TrimSpace(stringFromAny(item["password"])) == "" {
 			v.addf("%s missing password", path)
 		}
+	case "mieru":
+		username := stringFromAny(item["username"])
+		if strings.TrimSpace(username) == "" {
+			v.addf("%s missing username", path)
+		} else if len([]byte(username)) > 64 {
+			v.addf("%s username exceeds 64 bytes", path)
+		}
+		password := stringFromAny(item["password"])
+		if strings.TrimSpace(password) == "" {
+			v.addf("%s missing password", path)
+		} else if len([]byte(password)) > 64 {
+			v.addf("%s password exceeds 64 bytes", path)
+		}
+		v.validateMieruTransport(path, item)
 	case "socks":
 		// Username/password are optional for unauthenticated third-party SOCKS5.
+	}
+}
+
+func (v *configValidator) validateMieruInbound(path string, inbound map[string]any) {
+	users := mapList(inbound["users"])
+	if len(users) == 0 {
+		v.addf("%s mieru users missing", path)
+	}
+	seen := map[string]bool{}
+	for i, user := range users {
+		userPath := fmt.Sprintf("%s.users[%d]", path, i)
+		name := strings.TrimSpace(stringFromAny(user["name"]))
+		if name == "" {
+			v.addf("%s missing name", userPath)
+		} else if len([]byte(name)) > 64 {
+			v.addf("%s name exceeds 64 bytes", userPath)
+		} else if seen[name] {
+			v.addf("%s duplicate name %q", userPath, name)
+		}
+		seen[name] = true
+		if strings.TrimSpace(stringFromAny(user["password"])) == "" {
+			v.addf("%s missing password", userPath)
+		} else if len([]byte(stringFromAny(user["password"]))) > 64 {
+			v.addf("%s password exceeds 64 bytes", userPath)
+		}
+	}
+	v.validateMieruTransport(path, inbound)
+}
+
+func (v *configValidator) validateMieruTransport(path string, item map[string]any) {
+	switch strings.ToUpper(strings.TrimSpace(stringFromAny(item["transport"]))) {
+	case "TCP", "UDP":
+	default:
+		v.addf("%s mieru transport must be TCP or UDP", path)
 	}
 }
 

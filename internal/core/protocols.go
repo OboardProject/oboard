@@ -117,6 +117,8 @@ func AdapterFor(protocol model.Protocol) (Adapter, error) {
 		return anyTLSAdapter{}, nil
 	case model.ProtocolSS:
 		return ssAdapter{}, nil
+	case model.ProtocolMieru:
+		return mieruAdapter{}, nil
 	case model.ProtocolSocks:
 		return nil, fmt.Errorf("socks is only supported as imported outbound")
 	default:
@@ -129,6 +131,168 @@ func ValidatePort(port int) error {
 		return fmt.Errorf("invalid port %d", port)
 	}
 	return nil
+}
+
+const MieruMaxPorts = 64
+
+func MieruInboundPorts(inbound model.Inbound) ([]int, error) {
+	if inbound.Protocol != model.ProtocolMieru {
+		if err := ValidatePort(inbound.Port); err != nil {
+			return nil, err
+		}
+		return []int{inbound.Port}, nil
+	}
+	return mieruPortsFromConfig(inbound.Port, inbound.ConfigJSON, "listen_ports")
+}
+
+func MieruOutboundPorts(port int, configJSON string) ([]int, error) {
+	return mieruPortsFromConfig(port, configJSON, "server_ports")
+}
+
+func NormalizeMieruPortConfig(primary int, configJSON, rangeKey string) (int, string, error) {
+	extra, err := decodeMieruConfig(configJSON)
+	if err != nil {
+		return 0, "", err
+	}
+	ports, err := mieruPortsFromValue(primary, extra[rangeKey])
+	if err != nil {
+		return 0, "", err
+	}
+	primary = ports[0]
+	ranges := compressMieruPorts(ports[1:])
+	if len(ranges) == 0 {
+		delete(extra, rangeKey)
+	} else {
+		extra[rangeKey] = ranges
+	}
+	normalized, err := json.Marshal(extra)
+	if err != nil {
+		return 0, "", err
+	}
+	return primary, string(normalized), nil
+}
+
+func MieruInboundTransport(inbound model.Inbound) string {
+	if inbound.Protocol != model.ProtocolMieru {
+		return ""
+	}
+	return normalizeMieruTransport(stringValue(parseExtra(inbound.ConfigJSON), "transport", "TCP"))
+}
+
+func mieruPortsFromConfig(primary int, configJSON, rangeKey string) ([]int, error) {
+	extra, err := decodeMieruConfig(configJSON)
+	if err != nil {
+		return nil, err
+	}
+	return mieruPortsFromValue(primary, extra[rangeKey])
+}
+
+func decodeMieruConfig(raw string) (map[string]any, error) {
+	if strings.TrimSpace(raw) == "" {
+		raw = "{}"
+	}
+	var extra map[string]any
+	if err := json.Unmarshal([]byte(raw), &extra); err != nil {
+		return nil, err
+	}
+	if extra == nil {
+		extra = map[string]any{}
+	}
+	return extra, nil
+}
+
+func mieruPortsFromValue(primary int, value any) ([]int, error) {
+	ports := map[int]struct{}{}
+	if primary != 0 {
+		if err := ValidatePort(primary); err != nil {
+			return nil, err
+		}
+		ports[primary] = struct{}{}
+	}
+	ranges, err := mieruPortRangeStrings(value)
+	if err != nil {
+		return nil, err
+	}
+	for _, value := range ranges {
+		startText, endText, found := strings.Cut(value, "-")
+		if !found || startText == "" || endText == "" || strings.Contains(endText, "-") || strings.TrimSpace(value) != value {
+			return nil, fmt.Errorf("invalid mieru port range %q", value)
+		}
+		start, startErr := strconv.Atoi(startText)
+		end, endErr := strconv.Atoi(endText)
+		if startErr != nil || endErr != nil || ValidatePort(start) != nil || ValidatePort(end) != nil || start > end {
+			return nil, fmt.Errorf("invalid mieru port range %q", value)
+		}
+		for port := start; port <= end; port++ {
+			ports[port] = struct{}{}
+			if len(ports) > MieruMaxPorts {
+				return nil, fmt.Errorf("mieru supports at most %d unique ports", MieruMaxPorts)
+			}
+		}
+	}
+	if len(ports) == 0 {
+		return nil, errors.New("mieru requires at least one port")
+	}
+	out := make([]int, 0, len(ports))
+	for port := range ports {
+		out = append(out, port)
+	}
+	sort.Ints(out)
+	return out, nil
+}
+
+func mieruPortRangeStrings(value any) ([]string, error) {
+	switch typed := value.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		return []string{typed}, nil
+	case []string:
+		return append([]string(nil), typed...), nil
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text, ok := item.(string)
+			if !ok {
+				return nil, errors.New("mieru port ranges must contain only strings")
+			}
+			out = append(out, text)
+		}
+		return out, nil
+	default:
+		return nil, errors.New("mieru port ranges must be a string or string array")
+	}
+}
+
+func compressMieruPorts(ports []int) []string {
+	if len(ports) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(ports))
+	start := ports[0]
+	end := start
+	flush := func() {
+		out = append(out, fmt.Sprintf("%d-%d", start, end))
+	}
+	for _, port := range ports[1:] {
+		if port == end+1 {
+			end = port
+			continue
+		}
+		flush()
+		start, end = port, port
+	}
+	flush()
+	return out
+}
+
+func normalizeMieruTransport(value string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "UDP":
+		return "UDP"
+	default:
+		return "TCP"
+	}
 }
 
 func ValidateListenIP(ip string) error {
@@ -449,6 +613,18 @@ func addRuntimeLimitsForInboundTag(config *SingBoxConfig, inbound model.Inbound,
 		return
 	}
 	limits := runtimeLimitsForUsers(users, opts)
+	if inbound.Protocol == model.ProtocolMieru && len(limits) > 0 {
+		aliases := make(map[string]OBoardUserRuntimeLimit, len(limits))
+		for _, user := range users {
+			if limit, ok := limits[user.Username]; ok {
+				if limit.PathID == 0 {
+					limit.PathID = runtimePathIDFromUsername(user.Username)
+				}
+				aliases[protocolAuthUsername(inbound.Protocol, user)] = limit
+			}
+		}
+		limits = aliases
+	}
 	if len(limits) == 0 {
 		return
 	}
@@ -544,6 +720,9 @@ func validateServerUDPForInbound(server model.Server, inbound model.Inbound) err
 	if inbound.Protocol == model.ProtocolHY2 {
 		return fmt.Errorf("server %s udp_inbound_mode=%s cannot host HY2 inbound %s because HY2 requires native UDP inbound", server.Name, server.UDPInboundMode, inbound.Name)
 	}
+	if inbound.Protocol == model.ProtocolMieru && MieruInboundTransport(inbound) == "UDP" {
+		return fmt.Errorf("server %s udp_inbound_mode=%s cannot host UDP Mieru inbound %s", server.Name, server.UDPInboundMode, inbound.Name)
+	}
 	return nil
 }
 
@@ -610,7 +789,7 @@ func externalOutboundToSingBoxWithTag(v model.ExternalOutbound, server model.Ser
 
 func stripPrivateConfigFields(raw map[string]any, protocol model.Protocol) {
 	delete(raw, "_oboard")
-	if protocol != model.ProtocolSocks {
+	if protocol != model.ProtocolSocks && protocol != model.ProtocolMieru {
 		delete(raw, "username")
 	}
 }
@@ -856,7 +1035,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 			if step.TransportMode == model.ProxyPathTransportPortForward {
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
-					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, users, opts, chainServices)
+					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices)
 					previousTag = ""
 				}
 				continue
@@ -878,7 +1057,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 			if activeServerID != server.ID {
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
-					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, users, opts, chainServices)
+					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices)
 					previousTag = ""
 				}
 				continue
@@ -918,7 +1097,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 				}
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
-					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, users, opts, chainServices)
+					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices)
 					previousTag = ""
 				}
 			}
@@ -967,12 +1146,15 @@ func validateProxyPathForConfig(path model.ProxyPath, root model.Inbound, steps 
 	return nil
 }
 
-func proxyPathStepInboundIdentity(path model.ProxyPath, step model.ProxyPathStep, root model.Inbound, targetServerID int64, users []model.User, opts ConfigOptions, services map[proxyPathChainServiceKey]*proxyPathChainService) (string, []string) {
+func proxyPathStepInboundIdentity(path model.ProxyPath, step model.ProxyPathStep, root model.Inbound, targetServerID int64, inboundByID map[int64]model.Inbound, users []model.User, opts ConfigOptions, services map[proxyPathChainServiceKey]*proxyPathChainService) (string, []string) {
 	if step.InboundID != nil && *step.InboundID != 0 {
-		return tag("in", *step.InboundID), []string{proxyPathLinkUser(path, model.Inbound{ID: *step.InboundID}).Username}
+		inbound := inboundByID[*step.InboundID]
+		user := proxyPathLinkUser(path, inbound)
+		return tag("in", *step.InboundID), []string{protocolAuthUsername(inbound.Protocol, user)}
 	}
 	if service, ok := proxyPathChainServiceForStep(services, step, targetServerID); ok {
-		return service.Tag, []string{proxyPathInternalUser(path, step).Username}
+		user := proxyPathInternalUser(path, step)
+		return service.Tag, []string{protocolAuthUsername(service.Inbound.Protocol, user)}
 	}
 	return proxyPathInternalInboundTag(path.ID, step.Position), proxyPathBranchUsernames(path, root, usersForInbound(root, users, opts.InboundUsers))
 }
@@ -981,7 +1163,7 @@ func proxyPathBranchUsernames(path model.ProxyPath, root model.Inbound, users []
 	branchUsers := proxyPathBranchUsersForPath(path, root, users)
 	names := make([]string, 0, len(branchUsers))
 	for _, user := range branchUsers {
-		names = append(names, user.Username)
+		names = append(names, protocolAuthUsername(root.Protocol, user))
 	}
 	return names
 }
@@ -1855,7 +2037,7 @@ func firstActiveUser(users []model.User) *model.User {
 
 func InboundSupportsMultipleUsers(inbound model.Inbound) bool {
 	switch inbound.Protocol {
-	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSSH:
+	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolMieru, model.ProtocolSSH:
 		return true
 	case model.ProtocolSS:
 		method := stringValue(parseExtra(inbound.ConfigJSON), "method", "2022-blake3-aes-128-gcm")
@@ -1900,6 +2082,38 @@ func passwordUsers(users []model.User) []map[string]any {
 		if u.ProxyPassword != "" {
 			out = append(out, map[string]any{"name": u.Username, "password": u.ProxyPassword})
 		}
+	}
+	return out
+}
+
+func mieruUsername(user model.User) string {
+	if user.ID > 0 {
+		if pathID := runtimePathIDFromUsername(user.Username); pathID > 0 {
+			return fmt.Sprintf("oboard-u%d-p%d", user.ID, pathID)
+		}
+		return fmt.Sprintf("oboard-u%d", user.ID)
+	}
+	if user.ID < 0 {
+		return fmt.Sprintf("oboard-i%x", -user.ID)
+	}
+	sum := sha256.Sum256([]byte(user.Username + "\x00" + user.ProxyPassword))
+	return fmt.Sprintf("oboard-s%x", sum[:8])
+}
+
+func protocolAuthUsername(protocol model.Protocol, user model.User) string {
+	if protocol == model.ProtocolMieru {
+		return mieruUsername(user)
+	}
+	return user.Username
+}
+
+func mieruPasswordUsers(users []model.User) []map[string]any {
+	out := make([]map[string]any, 0, len(users))
+	for _, user := range users {
+		if user.ProxyPassword == "" {
+			continue
+		}
+		out = append(out, map[string]any{"name": mieruUsername(user), "password": user.ProxyPassword})
 	}
 	return out
 }
@@ -2145,6 +2359,180 @@ func (a anyTLSAdapter) SubscriptionNode(user model.User, inbound model.Inbound, 
 	}
 	applyAllowed(node, extra, "padding_scheme")
 	return node, nil
+}
+
+type mieruAdapter struct{}
+
+func (mieruAdapter) Protocol() model.Protocol { return model.ProtocolMieru }
+func (mieruAdapter) ValidateInbound(v model.Inbound) error {
+	if err := ValidateListenIP(v.ListenIP); err != nil {
+		return err
+	}
+	if _, err := MieruInboundPorts(v); err != nil {
+		return err
+	}
+	extra, err := decodeMieruConfig(v.ConfigJSON)
+	if err != nil {
+		return err
+	}
+	return validateMieruOptions(extra, false)
+}
+func (mieruAdapter) ValidateOutbound(v model.Outbound) error {
+	if strings.TrimSpace(v.TargetAddress) == "" {
+		return errors.New("target_address required")
+	}
+	if _, err := MieruOutboundPorts(v.TargetPort, v.ConfigJSON); err != nil {
+		return err
+	}
+	extra, err := decodeMieruConfig(v.ConfigJSON)
+	if err != nil {
+		return err
+	}
+	username := stringValue(extra, "username", "")
+	if strings.TrimSpace(username) == "" {
+		return errors.New("mieru username required")
+	}
+	if len([]byte(username)) > 64 {
+		return errors.New("mieru username exceeds 64 bytes")
+	}
+	password := stringValue(extra, "password", "")
+	if password == "" {
+		return errors.New("mieru password required")
+	}
+	if len([]byte(password)) > 64 {
+		return errors.New("mieru password exceeds 64 bytes")
+	}
+	return validateMieruOptions(extra, true)
+}
+func (a mieruAdapter) Inbound(v model.Inbound, users []model.User) (map[string]any, error) {
+	if err := a.ValidateInbound(v); err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		if len([]byte(user.ProxyPassword)) > 64 {
+			return nil, fmt.Errorf("mieru password for user %d exceeds 64 bytes", user.ID)
+		}
+	}
+	extra := parseExtra(v.ConfigJSON)
+	ports, _ := MieruInboundPorts(v)
+	item := map[string]any{
+		"type":                   "mieru",
+		"tag":                    tag("in", v.ID),
+		"listen":                 v.ListenIP,
+		"listen_port":            ports[0],
+		"transport":              normalizeMieruTransport(stringValue(extra, "transport", "TCP")),
+		"users":                  mieruPasswordUsers(users),
+		"user_hint_is_mandatory": boolValueWithDefault(extra["user_hint_is_mandatory"], true),
+	}
+	if ranges := compressMieruPorts(ports[1:]); len(ranges) > 0 {
+		item["listen_ports"] = ranges
+	}
+	applyAllowed(item, extra, "traffic_pattern")
+	return item, nil
+}
+func (a mieruAdapter) Outbound(v model.Outbound, user *model.User) (map[string]any, error) {
+	if err := a.ValidateOutbound(v); err != nil {
+		return nil, err
+	}
+	extra := parseExtra(v.ConfigJSON)
+	ports, _ := MieruOutboundPorts(v.TargetPort, v.ConfigJSON)
+	username := stringValue(extra, "username", "")
+	password := stringValue(extra, "password", "")
+	if user != nil {
+		if username == "" {
+			username = mieruUsername(*user)
+		}
+		if password == "" {
+			password = user.ProxyPassword
+		}
+	}
+	item := map[string]any{
+		"type":        "mieru",
+		"tag":         tag("out", v.ID),
+		"server":      v.TargetAddress,
+		"server_port": ports[0],
+		"transport":   normalizeMieruTransport(stringValue(extra, "transport", "TCP")),
+		"username":    username,
+		"password":    password,
+	}
+	if ranges := compressMieruPorts(ports[1:]); len(ranges) > 0 {
+		item["server_ports"] = ranges
+	}
+	applyAllowed(item, extra, "multiplexing", "traffic_pattern", "domain_resolver", "network_strategy", "fallback_delay")
+	return item, nil
+}
+func (a mieruAdapter) SubscriptionNode(user model.User, inbound model.Inbound, server model.Server) (map[string]any, error) {
+	if err := a.ValidateInbound(inbound); err != nil {
+		return nil, err
+	}
+	if len([]byte(user.ProxyPassword)) > 64 {
+		return nil, fmt.Errorf("mieru password for user %d exceeds 64 bytes", user.ID)
+	}
+	extra := parseExtra(inbound.ConfigJSON)
+	ports, _ := MieruInboundPorts(inbound)
+	node := map[string]any{
+		"type":        "mieru",
+		"tag":         inbound.Name,
+		"server":      server.EntryAddress,
+		"server_port": ports[0],
+		"transport":   normalizeMieruTransport(stringValue(extra, "transport", "TCP")),
+		"username":    mieruUsername(user),
+		"password":    user.ProxyPassword,
+	}
+	if ranges := compressMieruPorts(ports[1:]); len(ranges) > 0 {
+		node["server_ports"] = ranges
+	}
+	applyAllowed(node, extra, "multiplexing", "traffic_pattern")
+	return node, nil
+}
+
+var mieruMultiplexingLevels = map[string]bool{
+	"MULTIPLEXING_DEFAULT": true,
+	"MULTIPLEXING_OFF":     true,
+	"MULTIPLEXING_LOW":     true,
+	"MULTIPLEXING_MIDDLE":  true,
+	"MULTIPLEXING_HIGH":    true,
+}
+
+func validateMieruOptions(extra map[string]any, outbound bool) error {
+	if transportValue, exists := extra["transport"]; exists {
+		transport, ok := transportValue.(string)
+		if !ok || (strings.ToUpper(strings.TrimSpace(transport)) != "TCP" && strings.ToUpper(strings.TrimSpace(transport)) != "UDP") {
+			return errors.New("mieru transport must be TCP or UDP")
+		}
+	}
+	if multiplexingValue, exists := extra["multiplexing"]; exists {
+		multiplexing, ok := multiplexingValue.(string)
+		if !ok || !mieruMultiplexingLevels[multiplexing] {
+			return errors.New("invalid mieru multiplexing level")
+		}
+	}
+	if patternValue, exists := extra["traffic_pattern"]; exists {
+		pattern, ok := patternValue.(string)
+		if !ok {
+			return errors.New("mieru traffic_pattern must be a base64 string")
+		}
+		if pattern != "" {
+			if _, err := base64.StdEncoding.DecodeString(pattern); err != nil {
+				return errors.New("mieru traffic_pattern must be valid base64")
+			}
+		}
+	}
+	if !outbound {
+		if mandatory, exists := extra["user_hint_is_mandatory"]; exists {
+			if _, ok := mandatory.(bool); !ok {
+				return errors.New("mieru user_hint_is_mandatory must be boolean")
+			}
+		}
+	}
+	return nil
+}
+
+func boolValueWithDefault(value any, fallback bool) bool {
+	if typed, ok := value.(bool); ok {
+		return typed
+	}
+	return fallback
 }
 
 type ssAdapter struct{}

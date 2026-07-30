@@ -164,7 +164,7 @@ type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'interface'
 type RoutingRule = { id: number; server_id: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; enabled: boolean }
 type ExternalOutboundAccessGrant = { id: number; external_outbound_id: number; subject_type: AccessSubjectType; subject_id: number; enabled: boolean }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
-type SubscriptionFormat = 'plain-json' | 'stash' | 'clash-meta' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'v2ray' | 'v2ray-uri' | 'clash'
+type SubscriptionFormat = 'plain-json' | 'stash' | 'clash-meta' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'sing-box-mieru' | 'mieru' | 'v2ray' | 'v2ray-uri' | 'clash'
 type SubscriptionProfile = { id: number; name: string; group_name: string; description: string; config_json: string; enabled: boolean; created_at?: string; updated_at?: string }
 type SubscriptionAssignment = { id: number; profile_id: number; user_id: number; server_id?: number; inbound_id?: number; group_name: string; enabled: boolean }
 type AuditLog = { id: number; actor_id?: number; action: string; target: string; detail: string; ip: string; created_at: string }
@@ -182,9 +182,9 @@ type SessionUser = Pick<User, 'id' | 'username' | 'nickname' | 'role' | 'status'
 type UserDraft = { username: string; nickname: string; password?: string; role: Role; status: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; limit_mode: LimitMode }
 type UserGroupDraft = { name: string; description: string; role: Role; enabled: boolean; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number }
 
-const protocols: Protocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'ssh']
-const proxyProtocols: Exclude<Protocol, 'ssh'>[] = ['vless', 'hy2', 'anytls', 'shadowsocks']
-const externalProtocols: ExternalProtocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'socks']
+const protocols: Protocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'ssh']
+const proxyProtocols: Exclude<Protocol, 'ssh'>[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru']
+const externalProtocols: ExternalProtocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'socks']
 const forwardProtocols: ForwardProtocol[] = ['tcp', 'udp', 'tcp_udp']
 const forwardBackends: ForwardBackend[] = ['auto', 'realm', 'nft', 'builtin']
 const probeModes: ProbeMode[] = ['never', 'apply', 'periodic', 'sampled', 'periodic_sampled']
@@ -487,6 +487,8 @@ function ServerRegionField({ draft, update }: { draft: any; update: (patch: any)
 }
 const subscriptionFormats: { value: SubscriptionFormat; label: string }[] = [
   { value: 'sing-box', label: 'sing-box' },
+  { value: 'sing-box-mieru', label: 'sing-box + Mieru' },
+  { value: 'mieru', label: 'Mieru' },
   { value: 'clash-meta', label: 'Clash.Meta' },
   { value: 'mihomo', label: 'Mihomo' },
   { value: 'stash', label: 'Stash' },
@@ -7176,7 +7178,8 @@ function preferredProtocolPortInRange(protocol: Protocol, start: number, end: nu
     hy2: [443, 8443, 10443],
     anytls: [443, 8443, 10443],
     shadowsocks: [8388, 18388, 38388],
-	ssh: [2222, 22022, 22222],
+    mieru: [8964, 18964, 38964],
+    ssh: [2222, 22022, 22222],
   }
   for (const port of preferred[protocol] || []) {
     if (port >= start && port <= end && !used.has(port)) return port
@@ -7280,7 +7283,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
       const keepManualPort = mode === 'edit' || old.__port_manual === true
       const nextPort = keepManualPort ? currentPort : nextAvailableInboundPort(data, server, preset.protocol, preset.defaultPort, old.id)
       const oldAutoName = autoInboundName(server, old.protocol || protocol, currentPort)
-      const shouldRename = !old.name || old.name === oldAutoName || /^.+-(vless|hy2|anytls|shadowsocks|ssh)-\d+$/.test(String(old.name))
+      const shouldRename = !old.name || old.name === oldAutoName || /^.+-(vless|hy2|anytls|shadowsocks|mieru|ssh)-\d+$/.test(String(old.name))
       return {
         ...old,
         protocol: preset.protocol,
@@ -7301,7 +7304,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     const keepManualPort = mode === 'edit' || draft.__port_manual === true
     const nextPort = keepManualPort ? currentPort : nextAvailableInboundPort(data, nextServer, protocol, currentPort, draft.id)
     const oldName = autoInboundName(server, protocol, currentPort)
-    const shouldRename = !draft.name || draft.name === oldName || /^.+-(vless|hy2|anytls|shadowsocks|ssh)-\d+$/.test(String(draft.name))
+    const shouldRename = !draft.name || draft.name === oldName || /^.+-(vless|hy2|anytls|shadowsocks|mieru|ssh)-\d+$/.test(String(draft.name))
     const nextZones = (selectedDNSCredential?.zones || []).filter(zone => zone.server_id == null || zone.server_id === serverID)
     const nextZone = nextZones.find(zone => zone.server_id === serverID) || nextZones.find(zone => zone.zone_name === selectedDNSZoneName) || nextZones[0]
     const dnsDomain = draft.dns_sync_enabled ? domainWithZone(dnsPrefix, nextZone?.zone_name || '') : draft.dns_domain
@@ -7419,7 +7422,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
           <FormField label="监听 IP"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" /></FormField>
           <FormField label="监听端口" required><div className="inline-field-action"><input value={draft.port} onChange={e => changePort(Number(e.target.value))} inputMode="numeric" /><button type="button" className="ghost" onClick={chooseAutoPort}>自动选择</button></div><small className="field-hint">{draft.__port_manual ? '已手动指定。' : '从服务器端口池自动选择。'}</small></FormField>
           <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
-          {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onGenerateRealityKeypair={() => generateRealityKeypair(false)} realityKeyLoading={realityKeyLoading} />}
+          {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onGenerateRealityKeypair={() => generateRealityKeypair(false)} realityKeyLoading={realityKeyLoading} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} />}
           {mode === 'create' && <details className="entry-access-settings">
             <summary>用户权限与授权范围</summary>
             <div className="entry-access-settings-body">
@@ -7454,7 +7457,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   </MotionDialogPanel>
 }
 
-function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName = true, onGenerateRealityKeypair, realityKeyLoading }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; showTLSServerName?: boolean; onGenerateRealityKeypair?: () => void; realityKeyLoading?: boolean }) {
+function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName = true, onGenerateRealityKeypair, realityKeyLoading, mieruUDPAllowed = true }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; showTLSServerName?: boolean; onGenerateRealityKeypair?: () => void; realityKeyLoading?: boolean; mieruUDPAllowed?: boolean }) {
   const tls = objectConfig(config.tls)
   const transport = objectConfig(config.transport)
   const headers = objectConfig(transport.headers)
@@ -7495,7 +7498,25 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
     <FormField label="加密方法"><Select value={String(config.method || '2022-blake3-aes-128-gcm')} onChange={e => updateConfig({ method: e.target.value })}>{shadowsocksMethods.map(x => <option key={x.value} value={x.value}>{x.label}</option>)}</Select></FormField>
     {!String(config.method || '').startsWith('2022-') && <div className="access-note compact"><strong>单用户入口</strong><span>多人使用请选择 SS 2022 或其他多用户协议。</span></div>}
   </div>
+  if (presetID === 'mieru-basic') return <MieruConfigFields config={config} updateConfig={updateConfig} rangeKey="listen_ports" udpAllowed={mieruUDPAllowed} showUserHint />
   return null
+}
+
+function MieruConfigFields({ config, updateConfig, rangeKey, udpAllowed = true, showUserHint = false }: { config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; rangeKey: 'listen_ports' | 'server_ports'; udpAllowed?: boolean; showUserHint?: boolean }) {
+  const rawRanges = config[rangeKey]
+  const rangeText = Array.isArray(rawRanges) ? rawRanges.join(', ') : typeof rawRanges === 'string' ? rawRanges : ''
+  const updateRanges = (value: string) => {
+    const ranges = value.split(',').map(item => item.trim()).filter(Boolean)
+    updateConfig({ [rangeKey]: ranges.length ? ranges : undefined })
+  }
+  return <div className="preset-fields">
+    <div className="form-section-title">Mieru 设置</div>
+    <FormField label="传输协议"><Select variant="segmented" value={String(config.transport || 'TCP').toUpperCase()} onChange={event => updateConfig({ transport: event.target.value })}><option value="TCP">TCP</option><option value="UDP" disabled={!udpAllowed}>UDP</option></Select></FormField>
+    <FormField label="额外端口范围"><input value={rangeText} onChange={event => updateRanges(event.target.value)} placeholder="8965-8970, 9000-9002" /></FormField>
+    <FormField label="复用级别"><Select value={String(config.multiplexing || 'MULTIPLEXING_DEFAULT')} onChange={event => updateConfig({ multiplexing: event.target.value })}>{mieruMultiplexingLevels.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}</Select></FormField>
+    <FormField label="流量模式"><input value={String(config.traffic_pattern || '')} onChange={event => updateConfig({ traffic_pattern: event.target.value || undefined })} /></FormField>
+    {showUserHint && <label className="check-row"><input type="checkbox" checked={config.user_hint_is_mandatory !== false} onChange={event => updateConfig({ user_hint_is_mandatory: event.target.checked })} /><span>强制用户提示</span></label>}
+  </div>
 }
 
 function objectConfig(value: any): Record<string, any> {
@@ -7602,13 +7623,39 @@ function inboundAccessSummary(data: any, entry: Inbound) {
 
 function latestInboundProbeSummary(data: any, inboundID: number) {
   const probes: InboundProbeResult[] = (data.inbound_probes || []).filter((x: InboundProbeResult) => x.inbound_id === inboundID)
-  const local = probes.find(x => x.mode === 'agent_listener')
-  const external = probes.find(x => x.mode.startsWith('controller_external'))
-  if (local && !local.available) return { tone: 'danger', label: '本机监听异常', detail: local.error || '端口未监听', probe: local }
-  if (external && !external.available) return { tone: 'danger', label: '公网端口异常', detail: external.error || '无法连接', probe: external }
-  if (external?.available && external.confirmed) return { tone: 'ok', label: `公网可用 · ${external.latency_ms}ms`, detail: `${external.success_count}/${external.sample_count} 次成功 · P95 ${external.p95_latency_ms}ms`, probe: external }
-  if (local?.available && local.transport === 'udp') return { tone: 'ok', label: 'UDP 监听正常', detail: '主控已发出公网 UDP 探测包', probe: local }
-  if (local?.available) return { tone: 'ok', label: `本机正常 · ${local.latency_ms}ms`, detail: `${local.success_count}/${local.sample_count} 次成功`, probe: local }
+  if (!probes.length) return { tone: 'pending', label: '等待端口探测', detail: '下发后自动检测', probe: undefined }
+  const latestVersion = Math.max(...probes.map(probe => Number(probe.config_version || 0)))
+  const current = probes.filter(probe => Number(probe.config_version || 0) === latestVersion)
+  const latestByEndpoint = (items: InboundProbeResult[]) => {
+    const selected = new Map<string, InboundProbeResult>()
+    items.forEach(item => {
+      const key = `${item.mode}\u0000${item.endpoint}`
+      const previous = selected.get(key)
+      if (!previous || String(item.created_at || '') > String(previous.created_at || '')) selected.set(key, item)
+    })
+    return Array.from(selected.values())
+  }
+  const local = latestByEndpoint(current.filter(probe => probe.mode === 'agent_listener'))
+  const external = latestByEndpoint(current.filter(probe => probe.mode.startsWith('controller_external')))
+  const localFailure = local.find(probe => !probe.available)
+  const externalFailure = external.find(probe => !probe.available)
+  if (localFailure) return { tone: 'danger', label: '本机监听异常', detail: `${local.filter(probe => probe.available).length}/${local.length} 个端口正常 · ${localFailure.error || localFailure.endpoint}`, probe: localFailure }
+  if (externalFailure) return { tone: 'danger', label: '公网端口异常', detail: `${external.filter(probe => probe.available).length}/${external.length} 个端口正常 · ${externalFailure.error || externalFailure.endpoint}`, probe: externalFailure }
+  const representative = [...external, ...local].sort((left, right) => Number(right.sample_count || 0) - Number(left.sample_count || 0))[0]
+  const portCount = Math.max(local.length, external.length)
+  const totalSamples = external.reduce((sum, probe) => sum + Number(probe.sample_count || 0), 0)
+  const totalSuccesses = external.reduce((sum, probe) => sum + Number(probe.success_count || 0), 0)
+  if (external.length && external.every(probe => probe.available && probe.confirmed)) {
+    return { tone: 'ok', label: `公网 ${portCount} 个端口可用`, detail: `${totalSuccesses}/${totalSamples} 次成功 · 主端口 ${representative?.latency_ms || 0}ms`, probe: representative }
+  }
+  if (local.length && local.every(probe => probe.available) && local.some(probe => probe.transport === 'udp')) {
+    return { tone: 'ok', label: `UDP ${portCount} 个端口监听正常`, detail: external.length ? '公网 UDP 信号已发送' : '等待公网 UDP 探测', probe: representative }
+  }
+  if (local.length && local.every(probe => probe.available)) {
+    const successCount = local.reduce((sum, probe) => sum + Number(probe.success_count || 0), 0)
+    const sampleCount = local.reduce((sum, probe) => sum + Number(probe.sample_count || 0), 0)
+    return { tone: 'ok', label: `本机 ${portCount} 个端口正常`, detail: `${successCount}/${sampleCount} 次成功`, probe: representative }
+  }
   return { tone: 'pending', label: '等待端口探测', detail: '下发后自动检测', probe: undefined }
 }
 
@@ -7628,7 +7675,7 @@ function forwardProbeDetails(probe?: PortForwardProbeResult) {
 }
 
 function inboundSupportsMultipleUsersUI(entry: Inbound) {
-	if (entry.protocol === 'vless' || entry.protocol === 'hy2' || entry.protocol === 'anytls' || entry.protocol === 'ssh') return true
+	if (entry.protocol === 'vless' || entry.protocol === 'hy2' || entry.protocol === 'anytls' || entry.protocol === 'mieru' || entry.protocol === 'ssh') return true
   if (entry.protocol !== 'shadowsocks') return false
   const cfg = parseConfig(entry.config_json) || {}
   return String(cfg.method || '2022-blake3-aes-128-gcm').toLowerCase().startsWith('2022-')
@@ -8895,6 +8942,8 @@ function ExternalOutbounds({ data, client, load }: any) {
   const [content, setContent] = useState('socks5://user:password@example.com:1080#SOCKS-A')
   const payload = () => ({ ...f, server_id: f.scope === 'server' && f.server_id ? f.server_id : undefined })
   const importPayload = () => ({ scope: f.scope, server_id: f.scope === 'server' && f.server_id ? f.server_id : undefined, expose_to_users: f.expose_to_users, content })
+  const mieruConfig = parseConfig(f.config_json) || {}
+  const updateMieruConfig = (patch: Record<string, any>) => setF({ ...f, config_json: JSON.stringify({ ...mieruConfig, ...patch }, null, 2) })
   useEffect(() => {
     if (f.protocol === 'socks') return
     const next = ensureAuthConfig(f.config_json, f.protocol as Protocol)
@@ -8913,6 +8962,7 @@ function ExternalOutbounds({ data, client, load }: any) {
       <input value={f.target_address} onChange={e => setF({ ...f, target_address: e.target.value })} placeholder="目标地址" />
       <input value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口" />
       {f.protocol !== 'socks' && <AuthFields value={f as any} setValue={setF as any} />}
+      {f.protocol === 'mieru' && <MieruConfigFields config={mieruConfig} updateConfig={updateMieruConfig} rangeKey="server_ports" />}
       <textarea value={f.config_json} onChange={e => setF({ ...f, config_json: e.target.value })} placeholder="JSON 配置" />
       <Select variant="segmented" value={String(f.expose_to_users)} onChange={e => setF({ ...f, expose_to_users: e.target.value === 'true' })}><option value="false">默认不进订阅</option><option value="true">允许授权到订阅</option></Select>
       <Select variant="segmented" value={String(f.enabled)} onChange={e => setF({ ...f, enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select>
@@ -9871,6 +9921,8 @@ function Tunnels({ data, client, load }: any) {
 
 const subscriptionClientIcons: Record<string, string> = {
   'sing-box': singBoxClientIcon,
+  'sing-box-mieru': singBoxClientIcon,
+  mieru: singBoxClientIcon,
   'clash-meta': clashMetaClientIcon,
   mihomo: clashMetaClientIcon,
   stash: stashClientIcon,
@@ -10025,6 +10077,8 @@ function Subscriptions({ data, client, load, notify }: any) {
 
   const clientFormats = [
     { id: 'sing-box', name: 'sing-box', type: 'Native JSON' },
+    { id: 'sing-box-mieru', name: 'sing-box + Mieru', type: 'Extended JSON' },
+    { id: 'mieru', name: 'Mieru', type: 'mierus URI' },
     { id: 'clash-meta', name: 'Clash.Meta', type: 'YAML Config' },
     { id: 'mihomo', name: 'Mihomo', type: 'YAML Config' },
     { id: 'stash', name: 'Stash', type: 'YAML' },
@@ -11454,6 +11508,7 @@ const inboundPresets: InboundPreset[] = [
   { id: 'ss-aes-256-gcm', protocol: 'shadowsocks', label: 'SS 256', description: 'AES-256-GCM，单用户', defaultPort: 8388 },
   { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'AES-128-GCM，多用户', defaultPort: 8388 },
   { id: 'ss-2022-256', protocol: 'shadowsocks', label: 'SS 2022-256', description: 'AES-256-GCM，多用户', defaultPort: 8388 },
+  { id: 'mieru-basic', protocol: 'mieru', label: 'Mieru', description: 'Mieru 多用户入口', defaultPort: 8964 },
   { id: 'ssh-restricted', protocol: 'ssh', label: 'SSH 受限代理', description: '公钥认证，仅支持本地/动态转发', defaultPort: 2222 },
 ]
 
@@ -11462,6 +11517,14 @@ const shadowsocksMethods = [
   { value: 'aes-256-gcm', label: 'SS 256' },
   { value: '2022-blake3-aes-128-gcm', label: 'SS 2022-128' },
   { value: '2022-blake3-aes-256-gcm', label: 'SS 2022-256' },
+]
+
+const mieruMultiplexingLevels = [
+  { value: 'MULTIPLEXING_DEFAULT', label: '默认' },
+  { value: 'MULTIPLEXING_OFF', label: '关闭' },
+  { value: 'MULTIPLEXING_LOW', label: '低' },
+  { value: 'MULTIPLEXING_MIDDLE', label: '中' },
+  { value: 'MULTIPLEXING_HIGH', label: '高' },
 ]
 
 function parseConfig(raw: string): Record<string, any> | null {
@@ -11511,7 +11574,8 @@ function defaultInboundPreset(protocol: Protocol) {
     hy2: 'hy2-tls',
     anytls: 'anytls-basic',
     shadowsocks: 'ss-2022-128',
-	ssh: 'ssh-restricted',
+    mieru: 'mieru-basic',
+    ssh: 'ssh-restricted',
   }
   return defaults[protocol]
 }
@@ -11539,7 +11603,8 @@ function inferInboundPreset(protocol: Protocol, configJson: string) {
   }
   if (protocol === 'hy2') return 'hy2-tls'
   if (protocol === 'anytls') return 'anytls-basic'
-	if (protocol === 'ssh') return 'ssh-restricted'
+  if (protocol === 'mieru') return 'mieru-basic'
+  if (protocol === 'ssh') return 'ssh-restricted'
   return defaultInboundPreset(protocol)
 }
 
@@ -11591,6 +11656,11 @@ function buildInboundPresetConfig(id: string) {
     cfg.down_mbps = 100
   }
   if (preset.id === 'anytls-basic') cfg.tls = { enabled: true }
+  if (preset.id === 'mieru-basic') {
+    cfg.transport = 'TCP'
+    cfg.multiplexing = 'MULTIPLEXING_DEFAULT'
+    cfg.user_hint_is_mandatory = true
+  }
   return JSON.stringify(cfg, null, 2)
 }
 
@@ -11609,7 +11679,7 @@ function defaultAuth(protocol: Protocol): ProtocolAuth {
   return {
     username: `node-${randomToken(6)}`,
     uuid: protocol === 'vless' ? makeUUID() : '',
-    password: protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' ? randomToken(24) : '',
+    password: protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' || protocol === 'mieru' ? randomToken(24) : '',
     method: protocol === 'shadowsocks' ? '2022-blake3-aes-128-gcm' : '',
   }
 }
@@ -11618,9 +11688,9 @@ function readAuth(configJson: string, protocol: Protocol): ProtocolAuth {
   const cfg = parseConfig(configJson) || {}
   const meta = cfg._oboard && typeof cfg._oboard === 'object' ? cfg._oboard : {}
   return {
-    username: typeof meta.username === 'string' ? meta.username : '',
+    username: protocol === 'mieru' && typeof cfg.username === 'string' ? cfg.username : typeof meta.username === 'string' ? meta.username : '',
     uuid: protocol === 'vless' && typeof cfg.uuid === 'string' ? cfg.uuid : '',
-    password: (protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks') && typeof cfg.password === 'string' ? cfg.password : '',
+    password: (protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' || protocol === 'mieru') && typeof cfg.password === 'string' ? cfg.password : '',
     method: protocol === 'shadowsocks' && typeof cfg.method === 'string' ? cfg.method : '2022-blake3-aes-128-gcm',
   }
 }
@@ -11631,12 +11701,18 @@ function writeAuth(configJson: string, protocol: Protocol, auth: ProtocolAuth) {
   meta.username = auth.username
   meta.auth_auto = true
   cfg._oboard = meta
-  delete cfg.username
+  if (protocol === 'mieru') cfg.username = auth.username
+  else delete cfg.username
   if (protocol === 'vless') cfg.uuid = auth.uuid
   if (protocol === 'hy2' || protocol === 'anytls') cfg.password = auth.password
   if (protocol === 'shadowsocks') {
     cfg.method = auth.method || '2022-blake3-aes-128-gcm'
     cfg.password = auth.password
+  }
+  if (protocol === 'mieru') {
+    cfg.password = auth.password
+    cfg.transport = typeof cfg.transport === 'string' ? cfg.transport : 'TCP'
+    cfg.multiplexing = typeof cfg.multiplexing === 'string' ? cfg.multiplexing : 'MULTIPLEXING_DEFAULT'
   }
   return JSON.stringify(cfg, null, 2)
 }
@@ -11666,7 +11742,7 @@ function AuthFields({ value, setValue }: any) {
     <div className="auth-title"><span>认证信息</span><button className="ghost" onClick={() => setValue({ ...value, config_json: regenerateAuthConfig(value.config_json, protocol) })}>重新生成</button></div>
     <FormField label="用户名 / 标签"><input value={auth.username} onChange={e => setAuth({ username: e.target.value })} /></FormField>
     {protocol === 'vless' && <FormField label="UUID" required><input value={auth.uuid} onChange={e => setAuth({ uuid: e.target.value })} /></FormField>}
-    {(protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks') && <FormField label="密码" required><input value={auth.password} onChange={e => setAuth({ password: e.target.value })} /></FormField>}
+    {(protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' || protocol === 'mieru') && <FormField label="密码" required><input value={auth.password} onChange={e => setAuth({ password: e.target.value })} /></FormField>}
     {protocol === 'shadowsocks' && <FormField label="加密方法"><input value={auth.method} onChange={e => setAuth({ method: e.target.value })} /></FormField>}
   </div>
 }
@@ -11677,7 +11753,9 @@ function ProtocolForm({ value, setValue, servers, submit, outbound }: any) {
     const next = ensureAuthConfig(value.config_json, protocol)
     if (next !== value.config_json) setValue({ ...value, config_json: next })
   }, [value.protocol])
-  return <div className="form"><Select value={value.server_id} onChange={e => setValue({ ...value, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><input value={value.name} onChange={e => setValue({ ...value, name: e.target.value })} placeholder="名称" /><Select value={value.protocol} onChange={e => setValue({ ...value, protocol: e.target.value as Protocol, config_json: ensureAuthConfig(value.config_json, e.target.value as Protocol) })}>{(outbound ? proxyProtocols : protocols).map(p => <option key={p} value={p}>{labelProtocol(p)}</option>)}</Select>{outbound ? <><input value={value.target_address} onChange={e => setValue({ ...value, target_address: e.target.value })} placeholder="目标地址" /><input value={value.target_port} onChange={e => setValue({ ...value, target_port: Number(e.target.value) })} placeholder="目标端口" /></> : <><input value={value.listen_ip} onChange={e => setValue({ ...value, listen_ip: e.target.value })} placeholder="监听 IP" /><input value={value.port} onChange={e => setValue({ ...value, port: Number(e.target.value) })} placeholder="监听端口" /></>}<AuthFields value={value} setValue={setValue} /><textarea value={value.config_json} onChange={e => setValue({ ...value, config_json: e.target.value })} placeholder="JSON 配置" /><button onClick={submit}>创建</button></div>
+  const config = parseConfig(value.config_json) || {}
+  const updateConfig = (patch: Record<string, any>) => setValue({ ...value, config_json: JSON.stringify({ ...config, ...patch }, null, 2) })
+  return <div className="form"><Select value={value.server_id} onChange={e => setValue({ ...value, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><input value={value.name} onChange={e => setValue({ ...value, name: e.target.value })} placeholder="名称" /><Select value={value.protocol} onChange={e => setValue({ ...value, protocol: e.target.value as Protocol, config_json: ensureAuthConfig(value.config_json, e.target.value as Protocol) })}>{(outbound ? proxyProtocols : protocols).map(p => <option key={p} value={p}>{labelProtocol(p)}</option>)}</Select>{outbound ? <><input value={value.target_address} onChange={e => setValue({ ...value, target_address: e.target.value })} placeholder="目标地址" /><input value={value.target_port} onChange={e => setValue({ ...value, target_port: Number(e.target.value) })} placeholder="目标端口" /></> : <><input value={value.listen_ip} onChange={e => setValue({ ...value, listen_ip: e.target.value })} placeholder="监听 IP" /><input value={value.port} onChange={e => setValue({ ...value, port: Number(e.target.value) })} placeholder="监听端口" /></>}<AuthFields value={value} setValue={setValue} />{value.protocol === 'mieru' && <MieruConfigFields config={config} updateConfig={updateConfig} rangeKey={outbound ? 'server_ports' : 'listen_ports'} showUserHint={!outbound} />}<textarea value={value.config_json} onChange={e => setValue({ ...value, config_json: e.target.value })} placeholder="JSON 配置" /><button onClick={submit}>创建</button></div>
 }
 
 function Table({ rows, actions, loading: propLoading }: any) {
@@ -11853,6 +11931,7 @@ function labelProtocol(p: Protocol | string) {
 	if (p === 'shadowsocks') return 'SS'
 	if (p === 'hy2') return 'HY2'
 	if (p === 'anytls') return 'AnyTLS'
+	if (p === 'mieru') return 'Mieru'
 	if (p === 'vless') return 'VLESS'
 	if (p === 'ssh') return 'SSH'
 	if (p === 'socks') return 'SOCKS'

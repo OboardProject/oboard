@@ -2,7 +2,7 @@
 // These mirror the Controller JSON contracts; keep them in sync with
 // oboard/internal/model/types.go.
 
-export type Protocol = 'vless' | 'hy2' | 'anytls' | 'shadowsocks' | 'ssh'
+export type Protocol = 'vless' | 'hy2' | 'anytls' | 'shadowsocks' | 'mieru' | 'ssh'
 export type ExternalProtocol = Exclude<Protocol, 'ssh'> | 'socks'
 export type EntryIPMode = 'auto' | 'ipv4' | 'ipv6' | 'custom'
 export type RegionMode = 'auto' | 'manual'

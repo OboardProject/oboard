@@ -801,7 +801,7 @@ func (s *Server) currentVersionInfo() model.VersionInfo {
 		AgentUpdateRepo:      defaultAgentUpdateRepo,
 		KernelVersion:        version.KernelVersion,
 		KernelBuild:          version.KernelBuild,
-		Protocols:            []string{"vless", "hy2", "anytls", "shadowsocks"},
+		Protocols:            []string{"vless", "hy2", "anytls", "shadowsocks", "mieru"},
 		Kernel:               "oboard-sb (sing-box compatible)",
 		APIPrefix:            s.currentBasePath() + "/api/v1",
 	}
@@ -2796,7 +2796,13 @@ func (s *Server) serverDiagnose(w http.ResponseWriter, r *http.Request, id int64
 		if strings.TrimSpace(host) == "" {
 			continue
 		}
-		targets = append(targets, model.DiagnosticTarget{Name: inbound.Name, Protocol: inbound.Protocol, Host: host, Port: inbound.Port})
+		ports, err := core.MieruInboundPorts(inbound)
+		if err != nil {
+			continue
+		}
+		for _, port := range ports {
+			targets = append(targets, model.DiagnosticTarget{Name: inbound.Name, Protocol: inbound.Protocol, Host: host, Port: port})
+		}
 	}
 	configVersion := time.Now().Unix()
 	task, err := s.queueAgentTask(r.Context(), server.ID, model.AgentTaskTypeDiagnoseNetwork, model.DiagnoseNetworkTaskPayload{Version: configVersion, ServerID: server.ID, EntryTargets: targets}, configVersion)
@@ -3525,6 +3531,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 		}
 		v.ConfigJSON = normalized
 		v = normalizeInbound(v)
+		if err := normalizeMieruInboundPorts(&v); err != nil {
+			fail(w, err, 400)
+			return
+		}
 		if err := validateInbound(v); err != nil {
 			fail(w, err, 400)
 			return
@@ -3599,6 +3609,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 		}
 		v.ConfigJSON = normalized
 		v = normalizeInbound(v)
+		if err := normalizeMieruInboundPorts(&v); err != nil {
+			fail(w, err, 400)
+			return
+		}
 		if err := validateInbound(v); err != nil {
 			fail(w, err, 400)
 			return
@@ -3697,6 +3711,10 @@ func (s *Server) ensureInboundListenAvailable(ctx context.Context, v model.Inbou
 	if err != nil {
 		return err
 	}
+	ports, err := core.MieruInboundPorts(v)
+	if err != nil {
+		return err
+	}
 	for _, existing := range items {
 		if existing.ID == v.ID || !existing.Enabled {
 			continue
@@ -3705,8 +3723,16 @@ func (s *Server) ensureInboundListenAvailable(ctx context.Context, v model.Inbou
 		if existingListenIP == "" {
 			existingListenIP = "0.0.0.0"
 		}
-		if existing.ServerID == v.ServerID && existingListenIP == listenIP && existing.Port == v.Port {
-			return fmt.Errorf("inbound listen resource %s:%d on server %d already used by %s (id %d)", listenIP, v.Port, v.ServerID, existing.Name, existing.ID)
+		existingPorts, err := core.MieruInboundPorts(existing)
+		if err != nil {
+			return err
+		}
+		for _, port := range ports {
+			for _, existingPort := range existingPorts {
+				if existing.ServerID == v.ServerID && existingListenIP == listenIP && existingPort == port {
+					return fmt.Errorf("inbound listen resource %s:%d on server %d already used by %s (id %d)", listenIP, port, v.ServerID, existing.Name, existing.ID)
+				}
+			}
 		}
 	}
 	return nil
@@ -4805,6 +4831,19 @@ func normalizeInbound(v model.Inbound) model.Inbound {
 	return v
 }
 
+func normalizeMieruInboundPorts(v *model.Inbound) error {
+	if v == nil || v.Protocol != model.ProtocolMieru {
+		return nil
+	}
+	port, configJSON, err := core.NormalizeMieruPortConfig(v.Port, v.ConfigJSON, "listen_ports")
+	if err != nil {
+		return err
+	}
+	v.Port = port
+	v.ConfigJSON = configJSON
+	return nil
+}
+
 func inboundConfigHasCertificatePaths(configJSON string) bool {
 	var config map[string]any
 	if json.Unmarshal([]byte(configJSON), &config) != nil {
@@ -4949,6 +4988,17 @@ func applyInboundConfigDefaults(protocol model.Protocol, raw string) (string, er
 			return "", err
 		}
 	}
+	if protocol == model.ProtocolMieru {
+		if stringFromMap(cfg, "transport") == "" {
+			cfg["transport"] = "TCP"
+		}
+		if _, exists := cfg["user_hint_is_mandatory"]; !exists {
+			cfg["user_hint_is_mandatory"] = true
+		}
+		if stringFromMap(cfg, "multiplexing") == "" {
+			cfg["multiplexing"] = "MULTIPLEXING_DEFAULT"
+		}
+	}
 	b, err := json.Marshal(cfg)
 	if err != nil {
 		return "", err
@@ -4995,6 +5045,23 @@ func applyProtocolAuthDefaults(protocol model.Protocol, raw string) (string, err
 		}
 		if stringFromMap(cfg, "password") == "" {
 			secret, err := randomSS2022Key(stringFromMap(cfg, "method"))
+			if err != nil {
+				return "", err
+			}
+			cfg["password"] = secret
+		}
+	case model.ProtocolMieru:
+		if stringFromMap(cfg, "transport") == "" {
+			cfg["transport"] = "TCP"
+		}
+		if stringFromMap(cfg, "multiplexing") == "" {
+			cfg["multiplexing"] = "MULTIPLEXING_DEFAULT"
+		}
+		if stringFromMap(cfg, "username") == "" {
+			cfg["username"] = randomNodeUsername()
+		}
+		if stringFromMap(cfg, "password") == "" {
+			secret, err := security.RandomToken(18)
 			if err != nil {
 				return "", err
 			}
@@ -5087,6 +5154,10 @@ func (s *Server) outbounds(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		v.ConfigJSON = normalized
+		if err := normalizeMieruOutboundPorts(v.Protocol, &v.TargetPort, &v.ConfigJSON); err != nil {
+			fail(w, err, 400)
+			return
+		}
 		if err := validateOutbound(v); err != nil {
 			fail(w, err, 400)
 			return
@@ -5127,6 +5198,10 @@ func (s *Server) outbounds(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		v.ConfigJSON = normalized
+		if err := normalizeMieruOutboundPorts(v.Protocol, &v.TargetPort, &v.ConfigJSON); err != nil {
+			fail(w, err, 400)
+			return
+		}
 		if err := validateOutbound(v); err != nil {
 			fail(w, err, 400)
 			return
@@ -5178,6 +5253,19 @@ func validateOutbound(v model.Outbound) error {
 		return err
 	}
 	return a.ValidateOutbound(v)
+}
+
+func normalizeMieruOutboundPorts(protocol model.Protocol, port *int, configJSON *string) error {
+	if protocol != model.ProtocolMieru || port == nil || configJSON == nil {
+		return nil
+	}
+	primary, normalized, err := core.NormalizeMieruPortConfig(*port, *configJSON, "server_ports")
+	if err != nil {
+		return err
+	}
+	*port = primary
+	*configJSON = normalized
+	return nil
 }
 
 func (s *Server) validateOutboundAddress(ctx context.Context, v model.Outbound) error {
@@ -5440,6 +5528,9 @@ func (s *Server) validateExternalOutbound(ctx context.Context, v *model.External
 		}
 		v.ConfigJSON = normalized
 	}
+	if err := normalizeMieruOutboundPorts(v.Protocol, &v.TargetPort, &v.ConfigJSON); err != nil {
+		return err
+	}
 	if v.TargetAddress == "" {
 		var raw map[string]any
 		if json.Unmarshal([]byte(v.ConfigJSON), &raw) == nil {
@@ -5456,6 +5547,20 @@ func (s *Server) validateExternalOutbound(ctx context.Context, v *model.External
 	}
 	if err := core.ValidatePort(v.TargetPort); err != nil {
 		return err
+	}
+	if v.Protocol == model.ProtocolMieru {
+		adapter, err := core.AdapterFor(v.Protocol)
+		if err != nil {
+			return err
+		}
+		if err := adapter.ValidateOutbound(model.Outbound{
+			Protocol:      v.Protocol,
+			TargetAddress: v.TargetAddress,
+			TargetPort:    v.TargetPort,
+			ConfigJSON:    v.ConfigJSON,
+		}); err != nil {
+			return err
+		}
 	}
 	if v.ServerID != nil && *v.ServerID != 0 {
 		server, err := s.store.GetServer(ctx, *v.ServerID)
@@ -5527,11 +5632,11 @@ func parseExternalOutboundImport(content string) ([]model.ExternalOutbound, erro
 			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
 				continue
 			}
-			item, err := parseExternalOutboundLine(line)
+			items, err := parseExternalOutboundLine(line)
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, item)
+			out = append(out, items...)
 		}
 		if len(out) == 0 {
 			return nil, errors.New("no importable node found")
@@ -5560,29 +5665,37 @@ func parseExternalOutboundImport(content string) ([]model.ExternalOutbound, erro
 	return out, nil
 }
 
-func parseExternalOutboundLine(line string) (model.ExternalOutbound, error) {
+func parseExternalOutboundLine(line string) ([]model.ExternalOutbound, error) {
 	if strings.HasPrefix(line, "{") {
 		var raw map[string]any
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
-			return model.ExternalOutbound{}, err
+			return nil, err
 		}
-		return externalOutboundFromRawMap(raw, "imported-1")
+		item, err := externalOutboundFromRawMap(raw, "imported-1")
+		return []model.ExternalOutbound{item}, err
 	}
 	u, err := url.Parse(line)
 	if err != nil {
-		return model.ExternalOutbound{}, err
+		return nil, err
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "ss":
-		return parseSSImportURI(line)
+		item, err := parseSSImportURI(line)
+		return []model.ExternalOutbound{item}, err
 	case "socks", "socks5":
-		return parseSocksImportURI(u)
+		item, err := parseSocksImportURI(u)
+		return []model.ExternalOutbound{item}, err
 	case "vless":
-		return parseVLESSImportURI(u)
+		item, err := parseVLESSImportURI(u)
+		return []model.ExternalOutbound{item}, err
+	case "mierus":
+		return parseMieruSimpleImportURI(u)
+	case "mieru":
+		return nil, errors.New("不支持导入二进制 mieru:// 配置，请使用官方 mierus:// 简单分享链接")
 	case "trojan":
-		return model.ExternalOutbound{}, errors.New("暂不支持导入 Trojan")
+		return nil, errors.New("暂不支持导入 Trojan")
 	default:
-		return model.ExternalOutbound{}, fmt.Errorf("unsupported import scheme %q", u.Scheme)
+		return nil, fmt.Errorf("unsupported import scheme %q", u.Scheme)
 	}
 }
 
@@ -5598,7 +5711,7 @@ func externalOutboundFromRawMap(raw map[string]any, fallbackName string) (model.
 		proto = string(model.ProtocolSS)
 	}
 	switch model.Protocol(proto) {
-	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolSocks:
+	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru, model.ProtocolSocks:
 	default:
 		return model.ExternalOutbound{}, fmt.Errorf("unsupported outbound type %q", proto)
 	}
@@ -5610,6 +5723,113 @@ func externalOutboundFromRawMap(raw map[string]any, fallbackName string) (model.
 	port := intFromAnyController(raw["server_port"])
 	b, _ := json.Marshal(raw)
 	return model.ExternalOutbound{Name: name, Protocol: model.Protocol(proto), TargetAddress: addr, TargetPort: port, ConfigJSON: string(b), Enabled: true}, nil
+}
+
+func parseMieruSimpleImportURI(u *url.URL) ([]model.ExternalOutbound, error) {
+	if u == nil || !strings.EqualFold(u.Scheme, "mierus") || u.Opaque != "" {
+		return nil, errors.New("invalid mierus URI")
+	}
+	if u.User == nil || strings.TrimSpace(u.User.Username()) == "" {
+		return nil, errors.New("invalid mierus URI: username required")
+	}
+	password, ok := u.User.Password()
+	if !ok || password == "" {
+		return nil, errors.New("invalid mierus URI: password required")
+	}
+	host := strings.TrimSpace(u.Hostname())
+	if host == "" {
+		return nil, errors.New("invalid mierus URI: server required")
+	}
+	query := u.Query()
+	profile := strings.TrimSpace(query.Get("profile"))
+	if profile == "" {
+		return nil, errors.New("invalid mierus URI: profile required")
+	}
+	if query.Get("mtu") != "" || query.Get("handshake-mode") != "" {
+		return nil, errors.New("暂不支持导入带 mtu 或 handshake-mode 的 mierus 链接")
+	}
+	portValues := query["port"]
+	protocolValues := query["protocol"]
+	if len(portValues) == 0 || len(portValues) != len(protocolValues) {
+		return nil, errors.New("invalid mierus URI: port and protocol counts must match")
+	}
+	rangesByTransport := map[string][]string{"TCP": {}, "UDP": {}}
+	for index, value := range portValues {
+		transport := strings.ToUpper(strings.TrimSpace(protocolValues[index]))
+		if transport != "TCP" && transport != "UDP" {
+			return nil, fmt.Errorf("invalid mierus URI transport %q", protocolValues[index])
+		}
+		value = strings.TrimSpace(value)
+		if port, err := strconv.Atoi(value); err == nil {
+			if err := core.ValidatePort(port); err != nil {
+				return nil, fmt.Errorf("invalid mierus URI port %q", value)
+			}
+			value = fmt.Sprintf("%d-%d", port, port)
+		}
+		rangesByTransport[transport] = append(rangesByTransport[transport], value)
+	}
+	transports := make([]string, 0, 2)
+	for _, transport := range []string{"TCP", "UDP"} {
+		if len(rangesByTransport[transport]) > 0 {
+			transports = append(transports, transport)
+		}
+	}
+	out := make([]model.ExternalOutbound, 0, len(transports))
+	for _, transport := range transports {
+		config := map[string]any{
+			"type":         "mieru",
+			"server":       host,
+			"username":     u.User.Username(),
+			"password":     password,
+			"transport":    transport,
+			"server_ports": rangesByTransport[transport],
+		}
+		if multiplexing := strings.TrimSpace(query.Get("multiplexing")); multiplexing != "" {
+			config["multiplexing"] = multiplexing
+		}
+		if pattern := strings.TrimSpace(query.Get("traffic-pattern")); pattern != "" {
+			config["traffic_pattern"] = pattern
+		}
+		configJSON, err := json.Marshal(config)
+		if err != nil {
+			return nil, err
+		}
+		primary, normalized, err := core.NormalizeMieruPortConfig(0, string(configJSON), "server_ports")
+		if err != nil {
+			return nil, fmt.Errorf("invalid mierus URI ports: %w", err)
+		}
+		name := importNodeName(u, profile)
+		if len(transports) > 1 {
+			name += " / " + transport
+		}
+		var normalizedConfig map[string]any
+		if err := json.Unmarshal([]byte(normalized), &normalizedConfig); err != nil {
+			return nil, err
+		}
+		normalizedConfig["tag"] = name
+		normalizedConfig["server_port"] = primary
+		normalized, err = marshalControllerJSON(normalizedConfig)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, model.ExternalOutbound{
+			Name:          name,
+			Protocol:      model.ProtocolMieru,
+			TargetAddress: host,
+			TargetPort:    primary,
+			ConfigJSON:    normalized,
+			Enabled:       true,
+		})
+	}
+	return out, nil
+}
+
+func marshalControllerJSON(value any) (string, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func parseSSImportURI(rawURI string) (model.ExternalOutbound, error) {

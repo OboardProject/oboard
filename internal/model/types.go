@@ -20,6 +20,7 @@ const (
 	ProtocolHY2    Protocol = "hy2"
 	ProtocolAnyTLS Protocol = "anytls"
 	ProtocolSS     Protocol = "shadowsocks"
+	ProtocolMieru  Protocol = "mieru"
 	ProtocolSocks  Protocol = "socks"
 	// ProtocolSSH is a managed, public-key-only SSH proxy entry. It is run by
 	// the Agent rather than sing-box, so it is intentionally kept out of the
@@ -196,6 +197,8 @@ const (
 	SubscriptionFormatShadowrocket SubscriptionFormat = "shadowrocket"
 	SubscriptionFormatQX           SubscriptionFormat = "qx"
 	SubscriptionFormatSingBox      SubscriptionFormat = "sing-box"
+	SubscriptionFormatSingBoxMieru SubscriptionFormat = "sing-box-mieru"
+	SubscriptionFormatMieru        SubscriptionFormat = "mieru"
 	SubscriptionFormatV2Ray        SubscriptionFormat = "v2ray"
 	SubscriptionFormatV2RayURI     SubscriptionFormat = "v2ray-uri"
 	SubscriptionFormatClash        SubscriptionFormat = "clash"
@@ -1203,13 +1206,14 @@ type DiagnoseNetworkTaskPayload struct {
 }
 
 type InboundProbeTarget struct {
-	InboundID int64    `json:"inbound_id"`
-	Name      string   `json:"name"`
-	Protocol  Protocol `json:"protocol"`
-	Host      string   `json:"host"`
-	ListenIP  string   `json:"listen_ip"`
-	Port      int      `json:"port"`
-	Transport string   `json:"transport"`
+	InboundID   int64    `json:"inbound_id"`
+	Name        string   `json:"name"`
+	Protocol    Protocol `json:"protocol"`
+	Host        string   `json:"host"`
+	ListenIP    string   `json:"listen_ip"`
+	Port        int      `json:"port"`
+	Transport   string   `json:"transport"`
+	SampleCount int      `json:"sample_count,omitempty"`
 }
 
 type InboundProbePlan struct {

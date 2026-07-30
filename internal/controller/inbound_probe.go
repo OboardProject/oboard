@@ -37,23 +37,36 @@ func buildInboundProbePlan(version int64, server model.Server, inbounds []model.
 			continue
 		}
 		host := strings.TrimSpace(core.ResolveEntryAddress(inbound, server))
-		if host == "" || inbound.Port <= 0 {
+		ports, err := core.MieruInboundPorts(inbound)
+		if host == "" || err != nil {
 			continue
 		}
-		plan.EntryTargets = append(plan.EntryTargets, model.InboundProbeTarget{
-			InboundID: inbound.ID, Name: inbound.Name, Protocol: inbound.Protocol, Host: host,
-			ListenIP: inbound.ListenIP, Port: inbound.Port, Transport: controllerProbeTransport(inbound.Protocol),
-		})
+		for index, port := range ports {
+			sampleCount := 1
+			if index == 0 {
+				sampleCount = inboundProbeSamples
+			}
+			plan.EntryTargets = append(plan.EntryTargets, model.InboundProbeTarget{
+				InboundID: inbound.ID, Name: inbound.Name, Protocol: inbound.Protocol, Host: host,
+				ListenIP: inbound.ListenIP, Port: port, Transport: controllerProbeTransport(inbound),
+				SampleCount: sampleCount,
+			})
+		}
 	}
 	return plan
 }
 
-func controllerProbeTransport(protocol model.Protocol) string {
-	switch protocol {
+func controllerProbeTransport(inbound model.Inbound) string {
+	switch inbound.Protocol {
 	case model.ProtocolHY2:
 		return "udp"
 	case model.ProtocolSS:
 		return "tcp_udp"
+	case model.ProtocolMieru:
+		if core.MieruInboundTransport(inbound) == "UDP" {
+			return "udp"
+		}
+		return "tcp"
 	default:
 		return "tcp"
 	}
@@ -169,30 +182,34 @@ func (s *Server) probeInboundPlan(ctx context.Context, plan model.InboundProbePl
 }
 
 func controllerProbeTarget(ctx context.Context, version int64, target model.InboundProbeTarget, mode string) model.InboundProbeResult {
+	sampleCount := target.SampleCount
+	if sampleCount <= 0 {
+		sampleCount = inboundProbeSamples
+	}
 	result := model.InboundProbeResult{
 		InboundID: target.InboundID, ConfigVersion: version, Mode: mode, Transport: target.Transport,
 		Endpoint: net.JoinHostPort(strings.Trim(target.Host, "[]"), fmt.Sprint(target.Port)), ResultJSON: "{}",
 	}
 	if target.Transport == "udp" {
-		latencies, failures := controllerUDPSignals(ctx, target.Host, target.Port, inboundProbeSamples, inboundProbeInterval, inboundProbeTimeout)
-		applyControllerProbeStats(&result, latencies, inboundProbeSamples)
-		result.Available = result.SuccessCount >= requiredControllerProbeSuccesses(inboundProbeSamples)
+		latencies, failures := controllerUDPSignals(ctx, target.Host, target.Port, sampleCount, inboundProbeInterval, inboundProbeTimeout)
+		applyControllerProbeStats(&result, latencies, sampleCount)
+		result.Available = result.SuccessCount >= requiredControllerProbeSuccesses(sampleCount)
 		result.Confirmed = false
 		result.ResultJSON = controllerProbeJSON(map[string]any{
 			"kind": "udp_signal", "confidence": "signal_only", "latencies_ms": latencies, "failures": failures,
 		})
 		if !result.Available {
-			result.Error = fmt.Sprintf("公网 UDP 发包仅成功 %d/%d 次", result.SuccessCount, inboundProbeSamples)
+			result.Error = fmt.Sprintf("公网 UDP 发包仅成功 %d/%d 次", result.SuccessCount, sampleCount)
 		}
 		return result
 	}
-	latencies, failures := controllerTCPSamples(ctx, target.Host, target.Port, inboundProbeSamples, inboundProbeInterval, inboundProbeTimeout)
-	applyControllerProbeStats(&result, latencies, inboundProbeSamples)
-	result.Available = result.SuccessCount >= requiredControllerProbeSuccesses(inboundProbeSamples)
+	latencies, failures := controllerTCPSamples(ctx, target.Host, target.Port, sampleCount, inboundProbeInterval, inboundProbeTimeout)
+	applyControllerProbeStats(&result, latencies, sampleCount)
+	result.Available = result.SuccessCount >= requiredControllerProbeSuccesses(sampleCount)
 	result.Confirmed = true
 	result.ResultJSON = controllerProbeJSON(map[string]any{"kind": "tcp_connect", "latencies_ms": latencies, "failures": failures})
 	if !result.Available {
-		result.Error = fmt.Sprintf("公网 TCP 建连仅成功 %d/%d 次", result.SuccessCount, inboundProbeSamples)
+		result.Error = fmt.Sprintf("公网 TCP 建连仅成功 %d/%d 次", result.SuccessCount, sampleCount)
 	}
 	return result
 }

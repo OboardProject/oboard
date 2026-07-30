@@ -480,6 +480,26 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 		}
 		enabledByInbound[path.InboundID]++
 		ordered := orderedProxyPathSteps(stepsByPath[path.ID])
+		for _, step := range ordered {
+			if step.InboundID == nil || *step.InboundID == 0 {
+				continue
+			}
+			target, ok := inboundByID[*step.InboundID]
+			if !ok || target.Protocol != model.ProtocolMieru {
+				continue
+			}
+			ports, err := MieruInboundPorts(target)
+			if err != nil {
+				return fmt.Errorf("代理路径 %s 的 Mieru 节点端口无效：%w", path.Name, err)
+			}
+			mode := step.TransportMode
+			if mode == "" {
+				mode = model.ProxyPathTransportSingBox
+			}
+			if len(ports) > 1 && (mode == model.ProxyPathTransportPortForward || mode == model.ProxyPathTransportTunnel) {
+				return fmt.Errorf("代理路径 %s 的多端口 Mieru 节点只能使用 sing-box 出站链", path.Name)
+			}
+		}
 		for index, step := range ordered {
 			if step.NodeType != model.ProxyPathStepWARP {
 				continue
@@ -818,6 +838,15 @@ func validateProxyPathTransportSemantics(path model.ProxyPath, root model.Inboun
 		}
 		return false, nil
 	}
+	if root.Protocol == model.ProtocolMieru {
+		ports, err := MieruInboundPorts(root)
+		if err != nil {
+			return false, fmt.Errorf("代理路径 %s 的 Mieru 入口端口无效：%w", path.Name, err)
+		}
+		if len(ports) > 1 {
+			return false, fmt.Errorf("代理路径 %s 的多端口 Mieru 入口不能使用可信透明转发", path.Name)
+		}
+	}
 	for index, step := range steps {
 		mode := step.TransportMode
 		if mode == "" {
@@ -887,6 +916,11 @@ func transparentForwardProtocol(inbound model.Inbound) model.ForwardProtocol {
 		default:
 			return model.ForwardProtocolTCPUDP
 		}
+	case model.ProtocolMieru:
+		if MieruInboundTransport(inbound) == "UDP" {
+			return model.ForwardProtocolUDP
+		}
+		return model.ForwardProtocolTCP
 	default:
 		return model.ForwardProtocolTCP
 	}

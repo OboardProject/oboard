@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"sort"
 	"strconv"
@@ -65,6 +66,10 @@ func GenerateSubscriptionWithOptions(user model.User, servers []model.Server, in
 		return renderPlainJSONSubscription(nodes)
 	case model.SubscriptionFormatSingBox:
 		return renderSingBoxSubscription(nodes)
+	case model.SubscriptionFormatSingBoxMieru:
+		return renderSingBoxMieruSubscription(nodes)
+	case model.SubscriptionFormatMieru:
+		return renderMieruSubscription(nodes)
 	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatClash:
 		return renderClashMetaSubscription(nodes)
 	case model.SubscriptionFormatV2Ray:
@@ -382,7 +387,7 @@ func externalOutboundSubscriptionRaw(external model.ExternalOutbound) (map[strin
 			}
 		}
 		return raw, nil
-	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS:
+	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru:
 		var raw map[string]any
 		if err := json.Unmarshal([]byte(external.ConfigJSON), &raw); err != nil {
 			raw = map[string]any{}
@@ -419,6 +424,20 @@ func renderPlainJSONSubscription(nodes []SubscriptionNode) (string, error) {
 }
 
 func renderSingBoxSubscription(nodes []SubscriptionNode) (string, error) {
+	officialNodes := make([]SubscriptionNode, 0, len(nodes))
+	for _, node := range nodes {
+		if stringFromAny(node.Raw["type"]) != "mieru" {
+			officialNodes = append(officialNodes, node)
+		}
+	}
+	return renderSingBoxConfig(officialNodes)
+}
+
+func renderSingBoxMieruSubscription(nodes []SubscriptionNode) (string, error) {
+	return renderSingBoxConfig(nodes)
+}
+
+func renderSingBoxConfig(nodes []SubscriptionNode) (string, error) {
 	outbounds := []map[string]any{{"type": "direct", "tag": "direct"}}
 	for _, node := range nodes {
 		outbounds = append(outbounds, cloneMap(node.Raw))
@@ -429,6 +448,57 @@ func renderSingBoxSubscription(nodes []SubscriptionNode) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+func renderMieruSubscription(nodes []SubscriptionNode) (string, error) {
+	lines := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if stringFromAny(node.Raw["type"]) != "mieru" {
+			continue
+		}
+		raw := node.Raw
+		server := strings.TrimSpace(stringFromAny(raw["server"]))
+		port := intFromAny(raw["server_port"])
+		username := stringFromAny(raw["username"])
+		password := stringFromAny(raw["password"])
+		if server == "" || port == 0 || username == "" || password == "" {
+			return "", fmt.Errorf("subscription node %s has incomplete mieru credentials", node.Name)
+		}
+		transport := normalizeMieruTransport(stringFromAny(raw["transport"]))
+		query := url.Values{}
+		query.Set("profile", node.Name)
+		query.Add("port", strconv.Itoa(port))
+		query.Add("protocol", transport)
+		ranges, err := mieruPortRangeStrings(raw["server_ports"])
+		if err != nil {
+			return "", fmt.Errorf("subscription node %s: %w", node.Name, err)
+		}
+		for _, portRange := range ranges {
+			query.Add("port", portRange)
+			query.Add("protocol", transport)
+		}
+		if multiplexing := stringFromAny(raw["multiplexing"]); multiplexing != "" {
+			query.Set("multiplexing", multiplexing)
+		}
+		if pattern := stringFromAny(raw["traffic_pattern"]); pattern != "" {
+			query.Set("traffic-pattern", pattern)
+		}
+		host := server
+		if ip := net.ParseIP(strings.Trim(server, "[]")); ip != nil && ip.To4() == nil {
+			host = "[" + strings.Trim(server, "[]") + "]"
+		}
+		shareURL := &url.URL{
+			Scheme:   "mierus",
+			User:     url.UserPassword(username, password),
+			Host:     host,
+			RawQuery: query.Encode(),
+		}
+		lines = append(lines, shareURL.String())
+	}
+	if len(lines) == 0 {
+		return "", nil
+	}
+	return strings.Join(lines, "\n") + "\n", nil
 }
 
 func renderClashMetaSubscription(nodes []SubscriptionNode) (string, error) {
@@ -772,6 +842,10 @@ func normalizeSubscriptionFormat(format model.SubscriptionFormat) model.Subscrip
 	switch strings.ToLower(strings.TrimSpace(string(format))) {
 	case "", "singbox", "sing-box":
 		return model.SubscriptionFormatSingBox
+	case "sing-box-mieru", "singbox-mieru", "singboxmieru":
+		return model.SubscriptionFormatSingBoxMieru
+	case "mieru", "mierus":
+		return model.SubscriptionFormatMieru
 	case "plain-json", "plainjson", "plain json", "json":
 		return model.SubscriptionFormatPlainJSON
 	case "stash":
@@ -825,6 +899,8 @@ func SupportedSubscriptionFormats() []model.SubscriptionFormat {
 		model.SubscriptionFormatShadowrocket,
 		model.SubscriptionFormatQX,
 		model.SubscriptionFormatSingBox,
+		model.SubscriptionFormatSingBoxMieru,
+		model.SubscriptionFormatMieru,
 		model.SubscriptionFormatV2Ray,
 		model.SubscriptionFormatV2RayURI,
 		model.SubscriptionFormatClash,
@@ -843,7 +919,7 @@ func IsSupportedSubscriptionFormat(format model.SubscriptionFormat) bool {
 
 func SubscriptionContentType(format model.SubscriptionFormat) string {
 	switch normalizeSubscriptionFormat(format) {
-	case model.SubscriptionFormatPlainJSON, model.SubscriptionFormatSingBox:
+	case model.SubscriptionFormatPlainJSON, model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
 		return "application/json"
 	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatClash:
 		return "text/yaml; charset=utf-8"

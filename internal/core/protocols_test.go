@@ -20,7 +20,7 @@ import (
 
 func TestProtocolAdaptersGenerateSingBoxBlocks(t *testing.T) {
 	users := []model.User{{Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111", ProxyPassword: "pass-a"}}
-	protocols := []model.Protocol{model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS}
+	protocols := []model.Protocol{model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru}
 	for _, protocol := range protocols {
 		adapter, err := AdapterFor(protocol)
 		if err != nil {
@@ -34,7 +34,7 @@ func TestProtocolAdaptersGenerateSingBoxBlocks(t *testing.T) {
 		if block["tag"] == "" || block["type"] == "" {
 			t.Fatalf("%s inbound missing type/tag: %#v", protocol, block)
 		}
-		outbound := model.Outbound{ID: 2, ServerID: 1, Name: string(protocol), Protocol: protocol, TargetAddress: "example.com", TargetPort: 443, ConfigJSON: `{}`, Enabled: true}
+		outbound := model.Outbound{ID: 2, ServerID: 1, Name: string(protocol), Protocol: protocol, TargetAddress: "example.com", TargetPort: 443, ConfigJSON: testOutboundConfig(protocol), Enabled: true}
 		out, err := adapter.Outbound(outbound, &users[0])
 		if err != nil {
 			t.Fatalf("%s outbound: %v", protocol, err)
@@ -434,6 +434,8 @@ func TestTransparentPortForwardProtocolsFollowUserInbound(t *testing.T) {
 		{protocol: model.ProtocolHY2, config: `{}`, want: model.ForwardProtocolUDP},
 		{protocol: model.ProtocolSS, config: `{}`, want: model.ForwardProtocolTCPUDP},
 		{protocol: model.ProtocolSS, config: `{"network":"tcp"}`, want: model.ForwardProtocolTCP},
+		{protocol: model.ProtocolMieru, config: `{"transport":"TCP"}`, want: model.ForwardProtocolTCP},
+		{protocol: model.ProtocolMieru, config: `{"transport":"UDP"}`, want: model.ForwardProtocolUDP},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.protocol)+tc.config, func(t *testing.T) {
@@ -488,6 +490,7 @@ func TestTransparentProcessingClonesEverySupportedInboundProtocol(t *testing.T) 
 		{name: "hysteria2", protocol: model.ProtocolHY2, config: testInboundConfig(model.ProtocolHY2), wantType: "hysteria2", wantForward: model.ForwardProtocolUDP},
 		{name: "anytls", protocol: model.ProtocolAnyTLS, config: testInboundConfig(model.ProtocolAnyTLS), wantType: "anytls", wantForward: model.ForwardProtocolTCP},
 		{name: "shadowsocks", protocol: model.ProtocolSS, config: `{"method":"aes-128-gcm"}`, wantType: "shadowsocks", wantForward: model.ForwardProtocolTCPUDP},
+		{name: "mieru", protocol: model.ProtocolMieru, config: `{"transport":"TCP"}`, wantType: "mieru", wantForward: model.ForwardProtocolTCP},
 	}
 	for index, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -797,6 +800,7 @@ func TestGenerateServerConfigUsesPlaceholderWhenInboundHasNoUsers(t *testing.T) 
 		{name: "ss-single-password", protocol: model.ProtocolSS, config: `{"method":"aes-128-gcm"}`, port: 8388},
 		{name: "ss-2022", protocol: model.ProtocolSS, config: `{"method":"2022-blake3-aes-128-gcm","password":"` + base64.StdEncoding.EncodeToString(make([]byte, 16)) + `"}`, port: 8389},
 		{name: "ss-2022-default", protocol: model.ProtocolSS, config: `{}`, port: 8390},
+		{name: "mieru", protocol: model.ProtocolMieru, config: `{"transport":"TCP"}`, port: 8964},
 	}
 	for i, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -835,7 +839,11 @@ func TestGenerateServerConfigUsesPlaceholderWhenInboundHasNoUsers(t *testing.T) 
 					t.Fatalf("placeholder users missing: %#v", inbound)
 				}
 				user := rawUsers[0].(map[string]any)
-				if user["name"] != placeholderName {
+				if tt.protocol == model.ProtocolMieru {
+					if name := stringFromAny(user["name"]); !strings.HasPrefix(name, "oboard-s") || len(name) > 64 {
+						t.Fatalf("Mieru placeholder name = %#v", user)
+					}
+				} else if user["name"] != placeholderName {
 					t.Fatalf("placeholder name = %#v, want %s", user, placeholderName)
 				}
 				if tt.protocol == model.ProtocolVLESS && user["uuid"] == "" {
@@ -1269,7 +1277,7 @@ func TestVLESSRealityInboundStripsClientPublicKey(t *testing.T) {
 
 func TestProtocolUsersUseSingBoxObjectShape(t *testing.T) {
 	users := []model.User{{Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111", ProxyPassword: "pass-a"}}
-	for _, protocol := range []model.Protocol{model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS} {
+	for _, protocol := range []model.Protocol{model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru} {
 		adapter, err := AdapterFor(protocol)
 		if err != nil {
 			t.Fatal(err)
@@ -1302,9 +1310,18 @@ func testInboundConfig(protocol model.Protocol) string {
 	switch protocol {
 	case model.ProtocolHY2, model.ProtocolAnyTLS:
 		return `{"tls":{"enabled":true,"certificate_path":"/tmp/cert.pem","key_path":"/tmp/key.pem"}}`
+	case model.ProtocolMieru:
+		return `{"transport":"TCP"}`
 	default:
 		return `{}`
 	}
+}
+
+func testOutboundConfig(protocol model.Protocol) string {
+	if protocol == model.ProtocolMieru {
+		return `{"transport":"TCP","username":"node","password":"pass"}`
+	}
+	return `{}`
 }
 
 func TestHY2LatestFieldsPassThrough(t *testing.T) {

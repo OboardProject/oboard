@@ -109,6 +109,11 @@ func singBoxInboundListenTransport(inbound map[string]any) listenTransport {
 		default:
 			return listenTCP | listenUDP
 		}
+	case "mieru":
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(inbound["transport"])), "udp") {
+			return listenUDP
+		}
+		return listenTCP
 	default:
 		return listenTCP
 	}
@@ -117,21 +122,30 @@ func singBoxInboundListenTransport(inbound map[string]any) listenTransport {
 func singBoxListenResources(serverID int64, inbounds []map[string]any) []listenResource {
 	resources := make([]listenResource, 0, len(inbounds))
 	for index, inbound := range inbounds {
-		port := intFromAny(inbound["listen_port"])
-		if !validPort(port) {
-			continue
+		ports := []int{intFromAny(inbound["listen_port"])}
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(inbound["type"])), "mieru") {
+			expanded, err := mieruPortsFromValue(ports[0], inbound["listen_ports"])
+			if err != nil {
+				continue
+			}
+			ports = expanded
 		}
 		tag := strings.TrimSpace(stringFromAny(inbound["tag"]))
 		if tag == "" {
 			tag = strconv.Itoa(index)
 		}
-		resources = append(resources, listenResource{
-			serverID: serverID,
-			address:  normalizeListenAddress(stringFromAny(inbound["listen"])),
-			port:     port,
-			protocol: singBoxInboundListenTransport(inbound),
-			owner:    "core inbound " + tag,
-		})
+		for _, port := range ports {
+			if !validPort(port) {
+				continue
+			}
+			resources = append(resources, listenResource{
+				serverID: serverID,
+				address:  normalizeListenAddress(stringFromAny(inbound["listen"])),
+				port:     port,
+				protocol: singBoxInboundListenTransport(inbound),
+				owner:    "core inbound " + tag,
+			})
+		}
 	}
 	return resources
 }
