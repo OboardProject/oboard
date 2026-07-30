@@ -1593,6 +1593,74 @@ func TestProxyPathServerOnlyStepsPlanAndValidation(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 4, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "port_forward"}, http.StatusBadRequest)
 }
 
+func TestProxyPathRejectsExplicitIPv6TargetFromIPv4OnlySource(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+
+	source := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{
+		"name": "IPv4 source", "public_ipv4": "198.51.100.10", "entry_ip_mode": "ipv4", "listen_ip": "0.0.0.0", "ip_stack": "ipv4_only", "port_range_start": 30000, "port_range_end": 30100,
+	}, http.StatusCreated)["server"].(map[string]any)
+	target := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{
+		"name": "dual target", "public_ipv4": "203.0.113.20", "public_ipv6": "2001:db8::20", "entry_ip_mode": "ipv6", "listen_ip": "::", "ip_stack": "dual_stack", "port_range_start": 31000, "port_range_end": 31100,
+	}, http.StatusCreated)["server"].(map[string]any)
+	sourceID := int64(source["id"].(float64))
+	targetID := int64(target["id"].(float64))
+	inbound := request(t, h, http.MethodPost, "/api/v1/inbounds", token, map[string]any{
+		"server_id": sourceID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true,
+	}, http.StatusCreated)["inbound"].(map[string]any)
+	inboundID := int64(inbound["id"].(float64))
+
+	enabled := request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"name": "enabled-invalid", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
+	enabledID := int64(enabled["id"].(float64))
+	badStep := request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": enabledID, "node_type": "server_inbound", "server_id": targetID, "transport_mode": "singbox"}, http.StatusBadRequest)
+	if message := fmt.Sprint(badStep["error"]); !strings.Contains(message, "IPv4 source") || !strings.Contains(message, "dual target") || !strings.Contains(message, "IPv6") {
+		t.Fatalf("step error is not actionable: %q", message)
+	}
+	if steps, err := db.ListProxyPathStepsForPath(context.Background(), enabledID); err != nil || len(steps) != 0 {
+		t.Fatalf("rejected step persisted: steps=%#v err=%v", steps, err)
+	}
+
+	disabled := request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"name": "stored-invalid", "inbound_id": inboundID, "enabled": false}, http.StatusCreated)["proxy_path"].(map[string]any)
+	disabledID := int64(disabled["id"].(float64))
+	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": disabledID, "node_type": "server_inbound", "server_id": targetID, "transport_mode": "singbox"}, http.StatusCreated)
+	enableError := request(t, h, http.MethodPatch, "/api/v1/proxy-paths/"+itoa(disabledID), token, map[string]any{"enabled": true}, http.StatusBadRequest)
+	if message := fmt.Sprint(enableError["error"]); !strings.Contains(message, "IPv6") {
+		t.Fatalf("enable error is not actionable: %q", message)
+	}
+
+	stored, err := db.GetProxyPath(context.Background(), disabledID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.Enabled = true
+	if err := db.UpdateProxyPath(context.Background(), stored); err != nil {
+		t.Fatal(err)
+	}
+	before, err := db.ListTasks(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyError := request(t, h, http.MethodPost, "/api/v1/deployments/apply", token, map[string]any{}, http.StatusBadRequest)
+	if message := fmt.Sprint(applyError["error"]); !strings.Contains(message, "IPv6") || strings.Contains(message, "internal server error") {
+		t.Fatalf("deployment error is not actionable: %q", message)
+	}
+	after, err := db.ListTasks(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("invalid deployment queued tasks: before=%d after=%d", len(before), len(after))
+	}
+}
+
 func TestProxyPathAutomaticAndCustomNamesFollowTopology(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -239,32 +240,35 @@ func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 	rootInbound := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
 	chain := model.ProxyPath{ID: 50, Name: "A-B-C", InboundID: rootInbound.ID, Secret: "chain-secret", Enabled: true}
 	direct := model.ProxyPath{ID: 51, Kind: model.ProxyPathKindDirect, Name: "A-B-Direct", InboundID: rootInbound.ID, Secret: "direct-secret", Enabled: true}
+	directC := model.ProxyPath{ID: 52, Kind: model.ProxyPathKindDirect, Name: "A-B-C-Direct", InboundID: rootInbound.ID, Secret: "direct-c-secret", Enabled: true}
 	serverBID, serverCID := serverB.ID, serverC.ID
 	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
 	opts := ConfigOptions{
 		Servers:    []model.Server{serverA, serverB, serverC},
 		Inbounds:   []model.Inbound{rootInbound},
-		ProxyPaths: []model.ProxyPath{chain, direct},
+		ProxyPaths: []model.ProxyPath{chain, direct, directC},
 		ProxyPathSteps: []model.ProxyPathStep{
 			{ID: 1, PathID: chain.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID},
 			{ID: 2, PathID: chain.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverCID},
 			{ID: 3, PathID: direct.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID},
+			{ID: 4, PathID: directC.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID},
+			{ID: 5, PathID: directC.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverCID},
 		},
 		InboundUsers: []model.InboundUser{{InboundID: rootInbound.ID, UserID: user.ID, Enabled: true}},
 	}
 
 	configA := mustServerConfig(t, serverA, []model.Inbound{rootInbound}, []model.User{user}, opts)
-	if !hasRoute(configA, "in-10", "path-50-step-1") || !hasRoute(configA, "in-10", "path-51-step-1") {
+	if !hasRoute(configA, "in-10", "path-50-step-1") || !hasRoute(configA, "in-10", "path-51-step-1") || !hasRoute(configA, "in-10", "path-52-step-1") {
 		t.Fatalf("A should preserve both downstream branches: %s", configA)
 	}
 
 	configB := mustServerConfig(t, serverB, []model.Inbound{rootInbound}, nil, opts)
 	sharedTag := proxyPathChainServiceTag(DefaultProxyPathChainMethod)
-	if !hasInbound(configB, sharedTag, "__oboard_path_50_step_1") || !hasInbound(configB, sharedTag, "__oboard_path_51_step_1") {
+	if !hasInbound(configB, sharedTag, "__oboard_path_50_step_1") || !hasInbound(configB, sharedTag, "__oboard_path_51_step_1") || !hasInbound(configB, sharedTag, "__oboard_path_52_step_1") {
 		t.Fatalf("B should accept both branch identities: %s", configB)
 	}
 	parsed := parseSingBoxConfig(t, configB)
-	var chainRoute, directRoute bool
+	var chainRoute, directRoute, secondHopRoute bool
 	for _, rule := range mapList(parsed.Route["rules"]) {
 		users := stringList(rule["auth_user"])
 		if rule["outbound"] == "path-50-step-2" && len(users) == 1 && users[0] == "__oboard_path_50_step_1" {
@@ -273,9 +277,28 @@ func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 		if rule["outbound"] == "direct" && len(users) == 1 && users[0] == "__oboard_path_51_step_1" {
 			directRoute = true
 		}
+		if rule["outbound"] == "path-52-step-2" && len(users) == 1 && users[0] == "__oboard_path_52_step_1" {
+			secondHopRoute = true
+		}
 	}
-	if !chainRoute || !directRoute {
-		t.Fatalf("B should route the chain onward and the copied branch directly: chain=%v direct=%v config=%s", chainRoute, directRoute, configB)
+	if !chainRoute || !directRoute || !secondHopRoute {
+		t.Fatalf("B should route the chain and C branch onward while keeping its own direct branch: chain=%v direct=%v second_hop=%v config=%s", chainRoute, directRoute, secondHopRoute, configB)
+	}
+
+	configC := mustServerConfig(t, serverC, []model.Inbound{rootInbound}, nil, opts)
+	if !hasInbound(configC, sharedTag, "__oboard_path_52_step_2") {
+		t.Fatalf("C should accept the two-hop direct branch identity: %s", configC)
+	}
+	parsedC := parseSingBoxConfig(t, configC)
+	var cDirectRoute bool
+	for _, rule := range mapList(parsedC.Route["rules"]) {
+		users := stringList(rule["auth_user"])
+		if rule["outbound"] == "direct" && len(users) == 1 && users[0] == "__oboard_path_52_step_2" {
+			cDirectRoute = true
+		}
+	}
+	if !cDirectRoute {
+		t.Fatalf("C should terminate the two-hop branch with direct: %s", configC)
 	}
 	subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{serverA, serverB, serverC}, []model.Inbound{rootInbound}, SubscriptionOptions{
 		InboundUsers:   opts.InboundUsers,
@@ -285,8 +308,30 @@ func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(subscription, "A｜C") || !strings.Contains(subscription, "A｜B｜直出") {
+	if !strings.Contains(subscription, "A｜C") || !strings.Contains(subscription, "A｜B｜直出") || !strings.Contains(subscription, "A｜B｜C｜直出") {
 		t.Fatalf("subscription should preserve both chain and direct branches: %s", subscription)
+	}
+}
+
+func TestResolveReachableEntryAddressUsesSourceStackAndHonorsExplicitMode(t *testing.T) {
+	target := model.Server{ID: 2, Name: "target", PublicIPv4: "203.0.113.20", PublicIPv6: "2001:db8::20", EntryIPMode: model.EntryIPModeAuto}
+	ipv4Source := model.Server{ID: 1, Name: "v4-source", PublicIPv4: "198.51.100.10", IPStack: model.IPStackIPv4Only}
+	address, err := ResolveReachableEntryAddress(ipv4Source, model.Inbound{}, target)
+	if err != nil || address != target.PublicIPv4 {
+		t.Fatalf("IPv4 source address = %q, err=%v", address, err)
+	}
+	ipv6Source := model.Server{ID: 3, Name: "v6-source", PublicIPv6: "2001:db8::10", IPStack: model.IPStackIPv6Only}
+	address, err = ResolveReachableEntryAddress(ipv6Source, model.Inbound{}, target)
+	if err != nil || address != target.PublicIPv6 {
+		t.Fatalf("IPv6 source address = %q, err=%v", address, err)
+	}
+	target.EntryIPMode = model.EntryIPModeIPv6
+	if _, err := ResolveReachableEntryAddress(ipv4Source, model.Inbound{}, target); err == nil || !errors.Is(err, ErrInvalidDesiredState) || !strings.Contains(err.Error(), "IPv6") {
+		t.Fatalf("explicit IPv6 mismatch error = %v", err)
+	}
+	_, err = GenerateServerConfigWithOptions(ipv4Source, nil, []model.Outbound{{ID: 1, ServerID: ipv4Source.ID, Name: "bad-v6", Protocol: model.ProtocolVLESS, TargetAddress: target.PublicIPv6, TargetPort: 443, Enabled: true}}, testDNSState(ipv4Source.ID), nil, ConfigOptions{})
+	if err == nil || !errors.Is(err, ErrInvalidDesiredState) {
+		t.Fatalf("generated config mismatch error = %v", err)
 	}
 }
 

@@ -379,6 +379,16 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 				if path.Enabled {
 					inboundByID[plannedInbound.ID] = plannedInbound
 				}
+				if path.Enabled && mode == model.ProxyPathTransportSingBox {
+					sourceServer, sourceOK := serverByID[previousServerID]
+					targetServer, targetServerOK := serverByID[targetServerID]
+					if !sourceOK || !targetServerOK {
+						return nil, nil, fmt.Errorf("代理路径 %s 第 %d 跳无法确定源/目标服务器", path.Name, step.Position)
+					}
+					if _, err := ResolveReachableEntryAddress(sourceServer, plannedInbound, targetServer); err != nil {
+						return nil, nil, fmt.Errorf("代理路径 %s 第 %d 跳: %w", path.Name, step.Position, err)
+					}
+				}
 			}
 			switch mode {
 			case model.ProxyPathTransportPortForward:
@@ -980,13 +990,7 @@ func proxyPathManagedPortForward(path model.ProxyPath, step model.ProxyPathStep,
 }
 
 func proxyPathReachableServerAddress(source, target model.Server) (string, error) {
-	candidate := ResolveServerEntryAddress(target)
-	if candidate != "" && candidate != "0.0.0.0" && candidate != "::" {
-		if err := ValidateAddressForIPStack(EffectiveIPStack(source), candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("目标服务器 %s 没有与源服务器 IP 栈兼容的公网地址", target.Name)
+	return ResolveReachableServerEntryAddress(source, target)
 }
 
 func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sourceServerID, targetServerID int64, targetInbound model.Inbound, servers map[int64]model.Server, inbounds map[int64]model.Inbound, ledger *ProxyPathPortLedger) (model.Tunnel, error) {
@@ -1000,6 +1004,10 @@ func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sour
 	}
 	if !ok {
 		return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳目标服务器不存在", path.Name, step.Position)
+	}
+	targetEndpoint, err := ResolveReachableServerEntryAddress(source, target)
+	if err != nil {
+		return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳: %w", path.Name, step.Position, err)
 	}
 	cfg := parseStepConfig(step.ConfigJSON)
 	typeName := model.TunnelType(strings.ToLower(stringValue(cfg, "type", string(model.TunnelTypeSSH))))
@@ -1038,7 +1046,7 @@ func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sour
 		}
 		b, _ := json.Marshal(sshConfig)
 		tunnel.ListenPort = listenPort
-		tunnel.TargetEndpoint = ResolveServerEntryAddress(target)
+		tunnel.TargetEndpoint = targetEndpoint
 		tunnel.TargetPort = sshPort
 		tunnel.ConfigJSON = string(b)
 	case model.TunnelTypeWireGuard:
@@ -1071,7 +1079,7 @@ func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sour
 		b, _ := json.Marshal(pair)
 		tunnel.LocalAddress = sourceAddress
 		tunnel.PeerAddress = prefixHost(targetAddress) + "/32"
-		tunnel.TargetEndpoint = ResolveServerEntryAddress(target)
+		tunnel.TargetEndpoint = targetEndpoint
 		tunnel.TargetPort = listenPort
 		tunnel.ConfigJSON = string(b)
 	default:

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -51,5 +52,24 @@ func TestValidateTunnelEndpoint(t *testing.T) {
 		if err := ValidateTunnelEndpoint(bad); err == nil {
 			t.Fatalf("bad endpoint %q accepted", bad)
 		}
+	}
+}
+
+func TestBuildTunnelPlanSelectsCompatibleAddressAndRejectsExplicitMismatch(t *testing.T) {
+	servers := []model.Server{
+		{ID: 1, Name: "source", PublicIPv6: "2001:db8::1", IPStack: model.IPStackIPv6Only},
+		{ID: 2, Name: "target", PublicIPv4: "203.0.113.2", PublicIPv6: "2001:db8::2", EntryIPMode: model.EntryIPModeAuto},
+	}
+	tunnel := model.Tunnel{ID: 1, Name: "auto-address", SourceServerID: 1, TargetServerID: 2, Type: model.TunnelTypeSSH, TargetPort: 22, Enabled: true}
+	plan, err := BuildTunnelPlan(10, servers[0], servers, []model.Tunnel{tunnel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Tunnels) != 1 || plan.Tunnels[0].TargetEndpoint != servers[1].PublicIPv6 {
+		t.Fatalf("tunnel plan = %#v", plan)
+	}
+	tunnel.TargetEndpoint = servers[1].PublicIPv4
+	if _, err := BuildTunnelPlan(11, servers[0], servers, []model.Tunnel{tunnel}); err == nil || !errors.Is(err, ErrInvalidDesiredState) || !strings.Contains(err.Error(), "IPv4") {
+		t.Fatalf("incompatible tunnel error = %v", err)
 	}
 }

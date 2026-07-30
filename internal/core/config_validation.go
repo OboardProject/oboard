@@ -14,6 +14,23 @@ import (
 // reporting a server fault.
 var ErrInvalidDesiredState = errors.New("invalid desired state")
 
+type invalidDesiredStateError struct {
+	cause error
+}
+
+func (e invalidDesiredStateError) Error() string { return e.cause.Error() }
+func (e invalidDesiredStateError) Unwrap() error { return e.cause }
+func (e invalidDesiredStateError) Is(target error) bool {
+	return target == ErrInvalidDesiredState
+}
+
+func markInvalidDesiredState(err error) error {
+	if err == nil || errors.Is(err, ErrInvalidDesiredState) {
+		return err
+	}
+	return invalidDesiredStateError{cause: err}
+}
+
 func ValidateGeneratedSingBoxConfig(config SingBoxConfig) error {
 	v := &configValidator{
 		tags:        map[string]string{},

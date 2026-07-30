@@ -375,7 +375,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 			continue
 		}
 		if err := ValidateAddressForIPStack(EffectiveIPStack(server), outbound.TargetAddress); err != nil {
-			return "", fmt.Errorf("outbound %s: %w", outbound.Name, err)
+			return "", markInvalidDesiredState(fmt.Errorf("outbound %s: %w", outbound.Name, err))
 		}
 		adapter, err := AdapterFor(outbound.Protocol)
 		if err != nil {
@@ -393,7 +393,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 			continue
 		}
 		if err := ValidateAddressForIPStack(EffectiveIPStack(server), external.TargetAddress); err != nil {
-			return "", fmt.Errorf("external outbound %s: %w", external.Name, err)
+			return "", markInvalidDesiredState(fmt.Errorf("external outbound %s: %w", external.Name, err))
 		}
 		item, err := externalOutboundToSingBox(external, server, firstActiveUser(users))
 		if err != nil {
@@ -1054,7 +1054,7 @@ func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourc
 			return nil, fmt.Errorf("imported node %s is not available on server %d", external.Name, sourceServer.ID)
 		}
 		if err := ValidateAddressForIPStack(EffectiveIPStack(sourceServer), external.TargetAddress); err != nil {
-			return nil, err
+			return nil, markInvalidDesiredState(err)
 		}
 		return externalOutboundToSingBoxWithTag(external, sourceServer, firstActiveUser(users), outboundTag)
 	case model.ProxyPathStepServerInbound:
@@ -1087,11 +1087,8 @@ func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourc
 		if !ok {
 			return nil, fmt.Errorf("target server not found")
 		}
-		address := firstNonEmpty(ResolveEntryAddress(inbound, targetServer), targetServer.ListenIP)
-		if strings.TrimSpace(address) == "" {
-			return nil, fmt.Errorf("target inbound %s has no reachable entry address", inbound.Name)
-		}
-		if err := ValidateAddressForIPStack(EffectiveIPStack(sourceServer), address); err != nil {
+		address, err := ResolveReachableEntryAddress(sourceServer, inbound, targetServer)
+		if err != nil {
 			return nil, err
 		}
 		targetServer.EntryAddress = address
@@ -1545,6 +1542,88 @@ func ValidateAddressForIPStack(stack model.IPStack, address string) error {
 		}
 	}
 	return nil
+}
+
+func ResolveReachableEntryAddress(source model.Server, inbound model.Inbound, target model.Server) (string, error) {
+	if inbound.DNSSyncEnabled && strings.TrimSpace(inbound.DNSDomain) != "" {
+		return strings.TrimSpace(inbound.DNSDomain), nil
+	}
+	mode := inbound.EntryIPMode
+	if mode == "" || mode == model.EntryIPModeAuto {
+		mode = target.EntryIPMode
+	}
+	if mode == "" || mode == model.EntryIPModeAuto {
+		return resolveCompatibleServerAddress(source, target)
+	}
+	address := entryAddressForMode(mode, inbound.ExternalIP, target)
+	return validateReachableServerAddress(source, target, address)
+}
+
+func ResolveReachableServerEntryAddress(source, target model.Server) (string, error) {
+	mode := target.EntryIPMode
+	if mode == "" || mode == model.EntryIPModeAuto {
+		return resolveCompatibleServerAddress(source, target)
+	}
+	return validateReachableServerAddress(source, target, entryAddressForMode(mode, "", target))
+}
+
+func resolveCompatibleServerAddress(source, target model.Server) (string, error) {
+	ipv4 := strings.TrimSpace(target.PublicIPv4)
+	ipv6 := strings.TrimSpace(target.PublicIPv6)
+	var candidates []string
+	switch EffectiveIPStack(source) {
+	case model.IPStackIPv6Only, model.IPStackPreferIPv6:
+		candidates = []string{ipv6, ipv4}
+	default:
+		candidates = []string{ipv4, ipv6}
+	}
+	for _, address := range candidates {
+		if address == "" {
+			continue
+		}
+		if ValidateAddressForIPStack(EffectiveIPStack(source), address) == nil {
+			return address, nil
+		}
+	}
+	for _, address := range candidates {
+		if address != "" {
+			return validateReachableServerAddress(source, target, address)
+		}
+	}
+	return "", markInvalidDesiredState(fmt.Errorf("目标服务器 %s 没有可供源服务器 %s 连接的公网入口地址", target.Name, source.Name))
+}
+
+func entryAddressForMode(mode model.EntryIPMode, externalIP string, server model.Server) string {
+	switch mode {
+	case model.EntryIPModeIPv4:
+		return strings.TrimSpace(server.PublicIPv4)
+	case model.EntryIPModeIPv6:
+		return strings.TrimSpace(server.PublicIPv6)
+	case model.EntryIPModeCustom:
+		if strings.TrimSpace(externalIP) != "" {
+			return strings.TrimSpace(externalIP)
+		}
+		return strings.TrimSpace(server.EntryAddress)
+	default:
+		return ""
+	}
+}
+
+func validateReachableServerAddress(source, target model.Server, address string) (string, error) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return "", markInvalidDesiredState(fmt.Errorf("目标服务器 %s 选择的入口地址不存在", target.Name))
+	}
+	if err := ValidateAddressForIPStack(EffectiveIPStack(source), address); err != nil {
+		family := AddressFamily(address)
+		if family == "ipv4" {
+			family = "IPv4"
+		} else if family == "ipv6" {
+			family = "IPv6"
+		}
+		return "", markInvalidDesiredState(fmt.Errorf("源服务器 %s（%s）无法连接目标服务器 %s 的 %s 地址 %q；请调整目标入口地址或源服务器 IP 栈", source.Name, EffectiveIPStack(source), target.Name, family, address))
+	}
+	return address, nil
 }
 
 func ResolveEntryAddress(inbound model.Inbound, server model.Server) string {

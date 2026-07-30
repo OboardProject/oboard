@@ -388,7 +388,16 @@ func BuildTunnelPlan(version int64, server model.Server, servers []model.Server,
 			if !ok {
 				return model.TunnelPlan{}, fmt.Errorf("target server %d does not exist", t.TargetServerID)
 			}
-			t.TargetEndpoint = firstNonEmpty(ResolveServerEntryAddress(target), target.ListenIP)
+			address, err := ResolveReachableServerEntryAddress(server, target)
+			if err != nil {
+				return model.TunnelPlan{}, fmt.Errorf("tunnel %q: %w", t.Name, err)
+			}
+			t.TargetEndpoint = address
+		} else if err := ValidateAddressForIPStack(EffectiveIPStack(server), t.TargetEndpoint); err != nil {
+			target := byID[t.TargetServerID]
+			if _, reachableErr := validateReachableServerAddress(server, target, t.TargetEndpoint); reachableErr != nil {
+				return model.TunnelPlan{}, fmt.Errorf("tunnel %q: %w", t.Name, reachableErr)
+			}
 		}
 		out = append(out, t)
 	}

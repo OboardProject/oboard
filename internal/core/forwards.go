@@ -72,6 +72,12 @@ func BuildPortForwardPlan(version int64, server model.Server, servers []model.Se
 			}
 			f.TargetAddress = address
 		}
+		if err := ValidateAddressForIPStack(EffectiveIPStack(server), f.TargetAddress); err != nil {
+			target := byID[f.TargetServerID]
+			if _, reachableErr := validateReachableServerAddress(server, target, f.TargetAddress); reachableErr != nil {
+				return model.PortForwardPlan{}, fmt.Errorf("port forward %q: %w", f.Name, reachableErr)
+			}
+		}
 		if strings.TrimSpace(f.TargetAddress) == "" {
 			return model.PortForwardPlan{}, fmt.Errorf("port forward %q target_address is empty", f.Name)
 		}

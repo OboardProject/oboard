@@ -1,6 +1,8 @@
 package core
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -38,6 +40,17 @@ func TestBuildPortForwardPlanUsesDetectedAddressForSourceIPStack(t *testing.T) {
 	}
 	if len(plan.Rules) != 1 || plan.Rules[0].TargetAddress != servers[1].PublicIPv4 {
 		t.Fatalf("plan = %#v, want detected IPv4 target", plan)
+	}
+}
+
+func TestBuildPortForwardPlanRejectsExplicitIncompatibleLiteral(t *testing.T) {
+	servers := []model.Server{
+		{ID: 1, Name: "source", PublicIPv4: "198.51.100.1", IPStack: model.IPStackIPv4Only},
+		{ID: 2, Name: "target", PublicIPv6: "2001:db8::2"},
+	}
+	_, err := BuildPortForwardPlan(9, servers[0], servers, []model.PortForward{{ID: 1, Name: "bad-address", SourceServerID: 1, TargetServerID: 2, ListenPort: 443, TargetAddress: servers[1].PublicIPv6, TargetPort: 8443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendBuiltin, Enabled: true}})
+	if err == nil || !errors.Is(err, ErrInvalidDesiredState) || !strings.Contains(err.Error(), "IPv6") {
+		t.Fatalf("incompatible forward error = %v", err)
 	}
 }
 
