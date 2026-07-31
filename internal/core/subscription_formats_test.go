@@ -73,10 +73,10 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 		{format: model.SubscriptionFormatSingBox, proxyCount: 5, excludes: []string{`"type": "mieru"`, "oboard_group", "must-not-leak"}},
 		{format: model.SubscriptionFormatSingBoxMieru, proxyCount: 6, contains: []string{`"type": "mieru"`, `"server_port": 25250`}, excludes: []string{"oboard_group", "must-not-leak"}},
 		{format: model.SubscriptionFormatMieru, proxyCount: 1, contains: []string{"mierus://", "25251-25252", "protocol=TCP"}, excludes: []string{"vless://"}},
-		{format: model.SubscriptionFormatClashMeta, proxyCount: 5, contains: []string{"reality-opts:", "udp-over-tcp: true"}, excludes: []string{"type: mieru"}},
-		{format: model.SubscriptionFormatMihomo, proxyCount: 5, contains: []string{"reality-opts:", "obfs-password: obfs-pass"}, excludes: []string{"type: mieru"}},
+		{format: model.SubscriptionFormatClashMeta, proxyCount: 6, contains: []string{"reality-opts:", "udp-over-tcp: true", "type: mieru", "port-range: 25250-25252", "traffic-pattern: AA=="}},
+		{format: model.SubscriptionFormatMihomo, proxyCount: 6, contains: []string{"reality-opts:", "obfs-password: obfs-pass", "type: mieru", "port-range: 25250-25252"}},
 		{format: model.SubscriptionFormatStash, proxyCount: 5, contains: []string{"auth: hy2-pass", "up-speed: 100", "down-speed: 200"}, excludes: []string{"type: mieru"}},
-		{format: model.SubscriptionFormatShadowrocket, proxyCount: 5, contains: []string{"proxies:"}, excludes: []string{"proxy-groups:", "rules:", "type: mieru"}},
+		{format: model.SubscriptionFormatShadowrocket, proxyCount: 6, contains: []string{"proxies:", "type: mieru", "port-range: 25250-25252"}, excludes: []string{"proxy-groups:", "rules:"}},
 		{format: model.SubscriptionFormatEgern, proxyCount: 5, contains: []string{"type: shadowsocks", "method: chacha20-poly1305", "bandwidth: 100", "user_id:"}, excludes: []string{"type: mieru"}},
 		{format: model.SubscriptionFormatLoon, proxyCount: 5, contains: []string{"=vless,", "=Hysteria2,", "udp-over-tcp=true"}, excludes: []string{"mieru"}},
 		{format: model.SubscriptionFormatQX, proxyCount: 4, contains: []string{"vless=", "anytls=", "udp-over-tcp=sp.v2"}, excludes: []string{"hysteria2=", "mieru"}},
@@ -173,6 +173,58 @@ func TestSubscriptionTargetFiltersUnsupportedVariants(t *testing.T) {
 	}
 }
 
+func TestMieruYAMLPortMapping(t *testing.T) {
+	tests := []struct {
+		name        string
+		serverPorts []string
+		wantPort    int
+		wantRange   string
+	}{
+		{name: "continuous", serverPorts: []string{"25251-25252"}, wantRange: "25250-25252"},
+		{name: "disjoint", serverPorts: []string{"25252-25253"}, wantPort: 25250},
+	}
+	formats := []model.SubscriptionFormat{
+		model.SubscriptionFormatClashMeta,
+		model.SubscriptionFormatMihomo,
+		model.SubscriptionFormatShadowrocket,
+	}
+	for _, test := range tests {
+		for _, format := range formats {
+			t.Run(test.name+"/"+string(format), func(t *testing.T) {
+				node := SubscriptionNode{Name: "Mieru", Raw: map[string]any{
+					"type": "mieru", "server": "2001:db8::20", "server_port": 25250,
+					"server_ports": test.serverPorts, "transport": "TCP",
+					"username": "oboard-u7", "password": "mieru-pass",
+					"multiplexing": "MULTIPLEXING_HIGH", "traffic_pattern": "AA==",
+				}}
+				output, err := renderSubscriptionTarget([]SubscriptionNode{node}, format)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var document struct {
+					Proxies []map[string]any `yaml:"proxies"`
+				}
+				if err := yaml.Unmarshal([]byte(output), &document); err != nil {
+					t.Fatal(err)
+				}
+				if len(document.Proxies) != 1 {
+					t.Fatalf("proxy count = %d, want 1:\n%s", len(document.Proxies), output)
+				}
+				proxy := document.Proxies[0]
+				if proxy["type"] != "mieru" || proxy["transport"] != "TCP" || proxy["udp"] != true || proxy["username"] != "oboard-u7" || proxy["password"] != "mieru-pass" || proxy["multiplexing"] != "MULTIPLEXING_HIGH" || proxy["traffic-pattern"] != "AA==" {
+					t.Fatalf("unexpected Mieru mapping: %#v", proxy)
+				}
+				if got := intFromAny(proxy["port"]); got != test.wantPort {
+					t.Fatalf("port = %d, want %d: %#v", got, test.wantPort, proxy)
+				}
+				if got := stringFromAny(proxy["port-range"]); got != test.wantRange {
+					t.Fatalf("port-range = %q, want %q: %#v", got, test.wantRange, proxy)
+				}
+			})
+		}
+	}
+}
+
 func TestEgernHTTPTransportAndURIFragmentArePreserved(t *testing.T) {
 	node := SubscriptionNode{Name: "Edge+A B", Raw: map[string]any{
 		"type": "vless", "server": "example.com", "server_port": 443,
@@ -223,8 +275,9 @@ func TestV2RaySubscriptionEncodesURIListWithoutMieru(t *testing.T) {
 func TestSubscriptionTargetEmptyOutputsAreValid(t *testing.T) {
 	mieruOnly := subscriptionFormatFixtureNodes()[5:]
 	for _, format := range []model.SubscriptionFormat{
-		model.SubscriptionFormatClashMeta,
-		model.SubscriptionFormatShadowrocket,
+		model.SubscriptionFormatStash,
+		model.SubscriptionFormatClash,
+		model.SubscriptionFormatEgern,
 		model.SubscriptionFormatSurge,
 		model.SubscriptionFormatV2Ray,
 		model.SubscriptionFormatV2RayURI,
@@ -234,7 +287,7 @@ func TestSubscriptionTargetEmptyOutputsAreValid(t *testing.T) {
 			t.Fatalf("%s: %v", format, err)
 		}
 		switch format {
-		case model.SubscriptionFormatClashMeta, model.SubscriptionFormatShadowrocket:
+		case model.SubscriptionFormatStash, model.SubscriptionFormatClash, model.SubscriptionFormatEgern:
 			var parsed map[string]any
 			if err := yaml.Unmarshal([]byte(output), &parsed); err != nil {
 				t.Fatalf("%s invalid YAML: %v\n%s", format, err, output)

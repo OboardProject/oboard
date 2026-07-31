@@ -348,7 +348,12 @@ func subscriptionTargetSupports(format model.SubscriptionFormat, proxy subscript
 		return proxy.Type == "mieru"
 	}
 	if proxy.Type == "mieru" {
-		return false
+		switch format {
+		case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatShadowrocket:
+			return true
+		default:
+			return false
+		}
 	}
 	switch format {
 	case model.SubscriptionFormatSingBox, model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatShadowrocket, model.SubscriptionFormatV2Ray, model.SubscriptionFormatV2RayURI:
@@ -726,8 +731,37 @@ func clashStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionFormat
 		setNonEmpty(out, "username", proxy.Username)
 		setNonEmpty(out, "password", proxy.Password)
 		out["udp"] = true
+	case "mieru":
+		ports, err := mieruPortsFromValue(proxy.Port, proxy.ServerPorts)
+		if err != nil {
+			return nil, err
+		}
+		delete(out, "port")
+		if portRange, ok := contiguousMieruPortRange(ports); ok {
+			out["port-range"] = portRange
+		} else {
+			out["port"] = ports[0]
+		}
+		out["transport"] = strings.ToUpper(proxy.Network)
+		out["username"] = proxy.Username
+		out["password"] = proxy.Password
+		out["udp"] = true
+		setNonEmpty(out, "multiplexing", proxy.Multiplexing)
+		setNonEmpty(out, "traffic-pattern", proxy.TrafficPattern)
 	}
 	return out, nil
+}
+
+func contiguousMieruPortRange(ports []int) (string, bool) {
+	if len(ports) < 2 {
+		return "", false
+	}
+	for index := 1; index < len(ports); index++ {
+		if ports[index] != ports[index-1]+1 {
+			return "", false
+		}
+	}
+	return fmt.Sprintf("%d-%d", ports[0], ports[len(ports)-1]), true
 }
 
 func applyClashTransportMap(out map[string]any, transport subscriptionTransport) {
