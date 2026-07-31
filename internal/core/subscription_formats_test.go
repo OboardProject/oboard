@@ -76,7 +76,7 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 		{format: model.SubscriptionFormatClashMeta, proxyCount: 6, contains: []string{"reality-opts:", "udp-over-tcp: true", "type: mieru", "port-range: 25250-25252", "traffic-pattern: AA=="}},
 		{format: model.SubscriptionFormatMihomo, proxyCount: 6, contains: []string{"reality-opts:", "obfs-password: obfs-pass", "type: mieru", "port-range: 25250-25252"}},
 		{format: model.SubscriptionFormatStash, proxyCount: 5, contains: []string{"auth: hy2-pass", "up-speed: 100", "down-speed: 200"}, excludes: []string{"type: mieru"}},
-		{format: model.SubscriptionFormatShadowrocket, proxyCount: 6, contains: []string{"proxies:", "type: mieru", "port-range: 25250-25252"}, excludes: []string{"proxy-groups:", "rules:"}},
+		{format: model.SubscriptionFormatShadowrocket, proxyCount: 6, contains: []string{"proxies:", "type: mieru", "port-range: 25250-25252", "user-hint-is-mandatory: true"}, excludes: []string{"proxy-groups:", "rules:"}},
 		{format: model.SubscriptionFormatEgern, proxyCount: 5, contains: []string{"type: shadowsocks", "method: chacha20-poly1305", "bandwidth: 100", "user_id:"}, excludes: []string{"type: mieru"}},
 		{format: model.SubscriptionFormatLoon, proxyCount: 5, contains: []string{"=vless,", "=Hysteria2,", "udp-over-tcp=true"}, excludes: []string{"mieru"}},
 		{format: model.SubscriptionFormatQX, proxyCount: 4, contains: []string{"vless=", "anytls=", "udp-over-tcp=sp.v2"}, excludes: []string{"hysteria2=", "mieru"}},
@@ -213,6 +213,14 @@ func TestMieruYAMLPortMapping(t *testing.T) {
 				proxy := document.Proxies[0]
 				if proxy["type"] != "mieru" || proxy["transport"] != "TCP" || proxy["udp"] != true || proxy["username"] != "oboard-u7" || proxy["password"] != "mieru-pass" || proxy["multiplexing"] != "MULTIPLEXING_HIGH" || proxy["traffic-pattern"] != "AA==" {
 					t.Fatalf("unexpected Mieru mapping: %#v", proxy)
+				}
+				userHint, hasUserHint := proxy["user-hint-is-mandatory"]
+				if format == model.SubscriptionFormatShadowrocket {
+					if !hasUserHint || userHint != true {
+						t.Fatalf("Shadowrocket Mieru user hint = %#v, want true: %#v", userHint, proxy)
+					}
+				} else if hasUserHint {
+					t.Fatalf("%s unexpectedly received Shadowrocket user hint: %#v", format, proxy)
 				}
 				if got := intFromAny(proxy["port"]); got != test.wantPort {
 					t.Fatalf("port = %d, want %d: %#v", got, test.wantPort, proxy)

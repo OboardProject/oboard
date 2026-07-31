@@ -746,6 +746,9 @@ func clashStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionFormat
 		out["username"] = proxy.Username
 		out["password"] = proxy.Password
 		out["udp"] = true
+		if format == model.SubscriptionFormatShadowrocket {
+			out["user-hint-is-mandatory"] = true
+		}
 		setNonEmpty(out, "multiplexing", proxy.Multiplexing)
 		setNonEmpty(out, "traffic-pattern", proxy.TrafficPattern)
 	}
