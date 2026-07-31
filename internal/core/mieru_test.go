@@ -142,6 +142,71 @@ func TestMieruSubscriptionFormatsAreExplicit(t *testing.T) {
 	}
 }
 
+func TestMieruSubscriptionTargetMatrix(t *testing.T) {
+	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "secret"}
+	server := model.Server{ID: 1, Name: "IPv6 Mieru", PublicIPv6: "2001:db8::1"}
+	inbound := model.Inbound{
+		ID: 1, ServerID: server.ID, Name: "Mieru", Protocol: model.ProtocolMieru, Port: 8964, Enabled: true,
+		ConfigJSON: `{"transport":"TCP","listen_ports":["8965-8966"],"multiplexing":"MULTIPLEXING_HIGH","traffic_pattern":"AA=="}`,
+	}
+
+	for _, test := range []struct {
+		format    model.SubscriptionFormat
+		wantMieru bool
+	}{
+		{format: model.SubscriptionFormatPlainJSON, wantMieru: true},
+		{format: model.SubscriptionFormatSingBox},
+		{format: model.SubscriptionFormatSingBoxMieru, wantMieru: true},
+		{format: model.SubscriptionFormatMieru, wantMieru: true},
+		{format: model.SubscriptionFormatClashMeta},
+		{format: model.SubscriptionFormatMihomo},
+		{format: model.SubscriptionFormatShadowrocket},
+		{format: model.SubscriptionFormatClash},
+		{format: model.SubscriptionFormatStash},
+		{format: model.SubscriptionFormatV2RayURI},
+	} {
+		t.Run(string(test.format), func(t *testing.T) {
+			subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{Format: test.format})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(subscription, "mieru"); got != test.wantMieru {
+				t.Fatalf("Mieru presence = %v, want %v:\n%s", got, test.wantMieru, subscription)
+			}
+		})
+	}
+
+	if got := SubscriptionContentType(model.SubscriptionFormatShadowrocket); got != "text/yaml; charset=utf-8" {
+		t.Fatalf("Shadowrocket content type = %q", got)
+	}
+	empty, err := renderSubscriptionTarget(nil, model.SubscriptionFormatShadowrocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty != "proxies: []\n" {
+		t.Fatalf("empty Shadowrocket subscription = %q", empty)
+	}
+}
+
+func TestMieruExtendedSubscriptionPreservesDisjointRanges(t *testing.T) {
+	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "secret"}
+	server := model.Server{ID: 1, Name: "Mieru", PublicIPv4: "203.0.113.1"}
+	inbound := model.Inbound{
+		ID: 1, ServerID: server.ID, Name: "Mieru", Protocol: model.ProtocolMieru, Port: 8964, Enabled: true,
+		ConfigJSON: `{"transport":"UDP","listen_ports":["9000-9001"]}`,
+	}
+	subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{Format: model.SubscriptionFormatSingBoxMieru})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(subscription, `"server_port": 8964`) || !strings.Contains(subscription, `"9000-9001"`) {
+		t.Fatalf("extended subscription lost Mieru ports:\n%s", subscription)
+	}
+	if !strings.Contains(subscription, `"transport": "UDP"`) {
+		t.Fatalf("Mieru transport missing:\n%s", subscription)
+	}
+}
+
 func TestMieruExtraListenPortsParticipateInConflictValidation(t *testing.T) {
 	inbounds := []map[string]any{
 		{"type": "mieru", "tag": "mieru", "listen": "0.0.0.0", "listen_port": 8964, "listen_ports": []string{"8965-8966"}, "transport": "TCP"},

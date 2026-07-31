@@ -486,8 +486,8 @@ function ServerRegionField({ draft, update }: { draft: any; update: (patch: any)
   )
 }
 const subscriptionFormats: { value: SubscriptionFormat; label: string }[] = [
-  { value: 'sing-box', label: 'sing-box' },
   { value: 'sing-box-mieru', label: 'sing-box + Mieru' },
+  { value: 'sing-box', label: 'sing-box' },
   { value: 'mieru', label: 'Mieru' },
   { value: 'clash-meta', label: 'Clash.Meta' },
   { value: 'mihomo', label: 'Mihomo' },
@@ -2770,6 +2770,9 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   const channelLabel = snapshot.channel === 'dev' ? '开发版' : snapshot.channel === 'stable' ? '正式版' : snapshot.channel === 'pinned' ? '固定版本' : '未知'
   const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || ['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status) ? 'warning' : 'ok'
   const updateInProgress = installExpected || ['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status)
+  const expectedAgentVersion = String(data.version?.agent_expected_version || '').trim()
+  const expectedAgentBuild = String(data.version?.agent_expected_build || '').trim()
+  const expectedAgentLabel = expectedAgentVersion ? `${expectedAgentVersion}${expectedAgentBuild ? ` · 构建 ${expectedAgentBuild}` : ''}` : '暂无构建信息'
   const updateLayout = shouldReduceMotion ? false : 'position'
   const updateLayoutTransition = { duration: shouldReduceMotion ? 0 : 0.28, ease: 'easeOut' as const }
   return <section className="settings-card controller-update-card">
@@ -2794,6 +2797,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
       <div><span>最新版本</span><strong>{snapshot.available?.version || '尚未检查'}</strong><small>{snapshot.available?.build ? `构建 ${snapshot.available.build}` : '点击检查更新'}</small></div>
     </m.div>
     <div className="controller-update-meta">
+      <span>主控配套 Agent<strong title={expectedAgentLabel}>{expectedAgentLabel}</strong></span>
       <span>上次检查<strong>{snapshot.last_checked_at ? formatDate(snapshot.last_checked_at) : '尚未检查'}</strong></span>
       {snapshot.backup_path && <span>最近备份<strong title={snapshot.backup_path}>{snapshot.backup_path}</strong></span>}
     </div>
@@ -7178,7 +7182,7 @@ function preferredProtocolPortInRange(protocol: Protocol, start: number, end: nu
     hy2: [443, 8443, 10443],
     anytls: [443, 8443, 10443],
     shadowsocks: [8388, 18388, 38388],
-    mieru: [8964, 18964, 38964],
+    mieru: [25250, 35250, 45250],
     ssh: [2222, 22022, 22222],
   }
   for (const port of preferred[protocol] || []) {
@@ -9044,7 +9048,7 @@ function CopySubscriptionButton({ user }: { user: User }) {
   );
 }
 
-function QuickOneTimeSubscriptionButton({ user, client, format = 'sing-box', encrypted = false, notify, className = 'ghost' }: { user: User; client: ReturnType<typeof api>; format?: SubscriptionFormat; encrypted?: boolean; notify?: (message: string, tone?: ToastKind) => void; className?: string }) {
+function QuickOneTimeSubscriptionButton({ user, client, format = 'sing-box-mieru', encrypted = false, notify, className = 'ghost' }: { user: User; client: ReturnType<typeof api>; format?: SubscriptionFormat; encrypted?: boolean; notify?: (message: string, tone?: ToastKind) => void; className?: string }) {
   const dialogs = useDialogs()
   const [creating, setCreating] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -9936,6 +9940,7 @@ const subscriptionClientIcons: Record<string, string> = {
   v2ray: v2rayNClientIcon,
   'v2ray-uri': v2rayNClientIcon,
   clash: clashClassicClientIcon,
+  'plain-json': singBoxClientIcon,
 }
 
 let subscriptionClientIconsReady: Promise<void> | null = null
@@ -10013,7 +10018,7 @@ function proxyPathChainLabels(data: any, path: ProxyPath): string[] {
 function Subscriptions({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
   const [iconsReady, setIconsReady] = useState(false)
-  const [subscriptionFormat, setSubscriptionFormat] = useState<SubscriptionFormat>('sing-box')
+  const [subscriptionFormat, setSubscriptionFormat] = useState<SubscriptionFormat>('sing-box-mieru')
   const [expandedServers, setExpandedServers] = useState<Record<number, boolean>>({})
   const [selectedInboundIDs, setSelectedInboundIDs] = useState<number[]>([])
   const [selectedUserIDs, setSelectedUserIDs] = useState<number[]>([])
@@ -10076,20 +10081,23 @@ function Subscriptions({ data, client, load, notify }: any) {
   const activeProfile = profiles.find(p => p.id === activeProfileID) || null
 
   const clientFormats = [
-    { id: 'sing-box', name: 'sing-box', type: 'Native JSON' },
     { id: 'sing-box-mieru', name: 'sing-box + Mieru', type: 'Extended JSON' },
+    { id: 'sing-box', name: 'sing-box', type: 'Native JSON' },
     { id: 'mieru', name: 'Mieru', type: 'mierus URI' },
     { id: 'clash-meta', name: 'Clash.Meta', type: 'YAML Config' },
     { id: 'mihomo', name: 'Mihomo', type: 'YAML Config' },
     { id: 'stash', name: 'Stash', type: 'YAML' },
     { id: 'surge', name: 'Surge', type: 'Conf' },
-    { id: 'shadowrocket', name: 'Shadowrocket', type: 'URI' },
-    { id: 'qx', name: 'Quantumult X', type: 'URI' },
-    { id: 'loon', name: 'Loon', type: 'URI' },
+    { id: 'surge-mac', name: 'Surge Mac', type: 'Conf' },
+    { id: 'shadowrocket', name: 'Shadowrocket', type: 'YAML' },
+    { id: 'qx', name: 'Quantumult X', type: 'Conf' },
+    { id: 'loon', name: 'Loon', type: 'Conf' },
     { id: 'surfboard', name: 'Surfboard', type: 'Conf' },
     { id: 'egern', name: 'Egern', type: 'YAML' },
+    { id: 'v2ray', name: 'V2Ray', type: 'Base64 URI' },
     { id: 'v2ray-uri', name: 'V2Ray URI', type: 'URI' },
     { id: 'clash', name: 'Clash', type: 'YAML' },
+    { id: 'plain-json', name: 'Plain JSON', type: 'JSON' },
   ]
 
   const toggleServerExpand = (serverID: number) => {
@@ -11508,7 +11516,7 @@ const inboundPresets: InboundPreset[] = [
   { id: 'ss-aes-256-gcm', protocol: 'shadowsocks', label: 'SS 256', description: 'AES-256-GCM，单用户', defaultPort: 8388 },
   { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'AES-128-GCM，多用户', defaultPort: 8388 },
   { id: 'ss-2022-256', protocol: 'shadowsocks', label: 'SS 2022-256', description: 'AES-256-GCM，多用户', defaultPort: 8388 },
-  { id: 'mieru-basic', protocol: 'mieru', label: 'Mieru', description: 'Mieru 多用户入口', defaultPort: 8964 },
+  { id: 'mieru-basic', protocol: 'mieru', label: 'Mieru', description: 'Mieru 多用户入口', defaultPort: 25250 },
   { id: 'ssh-restricted', protocol: 'ssh', label: 'SSH 受限代理', description: '公钥认证，仅支持本地/动态转发', defaultPort: 2222 },
 ]
 

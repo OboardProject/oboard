@@ -8,6 +8,7 @@ require (
 	github.com/lionsoul2014/ip2region/binding/golang v0.0.0-20260709160242-cd40e3a1d532
 	github.com/metacubex/age v0.0.0-20260603010618-28d156b4ea78
 	github.com/pquerna/otp v1.5.0
+	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/crypto v0.53.0
 	modernc.org/sqlite v1.53.0
 )

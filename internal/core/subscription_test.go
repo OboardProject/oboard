@@ -182,7 +182,7 @@ func TestVLESSRealitySubscriptionUsesTCPRealityVision(t *testing.T) {
 	if !ok || utls["fingerprint"] != "chrome" {
 		t.Fatalf("reality subscription should default uTLS chrome fingerprint: %#v", tls)
 	}
-	uri, err := shareURIFromNode(nodes[0])
+	uri, err := renderSubscriptionTarget(nodes, model.SubscriptionFormatV2RayURI)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestManagedCertificateDomainOverridesSubscriptionSNI(t *testing.T) {
 			if !ok || tls["server_name"] != "entry.example.net" {
 				t.Fatalf("subscription TLS = %#v", nodes[0].Raw["tls"])
 			}
-			uri, err := shareURIFromNode(nodes[0])
+			uri, err := renderSubscriptionTarget(nodes, model.SubscriptionFormatV2RayURI)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -385,7 +385,7 @@ func TestGenerateClashMetaSubscription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"proxies:", "proxy-groups:", "type: vless", "name: \"自动选择\"", "MATCH,自动选择"} {
+	for _, want := range []string{"proxies:", "proxy-groups:", "type: vless", "name: 自动选择", "MATCH,自动选择"} {
 		if !strings.Contains(sub, want) {
 			t.Fatalf("clash subscription missing %q:\n%s", want, sub)
 		}

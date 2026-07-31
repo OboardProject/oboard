@@ -1,11 +1,8 @@
 package core
 
 import (
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"sort"
 	"strconv"
@@ -61,24 +58,7 @@ func GenerateSubscriptionWithOptions(user model.User, servers []model.Server, in
 	if err != nil {
 		return "", err
 	}
-	switch format {
-	case model.SubscriptionFormatPlainJSON:
-		return renderPlainJSONSubscription(nodes)
-	case model.SubscriptionFormatSingBox:
-		return renderSingBoxSubscription(nodes)
-	case model.SubscriptionFormatSingBoxMieru:
-		return renderSingBoxMieruSubscription(nodes)
-	case model.SubscriptionFormatMieru:
-		return renderMieruSubscription(nodes)
-	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatClash:
-		return renderClashMetaSubscription(nodes)
-	case model.SubscriptionFormatV2Ray:
-		return renderV2RaySubscription(nodes)
-	case model.SubscriptionFormatV2RayURI, model.SubscriptionFormatShadowrocket, model.SubscriptionFormatLoon, model.SubscriptionFormatEgern, model.SubscriptionFormatQX, model.SubscriptionFormatSurfboard, model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac:
-		return renderURIListSubscription(nodes)
-	default:
-		return "", fmt.Errorf("unsupported subscription format %q", format)
-	}
+	return renderSubscriptionTarget(nodes, format)
 }
 
 func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []model.Inbound, opts SubscriptionOptions) ([]SubscriptionNode, error) {
@@ -416,282 +396,31 @@ func subscriptionInboundAllowed(userID, inboundID int64, bindings []model.Inboun
 }
 
 func renderPlainJSONSubscription(nodes []SubscriptionNode) (string, error) {
-	b, err := json.MarshalIndent(nodes, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return renderSubscriptionTarget(nodes, model.SubscriptionFormatPlainJSON)
 }
 
 func renderSingBoxSubscription(nodes []SubscriptionNode) (string, error) {
-	officialNodes := make([]SubscriptionNode, 0, len(nodes))
-	for _, node := range nodes {
-		if stringFromAny(node.Raw["type"]) != "mieru" {
-			officialNodes = append(officialNodes, node)
-		}
-	}
-	return renderSingBoxConfig(officialNodes)
+	return renderSubscriptionTarget(nodes, model.SubscriptionFormatSingBox)
 }
 
 func renderSingBoxMieruSubscription(nodes []SubscriptionNode) (string, error) {
-	return renderSingBoxConfig(nodes)
-}
-
-func renderSingBoxConfig(nodes []SubscriptionNode) (string, error) {
-	outbounds := []map[string]any{{"type": "direct", "tag": "direct"}}
-	for _, node := range nodes {
-		outbounds = append(outbounds, cloneMap(node.Raw))
-	}
-	config := SingBoxConfig{Log: map[string]any{"level": "warn"}, DNS: defaultDNS("remote"), Inbounds: []map[string]any{}, Outbounds: outbounds, Route: map[string]any{"final": "direct"}}
-	b, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return renderSubscriptionTarget(nodes, model.SubscriptionFormatSingBoxMieru)
 }
 
 func renderMieruSubscription(nodes []SubscriptionNode) (string, error) {
-	lines := make([]string, 0, len(nodes))
-	for _, node := range nodes {
-		if stringFromAny(node.Raw["type"]) != "mieru" {
-			continue
-		}
-		raw := node.Raw
-		server := strings.TrimSpace(stringFromAny(raw["server"]))
-		port := intFromAny(raw["server_port"])
-		username := stringFromAny(raw["username"])
-		password := stringFromAny(raw["password"])
-		if server == "" || port == 0 || username == "" || password == "" {
-			return "", fmt.Errorf("subscription node %s has incomplete mieru credentials", node.Name)
-		}
-		transport := normalizeMieruTransport(stringFromAny(raw["transport"]))
-		query := url.Values{}
-		query.Set("profile", node.Name)
-		query.Add("port", strconv.Itoa(port))
-		query.Add("protocol", transport)
-		ranges, err := mieruPortRangeStrings(raw["server_ports"])
-		if err != nil {
-			return "", fmt.Errorf("subscription node %s: %w", node.Name, err)
-		}
-		for _, portRange := range ranges {
-			query.Add("port", portRange)
-			query.Add("protocol", transport)
-		}
-		if multiplexing := stringFromAny(raw["multiplexing"]); multiplexing != "" {
-			query.Set("multiplexing", multiplexing)
-		}
-		if pattern := stringFromAny(raw["traffic_pattern"]); pattern != "" {
-			query.Set("traffic-pattern", pattern)
-		}
-		host := server
-		if ip := net.ParseIP(strings.Trim(server, "[]")); ip != nil && ip.To4() == nil {
-			host = "[" + strings.Trim(server, "[]") + "]"
-		}
-		shareURL := &url.URL{
-			Scheme:   "mierus",
-			User:     url.UserPassword(username, password),
-			Host:     host,
-			RawQuery: query.Encode(),
-		}
-		lines = append(lines, shareURL.String())
-	}
-	if len(lines) == 0 {
-		return "", nil
-	}
-	return strings.Join(lines, "\n") + "\n", nil
+	return renderSubscriptionTarget(nodes, model.SubscriptionFormatMieru)
 }
 
 func renderClashMetaSubscription(nodes []SubscriptionNode) (string, error) {
-	if len(nodes) == 0 {
-		return "proxies: []\nproxy-groups: []\nrules:\n  - MATCH,DIRECT\n", nil
-	}
-	var b strings.Builder
-	b.WriteString("proxies:\n")
-	groups := map[string][]string{}
-	for _, node := range nodes {
-		proxy, err := clashProxyFromNode(node)
-		if err != nil {
-			if strings.Contains(err.Error(), "unsupported") {
-				continue
-			}
-			return "", err
-		}
-		if strings.TrimSpace(proxy) == "" {
-			continue
-		}
-		b.WriteString(proxy)
-		groups[node.Group] = append(groups[node.Group], node.Name)
-	}
-	b.WriteString("proxy-groups:\n")
-	groupNames := make([]string, 0, len(groups))
-	for name := range groups {
-		groupNames = append(groupNames, name)
-	}
-	sort.Strings(groupNames)
-	for _, name := range groupNames {
-		b.WriteString("  - name: ")
-		b.WriteString(yamlQuote(name))
-		b.WriteString("\n    type: select\n    proxies:\n")
-		for _, proxy := range groups[name] {
-			b.WriteString("      - ")
-			b.WriteString(yamlQuote(proxy))
-			b.WriteByte('\n')
-		}
-		b.WriteString("      - DIRECT\n")
-	}
-	b.WriteString("rules:\n")
-	if len(groupNames) > 0 {
-		b.WriteString("  - MATCH,")
-		b.WriteString(groupNames[0])
-		b.WriteByte('\n')
-	} else {
-		b.WriteString("  - MATCH,DIRECT\n")
-	}
-	return b.String(), nil
+	return renderSubscriptionTarget(nodes, model.SubscriptionFormatClashMeta)
 }
 
 func renderV2RaySubscription(nodes []SubscriptionNode) (string, error) {
-	list, err := renderURIListSubscription(nodes)
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString([]byte(list)), nil
+	return renderSubscriptionTarget(nodes, model.SubscriptionFormatV2Ray)
 }
 
 func renderURIListSubscription(nodes []SubscriptionNode) (string, error) {
-	lines := make([]string, 0, len(nodes))
-	for _, node := range nodes {
-		uri, err := shareURIFromNode(node)
-		if err != nil {
-			if strings.Contains(err.Error(), "unsupported") {
-				continue
-			}
-			return "", err
-		}
-		lines = append(lines, uri)
-	}
-	return strings.Join(lines, "\n") + "\n", nil
-}
-
-func shareURIFromNode(node SubscriptionNode) (string, error) {
-	raw := node.Raw
-	typ := stringFromAny(raw["type"])
-	server := stringFromAny(raw["server"])
-	port := intFromAny(raw["server_port"])
-	if server == "" || port == 0 {
-		return "", fmt.Errorf("subscription node %s missing server/server_port", node.Name)
-	}
-	switch typ {
-	case "vless":
-		return vlessShareURI(node, server, port), nil
-	case "hysteria2":
-		return passwordShareURI("hysteria2", node, server, port, stringFromAny(raw["password"])), nil
-	case "anytls":
-		return passwordShareURI("anytls", node, server, port, stringFromAny(raw["password"])), nil
-	case "shadowsocks":
-		method := stringFromAny(raw["method"])
-		password := stringFromAny(raw["password"])
-		if method == "" || password == "" {
-			return "", fmt.Errorf("subscription node %s missing shadowsocks method/password", node.Name)
-		}
-		userInfo := base64.RawURLEncoding.EncodeToString([]byte(method + ":" + password))
-		return "ss://" + userInfo + "@" + server + ":" + strconv.Itoa(port) + "#" + url.QueryEscape(node.Name), nil
-	case "socks":
-		username := stringFromAny(raw["username"])
-		password := stringFromAny(raw["password"])
-		if username == "" && password == "" {
-			return "socks5://" + server + ":" + strconv.Itoa(port) + "#" + url.QueryEscape(node.Name), nil
-		}
-		return "socks5://" + url.UserPassword(username, password).String() + "@" + server + ":" + strconv.Itoa(port) + "#" + url.QueryEscape(node.Name), nil
-	default:
-		return "", errors.New("unsupported URI proxy type " + typ)
-	}
-}
-
-func vlessShareURI(node SubscriptionNode, server string, port int) string {
-	raw := node.Raw
-	q := url.Values{}
-	q.Set("encryption", "none")
-	applyVLESSTransportURIParams(q, raw)
-	if flow := stringFromAny(raw["flow"]); flow != "" {
-		q.Set("flow", flow)
-	}
-	if packetEncoding := stringFromAny(raw["packet_encoding"]); packetEncoding != "" {
-		q.Set("packetEncoding", packetEncoding)
-	}
-	applyTLSURIParams(q, raw)
-	return "vless://" + url.QueryEscape(stringFromAny(raw["uuid"])) + "@" + server + ":" + strconv.Itoa(port) + "?" + q.Encode() + "#" + url.QueryEscape(node.Name)
-}
-
-func applyVLESSTransportURIParams(q url.Values, raw map[string]any) {
-	transport, ok := raw["transport"].(map[string]any)
-	if !ok {
-		q.Set("type", "tcp")
-		return
-	}
-	transportType := stringFromAny(transport["type"])
-	if transportType == "" {
-		transportType = "tcp"
-	}
-	q.Set("type", transportType)
-	switch transportType {
-	case "ws":
-		if path := stringFromAny(transport["path"]); path != "" {
-			q.Set("path", path)
-		}
-		if headers, ok := transport["headers"].(map[string]any); ok {
-			if host := stringFromAny(headers["Host"]); host != "" {
-				q.Set("host", host)
-			}
-		}
-	case "grpc":
-		if serviceName := stringFromAny(transport["service_name"]); serviceName != "" {
-			q.Set("serviceName", serviceName)
-		}
-	}
-}
-
-func passwordShareURI(scheme string, node SubscriptionNode, server string, port int, password string) string {
-	q := url.Values{}
-	applyTLSURIParams(q, node.Raw)
-	return scheme + "://" + url.QueryEscape(password) + "@" + server + ":" + strconv.Itoa(port) + querySuffix(q) + "#" + url.QueryEscape(node.Name)
-}
-
-func applyTLSURIParams(q url.Values, raw map[string]any) {
-	tlsRaw, ok := raw["tls"].(map[string]any)
-	if !ok {
-		return
-	}
-	if enabled, ok := tlsRaw["enabled"].(bool); ok && enabled {
-		q.Set("security", "tls")
-	}
-	if serverName := stringFromAny(tlsRaw["server_name"]); serverName != "" {
-		q.Set("sni", serverName)
-	}
-	if reality, ok := tlsRaw["reality"].(map[string]any); ok {
-		if publicKey := stringFromAny(reality["public_key"]); publicKey != "" {
-			q.Set("security", "reality")
-			q.Set("pbk", publicKey)
-			if fp := realityFingerprint(tlsRaw); fp != "" {
-				q.Set("fp", fp)
-			}
-		}
-		if shortID := stringFromAny(reality["short_id"]); shortID != "" {
-			q.Set("sid", shortID)
-		}
-	}
-}
-
-func realityFingerprint(tlsRaw map[string]any) string {
-	if utls, ok := tlsRaw["utls"].(map[string]any); ok {
-		if fp := strings.TrimSpace(stringFromAny(utls["fingerprint"])); fp != "" {
-			return fp
-		}
-	}
-	if fp := strings.TrimSpace(stringFromAny(tlsRaw["fingerprint"])); fp != "" {
-		return fp
-	}
-	return "chrome"
+	return renderSubscriptionTarget(nodes, model.SubscriptionFormatV2RayURI)
 }
 
 func querySuffix(q url.Values) string {
@@ -699,98 +428,6 @@ func querySuffix(q url.Values) string {
 		return ""
 	}
 	return "?" + q.Encode()
-}
-
-func clashProxyFromNode(node SubscriptionNode) (string, error) {
-	raw := node.Raw
-	typ, _ := raw["type"].(string)
-	server, _ := raw["server"].(string)
-	port := intFromAny(raw["server_port"])
-	if server == "" || port == 0 {
-		return "", fmt.Errorf("subscription node %s missing server/server_port", node.Name)
-	}
-	var b strings.Builder
-	b.WriteString("  - name: ")
-	b.WriteString(yamlQuote(node.Name))
-	b.WriteString("\n")
-	switch typ {
-	case "vless":
-		b.WriteString("    type: vless\n")
-		b.WriteString("    server: ")
-		b.WriteString(yamlQuote(server))
-		b.WriteString("\n    port: ")
-		b.WriteString(strconv.Itoa(port))
-		b.WriteString("\n    uuid: ")
-		b.WriteString(yamlQuote(stringFromAny(raw["uuid"])))
-		b.WriteString("\n")
-		if flow := stringFromAny(raw["flow"]); flow != "" {
-			b.WriteString("    flow: ")
-			b.WriteString(yamlQuote(flow))
-			b.WriteString("\n")
-		}
-		if transport, ok := raw["transport"].(map[string]any); ok {
-			if transportType := stringFromAny(transport["type"]); transportType != "" {
-				b.WriteString("    network: ")
-				b.WriteString(yamlQuote(transportType))
-				b.WriteString("\n")
-			}
-		}
-		applyClashTLS(&b, raw)
-	case "hysteria2":
-		b.WriteString("    type: hysteria2\n")
-		b.WriteString("    server: ")
-		b.WriteString(yamlQuote(server))
-		b.WriteString("\n    port: ")
-		b.WriteString(strconv.Itoa(port))
-		b.WriteString("\n    password: ")
-		b.WriteString(yamlQuote(stringFromAny(raw["password"])))
-		b.WriteString("\n")
-		applyClashTLS(&b, raw)
-	case "anytls":
-		b.WriteString("    type: anytls\n")
-		b.WriteString("    server: ")
-		b.WriteString(yamlQuote(server))
-		b.WriteString("\n    port: ")
-		b.WriteString(strconv.Itoa(port))
-		b.WriteString("\n    password: ")
-		b.WriteString(yamlQuote(stringFromAny(raw["password"])))
-		b.WriteString("\n")
-		applyClashTLS(&b, raw)
-	case "shadowsocks":
-		b.WriteString("    type: ss\n")
-		b.WriteString("    server: ")
-		b.WriteString(yamlQuote(server))
-		b.WriteString("\n    port: ")
-		b.WriteString(strconv.Itoa(port))
-		b.WriteString("\n    cipher: ")
-		b.WriteString(yamlQuote(stringFromAny(raw["method"])))
-		b.WriteString("\n    password: ")
-		b.WriteString(yamlQuote(stringFromAny(raw["password"])))
-		b.WriteString("\n")
-		if udpOverTCPEnabled(raw["udp_over_tcp"]) {
-			b.WriteString("    udp: true\n    udp-over-tcp: true\n")
-		}
-	case "socks":
-		b.WriteString("    type: socks5\n")
-		b.WriteString("    server: ")
-		b.WriteString(yamlQuote(server))
-		b.WriteString("\n    port: ")
-		b.WriteString(strconv.Itoa(port))
-		b.WriteString("\n")
-		if username := stringFromAny(raw["username"]); username != "" {
-			b.WriteString("    username: ")
-			b.WriteString(yamlQuote(username))
-			b.WriteString("\n")
-		}
-		if password := stringFromAny(raw["password"]); password != "" {
-			b.WriteString("    password: ")
-			b.WriteString(yamlQuote(password))
-			b.WriteString("\n")
-		}
-	default:
-		return "", errors.New("unsupported clash proxy type " + typ)
-	}
-	return b.String(), nil
 }
 
 func udpOverTCPEnabled(value any) bool {
@@ -801,41 +438,6 @@ func udpOverTCPEnabled(value any) bool {
 		return boolValue(options["enabled"])
 	}
 	return false
-}
-
-func applyClashTLS(b *strings.Builder, raw map[string]any) {
-	tlsRaw, ok := raw["tls"].(map[string]any)
-	if !ok {
-		return
-	}
-	if enabled, ok := tlsRaw["enabled"].(bool); ok {
-		b.WriteString("    tls: ")
-		if enabled {
-			b.WriteString("true\n")
-		} else {
-			b.WriteString("false\n")
-		}
-	}
-	if serverName := stringFromAny(tlsRaw["server_name"]); serverName != "" {
-		b.WriteString("    servername: ")
-		b.WriteString(yamlQuote(serverName))
-		b.WriteString("\n")
-	}
-	if reality, ok := tlsRaw["reality"].(map[string]any); ok {
-		if publicKey := stringFromAny(reality["public_key"]); publicKey != "" {
-			b.WriteString("    client-fingerprint: ")
-			b.WriteString(yamlQuote(realityFingerprint(tlsRaw)))
-			b.WriteString("\n")
-			b.WriteString("    reality-opts:\n      public-key: ")
-			b.WriteString(yamlQuote(publicKey))
-			b.WriteString("\n")
-			if shortID := stringFromAny(reality["short_id"]); shortID != "" {
-				b.WriteString("      short-id: ")
-				b.WriteString(yamlQuote(shortID))
-				b.WriteString("\n")
-			}
-		}
-	}
 }
 
 func normalizeSubscriptionFormat(format model.SubscriptionFormat) model.SubscriptionFormat {
@@ -921,27 +523,11 @@ func SubscriptionContentType(format model.SubscriptionFormat) string {
 	switch normalizeSubscriptionFormat(format) {
 	case model.SubscriptionFormatPlainJSON, model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
 		return "application/json"
-	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatClash:
+	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatShadowrocket, model.SubscriptionFormatEgern, model.SubscriptionFormatClash:
 		return "text/yaml; charset=utf-8"
 	default:
 		return "text/plain; charset=utf-8"
 	}
-}
-
-func cloneMap(in map[string]any) map[string]any {
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-func yamlQuote(v string) string {
-	if v == "" {
-		return `""`
-	}
-	b, _ := json.Marshal(v)
-	return string(b)
 }
 
 func intFromAny(v any) int {
