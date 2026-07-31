@@ -15,6 +15,11 @@ type DNSConfigState struct {
 	BootstrapList *model.DNSList
 }
 
+const (
+	primaryRemoteDNSTag    = "remote-primary"
+	primaryBootstrapDNSTag = "bootstrap-primary"
+)
+
 func DNSConfigStateForServer(serverID int64, lists []model.DNSList, policies []model.ServerDNSPolicy) (*DNSConfigState, error) {
 	var policy *model.ServerDNSPolicy
 	for i := range policies {
@@ -64,21 +69,21 @@ func BuildDNSConfig(server model.Server, state *DNSConfigState) (map[string]any,
 	servers := make([]map[string]any, 0, len(encrypted)+len(bootstrap)+1)
 	for i, candidate := range encrypted {
 		item := candidateToSingBoxDNS(candidate)
-		item["tag"] = []string{"remote-primary", "remote-secondary"}[i]
+		item["tag"] = []string{primaryRemoteDNSTag, "remote-secondary"}[i]
 		if hostNeedsResolver(candidate.Server) {
-			item["domain_resolver"] = "bootstrap-primary"
+			item["domain_resolver"] = primaryBootstrapDNSTag
 		}
 		servers = append(servers, item)
 	}
 	for i, candidate := range bootstrap {
 		item := candidateToSingBoxDNS(candidate)
-		item["tag"] = []string{"bootstrap-primary", "bootstrap-secondary"}[i]
+		item["tag"] = []string{primaryBootstrapDNSTag, "bootstrap-secondary"}[i]
 		servers = append(servers, item)
 	}
 	servers = append(servers, map[string]any{"type": "local", "tag": "local"})
 	return map[string]any{
 		"servers":  servers,
-		"final":    "remote-primary",
+		"final":    primaryRemoteDNSTag,
 		"strategy": normalizeDNSStrategy(state.Policy.Strategy, EffectiveIPStack(server)),
 	}, nil
 }

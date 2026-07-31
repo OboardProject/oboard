@@ -417,7 +417,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 					plan.Warnings = append(plan.Warnings, fmt.Sprintf("第 %d 跳隧道需要目标服务器", step.Position))
 					continue
 				}
-				tunnelKey := proxyPathTunnelReuseKey(step, previousServerID, targetServerID, plannedInbound, serverByID)
+				tunnelKey := proxyPathTunnelReuseKey(step, previousServerID, targetServerID, plannedInbound)
 				t, exists := sharedTunnels[tunnelKey]
 				if !exists {
 					var err error
@@ -1045,7 +1045,7 @@ func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sour
 	}
 	cfg := parseStepConfig(step.ConfigJSON)
 	typeName := model.TunnelType(strings.ToLower(stringValue(cfg, "type", string(model.TunnelTypeSSH))))
-	reuseKey := proxyPathTunnelReuseKey(step, sourceServerID, targetServerID, targetInbound, servers)
+	reuseKey := proxyPathTunnelReuseKey(step, sourceServerID, targetServerID, targetInbound)
 	tunnel := model.Tunnel{ID: stableProxyPathResourceID("proxy-path-tunnel", reuseKey), Name: fmt.Sprintf("共享隧道 / %s -> %s", source.Name, target.Name), SourceServerID: sourceServerID, TargetServerID: targetServerID, Type: typeName, Priority: 1000, Enabled: true}
 	switch typeName {
 	case model.TunnelTypeSSH:
@@ -1058,16 +1058,13 @@ func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sour
 		})
 		sshPort := intValueFromMap(cfg, "ssh_port", 0)
 		if sshPort == 0 {
-			sshPort = target.SSHPort
-		}
-		if sshPort == 0 {
-			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳的目标服务器 %s 未设置 SSH 端口", path.Name, step.Position, target.Name)
+			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳未设置目标端隧道服务端口", path.Name, step.Position)
 		}
 		if err := ValidatePort(sshPort); err != nil {
-			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳 SSH 端口: %w", path.Name, step.Position, err)
+			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳目标端隧道服务端口: %w", path.Name, step.Position, err)
 		}
 		if !proxyPathPortAvailable(target.ID, sshPort, model.ForwardProtocolTCP, inbounds) {
-			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳 SSH 端口 %d 已被目标服务器的 TCP 服务占用", path.Name, step.Position, sshPort)
+			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳目标端隧道服务端口 %d 已被目标服务器的 TCP 服务占用", path.Name, step.Position, sshPort)
 		}
 		sshConfig := map[string]any{
 			"managed_pair":       true,
@@ -1122,15 +1119,12 @@ func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sour
 	return tunnel, nil
 }
 
-func proxyPathTunnelReuseKey(step model.ProxyPathStep, sourceServerID, targetServerID int64, targetInbound model.Inbound, servers map[int64]model.Server) string {
+func proxyPathTunnelReuseKey(step model.ProxyPathStep, sourceServerID, targetServerID int64, targetInbound model.Inbound) string {
 	cfg := parseStepConfig(step.ConfigJSON)
 	typeName := strings.ToLower(stringValue(cfg, "type", string(model.TunnelTypeSSH)))
 	switch model.TunnelType(typeName) {
 	case model.TunnelTypeSSH:
 		sshPort := intValueFromMap(cfg, "ssh_port", 0)
-		if sshPort == 0 {
-			sshPort = servers[targetServerID].SSHPort
-		}
 		return fmt.Sprintf("ssh:%d:%d:%d:%d", sourceServerID, targetServerID, sshPort, targetInbound.Port)
 	case model.TunnelTypeWireGuard:
 		// persistent_keepalive is a tuning value, not part of the peer identity.
@@ -1181,9 +1175,6 @@ func proxyPathAvailablePortForProtocol(server model.Server, pathSeed int64, posi
 		if inbound.ServerID == server.ID && inbound.Port > 0 && (protocol == "" || proxyPathInboundUsesProtocol(inbound, protocol)) {
 			occupied[inbound.Port] = true
 		}
-	}
-	if server.SSHPort > 0 && protocol != model.ForwardProtocolUDP {
-		occupied[server.SSHPort] = true
 	}
 	choose := func(rangeStart, rangeEnd int) int {
 		span := rangeEnd - rangeStart + 1

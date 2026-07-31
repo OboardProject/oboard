@@ -272,7 +272,6 @@ type Server struct {
 	BBREnabled               bool           `json:"bbr_enabled"`
 	PortRangeStart           int            `json:"port_range_start"`
 	PortRangeEnd             int            `json:"port_range_end"`
-	SSHPort                  int            `json:"ssh_port"`
 	Status                   ServerStatus   `json:"status"`
 	OS                       string         `json:"os"`
 	DistroID                 string         `json:"distro_id"`
@@ -477,18 +476,32 @@ type InboundUser struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// SSHUserKey belongs to one panel user and can be enabled on one or more SSH
-// inbounds through the normal inbound-user grant. Private keys are never
-// stored by OBoard.
-type SSHUserKey struct {
-	ID          int64     `json:"id"`
-	UserID      int64     `json:"user_id"`
-	Name        string    `json:"name"`
-	PublicKey   string    `json:"public_key"`
-	Fingerprint string    `json:"fingerprint"`
-	Enabled     bool      `json:"enabled"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+// SSHUserCredential is the Controller-managed client identity shared by every
+// restricted SSH inbound granted to one panel user. Only the public metadata is
+// serialized; the encrypted private key remains inside Controller storage.
+type SSHUserCredential struct {
+	UserID              int64     `json:"user_id"`
+	PublicKey           string    `json:"public_key"`
+	Fingerprint         string    `json:"fingerprint"`
+	PrivateKeyEncrypted string    `json:"-"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+type SSHServerHostKey struct {
+	ServerID      int64     `json:"server_id"`
+	PublicKey     string    `json:"public_key"`
+	Fingerprint   string    `json:"fingerprint"`
+	ConfigVersion int64     `json:"config_version"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type SSHCredentialDeployment struct {
+	ServerID              int64     `json:"server_id"`
+	UserID                int64     `json:"user_id"`
+	CredentialFingerprint string    `json:"credential_fingerprint"`
+	ConfigVersion         int64     `json:"config_version"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 type AccessSubjectType string

@@ -68,6 +68,61 @@ func TestSubscriptionRespectsInboundUserBindings(t *testing.T) {
 	}
 }
 
+func TestSSHSubscriptionRequiresCredentialDeploymentAndAuthorization(t *testing.T) {
+	user := model.User{ID: 7, Username: "alice", Status: "active"}
+	server := model.Server{ID: 1, Name: "tokyo", PublicIPv4: "203.0.113.10"}
+	inbound := model.Inbound{ID: 11, ServerID: server.ID, Name: "ssh", Protocol: model.ProtocolSSH, ListenIP: "0.0.0.0", Port: 2222, EntryIPMode: model.EntryIPModeIPv4, Enabled: true}
+	base := SubscriptionOptions{
+		InboundUsers:             []model.InboundUser{{InboundID: inbound.ID, UserID: user.ID, Enabled: true}},
+		SSHPrivateKey:            sshSubscriptionPrivateKey,
+		SSHCredentialFingerprint: "SHA256:user-key",
+		SSHServerHostKeys:        map[int64]string{server.ID: sshSubscriptionHostKey},
+		SSHDeployedFingerprints:  map[int64]string{server.ID: "SHA256:user-key"},
+	}
+	tests := []struct {
+		name   string
+		mutate func(*SubscriptionOptions)
+		want   int
+	}{
+		{name: "all state matches", want: 1},
+		{name: "missing private key", mutate: func(opts *SubscriptionOptions) { opts.SSHPrivateKey = "" }},
+		{name: "missing credential fingerprint", mutate: func(opts *SubscriptionOptions) { opts.SSHCredentialFingerprint = "" }},
+		{name: "credential not deployed", mutate: func(opts *SubscriptionOptions) { opts.SSHDeployedFingerprints = nil }},
+		{name: "rotated credential pending deployment", mutate: func(opts *SubscriptionOptions) { opts.SSHDeployedFingerprints[server.ID] = "SHA256:old-key" }},
+		{name: "missing agent host key", mutate: func(opts *SubscriptionOptions) { opts.SSHServerHostKeys = nil }},
+		{name: "user not authorized", mutate: func(opts *SubscriptionOptions) {
+			opts.InboundUsers = []model.InboundUser{{InboundID: inbound.ID, UserID: 8, Enabled: true}}
+		}},
+		{name: "profile assignment missing", mutate: func(opts *SubscriptionOptions) {
+			opts.Profile = &model.SubscriptionProfile{ID: 3, Enabled: true}
+			opts.RequireAssignments = true
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			opts := base
+			opts.SSHServerHostKeys = map[int64]string{server.ID: base.SSHServerHostKeys[server.ID]}
+			opts.SSHDeployedFingerprints = map[int64]string{server.ID: base.SSHDeployedFingerprints[server.ID]}
+			if test.mutate != nil {
+				test.mutate(&opts)
+			}
+			nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(nodes) != test.want {
+				t.Fatalf("SSH nodes = %#v, want %d", nodes, test.want)
+			}
+			if test.want == 1 {
+				raw := nodes[0].Raw
+				if raw["server"] != server.PublicIPv4 || raw["username"] != "oboard-7" || raw["private_key"] != sshSubscriptionPrivateKey || !stringSetContains(stringListFromAny(raw["host_key"]), sshSubscriptionHostKey) {
+					t.Fatalf("SSH node = %#v", raw)
+				}
+			}
+		})
+	}
+}
+
 func TestSubscriptionProfileWithoutAssignmentsReturnsNoNodes(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
 	profile := &model.SubscriptionProfile{ID: 9, Name: "empty-profile", GroupName: "default", Enabled: true}

@@ -17,8 +17,6 @@ export type TransportDialogTarget = {
   targetLabel: string
   /** Set when the operator picked an existing inbound instead of a server. */
   targetInboundLabel?: string
-  /** The target server's stored SSH port, 0 when unset. */
-  targetSSHPort?: number
   /** An imported node can only be reached through a sing-box outbound. */
   importedOnly?: boolean
 }
@@ -55,8 +53,7 @@ export function TransportDialog({
   const [tunnelKind, setTunnelKind] = useState<TunnelKind>(() => (existing.type === 'wireguard' ? 'wireguard' : 'ssh'))
   const [sshPort, setSSHPort] = useState<string>(() => {
     const stored = numberOr(existing.ssh_port, 0)
-    if (stored > 0) return String(stored)
-    return target.targetSSHPort ? String(target.targetSSHPort) : ''
+    return stored > 0 ? String(stored) : ''
   })
   const [keepalive, setKeepalive] = useState<string>(() => String(numberOr(existing.persistent_keepalive, DEFAULT_KEEPALIVE)))
   const [saving, setSaving] = useState(false)
@@ -176,7 +173,7 @@ export function TransportDialog({
 
         {needsSSHPort && (
           <label className="transport-field">
-            <span>目标 SSH 端口</span>
+            <span>目标端隧道服务端口</span>
             <input
               type="number"
               min={1}
@@ -188,10 +185,8 @@ export function TransportDialog({
             />
             <small className={sshPortInvalid ? 'transport-field-error' : 'muted'}>
               {sshPortInvalid
-                ? 'SSH 端口必须是 1 到 65535 的整数。'
-                : target.targetSSHPort
-                  ? `留空则使用目标服务器已保存的 ${target.targetSSHPort}。`
-                  : '目标服务器未保存 SSH 端口，请填写本次隧道使用的端口。'}
+                ? '目标端隧道服务端口必须是 1 到 65535 的整数。'
+                : '由 OBoard 在目标 Agent 上启动专用隧道服务；这不是服务器的登录 SSH 端口。'}
             </small>
           </label>
         )}
@@ -215,7 +210,7 @@ export function TransportDialog({
 
         <div className="transport-preview">
           <span>这一跳</span>
-          <strong>{describeSelection(target, mode, usesExistingInbound, chainMethod, chainMethods, tunnelKind, sshPortValue, target.targetSSHPort)}</strong>
+          <strong>{describeSelection(target, mode, usesExistingInbound, chainMethod, chainMethods, tunnelKind, sshPortValue)}</strong>
         </div>
       </div>
       <footer className="dialog-actions">
@@ -234,7 +229,6 @@ function describeSelection(
   chainMethods: ChainMethodOption[],
   tunnelKind: TunnelKind,
   sshPort: number,
-  storedSSHPort?: number,
 ) {
   const route = `${target.sourceLabel} → ${target.targetLabel}`
   const methodLabel = chainMethods.find(item => item.value === chainMethod)?.label || chainMethod
@@ -242,8 +236,7 @@ function describeSelection(
   const service = usesExistingInbound ? `复用 ${target.targetInboundLabel}` : `共享 ${methodLabel}`
   if (mode === 'tunnel') {
     if (tunnelKind === 'wireguard') return `${route} · WireGuard 隧道 · ${service}`
-    const port = sshPort > 0 ? sshPort : storedSSHPort
-    return `${route} · SSH 隧道${port ? ` (:${port})` : ''} · ${service}`
+    return `${route} · SSH 隧道${sshPort > 0 ? ` (:${sshPort})` : ''} · ${service}`
   }
   return `${route} · ${service}`
 }

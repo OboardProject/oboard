@@ -2,12 +2,14 @@ package controller
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -154,8 +156,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/me/passkeys/register/finish", s.auth(s.passkeyRegisterFinish, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/passkeys/", s.auth(s.passkeys, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/subscription-age", s.auth(s.selfSubscriptionAge, model.RoleViewer))
-	mux.HandleFunc("/api/v1/me/ssh-user-keys", s.auth(s.selfSSHUserKeys, model.RoleViewer))
-	mux.HandleFunc("/api/v1/me/ssh-user-keys/", s.auth(s.selfSSHUserKeys, model.RoleViewer))
+	mux.HandleFunc("/api/v1/me/ssh-credential", s.auth(s.selfSSHUserCredential, model.RoleViewer))
+	mux.HandleFunc("/api/v1/me/ssh-credential/", s.auth(s.selfSSHUserCredential, model.RoleViewer))
 	mux.HandleFunc("/api/v1/page-data", s.auth(s.pageData, model.RoleViewer))
 	mux.HandleFunc("/api/v1/dashboard/summary", s.auth(s.dashboard, model.RoleViewer))
 	mux.HandleFunc("/api/v1/settings/base-path/retry", s.auth(s.settingsBasePathRetry, model.RoleAdmin))
@@ -187,8 +189,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/inbounds/", s.auth(s.inbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/inbound-users", s.auth(s.inboundUsers, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/inbound-users/", s.auth(s.inboundUsers, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/ssh-user-keys", s.auth(s.sshUserKeys, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/ssh-user-keys/", s.auth(s.sshUserKeys, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/ssh-user-credentials", s.auth(s.sshUserCredentials, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/ssh-user-credentials/", s.auth(s.sshUserCredentials, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/user-groups", s.auth(s.userGroups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/user-groups/", s.auth(s.userGroups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/user-group-members", s.auth(s.userGroupMembers, model.RoleAdmin))
@@ -1000,11 +1002,14 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			out["user_group_members"] = members
 			out["external_outbound_access_grants"] = externalGrants
 			out["settings"] = s.publicSettings(ctx, settings)
-			sshKeys, err := s.store.ListSSHUserKeys(ctx)
+			if _, err := s.ensureAuthorizedSSHCredentials(ctx, nil); err != nil {
+				return err
+			}
+			sshKeys, err := s.store.ListSSHUserCredentials(ctx)
 			if err != nil {
 				return err
 			}
-			out["ssh_user_keys"] = sshKeys
+			out["ssh_user_credentials"] = sshKeys
 		}
 		return nil
 	}
@@ -1401,12 +1406,15 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			if err == nil {
 				out["passkeys"] = passkeys
 			}
-			var keys []model.SSHUserKey
+			var credential *model.SSHUserCredential
 			if err == nil {
-				keys, err = s.store.ListSSHUserKeysForUser(ctx, user.ID)
+				_, err = s.ensureAuthorizedSSHCredentials(ctx, nil)
+				if err == nil {
+					credential, _ = s.store.GetSSHUserCredential(ctx, user.ID)
+				}
 			}
 			if err == nil {
-				out["ssh_user_keys"] = keys
+				out["ssh_user_credential"] = credential
 			}
 			if err == nil {
 				config, configErr := s.store.FullRoutingConfigData(ctx)
@@ -3151,11 +3159,6 @@ func validateServer(v *model.Server) error {
 	if err := validateMTUPolicy(v); err != nil {
 		return err
 	}
-	if v.SSHPort != 0 {
-		if err := core.ValidatePort(v.SSHPort); err != nil {
-			return fmt.Errorf("ssh_port: %w", err)
-		}
-	}
 	return core.ValidatePortRange(v.PortRangeStart, v.PortRangeEnd)
 }
 
@@ -3824,167 +3827,223 @@ func (s *Server) inboundUsers(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) sshUserKeys(w http.ResponseWriter, r *http.Request) {
-	id := idFromPath(r.URL.Path, "/api/v1/ssh-user-keys/")
-	switch r.Method {
-	case http.MethodGet:
-		if id != 0 {
-			item, err := s.store.GetSSHUserKey(r.Context(), id)
-			if err != nil {
-				fail(w, err, http.StatusNotFound)
-				return
-			}
-			write(w, http.StatusOK, map[string]any{"ssh_user_key": item})
+const sshUserPrivateKeyPurpose = "ssh-user-private-key"
+
+func (s *Server) sshUserCredentials(w http.ResponseWriter, r *http.Request) {
+	prefix := "/api/v1/ssh-user-credentials/"
+	userID := idFromPath(r.URL.Path, prefix)
+	parts := pathParts(r.URL.Path, prefix)
+	if userID == 0 {
+		if r.Method != http.MethodGet {
+			method(w)
 			return
 		}
-		items, err := s.store.ListSSHUserKeys(r.Context())
+		items, err := s.store.ListSSHUserCredentials(r.Context())
 		if err != nil {
 			fail(w, err, http.StatusInternalServerError)
 			return
 		}
-		write(w, http.StatusOK, map[string]any{"ssh_user_keys": items})
-	case http.MethodPost:
-		var v model.SSHUserKey
-		if !decode(w, r, &v) {
+		write(w, http.StatusOK, map[string]any{"ssh_user_credentials": items})
+		return
+	}
+	if len(parts) != 2 {
+		notFound(w, r)
+		return
+	}
+	switch parts[1] {
+	case "private-key":
+		if r.Method != http.MethodGet {
+			method(w)
 			return
 		}
-		if err := s.normalizeSSHUserKey(r.Context(), &v); err != nil {
-			fail(w, err, http.StatusBadRequest)
+		s.downloadSSHUserPrivateKey(w, r, userID)
+	case "rotate":
+		if r.Method != http.MethodPost {
+			method(w)
 			return
 		}
-		if err := s.store.CreateSSHUserKey(r.Context(), &v); err != nil {
-			fail(w, err, http.StatusConflict)
-			return
-		}
-		auditReq(s, r, "create", "ssh-user-key", fmt.Sprint(v.ID))
-		write(w, http.StatusCreated, map[string]any{"ssh_user_key": v})
-	case http.MethodPatch:
-		if id == 0 {
-			fail(w, errors.New("missing id"), http.StatusBadRequest)
-			return
-		}
-		current, err := s.store.GetSSHUserKey(r.Context(), id)
+		credential, err := s.rotateSSHUserCredential(r.Context(), userID)
 		if err != nil {
 			fail(w, err, http.StatusNotFound)
 			return
 		}
-		v := *current
-		if !decode(w, r, &v) {
-			return
-		}
-		v.ID = id
-		v.UserID = current.UserID // keys are never reassigned across users.
-		if err := s.normalizeSSHUserKey(r.Context(), &v); err != nil {
-			fail(w, err, http.StatusBadRequest)
-			return
-		}
-		if err := s.store.UpdateSSHUserKey(r.Context(), &v); err != nil {
-			fail(w, err, http.StatusConflict)
-			return
-		}
-		auditReq(s, r, "update", "ssh-user-key", fmt.Sprint(id))
-		write(w, http.StatusOK, map[string]any{"ssh_user_key": v})
-	case http.MethodDelete:
-		if id == 0 {
-			fail(w, errors.New("missing id"), http.StatusBadRequest)
-			return
-		}
-		if err := s.store.DeleteSSHUserKey(r.Context(), id); err != nil {
-			fail(w, err, http.StatusInternalServerError)
-			return
-		}
-		auditReq(s, r, "delete", "ssh-user-key", fmt.Sprint(id))
-		write(w, http.StatusOK, map[string]any{"deleted": true})
+		auditReq(s, r, "rotate", "ssh-user-credential", fmt.Sprint(userID))
+		write(w, http.StatusOK, map[string]any{"ssh_user_credential": credential})
 	default:
-		method(w)
+		notFound(w, r)
 	}
 }
 
-// selfSSHUserKeys lets a user maintain only their own public keys.  The
-// corresponding private key never leaves the user's device, and ownership is
-// enforced here instead of trusting a user_id provided by the browser.
-func (s *Server) selfSSHUserKeys(w http.ResponseWriter, r *http.Request) {
+func (s *Server) selfSSHUserCredential(w http.ResponseWriter, r *http.Request) {
 	user := currentUser(r)
 	if user == nil {
 		fail(w, errors.New("invalid session"), http.StatusUnauthorized)
 		return
 	}
-	id := idFromPath(r.URL.Path, "/api/v1/me/ssh-user-keys/")
-	switch r.Method {
-	case http.MethodGet:
-		if id != 0 {
-			item, err := s.store.GetSSHUserKey(r.Context(), id)
-			if err != nil || item.UserID != user.ID {
-				fail(w, errors.New("SSH 公钥不存在"), http.StatusNotFound)
-				return
-			}
-			write(w, http.StatusOK, map[string]any{"ssh_user_key": item})
+	suffix := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/me/ssh-credential"), "/")
+	switch suffix {
+	case "":
+		if r.Method != http.MethodGet {
+			method(w)
 			return
 		}
-		items, err := s.store.ListSSHUserKeysForUser(r.Context(), user.ID)
+		credential, err := s.store.GetSSHUserCredential(r.Context(), user.ID)
 		if err != nil {
-			fail(w, err, http.StatusInternalServerError)
+			fail(w, errors.New("SSH 凭据不存在"), http.StatusNotFound)
 			return
 		}
-		write(w, http.StatusOK, map[string]any{"ssh_user_keys": items})
-	case http.MethodPost:
-		var v model.SSHUserKey
-		if !decode(w, r, &v) {
+		write(w, http.StatusOK, map[string]any{"ssh_user_credential": credential})
+	case "private-key":
+		if r.Method != http.MethodGet {
+			method(w)
 			return
 		}
-		v.UserID = user.ID
-		if err := s.normalizeSSHUserKey(r.Context(), &v); err != nil {
-			fail(w, err, http.StatusBadRequest)
+		s.downloadSSHUserPrivateKey(w, r, user.ID)
+	case "rotate":
+		if r.Method != http.MethodPost {
+			method(w)
 			return
 		}
-		if err := s.store.CreateSSHUserKey(r.Context(), &v); err != nil {
-			fail(w, err, http.StatusConflict)
+		credential, err := s.rotateSSHUserCredential(r.Context(), user.ID)
+		if err != nil {
+			fail(w, err, http.StatusNotFound)
 			return
 		}
-		auditReq(s, r, "create", "ssh-user-key", fmt.Sprint(v.ID))
-		write(w, http.StatusCreated, map[string]any{"ssh_user_key": v})
-	case http.MethodDelete:
-		if id == 0 {
-			fail(w, errors.New("missing id"), http.StatusBadRequest)
-			return
-		}
-		item, err := s.store.GetSSHUserKey(r.Context(), id)
-		if err != nil || item.UserID != user.ID {
-			fail(w, errors.New("SSH 公钥不存在"), http.StatusNotFound)
-			return
-		}
-		if err := s.store.DeleteSSHUserKey(r.Context(), id); err != nil {
-			fail(w, err, http.StatusInternalServerError)
-			return
-		}
-		auditReq(s, r, "delete", "ssh-user-key", fmt.Sprint(id))
-		write(w, http.StatusOK, map[string]any{"deleted": true})
+		auditReq(s, r, "rotate", "ssh-user-credential", fmt.Sprint(user.ID))
+		write(w, http.StatusOK, map[string]any{"ssh_user_credential": credential})
 	default:
-		method(w)
+		notFound(w, r)
 	}
 }
 
-func (s *Server) normalizeSSHUserKey(ctx context.Context, v *model.SSHUserKey) error {
-	if v.UserID == 0 {
-		return errors.New("user_id required")
+func (s *Server) newSSHUserCredential(ctx context.Context, userID int64) (*model.SSHUserCredential, error) {
+	if _, err := s.store.GetUser(ctx, userID); err != nil {
+		return nil, err
 	}
-	if _, err := s.store.GetUser(ctx, v.UserID); err != nil {
-		return err
-	}
-	v.Name = strings.TrimSpace(v.Name)
-	if v.Name == "" {
-		v.Name = "默认密钥"
-	}
-	if len(v.Name) > 80 {
-		return errors.New("SSH 密钥名称不能超过 80 个字符")
-	}
-	parsed, _, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(v.PublicKey)))
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return errors.New("SSH 公钥格式无效")
+		return nil, err
 	}
-	v.PublicKey = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(parsed)))
-	v.Fingerprint = ssh.FingerprintSHA256(parsed)
-	return nil
+	publicKey, err := ssh.NewPublicKey(privateKey.Public())
+	if err != nil {
+		return nil, err
+	}
+	block, err := ssh.MarshalPrivateKey(privateKey, "")
+	if err != nil {
+		return nil, err
+	}
+	privatePEM := pem.EncodeToMemory(block)
+	encrypted, err := security.EncryptSecret(s.sessionSecret, sshUserPrivateKeyPurpose, string(privatePEM))
+	if err != nil {
+		return nil, err
+	}
+	return &model.SSHUserCredential{UserID: userID, PublicKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(publicKey))), Fingerprint: ssh.FingerprintSHA256(publicKey), PrivateKeyEncrypted: encrypted}, nil
+}
+
+// ensureAuthorizedSSHCredentials repairs the derived credential state before a
+// deployment, page response, or subscription is rendered. It covers direct,
+// server/global, and group grants through the same effective binding projection
+// used by SSH and subscription routing.
+func (s *Server) ensureAuthorizedSSHCredentials(ctx context.Context, data *store.FullRoutingConfig) (*store.FullRoutingConfig, error) {
+	if data == nil {
+		loaded, err := s.store.FullRoutingConfigData(ctx)
+		if err != nil {
+			return nil, err
+		}
+		data = &loaded
+	}
+	sshInbound := map[int64]bool{}
+	for _, inbound := range data.Inbounds {
+		if inbound.Enabled && inbound.Protocol == model.ProtocolSSH {
+			sshInbound[inbound.ID] = true
+		}
+	}
+	if len(sshInbound) == 0 {
+		return data, nil
+	}
+	users := map[int64]model.User{}
+	for _, user := range data.Users {
+		users[user.ID] = user
+	}
+	seen := map[int64]bool{}
+	for _, binding := range effectiveInboundUsersForRouting(*data) {
+		if !binding.Enabled || !sshInbound[binding.InboundID] || seen[binding.UserID] {
+			continue
+		}
+		user, ok := users[binding.UserID]
+		if !ok || user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") {
+			continue
+		}
+		seen[binding.UserID] = true
+		if _, err := s.ensureSSHUserCredential(ctx, binding.UserID); err != nil {
+			return nil, fmt.Errorf("create SSH credential for user %d: %w", binding.UserID, err)
+		}
+	}
+	credentials, err := s.store.ListSSHUserCredentials(ctx)
+	if err != nil {
+		return nil, err
+	}
+	data.SSHUserCredentials = credentials
+	return data, nil
+}
+
+func (s *Server) ensureSSHUserCredential(ctx context.Context, userID int64) (*model.SSHUserCredential, error) {
+	if current, err := s.store.GetSSHUserCredential(ctx, userID); err == nil {
+		return current, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	credential, err := s.newSSHUserCredential(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	created, err := s.store.CreateSSHUserCredential(ctx, credential)
+	if err != nil {
+		return nil, err
+	}
+	if !created {
+		return s.store.GetSSHUserCredential(ctx, userID)
+	}
+	return credential, nil
+}
+
+func (s *Server) rotateSSHUserCredential(ctx context.Context, userID int64) (*model.SSHUserCredential, error) {
+	current, err := s.store.GetSSHUserCredential(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	credential, err := s.newSSHUserCredential(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	credential.CreatedAt = current.CreatedAt
+	if err := s.store.ReplaceSSHUserCredential(ctx, credential); err != nil {
+		return nil, err
+	}
+	return credential, nil
+}
+
+func (s *Server) downloadSSHUserPrivateKey(w http.ResponseWriter, r *http.Request, userID int64) {
+	credential, err := s.store.GetSSHUserCredential(r.Context(), userID)
+	if err != nil {
+		fail(w, errors.New("SSH 凭据不存在"), http.StatusNotFound)
+		return
+	}
+	privateKey, err := security.DecryptSecret(s.sessionSecret, sshUserPrivateKeyPurpose, credential.PrivateKeyEncrypted)
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, sshPrivateKeyFilename(userID)))
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	auditReq(s, r, "download", "ssh-user-credential", fmt.Sprint(userID))
+	_, _ = io.WriteString(w, privateKey)
+}
+
+func sshPrivateKeyFilename(userID int64) string {
+	return fmt.Sprintf("oboard-ssh-user-%d-ed25519", userID)
 }
 
 func (s *Server) userGroups(w http.ResponseWriter, r *http.Request) {
@@ -6998,22 +7057,17 @@ func normalizeProxyPathTunnelConfig(v *model.ProxyPathStep, cfg map[string]any) 
 	}
 	switch model.TunnelType(typeName) {
 	case model.TunnelTypeSSH:
-		if raw, ok := cfg["ssh_port"]; ok && strings.TrimSpace(fmt.Sprint(raw)) != "" && fmt.Sprint(raw) != "0" {
-			port := intFromAnyController(raw)
-			if port <= 0 || port > 65535 {
-				return errors.New("SSH 端口必须是 1 到 65535 的整数")
-			}
-			cfg["ssh_port"] = port
+		port := intFromAnyController(cfg["ssh_port"])
+		if port <= 0 || port > 65535 {
+			return errors.New("目标端隧道服务端口必须是 1 到 65535 的整数")
 		}
 		managed := map[string]any{
 			"type":         string(model.TunnelTypeSSH),
 			"managed_pair": true,
+			"ssh_port":     port,
 		}
 		if method := strings.TrimSpace(fmt.Sprint(cfg["chain_method"])); method != "" && method != "<nil>" {
 			managed["chain_method"] = method
-		}
-		if port := intFromAnyController(cfg["ssh_port"]); port > 0 {
-			managed["ssh_port"] = port
 		}
 		cfg = managed
 	case model.TunnelTypeWireGuard:
@@ -8680,6 +8734,10 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	if _, err := s.ensureAuthorizedSSHCredentials(r.Context(), &data); err != nil {
+		fail(w, err, 500)
+		return
+	}
 	resolveRoutingProxyPathNames(&data)
 	servers, in := data.Servers, data.Inbounds
 	warpServerIDs, err := core.ProxyPathWARPServerIDs(data.ProxyPaths, data.ProxyPathSteps, in)
@@ -8938,9 +8996,9 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 		users[user.ID] = user
 	}
 	keysByUser := map[int64][]string{}
-	for _, key := range data.SSHUserKeys {
-		if key.Enabled {
-			keysByUser[key.UserID] = append(keysByUser[key.UserID], key.PublicKey)
+	for _, credential := range data.SSHUserCredentials {
+		if strings.TrimSpace(credential.PublicKey) != "" {
+			keysByUser[credential.UserID] = []string{credential.PublicKey}
 		}
 	}
 	bound := map[int64][]int64{}
@@ -8970,7 +9028,7 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 			}
 			publicKeys := keysByUser[userID]
 			if len(publicKeys) == 0 {
-				return model.SSHInboundPlan{}, fmt.Errorf("SSH 入口 %s 已授权给用户 %s，但该用户尚未添加 SSH 公钥", inbound.Name, user.Username)
+				continue
 			}
 			entry.Users = append(entry.Users, model.SSHInboundUser{UserID: user.ID, Username: sshLoginName(user.ID), PublicKeys: publicKeys, Enabled: true})
 			if policy, ok := policies[user.ID]; ok {
@@ -9549,7 +9607,43 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	if _, err := s.ensureAuthorizedSSHCredentials(r.Context(), &data); err != nil {
+		fail(w, err, 500)
+		return
+	}
 	servers, in := data.Servers, data.Inbounds
+	sshPrivateKey := ""
+	sshCredentialFingerprint := ""
+	sshServerHostKeys := map[int64]string{}
+	sshDeployedFingerprints := map[int64]string{}
+	if credential, credentialErr := s.store.GetSSHUserCredential(r.Context(), user.ID); credentialErr == nil {
+		sshPrivateKey, err = security.DecryptSecret(s.sessionSecret, sshUserPrivateKeyPurpose, credential.PrivateKeyEncrypted)
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		sshCredentialFingerprint = credential.Fingerprint
+		deployments, deploymentErr := s.store.ListSSHCredentialDeploymentsForUser(r.Context(), user.ID)
+		if deploymentErr != nil {
+			fail(w, deploymentErr, 500)
+			return
+		}
+		for _, deployment := range deployments {
+			sshDeployedFingerprints[deployment.ServerID] = deployment.CredentialFingerprint
+		}
+		for _, server := range servers {
+			hostKey, hostErr := s.store.GetSSHServerHostKey(r.Context(), server.ID)
+			if hostErr == nil {
+				sshServerHostKeys[server.ID] = hostKey.PublicKey
+			} else if !errors.Is(hostErr, sql.ErrNoRows) {
+				fail(w, hostErr, 500)
+				return
+			}
+		}
+	} else if !errors.Is(credentialErr, sql.ErrNoRows) {
+		fail(w, credentialErr, 500)
+		return
+	}
 	assignments, err := s.store.ListSubscriptionAssignmentsForUser(r.Context(), user.ID)
 	if err != nil {
 		fail(w, err, 500)
@@ -9577,6 +9671,10 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		ExternalOutboundAccessGrants: data.ExternalOutboundAccessGrants,
 		UserGroups:                   data.UserGroups,
 		UserGroupMembers:             data.UserGroupMembers,
+		SSHPrivateKey:                sshPrivateKey,
+		SSHCredentialFingerprint:     sshCredentialFingerprint,
+		SSHServerHostKeys:            sshServerHostKeys,
+		SSHDeployedFingerprints:      sshDeployedFingerprints,
 	})
 	if err != nil {
 		fail(w, err, 500)
@@ -9988,6 +10086,12 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, http.StatusBadRequest)
 			return
 		}
+		if req.Status == "succeeded" {
+			if err := s.applyDeploymentSSHState(r.Context(), server.ID, *task, req.ResultJSON); err != nil {
+				fail(w, err, http.StatusBadRequest)
+				return
+			}
+		}
 	}
 	if err := s.completeTaskWithNotification(r.Context(), req.TaskID, req.Status, req.ResultJSON); err != nil {
 		fail(w, err, 500)
@@ -10051,6 +10155,72 @@ func (s *Server) applyDeploymentWARPReports(ctx context.Context, serverID int64,
 		}
 	}
 	return nil
+}
+
+func (s *Server) applyDeploymentSSHState(ctx context.Context, serverID int64, task model.AgentTask, resultJSON string) error {
+	var result struct {
+		Steps []struct {
+			Key    string          `json:"key"`
+			Status string          `json:"status"`
+			Result json.RawMessage `json:"result"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(resultJSON), &result); err != nil {
+		return err
+	}
+	var report struct {
+		HostPublicKey      string `json:"host_public_key"`
+		HostKeyFingerprint string `json:"host_key_fingerprint"`
+	}
+	found := false
+	for _, step := range result.Steps {
+		if step.Key != "ssh_inbounds" || (step.Status != "succeeded" && step.Status != "skipped") {
+			continue
+		}
+		found = true
+		if err := json.Unmarshal(step.Result, &report); err != nil {
+			return fmt.Errorf("decode SSH deployment result: %w", err)
+		}
+		break
+	}
+	if !found || strings.TrimSpace(report.HostPublicKey) == "" {
+		return s.store.ClearSSHDeploymentState(ctx, serverID)
+	}
+	hostPublicKey, rest, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(report.HostPublicKey)))
+	if err != nil || len(strings.TrimSpace(string(rest))) != 0 {
+		return errors.New("SSH deployment result contains an invalid host public key")
+	}
+	canonicalHostKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostPublicKey)))
+	hostFingerprint := ssh.FingerprintSHA256(hostPublicKey)
+	if report.HostKeyFingerprint != hostFingerprint {
+		return errors.New("SSH deployment host key fingerprint does not match")
+	}
+	var payload model.DeploymentTaskPayload
+	if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
+		return fmt.Errorf("decode SSH deployment payload: %w", err)
+	}
+	credentials := map[int64]string{}
+	for _, inbound := range payload.SSHInbounds.Inbounds {
+		for _, user := range inbound.Users {
+			if !user.Enabled || user.UserID <= 0 || len(user.PublicKeys) != 1 {
+				continue
+			}
+			publicKey, rest, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(user.PublicKeys[0])))
+			if err != nil || len(strings.TrimSpace(string(rest))) != 0 {
+				return fmt.Errorf("SSH deployment user %d contains an invalid public key", user.UserID)
+			}
+			fingerprint := ssh.FingerprintSHA256(publicKey)
+			if previous := credentials[user.UserID]; previous != "" && previous != fingerprint {
+				return fmt.Errorf("SSH deployment user %d contains conflicting credentials", user.UserID)
+			}
+			credentials[user.UserID] = fingerprint
+		}
+	}
+	version := payload.Version
+	if version == 0 {
+		version = task.ConfigVersion
+	}
+	return s.store.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: serverID, PublicKey: canonicalHostKey, Fingerprint: hostFingerprint, ConfigVersion: version}, credentials)
 }
 
 func allowedTaskStatus(status string) bool {

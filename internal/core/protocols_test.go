@@ -1044,6 +1044,43 @@ func TestValidateGeneratedSingBoxConfigRejectsBadDNSDetour(t *testing.T) {
 	}
 }
 
+func TestValidateGeneratedSingBoxConfigRejectsUnknownDialResolver(t *testing.T) {
+	tests := []struct {
+		name      string
+		outbounds []map[string]any
+		endpoints []map[string]any
+		want      string
+	}{
+		{
+			name:      "outbound",
+			outbounds: []map[string]any{{"type": "direct", "tag": "direct", "domain_resolver": map[string]any{"server": "bootstrap"}}, {"type": "block", "tag": "block"}},
+			want:      `outbounds[0].domain_resolver references unknown dns server "bootstrap"`,
+		},
+		{
+			name:      "endpoint",
+			outbounds: []map[string]any{{"type": "direct", "tag": "direct"}, {"type": "block", "tag": "block"}},
+			endpoints: []map[string]any{{"type": "wireguard", "tag": "warp-1", "domain_resolver": "bootstrap"}},
+			want:      `endpoints[0].domain_resolver references unknown dns server "bootstrap"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := SingBoxConfig{
+				DNS: map[string]any{"servers": []map[string]any{
+					{"type": "udp", "tag": primaryBootstrapDNSTag, "server": "1.1.1.1", "server_port": 53},
+				}, "final": primaryBootstrapDNSTag},
+				Outbounds: tt.outbounds,
+				Endpoints: tt.endpoints,
+				Route:     map[string]any{"final": "direct"},
+			}
+			err := ValidateGeneratedSingBoxConfig(config)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateGeneratedSingBoxConfigRejectsUoTOnInbound(t *testing.T) {
 	config := SingBoxConfig{
 		DNS: map[string]any{"servers": []map[string]any{
@@ -1060,9 +1097,9 @@ func TestValidateGeneratedSingBoxConfigRejectsUoTOnInbound(t *testing.T) {
 }
 
 func TestGeneratedConfigPassesOfficialSingBoxCheck(t *testing.T) {
-	bin := os.Getenv("SING_BOX_BIN")
+	bin, oboardSB := configuredSingBoxCheckBinary()
 	if bin == "" {
-		t.Skip("set SING_BOX_BIN to run official sing-box check")
+		t.Skip("set OBOARD_SB_BIN or SING_BOX_BIN to run a sing-box check")
 	}
 	config, err := GenerateServerConfig(
 		model.Server{ID: 1, Name: "edge", IPStack: model.IPStackPreferIPv4},
@@ -1079,13 +1116,13 @@ func TestGeneratedConfigPassesOfficialSingBoxCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runSingBoxCheck(t, bin, config)
+	runSingBoxCheck(t, bin, oboardSB, config)
 }
 
 func TestGeneratedWARPAndRouteConfigPassesOfficialSingBoxCheck(t *testing.T) {
-	bin := os.Getenv("SING_BOX_BIN")
+	bin, oboardSB := configuredSingBoxCheckBinary()
 	if bin == "" {
-		t.Skip("set SING_BOX_BIN to run official sing-box check")
+		t.Skip("set OBOARD_SB_BIN or SING_BOX_BIN to run a sing-box check")
 	}
 	warpID := int64(30)
 	server := model.Server{ID: 1, Name: "edge", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, MTUValue: 1280}
@@ -1100,27 +1137,27 @@ func TestGeneratedWARPAndRouteConfigPassesOfficialSingBoxCheck(t *testing.T) {
 		[]model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111"}},
 		ConfigOptions{
 			Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound}, ProxyPaths: []model.ProxyPath{path}, ProxyPathSteps: []model.ProxyPathStep{step},
-			WARPProfiles: []model.WARPProfile{{ID: warpID, ServerID: 1, Name: "warp", Status: model.WARPStatusReady, ConfigJSON: `{"type":"wireguard","address":["172.16.0.2/32","2606:4700:110:abcd::2/128"],"private_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","peers":[{"address":"engage.cloudflareclient.com","port":2408,"public_key":"bmXOC+F1sQvdD4mp8yt3l7wY6/3mpYBvn04zP65yzM8=","reserved":[1,2,3],"allowed_ips":["0.0.0.0/0","::/0"]}]}`, Enabled: true}},
+			WARPProfiles: []model.WARPProfile{{ID: warpID, ServerID: 1, Name: "warp", Status: model.WARPStatusReady, ConfigJSON: `{"type":"wireguard","address":["172.16.0.2/32","2606:4700:110:abcd::2/128"],"private_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","peers":[{"address":"engage.cloudflareclient.com","port":2408,"public_key":"bmXOC+F1sQvdD4mp8yt3l7wY6/3mpYBvn04zP65yzM8=","reserved":[1,2,3],"allowed_ips":["0.0.0.0/0","::/0"]}],"domain_resolver":{"server":"bootstrap","strategy":"prefer_ipv6"}}`, Enabled: true}},
 			RoutingRules: []model.RoutingRule{{ID: 2, ServerID: 1, Name: "ssh-via-eth1", Priority: 20, MatchJSON: `{"port":[22]}`, Action: model.RouteActionInterface, InterfaceName: "eth1", Enabled: true}},
 		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runSingBoxCheck(t, bin, config)
+	runSingBoxCheck(t, bin, oboardSB, config)
 }
 
 func TestReadyWARPInfersIPv6ResolverAndMTUForAutoServer(t *testing.T) {
 	endpoint, err := warpProfileToSingBox(model.WARPProfile{
 		ID:          30,
 		DNSStrategy: "auto",
-		ConfigJSON:  `{"type":"wireguard","address":["172.16.0.2/32","2606:4700:110::2/128"],"private_key":"private","peers":[{"address":"engage.cloudflareclient.com","port":2408,"public_key":"public","allowed_ips":["0.0.0.0/0","::/0"]}]}`,
+		ConfigJSON:  `{"type":"wireguard","address":["172.16.0.2/32","2606:4700:110::2/128"],"private_key":"private","peers":[{"address":"engage.cloudflareclient.com","port":2408,"public_key":"public","allowed_ips":["0.0.0.0/0","::/0"]}],"domain_resolver":{"server":"bootstrap","strategy":"prefer_ipv4"}}`,
 	}, model.Server{IPStack: model.IPStackAuto, PublicIPv6: "2001:db8::10"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	resolver, ok := endpoint["domain_resolver"].(map[string]any)
-	if !ok || resolver["strategy"] != "ipv6_only" {
+	if !ok || resolver["server"] != primaryBootstrapDNSTag || resolver["strategy"] != "ipv6_only" {
 		t.Fatalf("WARP domain_resolver = %#v", endpoint["domain_resolver"])
 	}
 	if endpoint["mtu"] != 1280 {
@@ -1457,13 +1494,24 @@ func TestValidateRoutingMatchJSONPorts(t *testing.T) {
 	}
 }
 
-func runSingBoxCheck(t *testing.T, bin string, config string) {
+func configuredSingBoxCheckBinary() (string, bool) {
+	if bin := os.Getenv("OBOARD_SB_BIN"); bin != "" {
+		return bin, true
+	}
+	return os.Getenv("SING_BOX_BIN"), false
+}
+
+func runSingBoxCheck(t *testing.T, bin string, oboardSB bool, config string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(bin, "check", "-c", path)
+	args := []string{"check", "-c", path}
+	if oboardSB {
+		args = []string{"-check", "-config", path}
+	}
+	cmd := exec.Command(bin, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("sing-box check failed: %v\n%s\nconfig:\n%s", err, out, config)
 	}
@@ -1629,7 +1677,7 @@ func TestProxyPathInternalPortsAvoidOccupiedSinglePortRanges(t *testing.T) {
 func TestProxyPathTunnelPortsAvoidGeneratedInboundCollisions(t *testing.T) {
 	sourceA := model.Server{ID: 1, Name: "A", PublicIPv4: "198.51.100.1", ListenIP: "0.0.0.0", PortRangeStart: 40000, PortRangeEnd: 40100}
 	sourceB := model.Server{ID: 2, Name: "B", PublicIPv4: "198.51.100.2", ListenIP: "0.0.0.0", PortRangeStart: 41000, PortRangeEnd: 41100}
-	target := model.Server{ID: 5, Name: "target", PublicIPv4: "203.0.113.5", ListenIP: "0.0.0.0", PortRangeStart: 60100, PortRangeEnd: 60103, SSHPort: 60103}
+	target := model.Server{ID: 5, Name: "target", PublicIPv4: "203.0.113.5", ListenIP: "0.0.0.0", PortRangeStart: 60100, PortRangeEnd: 60103}
 	rootA := model.Inbound{ID: 1, ServerID: sourceA.ID, Protocol: model.ProtocolVLESS, Port: 443, Enabled: true}
 	rootB := model.Inbound{ID: 2, ServerID: sourceB.ID, Protocol: model.ProtocolVLESS, Port: 8443, Enabled: true}
 	targetPublic := model.Inbound{ID: 6, ServerID: target.ID, Protocol: model.ProtocolVLESS, Port: 60100, Enabled: true}
@@ -1638,7 +1686,7 @@ func TestProxyPathTunnelPortsAvoidGeneratedInboundCollisions(t *testing.T) {
 	chainStep := model.ProxyPathStep{ID: 9, PathID: chainPath.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`}
 	sshPath := model.ProxyPath{ID: 10, Name: "ssh", InboundID: rootB.ID, Enabled: true}
 	privateKey, publicKey := testSSHKeyPair(t)
-	sshConfig, _ := json.Marshal(map[string]any{"type": "ssh", "client_private_key": privateKey, "client_public_key": publicKey})
+	sshConfig, _ := json.Marshal(map[string]any{"type": "ssh", "ssh_port": 60103, "client_private_key": privateKey, "client_public_key": publicKey})
 	sshStep := model.ProxyPathStep{ID: 10, PathID: sshPath.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: string(sshConfig)}
 
 	plans, err := BuildProxyPathPlans(
@@ -1664,12 +1712,12 @@ func TestProxyPathTunnelPortsAvoidGeneratedInboundCollisions(t *testing.T) {
 
 func TestProxyPathSSHTunnelConnectsSingBoxToManagedLocalForward(t *testing.T) {
 	source := model.Server{ID: 1, Name: "A", PublicIPv4: "198.51.100.10", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
-	target := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100, SSHPort: 22}
+	target := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
 	root := model.Inbound{ID: 1, ServerID: source.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
 	path := model.ProxyPath{ID: 70, Name: "A-SSH-B", InboundID: root.ID, Secret: "path-secret", Enabled: true}
 	targetID := target.ID
 	privateKey, publicKey := testSSHKeyPair(t)
-	stepConfig, _ := json.Marshal(map[string]any{"type": "ssh", "managed_pair": true, "client_private_key": privateKey, "client_public_key": publicKey})
+	stepConfig, _ := json.Marshal(map[string]any{"type": "ssh", "ssh_port": 22, "managed_pair": true, "client_private_key": privateKey, "client_public_key": publicKey})
 	step := model.ProxyPathStep{ID: 71, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: string(stepConfig)}
 	opts := ConfigOptions{Servers: []model.Server{source, target}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{path}, ProxyPathSteps: []model.ProxyPathStep{step}}
 
@@ -1717,7 +1765,7 @@ func TestProxyPathSSHTunnelConnectsSingBoxToManagedLocalForward(t *testing.T) {
 	if sourceSSH["role"] != "client" || sourceSSH["client_private_key"] == "" || sourceSSH["authorized_key"] != nil {
 		t.Fatalf("SSH source projection = %#v", sourceSSH)
 	}
-	if targetSSH["role"] != "server" || targetSSH["authorized_key"] != tunnelConfig["client_public_key"] || targetSSH["authorized_key"] == publicKey || targetSSH["client_private_key"] != nil || intFromAny(targetSSH["server_port"]) != target.SSHPort {
+	if targetSSH["role"] != "server" || targetSSH["authorized_key"] != tunnelConfig["client_public_key"] || targetSSH["authorized_key"] == publicKey || targetSSH["client_private_key"] != nil || intFromAny(targetSSH["server_port"]) != 22 {
 		t.Fatalf("SSH target projection = %#v", targetSSH)
 	}
 
@@ -1737,9 +1785,9 @@ func TestProxyPathSSHTunnelConnectsSingBoxToManagedLocalForward(t *testing.T) {
 	}
 }
 
-func TestProxyPathSSHTunnelPortSelection(t *testing.T) {
+func TestProxyPathSSHTunnelRequiresExplicitPort(t *testing.T) {
 	source := model.Server{ID: 1, Name: "source", PublicIPv4: "198.51.100.10", ListenIP: "0.0.0.0", PortRangeStart: 30000, PortRangeEnd: 30100}
-	target := model.Server{ID: 2, Name: "target", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", PortRangeStart: 31000, PortRangeEnd: 31100, SSHPort: 22}
+	target := model.Server{ID: 2, Name: "target", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", PortRangeStart: 31000, PortRangeEnd: 31100}
 	root := model.Inbound{ID: 1, ServerID: source.ID, Name: "entry", Protocol: model.ProtocolVLESS, Port: 443, Enabled: true}
 	targetID := target.ID
 	paths := []model.ProxyPath{
@@ -1747,15 +1795,15 @@ func TestProxyPathSSHTunnelPortSelection(t *testing.T) {
 		{ID: 92, Name: "saved-port-b", InboundID: root.ID, Enabled: true},
 	}
 	steps := []model.ProxyPathStep{
-		{ID: 91, PathID: 91, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: `{"type":"ssh"}`},
-		{ID: 92, PathID: 92, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: `{"type":"ssh"}`},
+		{ID: 91, PathID: 91, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: `{"type":"ssh","ssh_port":22}`},
+		{ID: 92, PathID: 92, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: `{"type":"ssh","ssh_port":22}`},
 	}
 	plans, err := BuildProxyPathPlans(paths, steps, []model.Server{source, target}, []model.Inbound{root})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(plans) != 2 || plans[0].Tunnels[0].TargetPort != 22 || plans[1].Tunnels[0].TargetPort != 22 {
-		t.Fatalf("SSH paths did not share saved port: %#v", plans)
+		t.Fatalf("SSH paths did not project the explicit shared port: %#v", plans)
 	}
 
 	override := steps[:1]
@@ -1768,9 +1816,8 @@ func TestProxyPathSSHTunnelPortSelection(t *testing.T) {
 		t.Fatalf("step SSH port = %d, want override 2222", got)
 	}
 
-	target.SSHPort = 0
 	override[0].ConfigJSON = `{"type":"ssh"}`
-	if _, err := BuildProxyPathPlans(paths[:1], override, []model.Server{source, target}, []model.Inbound{root}); err == nil || !strings.Contains(err.Error(), "未设置 SSH 端口") {
+	if _, err := BuildProxyPathPlans(paths[:1], override, []model.Server{source, target}, []model.Inbound{root}); err == nil || !strings.Contains(err.Error(), "未设置目标端隧道服务端口") {
 		t.Fatalf("missing SSH port error = %v", err)
 	}
 }

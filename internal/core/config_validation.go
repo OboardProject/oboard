@@ -141,6 +141,7 @@ func (v *configValidator) validateOutbounds(outbounds []map[string]any) {
 		default:
 			v.addf("%s unsupported outbound type %q", path, typ)
 		}
+		v.validateDomainResolver(path, outbound["domain_resolver"])
 	}
 	for i, outbound := range outbounds {
 		if detour := stringFromAny(outbound["detour"]); detour != "" && !v.outboundTag[detour] {
@@ -160,6 +161,28 @@ func (v *configValidator) validateEndpoints(endpoints []map[string]any) {
 		if stringFromAny(endpoint["type"]) == "" {
 			v.addf("%s missing type", path)
 		}
+		v.validateDomainResolver(path, endpoint["domain_resolver"])
+	}
+}
+
+func (v *configValidator) validateDomainResolver(path string, value any) {
+	if value == nil {
+		return
+	}
+	var tag string
+	switch resolver := value.(type) {
+	case string:
+		tag = strings.TrimSpace(resolver)
+	case map[string]any:
+		tag = strings.TrimSpace(stringFromAny(resolver["server"]))
+	default:
+		v.addf("%s.domain_resolver has invalid shape", path)
+		return
+	}
+	if tag == "" {
+		v.addf("%s.domain_resolver missing server", path)
+	} else if !v.dnsTag[tag] {
+		v.addf("%s.domain_resolver references unknown dns server %q", path, tag)
 	}
 }
 

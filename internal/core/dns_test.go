@@ -113,7 +113,7 @@ func TestGeneratedConfigUsesCurrentDomainResolverShape(t *testing.T) {
 	config, err := GenerateServerConfig(
 		model.Server{ID: 1, Name: "edge", IPStack: model.IPStackPreferIPv6},
 		nil,
-		[]model.Outbound{{ID: 2, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, TargetAddress: "example.com", TargetPort: 443, ConfigJSON: `{"domain_resolver":{"server":"bootstrap","strategy":"prefer_ipv4"}}`, Enabled: true}},
+		[]model.Outbound{{ID: 2, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, TargetAddress: "example.com", TargetPort: 443, ConfigJSON: `{"domain_resolver":{"server":"bootstrap-primary","strategy":"prefer_ipv4"}}`, Enabled: true}},
 		nil,
 		[]model.User{{Username: "u", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111", ProxyPassword: "pass"}},
 	)
@@ -133,7 +133,7 @@ func TestGeneratedConfigUsesCurrentDomainResolverShape(t *testing.T) {
 		t.Fatalf("outbound should not emit deprecated domain_strategy: %#v", outbound)
 	}
 	dialResolver, ok := outbound["domain_resolver"].(map[string]any)
-	if !ok || dialResolver["server"] != "bootstrap" || dialResolver["strategy"] != "prefer_ipv4" {
+	if !ok || dialResolver["server"] != "bootstrap-primary" || dialResolver["strategy"] != "prefer_ipv4" {
 		t.Fatalf("outbound domain_resolver = %#v", outbound["domain_resolver"])
 	}
 }

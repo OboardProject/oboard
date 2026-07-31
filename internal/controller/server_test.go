@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdh"
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -361,21 +359,22 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := buildSSHInboundPlan(1, *server, data, effectiveInboundUsersForRouting(data), policies); err == nil || !strings.Contains(err.Error(), "尚未添加 SSH 公钥") {
-		t.Fatalf("missing SSH key error = %v", err)
+	if _, err := srv.ensureAuthorizedSSHCredentials(ctx, &data); err != nil {
+		t.Fatal(err)
 	}
-	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	credential, err := db.GetSSHUserCredential(ctx, user.ID)
+	if err != nil || credential.PrivateKeyEncrypted == "" || strings.Contains(credential.PrivateKeyEncrypted, "PRIVATE KEY") {
+		t.Fatalf("managed SSH credential = %#v, err=%v", credential, err)
+	}
+	privateKeyPEM, err := security.DecryptSecret("test-secret", sshUserPrivateKeyPurpose, credential.PrivateKeyEncrypted)
 	if err != nil {
 		t.Fatal(err)
 	}
-	publicKey, err := ssh.NewPublicKey(privateKey.Public())
-	if err != nil {
-		t.Fatal(err)
+	privateSigner, err := ssh.ParsePrivateKey([]byte(privateKeyPEM))
+	if err != nil || ssh.FingerprintSHA256(privateSigner.PublicKey()) != credential.Fingerprint {
+		t.Fatalf("managed SSH private key mismatch: %v", err)
 	}
-	if err := db.CreateSSHUserKey(ctx, &model.SSHUserKey{UserID: user.ID, Name: "test", PublicKey: string(ssh.MarshalAuthorizedKey(publicKey)), Fingerprint: ssh.FingerprintSHA256(publicKey), Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
-	data, err = db.FullRoutingConfigData(ctx)
+	data.SSHUserCredentials, err = db.ListSSHUserCredentials(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +390,7 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	}
 }
 
-func TestSelfSSHUserKeysAreScopedToCurrentUser(t *testing.T) {
+func TestManagedSSHCredentialDownloadAndRotationAreScoped(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -406,31 +405,205 @@ func TestSelfSSHUserKeysAreScopedToCurrentUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	srv := newTestServer(db, "test-secret", "")
+	h = srv.Handler()
+	adminCredential, err := srv.ensureSSHUserCredential(ctx, admin.ID)
 	if err != nil {
 		t.Fatal(err)
-	}
-	publicKey, err := ssh.NewPublicKey(privateKey.Public())
-	if err != nil {
-		t.Fatal(err)
-	}
-	created := request(t, h, http.MethodPost, "/api/v1/me/ssh-user-keys", token, map[string]any{"user_id": 999999, "name": "laptop", "public_key": string(ssh.MarshalAuthorizedKey(publicKey)), "enabled": true}, http.StatusCreated)
-	item := created["ssh_user_key"].(map[string]any)
-	if got := int64(item["user_id"].(float64)); got != admin.ID {
-		t.Fatalf("self-service key owner = %d, want %d", got, admin.ID)
 	}
 	other := &model.User{Username: "other", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "other-id", ProxyPassword: "other-pass"}
 	if err := db.CreateUser(ctx, other); err != nil {
 		t.Fatal(err)
 	}
-	otherKey := &model.SSHUserKey{UserID: other.ID, Name: "other-key", PublicKey: string(ssh.MarshalAuthorizedKey(publicKey)), Fingerprint: ssh.FingerprintSHA256(publicKey), Enabled: true}
-	if err := db.CreateSSHUserKey(ctx, otherKey); err != nil {
+	if _, err := srv.ensureSSHUserCredential(ctx, other.ID); err != nil {
 		t.Fatal(err)
 	}
-	request(t, h, http.MethodDelete, "/api/v1/me/ssh-user-keys/"+strconv.FormatInt(otherKey.ID, 10), token, nil, http.StatusNotFound)
-	keys := request(t, h, http.MethodGet, "/api/v1/me/ssh-user-keys", token, nil, http.StatusOK)["ssh_user_keys"].([]any)
-	if len(keys) != 1 || int64(keys[0].(map[string]any)["user_id"].(float64)) != admin.ID {
-		t.Fatalf("self-service keys leaked another user: %#v", keys)
+	metadata := request(t, h, http.MethodGet, "/api/v1/me/ssh-credential", token, nil, http.StatusOK)["ssh_user_credential"].(map[string]any)
+	if metadata["private_key_encrypted"] != nil || metadata["user_id"] != float64(admin.ID) {
+		t.Fatalf("self credential metadata leaked or changed owner: %#v", metadata)
+	}
+	download := httptest.NewRecorder()
+	downloadRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me/ssh-credential/private-key", nil)
+	downloadRequest.Header.Set("Authorization", "Bearer "+token)
+	h.ServeHTTP(download, downloadRequest)
+	if download.Code != http.StatusOK || !strings.Contains(download.Body.String(), "OPENSSH PRIVATE KEY") || !strings.Contains(download.Header().Get("Content-Disposition"), sshPrivateKeyFilename(admin.ID)) || !strings.Contains(download.Header().Get("Cache-Control"), "no-store") {
+		t.Fatalf("private key download status=%d headers=%v body=%q", download.Code, download.Header(), download.Body.String())
+	}
+	rotated := request(t, h, http.MethodPost, "/api/v1/me/ssh-credential/rotate", token, map[string]any{}, http.StatusOK)["ssh_user_credential"].(map[string]any)
+	if rotated["fingerprint"] == adminCredential.Fingerprint || rotated["private_key_encrypted"] != nil {
+		t.Fatalf("rotated credential = %#v", rotated)
+	}
+	adminDownloadOther := httptest.NewRecorder()
+	adminRequest := httptest.NewRequest(http.MethodGet, "/api/v1/ssh-user-credentials/"+strconv.FormatInt(other.ID, 10)+"/private-key", nil)
+	adminRequest.Header.Set("Authorization", "Bearer "+token)
+	h.ServeHTTP(adminDownloadOther, adminRequest)
+	if adminDownloadOther.Code != http.StatusOK || !strings.Contains(adminDownloadOther.Body.String(), "OPENSSH PRIVATE KEY") {
+		t.Fatalf("admin private key download status=%d body=%q", adminDownloadOther.Code, adminDownloadOther.Body.String())
+	}
+}
+
+func TestApplyDeploymentSSHStatePersistsOnlyValidatedTaskCredentials(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	server := &model.Server{Name: "ssh-edge", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", PortRangeStart: 20000, PortRangeEnd: 20100, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "alice", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "alice-id", ProxyPassword: "alice-pass"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := srv.ensureSSHUserCredential(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostIdentity, err := srv.newSSHUserCredential(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := model.DeploymentTaskPayload{Version: 19, SSHInbounds: model.SSHInboundPlan{Version: 19, Inbounds: []model.SSHInbound{{
+		InboundID: 31, ServerID: server.ID, Enabled: true,
+		Users: []model.SSHInboundUser{{UserID: user.ID, Username: sshLoginName(user.ID), PublicKeys: []string{credential.PublicKey}, Enabled: true}},
+	}}}}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, ConfigVersion: 19, PayloadJSON: string(payloadJSON)}
+	resultJSON := func(publicKey, fingerprint string) string {
+		t.Helper()
+		encoded, err := json.Marshal(map[string]any{"steps": []any{map[string]any{
+			"key": "ssh_inbounds", "status": "succeeded", "result": map[string]any{
+				"host_public_key": publicKey, "host_key_fingerprint": fingerprint,
+				"users": map[string]string{strconv.FormatInt(user.ID, 10): "SHA256:agent-supplied-value-must-be-ignored"},
+			},
+		}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(encoded)
+	}
+
+	if err := srv.applyDeploymentSSHState(ctx, server.ID, task, resultJSON(hostIdentity.PublicKey, hostIdentity.Fingerprint)); err != nil {
+		t.Fatal(err)
+	}
+	hostKey, err := db.GetSSHServerHostKey(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hostKey.PublicKey != hostIdentity.PublicKey || hostKey.Fingerprint != hostIdentity.Fingerprint || hostKey.ConfigVersion != 19 {
+		t.Fatalf("persisted SSH host key = %#v", hostKey)
+	}
+	deployments, err := db.ListSSHCredentialDeploymentsForUser(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deployments) != 1 || deployments[0].ServerID != server.ID || deployments[0].CredentialFingerprint != credential.Fingerprint || deployments[0].ConfigVersion != 19 {
+		t.Fatalf("persisted SSH credential deployments = %#v", deployments)
+	}
+
+	for _, invalid := range []struct {
+		name        string
+		publicKey   string
+		fingerprint string
+	}{
+		{name: "invalid public key", publicKey: "not-an-ssh-public-key", fingerprint: hostIdentity.Fingerprint},
+		{name: "mismatched fingerprint", publicKey: hostIdentity.PublicKey, fingerprint: "SHA256:mismatch"},
+	} {
+		t.Run(invalid.name, func(t *testing.T) {
+			if err := srv.applyDeploymentSSHState(ctx, server.ID, task, resultJSON(invalid.publicKey, invalid.fingerprint)); err == nil {
+				t.Fatal("invalid SSH deployment report was accepted")
+			}
+			unchanged, err := db.GetSSHServerHostKey(ctx, server.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if unchanged.PublicKey != hostIdentity.PublicKey || unchanged.Fingerprint != hostIdentity.Fingerprint {
+				t.Fatalf("invalid report changed persisted host identity: %#v", unchanged)
+			}
+		})
+	}
+
+	if err := srv.applyDeploymentSSHState(ctx, server.ID, task, `{"steps":[]}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.GetSSHServerHostKey(ctx, server.ID); err == nil {
+		t.Fatal("missing SSH deployment report retained the host key")
+	}
+	deployments, err = db.ListSSHCredentialDeploymentsForUser(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deployments) != 0 {
+		t.Fatalf("missing SSH deployment report retained credentials: %#v", deployments)
+	}
+}
+
+func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	server := &model.Server{Name: "tokyo", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", PortRangeStart: 20000, PortRangeEnd: 20100, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "alice", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "alice-id", ProxyPassword: "alice-pass", SubscriptionToken: "ssh-subscription-token"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "managed-ssh", Protocol: model.ProtocolSSH, ListenIP: "0.0.0.0", Port: 2222, EntryIPMode: model.EntryIPModeIPv4, ConfigJSON: `{"exposure_confirmed":true,"exposure_confirmation_version":"ssh-inbound-v1","access_mode":"restricted_proxy"}`, Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: inbound.ID, UserID: user.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := srv.ensureSSHUserCredential(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostIdentity, err := srv.newSSHUserCredential(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := srv.Handler()
+	readSubscription := func() []map[string]any {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions/ssh-subscription-token?format=plain-json", nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("subscription status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		var nodes []map[string]any
+		if err := json.Unmarshal(recorder.Body.Bytes(), &nodes); err != nil {
+			t.Fatal(err)
+		}
+		return nodes
+	}
+	if nodes := readSubscription(); len(nodes) != 0 {
+		t.Fatalf("SSH subscription appeared before deployment: %#v", nodes)
+	}
+	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, ConfigVersion: 23}, map[int64]string{user.ID: "SHA256:old-credential"}); err != nil {
+		t.Fatal(err)
+	}
+	if nodes := readSubscription(); len(nodes) != 0 {
+		t.Fatalf("SSH subscription appeared for mismatched credential: %#v", nodes)
+	}
+	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, ConfigVersion: 24}, map[int64]string{user.ID: credential.Fingerprint}); err != nil {
+		t.Fatal(err)
+	}
+	nodes := readSubscription()
+	if len(nodes) != 1 || nodes[0]["type"] != "ssh" || nodes[0]["username"] != sshLoginName(user.ID) || nodes[0]["server"] != server.PublicIPv4 || !strings.Contains(fmt.Sprint(nodes[0]["private_key"]), "OPENSSH PRIVATE KEY") {
+		t.Fatalf("matching SSH subscription = %#v", nodes)
 	}
 }
 
@@ -909,10 +1082,10 @@ func TestControllerFormalAPI(t *testing.T) {
 		t.Fatalf("unexpected version response: %#v", version)
 	}
 
-	createdServer := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "s1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010, "ssh_port": 22}, http.StatusCreated)
+	createdServer := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "s1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverPayload := createdServer["server"].(map[string]any)
-	if serverPayload["ssh_port"] != float64(22) {
-		t.Fatalf("server SSH port missing: %#v", serverPayload)
+	if _, ok := serverPayload["ssh_port"]; ok {
+		t.Fatalf("server API still exposes ssh_port: %#v", serverPayload)
 	}
 	if serverPayload["mtu_mode"] != "detect" || serverPayload["mtu_probe_host"] == "" {
 		t.Fatalf("server MTU defaults missing: %#v", serverPayload)
@@ -921,7 +1094,6 @@ func TestControllerFormalAPI(t *testing.T) {
 		t.Fatalf("server telemetry defaults missing: %#v", serverPayload)
 	}
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "invalid-ssh", "listen_ip": "0.0.0.0", "ssh_port": 70000}, http.StatusBadRequest)
 	createdServer2 := request(t, h, http.MethodPost, "/api/v1/servers", token, map[string]any{"name": "s2", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20010}, http.StatusCreated)
 	server2ID := int64(createdServer2["server"].(map[string]any)["id"].(float64))
 	request(t, h, http.MethodGet, "/api/v1/servers/"+itoa(serverID), token, nil, http.StatusOK)
@@ -1867,6 +2039,7 @@ func TestProxyPathSSHTunnelOwnsAndHidesManagedKey(t *testing.T) {
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
 	path := request(t, h, http.MethodPost, "/api/v1/proxy-paths", token, map[string]any{"name": "A-SSH-B", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(path["proxy_path"].(map[string]any)["id"].(float64))
+	request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "tunnel", "config_json": `{"type":"ssh"}`}, http.StatusBadRequest)
 	attackerPrivate, attackerPublic := "attacker-private-key", "ssh-ed25519 attacker-public-key"
 	malicious, _ := json.Marshal(map[string]any{"type": "ssh", "ssh_port": 31005, "client_private_key": attackerPrivate, "client_public_key": attackerPublic})
 	created := request(t, h, http.MethodPost, "/api/v1/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "tunnel", "config_json": string(malicious)}, http.StatusCreated)

@@ -26,6 +26,10 @@ type SubscriptionOptions struct {
 	ExternalOutboundAccessGrants []model.ExternalOutboundAccessGrant
 	UserGroups                   []model.UserGroup
 	UserGroupMembers             []model.UserGroupMember
+	SSHPrivateKey                string
+	SSHCredentialFingerprint     string
+	SSHServerHostKeys            map[int64]string
+	SSHDeployedFingerprints      map[int64]string
 }
 
 type SubscriptionNode struct {
@@ -90,10 +94,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 	nodes := []SubscriptionNode{}
 	nameRefs := []subscriptionNodeNameRef{}
 	for _, inbound := range inbounds {
-		// SSH uses a public key held by the user, not a credential that can be
-		// safely embedded in a proxy subscription. The panel exposes it as a
-		// dedicated SSH access card instead.
-		if !inbound.Enabled || inbound.Protocol == model.ProtocolSSH {
+		if !inbound.Enabled {
 			continue
 		}
 		if opts.InboundUsers != nil && !subscriptionInboundAllowed(user.ID, inbound.ID, opts.InboundUsers) {
@@ -118,6 +119,24 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		group := defaultGroup
 		if strings.TrimSpace(assignment.GroupName) != "" {
 			group = strings.TrimSpace(assignment.GroupName)
+		}
+		if inbound.Protocol == model.ProtocolSSH {
+			hostKey := strings.TrimSpace(opts.SSHServerHostKeys[server.ID])
+			if strings.TrimSpace(opts.SSHPrivateKey) == "" || strings.TrimSpace(opts.SSHCredentialFingerprint) == "" || opts.SSHDeployedFingerprints[server.ID] != opts.SSHCredentialFingerprint || hostKey == "" {
+				continue
+			}
+			raw := map[string]any{
+				"type":         "ssh",
+				"server":       server.EntryAddress,
+				"server_port":  inbound.Port,
+				"username":     fmt.Sprintf("oboard-%d", user.ID),
+				"private_key":  opts.SSHPrivateKey,
+				"host_key":     []string{hostKey},
+				"oboard_group": group,
+			}
+			nodes = append(nodes, SubscriptionNode{Name: standaloneName, Group: group, ServerID: server.ID, Inbound: inbound, Server: server, Raw: raw})
+			nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameStandalone, resourceID: inbound.ID, serverID: server.ID})
+			continue
 		}
 		adapter, err := AdapterFor(inbound.Protocol)
 		if err != nil {

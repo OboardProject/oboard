@@ -708,9 +708,9 @@ func runtimePathIDFromUsername(username string) int64 {
 
 func defaultDNS(final string) map[string]any {
 	if final == "" {
-		final = "remote"
+		final = primaryRemoteDNSTag
 	}
-	return map[string]any{"servers": []map[string]any{{"type": "https", "tag": "remote", "server": "cloudflare-dns.com", "server_port": 443, "path": "/dns-query", "tls": map[string]any{"server_name": "cloudflare-dns.com"}, "domain_resolver": "bootstrap"}, {"type": "udp", "tag": "bootstrap", "server": "1.1.1.1", "server_port": 53}, {"type": "local", "tag": "local"}}, "final": final, "strategy": "prefer_ipv4"}
+	return map[string]any{"servers": []map[string]any{{"type": "https", "tag": primaryRemoteDNSTag, "server": "cloudflare-dns.com", "server_port": 443, "path": "/dns-query", "tls": map[string]any{"server_name": "cloudflare-dns.com"}, "domain_resolver": primaryBootstrapDNSTag}, {"type": "udp", "tag": primaryBootstrapDNSTag, "server": "1.1.1.1", "server_port": 53}, {"type": "local", "tag": "local"}}, "final": final, "strategy": "prefer_ipv4"}
 }
 
 func validateServerUDPForInbound(server model.Server, inbound model.Inbound) error {
@@ -1457,7 +1457,7 @@ func warpProfileToSingBox(v model.WARPProfile, server model.Server) (map[string]
 	if mtu > 0 {
 		raw["mtu"] = mtu
 	}
-	applyDialDomainResolver(raw, normalizeDNSStrategy(v.DNSStrategy, EffectiveIPStack(server)))
+	applyManagedWARPDomainResolver(raw, normalizeDNSStrategy(v.DNSStrategy, EffectiveIPStack(server)))
 	return raw, nil
 }
 
@@ -1573,7 +1573,7 @@ func preferredDNSResolverTag(dns map[string]any) string {
 	fallback := "local"
 	for _, server := range dnsServerItems(dns["servers"]) {
 		tag, _ := server["tag"].(string)
-		if tag == "bootstrap-primary" || tag == "bootstrap" {
+		if tag == primaryBootstrapDNSTag {
 			return tag
 		}
 		if tag != "" && fallback == "local" {
@@ -1610,7 +1610,11 @@ func applyDialDomainResolver(item map[string]any, defaultStrategy string) {
 	if defaultStrategy == "" {
 		return
 	}
-	item["domain_resolver"] = map[string]any{"server": "bootstrap-primary", "strategy": defaultStrategy}
+	item["domain_resolver"] = map[string]any{"server": primaryBootstrapDNSTag, "strategy": defaultStrategy}
+}
+
+func applyManagedWARPDomainResolver(item map[string]any, strategy string) {
+	item["domain_resolver"] = map[string]any{"server": primaryBootstrapDNSTag, "strategy": strategy}
 }
 
 func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds []model.Outbound, external []model.ExternalOutbound) ([]map[string]any, error) {

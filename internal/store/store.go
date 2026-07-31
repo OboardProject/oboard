@@ -29,7 +29,7 @@ const (
 	configVersionSetting  = "system.config_version_sequence"
 )
 
-const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_token_hash,''),chain_secret,coalesce(enrollment_hash,''),enrollment_expires_at,entry_address,coalesce(public_ipv4,''),coalesce(public_ipv6,''),coalesce(region_code,''),coalesce(detected_region_code,''),coalesce(region_mode,'auto'),coalesce(entry_ip_mode,'auto'),listen_ip,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,ssh_port,status,os,coalesce(distro_id,''),coalesce(distro_version,''),coalesce(distro_name,''),coalesce(libc,''),coalesce(service_manager,''),coalesce(package_manager,''),arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,coalesce(agent_version,''),coalesce(agent_build,''),sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at from servers`
+const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_token_hash,''),chain_secret,coalesce(enrollment_hash,''),enrollment_expires_at,entry_address,coalesce(public_ipv4,''),coalesce(public_ipv6,''),coalesce(region_code,''),coalesce(detected_region_code,''),coalesce(region_mode,'auto'),coalesce(entry_ip_mode,'auto'),listen_ip,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,status,os,coalesce(distro_id,''),coalesce(distro_version,''),coalesce(distro_name,''),coalesce(libc,''),coalesce(service_manager,''),coalesce(package_manager,''),arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,coalesce(agent_version,''),coalesce(agent_build,''),sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at from servers`
 
 const userSelectSQL = `select u.id,u.username,u.nickname,u.password_hash,coalesce(u.session_version,0),u.role,u.status,u.proxy_uuid,u.proxy_password,u.speed_limit_mbps,u.traffic_limit_bytes,u.traffic_used_bytes,u.traffic_reset_mode,u.traffic_reset_day,coalesce(u.subscription_token,''),coalesce(p.burn_after_read,0),p.burned_at,coalesce(a.enabled,0),coalesce(a.public_key,''),u.created_at,u.updated_at from users u left join subscription_token_policies p on p.user_id=u.id left join subscription_age_keys a on a.user_id=u.id`
 
@@ -125,8 +125,10 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists user_authentication (user_id integer primary key references users(id) on delete cascade, totp_enabled integer not null default 0, totp_secret_encrypted text not null default '', recovery_code_hashes_json text not null default '[]', totp_last_used_step integer not null default -1, webauthn_user_handle text unique, updated_at text not null)`,
 		`create table if not exists passkey_credentials (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, name text not null, credential_id text not null unique, credential_json text not null, created_at text not null, last_used_at text)`,
 		`create table if not exists auth_challenges (token_hash text primary key, kind text not null, user_id integer references users(id) on delete cascade, data_encrypted text not null, expires_at text not null, created_at text not null)`,
-		`create table if not exists ssh_user_keys (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, name text not null, public_key text not null, fingerprint text not null, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(user_id,fingerprint))`,
-		`create table if not exists servers (id integer primary key autoincrement, name text not null, agent_id text unique, agent_token_hash text, chain_secret text not null, enrollment_hash text, enrollment_expires_at text, entry_address text, public_ipv4 text not null default '', public_ipv6 text not null default '', region_code text not null default '', detected_region_code text not null default '', region_mode text not null default 'auto', entry_ip_mode text not null default 'auto', listen_ip text, ip_stack text not null default 'auto', udp_inbound_mode text not null default 'allow', mtu_mode text not null default 'detect', mtu_value integer not null default 0, mtu_probe_host text not null default '1.1.1.1', mtu_probe_port integer not null default 443, mtu_overhead_bytes integer not null default 0, bbr_enabled integer not null default 0, port_range_start integer not null default 10000, port_range_end integer not null default 20000, ssh_port integer not null default 0, status text not null, os text, distro_id text not null default '', distro_version text not null default '', distro_name text not null default '', libc text not null default '', service_manager text not null default '', package_manager text not null default '', arch text, kernel text, cpu text, memory_bytes integer not null default 0, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, agent_memory_bytes integer not null default 0, disk_bytes integer not null default 0, agent_version text not null default '', agent_build text not null default '', sing_box_version text, connection_audit_enabled integer not null default 0, last_seen_at text, created_at text not null, updated_at text not null)`,
+		`create table if not exists ssh_user_credentials (user_id integer primary key references users(id) on delete cascade, public_key text not null, fingerprint text not null unique, private_key_encrypted text not null, created_at text not null, updated_at text not null)`,
+		`create table if not exists ssh_server_host_keys (server_id integer primary key references servers(id) on delete cascade, public_key text not null, fingerprint text not null, config_version integer not null, updated_at text not null)`,
+		`create table if not exists ssh_credential_deployments (server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, credential_fingerprint text not null, config_version integer not null, updated_at text not null, primary key(server_id,user_id))`,
+		`create table if not exists servers (id integer primary key autoincrement, name text not null, agent_id text unique, agent_token_hash text, chain_secret text not null, enrollment_hash text, enrollment_expires_at text, entry_address text, public_ipv4 text not null default '', public_ipv6 text not null default '', region_code text not null default '', detected_region_code text not null default '', region_mode text not null default 'auto', entry_ip_mode text not null default 'auto', listen_ip text, ip_stack text not null default 'auto', udp_inbound_mode text not null default 'allow', mtu_mode text not null default 'detect', mtu_value integer not null default 0, mtu_probe_host text not null default '1.1.1.1', mtu_probe_port integer not null default 443, mtu_overhead_bytes integer not null default 0, bbr_enabled integer not null default 0, port_range_start integer not null default 10000, port_range_end integer not null default 20000, status text not null, os text, distro_id text not null default '', distro_version text not null default '', distro_name text not null default '', libc text not null default '', service_manager text not null default '', package_manager text not null default '', arch text, kernel text, cpu text, memory_bytes integer not null default 0, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, agent_memory_bytes integer not null default 0, disk_bytes integer not null default 0, agent_version text not null default '', agent_build text not null default '', sing_box_version text, connection_audit_enabled integer not null default 0, last_seen_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_credentials (id integer primary key autoincrement, name text not null unique, provider text not null, zone_name text not null, zone_id text not null default '', config_encrypted text not null, enabled integer not null default 1, verified_at text, last_error text not null default '', created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_credential_zones (id integer primary key autoincrement, credential_id integer not null references dns_credentials(id) on delete cascade, zone_name text not null, provider_zone_id text not null default '', server_id integer references servers(id) on delete set null, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_record_metadata (dns_zone_id integer not null references dns_credential_zones(id) on delete cascade, provider_record_id text not null, comment text not null default '', server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, updated_at text not null, primary key(dns_zone_id,provider_record_id))`,
@@ -205,7 +207,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_subscription_one_time_tokens_user on subscription_one_time_tokens(user_id)`,
 		`create index if not exists idx_passkey_credentials_user on passkey_credentials(user_id)`,
 		`create index if not exists idx_auth_challenges_expiry on auth_challenges(expires_at)`,
-		`create index if not exists idx_ssh_user_keys_user on ssh_user_keys(user_id, enabled)`,
+		`create index if not exists idx_ssh_credential_deployments_user on ssh_credential_deployments(user_id, server_id)`,
 		`create index if not exists idx_dns_credential_zones_credential on dns_credential_zones(credential_id, zone_name)`,
 		`create index if not exists idx_dns_credential_zones_server on dns_credential_zones(server_id)`,
 		`create index if not exists idx_proxy_path_port_allocations_server on proxy_path_port_allocations(server_id)`,
@@ -214,6 +216,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
+	}
+	if _, err := s.db.ExecContext(ctx, `drop table if exists ssh_user_keys`); err != nil {
+		return err
 	}
 	if err := s.ensureNullableAuthChallengeUser(ctx); err != nil {
 		return err
@@ -1289,7 +1294,7 @@ func (s *Store) CreateServer(ctx context.Context, v *model.Server) error {
 	}
 	normalizeServerEntryIP(v)
 	normalizeServerRegion(v)
-	res, err := s.db.ExecContext(ctx, `insert into servers(name,agent_id,agent_token_hash,chain_secret,enrollment_hash,entry_address,public_ipv4,public_ipv6,region_code,detected_region_code,region_mode,entry_ip_mode,listen_ip,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,ssh_port,status,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,agent_version,agent_build,sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.Name, nullEmpty(v.AgentID), nullEmpty(v.AgentTokenHash), v.ChainSecret, nullEmpty(v.EnrollmentHash), v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.SSHPort, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into servers(name,agent_id,agent_token_hash,chain_secret,enrollment_hash,entry_address,public_ipv4,public_ipv6,region_code,detected_region_code,region_mode,entry_ip_mode,listen_ip,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,status,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,agent_version,agent_build,sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.Name, nullEmpty(v.AgentID), nullEmpty(v.AgentTokenHash), v.ChainSecret, nullEmpty(v.EnrollmentHash), v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -1308,7 +1313,7 @@ func (s *Store) UpdateServer(ctx context.Context, v *model.Server) error {
 	// Note: enrollment_hash is intentionally not cleared via empty string here —
 	// coalesce(nullif('',''), enrollment_hash) would preserve the old hash.
 	// Use SetServerEnrollmentHash / ClaimServerEnrollment for one-time token lifecycle.
-	_, err := s.db.ExecContext(ctx, `update servers set name=?, agent_id=coalesce(nullif(?,''),agent_id), agent_token_hash=coalesce(nullif(?,''),agent_token_hash), chain_secret=coalesce(nullif(?,''),chain_secret), enrollment_hash=coalesce(nullif(?,''),enrollment_hash), entry_address=?, public_ipv4=?, public_ipv6=?, region_code=?, detected_region_code=?, region_mode=?, entry_ip_mode=?, listen_ip=?, ip_stack=?, udp_inbound_mode=?, mtu_mode=?, mtu_value=?, mtu_probe_host=?, mtu_probe_port=?, mtu_overhead_bytes=?, bbr_enabled=?, port_range_start=?, port_range_end=?, ssh_port=?, status=?, os=?, distro_id=?, distro_version=?, distro_name=?, libc=?, service_manager=?, package_manager=?, arch=?, kernel=?, cpu=?, memory_bytes=?, cpu_usage_percent=?, memory_used_bytes=?, memory_total_bytes=?, agent_memory_bytes=?, disk_bytes=?, agent_version=?, agent_build=?, sing_box_version=?, connection_audit_enabled=?, last_seen_at=?, updated_at=? where id=?`, v.Name, v.AgentID, v.AgentTokenHash, v.ChainSecret, v.EnrollmentHash, v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.SSHPort, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), v.UpdatedAt.Format(time.RFC3339Nano), v.ID)
+	_, err := s.db.ExecContext(ctx, `update servers set name=?, agent_id=coalesce(nullif(?,''),agent_id), agent_token_hash=coalesce(nullif(?,''),agent_token_hash), chain_secret=coalesce(nullif(?,''),chain_secret), enrollment_hash=coalesce(nullif(?,''),enrollment_hash), entry_address=?, public_ipv4=?, public_ipv6=?, region_code=?, detected_region_code=?, region_mode=?, entry_ip_mode=?, listen_ip=?, ip_stack=?, udp_inbound_mode=?, mtu_mode=?, mtu_value=?, mtu_probe_host=?, mtu_probe_port=?, mtu_overhead_bytes=?, bbr_enabled=?, port_range_start=?, port_range_end=?, status=?, os=?, distro_id=?, distro_version=?, distro_name=?, libc=?, service_manager=?, package_manager=?, arch=?, kernel=?, cpu=?, memory_bytes=?, cpu_usage_percent=?, memory_used_bytes=?, memory_total_bytes=?, agent_memory_bytes=?, disk_bytes=?, agent_version=?, agent_build=?, sing_box_version=?, connection_audit_enabled=?, last_seen_at=?, updated_at=? where id=?`, v.Name, v.AgentID, v.AgentTokenHash, v.ChainSecret, v.EnrollmentHash, v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), v.UpdatedAt.Format(time.RFC3339Nano), v.ID)
 	if err != nil {
 		return err
 	}
@@ -1412,7 +1417,7 @@ func scanServers(rows *sql.Rows) ([]model.Server, error) {
 		var v model.Server
 		var last, enrollExp sql.NullString
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.Name, &v.AgentID, &v.AgentTokenHash, &v.ChainSecret, &v.EnrollmentHash, &enrollExp, &v.EntryAddress, &v.PublicIPv4, &v.PublicIPv6, &v.RegionCode, &v.DetectedRegionCode, &v.RegionMode, &v.EntryIPMode, &v.ListenIP, &v.IPStack, &v.UDPInboundMode, &v.MTUMode, &v.MTUValue, &v.MTUProbeHost, &v.MTUProbePort, &v.MTUOverheadBytes, &v.BBREnabled, &v.PortRangeStart, &v.PortRangeEnd, &v.SSHPort, &v.Status, &v.OS, &v.DistroID, &v.DistroVersion, &v.DistroName, &v.Libc, &v.ServiceManager, &v.PackageManager, &v.Arch, &v.Kernel, &v.CPU, &v.MemoryBytes, &v.CPUUsagePercent, &v.MemoryUsedBytes, &v.MemoryTotalBytes, &v.AgentMemoryBytes, &v.DiskBytes, &v.AgentVersion, &v.AgentBuild, &v.SingBoxVersion, &v.ConnectionAuditEnabled, &last, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.Name, &v.AgentID, &v.AgentTokenHash, &v.ChainSecret, &v.EnrollmentHash, &enrollExp, &v.EntryAddress, &v.PublicIPv4, &v.PublicIPv6, &v.RegionCode, &v.DetectedRegionCode, &v.RegionMode, &v.EntryIPMode, &v.ListenIP, &v.IPStack, &v.UDPInboundMode, &v.MTUMode, &v.MTUValue, &v.MTUProbeHost, &v.MTUProbePort, &v.MTUOverheadBytes, &v.BBREnabled, &v.PortRangeStart, &v.PortRangeEnd, &v.Status, &v.OS, &v.DistroID, &v.DistroVersion, &v.DistroName, &v.Libc, &v.ServiceManager, &v.PackageManager, &v.Arch, &v.Kernel, &v.CPU, &v.MemoryBytes, &v.CPUUsagePercent, &v.MemoryUsedBytes, &v.MemoryTotalBytes, &v.AgentMemoryBytes, &v.DiskBytes, &v.AgentVersion, &v.AgentBuild, &v.SingBoxVersion, &v.ConnectionAuditEnabled, &last, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if enrollExp.Valid && enrollExp.String != "" {
@@ -2009,48 +2014,56 @@ func (s *Store) DeleteInboundUsersForUser(ctx context.Context, userID int64) err
 	return err
 }
 
-func (s *Store) CreateSSHUserKey(ctx context.Context, v *model.SSHUserKey) error {
+func (s *Store) CreateSSHUserCredential(ctx context.Context, v *model.SSHUserCredential) (bool, error) {
 	ts := now()
-	v.CreatedAt = parseTime(ts)
-	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into ssh_user_keys(user_id,name,public_key,fingerprint,enabled,created_at,updated_at) values(?,?,?,?,?,?,?)`, v.UserID, v.Name, v.PublicKey, v.Fingerprint, boolInt(v.Enabled), ts, ts)
+	result, err := s.db.ExecContext(ctx, `insert into ssh_user_credentials(user_id,public_key,fingerprint,private_key_encrypted,created_at,updated_at) values(?,?,?,?,?,?) on conflict(user_id) do nothing`, v.UserID, v.PublicKey, v.Fingerprint, v.PrivateKeyEncrypted, ts, ts)
+	if err != nil {
+		return false, err
+	}
+	created, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if created != 0 {
+		v.CreatedAt = parseTime(ts)
+		v.UpdatedAt = v.CreatedAt
+	}
+	return created != 0, nil
+}
+
+func (s *Store) ReplaceSSHUserCredential(ctx context.Context, v *model.SSHUserCredential) error {
+	ts := now()
+	result, err := s.db.ExecContext(ctx, `update ssh_user_credentials set public_key=?,fingerprint=?,private_key_encrypted=?,updated_at=? where user_id=?`, v.PublicKey, v.Fingerprint, v.PrivateKeyEncrypted, ts, v.UserID)
 	if err != nil {
 		return err
 	}
-	v.ID, _ = res.LastInsertId()
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return sql.ErrNoRows
+	}
+	v.UpdatedAt = parseTime(ts)
 	return nil
 }
 
-func (s *Store) UpdateSSHUserKey(ctx context.Context, v *model.SSHUserKey) error {
-	_, err := s.db.ExecContext(ctx, `update ssh_user_keys set name=?,public_key=?,fingerprint=?,enabled=?,updated_at=? where id=?`, v.Name, v.PublicKey, v.Fingerprint, boolInt(v.Enabled), now(), v.ID)
-	return err
-}
-
-func (s *Store) ListSSHUserKeys(ctx context.Context) ([]model.SSHUserKey, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,name,public_key,fingerprint,enabled,created_at,updated_at from ssh_user_keys order by user_id asc,id asc`)
+func (s *Store) ListSSHUserCredentials(ctx context.Context) ([]model.SSHUserCredential, error) {
+	rows, err := s.db.QueryContext(ctx, `select user_id,public_key,fingerprint,private_key_encrypted,created_at,updated_at from ssh_user_credentials order by user_id asc`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanSSHUserKeys(rows)
+	return scanSSHUserCredentials(rows)
 }
 
-func (s *Store) ListSSHUserKeysForUser(ctx context.Context, userID int64) ([]model.SSHUserKey, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,name,public_key,fingerprint,enabled,created_at,updated_at from ssh_user_keys where user_id=? order by id asc`, userID)
+func (s *Store) GetSSHUserCredential(ctx context.Context, userID int64) (*model.SSHUserCredential, error) {
+	rows, err := s.db.QueryContext(ctx, `select user_id,public_key,fingerprint,private_key_encrypted,created_at,updated_at from ssh_user_credentials where user_id=?`, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanSSHUserKeys(rows)
-}
-
-func (s *Store) GetSSHUserKey(ctx context.Context, id int64) (*model.SSHUserKey, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,name,public_key,fingerprint,enabled,created_at,updated_at from ssh_user_keys where id=?`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items, err := scanSSHUserKeys(rows)
+	items, err := scanSSHUserCredentials(rows)
 	if err != nil || len(items) == 0 {
 		if err != nil {
 			return nil, err
@@ -2060,22 +2073,81 @@ func (s *Store) GetSSHUserKey(ctx context.Context, id int64) (*model.SSHUserKey,
 	return &items[0], nil
 }
 
-func (s *Store) DeleteSSHUserKey(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from ssh_user_keys where id=?`, id)
-	return err
-}
-
-func scanSSHUserKeys(rows *sql.Rows) ([]model.SSHUserKey, error) {
-	out := []model.SSHUserKey{}
+func scanSSHUserCredentials(rows *sql.Rows) ([]model.SSHUserCredential, error) {
+	out := []model.SSHUserCredential{}
 	for rows.Next() {
-		var v model.SSHUserKey
-		var enabled int
+		var v model.SSHUserCredential
 		var createdAt, updatedAt string
-		if err := rows.Scan(&v.ID, &v.UserID, &v.Name, &v.PublicKey, &v.Fingerprint, &enabled, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&v.UserID, &v.PublicKey, &v.Fingerprint, &v.PrivateKeyEncrypted, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
-		v.Enabled = enabled != 0
 		v.CreatedAt = parseTime(createdAt)
+		v.UpdatedAt = parseTime(updatedAt)
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ApplySSHDeploymentState(ctx context.Context, hostKey model.SSHServerHostKey, credentials map[int64]string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ts := now()
+	if _, err := tx.ExecContext(ctx, `insert into ssh_server_host_keys(server_id,public_key,fingerprint,config_version,updated_at) values(?,?,?,?,?) on conflict(server_id) do update set public_key=excluded.public_key,fingerprint=excluded.fingerprint,config_version=excluded.config_version,updated_at=excluded.updated_at`, hostKey.ServerID, hostKey.PublicKey, hostKey.Fingerprint, hostKey.ConfigVersion, ts); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `delete from ssh_credential_deployments where server_id=?`, hostKey.ServerID); err != nil {
+		return err
+	}
+	for userID, fingerprint := range credentials {
+		if _, err := tx.ExecContext(ctx, `insert into ssh_credential_deployments(server_id,user_id,credential_fingerprint,config_version,updated_at) values(?,?,?,?,?)`, hostKey.ServerID, userID, fingerprint, hostKey.ConfigVersion, ts); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ClearSSHDeploymentState(ctx context.Context, serverID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `delete from ssh_credential_deployments where server_id=?`, serverID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `delete from ssh_server_host_keys where server_id=?`, serverID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) GetSSHServerHostKey(ctx context.Context, serverID int64) (*model.SSHServerHostKey, error) {
+	var v model.SSHServerHostKey
+	var updatedAt string
+	err := s.db.QueryRowContext(ctx, `select server_id,public_key,fingerprint,config_version,updated_at from ssh_server_host_keys where server_id=?`, serverID).Scan(&v.ServerID, &v.PublicKey, &v.Fingerprint, &v.ConfigVersion, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	v.UpdatedAt = parseTime(updatedAt)
+	return &v, nil
+}
+
+func (s *Store) ListSSHCredentialDeploymentsForUser(ctx context.Context, userID int64) ([]model.SSHCredentialDeployment, error) {
+	rows, err := s.db.QueryContext(ctx, `select server_id,user_id,credential_fingerprint,config_version,updated_at from ssh_credential_deployments where user_id=? order by server_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.SSHCredentialDeployment{}
+	for rows.Next() {
+		var v model.SSHCredentialDeployment
+		var updatedAt string
+		if err := rows.Scan(&v.ServerID, &v.UserID, &v.CredentialFingerprint, &v.ConfigVersion, &updatedAt); err != nil {
+			return nil, err
+		}
 		v.UpdatedAt = parseTime(updatedAt)
 		out = append(out, v)
 	}
@@ -4665,7 +4737,7 @@ type FullRoutingConfig struct {
 	DNSLists                     []model.DNSList                     `json:"dns_lists"`
 	ServerDNSPolicies            []model.ServerDNSPolicy             `json:"server_dns_policies"`
 	Users                        []model.User                        `json:"users"`
-	SSHUserKeys                  []model.SSHUserKey                  `json:"ssh_user_keys"`
+	SSHUserCredentials           []model.SSHUserCredential           `json:"ssh_user_credentials"`
 	ProxyPathPortAllocations     []model.ProxyPathPortAllocation     `json:"proxy_path_port_allocations"`
 }
 
@@ -4698,7 +4770,7 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
-	sshUserKeys, err := s.ListSSHUserKeys(ctx)
+	sshUserCredentials, err := s.ListSSHUserCredentials(ctx)
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
@@ -4742,7 +4814,7 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
-	return FullRoutingConfig{Servers: servers, Inbounds: in, InboundUsers: inboundUsers, UserGroups: groups, UserGroupMembers: members, InboundAccessGrants: grants, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ExternalOutboundAccessGrants: externalGrants, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, SSHUserKeys: sshUserKeys, ProxyPathPortAllocations: portAllocations}, nil
+	return FullRoutingConfig{Servers: servers, Inbounds: in, InboundUsers: inboundUsers, UserGroups: groups, UserGroupMembers: members, InboundAccessGrants: grants, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ExternalOutboundAccessGrants: externalGrants, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, SSHUserCredentials: sshUserCredentials, ProxyPathPortAllocations: portAllocations}, nil
 }
 
 func nullEmpty(v string) any {

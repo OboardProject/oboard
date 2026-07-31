@@ -61,6 +61,19 @@ func subscriptionFormatFixtureNodes() []SubscriptionNode {
 	}
 }
 
+const (
+	sshSubscriptionPrivateKey = "-----BEGIN OPENSSH PRIVATE KEY-----\ntest-private-key\n-----END OPENSSH PRIVATE KEY-----\n"
+	sshSubscriptionHostKey    = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestAgentHostKey"
+)
+
+func sshSubscriptionFixtureNode() SubscriptionNode {
+	return SubscriptionNode{Name: "SSH Managed", Group: "SSH", Raw: map[string]any{
+		"type": "ssh", "server": "ssh.example.com", "server_port": 2222,
+		"username": "oboard-7", "private_key": sshSubscriptionPrivateKey,
+		"host_key": []string{sshSubscriptionHostKey},
+	}}
+}
+
 func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 	nodes := subscriptionFormatFixtureNodes()
 	tests := []struct {
@@ -104,6 +117,124 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 			}
 			if got := countRenderedSubscriptionProxies(t, test.format, output); got != test.proxyCount {
 				t.Fatalf("proxy count = %d, want %d:\n%s", got, test.proxyCount, output)
+			}
+		})
+	}
+}
+
+func TestSSHSubscriptionTargetMappings(t *testing.T) {
+	node := sshSubscriptionFixtureNode()
+
+	plain, err := renderSubscriptionTarget([]SubscriptionNode{node}, model.SubscriptionFormatPlainJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var canonical []map[string]any
+	if err := json.Unmarshal([]byte(plain), &canonical); err != nil {
+		t.Fatal(err)
+	}
+	if len(canonical) != 1 || canonical[0]["type"] != "ssh" || canonical[0]["server"] != "ssh.example.com" || intFromAny(canonical[0]["port"]) != 2222 || canonical[0]["username"] != "oboard-7" || canonical[0]["private_key"] != sshSubscriptionPrivateKey || !stringSetContains(stringListFromAny(canonical[0]["host_key"]), sshSubscriptionHostKey) {
+		t.Fatalf("plain SSH mapping = %#v", canonical)
+	}
+
+	singBox, err := renderSubscriptionTarget([]SubscriptionNode{node}, model.SubscriptionFormatSingBox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var singBoxConfig SingBoxConfig
+	if err := json.Unmarshal([]byte(singBox), &singBoxConfig); err != nil {
+		t.Fatal(err)
+	}
+	if len(singBoxConfig.Outbounds) != 2 {
+		t.Fatalf("sing-box outbounds = %#v", singBoxConfig.Outbounds)
+	}
+	sshOutbound := singBoxConfig.Outbounds[1]
+	if sshOutbound["type"] != "ssh" || sshOutbound["user"] != "oboard-7" || sshOutbound["private_key"] != sshSubscriptionPrivateKey || !stringSetContains(stringListFromAny(sshOutbound["host_key"]), sshSubscriptionHostKey) {
+		t.Fatalf("sing-box SSH mapping = %#v", sshOutbound)
+	}
+
+	yamlFormats := []model.SubscriptionFormat{
+		model.SubscriptionFormatClashMeta,
+		model.SubscriptionFormatMihomo,
+		model.SubscriptionFormatShadowrocket,
+		model.SubscriptionFormatStash,
+		model.SubscriptionFormatEgern,
+	}
+	for _, format := range yamlFormats {
+		t.Run(string(format), func(t *testing.T) {
+			output, err := renderSubscriptionTarget([]SubscriptionNode{node}, format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document struct {
+				Proxies []map[string]any `yaml:"proxies"`
+			}
+			if err := yaml.Unmarshal([]byte(output), &document); err != nil {
+				t.Fatal(err)
+			}
+			if len(document.Proxies) != 1 {
+				t.Fatalf("%s SSH proxies = %#v", format, document.Proxies)
+			}
+			proxy := document.Proxies[0]
+			usernameKey, privateKeyKey, hostKeyKey := "username", "private-key", "host-key"
+			if format == model.SubscriptionFormatStash {
+				usernameKey = "user"
+			}
+			if format == model.SubscriptionFormatEgern {
+				privateKeyKey, hostKeyKey = "private_key", "host_keys"
+			}
+			if proxy["type"] != "ssh" || proxy["server"] != "ssh.example.com" || intFromAny(proxy["port"]) != 2222 || proxy[usernameKey] != "oboard-7" || proxy[privateKeyKey] != sshSubscriptionPrivateKey || !stringSetContains(stringListFromAny(proxy[hostKeyKey]), sshSubscriptionHostKey) {
+				t.Fatalf("%s SSH mapping = %#v", format, proxy)
+			}
+		})
+	}
+
+	for _, format := range []model.SubscriptionFormat{model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac} {
+		t.Run(string(format), func(t *testing.T) {
+			output, err := renderSubscriptionTarget([]SubscriptionNode{node}, format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			keyName := surgeSSHKeyName(sshSubscriptionPrivateKey)
+			for _, want := range []string{
+				"[Proxy]\n",
+				"SSH Managed=ssh,ssh.example.com,2222",
+				`username="oboard-7"`,
+				"private-key=" + keyName,
+				`server-fingerprint="` + sshSubscriptionHostKey + `"`,
+				"[Keystore]\n",
+				keyName + "=type=openssh-private-key,base64=" + base64.StdEncoding.EncodeToString([]byte(sshSubscriptionPrivateKey)),
+			} {
+				if !strings.Contains(output, want) {
+					t.Fatalf("%s output missing %q:\n%s", format, want, output)
+				}
+			}
+		})
+	}
+}
+
+func TestSSHSubscriptionIsOmittedFromUnsupportedTargets(t *testing.T) {
+	node := sshSubscriptionFixtureNode()
+	formats := []model.SubscriptionFormat{
+		model.SubscriptionFormatSingBoxMieru,
+		model.SubscriptionFormatMieru,
+		model.SubscriptionFormatClash,
+		model.SubscriptionFormatLoon,
+		model.SubscriptionFormatQX,
+		model.SubscriptionFormatSurfboard,
+		model.SubscriptionFormatV2Ray,
+		model.SubscriptionFormatV2RayURI,
+	}
+	for _, format := range formats {
+		t.Run(string(format), func(t *testing.T) {
+			output, err := renderSubscriptionTarget([]SubscriptionNode{node}, format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, secret := range []string{"SSH Managed", sshSubscriptionPrivateKey, sshSubscriptionHostKey} {
+				if strings.Contains(output, secret) {
+					t.Fatalf("%s leaked unsupported SSH node data:\n%s", format, output)
+				}
 			}
 		})
 	}

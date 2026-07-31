@@ -178,15 +178,15 @@ func TestExplicitProxyPathInboundOverridesSharedShadowsocksDefault(t *testing.T)
 
 func TestProxyPathDerivedTunnelsReuseStableResources(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "A", ChainSecret: "chain-a", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
-	serverB := model.Server{ID: 2, Name: "B", ChainSecret: "chain-b", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100, SSHPort: 22}
+	serverB := model.Server{ID: 2, Name: "B", ChainSecret: "chain-b", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
 	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
 	bID := serverB.ID
 
 	t.Run("ssh", func(t *testing.T) {
 		paths := []model.ProxyPath{{ID: 10, Name: "ssh-one", InboundID: root.ID, Enabled: true}, {ID: 20, Name: "ssh-two", InboundID: root.ID, Enabled: true}}
 		steps := []model.ProxyPathStep{
-			{ID: 11, PathID: paths[0].ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &bID, TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: `{"type":"ssh"}`},
-			{ID: 21, PathID: paths[1].ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &bID, TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: `{"type":"ssh"}`},
+			{ID: 11, PathID: paths[0].ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &bID, TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: `{"type":"ssh","ssh_port":22}`},
+			{ID: 21, PathID: paths[1].ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &bID, TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: `{"type":"ssh","ssh_port":22}`},
 		}
 		plans, err := BuildProxyPathPlans(paths, steps, []model.Server{serverA, serverB}, []model.Inbound{root})
 		if err != nil {
@@ -571,8 +571,8 @@ func TestSSHTunnelIdentityStaysStableWhenTargetGainsInbound(t *testing.T) {
 	// The SSH reuse key embeds the target service port, so before ports were
 	// persisted an unrelated inbound on the target could move that port, change
 	// the reuse key, and silently rotate the tunnel ID and its key pair.
-	source := model.Server{ID: 1, Name: "src", ChainSecret: "chain-1", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100, SSHPort: 22}
-	target := model.Server{ID: 2, Name: "dst", ChainSecret: "chain-2", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100, SSHPort: 22}
+	source := model.Server{ID: 1, Name: "src", ChainSecret: "chain-1", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
+	target := model.Server{ID: 2, Name: "dst", ChainSecret: "chain-2", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
 	root := model.Inbound{ID: 11, ServerID: source.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
 	path := model.ProxyPath{ID: 101, Name: "src-dst", InboundID: root.ID, Secret: "seed", Enabled: true}
 	targetID := target.ID

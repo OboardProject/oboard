@@ -30,7 +30,6 @@ export type Server = {
   bbr_enabled: boolean
   port_range_start: number
   port_range_end: number
-  ssh_port: number
   status: string
   os: string
   distro_id: string

@@ -130,7 +130,7 @@ type DNSRecord = { id: string; credential_id: number; dns_zone_id?: number; zone
 type GoogleEABCredential = { id: number; key_id: string; remark: string; usage_count: number; created_at: string }
 type Certificate = { id: number; name: string; primary_domain: string; domains: string[]; wildcard: boolean; challenge_type: 'http01' | 'dns01' | 'dns01_manual' | 'imported'; dns_credential_id?: number; issuance_server_id?: number; acme_ca: string; account_email: string; google_eab_credential_id?: number; eab_key_id?: string; eab_configured?: boolean; status: string; revision?: string; not_before?: string; not_after?: string; auto_renew: boolean; validation_records?: DNSRecord[]; last_error?: string; last_issued_at?: string; last_renewal_attempt_at?: string }
 type InboundUser = { id: number; inbound_id: number; user_id: number; enabled: boolean }
-type SSHUserKey = { id: number; user_id: number; name: string; public_key: string; fingerprint: string; enabled: boolean }
+type SSHUserCredential = { user_id: number; public_key: string; fingerprint: string; created_at: string; updated_at: string }
 type SSHAccess = { inbound_id: number; name: string; address: string; port: number; username: string }
 type AccessSubjectType = 'user' | 'group'
 type AccessScopeType = 'global' | 'server' | 'inbound'
@@ -876,6 +876,15 @@ async function copyText(value: string) {
   } finally {
     document.body.removeChild(textarea)
   }
+}
+
+function downloadBrowserFile(file: { blob: Blob; filename: string }) {
+  const url = URL.createObjectURL(file.blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = file.filename
+  anchor.click()
+  URL.revokeObjectURL(url)
 }
 
 function passkeyAvailable() {
@@ -2001,7 +2010,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
 function AccountPage({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
   const user: User | undefined = data.account_user || data.current_user
-  const sshUserKeys: SSHUserKey[] = data.ssh_user_keys || []
+  const sshCredential: SSHUserCredential | null = data.ssh_user_credential || null
   const sshAccesses: SSHAccess[] = data.ssh_accesses || []
   const [nickname, setNickname] = useState(user?.nickname || '')
   const [currentPassword, setCurrentPassword] = useState('')
@@ -2169,27 +2178,22 @@ function AccountPage({ data, client, load, notify }: any) {
     }
   }
 
-  const addSSHUserKey = async () => {
-    const publicKey = await dialogs.prompt({ title: '添加 SSH 公钥', message: '只粘贴公钥（ssh-ed25519、ssh-rsa 等），私钥只保留在你的设备上。', placeholder: 'ssh-ed25519 AAAA...' })
-    if (publicKey === null || !publicKey.trim()) return
-    const name = await dialogs.prompt({ title: '密钥名称', message: '用于区分你的设备。', defaultValue: '默认密钥', placeholder: '例如：MacBook' })
-    if (name === null) return
+  const downloadSSHCredential = async () => {
     try {
-      await client.request('/me/ssh-user-keys', { method: 'POST', body: JSON.stringify({ name: name.trim() || '默认密钥', public_key: publicKey.trim(), enabled: true }) })
-      await load()
-      notify?.('SSH 公钥已添加', 'success')
+      downloadBrowserFile(await client.download('/me/ssh-credential/private-key'))
+      notify?.('SSH 私钥已下载', 'success')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     }
   }
 
-  const deleteSSHUserKey = async (key: SSHUserKey) => {
-    const confirmed = await dialogs.confirm({ title: '移除 SSH 公钥？', message: `将移除“${key.name}”。使用此密钥的 SSH 受限代理连接会被拒绝。`, confirmText: '移除', tone: 'danger' })
+  const rotateSSHCredential = async () => {
+    const confirmed = await dialogs.confirm({ title: '轮换 SSH 凭据？', message: '现有私钥将在下次部署后失效。新私钥不会自动下载，请在轮换后按需下载。', confirmText: '确认轮换', tone: 'danger' })
     if (!confirmed) return
     try {
-      await client.request(`/me/ssh-user-keys/${key.id}`, { method: 'DELETE' })
+      await client.request('/me/ssh-credential/rotate', { method: 'POST', body: '{}' })
       await load()
-      notify?.('SSH 公钥已移除', 'success')
+      notify?.('SSH 凭据已轮换，将在下次部署后生效', 'success')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     }
@@ -2197,7 +2201,8 @@ function AccountPage({ data, client, load, notify }: any) {
 
   const copySSHCommand = async (access: SSHAccess) => {
     const host = access.address.includes(':') && !access.address.startsWith('[') ? `[${access.address}]` : access.address
-    const command = `ssh -N -D 127.0.0.1:1080 -p ${access.port} ${access.username}@${host}`
+    const filename = `oboard-ssh-user-${user?.id || 0}-ed25519`
+    const command = `chmod 600 ./${filename} && ssh -i ./${filename} -N -D 127.0.0.1:1080 -p ${access.port} ${access.username}@${host}`
     const ok = await copyText(command)
     notify?.(ok ? 'SSH 动态代理命令已复制' : '复制失败，请手动复制', ok ? 'success' : 'error')
   }
@@ -2255,11 +2260,11 @@ function AccountPage({ data, client, load, notify }: any) {
           </div>
         </section>
         <section className="sub-section">
-          <div className="sub-section-head"><div><h3><Lock size={16} />SSH 公钥</h3><p className="muted">用于 SSH 受限代理。只支持公钥认证；私钥始终保留在你的设备上。</p></div><button type="button" className="ghost" onClick={() => void addSSHUserKey()}>添加公钥</button></div>
+          <div className="sub-section-head"><div><h3><Lock size={16} />SSH 凭据</h3><p className="muted">用于已授权的 SSH 受限代理和支持 SSH 的订阅客户端。</p></div>{sshCredential && <div className="sub-user-actions"><button type="button" className="ghost" onClick={() => void downloadSSHCredential()}><Download size={14} />下载私钥</button><button type="button" className="ghost danger-text" onClick={() => void rotateSSHCredential()}><RefreshCw size={14} />轮换</button></div>}</div>
           <div className="sub-user-actions">
-            {sshUserKeys.length ? sshUserKeys.map(key => <div className="sub-user-actions" key={key.id}><span className={`sub-pill ${key.enabled !== false ? 'ok' : 'warn'}`} title={key.fingerprint}>{key.name} · {key.fingerprint}</span><button type="button" className="ghost danger-text" onClick={() => void deleteSSHUserKey(key)}>移除</button></div>) : <span className="muted">尚未添加 SSH 公钥</span>}
+            {sshCredential ? <span className="sub-pill ok" title={sshCredential.public_key}>{sshCredential.fingerprint}</span> : <span className="muted">获得 SSH 入口授权后自动生成</span>}
           </div>
-          {sshAccesses.length > 0 && <div className="sub-user-actions"><span className="muted">已授权入口</span>{sshAccesses.map(access => <button type="button" className="ghost" key={access.inbound_id} disabled={!sshUserKeys.some(key => key.enabled !== false)} onClick={() => void copySSHCommand(access)}>复制 {access.name} 命令</button>)}</div>}
+          {sshAccesses.length > 0 && <div className="sub-user-actions"><span className="muted">已授权入口</span>{sshAccesses.map(access => <button type="button" className="ghost" key={access.inbound_id} disabled={!sshCredential} onClick={() => void copySSHCommand(access)}>复制 {access.name} 命令</button>)}</div>}
         </section>
       </div>
     </div>
@@ -4118,7 +4123,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean }) {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), port_range_start: 100, port_range_end: 65535, ssh_port: 0, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connection_audit_enabled: true }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), port_range_start: 100, port_range_end: 65535, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connection_audit_enabled: true }
 }
 
 function GridViewIcon() {
@@ -4643,9 +4648,6 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: Re
           <FormField label="监听 IP" hint="通常保持 0.0.0.0。">
             <input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" />
           </FormField>
-		  <FormField label="SSH 端口（可选）" hint="用于 SSH 隧道，留空时再询问。">
-			<input type="number" min={1} max={65535} value={draft.ssh_port || ''} onChange={e => update({ ssh_port: e.target.value ? Number(e.target.value) : 0 })} placeholder="例如：22" />
-		  </FormField>
 
           <div className="form-section-title">网络策略</div>
           <FormField label="出口解析策略" hint="选择出口优先使用的 IP 类型。">
@@ -4721,7 +4723,6 @@ function ServerEditDialog({ server, onCancel, onSubmit }: { server: Server; onCa
             <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6} />
           </FormField>
           <FormField label="监听 IP"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
-		  <FormField label="SSH 端口（可选）" hint="用于 SSH 隧道，留空时再询问。"><input type="number" min={1} max={65535} value={draft.ssh_port || ''} onChange={e => update({ ssh_port: e.target.value ? Number(e.target.value) : 0 })} placeholder="例如：22" /></FormField>
           <div className="form-section-title">网络策略</div>
           <FormField label="出口解析策略"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
@@ -5278,7 +5279,6 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
             <ServerDetailItem label="网络优先" value={labelValue(server.ip_stack || 'unknown')} />
             <ServerDetailItem label="UDP 模式" value={labelValue(server.udp_inbound_mode || 'unknown')} />
             <ServerDetailItem label="端口范围" value={portRangeLabel(server)} />
-			<ServerDetailItem label="SSH 端口" value={server.ssh_port ? String(server.ssh_port) : '未设置'} />
             <ServerDetailItem label="安装时尝试 BBR + FQ" value={server.bbr_enabled ? '是' : '否'} />
             <ServerDetailItem label="公网可访问性" value={connectivityLabel} />
           </dl>
@@ -5794,7 +5794,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      sourceLabel: sourceLabel || selected?.name || '当前节点',
 	      targetLabel,
 	      targetInboundLabel: targetInbound ? `${targetInbound.name || `入口 ${targetInbound.id}`} / ${labelProtocol(targetInbound.protocol)}:${targetInbound.port}` : undefined,
-	      targetSSHPort: targetServer?.ssh_port || 0,
 	      importedOnly: target.node_type === 'imported',
 	    },
 	    current: current?.config_json,
@@ -10096,7 +10095,7 @@ function Subscriptions({ data, client, load, notify }: any) {
   const servers: Server[] = data.servers || []
   const inbounds: Inbound[] = (data.inbounds || []).filter((x: Inbound) => x.enabled !== false && x.protocol !== 'ssh')
   const sshInbounds: Inbound[] = (data.inbounds || []).filter((x: Inbound) => x.enabled !== false && x.protocol === 'ssh')
-  const sshUserKeys: SSHUserKey[] = data.ssh_user_keys || []
+  const sshUserCredentials: SSHUserCredential[] = data.ssh_user_credentials || []
   const profiles: SubscriptionProfile[] = data.subscription_profiles || []
   const assignments: SubscriptionAssignment[] = data.subscription_assignments || []
   const userGroups: UserGroup[] = data.user_groups || []
@@ -10275,15 +10274,22 @@ function Subscriptions({ data, client, load, notify }: any) {
     }
   }
 
-  const addSSHUserKey = async (user: User) => {
-    const publicKey = await dialogs.prompt({ title: `添加 ${user.username} 的 SSH 公钥`, message: '仅粘贴公钥（ssh-ed25519、ssh-rsa 等），不要粘贴私钥。此密钥用于 SSH 受限代理入口。', placeholder: 'ssh-ed25519 AAAA...' })
-    if (publicKey === null || !publicKey.trim()) return
-    const name = await dialogs.prompt({ title: '密钥名称', message: '用于识别此公钥。', defaultValue: '默认密钥', placeholder: '例如：MacBook' })
-    if (name === null) return
+  const downloadSSHCredential = async (user: User) => {
     try {
-      await client.request('/ssh-user-keys', { method: 'POST', body: JSON.stringify({ user_id: user.id, name: name.trim() || '默认密钥', public_key: publicKey.trim(), enabled: true }) })
+      downloadBrowserFile(await client.download(`/ssh-user-credentials/${user.id}/private-key`))
+      notify?.(`${user.username} 的 SSH 私钥已下载`, 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    }
+  }
+
+  const rotateSSHCredential = async (user: User) => {
+    const confirmed = await dialogs.confirm({ title: `轮换 ${user.username} 的 SSH 凭据？`, message: '现有私钥将在下次部署后失效。新凭据不会自动下发或下载。', confirmText: '确认轮换', tone: 'danger' })
+    if (!confirmed) return
+    try {
+      await client.request(`/ssh-user-credentials/${user.id}/rotate`, { method: 'POST', body: '{}' })
       await load()
-      notify?.('SSH 公钥已添加', 'success')
+      notify?.(`${user.username} 的 SSH 凭据已轮换`, 'success')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     }
@@ -10292,7 +10298,8 @@ function Subscriptions({ data, client, load, notify }: any) {
   const sshCommandFor = (inbound: Inbound, user: User) => {
     const address = inboundEntryAddress(data, inbound)
     const host = address.includes(':') && !address.startsWith('[') ? `[${address}]` : address
-    return `ssh -N -D 127.0.0.1:1080 -p ${inbound.port} oboard-${user.id}@${host}`
+    const filename = `oboard-ssh-user-${user.id}-ed25519`
+    return `chmod 600 ./${filename} && ssh -i ./${filename} -N -D 127.0.0.1:1080 -p ${inbound.port} oboard-${user.id}@${host}`
   }
 
   const copyUserSub = async (user: User, encrypted = false) => {
@@ -10420,7 +10427,7 @@ function Subscriptions({ data, client, load, notify }: any) {
             <div className="sub-section-head">
               <div>
                 <h3><Lock size={16} />SSH 受限代理</h3>
-                <p className="muted">SSH 不写入常规代理订阅；每个用户使用自己的公钥和独立登录名。仅支持本地/动态转发，不提供 shell、SFTP 或远程转发。</p>
+                <p className="muted">主控托管每个用户的 SSH 凭据，并向支持 SSH 的订阅客户端分发。Agent 仅开放本地/动态转发。</p>
               </div>
             </div>
             <div className="sub-user-table">
@@ -10431,12 +10438,12 @@ function Subscriptions({ data, client, load, notify }: any) {
                   <div className="sub-user-main"><span className="sub-user-avatar"><Lock size={14} /></span><div><strong>{inbound.name}</strong><small>{endpoint}</small></div></div>
                   <div className="sub-security-stack">
                     {granted.length ? granted.map(user => {
-                      const keys = sshUserKeys.filter(key => key.user_id === user.id && key.enabled !== false)
-                      return <div key={user.id} className="sub-user-actions"><span className={`sub-pill ${keys.length ? 'ok' : 'warn'}`}>{user.username} · {keys.length ? `${keys.length} 把公钥` : '未配置公钥'}</span><button type="button" className="ghost" onClick={() => void addSSHUserKey(user)}>添加公钥</button>{keys.map(key => <button type="button" className="ghost danger-text" key={key.id} title={key.fingerprint} onClick={async () => { await client.request(`/ssh-user-keys/${key.id}`, { method: 'DELETE' }); await load() }}>移除 {key.name}</button>)}</div>
+                      const credential = sshUserCredentials.find(item => item.user_id === user.id)
+                      return <div key={user.id} className="sub-user-actions"><span className={`sub-pill ${credential ? 'ok' : 'warn'}`} title={credential?.public_key}>{user.username} · {credential?.fingerprint || '等待生成凭据'}</span>{credential && <><button type="button" className="ghost" onClick={() => void downloadSSHCredential(user)}><Download size={14} />下载</button><button type="button" className="ghost danger-text" onClick={() => void rotateSSHCredential(user)}><RefreshCw size={14} />轮换</button></>}</div>
                     }) : <span className="sub-pill warn">暂无授权用户</span>}
                   </div>
                   <div className="sub-user-actions">
-                    {granted.map(user => <button type="button" className="ghost" key={user.id} disabled={!sshUserKeys.some(key => key.user_id === user.id && key.enabled !== false)} onClick={() => void copyText(sshCommandFor(inbound, user)).then(ok => notify?.(ok ? `${user.username} 的 SSH 命令已复制` : '复制失败', ok ? 'success' : 'error'))}>复制 {user.username} 命令</button>)}
+                    {granted.map(user => <button type="button" className="ghost" key={user.id} disabled={!sshUserCredentials.some(item => item.user_id === user.id)} onClick={() => void copyText(sshCommandFor(inbound, user)).then(ok => notify?.(ok ? `${user.username} 的 SSH 命令已复制` : '复制失败', ok ? 'success' : 'error'))}>复制 {user.username} 命令</button>)}
                   </div>
                 </div>
               })}

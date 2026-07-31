@@ -16,13 +16,22 @@ func TestServerRegionRoundTripAndAutomaticDetection(t *testing.T) {
 	}
 	defer s.Close()
 	ctx := context.Background()
+	var sshPortColumns int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from pragma_table_info('servers') where name='ssh_port'`).Scan(&sshPortColumns); err != nil {
+		t.Fatal(err)
+	}
+	if sshPortColumns != 0 {
+		t.Fatalf("fresh servers schema still contains ssh_port")
+	}
+	if _, err := s.db.ExecContext(ctx, `alter table servers add column ssh_port integer not null default 2222`); err != nil {
+		t.Fatal(err)
+	}
 	server := &model.Server{
 		Name:               "region-server",
 		AgentID:            "region-agent",
 		RegionMode:         "manual",
 		RegionCode:         "TW",
 		DetectedRegionCode: "HK",
-		SSHPort:            2222,
 		ListenIP:           "0.0.0.0",
 		IPStack:            model.IPStackAuto,
 		UDPInboundMode:     model.UDPInboundAllow,
@@ -37,7 +46,7 @@ func TestServerRegionRoundTripAndAutomaticDetection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.RegionMode != "manual" || stored.RegionCode != "TW" || stored.DetectedRegionCode != "HK" || stored.SSHPort != 2222 {
+	if stored.RegionMode != "manual" || stored.RegionCode != "TW" || stored.DetectedRegionCode != "HK" {
 		t.Fatalf("unexpected stored region: %#v", stored)
 	}
 	windowStart := time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC)
@@ -54,7 +63,6 @@ func TestServerRegionRoundTripAndAutomaticDetection(t *testing.T) {
 	}
 	stored.RegionMode = "auto"
 	stored.RegionCode = ""
-	stored.SSHPort = 22
 	if err := s.UpdateServer(ctx, stored); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +70,14 @@ func TestServerRegionRoundTripAndAutomaticDetection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.RegionMode != "auto" || stored.RegionCode != "" || stored.DetectedRegionCode != "SG" || stored.SSHPort != 22 {
+	if stored.RegionMode != "auto" || stored.RegionCode != "" || stored.DetectedRegionCode != "SG" {
 		t.Fatalf("unexpected automatic region state: %#v", stored)
+	}
+	var legacySSHPort int
+	if err := s.db.QueryRowContext(ctx, `select ssh_port from servers where id=?`, server.ID).Scan(&legacySSHPort); err != nil {
+		t.Fatal(err)
+	}
+	if legacySSHPort != 2222 {
+		t.Fatalf("runtime unexpectedly rewrote legacy ssh_port to %d", legacySSHPort)
 	}
 }
