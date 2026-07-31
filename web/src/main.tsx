@@ -28,6 +28,8 @@ import type {
 import { TransportDialog } from './components/proxy-path/TransportDialog'
 import {
   GRAPH_ENTRY_NODE_WIDTH,
+  GRAPH_LAYER_SECONDARY_OFFSET_Y,
+  GRAPH_LAYER_SIBLING_GAP,
   defaultEntryGraphPosition,
   defaultImportedGraphPosition,
   defaultServerGraphPosition,
@@ -5699,11 +5701,72 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const id = `imported-${node.id}`
 	  if (!positions[id]) placeGraphNode(id, defaultImportedGraphPosition(canvasImportedIDs.length))
 	}
+	const positionFromCurrentRoot = (layout: Record<string, GraphPosition>, nodeID: string) => {
+	  const candidate = layout[nodeID]
+	  if (!candidate) return null
+	  const rootServerID = selected?.id || servers[0]?.id || 0
+	  const rootNodeID = rootServerID ? `server-${rootServerID}` : ''
+	  const arrangedRoot = rootNodeID ? layout[rootNodeID] : undefined
+	  const currentRoot = rootNodeID
+	    ? positions[rootNodeID] || nodes.find(node => node.id === rootNodeID)?.position
+	    : undefined
+	  if (!arrangedRoot || !currentRoot) return snapGraphPosition(candidate)
+	  return snapGraphPosition({
+	    x: candidate.x + currentRoot.x - arrangedRoot.x,
+	    y: candidate.y + currentRoot.y - arrangedRoot.y,
+	  })
+	}
+	const openCanvasServerPosition = (preferred: GraphPosition, server: Server) => {
+	  const entryCount = entries.filter(entry => entry.server_id === server.id && entry.enabled !== false).length
+	  const width = graphServerNodeWidth(entryCount)
+	  const height = 140
+	  const occupied = nodes.map(node => ({
+	    x: node.position.x,
+	    y: node.position.y,
+	    width: node.width || Number.parseFloat(String(node.style?.width || '')) || GRAPH_ENTRY_NODE_WIDTH,
+	    height: node.height || Number.parseFloat(String(node.style?.height || '')) || height,
+	  }))
+	  const isOpen = (candidate: GraphPosition) => occupied.every(rect => (
+	    candidate.x + width + 32 <= rect.x ||
+	    rect.x + rect.width + 32 <= candidate.x ||
+	    candidate.y + height + 24 <= rect.y ||
+	    rect.y + rect.height + 24 <= candidate.y
+	  ))
+	  if (isOpen(preferred)) return preferred
+
+	  const rootServerID = selected?.id || servers[0]?.id || 0
+	  const rootNode = nodes.find(node => node.id === `server-${rootServerID}`)
+	  const rootPosition = rootNode?.position || positions[`server-${rootServerID}`] || defaultServerGraphPosition(0)
+	  const rootWidth = rootNode?.width || Number.parseFloat(String(rootNode?.style?.width || '')) || GRAPH_ENTRY_NODE_WIDTH
+	  const origin = {
+	    x: rootPosition.x + (rootWidth - width) / 2,
+	    y: rootPosition.y + 370,
+	  }
+	  const columnStep = width + GRAPH_LAYER_SIBLING_GAP
+	  const rowColumns = [
+	    [0, 1, -1, 2],
+	    [0.5, 1.5, -0.5, 2.5, -1.5],
+	    [0, 1, -1, 2, -2],
+	  ]
+	  for (let row = 0; row < rowColumns.length; row++) {
+	    for (const column of rowColumns[row]) {
+	      const candidate = snapGraphPosition({
+	        x: origin.x + column * columnStep,
+	        y: origin.y + row * GRAPH_LAYER_SECONDARY_OFFSET_Y,
+	      })
+	      if (isOpen(candidate)) return candidate
+	    }
+	  }
+	  return preferred
+	}
 	const putServerOnCanvas = (server: Server) => {
 	  const instance: CanvasServerInstance = { instance_id: `${server.id}-${Date.now()}-${++canvasServerSequence.current}`, server_id: server.id }
 	  const id = canvasServerNodeID(instance)
-	  setCanvasServerInstances(items => [...items, instance])
-	  placeGraphNode(id, defaultServerGraphPosition(Math.max(1, builtFlow.nodes.filter(node => String(node.className || '').includes('server-graph-node')).length)))
+	  const nextInstances = [...canvasServerInstances, instance]
+	  const layout = autoLayoutProxyGraphPositions(data, selected?.id || 0, canvasImportedIDs, nextInstances, canvasDirectExitInstances, canvasWARPInstances)
+	  const preferred = positionFromCurrentRoot(layout, id) || defaultServerGraphPosition(1)
+	  setCanvasServerInstances(nextInstances)
+	  placeGraphNode(id, openCanvasServerPosition(preferred, server))
 	  window.setTimeout(() => fitGraphToSafeArea(280), 40)
 	}
 	const addImportedToCurrentEntry = async (node: ExternalOutbound) => {
