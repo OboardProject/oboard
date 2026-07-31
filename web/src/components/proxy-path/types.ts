@@ -102,6 +102,14 @@ export type ExternalOutbound = {
   target_address: string
   target_port: number
   config_json: string
+  region_mode: RegionMode
+  region_code: string
+  detected_region_code?: string
+  effective_region_code?: string
+  region_source?: string
+  region_status?: string
+  region_error?: string
+  region_probed_at?: string
   expose_to_users: boolean
   enabled: boolean
 }
@@ -119,6 +127,14 @@ export type ProxyPath = {
   name_mode: 'auto' | 'custom'
   name_template: ProxyPathNamePart[]
   inbound_id: number
+  exit_region_mode: RegionMode
+  exit_region_code: string
+  detected_exit_region_code?: string
+  effective_exit_region_code?: string
+  exit_region_source?: string
+  exit_region_status?: string
+  exit_region_error?: string
+  exit_region_probed_at?: string
   enabled: boolean
 }
 

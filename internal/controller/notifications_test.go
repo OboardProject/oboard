@@ -791,6 +791,12 @@ func TestNotificationDNSErrorTextUsesUserFacingReasons(t *testing.T) {
 	}
 }
 
+func TestTaskTypeNotificationLabelIncludesExternalEgress(t *testing.T) {
+	if got := taskTypeNotificationLabel(model.AgentTaskTypeProbeExternalEgress); got != "第三方出口探测" {
+		t.Fatalf("task label = %q", got)
+	}
+}
+
 func TestTaskTimeoutAndAdminAnnouncementQueue(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

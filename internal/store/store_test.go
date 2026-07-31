@@ -34,6 +34,59 @@ func TestOpenRestrictsDatabaseFilePermissions(t *testing.T) {
 	}
 }
 
+func TestProxyPathEgressAttemptsRetainOnlySameTopologySuccess(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "egress-owner"}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, Port: 443, ConfigJSON: "{}", Enabled: true}
+	if err := s.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	external := &model.ExternalOutbound{Name: "imported", Protocol: model.ProtocolSocks, Scope: model.ExternalOutboundScopeGlobal, TargetAddress: "8.8.8.8", TargetPort: 1080, ConfigJSON: "{}", Enabled: true}
+	if err := s.CreateExternalOutbound(ctx, external); err != nil {
+		t.Fatal(err)
+	}
+	path := &model.ProxyPath{InboundID: inbound.ID, Enabled: true}
+	if err := s.CreateProxyPath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	target := model.ExternalEgressProbeTarget{PathID: path.ID, ExternalOutboundID: external.ID, OwnerServerID: server.ID, TopologyFingerprint: "fingerprint-a"}
+	succeededAt := time.Now().UTC().Add(-time.Minute)
+	if err := s.SaveProxyPathEgressAttempt(ctx, target, 1, 0, "succeeded", "8.8.8.8", "US", "geo-v1", "", succeededAt); err != nil {
+		t.Fatal(err)
+	}
+	failedAt := succeededAt.Add(time.Minute)
+	if err := s.SaveProxyPathEgressAttempt(ctx, target, 1, 0, "failed", "", "", "", "timeout", failedAt); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetProxyPathEgressResult(ctx, target.PathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "failed" || got.LastExitIP != "8.8.8.8" || got.LastRegionCode != "US" || got.GeoDatabaseRevision != "geo-v1" || got.LastSuccessAt == nil || !got.LastSuccessAt.Equal(succeededAt) {
+		t.Fatalf("same-topology failure = %#v", got)
+	}
+
+	target.TopologyFingerprint = "fingerprint-b"
+	if err := s.MarkProxyPathEgressPending(ctx, target, 2, 0); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetProxyPathEgressResult(ctx, target.PathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "pending" || got.LastExitIP != "" || got.LastRegionCode != "" || got.GeoDatabaseRevision != "" || got.LastSuccessAt != nil {
+		t.Fatalf("changed-topology pending result = %#v", got)
+	}
+}
+
 func TestPasskeyOwnerLookupRequiresCredentialAndUserHandle(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

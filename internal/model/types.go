@@ -587,18 +587,26 @@ type RoutingRule struct {
 }
 
 type ExternalOutbound struct {
-	ID            int64                 `json:"id"`
-	ServerID      *int64                `json:"server_id,omitempty"`
-	Name          string                `json:"name"`
-	Protocol      Protocol              `json:"protocol"`
-	Scope         ExternalOutboundScope `json:"scope"`
-	TargetAddress string                `json:"target_address"`
-	TargetPort    int                   `json:"target_port"`
-	ConfigJSON    string                `json:"config_json"`
-	ExposeToUsers bool                  `json:"expose_to_users"`
-	Enabled       bool                  `json:"enabled"`
-	CreatedAt     time.Time             `json:"created_at"`
-	UpdatedAt     time.Time             `json:"updated_at"`
+	ID                  int64                 `json:"id"`
+	ServerID            *int64                `json:"server_id,omitempty"`
+	Name                string                `json:"name"`
+	Protocol            Protocol              `json:"protocol"`
+	Scope               ExternalOutboundScope `json:"scope"`
+	TargetAddress       string                `json:"target_address"`
+	TargetPort          int                   `json:"target_port"`
+	ConfigJSON          string                `json:"config_json"`
+	RegionMode          string                `json:"region_mode"`
+	RegionCode          string                `json:"region_code"`
+	DetectedRegionCode  string                `json:"detected_region_code,omitempty"`
+	EffectiveRegionCode string                `json:"effective_region_code,omitempty"`
+	RegionSource        string                `json:"region_source,omitempty"`
+	RegionStatus        string                `json:"region_status,omitempty"`
+	RegionError         string                `json:"region_error,omitempty"`
+	RegionProbedAt      *time.Time            `json:"region_probed_at,omitempty"`
+	ExposeToUsers       bool                  `json:"expose_to_users"`
+	Enabled             bool                  `json:"enabled"`
+	CreatedAt           time.Time             `json:"created_at"`
+	UpdatedAt           time.Time             `json:"updated_at"`
 }
 
 type ExternalOutboundAccessGrant struct {
@@ -612,18 +620,44 @@ type ExternalOutboundAccessGrant struct {
 }
 
 type ProxyPath struct {
-	ID                 int64               `json:"id"`
-	Kind               ProxyPathKind       `json:"kind"`
-	BranchSourceStepID *int64              `json:"branch_source_step_id,omitempty"`
-	Name               string              `json:"name"`
-	NameMode           ProxyPathNameMode   `json:"name_mode"`
-	NameTemplate       []ProxyPathNamePart `json:"name_template"`
-	NameTemplateJSON   string              `json:"-"`
-	InboundID          int64               `json:"inbound_id"`
-	Secret             string              `json:"-"`
-	Enabled            bool                `json:"enabled"`
-	CreatedAt          time.Time           `json:"created_at"`
-	UpdatedAt          time.Time           `json:"updated_at"`
+	ID                      int64               `json:"id"`
+	Kind                    ProxyPathKind       `json:"kind"`
+	BranchSourceStepID      *int64              `json:"branch_source_step_id,omitempty"`
+	Name                    string              `json:"name"`
+	NameMode                ProxyPathNameMode   `json:"name_mode"`
+	NameTemplate            []ProxyPathNamePart `json:"name_template"`
+	NameTemplateJSON        string              `json:"-"`
+	InboundID               int64               `json:"inbound_id"`
+	ExitRegionMode          string              `json:"exit_region_mode"`
+	ExitRegionCode          string              `json:"exit_region_code"`
+	DetectedExitRegionCode  string              `json:"detected_exit_region_code,omitempty"`
+	EffectiveExitRegionCode string              `json:"effective_exit_region_code,omitempty"`
+	ExitRegionSource        string              `json:"exit_region_source,omitempty"`
+	ExitRegionStatus        string              `json:"exit_region_status,omitempty"`
+	ExitRegionError         string              `json:"exit_region_error,omitempty"`
+	ExitRegionProbedAt      *time.Time          `json:"exit_region_probed_at,omitempty"`
+	Secret                  string              `json:"-"`
+	Enabled                 bool                `json:"enabled"`
+	CreatedAt               time.Time           `json:"created_at"`
+	UpdatedAt               time.Time           `json:"updated_at"`
+}
+
+type ProxyPathEgressResult struct {
+	PathID              int64      `json:"path_id"`
+	ExternalOutboundID  int64      `json:"external_outbound_id"`
+	OwnerServerID       int64      `json:"owner_server_id"`
+	TopologyFingerprint string     `json:"-"`
+	ConfigVersion       int64      `json:"config_version"`
+	TaskID              *int64     `json:"task_id,omitempty"`
+	Status              string     `json:"status"`
+	LastExitIP          string     `json:"-"`
+	LastRegionCode      string     `json:"last_region_code,omitempty"`
+	GeoDatabaseRevision string     `json:"geo_database_revision,omitempty"`
+	LastError           string     `json:"last_error,omitempty"`
+	LastAttemptAt       *time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt       *time.Time `json:"last_success_at,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 type ProxyPathKind string
@@ -1065,6 +1099,7 @@ const (
 	AgentTaskTypeProbeInbounds         = "probe_inbounds"
 	AgentTaskTypeProbeInboundsExternal = "probe_inbounds_external"
 	AgentTaskTypeProbePortForwards     = "probe_port_forwards"
+	AgentTaskTypeProbeExternalEgress   = "probe_external_egress"
 	AgentTaskTypeDetectMTU             = "detect_mtu"
 	AgentTaskTypeBenchmarkDNS          = "benchmark_dns"
 	AgentTaskTypeCollectLogs           = "collect_logs"
@@ -1126,10 +1161,38 @@ type DeploymentTaskPayload struct {
 	InboundProbe         *InboundProbePlan          `json:"inbound_probe,omitempty"`
 	ExternalInboundProbe *InboundProbePlan          `json:"external_inbound_probe,omitempty"`
 	PortForwardProbe     *PortForwardPlan           `json:"port_forward_probe,omitempty"`
+	ExternalEgressProbe  *ExternalEgressProbePlan   `json:"external_egress_probe,omitempty"`
 	Tunnels              TunnelPlan                 `json:"tunnels"`
 	SSHInbounds          SSHInboundPlan             `json:"ssh_inbounds"`
 	DNSBenchmark         *DNSBenchmarkPlan          `json:"dns_benchmark,omitempty"`
 	MTUDetection         *MTUDetectionPlan          `json:"mtu_detection,omitempty"`
+}
+
+type ExternalEgressProbePlan struct {
+	Version               int64                       `json:"version"`
+	ExpectedConfigVersion int64                       `json:"expected_config_version,omitempty"`
+	TimeoutMS             int                         `json:"timeout_ms"`
+	Targets               []ExternalEgressProbeTarget `json:"targets"`
+}
+
+type ExternalEgressProbeTarget struct {
+	ProbeID             string `json:"probe_id"`
+	PathID              int64  `json:"path_id"`
+	ExternalOutboundID  int64  `json:"external_outbound_id"`
+	OwnerServerID       int64  `json:"owner_server_id"`
+	OutboundTag         string `json:"outbound_tag"`
+	TopologyFingerprint string `json:"topology_fingerprint"`
+}
+
+type ExternalEgressProbeItem struct {
+	ProbeID string `json:"probe_id"`
+	Status  string `json:"status"`
+	ExitIP  string `json:"exit_ip,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+type ExternalEgressProbeResult struct {
+	Items []ExternalEgressProbeItem `json:"items"`
 }
 
 type IssueCertificateHTTPTaskPayload struct {

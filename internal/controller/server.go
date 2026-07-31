@@ -125,7 +125,10 @@ func (s *Server) ConfigureGeoIP(dir string) error {
 	}
 	s.geoIP = database
 	s.geoIPStatus = database.Status()
-	return s.refreshConnectionAuditGeography(context.Background())
+	if err := s.refreshConnectionAuditGeography(context.Background()); err != nil {
+		return err
+	}
+	return s.refreshProxyPathEgressGeography(context.Background())
 }
 
 func (s *Server) Close() {
@@ -915,6 +918,11 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		paths = core.ResolveProxyPathNames(paths, steps, out["servers"].([]model.Server), inbounds, externals)
+		egressResults, err := s.store.ListProxyPathEgressResults(ctx)
+		if err != nil {
+			return err
+		}
+		paths, externals = core.ResolveProxyPathExitRegions(paths, steps, out["servers"].([]model.Server), inbounds, externals, egressResults)
 		forwards, err := s.store.ListPortForwards(ctx)
 		if err != nil {
 			return err
@@ -2322,6 +2330,9 @@ func (s *Server) expireTimedOutTasks(ctx context.Context) {
 		if task.Type == model.AgentTaskTypeApplyCoreConfig {
 			_ = s.store.CompleteDNSBenchmarkApplyTask(ctx, task.ID, false, task.ResultJSON)
 		}
+		if task.Type == model.AgentTaskTypeProbeExternalEgress || task.Type == model.AgentTaskTypeApplyDeployment {
+			_ = s.applyExternalEgressTaskResults(ctx, task.ServerID, task, "failed", task.ResultJSON)
+		}
 		s.notifyTaskFailure(ctx, task)
 	}
 }
@@ -3163,18 +3174,22 @@ func validateServer(v *model.Server) error {
 }
 
 func validateServerRegion(v *model.Server) error {
-	v.RegionMode = strings.ToLower(strings.TrimSpace(v.RegionMode))
-	v.RegionCode = normalizeControllerRegionCode(v.RegionCode)
-	switch v.RegionMode {
+	return normalizeRegionSelection(&v.RegionMode, &v.RegionCode, "region")
+}
+
+func normalizeRegionSelection(mode, code *string, field string) error {
+	*mode = strings.ToLower(strings.TrimSpace(*mode))
+	*code = normalizeControllerRegionCode(*code)
+	switch *mode {
 	case "", "auto":
-		v.RegionMode = "auto"
-		v.RegionCode = ""
+		*mode = "auto"
+		*code = ""
 	case "manual":
-		if v.RegionCode == "" {
-			return errors.New("manual region requires a two-letter region code")
+		if *code == "" {
+			return fmt.Errorf("manual %s requires a two-letter region code", field)
 		}
 	default:
-		return errors.New("region_mode must be auto or manual")
+		return fmt.Errorf("%s_mode must be auto or manual", strings.ReplaceAll(field, " ", "_"))
 	}
 	return nil
 }
@@ -5479,18 +5494,19 @@ func (s *Server) externalOutbounds(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/external-outbounds/")
 	switch r.Method {
 	case http.MethodGet:
-		if id > 0 {
-			item, err := s.store.GetExternalOutbound(r.Context(), id)
-			if err != nil {
-				fail(w, err, 404)
-				return
-			}
-			write(w, 200, map[string]any{"external_outbound": item})
-			return
-		}
-		items, err := s.store.ListExternalOutbounds(r.Context())
+		items, err := s.resolvedExternalOutbounds(r.Context())
 		if err != nil {
 			fail(w, err, 500)
+			return
+		}
+		if id > 0 {
+			for i := range items {
+				if items[i].ID == id {
+					write(w, 200, map[string]any{"external_outbound": items[i]})
+					return
+				}
+			}
+			fail(w, sql.ErrNoRows, 404)
 			return
 		}
 		write(w, 200, map[string]any{"external_outbounds": items})
@@ -5507,13 +5523,18 @@ func (s *Server) externalOutbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		write(w, 201, map[string]any{"external_outbound": v})
+		write(w, 201, map[string]any{"external_outbound": s.resolvedExternalOutbound(r.Context(), v)})
 	case http.MethodPatch:
 		if id == 0 {
 			fail(w, errors.New("missing id"), 400)
 			return
 		}
-		var v model.ExternalOutbound
+		current, err := s.store.GetExternalOutbound(r.Context(), id)
+		if err != nil {
+			fail(w, err, 404)
+			return
+		}
+		v := *current
 		if !decode(w, r, &v) {
 			return
 		}
@@ -5526,7 +5547,7 @@ func (s *Server) externalOutbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		write(w, 200, map[string]any{"external_outbound": v})
+		write(w, 200, map[string]any{"external_outbound": s.resolvedExternalOutbound(r.Context(), v)})
 	case http.MethodDelete:
 		if id == 0 {
 			fail(w, errors.New("missing id"), 400)
@@ -5557,6 +5578,9 @@ func (s *Server) externalOutbounds(w http.ResponseWriter, r *http.Request) {
 func (s *Server) validateExternalOutbound(ctx context.Context, v *model.ExternalOutbound) error {
 	if strings.TrimSpace(v.Name) == "" {
 		return errors.New("name required")
+	}
+	if err := normalizeRegionSelection(&v.RegionMode, &v.RegionCode, "region"); err != nil {
+		return err
 	}
 	if v.Scope == "" {
 		v.Scope = model.ExternalOutboundScopeGlobal
@@ -5668,6 +5692,17 @@ func (s *Server) importExternalOutbounds(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		created = append(created, item)
+	}
+	if resolved, resolveErr := s.resolvedExternalOutbounds(r.Context()); resolveErr == nil {
+		resolvedByID := make(map[int64]model.ExternalOutbound, len(resolved))
+		for _, item := range resolved {
+			resolvedByID[item.ID] = item
+		}
+		for i := range created {
+			if item, ok := resolvedByID[created[i].ID]; ok {
+				created[i] = item
+			}
+		}
 	}
 	write(w, 201, map[string]any{"external_outbounds": created})
 }
@@ -6199,6 +6234,10 @@ func (s *Server) validateExternalOutboundAccessGrant(ctx context.Context, v *mod
 func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/proxy-paths/")
 	parts := pathParts(r.URL.Path, "/api/v1/proxy-paths/")
+	if id != 0 && len(parts) > 1 && parts[1] == "probe-egress" {
+		s.probeProxyPathEgress(w, r, id)
+		return
+	}
 	if len(parts) > 0 && parts[0] == "direct-branches" {
 		if r.Method != http.MethodPost {
 			method(w)
@@ -6536,6 +6575,9 @@ func (s *Server) validateProxyPath(ctx context.Context, v *model.ProxyPath) erro
 	}
 	if v.InboundID == 0 {
 		return errors.New("inbound_id required")
+	}
+	if err := normalizeRegionSelection(&v.ExitRegionMode, &v.ExitRegionCode, "exit region"); err != nil {
+		return err
 	}
 	inbound, err := s.store.GetInbound(ctx, v.InboundID)
 	if err != nil {
@@ -7175,7 +7217,30 @@ func (s *Server) proxyPathNameData(ctx context.Context) ([]model.ProxyPath, []mo
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
+	results, err := s.store.ListProxyPathEgressResults(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	paths, externals = core.ResolveProxyPathExitRegions(paths, steps, servers, inbounds, externals, results)
 	return paths, steps, servers, inbounds, externals, nil
+}
+
+func (s *Server) resolvedExternalOutbounds(ctx context.Context) ([]model.ExternalOutbound, error) {
+	_, _, _, _, externals, err := s.proxyPathNameData(ctx)
+	return externals, err
+}
+
+func (s *Server) resolvedExternalOutbound(ctx context.Context, fallback model.ExternalOutbound) model.ExternalOutbound {
+	items, err := s.resolvedExternalOutbounds(ctx)
+	if err != nil {
+		return fallback
+	}
+	for _, item := range items {
+		if item.ID == fallback.ID {
+			return item
+		}
+	}
+	return fallback
 }
 
 func (s *Server) resolvedProxyPath(ctx context.Context, fallback model.ProxyPath) model.ProxyPath {
@@ -8740,6 +8805,31 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	resolveRoutingProxyPathNames(&data)
 	servers, in := data.Servers, data.Inbounds
+	externalEgressTargetsByServer := map[int64][]model.ExternalEgressProbeTarget{}
+	if request.ServerID == 0 {
+		targets := core.ExternalEgressProbeTargets(data.ProxyPaths, data.ProxyPathSteps, servers, in, data.ExternalOutbounds)
+		if len(targets) > maxExternalEgressTargets {
+			fail(w, fmt.Errorf("第三方出口探测分支过多，单次最多支持 %d 个", maxExternalEgressTargets), http.StatusBadRequest)
+			return
+		}
+		for _, target := range targets {
+			externalEgressTargetsByServer[target.OwnerServerID] = append(externalEgressTargetsByServer[target.OwnerServerID], target)
+		}
+		for serverID, targets := range externalEgressTargetsByServer {
+			if len(targets) == 0 {
+				continue
+			}
+			server, ok := serverByID(servers, serverID)
+			if !ok || !agentBuildSupportsTask(server.AgentBuild, agentBuildMinExternalEgress) {
+				name := fmt.Sprintf("#%d", serverID)
+				if ok {
+					name = server.Name
+				}
+				fail(w, fmt.Errorf("服务器 %s 的 Agent 不支持第三方节点出口探测；请先更新 Agent", name), http.StatusConflict)
+				return
+			}
+		}
+	}
 	warpServerIDs, err := core.ProxyPathWARPServerIDs(data.ProxyPaths, data.ProxyPathSteps, in)
 	if err != nil {
 		fail(w, err, 400)
@@ -8933,6 +9023,10 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 
 		timePlan := model.TimeSyncPlan{Version: version, Mode: "first_apply", IntervalSeconds: 86400, Servers: []string{"pool.ntp.org", "time.cloudflare.com", "time.google.com"}}
+		var externalEgressProbe *model.ExternalEgressProbePlan
+		if targets := externalEgressTargetsByServer[server.ID]; len(targets) > 0 {
+			externalEgressProbe = &model.ExternalEgressProbePlan{Version: version, ExpectedConfigVersion: version, TimeoutMS: externalEgressTimeoutMS, Targets: targets}
+		}
 		payload := model.DeploymentTaskPayload{
 			Version:              version,
 			Config:               model.ApplyCoreConfigTaskPayload{Config: cfg, Assets: managedAssets},
@@ -8943,6 +9037,7 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 			InboundProbe:         inboundProbe,
 			ExternalInboundProbe: externalInboundProbe,
 			PortForwardProbe:     forwardProbe,
+			ExternalEgressProbe:  externalEgressProbe,
 			Tunnels:              tunnelPlan,
 			SSHInbounds:          sshInboundPlan,
 			DNSBenchmark:         dnsPlan,
@@ -8965,6 +9060,14 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tasks = append(tasks, task)
+		if item.payload.ExternalEgressProbe != nil {
+			for _, target := range item.payload.ExternalEgressProbe.Targets {
+				if err := s.store.MarkProxyPathEgressPending(r.Context(), target, version, task.ID); err != nil {
+					fail(w, err, 500)
+					return
+				}
+			}
+		}
 	}
 	auditReq(s, r, "apply", "deployment", fmt.Sprint(version))
 	write(w, 202, map[string]any{"config_version": version, "tasks": sanitizeTasksForRole(tasks, currentRole(r)), "summary": taskSummary(tasks)})
@@ -9667,6 +9770,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		InboundUsers:                 inboundUsers,
 		ProxyPaths:                   data.ProxyPaths,
 		ProxyPathSteps:               data.ProxyPathSteps,
+		ProxyPathEgressResults:       data.ProxyPathEgressResults,
 		ExternalOutbounds:            data.ExternalOutbounds,
 		ExternalOutboundAccessGrants: data.ExternalOutboundAccessGrants,
 		UserGroups:                   data.UserGroups,
@@ -10091,6 +10195,12 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 				fail(w, err, http.StatusBadRequest)
 				return
 			}
+		}
+	}
+	if task.Type == model.AgentTaskTypeProbeExternalEgress || task.Type == model.AgentTaskTypeApplyDeployment {
+		if err := s.applyExternalEgressTaskResults(r.Context(), server.ID, *task, req.Status, req.ResultJSON); err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
 		}
 	}
 	if err := s.completeTaskWithNotification(r.Context(), req.TaskID, req.Status, req.ResultJSON); err != nil {

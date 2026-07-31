@@ -506,7 +506,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		addRuntimeLimitsForInbound(&config, inbound, inboundUsers, opts)
 		inboundUsers = append(inboundUsers, pathLinkUsersForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps)...)
 		if len(inboundUsers) == 0 {
-			placeholderUsers, err := placeholderUsersForInbound(inbound)
+			placeholderUsers, err := placeholderUsersForInbound(inbound, server.ChainSecret)
 			if err != nil {
 				return "", err
 			}
@@ -899,7 +899,7 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 			baseUsers := usersForInbound(root, users, opts.InboundUsers)
 			processingUsers := proxyPathBranchUsersForPath(path, root, baseUsers)
 			if len(processingUsers) == 0 {
-				placeholderUsers, err := placeholderUsersForInbound(processingInbound)
+				placeholderUsers, err := placeholderUsersForInbound(processingInbound, server.ChainSecret)
 				if err != nil {
 					return nil, err
 				}
@@ -1878,14 +1878,22 @@ func usersForInbound(inbound model.Inbound, users []model.User, bindings []model
 	return out
 }
 
-func placeholderUsersForInbound(inbound model.Inbound) ([]model.User, error) {
-	uuid, err := randomPlaceholderUUID()
-	if err != nil {
-		return nil, err
-	}
-	password, err := randomPlaceholderSecret(24)
-	if err != nil {
-		return nil, err
+func placeholderUsersForInbound(inbound model.Inbound, serverSecret string) ([]model.User, error) {
+	var uuid, password string
+	if serverSecret = strings.TrimSpace(serverSecret); serverSecret != "" {
+		seed := fmt.Sprintf("%s:placeholder:inbound:%d", serverSecret, inbound.ID)
+		uuid = deterministicUUID(seed + ":uuid")
+		password = deterministicSecret(seed + ":password")
+	} else {
+		var err error
+		uuid, err = randomPlaceholderUUID()
+		if err != nil {
+			return nil, err
+		}
+		password, err = randomPlaceholderSecret(24)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return []model.User{{
 		ID:            0,

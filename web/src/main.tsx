@@ -487,6 +487,72 @@ function ServerRegionField({ draft, update }: { draft: any; update: (patch: any)
     </FormField>
   )
 }
+
+function exitRegionStatusLabel(status?: string, code?: string) {
+  const effectiveCode = normalizeRegionCode(code)
+  if (status === 'conflict') return '分支地区不一致'
+  if (status === 'incomplete') return '部分分支待探测'
+  if (status === 'stale') return '链路变更后待重探测'
+  if (status === 'unlinked') return '尚未用于代理链路'
+  if (status === 'pending') return effectiveCode ? `${regionLabel(effectiveCode)} · 等待更新` : '待探测'
+  if (status === 'failed') return effectiveCode ? `${regionLabel(effectiveCode)} · 最近探测失败` : '未识别'
+  if (effectiveCode) return regionLabel(effectiveCode)
+  return '待探测'
+}
+
+function ExitRegionBadge({ code, status, compact = false }: { code?: string; status?: string; compact?: boolean }) {
+  const effectiveCode = normalizeRegionCode(code)
+  const flagCode = effectiveCode || 'AQ'
+  const tone = status === 'failed' || status === 'conflict'
+    ? 'danger'
+    : status === 'pending' || status === 'stale' || status === 'incomplete' || !effectiveCode
+      ? 'warning'
+      : 'ok'
+  const label = exitRegionStatusLabel(status, effectiveCode)
+  return <span className={`exit-region-badge ${tone}${compact ? ' compact' : ''}`} title={label}>
+    <span className="exit-region-emoji" role="img" aria-label={effectiveCode ? regionLabel(effectiveCode) : '待探测'}>{regionFlagEmoji(flagCode)}</span>
+    <span>{compact && effectiveCode ? effectiveCode : label}</span>
+  </span>
+}
+
+function ExitRegionEditor({
+  mode,
+  manualCode,
+  effectiveCode,
+  status,
+  error,
+  probedAt,
+  onModeChange,
+  onCodeChange,
+  action,
+}: {
+  mode: RegionMode
+  manualCode?: string
+  effectiveCode?: string
+  status?: string
+  error?: string
+  probedAt?: string
+  onModeChange: (mode: RegionMode) => void
+  onCodeChange: (code: string) => void
+  action?: React.ReactNode
+}) {
+  return <div className="exit-region-editor">
+    <Select variant="segmented" value={mode} onChange={event => onModeChange(event.target.value as RegionMode)} aria-label="出口地区来源">
+      <option value="auto">自动识别</option>
+      <option value="manual">手动指定</option>
+    </Select>
+    {mode === 'manual'
+      ? <RegionPicker value={normalizeRegionCode(manualCode) || normalizeRegionCode(effectiveCode) || 'CN'} onChange={onCodeChange} />
+      : <div className="exit-region-auto">
+          <ExitRegionBadge code={effectiveCode} status={status} />
+          <div className="exit-region-auto-meta">
+            <span>{probedAt ? `最近探测 ${formatTableTime(probedAt)}` : '等待首次识别'}</span>
+            {error ? <small>{localizeErrorMessage(error)}</small> : null}
+          </div>
+          {action}
+        </div>}
+  </div>
+}
 const defaultSubscriptionFormat: SubscriptionFormat = 'mihomo'
 const subscriptionFormats: { value: SubscriptionFormat; label: string }[] = [
   { value: 'mihomo', label: 'Mihomo' },
@@ -657,7 +723,7 @@ const valueLabels: Record<string, string> = {
   allow: '允许', uot: 'UoT', never: '从不', first_apply: '首次下发', periodic: '定期', always: '每次', sampled: '实际连接采样', periodic_sampled: '定期+采样',
   detect: '仅检测', apply: '检测并应用', tcp_udp: 'TCP+UDP', builtin: '内置', wireguard: 'WireGuard', ssh: 'SSH', doh: 'DoH', dot: 'DoT', udp: 'UDP', tcp: 'TCP',
   cloudflare: 'Cloudflare', google: 'Google', quad9: 'Quad9', alidns: '阿里 DNS', dnspod: 'DNSPod', remote: '远程', local: '本地',
-  apply_deployment: '应用部署', apply_core_config: '下发核心配置', probe_inbounds: '检查入口监听', probe_inbounds_external: '检查公网端口', probe_port_forwards: '探测端口转发',
+  apply_deployment: '应用部署', apply_core_config: '下发核心配置', probe_inbounds: '检查入口监听', probe_inbounds_external: '检查公网端口', probe_port_forwards: '探测端口转发', probe_external_egress: '探测第三方出口',
   detect_mtu: 'MTU 检测', update_agent_config: '同步 Agent 配置', diagnose_network: '网络诊断',
   collect_logs: '拉取日志', manage_logs: '管理日志',
   install_agent: '安装 Agent', update_agent: '更新 Agent', uninstall_agent: '卸载 Agent',
@@ -1205,6 +1271,7 @@ function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => localStorage.getItem('oboard.sidebar.collapsed') === 'true')
   const [isMobile, setIsMobile] = useState(false)
+  const [proxyPathTopbarTarget, setProxyPathTopbarTarget] = useState<HTMLDivElement | null>(null)
 
   const toggleDesktopSidebar = () => {
     setIsSidebarCollapsed(collapsed => {
@@ -1642,7 +1709,7 @@ function App() {
             </div>
           </aside>
           <main className={`main${tab === 'proxy-paths' ? ' proxy-page-main' : ''}`}>
-            <header className={`topbar${tab === 'dashboard' ? ' topbar-quiet' : ''}`}>
+            <header className={`topbar${tab === 'dashboard' ? ' topbar-quiet' : ''}${tab === 'proxy-paths' ? ' proxy-path-topbar' : ''}`}>
               <div className="topbar-title-container">
                 {isMobile && (
                   <button
@@ -1735,11 +1802,12 @@ function App() {
 
                 <IconButton label={loading ? "正在刷新" : "刷新"} onClick={() => void load(tab)} className={`topbar-refresh${loading ? " refreshing" : ""}`} busy={loading}><RefreshIcon /></IconButton>
               </div>
+              <div ref={setProxyPathTopbarTarget} className="proxy-path-topbar-slot" aria-hidden={tab === 'proxy-paths' ? undefined : true} />
             </header>
             <div className="page-stage">
               <AnimatePresence initial={false} mode="popLayout">
                 <MotionPage key={tab}>
-                  {renderTab(tab, data, client, load, apply, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention)}
+                  {renderTab(tab, data, client, load, apply, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget)}
                 </MotionPage>
               </AnimatePresence>
             </div>
@@ -1984,11 +2052,11 @@ $ _`}</pre>
   )
 }
 
-function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: () => Promise<void>, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void) {
+function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: () => Promise<void>, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null) {
   if (tab === 'account') return <AccountPage data={data} client={client} load={load} notify={notify} />
   if (tab === 'dashboard') return <Dashboard data={data} loading={loading} displayName={sessionUser?.nickname || data.current_user?.nickname || sessionUser?.username || data.current_user?.username || 'Admin'} attention={dashboardAttention} dismissAttention={dismissDashboardAttention} />
   if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} />
-  if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} apply={apply} loading={loading} />
+  if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} apply={apply} loading={loading} topbarTarget={proxyPathTopbarTarget} />
   if (tab === 'inbounds') return <Inbounds data={data} client={client} load={load} />
   if (tab === 'outbounds') return <Outbounds data={data} client={client} load={load} />
   if (tab === 'routing') return <RoutingRules data={data} client={client} load={load} />
@@ -5347,23 +5415,22 @@ function inboundEntryAddress(data: any, entry: Inbound) {
 type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'routing' | 'transport'
 const proxyToolDragType = 'application/oboard-proxy-tool'
 
-function ProxyPathsWorkspace({ data, client, load, loading }: any) {
+function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget }: any) {
   const preferredRoot = (data.servers || []).find((server: Server) => (data.inbounds || []).some((entry: Inbound) => entry.server_id === server.id && entry.enabled !== false)) || (data.servers || [])[0]
   const [selectedServer, setSelectedServer] = useState<number>(preferredRoot?.id || 0)
-  const [panelActionsTarget, setPanelActionsTarget] = useState<HTMLDivElement | null>(null)
   useEffect(() => {
     const servers: Server[] = data.servers || []
     if (selectedServer && servers.some(server => server.id === selectedServer)) return
     const next = servers.find(server => (data.inbounds || []).some((entry: Inbound) => entry.server_id === server.id && entry.enabled !== false)) || servers[0]
     if (next) setSelectedServer(next.id)
   }, [data.servers?.length, data.inbounds?.length, selectedServer])
-  if (loading && !data.servers?.length) return <Panel title="代理链路"><DashboardSkeleton /></Panel>
+  if (loading && !data.servers?.length) return <Panel className="proxy-path-panel"><DashboardSkeleton /></Panel>
   const conflicts = deploymentConflicts(data)
-  return <Panel title="代理链路" className="proxy-path-panel" actions={<div ref={setPanelActionsTarget} className="proxy-path-panel-actions" />}>
+  return <Panel className="proxy-path-panel">
     {conflicts.length > 0 && <div className="error"><strong>下发前需要处理：</strong>{conflicts.map((x, i) => <div key={i}>{x}</div>)}</div>}
     <div className="proxy-shell">
       <ProxyGraphBoundary onRetry={load}>
-        <ProxyOverview data={data} client={client} load={load} selectedServer={selectedServer} setSelectedServer={setSelectedServer} panelActionsTarget={panelActionsTarget} />
+        <ProxyOverview data={data} client={client} load={load} selectedServer={selectedServer} setSelectedServer={setSelectedServer} topbarTarget={topbarTarget} />
       </ProxyGraphBoundary>
     </div>
   </Panel>
@@ -5419,7 +5486,7 @@ type TransportDialogRequest = {
   resolve: (value: TransportSelection | null) => void
 }
 
-function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, panelActionsTarget }: any) {
+function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget }: any) {
   const dialogs = useDialogs()
   const servers: Server[] = data.servers || []
   const entries: Inbound[] = data.inbounds || []
@@ -6419,11 +6486,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  setGraphMenu(null)
 	  await editProxyPathTransportForEntity(entity)
 	}
-	const editProxyPathNameForEntity = (entity: GraphEntity | null | undefined) => {
-	  if (!entity || entity.type !== 'proxy-path-step') return
-	  const step = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(item => item.id === entity.id)
-	  const pathID = entity.path_id || step?.path_id || 0
-	  const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === pathID)
+		const editProxyPathNameForEntity = (entity: GraphEntity | null | undefined) => {
+		  if (!entity || (entity.type !== 'proxy-path-step' && entity.type !== 'direct')) return
+		  const step = entity.type === 'proxy-path-step' ? ((data.proxy_path_steps || []) as ProxyPathStep[]).find(item => item.id === entity.id) : undefined
+		  const pathID = entity.path_id || step?.path_id || 0
+		  const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === pathID)
 	  if (path) setNamingPath(path)
 	}
 	const editProxyPathName = () => {
@@ -6483,10 +6550,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       const imported = (data.external_outbounds || []).find((item: ExternalOutbound) => item.id === entity.id)
       if (imported) setConfigNode(imported)
     }
-	  if (entity?.type === 'entry') {
+		  if (entity?.type === 'entry') {
       const inbound = entries.find(x => x.id === entity.id)
       if (inbound) openEditEntry(inbound)
     }
+		  if (entity?.type === 'direct' && entity.path_id) editProxyPathNameForEntity(entity)
   }
   const onNodeClick = (_: React.MouseEvent, _node: Node) => {
 	  setGraphMenu(null)
@@ -6494,7 +6562,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   }
 	  const openGraphContextMenu = (clientX: number, clientY: number, entity: GraphEntity) => {
 	    const menuWidth = Math.min(260, Math.max(148, window.innerWidth - 16))
-	    const menuHeight = entity.type === 'proxy-path-step' ? 166 : entity.type === 'direct' ? 126 : 86
+		    const menuHeight = entity.type === 'proxy-path-step' || (entity.type === 'direct' && entity.path_id) ? 166 : entity.type === 'direct' ? 126 : 86
     setGraphMenu({
       x: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(clientY, window.innerHeight - menuHeight - 8)),
@@ -6615,12 +6683,12 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
             onToggleInspector={toggleInspector}
           />
         </div>
-        {panelActionsTarget && createPortal(
+        {topbarTarget && createPortal(
           <div className="proxy-path-entry-picker">
             <span className="proxy-path-entry-label">入口服务器</span>
             <CustomSelect className="graph-entry-select" value={String(selected?.id || 0)} onChange={selectEntryServer} options={selectOptions} ariaLabel="选择当前入口服务器" />
           </div>,
-          panelActionsTarget,
+          topbarTarget,
         )}
         <div className={`flow proxy-flow ${initialViewportReady ? 'initial-viewport-ready' : 'initial-viewport-pending'}`} onDragOver={onToolDragOver} onDrop={onToolDrop}>
         <ReactFlow 
@@ -6661,7 +6729,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         <ProxyGraphLegend />
         {activeGraphEntity && <div className="graph-selection-toolbar" role="toolbar" aria-label="当前选中项操作">
           <strong title={activeGraphEntity.label}>{activeGraphEntity.label}</strong>
-			  {activeGraphEntity.type === 'proxy-path-step' && <button type="button" className="ghost" onClick={() => editProxyPathNameForEntity(activeGraphEntity)}><Edit3 size={13} />链路命名</button>}
+				  {(activeGraphEntity.type === 'proxy-path-step' || (activeGraphEntity.type === 'direct' && activeGraphEntity.path_id)) && <button type="button" className="ghost" onClick={() => editProxyPathNameForEntity(activeGraphEntity)}><Edit3 size={13} />链路设置</button>}
 	          {activeGraphActionLabel && <button type="button" className="ghost" onClick={() => void openActiveGraphEntity()}><Edit3 size={13} />{activeGraphActionLabel}</button>}
 			  {activeGraphEntity.type === 'direct' && <button type="button" className="ghost" onClick={() => copyDirectExit(activeGraphEntity)}><Copy size={13} />复制直接出口</button>}
 			  <button type="button" className="ghost danger-text" onClick={() => void deleteActiveGraphEntity()}><Trash2 size={13} />{activeGraphEntity.node_id?.startsWith('canvas-server-') || activeGraphEntity.node_id?.startsWith('direct-exit-canvas-') || activeGraphEntity.node_id?.startsWith('warp-canvas-') ? '移出画布' : activeGraphEntity.type === 'proxy-path-step' ? '断开后续' : '删除'}</button>
@@ -6671,7 +6739,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 
         {graphMenu && <div className="graph-context-menu" style={{ left: graphMenu.x, top: graphMenu.y }} onContextMenu={e => e.preventDefault()}>
           <div className="graph-context-menu-title">{graphMenu.entity.label}</div>
-			  {graphMenu.entity.type === 'proxy-path-step' && <button onClick={editProxyPathName}><Edit3 size={14} />链路命名</button>}
+				  {(graphMenu.entity.type === 'proxy-path-step' || (graphMenu.entity.type === 'direct' && graphMenu.entity.path_id)) && <button onClick={editProxyPathName}><Edit3 size={14} />链路设置</button>}
 			  {graphMenu.entity.type === 'proxy-path-step' && ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === graphMenu.entity.id)?.node_type !== 'warp' && <button onClick={editProxyPathTransport}><ArrowLeftRight size={14} />更改传递方式</button>}
 			  {graphMenu.entity.type === 'direct' && <button onClick={copyGraphMenuDirectExit}><Copy size={14} />复制直接出口</button>}
 			  <button className="danger-text" onClick={deleteGraphMenuEntity}><Trash2 size={14} />{graphMenu.entity.node_id?.startsWith('canvas-server-') || graphMenu.entity.node_id?.startsWith('direct-exit-canvas-') || graphMenu.entity.node_id?.startsWith('warp-canvas-') ? '从画布移除' : graphMenu.entity.type === 'proxy-path-step' ? '取消此处及后续节点' : '删除'}</button>
@@ -6719,8 +6787,14 @@ function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: Prox
   const initialTemplate = path.name_template?.length ? path.name_template : defaultProxyPathNameTemplate(references)
   const [mode, setMode] = useState<'auto' | 'custom'>(path.name_mode === 'custom' ? 'custom' : 'auto')
   const [parts, setParts] = useState<ProxyPathNamePart[]>(initialTemplate)
+	const [exitRegionMode, setExitRegionMode] = useState<RegionMode>(path.exit_region_mode === 'manual' ? 'manual' : 'auto')
+	const [exitRegionCode, setExitRegionCode] = useState(path.exit_region_code || path.effective_exit_region_code || 'CN')
   const [saving, setSaving] = useState(false)
+	const [probing, setProbing] = useState(false)
+	const [probeQueued, setProbeQueued] = useState(false)
   const chain = proxyPathChainLabels(data, path)
+	const pathSteps = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === path.id).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
+	const terminalImported = pathSteps[pathSteps.length - 1]?.node_type === 'imported'
   const preview = mode === 'auto'
     ? (path.name_mode === 'auto' ? path.name : (chain.length > 1 ? `${chain[0]}｜${chain[chain.length - 1]}` : chain[0] || path.name))
     : renderProxyPathNameTemplate(parts, data)
@@ -6748,22 +6822,41 @@ function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: Prox
     if (mode === 'custom' && !preview.trim()) return
     setSaving(true)
     try {
-      await client.request(`/proxy-paths/${path.id}`, { method: 'PATCH', body: JSON.stringify({ name_mode: mode, name_template: mode === 'custom' ? parts : [] }) })
+	  await client.request(`/proxy-paths/${path.id}`, { method: 'PATCH', body: JSON.stringify({
+		name_mode: mode,
+		name_template: mode === 'custom' ? parts : [],
+		exit_region_mode: exitRegionMode,
+		exit_region_code: exitRegionMode === 'manual' ? exitRegionCode : '',
+	  }) })
       await load()
       onClose()
     } catch (error: any) {
-      await dialogs.alert({ title: '保存链路名称失败', message: localizeErrorMessage(error.message || error) })
+	  await dialogs.alert({ title: '保存链路设置失败', message: localizeErrorMessage(error.message || error) })
     } finally {
       setSaving(false)
     }
   }
+	const probe = async () => {
+	  setProbing(true)
+	  try {
+		await client.request(`/proxy-paths/${path.id}/probe-egress`, { method: 'POST', body: '{}' })
+		setProbeQueued(true)
+		await load()
+	  } catch (error: any) {
+		await dialogs.alert({ title: '出口地区探测未开始', message: localizeErrorMessage(error.message || error) })
+	  } finally {
+		setProbing(false)
+	  }
+	}
 
   return <MotionDialogPanel onCancel={onClose} className="proxy-path-name-dialog">
     <header className="dialog-head">
-      <div><h2>链路命名</h2><p className="muted">{chain.join(' → ')}</p></div>
+	  <div><h2>链路设置</h2><p className="muted">{chain.join(' → ')}</p></div>
       <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><X size={16} /></button>
     </header>
     <div className="dialog-body proxy-path-name-body">
+	  <section className="proxy-path-setting-section">
+		<h3>订阅名称</h3>
       <Select variant="segmented" value={mode} onChange={event => switchMode(event.target.value as 'auto' | 'custom')} aria-label="链路命名方式">
         <option value="auto">自动命名</option>
         <option value="custom">自定义模板</option>
@@ -6791,6 +6884,21 @@ function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: Prox
           </div>)}
         </div>
       </>}
+	  </section>
+	  <section className="proxy-path-setting-section">
+		<div className="proxy-path-setting-heading"><div><h3>出口地区</h3><p className="muted">订阅节点会使用这里的国旗；自动模式按最后一级出口识别。</p></div>{probeQueued || path.exit_region_status === 'pending' ? <span className="status-pill warning">等待 Agent</span> : null}</div>
+		<ExitRegionEditor
+		  mode={exitRegionMode}
+		  manualCode={exitRegionCode}
+		  effectiveCode={path.effective_exit_region_code}
+		  status={probeQueued ? 'pending' : path.exit_region_status}
+		  error={path.exit_region_error}
+		  probedAt={path.exit_region_probed_at}
+		  onModeChange={next => { setExitRegionMode(next); if (next === 'manual' && !normalizeRegionCode(exitRegionCode)) setExitRegionCode(path.effective_exit_region_code || 'CN') }}
+		  onCodeChange={setExitRegionCode}
+		  action={terminalImported ? <button type="button" className="ghost icon-button exit-region-probe" onClick={() => void probe()} disabled={probing} aria-label="重新探测出口地区" title="重新探测出口地区"><RefreshCw size={15} className={probing ? 'spin' : ''} /></button> : undefined}
+		/>
+	  </section>
     </div>
     <footer className="dialog-actions"><button type="button" className="ghost" onClick={onClose}>取消</button><button type="button" onClick={() => void save()} disabled={saving || (mode === 'custom' && !preview.trim())}>{saving ? '保存中...' : '保存'}</button></footer>
   </MotionDialogPanel>
@@ -7163,12 +7271,28 @@ function ImportNodeDialog({ draft, setDraft, servers, onCancel, onSubmit }: { dr
 function ImportedNodeConfigDialog({ node, data, client, load, onClose }: { node: ExternalOutbound; data: any; client: ReturnType<typeof api>; load: () => Promise<void>; onClose: () => void }) {
   const dialogs = useDialogs()
   const grants: ExternalOutboundAccessGrant[] = (data.external_outbound_access_grants || []).filter((x: ExternalOutboundAccessGrant) => x.external_outbound_id === node.id)
+	const [regionMode, setRegionMode] = useState<RegionMode>(node.region_mode === 'manual' ? 'manual' : 'auto')
+	const [regionCode, setRegionCode] = useState(node.region_code || node.effective_region_code || 'CN')
+	const [savingRegion, setSavingRegion] = useState(false)
+	const linkedPaths = proxyPathsEndingAtExternal(data, node.id)
   const raw = safePrettyJSON(node.config_json)
   const toggleExpose = async () => {
-    await client.request(`/external-outbounds/${node.id}`, { method: 'PATCH', body: JSON.stringify({ ...node, expose_to_users: !node.expose_to_users }) })
+	await client.request(`/external-outbounds/${node.id}`, { method: 'PATCH', body: JSON.stringify({ expose_to_users: !node.expose_to_users }) })
     await load()
     onClose()
   }
+	const saveRegion = async () => {
+	  setSavingRegion(true)
+	  try {
+		await client.request(`/external-outbounds/${node.id}`, { method: 'PATCH', body: JSON.stringify({ region_mode: regionMode, region_code: regionMode === 'manual' ? regionCode : '' }) })
+		await load()
+		onClose()
+	  } catch (error: any) {
+		await dialogs.alert({ title: '保存出口地区失败', message: localizeErrorMessage(error.message || error) })
+	  } finally {
+		setSavingRegion(false)
+	  }
+	}
   const grantUser = async () => {
     const users: User[] = data.users || []
     if (!users.length) return dialogs.alert({ title: '没有用户', message: '请先创建用户。' })
@@ -7196,6 +7320,22 @@ function ImportedNodeConfigDialog({ node, data, client, load, onClose }: { node:
           <div><span>地址</span><strong>{formatHostPort(node.target_address, node.target_port)}</strong></div>
           <div><span>订阅</span><strong>{node.expose_to_users ? '可授权展示' : '默认隐藏'}</strong></div>
         </div>
+		<div className="compact-panel imported-region-panel">
+		  <div className="section-toolbar"><div><h3>出口地区</h3><p className="muted">自动模式汇总所有使用该节点的分支；分支自己的设置优先。</p></div><button type="button" onClick={() => void saveRegion()} disabled={savingRegion}>{savingRegion ? '保存中...' : '保存地区'}</button></div>
+		  <ExitRegionEditor
+			mode={regionMode}
+			manualCode={regionCode}
+			effectiveCode={node.effective_region_code}
+			status={node.region_status}
+			error={node.region_error}
+			probedAt={node.region_probed_at}
+			onModeChange={next => { setRegionMode(next); if (next === 'manual' && !normalizeRegionCode(regionCode)) setRegionCode(node.effective_region_code || 'CN') }}
+			onCodeChange={setRegionCode}
+		  />
+		  {regionMode === 'auto' && <div className="imported-region-branches">
+			{linkedPaths.length ? linkedPaths.map(path => <div key={path.id}><span>{path.name || `路径 ${path.id}`}</span><ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact /></div>) : <span className="muted">连接到代理链路后会自动探测。</span>}
+		  </div>}
+		</div>
         {node.expose_to_users && <div className="compact-panel">
           <div className="section-toolbar"><div><h3>订阅授权</h3><p className="muted">只控制这个导入节点是否出现在用户订阅，不影响链路图下发。</p></div><div className="section-actions"><button onClick={grantUser}>授权用户</button><button onClick={grantGroup}>授权用户组</button></div></div>
           {grants.length ? <div className="chip-list">{grants.map(g => <span className="chip" key={g.id}>{g.subject_type === 'user' ? userName(data, g.subject_id) : groupName(data, g.subject_id)} <button onClick={async () => { await client.request(`/external-outbound-access-grants/${g.id}`, { method: 'DELETE' }); await load() }}>×</button></span>)}</div> : <p className="muted">暂无授权。</p>}
@@ -7208,6 +7348,12 @@ function ImportedNodeConfigDialog({ node, data, client, load, onClose }: { node:
       </div>
       <footer className="dialog-actions"><button className="ghost" onClick={toggleExpose}>{node.expose_to_users ? '从订阅隐藏' : '允许订阅授权'}</button><button onClick={onClose}>完成</button></footer>
   </MotionDialogPanel>
+}
+
+function proxyPathsEndingAtExternal(data: any, externalID: number) {
+  const steps = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.node_type === 'imported' && step.external_outbound_id === externalID)
+  const terminalPathIDs = new Set(steps.filter(step => !((data.proxy_path_steps || []) as ProxyPathStep[]).some(other => other.path_id === step.path_id && other.position > step.position)).map(step => step.path_id))
+  return ((data.proxy_paths || []) as ProxyPath[]).filter(path => path.enabled !== false && terminalPathIDs.has(path.id))
 }
 
 function safePrettyJSON(raw: string) {
@@ -8284,19 +8430,19 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
         const server = (data.servers || []).find((item: Server) => item.id === serverID) as Server | undefined
         const profile = (data.warp_profiles || []).find((item: WARPProfile) => item.server_id === serverID) as WARPProfile | undefined
         const status = profile?.status || 'needed'
-        nodes.push({ id, className: `graph-node warp-graph-node proxy-path-instance-node status-${status}`, position, style: { width: 220 }, data: { entity, label: <WARPGraphNode connected title="WARP" meta={`${server?.name || `服务器 ${serverID}`} · ${labelValue(status)}`} /> } })
+		nodes.push({ id, className: `graph-node warp-graph-node proxy-path-instance-node status-${status}`, position, style: { width: 220 }, data: { entity, label: <WARPGraphNode connected title="WARP" meta={`${server?.name || `服务器 ${serverID}`} · ${labelValue(status)}`} exitRegion={step === pathSteps[pathSteps.length - 1] ? { code: path.effective_exit_region_code, status: path.exit_region_status } : undefined} /> } })
         return
       }
       if (step.node_type === 'imported' && step.external_outbound_id) {
         const imported = (data.external_outbounds || []).find((item: ExternalOutbound) => item.id === step.external_outbound_id) as ExternalOutbound | undefined
         if (!imported) return
-        nodes.push({ id, className: 'graph-node imported-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="导入节点" title={imported.name} meta={`${labelProtocol(imported.protocol)} · ${formatHostPort(imported.target_address, imported.target_port)} · 路径 ${path.id}`} pathHandles={continuationByNode.get(id) || []} /> } })
+		nodes.push({ id, className: 'graph-node imported-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="导入节点" title={imported.name} meta={`${labelProtocol(imported.protocol)} · ${formatHostPort(imported.target_address, imported.target_port)} · 路径 ${path.id}`} pathHandles={continuationByNode.get(id) || []} exitRegion={step === pathSteps[pathSteps.length - 1] ? { code: path.effective_exit_region_code, status: path.exit_region_status } : undefined} /> } })
         return
       }
       const serverID = graphStepServerID(step, inboundByID)
       const server = (data.servers || []).find((item: Server) => item.id === serverID) as Server | undefined
       if (!server) return
-      nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · 路径 ${path.id}`} pathHandles={continuationByNode.get(id) || []} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
+	  nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · 路径 ${path.id}`} pathHandles={continuationByNode.get(id) || []} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} exitRegion={step === pathSteps[pathSteps.length - 1] ? { code: path.effective_exit_region_code, status: path.exit_region_status } : undefined} /> } })
     })
   })
   const directPaths = visiblePaths.filter(path => path.kind === 'direct')
@@ -8322,7 +8468,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       style: { width: 220 },
       data: {
         entity: { type: 'direct', id: path.id, path_id: path.id, label: path.name || '直接出口', node_id: id } as GraphEntity,
-        label: <DirectExitGraphNode connected title={path.name || '直接出口'} meta={`${exitServer?.name || `服务器 ${exitServerID}`} · 直出`} />,
+		label: <DirectExitGraphNode connected title={path.name || '直接出口'} meta={`${exitServer?.name || `服务器 ${exitServerID}`} · 直出`} exitRegion={{ code: path.effective_exit_region_code, status: path.exit_region_status }} />,
       },
     })
   })
@@ -8542,20 +8688,22 @@ function pathStepIDFromHandle(handle?: string | null) {
 type GraphEntryHandle = { id: number; label: string; title: string }
 type GraphPathHandle = { step_id: number; label: string; title: string }
 
-function DirectExitGraphNode({ connected = false, title, meta }: { connected?: boolean; title: string; meta: string }) {
+function DirectExitGraphNode({ connected = false, title, meta, exitRegion }: { connected?: boolean; title: string; meta: string; exitRegion?: { code?: string; status?: string } }) {
   return <div className="direct-exit-card">
     <Handle id="target-top" className="connect-handle connect-target connect-target-top" type="target" position={Position.Top} isConnectable={!connected} />
     <span className="direct-exit-icon"><LogOut size={18} /></span>
     <span className="direct-exit-copy"><small>{connected ? '出口分支' : '可选出口'}</small><strong>{title}</strong></span>
+	{exitRegion && <ExitRegionBadge code={exitRegion.code} status={exitRegion.status} compact />}
     <span className={`direct-exit-state${connected ? ' enabled' : ''}`}>{meta}</span>
   </div>
 }
 
-function WARPGraphNode({ connected = false, title, meta }: { connected?: boolean; title: string; meta: string }) {
+function WARPGraphNode({ connected = false, title, meta, exitRegion }: { connected?: boolean; title: string; meta: string; exitRegion?: { code?: string; status?: string } }) {
   return <div className="warp-exit-card">
     <Handle id="target-top" className="connect-handle connect-target connect-target-top" type="target" position={Position.Top} isConnectable={!connected} />
     <span className="warp-exit-icon"><Zap size={18} /></span>
     <span className="warp-exit-copy"><small>{connected ? '链路出口' : '可选出口'}</small><strong>{title}</strong></span>
+	{exitRegion && <ExitRegionBadge code={exitRegion.code} status={exitRegion.status} compact />}
     <span className={`warp-exit-state${connected ? ' enabled' : ''}`}>{meta}</span>
   </div>
 }
@@ -8572,7 +8720,8 @@ function GraphNode({
   status,
   ipv4,
   cpu,
-  memory
+  memory,
+  exitRegion,
 }: { 
   kind: string; 
   title: string; 
@@ -8586,6 +8735,7 @@ function GraphNode({
   ipv4?: string;
   cpu?: number;
   memory?: number;
+  exitRegion?: { code?: string; status?: string };
 }) {
   const isOnline = status === 'online'
   const hasSharedPathHandle = entryHandles.length > 1 || pathHandles.length > 1
@@ -8682,6 +8832,7 @@ function GraphNode({
 
       {/* Body */}
       <div className="rf-node-body">
+		{exitRegion && <div className="rf-node-exit-region"><span>出口地区</span><ExitRegionBadge code={exitRegion.code} status={exitRegion.status} compact /></div>}
         {isServer ? (
           <>
             <div className="rf-node-detail"><span>公网地址</span><code>{ipv4 || subtitle2 || '未检测'}</code></div>
@@ -11245,7 +11396,7 @@ type TaskGroup = {
 
 const BATCHABLE_TASK_TYPES = new Set([
   'update_agent', 'update_agent_config', 'diagnose_network', 'detect_mtu',
-  'probe_inbounds', 'probe_inbounds_external', 'probe_port_forwards', 'collect_logs', 'manage_logs',
+  'probe_inbounds', 'probe_inbounds_external', 'probe_port_forwards', 'probe_external_egress', 'collect_logs', 'manage_logs',
 ])
 
 function TaskTimeline({ rows, data }: { rows: any[]; data: any }) {
@@ -11343,6 +11494,7 @@ function batchTitleForType(type: string) {
     case 'probe_inbounds': return '入口监听探测'
     case 'probe_inbounds_external': return '公网端口探测'
     case 'probe_port_forwards': return '端口转发探测'
+    case 'probe_external_egress': return '第三方出口探测'
     case 'collect_logs': return '拉取日志'
     case 'manage_logs': return '管理日志'
     default: return labelValue(type || 'task')
@@ -11551,7 +11703,7 @@ function redactTaskJSON(value: any): any {
 
 function taskSummaryFromPayload(type: string, payload: any) {
   if (type === 'apply_deployment') {
-    const count = [payload?.time_sync, payload?.config, payload?.port_forwards, payload?.inbound_probe, payload?.port_forward_probe, payload?.tunnels, payload?.dns_benchmark, payload?.mtu_detection].filter(Boolean).length
+    const count = [payload?.time_sync, payload?.config, payload?.port_forwards, payload?.inbound_probe, payload?.port_forward_probe, payload?.external_egress_probe, payload?.tunnels, payload?.dns_benchmark, payload?.mtu_detection].filter(Boolean).length
     return `${count || 1} 个部署步骤`
   }
   if (type === 'apply_core_config' && payload?.skipped) return '配置未变化，已跳过'
@@ -11561,13 +11713,20 @@ function taskSummaryFromPayload(type: string, payload: any) {
   if (type === 'detect_mtu') return payload?.mode ? `模式 ${labelValue(payload.mode)}` : 'MTU 检测'
   if (type === 'probe_inbounds' || type === 'probe_inbounds_external') return payload?.entry_targets?.length ? `${payload.entry_targets.length} 个入口` : '入口端口探测'
   if (type === 'probe_port_forwards') return payload?.rules?.length ? `${payload.rules.length} 条规则` : '端口转发探测'
+  if (type === 'probe_external_egress') return payload?.targets?.length ? `${payload.targets.length} 条分支` : '第三方出口探测'
   if (type === 'collect_logs') return payload?.services ? `服务 ${payload.services}` : '拉取日志'
   if (type === 'manage_logs') return `${payload?.action === 'clear' ? '清空' : '轮转'} ${payload?.services || 'all'} 日志`
   if (payload && typeof payload === 'object') return '等待 Agent 执行'
   return '暂无详情'
 }
 
-function Panel({ title, children, className = '', actions = null }: any) { return <section className={`panel${className ? ` ${className}` : ''}`}><div className="panel-head"><h2>{title}</h2>{actions}</div><div className="panel-body">{children}</div></section> }
+function Panel({ title, children, className = '', actions = null }: any) {
+  const hasHeader = Boolean(title || actions)
+  return <section className={`panel${className ? ` ${className}` : ''}`}>
+    {hasHeader && <div className="panel-head">{title && <h2>{title}</h2>}{actions}</div>}
+    <div className="panel-body">{children}</div>
+  </section>
+}
 
 type ProtocolAuth = { username: string; uuid: string; password: string; method: string }
 

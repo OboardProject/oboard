@@ -869,6 +869,28 @@ func TestGenerateServerConfigUsesPlaceholderWhenInboundHasNoUsers(t *testing.T) 
 	}
 }
 
+func TestGenerateServerConfigPlaceholderIsStableWithServerSecret(t *testing.T) {
+	server := model.Server{ID: 1, Name: "edge", ChainSecret: "stable-server-secret"}
+	inbounds := []model.Inbound{{ID: 1, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}}
+	generate := func(current model.Server) string {
+		t.Helper()
+		config, err := GenerateServerConfigWithOptions(current, inbounds, nil, nil, nil, ConfigOptions{InboundUsers: []model.InboundUser{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return config
+	}
+	first := generate(server)
+	second := generate(server)
+	if first != second {
+		t.Fatalf("same server secret generated different placeholder configs:\n%s\n%s", first, second)
+	}
+	server.ChainSecret = "different-server-secret"
+	if third := generate(server); third == first {
+		t.Fatal("different server secrets generated the same placeholder config")
+	}
+}
+
 func TestGenerateServerConfigPlaceholderDisappearsWhenUserBound(t *testing.T) {
 	config, err := GenerateServerConfigWithOptions(
 		model.Server{ID: 1, Name: "edge"},

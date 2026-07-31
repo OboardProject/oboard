@@ -26,10 +26,10 @@ func TestGenerateSubscriptionWithAssignmentsAndGroups(t *testing.T) {
 	if len(nodes) != 1 {
 		t.Fatalf("nodes = %d, want 1", len(nodes))
 	}
-	if nodes[0].Name != "hk" || nodes[0].Group != "香港" {
+	if nodes[0].Name != "🇦🇶 hk" || nodes[0].Group != "香港" {
 		t.Fatalf("node = %#v", nodes[0])
 	}
-	if nodes[0].Raw["tag"] != "hk" {
+	if nodes[0].Raw["tag"] != "🇦🇶 hk" {
 		t.Fatalf("node tag = %v", nodes[0].Raw["tag"])
 	}
 
@@ -305,11 +305,11 @@ func TestSubscriptionStandaloneNamesUseVisibleServersAndProtocols(t *testing.T) 
 		t.Fatal(err)
 	}
 	want := map[int64]string{
-		101: "香港｜01",
-		201: "香港｜02｜VLESS",
-		202: "香港｜02｜HY2",
-		301: "东京｜01",
-		302: "东京｜02",
+		101: "🇦🇶 香港｜01",
+		201: "🇦🇶 香港｜02｜VLESS",
+		202: "🇦🇶 香港｜02｜HY2",
+		301: "🇦🇶 东京｜01",
+		302: "🇦🇶 东京｜02",
 	}
 	for _, node := range nodes {
 		if got := node.Name; got != want[node.Inbound.ID] {
@@ -332,7 +332,7 @@ func TestSubscriptionStandaloneNamesUseOnlyVisibleProtocols(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(nodes) != 1 || nodes[0].Name != "香港" {
+	if len(nodes) != 1 || nodes[0].Name != "🇦🇶 香港" {
 		t.Fatalf("nodes = %#v", nodes)
 	}
 }
@@ -373,12 +373,12 @@ func TestSubscriptionNamesAvoidPathsAndDisambiguateImportedNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]bool{
-		"链路名":     true,
-		"链路名｜01":  true,
-		"导入名":     true,
-		"导入名｜01":  true,
-		"重复导入｜01": true,
-		"重复导入｜02": true,
+		"🇦🇶 链路名":     true,
+		"🇦🇶 链路名｜01":  true,
+		"🇦🇶 导入名":     true,
+		"🇦🇶 导入名｜01":  true,
+		"🇦🇶 重复导入｜01": true,
+		"🇦🇶 重复导入｜02": true,
 	}
 	seen := map[string]bool{}
 	for _, node := range nodes {

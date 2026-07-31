@@ -142,9 +142,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists inbound_access_grants (id integer primary key autoincrement, subject_type text not null, subject_id integer not null, scope_type text not null, server_id integer references servers(id) on delete cascade, inbound_id integer references inbounds(id) on delete cascade, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(subject_type,subject_id,scope_type,server_id,inbound_id))`,
 		`create table if not exists outbounds (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, next_server_id integer references servers(id) on delete set null, name text not null, protocol text not null, target_address text not null, target_port integer not null, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists routing_rules (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, priority integer not null default 100, match_json text not null default '{}', action text not null, outbound_id integer references outbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, target_server_id integer references servers(id) on delete set null, outbound_tag text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
-		`create table if not exists external_outbounds (id integer primary key autoincrement, server_id integer references servers(id) on delete set null, name text not null, protocol text not null, scope text not null default 'global', target_address text not null default '', target_port integer not null default 0, config_json text not null default '{}', expose_to_users integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists external_outbounds (id integer primary key autoincrement, server_id integer references servers(id) on delete set null, name text not null, protocol text not null, scope text not null default 'global', target_address text not null default '', target_port integer not null default 0, config_json text not null default '{}', region_mode text not null default 'auto', region_code text not null default '', expose_to_users integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists external_outbound_access_grants (id integer primary key autoincrement, external_outbound_id integer not null references external_outbounds(id) on delete cascade, subject_type text not null, subject_id integer not null, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(external_outbound_id,subject_type,subject_id))`,
-		`create table if not exists proxy_paths (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, kind text not null default 'chain', branch_source_step_id integer references proxy_path_steps(id) on delete set null, name_mode text not null default 'auto', name_template_json text not null default '[]', secret text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists proxy_paths (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, kind text not null default 'chain', branch_source_step_id integer references proxy_path_steps(id) on delete set null, name_mode text not null default 'auto', name_template_json text not null default '[]', exit_region_mode text not null default 'auto', exit_region_code text not null default '', secret text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_steps (id integer primary key autoincrement, path_id integer not null references proxy_paths(id) on delete cascade, position integer not null, node_type text not null, transport_mode text not null default 'singbox', processing_role integer not null default 0, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, config_json text not null default '{}', created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_port_allocations (id integer primary key autoincrement, kind text not null, scope_key text not null, server_id integer not null references servers(id) on delete cascade, port integer not null, created_at text not null, updated_at text not null, unique(kind,scope_key,server_id))`,
 		`create table if not exists warp_profiles (id integer primary key autoincrement, server_id integer not null unique references servers(id) on delete cascade, name text not null, status text not null default 'needed', config_json text not null default '{}', mtu integer not null default 0, dns_strategy text not null default '', last_requested_at text, error text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
@@ -153,6 +153,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists port_forwards (id integer primary key autoincrement, name text not null, source_server_id integer not null references servers(id) on delete cascade, target_server_id integer not null references servers(id) on delete cascade, listen_ip text not null default '', listen_port integer not null, target_address text not null default '', target_port integer not null, protocol text not null default 'tcp', backend text not null default 'auto', probe_mode text not null default 'apply', probe_interval_seconds integer not null default 300, sample_rate real not null default 0, priority integer not null default 100, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists tunnels (id integer primary key autoincrement, name text not null, source_server_id integer not null references servers(id) on delete cascade, target_server_id integer not null references servers(id) on delete cascade, type text not null, local_address text not null default '', peer_address text not null default '', listen_port integer not null default 0, target_endpoint text not null default '', target_port integer not null default 0, priority integer not null default 100, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists agent_tasks (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, type text not null, payload_json text not null, status text not null, result_json text not null default '{}', config_version integer not null default 0, nonce text not null, created_at text not null, updated_at text not null, completed_at text)`,
+		`create table if not exists proxy_path_egress_results (path_id integer primary key references proxy_paths(id) on delete cascade, external_outbound_id integer not null references external_outbounds(id) on delete cascade, owner_server_id integer not null references servers(id) on delete cascade, topology_fingerprint text not null, config_version integer not null default 0, task_id integer references agent_tasks(id) on delete set null, status text not null default 'pending', last_exit_ip text not null default '', last_region_code text not null default '', geo_database_revision text not null default '', last_error text not null default '', last_attempt_at text, last_success_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists deployment_failure_dismissals (config_version integer primary key, actor_id integer not null, dismissed_at text not null)`,
 		`create table if not exists audit_logs (id integer primary key autoincrement, actor_id integer references users(id) on delete set null, action text not null, target text not null, detail text not null, ip text not null, created_at text not null)`,
 		`create table if not exists traffic_stats (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, user_id integer references users(id) on delete cascade, inbound_id integer references inbounds(id) on delete set null, upload_bytes integer not null, download_bytes integer not null, created_at text not null)`,
@@ -270,6 +271,18 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "proxy_paths", "name_template_json", `alter table proxy_paths add column name_template_json text not null default '[]'`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "proxy_paths", "exit_region_mode", `alter table proxy_paths add column exit_region_mode text not null default 'auto'`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "proxy_paths", "exit_region_code", `alter table proxy_paths add column exit_region_code text not null default ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "external_outbounds", "region_mode", `alter table external_outbounds add column region_mode text not null default 'auto'`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "external_outbounds", "region_code", `alter table external_outbounds add column region_code text not null default ''`); err != nil {
 		return err
 	}
 	if err := s.dropColumn(ctx, "proxy_paths", "name", `alter table proxy_paths drop column name`); err != nil {
@@ -2539,7 +2552,7 @@ func (s *Store) CreateExternalOutbound(ctx context.Context, v *model.ExternalOut
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into external_outbounds(server_id,name,protocol,scope,target_address,target_port,config_json,expose_to_users,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Name, v.Protocol, v.Scope, v.TargetAddress, v.TargetPort, v.ConfigJSON, boolInt(v.ExposeToUsers), boolInt(v.Enabled), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into external_outbounds(server_id,name,protocol,scope,target_address,target_port,config_json,region_mode,region_code,expose_to_users,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Name, v.Protocol, v.Scope, v.TargetAddress, v.TargetPort, v.ConfigJSON, v.RegionMode, v.RegionCode, boolInt(v.ExposeToUsers), boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -2548,12 +2561,12 @@ func (s *Store) CreateExternalOutbound(ctx context.Context, v *model.ExternalOut
 }
 
 func (s *Store) UpdateExternalOutbound(ctx context.Context, v *model.ExternalOutbound) error {
-	_, err := s.db.ExecContext(ctx, `update external_outbounds set server_id=?,name=?,protocol=?,scope=?,target_address=?,target_port=?,config_json=?,expose_to_users=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Name, v.Protocol, v.Scope, v.TargetAddress, v.TargetPort, v.ConfigJSON, boolInt(v.ExposeToUsers), boolInt(v.Enabled), now(), v.ID)
+	_, err := s.db.ExecContext(ctx, `update external_outbounds set server_id=?,name=?,protocol=?,scope=?,target_address=?,target_port=?,config_json=?,region_mode=?,region_code=?,expose_to_users=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Name, v.Protocol, v.Scope, v.TargetAddress, v.TargetPort, v.ConfigJSON, v.RegionMode, v.RegionCode, boolInt(v.ExposeToUsers), boolInt(v.Enabled), now(), v.ID)
 	return err
 }
 
 func (s *Store) ListExternalOutbounds(ctx context.Context) ([]model.ExternalOutbound, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,server_id,name,protocol,scope,target_address,target_port,config_json,expose_to_users,enabled,created_at,updated_at from external_outbounds order by id desc`)
+	rows, err := s.db.QueryContext(ctx, `select id,server_id,name,protocol,scope,target_address,target_port,config_json,coalesce(region_mode,'auto'),coalesce(region_code,''),expose_to_users,enabled,created_at,updated_at from external_outbounds order by id desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -2564,7 +2577,7 @@ func (s *Store) ListExternalOutbounds(ctx context.Context) ([]model.ExternalOutb
 		var serverID sql.NullInt64
 		var expose, en int
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &serverID, &v.Name, &v.Protocol, &v.Scope, &v.TargetAddress, &v.TargetPort, &v.ConfigJSON, &expose, &en, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &serverID, &v.Name, &v.Protocol, &v.Scope, &v.TargetAddress, &v.TargetPort, &v.ConfigJSON, &v.RegionMode, &v.RegionCode, &expose, &en, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if serverID.Valid {
@@ -2666,7 +2679,7 @@ func (s *Store) CreateProxyPath(ctx context.Context, v *model.ProxyPath) error {
 	if err := encodeProxyPathNameTemplate(v); err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, `insert into proxy_paths(inbound_id,kind,branch_source_step_id,name_mode,name_template_json,secret,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)`, v.InboundID, v.Kind, v.BranchSourceStepID, v.NameMode, v.NameTemplateJSON, v.Secret, boolInt(v.Enabled), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into proxy_paths(inbound_id,kind,branch_source_step_id,name_mode,name_template_json,exit_region_mode,exit_region_code,secret,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, v.InboundID, v.Kind, v.BranchSourceStepID, v.NameMode, v.NameTemplateJSON, v.ExitRegionMode, v.ExitRegionCode, v.Secret, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -2678,12 +2691,12 @@ func (s *Store) UpdateProxyPath(ctx context.Context, v *model.ProxyPath) error {
 	if err := encodeProxyPathNameTemplate(v); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `update proxy_paths set inbound_id=?,kind=?,branch_source_step_id=?,name_mode=?,name_template_json=?,secret=?,enabled=?,updated_at=? where id=?`, v.InboundID, v.Kind, v.BranchSourceStepID, v.NameMode, v.NameTemplateJSON, v.Secret, boolInt(v.Enabled), now(), v.ID)
+	_, err := s.db.ExecContext(ctx, `update proxy_paths set inbound_id=?,kind=?,branch_source_step_id=?,name_mode=?,name_template_json=?,exit_region_mode=?,exit_region_code=?,secret=?,enabled=?,updated_at=? where id=?`, v.InboundID, v.Kind, v.BranchSourceStepID, v.NameMode, v.NameTemplateJSON, v.ExitRegionMode, v.ExitRegionCode, v.Secret, boolInt(v.Enabled), now(), v.ID)
 	return err
 }
 
 func (s *Store) ListProxyPaths(ctx context.Context) ([]model.ProxyPath, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,inbound_id,coalesce(kind,'chain'),branch_source_step_id,coalesce(name_mode,'auto'),coalesce(name_template_json,'[]'),coalesce(secret,''),enabled,created_at,updated_at from proxy_paths order by id desc`)
+	rows, err := s.db.QueryContext(ctx, `select id,inbound_id,coalesce(kind,'chain'),branch_source_step_id,coalesce(name_mode,'auto'),coalesce(name_template_json,'[]'),coalesce(exit_region_mode,'auto'),coalesce(exit_region_code,''),coalesce(secret,''),enabled,created_at,updated_at from proxy_paths order by id desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -2693,7 +2706,7 @@ func (s *Store) ListProxyPaths(ctx context.Context) ([]model.ProxyPath, error) {
 		var v model.ProxyPath
 		var en int
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.InboundID, &v.Kind, &v.BranchSourceStepID, &v.NameMode, &v.NameTemplateJSON, &v.Secret, &en, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.InboundID, &v.Kind, &v.BranchSourceStepID, &v.NameMode, &v.NameTemplateJSON, &v.ExitRegionMode, &v.ExitRegionCode, &v.Secret, &en, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if err := decodeProxyPathNameTemplate(&v); err != nil {
@@ -4733,6 +4746,7 @@ type FullRoutingConfig struct {
 	ExternalOutboundAccessGrants []model.ExternalOutboundAccessGrant `json:"external_outbound_access_grants"`
 	ProxyPaths                   []model.ProxyPath                   `json:"proxy_paths"`
 	ProxyPathSteps               []model.ProxyPathStep               `json:"proxy_path_steps"`
+	ProxyPathEgressResults       []model.ProxyPathEgressResult       `json:"proxy_path_egress_results"`
 	WARPProfiles                 []model.WARPProfile                 `json:"warp_profiles"`
 	DNSLists                     []model.DNSList                     `json:"dns_lists"`
 	ServerDNSPolicies            []model.ServerDNSPolicy             `json:"server_dns_policies"`
@@ -4794,6 +4808,10 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
+	proxyPathEgressResults, err := s.ListProxyPathEgressResults(ctx)
+	if err != nil {
+		return FullRoutingConfig{}, err
+	}
 	warp, err := s.ListWARPProfiles(ctx)
 	if err != nil {
 		return FullRoutingConfig{}, err
@@ -4814,7 +4832,7 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
-	return FullRoutingConfig{Servers: servers, Inbounds: in, InboundUsers: inboundUsers, UserGroups: groups, UserGroupMembers: members, InboundAccessGrants: grants, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ExternalOutboundAccessGrants: externalGrants, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, SSHUserCredentials: sshUserCredentials, ProxyPathPortAllocations: portAllocations}, nil
+	return FullRoutingConfig{Servers: servers, Inbounds: in, InboundUsers: inboundUsers, UserGroups: groups, UserGroupMembers: members, InboundAccessGrants: grants, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ExternalOutboundAccessGrants: externalGrants, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, ProxyPathEgressResults: proxyPathEgressResults, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, SSHUserCredentials: sshUserCredentials, ProxyPathPortAllocations: portAllocations}, nil
 }
 
 func nullEmpty(v string) any {

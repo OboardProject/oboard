@@ -1542,6 +1542,9 @@ func TestRoutingExternalOutboundAndWARPPathPublicAPI(t *testing.T) {
 	if external["protocol"] != "hy2" {
 		t.Fatalf("hysteria2 import protocol = %v, want hy2", external["protocol"])
 	}
+	if external["region_mode"] != "auto" || external["region_status"] != core.RegionStatusUnlinked {
+		t.Fatalf("imported outbound region state = %#v", external)
+	}
 	externalID := int64(external["id"].(float64))
 
 	outbound := request(t, h, http.MethodPost, "/api/v1/outbounds", token, map[string]any{"server_id": serverID, "name": "local-vless", "protocol": "vless", "target_address": "next.example.com", "target_port": 443, "config_json": "{}", "enabled": true}, http.StatusCreated)

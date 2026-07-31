@@ -22,6 +22,7 @@ type SubscriptionOptions struct {
 	InboundUsers                 []model.InboundUser
 	ProxyPaths                   []model.ProxyPath
 	ProxyPathSteps               []model.ProxyPathStep
+	ProxyPathEgressResults       []model.ProxyPathEgressResult
 	ExternalOutbounds            []model.ExternalOutbound
 	ExternalOutboundAccessGrants []model.ExternalOutboundAccessGrant
 	UserGroups                   []model.UserGroup
@@ -54,6 +55,7 @@ type subscriptionNodeNameRef struct {
 	kind       subscriptionNodeNameKind
 	resourceID int64
 	serverID   int64
+	regionCode string
 }
 
 func GenerateSubscriptionWithOptions(user model.User, servers []model.Server, inbounds []model.Inbound, opts SubscriptionOptions) (string, error) {
@@ -67,6 +69,7 @@ func GenerateSubscriptionWithOptions(user model.User, servers []model.Server, in
 
 func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []model.Inbound, opts SubscriptionOptions) ([]SubscriptionNode, error) {
 	opts.ProxyPaths = ResolveProxyPathNames(opts.ProxyPaths, opts.ProxyPathSteps, servers, inbounds, opts.ExternalOutbounds)
+	opts.ProxyPaths, opts.ExternalOutbounds = ResolveProxyPathExitRegions(opts.ProxyPaths, opts.ProxyPathSteps, servers, inbounds, opts.ExternalOutbounds, opts.ProxyPathEgressResults)
 	serverByID := map[int64]model.Server{}
 	for _, server := range servers {
 		serverByID[server.ID] = server
@@ -135,7 +138,8 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 				"oboard_group": group,
 			}
 			nodes = append(nodes, SubscriptionNode{Name: standaloneName, Group: group, ServerID: server.ID, Inbound: inbound, Server: server, Raw: raw})
-			nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameStandalone, resourceID: inbound.ID, serverID: server.ID})
+			regionCode, _ := EffectiveServerRegion(server)
+			nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameStandalone, resourceID: inbound.ID, serverID: server.ID, regionCode: regionCode})
 			continue
 		}
 		adapter, err := AdapterFor(inbound.Protocol)
@@ -150,7 +154,8 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 			}
 			raw["oboard_group"] = group
 			nodes = append(nodes, SubscriptionNode{Name: standaloneName, Group: group, ServerID: server.ID, Inbound: inbound, Server: server, Raw: raw})
-			nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameStandalone, resourceID: inbound.ID, serverID: server.ID})
+			regionCode, _ := EffectiveServerRegion(server)
+			nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameStandalone, resourceID: inbound.ID, serverID: server.ID, regionCode: regionCode})
 			continue
 		}
 		for _, path := range branches {
@@ -165,7 +170,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 			}
 			raw["oboard_group"] = group
 			nodes = append(nodes, SubscriptionNode{Name: branchName, Group: group, ServerID: server.ID, Inbound: inbound, Server: server, Raw: raw})
-			nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameProxyPath, resourceID: path.ID, serverID: server.ID})
+			nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameProxyPath, resourceID: path.ID, serverID: server.ID, regionCode: path.EffectiveExitRegionCode})
 		}
 	}
 	for _, external := range opts.ExternalOutbounds {
@@ -186,9 +191,13 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		group := defaultGroup
 		raw["oboard_group"] = group
 		nodes = append(nodes, SubscriptionNode{Name: name, Group: group, Raw: raw})
-		nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameExternal, resourceID: external.ID})
+		nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameExternal, resourceID: external.ID, regionCode: external.EffectiveRegionCode})
 	}
 	resolveSubscriptionNodeNames(nodes, nameRefs)
+	for _, ref := range nameRefs {
+		nodes[ref.index].Name = RegionFlagEmoji(ref.regionCode) + " " + nodes[ref.index].Name
+		nodes[ref.index].Raw["tag"] = nodes[ref.index].Name
+	}
 	sort.SliceStable(nodes, func(i, j int) bool {
 		if nodes[i].Group == nodes[j].Group {
 			return nodes[i].Name < nodes[j].Name

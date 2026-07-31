@@ -1278,6 +1278,7 @@ func taskTypeNotificationLabel(taskType string) string {
 		model.AgentTaskTypeProbeInbounds:         "入口探测",
 		model.AgentTaskTypeProbeInboundsExternal: "外部入口探测",
 		model.AgentTaskTypeProbePortForwards:     "端口转发探测",
+		model.AgentTaskTypeProbeExternalEgress:   "第三方出口探测",
 		model.AgentTaskTypeCollectLogs:           "日志拉取",
 		model.AgentTaskTypeManageLogs:            "日志管理",
 		model.AgentTaskTypeDiagnoseNetwork:       "网络诊断",
