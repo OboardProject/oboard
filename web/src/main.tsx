@@ -485,12 +485,11 @@ function ServerRegionField({ draft, update }: { draft: any; update: (patch: any)
     </FormField>
   )
 }
+const defaultSubscriptionFormat: SubscriptionFormat = 'mihomo'
 const subscriptionFormats: { value: SubscriptionFormat; label: string }[] = [
-  { value: 'sing-box-mieru', label: 'sing-box + Mieru' },
+  { value: 'mihomo', label: 'Mihomo' },
   { value: 'sing-box', label: 'sing-box' },
   { value: 'mieru', label: 'Mieru' },
-  { value: 'clash-meta', label: 'Clash.Meta' },
-  { value: 'mihomo', label: 'Mihomo' },
   { value: 'stash', label: 'Stash' },
   { value: 'plain-json', label: 'Plain JSON' },
   { value: 'surfboard', label: 'Surfboard' },
@@ -9013,9 +9012,11 @@ function groupToDraft(group: UserGroup): UserGroupDraft {
 function CopySubscriptionButton({ user }: { user: User }) {
   const [copied, setCopied] = useState(false);
   const token = user.subscription_token
+  const ageRequired = user.subscription_age_policy === 'required'
+  const missingRequiredAgeKey = ageRequired && !user.subscription_age_public_key
   const handleCopy = async () => {
-    if (!token) return;
-    const url = `${appControllerURL()}/api/v1/subscriptions/${token}`;
+    if (!token || missingRequiredAgeKey) return;
+    const url = subscriptionURLForToken(token, defaultSubscriptionFormat, ageRequired)
     if (await copyText(url)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -9029,9 +9030,9 @@ function CopySubscriptionButton({ user }: { user: User }) {
   return (
     <button
       onClick={handleCopy}
-      disabled={!token}
+      disabled={!token || missingRequiredAgeKey}
       className="btn-custom btn-secondary user-subscription-button"
-      title={user.subscription_burn_after_read ? '首次成功获取订阅内容后，此链接立即失效' : '复制长期订阅链接'}
+      title={missingRequiredAgeKey ? '请先配置 Age 公钥' : user.subscription_burn_after_read ? '首次成功获取订阅内容后，此链接立即失效' : '复制 Mihomo 订阅链接'}
     >
       {copied ? (
         <>
@@ -9048,17 +9049,18 @@ function CopySubscriptionButton({ user }: { user: User }) {
   );
 }
 
-function QuickOneTimeSubscriptionButton({ user, client, format = 'sing-box-mieru', encrypted = false, notify, className = 'ghost' }: { user: User; client: ReturnType<typeof api>; format?: SubscriptionFormat; encrypted?: boolean; notify?: (message: string, tone?: ToastKind) => void; className?: string }) {
+function QuickOneTimeSubscriptionButton({ user, client, format = defaultSubscriptionFormat, encrypted = false, notify, className = 'ghost' }: { user: User; client: ReturnType<typeof api>; format?: SubscriptionFormat; encrypted?: boolean; notify?: (message: string, tone?: ToastKind) => void; className?: string }) {
   const dialogs = useDialogs()
   const [creating, setCreating] = useState(false)
   const [copied, setCopied] = useState(false)
-  const disabled = creating || user.status !== 'active' || (encrypted && !user.subscription_age_public_key)
+  const useAge = encrypted || (isAgeSubscriptionFormat(format) && user.subscription_age_policy === 'required')
+  const disabled = creating || user.status !== 'active' || (useAge && !user.subscription_age_public_key)
   const createAndCopy = async () => {
     if (disabled) return
     setCreating(true)
     try {
       const result = await client.request(`/users/${user.id}/subscription-token/one-time`, { method: 'POST', body: '{}' }) as { subscription_token?: string }
-      const url = subscriptionURLForToken(result.subscription_token || '', format, encrypted)
+      const url = subscriptionURLForToken(result.subscription_token || '', format, useAge)
       if (!url) throw new Error('未能生成一次性订阅链接')
       if (await copyText(url)) {
         setCopied(true)
@@ -9925,9 +9927,7 @@ function Tunnels({ data, client, load }: any) {
 
 const subscriptionClientIcons: Record<string, string> = {
   'sing-box': singBoxClientIcon,
-  'sing-box-mieru': singBoxClientIcon,
   mieru: singBoxClientIcon,
-  'clash-meta': clashMetaClientIcon,
   mihomo: clashMetaClientIcon,
   stash: stashClientIcon,
   surge: surgeClientIcon,
@@ -10018,7 +10018,7 @@ function proxyPathChainLabels(data: any, path: ProxyPath): string[] {
 function Subscriptions({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
   const [iconsReady, setIconsReady] = useState(false)
-  const [subscriptionFormat, setSubscriptionFormat] = useState<SubscriptionFormat>('sing-box-mieru')
+  const [subscriptionFormat, setSubscriptionFormat] = useState<SubscriptionFormat>(defaultSubscriptionFormat)
   const [expandedServers, setExpandedServers] = useState<Record<number, boolean>>({})
   const [selectedInboundIDs, setSelectedInboundIDs] = useState<number[]>([])
   const [selectedUserIDs, setSelectedUserIDs] = useState<number[]>([])
@@ -10081,11 +10081,9 @@ function Subscriptions({ data, client, load, notify }: any) {
   const activeProfile = profiles.find(p => p.id === activeProfileID) || null
 
   const clientFormats = [
-    { id: 'sing-box-mieru', name: 'sing-box + Mieru', type: 'Extended JSON' },
+    { id: 'mihomo', name: 'Mihomo', type: 'YAML Config' },
     { id: 'sing-box', name: 'sing-box', type: 'Native JSON' },
     { id: 'mieru', name: 'Mieru', type: 'mierus URI' },
-    { id: 'clash-meta', name: 'Clash.Meta', type: 'YAML Config' },
-    { id: 'mihomo', name: 'Mihomo', type: 'YAML Config' },
     { id: 'stash', name: 'Stash', type: 'YAML' },
     { id: 'surge', name: 'Surge', type: 'Conf' },
     { id: 'surge-mac', name: 'Surge Mac', type: 'Conf' },
