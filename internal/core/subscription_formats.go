@@ -1,7 +1,6 @@
 package core
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -27,7 +26,6 @@ type subscriptionProxy struct {
 	UUID           string
 	Username       string
 	Password       string
-	PrivateKey     string
 	HostKeys       []string
 	Method         string
 	Flow           string
@@ -81,8 +79,6 @@ func renderSubscriptionTarget(nodes []SubscriptionNode, format model.Subscriptio
 		}
 	}
 	switch format {
-	case model.SubscriptionFormatPlainJSON:
-		return renderCanonicalJSON(compatible)
 	case model.SubscriptionFormatSingBox:
 		return renderSingBoxTarget(compatible)
 	case model.SubscriptionFormatSingBoxMieru:
@@ -92,7 +88,7 @@ func renderSubscriptionTarget(nodes []SubscriptionNode, format model.Subscriptio
 	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatClash:
 		return renderClashTarget(compatible, format)
 	case model.SubscriptionFormatShadowrocket:
-		return renderProxyListYAML(compatible, format)
+		return renderCanonicalURIList(compatible)
 	case model.SubscriptionFormatEgern:
 		return renderProxyListYAML(compatible, format)
 	case model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac, model.SubscriptionFormatLoon, model.SubscriptionFormatQX, model.SubscriptionFormatSurfboard:
@@ -133,7 +129,6 @@ func normalizeSubscriptionNode(node SubscriptionNode) (subscriptionProxy, error)
 		UUID:           stringFromAny(raw["uuid"]),
 		Username:       stringFromAny(raw["username"]),
 		Password:       stringFromAny(raw["password"]),
-		PrivateKey:     defaultString(stringFromAny(raw["private_key"]), stringFromAny(raw["private-key"])),
 		HostKeys:       stringListFromAny(raw["host_key"]),
 		Method:         stringFromAny(raw["method"]),
 		Flow:           stringFromAny(raw["flow"]),
@@ -227,8 +222,8 @@ func validateNormalizedSubscriptionProxy(proxy subscriptionProxy) error {
 	case "socks5":
 		return nil
 	case "ssh":
-		if proxy.Username == "" || proxy.PrivateKey == "" || len(proxy.HostKeys) == 0 {
-			return missing("ssh username/private key/host key")
+		if proxy.Username == "" || proxy.Password == "" {
+			return missing("ssh username/password")
 		}
 	case "mieru":
 		if proxy.Username == "" || proxy.Password == "" {
@@ -310,7 +305,7 @@ func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionP
 		"anytls":    {"password", "tls", "padding_scheme"},
 		"ss":        {"method", "password", "plugin", "plugin_opts", "network", "udp_over_tcp", "multiplex"},
 		"socks5":    {"version", "username", "password", "network", "udp_over_tcp"},
-		"ssh":       {"private_key", "host_key"},
+		"ssh":       {"password", "host_key"},
 		"mieru":     {"server_ports", "transport", "username", "password", "multiplexing", "traffic_pattern"},
 	}
 	typeName := map[string]string{"ss": "shadowsocks", "socks5": "socks"}[proxy.Type]
@@ -333,6 +328,7 @@ func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionP
 	}
 	if proxy.Type == "ssh" {
 		out["user"] = proxy.Username
+		out["password"] = proxy.Password
 	}
 	return out
 }
@@ -359,9 +355,6 @@ func cloneSubscriptionValue(value any) any {
 }
 
 func subscriptionTargetSupports(format model.SubscriptionFormat, proxy subscriptionProxy) bool {
-	if format == model.SubscriptionFormatPlainJSON {
-		return true
-	}
 	if format == model.SubscriptionFormatSingBoxMieru {
 		return proxy.Type != "ssh"
 	}
@@ -378,7 +371,7 @@ func subscriptionTargetSupports(format model.SubscriptionFormat, proxy subscript
 	}
 	if proxy.Type == "ssh" {
 		switch format {
-		case model.SubscriptionFormatSingBox, model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatShadowrocket, model.SubscriptionFormatStash, model.SubscriptionFormatEgern, model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac:
+		case model.SubscriptionFormatSingBox, model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatShadowrocket, model.SubscriptionFormatStash, model.SubscriptionFormatEgern, model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac, model.SubscriptionFormatV2Ray, model.SubscriptionFormatV2RayURI:
 			return true
 		default:
 			return false
@@ -516,83 +509,6 @@ func stringSetContains(values []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func renderCanonicalJSON(proxies []subscriptionProxy) (string, error) {
-	items := make([]map[string]any, 0, len(proxies))
-	for _, proxy := range proxies {
-		items = append(items, canonicalProxyMap(proxy))
-	}
-	data, err := json.MarshalIndent(items, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-func canonicalProxyMap(proxy subscriptionProxy) map[string]any {
-	out := map[string]any{
-		"name":   proxy.Name,
-		"group":  proxy.Group,
-		"type":   proxy.Type,
-		"server": proxy.Server,
-		"port":   proxy.Port,
-	}
-	switch proxy.Type {
-	case "vless":
-		out["uuid"] = proxy.UUID
-		out["udp"] = true
-		setNonEmpty(out, "flow", proxy.Flow)
-		setNonEmpty(out, "packet_encoding", proxy.PacketEncoding)
-	case "hysteria2", "anytls":
-		out["password"] = proxy.Password
-	case "ss":
-		out["method"] = proxy.Method
-		out["password"] = proxy.Password
-		if proxy.UoT {
-			out["udp_over_tcp"] = map[string]any{"enabled": true, "version": proxy.UoTVersion}
-		}
-	case "socks5":
-		setNonEmpty(out, "username", proxy.Username)
-		setNonEmpty(out, "password", proxy.Password)
-	case "ssh":
-		out["username"] = proxy.Username
-		out["private_key"] = proxy.PrivateKey
-		out["host_key"] = append([]string(nil), proxy.HostKeys...)
-	case "mieru":
-		out["username"] = proxy.Username
-		out["password"] = proxy.Password
-		out["transport"] = strings.ToUpper(proxy.Network)
-		setNonEmpty(out, "multiplexing", proxy.Multiplexing)
-		setNonEmpty(out, "traffic_pattern", proxy.TrafficPattern)
-	}
-	if proxy.Network != "" && proxy.Type != "mieru" {
-		out["network"] = proxy.Network
-	}
-	if proxy.Transport.Type != "" {
-		out["transport"] = transportMap(proxy.Transport)
-	}
-	if proxy.TLS.Present || proxy.TLS.Enabled {
-		out["tls"] = canonicalTLSMap(proxy.TLS)
-	}
-	if len(proxy.ServerPorts) > 0 {
-		out["server_ports"] = append([]string(nil), proxy.ServerPorts...)
-	}
-	setNonEmpty(out, "hop_interval", proxy.HopInterval)
-	setNonEmpty(out, "hop_interval_max", proxy.HopIntervalMax)
-	if proxy.UpMbps > 0 {
-		out["up_mbps"] = proxy.UpMbps
-	}
-	if proxy.DownMbps > 0 {
-		out["down_mbps"] = proxy.DownMbps
-	}
-	if proxy.ObfsType != "" {
-		out["obfs"] = map[string]any{"type": proxy.ObfsType, "password": proxy.ObfsPassword}
-	}
-	if proxy.PaddingScheme != nil {
-		out["padding_scheme"] = cloneSubscriptionValue(proxy.PaddingScheme)
-	}
-	return out
 }
 
 func renderSingBoxTarget(proxies []subscriptionProxy) (string, error) {
@@ -774,7 +690,7 @@ func clashStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionFormat
 		} else {
 			out["username"] = proxy.Username
 		}
-		out["private-key"] = proxy.PrivateKey
+		out["password"] = proxy.Password
 		out["host-key"] = append([]string(nil), proxy.HostKeys...)
 	case "mieru":
 		ports, err := mieruPortsFromValue(proxy.Port, proxy.ServerPorts)
@@ -794,7 +710,9 @@ func clashStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionFormat
 		if format == model.SubscriptionFormatShadowrocket {
 			out["user-hint-is-mandatory"] = true
 		}
-		setNonEmpty(out, "multiplexing", proxy.Multiplexing)
+		if proxy.Multiplexing != "MULTIPLEXING_DEFAULT" {
+			setNonEmpty(out, "multiplexing", proxy.Multiplexing)
+		}
 		setNonEmpty(out, "traffic-pattern", proxy.TrafficPattern)
 	}
 	return out, nil
@@ -912,7 +830,7 @@ func egernProxyMap(proxy subscriptionProxy) map[string]any {
 	case "ssh":
 		out["type"] = "ssh"
 		out["username"] = proxy.Username
-		out["private_key"] = proxy.PrivateKey
+		out["password"] = proxy.Password
 		out["host_keys"] = append([]string(nil), proxy.HostKeys...)
 	}
 	return out
@@ -980,36 +898,6 @@ func egernRealityMap(tls subscriptionTLS) map[string]any {
 	}
 	out := map[string]any{"public_key": tls.RealityPublicKey}
 	setNonEmpty(out, "short_id", tls.RealityShortID)
-	return out
-}
-
-func transportMap(transport subscriptionTransport) map[string]any {
-	out := map[string]any{"type": transport.Type}
-	setNonEmpty(out, "path", transport.Path)
-	setNonEmpty(out, "service_name", transport.ServiceName)
-	if transport.Host != "" {
-		out["headers"] = map[string]any{"Host": transport.Host}
-	}
-	return out
-}
-
-func canonicalTLSMap(tls subscriptionTLS) map[string]any {
-	out := map[string]any{"enabled": tls.Enabled}
-	setNonEmpty(out, "server_name", tls.ServerName)
-	if tls.Insecure {
-		out["insecure"] = true
-	}
-	if len(tls.ALPN) > 0 {
-		out["alpn"] = append([]string(nil), tls.ALPN...)
-	}
-	if tls.Fingerprint != "" {
-		out["utls"] = map[string]any{"enabled": true, "fingerprint": tls.Fingerprint}
-	}
-	if tls.RealityPublicKey != "" {
-		reality := map[string]any{"enabled": true, "public_key": tls.RealityPublicKey}
-		setNonEmpty(reality, "short_id", tls.RealityShortID)
-		out["reality"] = reality
-	}
 	return out
 }
 
@@ -1096,7 +984,6 @@ func subscriptionEndpoint(host string, port int) string {
 
 func renderClientLines(proxies []subscriptionProxy, format model.SubscriptionFormat) (string, error) {
 	lines := make([]string, 0, len(proxies))
-	sshKeys := map[string]string{}
 	for _, proxy := range proxies {
 		var line string
 		var err error
@@ -1118,26 +1005,11 @@ func renderClientLines(proxies []subscriptionProxy, format model.SubscriptionFor
 		if line != "" {
 			lines = append(lines, line)
 		}
-		if (format == model.SubscriptionFormatSurge || format == model.SubscriptionFormatSurgeMac) && proxy.Type == "ssh" {
-			sshKeys[surgeSSHKeyName(proxy.PrivateKey)] = proxy.PrivateKey
-		}
 	}
 	if len(lines) == 0 {
 		return "", nil
 	}
-	if len(sshKeys) == 0 {
-		return strings.Join(lines, "\n") + "\n", nil
-	}
-	keyNames := make([]string, 0, len(sshKeys))
-	for name := range sshKeys {
-		keyNames = append(keyNames, name)
-	}
-	sort.Strings(keyNames)
-	sections := []string{"[Proxy]", strings.Join(lines, "\n"), "", "[Keystore]"}
-	for _, name := range keyNames {
-		sections = append(sections, fmt.Sprintf("%s=type=openssh-private-key,base64=%s", name, base64.StdEncoding.EncodeToString([]byte(sshKeys[name]))))
-	}
-	return strings.Join(sections, "\n") + "\n", nil
+	return strings.Join(lines, "\n") + "\n", nil
 }
 
 func renderSurgeLine(proxy subscriptionProxy) (string, error) {
@@ -1177,16 +1049,11 @@ func renderSurgeLine(proxy subscriptionProxy) (string, error) {
 		appendSurgeTLSFields(&parts, proxy.TLS)
 		parts = append(parts, "udp-relay=true")
 	case "ssh":
-		parts = append(parts, fmt.Sprintf("%s=ssh,%s,%d", name, host, proxy.Port), "username="+quoteConf(proxy.Username), "private-key="+surgeSSHKeyName(proxy.PrivateKey), "server-fingerprint="+quoteConf(strings.Join(proxy.HostKeys, ",")))
+		parts = append(parts, fmt.Sprintf("%s=ssh,%s,%d", name, host, proxy.Port), "username="+quoteConf(proxy.Username), "password="+quoteConf(proxy.Password), "server-fingerprint="+quoteConf(strings.Join(proxy.HostKeys, ",")))
 	default:
 		return "", fmt.Errorf("Surge does not support subscription proxy type %q", proxy.Type)
 	}
 	return strings.Join(parts, ","), nil
-}
-
-func surgeSSHKeyName(privateKey string) string {
-	sum := sha256.Sum256([]byte(privateKey))
-	return fmt.Sprintf("oboard-ssh-%x", sum[:6])
 }
 
 func renderSurfboardLine(proxy subscriptionProxy) (string, error) {
@@ -1477,6 +1344,21 @@ func canonicalShareURI(proxy subscriptionProxy) (string, error) {
 	case "socks5":
 		credentials := base64.StdEncoding.EncodeToString([]byte(proxy.Username + ":" + proxy.Password))
 		return "socks://" + escapeURIComponent(credentials) + "@" + endpoint + "#" + fragment, nil
+	case "ssh":
+		shareURL := &url.URL{Scheme: "ssh", User: url.UserPassword(proxy.Username, proxy.Password), Host: endpoint, Fragment: proxy.Name}
+		return shareURL.String(), nil
+	case "mieru":
+		query := url.Values{}
+		query.Set("profile", proxy.Name)
+		query.Add("port", strconv.Itoa(proxy.Port))
+		query.Add("protocol", strings.ToUpper(proxy.Network))
+		for _, portRange := range proxy.ServerPorts {
+			query.Add("port", portRange)
+			query.Add("protocol", strings.ToUpper(proxy.Network))
+		}
+		setQueryIfNotEmpty(query, "multiplexing", proxy.Multiplexing)
+		setQueryIfNotEmpty(query, "traffic-pattern", proxy.TrafficPattern)
+		return (&url.URL{Scheme: "mierus", User: url.UserPassword(proxy.Username, proxy.Password), Host: subscriptionEndpoint(proxy.Server, 0), RawQuery: query.Encode()}).String(), nil
 	default:
 		return "", fmt.Errorf("URI subscriptions do not support proxy type %q", proxy.Type)
 	}

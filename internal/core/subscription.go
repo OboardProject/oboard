@@ -27,10 +27,7 @@ type SubscriptionOptions struct {
 	ExternalOutboundAccessGrants []model.ExternalOutboundAccessGrant
 	UserGroups                   []model.UserGroup
 	UserGroupMembers             []model.UserGroupMember
-	SSHPrivateKey                string
-	SSHCredentialFingerprint     string
 	SSHServerHostKeys            map[int64]string
-	SSHDeployedFingerprints      map[int64]string
 }
 
 type SubscriptionNode struct {
@@ -125,7 +122,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		}
 		if inbound.Protocol == model.ProtocolSSH {
 			hostKey := strings.TrimSpace(opts.SSHServerHostKeys[server.ID])
-			if strings.TrimSpace(opts.SSHPrivateKey) == "" || strings.TrimSpace(opts.SSHCredentialFingerprint) == "" || opts.SSHDeployedFingerprints[server.ID] != opts.SSHCredentialFingerprint || hostKey == "" {
+			if strings.TrimSpace(user.ProxyPassword) == "" || hostKey == "" {
 				continue
 			}
 			raw := map[string]any{
@@ -133,7 +130,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 				"server":       server.EntryAddress,
 				"server_port":  inbound.Port,
 				"username":     fmt.Sprintf("oboard-%d", user.ID),
-				"private_key":  opts.SSHPrivateKey,
+				"password":     user.ProxyPassword,
 				"host_key":     []string{hostKey},
 				"oboard_group": group,
 			}
@@ -423,10 +420,6 @@ func subscriptionInboundAllowed(userID, inboundID int64, bindings []model.Inboun
 	return false
 }
 
-func renderPlainJSONSubscription(nodes []SubscriptionNode) (string, error) {
-	return renderSubscriptionTarget(nodes, model.SubscriptionFormatPlainJSON)
-}
-
 func renderSingBoxSubscription(nodes []SubscriptionNode) (string, error) {
 	return renderSubscriptionTarget(nodes, model.SubscriptionFormatSingBox)
 }
@@ -476,8 +469,6 @@ func normalizeSubscriptionFormat(format model.SubscriptionFormat) model.Subscrip
 		return model.SubscriptionFormatSingBoxMieru
 	case "mieru", "mierus":
 		return model.SubscriptionFormatMieru
-	case "plain-json", "plainjson", "plain json", "json":
-		return model.SubscriptionFormatPlainJSON
 	case "stash":
 		return model.SubscriptionFormatStash
 	case "clash", "clash-meta", "mihomo":
@@ -517,7 +508,6 @@ func NormalizeSubscriptionFormatForAPI(format model.SubscriptionFormat) model.Su
 
 func SupportedSubscriptionFormats() []model.SubscriptionFormat {
 	return []model.SubscriptionFormat{
-		model.SubscriptionFormatPlainJSON,
 		model.SubscriptionFormatStash,
 		model.SubscriptionFormatClashMeta,
 		model.SubscriptionFormatMihomo,
@@ -549,9 +539,9 @@ func IsSupportedSubscriptionFormat(format model.SubscriptionFormat) bool {
 
 func SubscriptionContentType(format model.SubscriptionFormat) string {
 	switch normalizeSubscriptionFormat(format) {
-	case model.SubscriptionFormatPlainJSON, model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
+	case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
 		return "application/json"
-	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatShadowrocket, model.SubscriptionFormatEgern, model.SubscriptionFormatClash:
+	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatEgern, model.SubscriptionFormatClash:
 		return "text/yaml; charset=utf-8"
 	default:
 		return "text/plain; charset=utf-8"

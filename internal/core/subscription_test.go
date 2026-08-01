@@ -68,16 +68,13 @@ func TestSubscriptionRespectsInboundUserBindings(t *testing.T) {
 	}
 }
 
-func TestSSHSubscriptionRequiresCredentialDeploymentAndAuthorization(t *testing.T) {
-	user := model.User{ID: 7, Username: "alice", Status: "active"}
+func TestSSHSubscriptionRequiresDeployedHostAndAuthorization(t *testing.T) {
+	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "ssh-pass"}
 	server := model.Server{ID: 1, Name: "tokyo", PublicIPv4: "203.0.113.10"}
 	inbound := model.Inbound{ID: 11, ServerID: server.ID, Name: "ssh", Protocol: model.ProtocolSSH, ListenIP: "0.0.0.0", Port: 2222, EntryIPMode: model.EntryIPModeIPv4, Enabled: true}
 	base := SubscriptionOptions{
-		InboundUsers:             []model.InboundUser{{InboundID: inbound.ID, UserID: user.ID, Enabled: true}},
-		SSHPrivateKey:            sshSubscriptionPrivateKey,
-		SSHCredentialFingerprint: "SHA256:user-key",
-		SSHServerHostKeys:        map[int64]string{server.ID: sshSubscriptionHostKey},
-		SSHDeployedFingerprints:  map[int64]string{server.ID: "SHA256:user-key"},
+		InboundUsers:      []model.InboundUser{{InboundID: inbound.ID, UserID: user.ID, Enabled: true}},
+		SSHServerHostKeys: map[int64]string{server.ID: sshSubscriptionHostKey},
 	}
 	tests := []struct {
 		name   string
@@ -85,10 +82,6 @@ func TestSSHSubscriptionRequiresCredentialDeploymentAndAuthorization(t *testing.
 		want   int
 	}{
 		{name: "all state matches", want: 1},
-		{name: "missing private key", mutate: func(opts *SubscriptionOptions) { opts.SSHPrivateKey = "" }},
-		{name: "missing credential fingerprint", mutate: func(opts *SubscriptionOptions) { opts.SSHCredentialFingerprint = "" }},
-		{name: "credential not deployed", mutate: func(opts *SubscriptionOptions) { opts.SSHDeployedFingerprints = nil }},
-		{name: "rotated credential pending deployment", mutate: func(opts *SubscriptionOptions) { opts.SSHDeployedFingerprints[server.ID] = "SHA256:old-key" }},
 		{name: "missing agent host key", mutate: func(opts *SubscriptionOptions) { opts.SSHServerHostKeys = nil }},
 		{name: "user not authorized", mutate: func(opts *SubscriptionOptions) {
 			opts.InboundUsers = []model.InboundUser{{InboundID: inbound.ID, UserID: 8, Enabled: true}}
@@ -102,7 +95,6 @@ func TestSSHSubscriptionRequiresCredentialDeploymentAndAuthorization(t *testing.
 		t.Run(test.name, func(t *testing.T) {
 			opts := base
 			opts.SSHServerHostKeys = map[int64]string{server.ID: base.SSHServerHostKeys[server.ID]}
-			opts.SSHDeployedFingerprints = map[int64]string{server.ID: base.SSHDeployedFingerprints[server.ID]}
 			if test.mutate != nil {
 				test.mutate(&opts)
 			}
@@ -115,7 +107,7 @@ func TestSSHSubscriptionRequiresCredentialDeploymentAndAuthorization(t *testing.
 			}
 			if test.want == 1 {
 				raw := nodes[0].Raw
-				if raw["server"] != server.PublicIPv4 || raw["username"] != "oboard-7" || raw["private_key"] != sshSubscriptionPrivateKey || !stringSetContains(stringListFromAny(raw["host_key"]), sshSubscriptionHostKey) {
+				if raw["server"] != server.PublicIPv4 || raw["username"] != "oboard-7" || raw["password"] != user.ProxyPassword || !stringSetContains(stringListFromAny(raw["host_key"]), sshSubscriptionHostKey) {
 					t.Fatalf("SSH node = %#v", raw)
 				}
 			}
@@ -464,7 +456,6 @@ func TestSubscriptionFormatUsesRequestOption(t *testing.T) {
 
 func TestSubStoreTargetFormatsAreAccepted(t *testing.T) {
 	for _, format := range []model.SubscriptionFormat{
-		"plain-json",
 		"stash",
 		"clash-meta",
 		"mihomo",
@@ -482,6 +473,14 @@ func TestSubStoreTargetFormatsAreAccepted(t *testing.T) {
 	} {
 		if !IsSupportedSubscriptionFormat(format) {
 			t.Fatalf("format %q is not accepted", format)
+		}
+	}
+}
+
+func TestPlainJSONSubscriptionFormatIsRejected(t *testing.T) {
+	for _, format := range []model.SubscriptionFormat{"plain-json", "plainjson", "plain json", "json"} {
+		if IsSupportedSubscriptionFormat(format) {
+			t.Fatalf("removed format %q is still accepted", format)
 		}
 	}
 }

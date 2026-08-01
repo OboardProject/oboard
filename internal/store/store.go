@@ -125,9 +125,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists user_authentication (user_id integer primary key references users(id) on delete cascade, totp_enabled integer not null default 0, totp_secret_encrypted text not null default '', recovery_code_hashes_json text not null default '[]', totp_last_used_step integer not null default -1, webauthn_user_handle text unique, updated_at text not null)`,
 		`create table if not exists passkey_credentials (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, name text not null, credential_id text not null unique, credential_json text not null, created_at text not null, last_used_at text)`,
 		`create table if not exists auth_challenges (token_hash text primary key, kind text not null, user_id integer references users(id) on delete cascade, data_encrypted text not null, expires_at text not null, created_at text not null)`,
-		`create table if not exists ssh_user_credentials (user_id integer primary key references users(id) on delete cascade, public_key text not null, fingerprint text not null unique, private_key_encrypted text not null, created_at text not null, updated_at text not null)`,
 		`create table if not exists ssh_server_host_keys (server_id integer primary key references servers(id) on delete cascade, public_key text not null, fingerprint text not null, config_version integer not null, updated_at text not null)`,
-		`create table if not exists ssh_credential_deployments (server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, credential_fingerprint text not null, config_version integer not null, updated_at text not null, primary key(server_id,user_id))`,
+		`create table if not exists ssh_password_deployments (server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, password_digest text not null, config_version integer not null, updated_at text not null, primary key(server_id,user_id))`,
 		`create table if not exists servers (id integer primary key autoincrement, name text not null, agent_id text unique, agent_token_hash text, chain_secret text not null, enrollment_hash text, enrollment_expires_at text, entry_address text, public_ipv4 text not null default '', public_ipv6 text not null default '', region_code text not null default '', detected_region_code text not null default '', region_mode text not null default 'auto', entry_ip_mode text not null default 'auto', listen_ip text, ip_stack text not null default 'auto', udp_inbound_mode text not null default 'allow', mtu_mode text not null default 'detect', mtu_value integer not null default 0, mtu_probe_host text not null default '1.1.1.1', mtu_probe_port integer not null default 443, mtu_overhead_bytes integer not null default 0, bbr_enabled integer not null default 0, port_range_start integer not null default 10000, port_range_end integer not null default 20000, status text not null, os text, distro_id text not null default '', distro_version text not null default '', distro_name text not null default '', libc text not null default '', service_manager text not null default '', package_manager text not null default '', arch text, kernel text, cpu text, memory_bytes integer not null default 0, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, agent_memory_bytes integer not null default 0, disk_bytes integer not null default 0, agent_version text not null default '', agent_build text not null default '', sing_box_version text, connection_audit_enabled integer not null default 0, last_seen_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_credentials (id integer primary key autoincrement, name text not null unique, provider text not null, zone_name text not null, zone_id text not null default '', config_encrypted text not null, enabled integer not null default 1, verified_at text, last_error text not null default '', created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_credential_zones (id integer primary key autoincrement, credential_id integer not null references dns_credentials(id) on delete cascade, zone_name text not null, provider_zone_id text not null default '', server_id integer references servers(id) on delete set null, created_at text not null, updated_at text not null)`,
@@ -208,10 +207,10 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_subscription_one_time_tokens_user on subscription_one_time_tokens(user_id)`,
 		`create index if not exists idx_passkey_credentials_user on passkey_credentials(user_id)`,
 		`create index if not exists idx_auth_challenges_expiry on auth_challenges(expires_at)`,
-		`create index if not exists idx_ssh_credential_deployments_user on ssh_credential_deployments(user_id, server_id)`,
 		`create index if not exists idx_dns_credential_zones_credential on dns_credential_zones(credential_id, zone_name)`,
 		`create index if not exists idx_dns_credential_zones_server on dns_credential_zones(server_id)`,
 		`create index if not exists idx_proxy_path_port_allocations_server on proxy_path_port_allocations(server_id)`,
+		`create index if not exists idx_ssh_password_deployments_user on ssh_password_deployments(user_id, server_id)`,
 	}
 	for _, stmt := range schema {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -2027,81 +2026,7 @@ func (s *Store) DeleteInboundUsersForUser(ctx context.Context, userID int64) err
 	return err
 }
 
-func (s *Store) CreateSSHUserCredential(ctx context.Context, v *model.SSHUserCredential) (bool, error) {
-	ts := now()
-	result, err := s.db.ExecContext(ctx, `insert into ssh_user_credentials(user_id,public_key,fingerprint,private_key_encrypted,created_at,updated_at) values(?,?,?,?,?,?) on conflict(user_id) do nothing`, v.UserID, v.PublicKey, v.Fingerprint, v.PrivateKeyEncrypted, ts, ts)
-	if err != nil {
-		return false, err
-	}
-	created, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	if created != 0 {
-		v.CreatedAt = parseTime(ts)
-		v.UpdatedAt = v.CreatedAt
-	}
-	return created != 0, nil
-}
-
-func (s *Store) ReplaceSSHUserCredential(ctx context.Context, v *model.SSHUserCredential) error {
-	ts := now()
-	result, err := s.db.ExecContext(ctx, `update ssh_user_credentials set public_key=?,fingerprint=?,private_key_encrypted=?,updated_at=? where user_id=?`, v.PublicKey, v.Fingerprint, v.PrivateKeyEncrypted, ts, v.UserID)
-	if err != nil {
-		return err
-	}
-	updated, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if updated == 0 {
-		return sql.ErrNoRows
-	}
-	v.UpdatedAt = parseTime(ts)
-	return nil
-}
-
-func (s *Store) ListSSHUserCredentials(ctx context.Context) ([]model.SSHUserCredential, error) {
-	rows, err := s.db.QueryContext(ctx, `select user_id,public_key,fingerprint,private_key_encrypted,created_at,updated_at from ssh_user_credentials order by user_id asc`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanSSHUserCredentials(rows)
-}
-
-func (s *Store) GetSSHUserCredential(ctx context.Context, userID int64) (*model.SSHUserCredential, error) {
-	rows, err := s.db.QueryContext(ctx, `select user_id,public_key,fingerprint,private_key_encrypted,created_at,updated_at from ssh_user_credentials where user_id=?`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items, err := scanSSHUserCredentials(rows)
-	if err != nil || len(items) == 0 {
-		if err != nil {
-			return nil, err
-		}
-		return nil, sql.ErrNoRows
-	}
-	return &items[0], nil
-}
-
-func scanSSHUserCredentials(rows *sql.Rows) ([]model.SSHUserCredential, error) {
-	out := []model.SSHUserCredential{}
-	for rows.Next() {
-		var v model.SSHUserCredential
-		var createdAt, updatedAt string
-		if err := rows.Scan(&v.UserID, &v.PublicKey, &v.Fingerprint, &v.PrivateKeyEncrypted, &createdAt, &updatedAt); err != nil {
-			return nil, err
-		}
-		v.CreatedAt = parseTime(createdAt)
-		v.UpdatedAt = parseTime(updatedAt)
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) ApplySSHDeploymentState(ctx context.Context, hostKey model.SSHServerHostKey, credentials map[int64]string) error {
+func (s *Store) ApplySSHDeploymentState(ctx context.Context, hostKey model.SSHServerHostKey, passwordDigests map[int64]string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -2111,11 +2036,11 @@ func (s *Store) ApplySSHDeploymentState(ctx context.Context, hostKey model.SSHSe
 	if _, err := tx.ExecContext(ctx, `insert into ssh_server_host_keys(server_id,public_key,fingerprint,config_version,updated_at) values(?,?,?,?,?) on conflict(server_id) do update set public_key=excluded.public_key,fingerprint=excluded.fingerprint,config_version=excluded.config_version,updated_at=excluded.updated_at`, hostKey.ServerID, hostKey.PublicKey, hostKey.Fingerprint, hostKey.ConfigVersion, ts); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `delete from ssh_credential_deployments where server_id=?`, hostKey.ServerID); err != nil {
+	if _, err := tx.ExecContext(ctx, `delete from ssh_password_deployments where server_id=?`, hostKey.ServerID); err != nil {
 		return err
 	}
-	for userID, fingerprint := range credentials {
-		if _, err := tx.ExecContext(ctx, `insert into ssh_credential_deployments(server_id,user_id,credential_fingerprint,config_version,updated_at) values(?,?,?,?,?)`, hostKey.ServerID, userID, fingerprint, hostKey.ConfigVersion, ts); err != nil {
+	for userID, digest := range passwordDigests {
+		if _, err := tx.ExecContext(ctx, `insert into ssh_password_deployments(server_id,user_id,password_digest,config_version,updated_at) values(?,?,?,?,?)`, hostKey.ServerID, userID, digest, hostKey.ConfigVersion, ts); err != nil {
 			return err
 		}
 	}
@@ -2128,7 +2053,7 @@ func (s *Store) ClearSSHDeploymentState(ctx context.Context, serverID int64) err
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `delete from ssh_credential_deployments where server_id=?`, serverID); err != nil {
+	if _, err := tx.ExecContext(ctx, `delete from ssh_password_deployments where server_id=?`, serverID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `delete from ssh_server_host_keys where server_id=?`, serverID); err != nil {
@@ -2148,21 +2073,21 @@ func (s *Store) GetSSHServerHostKey(ctx context.Context, serverID int64) (*model
 	return &v, nil
 }
 
-func (s *Store) ListSSHCredentialDeploymentsForUser(ctx context.Context, userID int64) ([]model.SSHCredentialDeployment, error) {
-	rows, err := s.db.QueryContext(ctx, `select server_id,user_id,credential_fingerprint,config_version,updated_at from ssh_credential_deployments where user_id=? order by server_id`, userID)
+func (s *Store) ListSSHPasswordDeploymentsForUser(ctx context.Context, userID int64) ([]model.SSHPasswordDeployment, error) {
+	rows, err := s.db.QueryContext(ctx, `select server_id,user_id,password_digest,config_version,updated_at from ssh_password_deployments where user_id=? order by server_id`, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []model.SSHCredentialDeployment{}
+	out := []model.SSHPasswordDeployment{}
 	for rows.Next() {
-		var v model.SSHCredentialDeployment
+		var item model.SSHPasswordDeployment
 		var updatedAt string
-		if err := rows.Scan(&v.ServerID, &v.UserID, &v.CredentialFingerprint, &v.ConfigVersion, &updatedAt); err != nil {
+		if err := rows.Scan(&item.ServerID, &item.UserID, &item.PasswordDigest, &item.ConfigVersion, &updatedAt); err != nil {
 			return nil, err
 		}
-		v.UpdatedAt = parseTime(updatedAt)
-		out = append(out, v)
+		item.UpdatedAt = parseTime(updatedAt)
+		out = append(out, item)
 	}
 	return out, rows.Err()
 }
@@ -4751,7 +4676,6 @@ type FullRoutingConfig struct {
 	DNSLists                     []model.DNSList                     `json:"dns_lists"`
 	ServerDNSPolicies            []model.ServerDNSPolicy             `json:"server_dns_policies"`
 	Users                        []model.User                        `json:"users"`
-	SSHUserCredentials           []model.SSHUserCredential           `json:"ssh_user_credentials"`
 	ProxyPathPortAllocations     []model.ProxyPathPortAllocation     `json:"proxy_path_port_allocations"`
 }
 
@@ -4781,10 +4705,6 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 		return FullRoutingConfig{}, err
 	}
 	portAllocations, err := s.ListProxyPathPortAllocations(ctx)
-	if err != nil {
-		return FullRoutingConfig{}, err
-	}
-	sshUserCredentials, err := s.ListSSHUserCredentials(ctx)
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
@@ -4832,7 +4752,7 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
-	return FullRoutingConfig{Servers: servers, Inbounds: in, InboundUsers: inboundUsers, UserGroups: groups, UserGroupMembers: members, InboundAccessGrants: grants, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ExternalOutboundAccessGrants: externalGrants, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, ProxyPathEgressResults: proxyPathEgressResults, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, SSHUserCredentials: sshUserCredentials, ProxyPathPortAllocations: portAllocations}, nil
+	return FullRoutingConfig{Servers: servers, Inbounds: in, InboundUsers: inboundUsers, UserGroups: groups, UserGroupMembers: members, InboundAccessGrants: grants, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ExternalOutboundAccessGrants: externalGrants, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, ProxyPathEgressResults: proxyPathEgressResults, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, ProxyPathPortAllocations: portAllocations}, nil
 }
 
 func nullEmpty(v string) any {

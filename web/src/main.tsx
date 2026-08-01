@@ -130,7 +130,6 @@ type DNSRecord = { id: string; credential_id: number; dns_zone_id?: number; zone
 type GoogleEABCredential = { id: number; key_id: string; remark: string; usage_count: number; created_at: string }
 type Certificate = { id: number; name: string; primary_domain: string; domains: string[]; wildcard: boolean; challenge_type: 'http01' | 'dns01' | 'dns01_manual' | 'imported'; dns_credential_id?: number; issuance_server_id?: number; acme_ca: string; account_email: string; google_eab_credential_id?: number; eab_key_id?: string; eab_configured?: boolean; status: string; revision?: string; not_before?: string; not_after?: string; auto_renew: boolean; validation_records?: DNSRecord[]; last_error?: string; last_issued_at?: string; last_renewal_attempt_at?: string }
 type InboundUser = { id: number; inbound_id: number; user_id: number; enabled: boolean }
-type SSHUserCredential = { user_id: number; public_key: string; fingerprint: string; created_at: string; updated_at: string }
 type SSHAccess = { inbound_id: number; name: string; address: string; port: number; username: string }
 type AccessSubjectType = 'user' | 'group'
 type AccessScopeType = 'global' | 'server' | 'inbound'
@@ -166,7 +165,7 @@ type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'interface'
 type RoutingRule = { id: number; server_id: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; enabled: boolean }
 type ExternalOutboundAccessGrant = { id: number; external_outbound_id: number; subject_type: AccessSubjectType; subject_id: number; enabled: boolean }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
-type SubscriptionFormat = 'plain-json' | 'stash' | 'clash-meta' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'sing-box-mieru' | 'mieru' | 'v2ray' | 'v2ray-uri' | 'clash'
+type SubscriptionFormat = 'stash' | 'clash-meta' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'sing-box-mieru' | 'mieru' | 'v2ray' | 'v2ray-uri' | 'clash'
 type SubscriptionProfile = { id: number; name: string; group_name: string; description: string; config_json: string; enabled: boolean; created_at?: string; updated_at?: string }
 type SubscriptionAssignment = { id: number; profile_id: number; user_id: number; server_id?: number; inbound_id?: number; group_name: string; enabled: boolean }
 type AuditLog = { id: number; actor_id?: number; action: string; target: string; detail: string; ip: string; created_at: string }
@@ -559,7 +558,6 @@ const subscriptionFormats: { value: SubscriptionFormat; label: string }[] = [
   { value: 'sing-box', label: 'sing-box' },
   { value: 'mieru', label: 'Mieru' },
   { value: 'stash', label: 'Stash' },
-  { value: 'plain-json', label: 'Plain JSON' },
   { value: 'surfboard', label: 'Surfboard' },
   { value: 'surge', label: 'Surge' },
   { value: 'surge-mac', label: 'Surge Mac' },
@@ -2078,7 +2076,6 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
 function AccountPage({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
   const user: User | undefined = data.account_user || data.current_user
-  const sshCredential: SSHUserCredential | null = data.ssh_user_credential || null
   const sshAccesses: SSHAccess[] = data.ssh_accesses || []
   const [nickname, setNickname] = useState(user?.nickname || '')
   const [currentPassword, setCurrentPassword] = useState('')
@@ -2246,33 +2243,10 @@ function AccountPage({ data, client, load, notify }: any) {
     }
   }
 
-  const downloadSSHCredential = async () => {
-    try {
-      downloadBrowserFile(await client.download('/me/ssh-credential/private-key'))
-      notify?.('SSH 私钥已下载', 'success')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    }
-  }
-
-  const rotateSSHCredential = async () => {
-    const confirmed = await dialogs.confirm({ title: '轮换 SSH 凭据？', message: '现有私钥将在下次部署后失效。新私钥不会自动下载，请在轮换后按需下载。', confirmText: '确认轮换', tone: 'danger' })
-    if (!confirmed) return
-    try {
-      await client.request('/me/ssh-credential/rotate', { method: 'POST', body: '{}' })
-      await load()
-      notify?.('SSH 凭据已轮换，将在下次部署后生效', 'success')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    }
-  }
-
-  const copySSHCommand = async (access: SSHAccess) => {
-    const host = access.address.includes(':') && !access.address.startsWith('[') ? `[${access.address}]` : access.address
-    const filename = `oboard-ssh-user-${user?.id || 0}-ed25519`
-    const command = `chmod 600 ./${filename} && ssh -i ./${filename} -N -D 127.0.0.1:1080 -p ${access.port} ${access.username}@${host}`
-    const ok = await copyText(command)
-    notify?.(ok ? 'SSH 动态代理命令已复制' : '复制失败，请手动复制', ok ? 'success' : 'error')
+  const copySSHURI = async (access: SSHAccess) => {
+    const uri = sshShareURI(access.address, access.port, access.username, user?.proxy_password || '')
+    const ok = await copyText(uri)
+    notify?.(ok ? 'SSH 链接已复制' : '复制失败，请手动复制', ok ? 'success' : 'error')
   }
 
   return <><Panel title="我的账户" className="account-panel">
@@ -2328,11 +2302,8 @@ function AccountPage({ data, client, load, notify }: any) {
           </div>
         </section>
         <section className="sub-section">
-          <div className="sub-section-head"><div><h3><Lock size={16} />SSH 凭据</h3><p className="muted">用于已授权的 SSH 受限代理和支持 SSH 的订阅客户端。</p></div>{sshCredential && <div className="sub-user-actions"><button type="button" className="ghost" onClick={() => void downloadSSHCredential()}><Download size={14} />下载私钥</button><button type="button" className="ghost danger-text" onClick={() => void rotateSSHCredential()}><RefreshCw size={14} />轮换</button></div>}</div>
-          <div className="sub-user-actions">
-            {sshCredential ? <span className="sub-pill ok" title={sshCredential.public_key}>{sshCredential.fingerprint}</span> : <span className="muted">获得 SSH 入口授权后自动生成</span>}
-          </div>
-          {sshAccesses.length > 0 && <div className="sub-user-actions"><span className="muted">已授权入口</span>{sshAccesses.map(access => <button type="button" className="ghost" key={access.inbound_id} disabled={!sshCredential} onClick={() => void copySSHCommand(access)}>复制 {access.name} 命令</button>)}</div>}
+          <div className="sub-section-head"><div><h3><Lock size={16} />SSH 代理</h3><p className="muted">使用代理用户名和密码连接已授权的隔离 SSH 入口。</p></div></div>
+          {sshAccesses.length > 0 ? <div className="sub-user-actions"><span className="muted">已授权入口</span>{sshAccesses.map(access => <button type="button" className="ghost" key={access.inbound_id} onClick={() => void copySSHURI(access)}>复制 {access.name} 链接</button>)}</div> : <span className="muted">暂无已授权入口</span>}
         </section>
       </div>
     </div>
@@ -5406,6 +5377,10 @@ function formatHostPort(host: string, port: number) {
   const formattedHost = clean.includes(':') && !clean.startsWith('[') ? `[${clean}]` : clean
   return `${formattedHost}:${port || 0}`
 }
+function sshShareURI(host: string, port: number, username: string, password: string) {
+  const endpoint = formatHostPort(host, port)
+  return `ssh://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${endpoint}`
+}
 function inboundEntryAddress(data: any, entry: Inbound) {
 	if (entry.dns_sync_enabled && entry.dns_domain) return entry.dns_domain
   const server = (data.servers || []).find((s: Server) => s.id === entry.server_id)
@@ -6246,7 +6221,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     try {
       let finalDraft = entryDraft
       if (finalDraft.protocol === 'ssh') {
-        const confirmed = await dialogs.confirm({ title: '确认公开 SSH 受限代理入口', message: '该入口会向已授权用户公开由 Agent 实现的受限 SSH 代理服务，不会授予服务器登录权限，也不会创建主机账户。仅允许使用主控托管的 SSH 凭据进行公钥认证和本地/动态转发，目标仅限公网地址；shell、SFTP、会话通道和远程转发均会被拒绝。授权生效时会自动生成用户凭据，用户可在账户页下载私钥，并在部署完成后使用。', tone: 'danger', confirmText: '确认创建 SSH 入口' })
+        const confirmed = await dialogs.confirm({ title: '确认公开 SSH 受限代理入口', message: '该入口会向已授权用户公开由 Agent 实现的受限 SSH 代理服务，不会授予服务器登录权限，也不会创建主机账户。仅允许使用用户代理密码认证和本地/动态转发，目标仅限公网地址；shell、SFTP、会话通道和远程转发均会被拒绝。', tone: 'danger', confirmText: '确认创建 SSH 入口' })
         if (!confirmed) return
         finalDraft = { ...finalDraft, config_json: JSON.stringify({ ...(parseConfig(finalDraft.config_json) || {}), exposure_confirmed: true, exposure_confirmation_version: 'ssh-inbound-v1', access_mode: 'restricted_proxy' }) }
       }
@@ -6267,7 +6242,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     try {
       let finalDraft = editEntry
       if (finalDraft.protocol === 'ssh') {
-        const confirmed = await dialogs.confirm({ title: '确认更新 SSH 受限代理入口', message: '该入口会向已授权用户公开由 Agent 实现的受限 SSH 代理服务，不会授予服务器登录权限，也不会创建主机账户。仅允许使用主控托管的 SSH 凭据进行公钥认证和本地/动态转发，目标仅限公网地址；shell、SFTP、会话通道和远程转发均会被拒绝。授权生效时会自动生成用户凭据，用户可在账户页下载私钥，并在部署完成后使用。', tone: 'danger', confirmText: '确认保存' })
+        const confirmed = await dialogs.confirm({ title: '确认更新 SSH 受限代理入口', message: '该入口会向已授权用户公开由 Agent 实现的受限 SSH 代理服务，不会授予服务器登录权限，也不会创建主机账户。仅允许使用用户代理密码认证和本地/动态转发，目标仅限公网地址；shell、SFTP、会话通道和远程转发均会被拒绝。', tone: 'danger', confirmText: '确认保存' })
         if (!confirmed) return
         finalDraft = { ...finalDraft, config_json: JSON.stringify({ ...(parseConfig(finalDraft.config_json) || {}), exposure_confirmed: true, exposure_confirmation_version: 'ssh-inbound-v1', access_mode: 'restricted_proxy' }) }
       }
@@ -7580,7 +7555,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
           <FormField label="协议大类" required><Select value={presetProtocol} onChange={e => changePresetProtocol(e.target.value as Protocol)}>{protocols.map(p => <option key={p} value={p}>{labelProtocol(p)}</option>)}</Select></FormField>
           <FormField label="具体类型" required><Select value={presetID} onChange={e => applyPreset(e.target.value)}>{presetOptions.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</Select></FormField>
           <div className="preset-help"><strong>{selectedPreset.label}</strong><span>{selectedPreset.description}</span><small>协议：{labelProtocol(selectedPreset.protocol)}</small></div>
-          {protocol === 'ssh' && <div className="access-note warning"><strong>SSH 暴露确认</strong><span>仅允许公钥认证和本地/动态转发；不提供 shell、SFTP、远程转发或主机账户。保存时仍需再次确认。</span></div>}
+          {protocol === 'ssh' && <div className="access-note warning"><strong>SSH 暴露确认</strong><span>使用代理密码认证，仅允许本地/动态转发；不提供 shell、SFTP、远程转发或主机账户。保存时仍需再次确认。</span></div>}
           <FormField label="入口地址策略" hint="客户端订阅使用的连接地址。">
             <Select value={entryMode} onChange={e => changeEntryMode(e.target.value as EntryIPMode)}>{entryIPModes.map(x => <option key={x} value={x}>{entryAddressModeLabel(x, server)}</option>)}</Select>
           </FormField>
@@ -10153,7 +10128,6 @@ const subscriptionClientIcons: Record<string, string> = {
   v2ray: v2rayNClientIcon,
   'v2ray-uri': v2rayNClientIcon,
   clash: clashClassicClientIcon,
-  'plain-json': singBoxClientIcon,
 }
 
 let subscriptionClientIconsReady: Promise<void> | null = null
@@ -10246,7 +10220,6 @@ function Subscriptions({ data, client, load, notify }: any) {
   const servers: Server[] = data.servers || []
   const inbounds: Inbound[] = (data.inbounds || []).filter((x: Inbound) => x.enabled !== false && x.protocol !== 'ssh')
   const sshInbounds: Inbound[] = (data.inbounds || []).filter((x: Inbound) => x.enabled !== false && x.protocol === 'ssh')
-  const sshUserCredentials: SSHUserCredential[] = data.ssh_user_credentials || []
   const profiles: SubscriptionProfile[] = data.subscription_profiles || []
   const assignments: SubscriptionAssignment[] = data.subscription_assignments || []
   const userGroups: UserGroup[] = data.user_groups || []
@@ -10300,7 +10273,7 @@ function Subscriptions({ data, client, load, notify }: any) {
     { id: 'stash', name: 'Stash', type: 'YAML' },
     { id: 'surge', name: 'Surge', type: 'Conf' },
     { id: 'surge-mac', name: 'Surge Mac', type: 'Conf' },
-    { id: 'shadowrocket', name: 'Shadowrocket', type: 'YAML' },
+    { id: 'shadowrocket', name: 'Shadowrocket', type: 'URI' },
     { id: 'qx', name: 'Quantumult X', type: 'Conf' },
     { id: 'loon', name: 'Loon', type: 'Conf' },
     { id: 'surfboard', name: 'Surfboard', type: 'Conf' },
@@ -10308,7 +10281,6 @@ function Subscriptions({ data, client, load, notify }: any) {
     { id: 'v2ray', name: 'V2Ray', type: 'Base64 URI' },
     { id: 'v2ray-uri', name: 'V2Ray URI', type: 'URI' },
     { id: 'clash', name: 'Clash', type: 'YAML' },
-    { id: 'plain-json', name: 'Plain JSON', type: 'JSON' },
   ]
 
   const toggleServerExpand = (serverID: number) => {
@@ -10425,32 +10397,9 @@ function Subscriptions({ data, client, load, notify }: any) {
     }
   }
 
-  const downloadSSHCredential = async (user: User) => {
-    try {
-      downloadBrowserFile(await client.download(`/ssh-user-credentials/${user.id}/private-key`))
-      notify?.(`${user.username} 的 SSH 私钥已下载`, 'success')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    }
-  }
-
-  const rotateSSHCredential = async (user: User) => {
-    const confirmed = await dialogs.confirm({ title: `轮换 ${user.username} 的 SSH 凭据？`, message: '现有私钥将在下次部署后失效。新凭据不会自动下发或下载。', confirmText: '确认轮换', tone: 'danger' })
-    if (!confirmed) return
-    try {
-      await client.request(`/ssh-user-credentials/${user.id}/rotate`, { method: 'POST', body: '{}' })
-      await load()
-      notify?.(`${user.username} 的 SSH 凭据已轮换`, 'success')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    }
-  }
-
-  const sshCommandFor = (inbound: Inbound, user: User) => {
+  const sshURIFor = (inbound: Inbound, user: User) => {
     const address = inboundEntryAddress(data, inbound)
-    const host = address.includes(':') && !address.startsWith('[') ? `[${address}]` : address
-    const filename = `oboard-ssh-user-${user.id}-ed25519`
-    return `chmod 600 ./${filename} && ssh -i ./${filename} -N -D 127.0.0.1:1080 -p ${inbound.port} oboard-${user.id}@${host}`
+    return sshShareURI(address, inbound.port, `oboard-${user.id}`, user.proxy_password)
   }
 
   const copyUserSub = async (user: User, encrypted = false) => {
@@ -10578,7 +10527,7 @@ function Subscriptions({ data, client, load, notify }: any) {
             <div className="sub-section-head">
               <div>
                 <h3><Lock size={16} />SSH 受限代理</h3>
-                <p className="muted">主控托管每个用户的 SSH 凭据，并向支持 SSH 的订阅客户端分发。Agent 仅开放本地/动态转发。</p>
+                <p className="muted">使用用户代理密码认证，并向支持 SSH 的订阅客户端分发。Agent 仅开放本地/动态转发。</p>
               </div>
             </div>
             <div className="sub-user-table">
@@ -10588,13 +10537,10 @@ function Subscriptions({ data, client, load, notify }: any) {
                 return <div className="sub-user-row" key={inbound.id}>
                   <div className="sub-user-main"><span className="sub-user-avatar"><Lock size={14} /></span><div><strong>{inbound.name}</strong><small>{endpoint}</small></div></div>
                   <div className="sub-security-stack">
-                    {granted.length ? granted.map(user => {
-                      const credential = sshUserCredentials.find(item => item.user_id === user.id)
-                      return <div key={user.id} className="sub-user-actions"><span className={`sub-pill ${credential ? 'ok' : 'warn'}`} title={credential?.public_key}>{user.username} · {credential?.fingerprint || '等待生成凭据'}</span>{credential && <><button type="button" className="ghost" onClick={() => void downloadSSHCredential(user)}><Download size={14} />下载</button><button type="button" className="ghost danger-text" onClick={() => void rotateSSHCredential(user)}><RefreshCw size={14} />轮换</button></>}</div>
-                    }) : <span className="sub-pill warn">暂无授权用户</span>}
+                    {granted.length ? granted.map(user => <span key={user.id} className="sub-pill ok">{user.username}</span>) : <span className="sub-pill warn">暂无授权用户</span>}
                   </div>
                   <div className="sub-user-actions">
-                    {granted.map(user => <button type="button" className="ghost" key={user.id} disabled={!sshUserCredentials.some(item => item.user_id === user.id)} onClick={() => void copyText(sshCommandFor(inbound, user)).then(ok => notify?.(ok ? `${user.username} 的 SSH 命令已复制` : '复制失败', ok ? 'success' : 'error'))}>复制 {user.username} 命令</button>)}
+                    {granted.map(user => <button type="button" className="ghost" key={user.id} onClick={() => void copyText(sshURIFor(inbound, user)).then(ok => notify?.(ok ? `${user.username} 的 SSH 链接已复制` : '复制失败', ok ? 'success' : 'error'))}>复制 {user.username} 链接</button>)}
                   </div>
                 </div>
               })}
@@ -11744,7 +11690,7 @@ const inboundPresets: InboundPreset[] = [
   { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'AES-128-GCM，多用户', defaultPort: 8388 },
   { id: 'ss-2022-256', protocol: 'shadowsocks', label: 'SS 2022-256', description: 'AES-256-GCM，多用户', defaultPort: 8388 },
   { id: 'mieru-basic', protocol: 'mieru', label: 'Mieru', description: 'Mieru 多用户入口', defaultPort: 25250 },
-  { id: 'ssh-restricted', protocol: 'ssh', label: 'SSH 受限代理', description: '公钥认证，仅支持本地/动态转发', defaultPort: 2222 },
+  { id: 'ssh-restricted', protocol: 'ssh', label: 'SSH 受限代理', description: '密码认证，仅支持本地/动态转发', defaultPort: 2222 },
 ]
 
 const shadowsocksMethods = [

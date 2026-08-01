@@ -22,7 +22,7 @@ const (
 	ProtocolSS     Protocol = "shadowsocks"
 	ProtocolMieru  Protocol = "mieru"
 	ProtocolSocks  Protocol = "socks"
-	// ProtocolSSH is a managed, public-key-only SSH proxy entry. It is run by
+	// ProtocolSSH is a managed, password-authenticated SSH proxy entry. It is run by
 	// the Agent rather than sing-box, so it is intentionally kept out of the
 	// generic proxy protocol adapters.
 	ProtocolSSH Protocol = "ssh"
@@ -185,7 +185,6 @@ type AuthChallenge struct {
 type SubscriptionFormat string
 
 const (
-	SubscriptionFormatPlainJSON    SubscriptionFormat = "plain-json"
 	SubscriptionFormatStash        SubscriptionFormat = "stash"
 	SubscriptionFormatClashMeta    SubscriptionFormat = "clash-meta"
 	SubscriptionFormatMihomo       SubscriptionFormat = "mihomo"
@@ -476,18 +475,6 @@ type InboundUser struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// SSHUserCredential is the Controller-managed client identity shared by every
-// restricted SSH inbound granted to one panel user. Only the public metadata is
-// serialized; the encrypted private key remains inside Controller storage.
-type SSHUserCredential struct {
-	UserID              int64     `json:"user_id"`
-	PublicKey           string    `json:"public_key"`
-	Fingerprint         string    `json:"fingerprint"`
-	PrivateKeyEncrypted string    `json:"-"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
-}
-
 type SSHServerHostKey struct {
 	ServerID      int64     `json:"server_id"`
 	PublicKey     string    `json:"public_key"`
@@ -496,12 +483,12 @@ type SSHServerHostKey struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
-type SSHCredentialDeployment struct {
-	ServerID              int64     `json:"server_id"`
-	UserID                int64     `json:"user_id"`
-	CredentialFingerprint string    `json:"credential_fingerprint"`
-	ConfigVersion         int64     `json:"config_version"`
-	UpdatedAt             time.Time `json:"updated_at"`
+type SSHPasswordDeployment struct {
+	ServerID       int64     `json:"server_id"`
+	UserID         int64     `json:"user_id"`
+	PasswordDigest string    `json:"-"`
+	ConfigVersion  int64     `json:"config_version"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type AccessSubjectType string
@@ -1052,10 +1039,10 @@ type SSHInbound struct {
 }
 
 type SSHInboundUser struct {
-	UserID     int64    `json:"user_id"`
-	Username   string   `json:"username"`
-	PublicKeys []string `json:"public_keys"`
-	Enabled    bool     `json:"enabled"`
+	UserID   int64  `json:"user_id"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Enabled  bool   `json:"enabled"`
 }
 
 type PortForwardProbeResult struct {

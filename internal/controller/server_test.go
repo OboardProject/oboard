@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdh"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -359,86 +361,15 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.ensureAuthorizedSSHCredentials(ctx, &data); err != nil {
-		t.Fatal(err)
-	}
-	credential, err := db.GetSSHUserCredential(ctx, user.ID)
-	if err != nil || credential.PrivateKeyEncrypted == "" || strings.Contains(credential.PrivateKeyEncrypted, "PRIVATE KEY") {
-		t.Fatalf("managed SSH credential = %#v, err=%v", credential, err)
-	}
-	privateKeyPEM, err := security.DecryptSecret("test-secret", sshUserPrivateKeyPurpose, credential.PrivateKeyEncrypted)
-	if err != nil {
-		t.Fatal(err)
-	}
-	privateSigner, err := ssh.ParsePrivateKey([]byte(privateKeyPEM))
-	if err != nil || ssh.FingerprintSHA256(privateSigner.PublicKey()) != credential.Fingerprint {
-		t.Fatalf("managed SSH private key mismatch: %v", err)
-	}
-	data.SSHUserCredentials, err = db.ListSSHUserCredentials(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
 	plan, err := buildSSHInboundPlan(2, *server, data, effectiveInboundUsersForRouting(data), policies)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Inbounds) != 1 || len(plan.Inbounds[0].Users) != 1 || plan.Inbounds[0].Users[0].Username != "oboard-"+strconv.FormatInt(user.ID, 10) {
+	if len(plan.Inbounds) != 1 || len(plan.Inbounds[0].Users) != 1 || plan.Inbounds[0].Users[0].Username != "oboard-"+strconv.FormatInt(user.ID, 10) || plan.Inbounds[0].Users[0].Password != user.ProxyPassword {
 		t.Fatalf("SSH inbound plan = %#v", plan)
 	}
 	if _, ok := plan.Inbounds[0].Policies["user:"+strconv.FormatInt(user.ID, 10)]; !ok {
 		t.Fatalf("SSH plan lacks user traffic policy: %#v", plan.Inbounds[0].Policies)
-	}
-}
-
-func TestManagedSSHCredentialDownloadAndRotationAreScoped(t *testing.T) {
-	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	ctx := context.Background()
-	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
-	token := login["token"].(string)
-	admin, err := db.GetUserByUsername(ctx, "admin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := newTestServer(db, "test-secret", "")
-	h = srv.Handler()
-	adminCredential, err := srv.ensureSSHUserCredential(ctx, admin.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	other := &model.User{Username: "other", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "other-id", ProxyPassword: "other-pass"}
-	if err := db.CreateUser(ctx, other); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := srv.ensureSSHUserCredential(ctx, other.ID); err != nil {
-		t.Fatal(err)
-	}
-	metadata := request(t, h, http.MethodGet, "/api/v1/me/ssh-credential", token, nil, http.StatusOK)["ssh_user_credential"].(map[string]any)
-	if metadata["private_key_encrypted"] != nil || metadata["user_id"] != float64(admin.ID) {
-		t.Fatalf("self credential metadata leaked or changed owner: %#v", metadata)
-	}
-	download := httptest.NewRecorder()
-	downloadRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me/ssh-credential/private-key", nil)
-	downloadRequest.Header.Set("Authorization", "Bearer "+token)
-	h.ServeHTTP(download, downloadRequest)
-	if download.Code != http.StatusOK || !strings.Contains(download.Body.String(), "OPENSSH PRIVATE KEY") || !strings.Contains(download.Header().Get("Content-Disposition"), sshPrivateKeyFilename(admin.ID)) || !strings.Contains(download.Header().Get("Cache-Control"), "no-store") {
-		t.Fatalf("private key download status=%d headers=%v body=%q", download.Code, download.Header(), download.Body.String())
-	}
-	rotated := request(t, h, http.MethodPost, "/api/v1/me/ssh-credential/rotate", token, map[string]any{}, http.StatusOK)["ssh_user_credential"].(map[string]any)
-	if rotated["fingerprint"] == adminCredential.Fingerprint || rotated["private_key_encrypted"] != nil {
-		t.Fatalf("rotated credential = %#v", rotated)
-	}
-	adminDownloadOther := httptest.NewRecorder()
-	adminRequest := httptest.NewRequest(http.MethodGet, "/api/v1/ssh-user-credentials/"+strconv.FormatInt(other.ID, 10)+"/private-key", nil)
-	adminRequest.Header.Set("Authorization", "Bearer "+token)
-	h.ServeHTTP(adminDownloadOther, adminRequest)
-	if adminDownloadOther.Code != http.StatusOK || !strings.Contains(adminDownloadOther.Body.String(), "OPENSSH PRIVATE KEY") {
-		t.Fatalf("admin private key download status=%d body=%q", adminDownloadOther.Code, adminDownloadOther.Body.String())
 	}
 }
 
@@ -458,17 +389,18 @@ func TestApplyDeploymentSSHStatePersistsOnlyValidatedTaskCredentials(t *testing.
 	if err := db.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)
 	}
-	credential, err := srv.ensureSSHUserCredential(ctx, user.ID)
+	_, hostPrivateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostIdentity, err := srv.newSSHUserCredential(ctx, user.ID)
+	hostPublicKey, err := ssh.NewPublicKey(hostPrivateKey.Public())
 	if err != nil {
 		t.Fatal(err)
 	}
+	hostIdentity := model.SSHServerHostKey{PublicKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostPublicKey))), Fingerprint: ssh.FingerprintSHA256(hostPublicKey)}
 	payload := model.DeploymentTaskPayload{Version: 19, SSHInbounds: model.SSHInboundPlan{Version: 19, Inbounds: []model.SSHInbound{{
 		InboundID: 31, ServerID: server.ID, Enabled: true,
-		Users: []model.SSHInboundUser{{UserID: user.ID, Username: sshLoginName(user.ID), PublicKeys: []string{credential.PublicKey}, Enabled: true}},
+		Users: []model.SSHInboundUser{{UserID: user.ID, Username: sshLoginName(user.ID), Password: user.ProxyPassword, Enabled: true}},
 	}}}}
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -499,12 +431,12 @@ func TestApplyDeploymentSSHStatePersistsOnlyValidatedTaskCredentials(t *testing.
 	if hostKey.PublicKey != hostIdentity.PublicKey || hostKey.Fingerprint != hostIdentity.Fingerprint || hostKey.ConfigVersion != 19 {
 		t.Fatalf("persisted SSH host key = %#v", hostKey)
 	}
-	deployments, err := db.ListSSHCredentialDeploymentsForUser(ctx, user.ID)
+	deployments, err := db.ListSSHPasswordDeploymentsForUser(ctx, user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(deployments) != 1 || deployments[0].ServerID != server.ID || deployments[0].CredentialFingerprint != credential.Fingerprint || deployments[0].ConfigVersion != 19 {
-		t.Fatalf("persisted SSH credential deployments = %#v", deployments)
+	if len(deployments) != 1 || deployments[0].PasswordDigest != srv.sshPasswordDeploymentDigest(server.ID, user.ID, user.ProxyPassword) || deployments[0].ConfigVersion != 19 {
+		t.Fatalf("persisted SSH password deployments = %#v", deployments)
 	}
 
 	for _, invalid := range []struct {
@@ -535,12 +467,9 @@ func TestApplyDeploymentSSHStatePersistsOnlyValidatedTaskCredentials(t *testing.
 	if _, err := db.GetSSHServerHostKey(ctx, server.ID); err == nil {
 		t.Fatal("missing SSH deployment report retained the host key")
 	}
-	deployments, err = db.ListSSHCredentialDeploymentsForUser(ctx, user.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(deployments) != 0 {
-		t.Fatalf("missing SSH deployment report retained credentials: %#v", deployments)
+	deployments, err = db.ListSSHPasswordDeploymentsForUser(ctx, user.ID)
+	if err != nil || len(deployments) != 0 {
+		t.Fatalf("missing SSH deployment report retained password state: %#v, err=%v", deployments, err)
 	}
 }
 
@@ -567,42 +496,51 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: inbound.ID, UserID: user.ID, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	credential, err := srv.ensureSSHUserCredential(ctx, user.ID)
+	_, hostPrivateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostIdentity, err := srv.newSSHUserCredential(ctx, user.ID)
+	hostPublicKey, err := ssh.NewPublicKey(hostPrivateKey.Public())
 	if err != nil {
 		t.Fatal(err)
 	}
+	hostIdentity := model.SSHServerHostKey{PublicKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostPublicKey))), Fingerprint: ssh.FingerprintSHA256(hostPublicKey)}
 	handler := srv.Handler()
 	readSubscription := func() []map[string]any {
 		t.Helper()
 		recorder := httptest.NewRecorder()
-		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions/ssh-subscription-token?format=plain-json", nil))
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions/ssh-subscription-token?format=sing-box", nil))
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("subscription status=%d body=%s", recorder.Code, recorder.Body.String())
 		}
-		var nodes []map[string]any
-		if err := json.Unmarshal(recorder.Body.Bytes(), &nodes); err != nil {
+		var document struct {
+			Outbounds []map[string]any `json:"outbounds"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &document); err != nil {
 			t.Fatal(err)
+		}
+		nodes := make([]map[string]any, 0, len(document.Outbounds))
+		for _, outbound := range document.Outbounds {
+			if outbound["type"] == "ssh" {
+				nodes = append(nodes, outbound)
+			}
 		}
 		return nodes
 	}
 	if nodes := readSubscription(); len(nodes) != 0 {
 		t.Fatalf("SSH subscription appeared before deployment: %#v", nodes)
 	}
-	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, ConfigVersion: 23}, map[int64]string{user.ID: "SHA256:old-credential"}); err != nil {
+	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, ConfigVersion: 23}, map[int64]string{user.ID: srv.sshPasswordDeploymentDigest(server.ID, user.ID, "old-password")}); err != nil {
 		t.Fatal(err)
 	}
 	if nodes := readSubscription(); len(nodes) != 0 {
-		t.Fatalf("SSH subscription appeared for mismatched credential: %#v", nodes)
+		t.Fatalf("SSH subscription appeared for stale deployed password: %#v", nodes)
 	}
-	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, ConfigVersion: 24}, map[int64]string{user.ID: credential.Fingerprint}); err != nil {
+	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, ConfigVersion: 24}, map[int64]string{user.ID: srv.sshPasswordDeploymentDigest(server.ID, user.ID, user.ProxyPassword)}); err != nil {
 		t.Fatal(err)
 	}
 	nodes := readSubscription()
-	if len(nodes) != 1 || nodes[0]["type"] != "ssh" || nodes[0]["username"] != sshLoginName(user.ID) || nodes[0]["server"] != server.PublicIPv4 || !strings.Contains(fmt.Sprint(nodes[0]["private_key"]), "OPENSSH PRIVATE KEY") {
+	if len(nodes) != 1 || nodes[0]["type"] != "ssh" || nodes[0]["user"] != sshLoginName(user.ID) || nodes[0]["server"] != server.PublicIPv4 || nodes[0]["password"] != user.ProxyPassword {
 		t.Fatalf("matching SSH subscription = %#v", nodes)
 	}
 }
@@ -1269,8 +1207,11 @@ func TestSubscriptionBurnAfterReadLifecycle(t *testing.T) {
 	if got := fetch(persistentToken); got.Code != http.StatusOK {
 		t.Fatalf("persistent subscription second fetch status=%d body=%s", got.Code, got.Body.String())
 	}
-	if got := fetch(persistentToken + "?format=shadowrocket"); got.Code != http.StatusOK || got.Header().Get("Content-Type") != "text/yaml; charset=utf-8" || got.Body.String() != "proxies: []\n" {
+	if got := fetch(persistentToken + "?format=shadowrocket"); got.Code != http.StatusOK || got.Header().Get("Content-Type") != "text/plain; charset=utf-8" || got.Body.String() != "" {
 		t.Fatalf("Shadowrocket subscription status=%d headers=%#v body=%s", got.Code, got.Header(), got.Body.String())
+	}
+	if got := fetch(persistentToken + "?format=plain-json"); got.Code != http.StatusBadRequest {
+		t.Fatalf("removed plain-json subscription status=%d body=%s", got.Code, got.Body.String())
 	}
 
 	if got := requestLogPath("/api/v1/subscriptions/secret-token"); got != "/api/v1/subscriptions/[redacted]" {
@@ -2948,6 +2889,11 @@ func TestTrustedForwardAgentBuildGateAndSecretScrubbing(t *testing.T) {
 	scrubbed := scrubManagedTunnelSecretsJSON(raw)
 	if strings.Contains(scrubbed, "sender-secret") || strings.Contains(scrubbed, "receiver-secret") || strings.Count(scrubbed, "redacted") < 2 {
 		t.Fatalf("trusted-forward secrets were not scrubbed: %s", scrubbed)
+	}
+	sshPayload := `{"ssh_inbounds":{"inbounds":[{"users":[{"user_id":7,"username":"oboard-7","password":"proxy-secret","enabled":true}]}]}}`
+	sshScrubbed := scrubManagedTunnelSecretsJSON(sshPayload)
+	if strings.Contains(sshScrubbed, "proxy-secret") || !strings.Contains(sshScrubbed, "redacted") {
+		t.Fatalf("SSH inbound password was not scrubbed: %s", sshScrubbed)
 	}
 }
 

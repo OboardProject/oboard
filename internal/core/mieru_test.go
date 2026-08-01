@@ -154,7 +154,6 @@ func TestMieruSubscriptionTargetMatrix(t *testing.T) {
 		format    model.SubscriptionFormat
 		wantMieru bool
 	}{
-		{format: model.SubscriptionFormatPlainJSON, wantMieru: true},
 		{format: model.SubscriptionFormatSingBox},
 		{format: model.SubscriptionFormatSingBoxMieru, wantMieru: true},
 		{format: model.SubscriptionFormatMieru, wantMieru: true},
@@ -176,14 +175,14 @@ func TestMieruSubscriptionTargetMatrix(t *testing.T) {
 		})
 	}
 
-	if got := SubscriptionContentType(model.SubscriptionFormatShadowrocket); got != "text/yaml; charset=utf-8" {
+	if got := SubscriptionContentType(model.SubscriptionFormatShadowrocket); got != "text/plain; charset=utf-8" {
 		t.Fatalf("Shadowrocket content type = %q", got)
 	}
 	empty, err := renderSubscriptionTarget(nil, model.SubscriptionFormatShadowrocket)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if empty != "proxies: []\n" {
+	if empty != "" {
 		t.Fatalf("empty Shadowrocket subscription = %q", empty)
 	}
 }
