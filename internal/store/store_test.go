@@ -34,6 +34,125 @@ func TestOpenRestrictsDatabaseFilePermissions(t *testing.T) {
 	}
 }
 
+func TestServerTelemetryTimeColumnsMigrateFromPreviousSchema(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &model.Server{
+		Name:           "migration-node",
+		AgentID:        "migration-agent",
+		AgentTokenHash: "migration-token-hash",
+		Status:         model.ServerOnline,
+	}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	timeColumns := []string{
+		"time_correction_mode",
+		"time_check_status",
+		"time_offset_ms",
+		"time_effective_offset_ms",
+		"time_check_source",
+		"time_check_error",
+		"time_logical_active",
+		"time_unsupported_paths_json",
+		"time_checked_at",
+	}
+	for _, column := range timeColumns {
+		if _, err := raw.Exec(`alter table server_telemetry drop column ` + column); err != nil {
+			t.Fatalf("drop %s: %v", column, err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatalf("open with previous telemetry schema: %v", err)
+	}
+	defer s.Close()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("repeat migration: %v", err)
+	}
+	if err := s.CheckHealth(ctx); err != nil {
+		t.Fatalf("health check after migration: %v", err)
+	}
+
+	columns := map[string]bool{}
+	rows, err := s.db.QueryContext(ctx, `select name from pragma_table_info('server_telemetry')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		columns[name] = true
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range timeColumns {
+		if !columns[column] {
+			t.Errorf("missing migrated column %q", column)
+		}
+	}
+
+	var correctionMode, status, source, checkError, unsupportedPaths string
+	var offset, effectiveOffset int64
+	var logicalActive int
+	var checkedAt sql.NullString
+	if err := s.db.QueryRowContext(ctx, `select time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at from server_telemetry where server_id=?`, server.ID).Scan(
+		&correctionMode, &status, &offset, &effectiveOffset, &source, &checkError, &logicalActive, &unsupportedPaths, &checkedAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if correctionMode != "off" || status != "unknown" || offset != 0 || effectiveOffset != 0 || source != "" || checkError != "" || logicalActive != 0 || unsupportedPaths != "[]" || checkedAt.Valid {
+		t.Fatalf("migrated defaults = mode=%q status=%q offset=%d effective=%d source=%q error=%q logical=%d unsupported=%q checked=%v", correctionMode, status, offset, effectiveOffset, source, checkError, logicalActive, unsupportedPaths, checkedAt)
+	}
+
+	got, err := s.GetServerByAgent(ctx, server.AgentID)
+	if err != nil {
+		t.Fatalf("get server by agent after migration: %v", err)
+	}
+	if got.TimeCorrectionMode != model.TimeCorrectionOff || got.TimeCheckStatus != "unknown" {
+		t.Fatalf("migrated server time state = mode=%q status=%q", got.TimeCorrectionMode, got.TimeCheckStatus)
+	}
+	checked := time.Date(2026, time.August, 1, 12, 45, 0, 0, time.UTC)
+	result := model.TimeCheckResult{
+		Status:               "corrected",
+		RawOffsetMS:          45_000,
+		EffectiveOffsetMS:    25,
+		Source:               "ntp:test",
+		CheckedAt:            checked,
+		LogicalTimeActive:    true,
+		UnsupportedTimePaths: []string{"mieru"},
+	}
+	if err := s.UpdateServerTimeCheck(ctx, server.ID, result); err != nil {
+		t.Fatalf("update time check after migration: %v", err)
+	}
+	got, err = s.GetServerByAgent(ctx, server.AgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TimeCheckStatus != result.Status || got.TimeOffsetMS != result.RawOffsetMS || got.TimeEffectiveOffsetMS != result.EffectiveOffsetMS || got.TimeCheckSource != result.Source || !got.TimeLogicalActive || got.TimeCheckedAt == nil || !got.TimeCheckedAt.Equal(checked) || len(got.TimeUnsupportedPaths) != 1 || got.TimeUnsupportedPaths[0] != "mieru" {
+		t.Fatalf("updated server time state = %#v", got)
+	}
+}
+
 func TestProxyPathEgressAttemptsRetainOnlySameTopologySuccess(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

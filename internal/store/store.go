@@ -31,6 +31,8 @@ const (
 
 const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_token_hash,''),chain_secret,coalesce(enrollment_hash,''),enrollment_expires_at,entry_address,coalesce(public_ipv4,''),coalesce(public_ipv6,''),coalesce(region_code,''),coalesce(detected_region_code,''),coalesce(region_mode,'auto'),coalesce(entry_ip_mode,'auto'),listen_ip,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,status,os,coalesce(distro_id,''),coalesce(distro_version,''),coalesce(distro_name,''),coalesce(libc,''),coalesce(service_manager,''),coalesce(package_manager,''),arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,coalesce(agent_version,''),coalesce(agent_build,''),sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at from servers`
 
+const serverTelemetrySelectSQL = `select server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error from server_telemetry`
+
 const userSelectSQL = `select u.id,u.username,u.nickname,u.password_hash,coalesce(u.session_version,0),u.role,u.status,u.proxy_uuid,u.proxy_password,u.speed_limit_mbps,u.traffic_limit_bytes,u.traffic_used_bytes,u.traffic_reset_mode,u.traffic_reset_day,coalesce(u.subscription_token,''),coalesce(p.burn_after_read,0),p.burned_at,coalesce(a.enabled,0),coalesce(a.public_key,''),u.created_at,u.updated_at from users u left join subscription_token_policies p on p.user_id=u.id left join subscription_age_keys a on a.user_id=u.id`
 
 func Open(path string) (*Store, error) {
@@ -96,6 +98,22 @@ func secureSQLiteFile(path string) error {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+func (s *Store) CheckHealth(ctx context.Context) error {
+	for _, query := range []string{
+		serverSelectSQL + ` limit 0`,
+		serverTelemetrySelectSQL + ` limit 0`,
+	} {
+		rows, err := s.db.QueryContext(ctx, query)
+		if err != nil {
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func (s *Store) Migrate(ctx context.Context) error {
 	return s.migrate(ctx, false)
@@ -228,6 +246,25 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	}
 	if err := s.ensureColumn(ctx, "servers", "bbr_enabled", `alter table servers add column bbr_enabled integer not null default 0`); err != nil {
 		return err
+	}
+	serverTelemetryColumns := []struct {
+		name string
+		sql  string
+	}{
+		{"time_correction_mode", `alter table server_telemetry add column time_correction_mode text not null default 'off'`},
+		{"time_check_status", `alter table server_telemetry add column time_check_status text not null default 'unknown'`},
+		{"time_offset_ms", `alter table server_telemetry add column time_offset_ms integer not null default 0`},
+		{"time_effective_offset_ms", `alter table server_telemetry add column time_effective_offset_ms integer not null default 0`},
+		{"time_check_source", `alter table server_telemetry add column time_check_source text not null default ''`},
+		{"time_check_error", `alter table server_telemetry add column time_check_error text not null default ''`},
+		{"time_logical_active", `alter table server_telemetry add column time_logical_active integer not null default 0`},
+		{"time_unsupported_paths_json", `alter table server_telemetry add column time_unsupported_paths_json text not null default '[]'`},
+		{"time_checked_at", `alter table server_telemetry add column time_checked_at text`},
+	}
+	for _, column := range serverTelemetryColumns {
+		if err := s.ensureColumn(ctx, "server_telemetry", column.name, column.sql); err != nil {
+			return err
+		}
 	}
 	connectionAuditGeoColumns := []struct {
 		name string
@@ -1514,7 +1551,7 @@ func (s *Store) attachServerTelemetry(ctx context.Context, servers []model.Serve
 		servers[i].ConnectivityStatus = "disabled"
 		byID[servers[i].ID] = &servers[i]
 	}
-	rows, err := s.db.QueryContext(ctx, `select server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error from server_telemetry`)
+	rows, err := s.db.QueryContext(ctx, serverTelemetrySelectSQL)
 	if err != nil {
 		return err
 	}

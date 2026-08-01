@@ -869,6 +869,10 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
+	if err := s.store.CheckHealth(r.Context()); err != nil {
+		fail(w, err, http.StatusServiceUnavailable)
+		return
+	}
 	write(w, 200, map[string]any{"ok": true, "service": "oboard-controller"})
 }
 
@@ -10615,7 +10619,11 @@ func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Serve
 	}
 	server, err := s.store.GetServerByAgent(r.Context(), agentID)
 	if err != nil {
-		fail(w, errors.New("invalid agent credentials"), 401)
+		if errors.Is(err, sql.ErrNoRows) {
+			fail(w, errors.New("invalid agent credentials"), 401)
+		} else {
+			fail(w, err, http.StatusInternalServerError)
+		}
 		return nil, false
 	}
 	// Constant-time compare of hex-encoded SHA-256 hashes.
