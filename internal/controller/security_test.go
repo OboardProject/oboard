@@ -73,8 +73,33 @@ func TestLogoutAndAdminSessionRevocationInvalidateTokens(t *testing.T) {
 
 	secondLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "member", "password": "long-user-password"}, http.StatusOK)
 	secondToken := secondLogin["token"].(string)
+	thirdLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "member", "password": "long-user-password"}, http.StatusOK)
+	thirdToken := thirdLogin["token"].(string)
 	request(t, h, http.MethodPost, "/api/v1/users/"+itoa(memberID)+"/sessions/revoke", adminToken, map[string]any{}, http.StatusOK)
 	request(t, h, http.MethodGet, "/api/v1/me", secondToken, nil, http.StatusUnauthorized)
+	request(t, h, http.MethodGet, "/api/v1/me", thirdToken, nil, http.StatusUnauthorized)
+}
+
+func TestConcurrentLoginsRemainIndependent(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+
+	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	first := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	second := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	if first == second {
+		t.Fatal("separate logins returned the same token")
+	}
+
+	request(t, h, http.MethodGet, "/api/v1/me", first, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/me", second, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/auth/logout", first, map[string]any{}, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/me", first, nil, http.StatusUnauthorized)
+	request(t, h, http.MethodGet, "/api/v1/me", second, nil, http.StatusOK)
 }
 
 func TestCookieSessionsRequireCSRFForWrites(t *testing.T) {

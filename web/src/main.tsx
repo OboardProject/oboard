@@ -59,7 +59,7 @@ import {
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
-  PanelLeftClose, PanelLeftOpen
+  PanelLeftClose, PanelLeftOpen, RotateCcw
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -138,7 +138,7 @@ type UserGroup = { id: number; name: string; description: string; role: Role; sy
 type UserGroupMember = { id: number; group_id: number; user_id: number; enabled: boolean }
 type InboundAccessGrant = { id: number; subject_type: AccessSubjectType; subject_id: number; scope_type: AccessScopeType; server_id?: number; inbound_id?: number; enabled: boolean }
 type Outbound = { id: number; server_id: number; next_server_id?: number; name: string; protocol: Protocol; target_address: string; target_port: number; config_json: string; enabled: boolean }
-type User = { id: number; username: string; nickname: string; role: Role; status: string; protected?: boolean; proxy_uuid: string; proxy_password: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_used_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; traffic_period_key?: string; traffic_period_end?: string; traffic_quota_state?: string; subscription_token: string; subscription_burn_after_read: boolean; subscription_burned_at?: string; subscription_age_enabled: boolean; subscription_age_public_key?: string; subscription_age_policy?: 'optional' | 'required'; totp_enabled?: boolean; passkey_count?: number }
+type User = { id: number; username: string; nickname: string; role: Role; status: string; protected?: boolean; proxy_uuid: string; proxy_password: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_used_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; traffic_period_key?: string; traffic_period_end?: string; traffic_quota_state?: string; subscription_token: string; subscription_burn_after_read: boolean; subscription_burned_at?: string; subscription_age_enabled: boolean; subscription_age_public_key?: string; subscription_age_policy?: 'optional' | 'required'; subscription_suspended?: boolean; subscription_suspended_at?: string; subscription_suspend_reason?: string; totp_enabled?: boolean; passkey_count?: number }
 type PasskeyCredential = { id: number; name: string; created_at: string; last_used_at?: string }
 type AuthenticationStatus = { totp_enabled: boolean; recovery_codes_remaining: number; passkeys: PasskeyCredential[]; passkey_supported: boolean }
 type DNSTransport = 'udp' | 'tcp' | 'dot' | 'doh' | 'doq'
@@ -180,6 +180,18 @@ type ConnectionAuditOverview = { window_hours: number; risk_window_minutes: numb
 type ConnectionAuditDimension = { key: string; label: string; secondary?: string; connection_count: number; active_peak: number; last_seen_at: string }
 type ConnectionAuditReport = { report_id: string; server_id: number; user_id: number; inbound_id?: number; path_id?: number; source_ip: string; source_geo_code?: string; source_country_code?: string; source_country?: string; source_province?: string; source_city?: string; source_isp?: string; network: string; destination?: string; destination_port?: number; outbound_tag?: string; outbound_type?: string; connection_count: number; active_peak: number; active_at_end: number; started_at: string; ended_at: string }
 type ConnectionAuditUserDetail = { summary: ConnectionAuditUser; sources: ConnectionAuditDimension[]; destinations: ConnectionAuditDimension[]; outbounds: ConnectionAuditDimension[]; servers: ConnectionAuditDimension[]; recent: ConnectionAuditReport[]; risk_events: ConnectionAuditRiskEvent[] }
+type SubscriptionAuditThresholds = { region_limit: number; source_ip_limit: number; pull_limit: number; client_format_limit: number }
+type SubscriptionAuditPolicy = { short_window_minutes: number; long_window_hours: number; short: SubscriptionAuditThresholds; long: SubscriptionAuditThresholds }
+type SubscriptionAuditWindow = { window_minutes: number; pull_count: number; source_ip_count: number; region_count: number; client_format_count: number; regions: string[] }
+type SubscriptionAuditRisk = { level: AuditRiskLevel; score: number; signals: string[]; hard_block: boolean; reason?: string; short: SubscriptionAuditWindow; long: SubscriptionAuditWindow }
+type SubscriptionAuditUser = { user_id: number; username: string; nickname: string; risk_level: AuditRiskLevel; risk_score: number; risk_signals: string[]; suspended: boolean; suspended_at?: string; suspension_reason?: string; pull_count: number; successful_count: number; denied_count: number; source_ip_count: number; region_count: number; client_format_count: number; last_seen_at: string; current_risk: SubscriptionAuditRisk }
+type SubscriptionAuditOverview = { window_hours: number; generated_at: string; geo_database: GeoDatabaseStatus; policy: SubscriptionAuditPolicy; reporting_user_count: number; elevated_risk_count: number; suspended_count: number; total_pulls: number; unique_source_ips: number; users: SubscriptionAuditUser[] }
+type SubscriptionAuditDimension = { key: string; label: string; secondary?: string; pull_count: number; last_seen_at: string }
+type SubscriptionPullAudit = { id: number; user_id: number; source_ip: string; source_country_code?: string; source_country?: string; source_province?: string; source_city?: string; source_isp?: string; user_agent?: string; client_name: string; format: string; profile_id?: number; age_encrypted: boolean; token_kind: string; outcome: string; reason?: string; requested_at: string }
+type SubscriptionAccessState = { user_id: number; suspended: boolean; suspended_at?: string; reason?: string; evaluation_started_at: string; resumed_at?: string; resumed_by?: number }
+type SubscriptionAuditUserDetail = { summary: SubscriptionAuditUser; sources: SubscriptionAuditDimension[]; regions: SubscriptionAuditDimension[]; clients: SubscriptionAuditDimension[]; formats: SubscriptionAuditDimension[]; recent: SubscriptionPullAudit[]; access: SubscriptionAccessState }
+type CombinedAuditUser = { user_id: number; username: string; nickname: string; risk_level: AuditRiskLevel; risk_score: number; risk_signals: string[]; connection_risk_level: AuditRiskLevel; connection_risk_score: number; connection_observed: boolean; subscription_risk_level: AuditRiskLevel; subscription_risk_score: number; subscription_observed: boolean; subscription_suspended: boolean; last_seen_at: string }
+type CombinedAuditOverview = { window_hours: number; generated_at: string; elevated_risk_count: number; suspended_count: number; users: CombinedAuditUser[] }
 type LimitMode = 'inherit' | 'custom'
 type SessionUser = Pick<User, 'id' | 'username' | 'nickname' | 'role' | 'status' | 'totp_enabled' | 'passkey_count'>
 type UserDraft = { username: string; nickname: string; password?: string; role: Role; status: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; limit_mode: LimitMode }
@@ -772,6 +784,8 @@ const errorMessages: Record<string, string> = {
   'age encryption is only supported for Mihomo subscriptions': 'Age 加密仅支持 Mihomo、Clash.Meta 和 Clash 格式',
   'do not upload an age secret key; provide the public key': '请填写 Age 公钥，不要上传私钥',
   'subscription_age_policy must be optional or required': '订阅加密策略无效',
+  'subscription access is suspended': '订阅拉取已暂停，请先由管理员恢复',
+  'subscription access suspended; contact an administrator': '订阅拉取已暂停，请联系管理员',
   '验证码或恢复码错误': '验证码或恢复码错误',
   '六位验证码错误': '六位验证码错误',
   '该账号无法使用通行密钥': '该账号尚未添加通行密钥，或当前环境不支持',
@@ -2077,7 +2091,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
     ? <Subscriptions data={data} client={client} load={load} notify={notify} />
     : <MySubscriptions data={data} notify={notify} />
   if (tab === 'tasks') return <Tasks data={data} client={client} loading={loading} />
-  if (tab === 'audit') return <AuditConsole data={data} client={client} loading={loading} />
+  if (tab === 'audit') return <AuditConsole data={data} client={client} loading={loading} notify={notify} />
   if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} />
   return null
 }
@@ -2375,6 +2389,29 @@ function timeCheckNTPServerSettings(value: unknown) {
   return value.map(item => String(item || ''))
 }
 
+const subscriptionAuditPresets: Record<'sensitive' | 'balanced' | 'relaxed', SubscriptionAuditPolicy> = {
+  sensitive: { short_window_minutes: 15, long_window_hours: 24, short: { region_limit: 2, source_ip_limit: 4, pull_limit: 8, client_format_limit: 2 }, long: { region_limit: 3, source_ip_limit: 8, pull_limit: 24, client_format_limit: 4 } },
+  balanced: { short_window_minutes: 15, long_window_hours: 24, short: { region_limit: 3, source_ip_limit: 6, pull_limit: 12, client_format_limit: 3 }, long: { region_limit: 4, source_ip_limit: 12, pull_limit: 48, client_format_limit: 5 } },
+  relaxed: { short_window_minutes: 15, long_window_hours: 24, short: { region_limit: 4, source_ip_limit: 10, pull_limit: 30, client_format_limit: 5 }, long: { region_limit: 6, source_ip_limit: 24, pull_limit: 96, client_format_limit: 8 } },
+}
+
+function cloneSubscriptionAuditPolicy(value: SubscriptionAuditPolicy): SubscriptionAuditPolicy {
+  return { ...value, short: { ...value.short }, long: { ...value.long } }
+}
+
+function subscriptionAuditPolicyValue(value: any): SubscriptionAuditPolicy {
+  if (!value?.short || !value?.long) return cloneSubscriptionAuditPolicy(subscriptionAuditPresets.balanced)
+  return cloneSubscriptionAuditPolicy(value as SubscriptionAuditPolicy)
+}
+
+function subscriptionAuditPreset(value: SubscriptionAuditPolicy): 'sensitive' | 'balanced' | 'relaxed' | 'custom' {
+  const encoded = JSON.stringify(value)
+  for (const [key, preset] of Object.entries(subscriptionAuditPresets)) {
+    if (encoded === JSON.stringify(preset)) return key as 'sensitive' | 'balanced' | 'relaxed'
+  }
+  return 'custom'
+}
+
 
 function SettingsPage({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
@@ -2386,6 +2423,8 @@ function SettingsPage({ data, client, load, notify }: any) {
   const [controllerURL, setControllerURL] = useState(savedURL || currentOrigin)
   const [basePath, setBasePath] = useState(currentBasePath)
   const [subscriptionAgePolicy, setSubscriptionAgePolicy] = useState<'optional' | 'required'>(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional')
+  const [subscriptionAuditPolicy, setSubscriptionAuditPolicy] = useState<SubscriptionAuditPolicy>(() => subscriptionAuditPolicyValue(data.settings?.subscription_audit_policy))
+  const [subscriptionAuditPresetMode, setSubscriptionAuditPresetMode] = useState<'sensitive' | 'balanced' | 'relaxed' | 'custom'>(() => subscriptionAuditPreset(subscriptionAuditPolicyValue(data.settings?.subscription_audit_policy)))
   const [trafficTimezone, setTrafficTimezone] = useState(data.settings?.traffic_timezone || 'Asia/Shanghai')
   const [trafficMode, setTrafficMode] = useState(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
   const [controllerLogMaxMB, setControllerLogMaxMB] = useState(Number(data.settings?.controller_log_max_mb || 32))
@@ -2403,6 +2442,11 @@ function SettingsPage({ data, client, load, notify }: any) {
     return () => window.clearInterval(timer)
   }, [migration.active, migration.config_version])
   useEffect(() => { setSubscriptionAgePolicy(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional') }, [data.settings?.subscription_age_policy])
+  useEffect(() => {
+    const policy = subscriptionAuditPolicyValue(data.settings?.subscription_audit_policy)
+    setSubscriptionAuditPolicy(policy)
+    setSubscriptionAuditPresetMode(subscriptionAuditPreset(policy))
+  }, [data.settings?.subscription_audit_policy])
   useEffect(() => { setTrafficTimezone(data.settings?.traffic_timezone || 'Asia/Shanghai'); setTrafficMode(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject') }, [data.settings?.traffic_timezone, data.settings?.traffic_enforcement_mode])
   useEffect(() => {
     setControllerLogMaxMB(Number(data.settings?.controller_log_max_mb || 32))
@@ -2484,8 +2528,23 @@ function SettingsPage({ data, client, load, notify }: any) {
   }
   const saveSubscriptionSecurity = async () => {
     await runSave('subscription-security', async () => {
-      await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: subscriptionAgePolicy }) })
-    }, '订阅加密策略已保存')
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: subscriptionAgePolicy, subscription_audit_policy: subscriptionAuditPolicy }) })
+    }, '订阅安全策略已保存')
+  }
+  const chooseSubscriptionAuditPreset = (value: string) => {
+    if (value === 'custom') {
+      setSubscriptionAuditPresetMode('custom')
+      return
+    }
+    const preset = subscriptionAuditPresets[value as keyof typeof subscriptionAuditPresets]
+    if (preset) {
+      setSubscriptionAuditPolicy(cloneSubscriptionAuditPolicy(preset))
+      setSubscriptionAuditPresetMode(value as 'sensitive' | 'balanced' | 'relaxed')
+    }
+  }
+  const updateSubscriptionAuditPolicy = (windowName: 'short' | 'long', key: keyof SubscriptionAuditThresholds, value: number) => {
+    setSubscriptionAuditPresetMode('custom')
+    setSubscriptionAuditPolicy(current => ({ ...current, [windowName]: { ...current[windowName], [key]: Math.max(2, value || 2) } }))
   }
   const saveControllerLogs = async () => {
     await runSave('controller-logs', async () => {
@@ -2612,7 +2671,23 @@ function SettingsPage({ data, client, load, notify }: any) {
               <option value="required">强制开启</option>
             </Select>
           </FormField>
-          <div className="settings-actions"><button onClick={saveSubscriptionSecurity} disabled={Boolean(saving)}>{saving === 'subscription-security' ? '保存中...' : '保存订阅策略'}</button></div>
+        </div>
+        <div className="subscription-audit-settings">
+          <div className="settings-card-head"><div><h3>拉取风控</h3><p className="muted">地域达到阈值后自动暂停，其他阈值用于风险评分与管理员通知。</p></div></div>
+          <div className="form settings-form two-column">
+            <FormField label="策略档位" full>
+              <Select variant="segmented" value={subscriptionAuditPresetMode} onChange={event => chooseSubscriptionAuditPreset(event.target.value)} aria-label="订阅风控策略档位">
+                <option value="sensitive">敏感</option><option value="balanced">均衡</option><option value="relaxed">宽松</option><option value="custom">自定义</option>
+              </Select>
+            </FormField>
+            <FormField label="短窗口（分钟）"><input type="number" min={5} max={1440} value={subscriptionAuditPolicy.short_window_minutes} onChange={event => { setSubscriptionAuditPresetMode('custom'); setSubscriptionAuditPolicy(current => ({ ...current, short_window_minutes: Math.max(5, Number(event.target.value) || 5) })) }} /></FormField>
+            <FormField label="长窗口（小时）"><input type="number" min={1} max={720} value={subscriptionAuditPolicy.long_window_hours} onChange={event => { setSubscriptionAuditPresetMode('custom'); setSubscriptionAuditPolicy(current => ({ ...current, long_window_hours: Math.max(1, Number(event.target.value) || 1) })) }} /></FormField>
+            {([['region_limit', '地域'], ['source_ip_limit', '独立 IP'], ['pull_limit', '拉取次数'], ['client_format_limit', '客户端/格式']] as [keyof SubscriptionAuditThresholds, string][]).map(([key, label]) => <React.Fragment key={key}>
+              <FormField label={`短窗口${label}`}><input type="number" min={2} value={subscriptionAuditPolicy.short[key]} onChange={event => updateSubscriptionAuditPolicy('short', key, Number(event.target.value))} /></FormField>
+              <FormField label={`长窗口${label}`}><input type="number" min={2} value={subscriptionAuditPolicy.long[key]} onChange={event => updateSubscriptionAuditPolicy('long', key, Number(event.target.value))} /></FormField>
+            </React.Fragment>)}
+            <div className="settings-actions"><button onClick={saveSubscriptionSecurity} disabled={Boolean(saving)}>{saving === 'subscription-security' ? '保存中...' : '保存订阅安全策略'}</button></div>
+          </div>
         </div>
       </section>}
       {activeSection === 'traffic' && <section className="settings-card">
@@ -3883,62 +3958,113 @@ function ControllerLogsPanel({ client, dialogs, notify, maxMB, backups, setMaxMB
   </section>
 }
 
-function AuditConsole({ data, client, loading }: any) {
-  const [view, setView] = useState<'connections' | 'operations'>('connections')
+function AuditConsole({ data, client, loading, notify }: any) {
+  const dialogs = useDialogs()
+  const [view, setView] = useState<'combined' | 'subscriptions' | 'connections' | 'operations'>('combined')
   const [windowHours, setWindowHours] = useState(24)
   const [risk, setRisk] = useState<'all' | AuditRiskLevel>('all')
   const [query, setQuery] = useState('')
-  const [overview, setOverview] = useState<ConnectionAuditOverview | null>(data.connection_audit || null)
+  const [connectionOverview, setConnectionOverview] = useState<ConnectionAuditOverview | null>(data.connection_audit || null)
+  const [subscriptionOverview, setSubscriptionOverview] = useState<SubscriptionAuditOverview | null>(data.subscription_audit || null)
+  const [combinedOverview, setCombinedOverview] = useState<CombinedAuditOverview | null>(data.audit_risk || null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshRevision, setRefreshRevision] = useState(0)
   const [loadError, setLoadError] = useState('')
-  const [detail, setDetail] = useState<ConnectionAuditUserDetail | null>(null)
+  const [connectionDetail, setConnectionDetail] = useState<ConnectionAuditUserDetail | null>(null)
+  const [subscriptionDetail, setSubscriptionDetail] = useState<SubscriptionAuditUserDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const isAdmin = data.session?.role === 'admin' || data.current_user?.role === 'admin'
 
   useEffect(() => {
     let cancelled = false
     setRefreshing(true)
     setLoadError('')
-    client.request(`/audit/overview?window_hours=${windowHours}`).then((res: any) => {
-      if (!cancelled) setOverview(res.connection_audit || null)
+    client.request(`/audit/risk-overview?window_hours=${windowHours}`).then((overview: any) => {
+      if (cancelled) return
+      setConnectionOverview(overview.connection_audit || null)
+      setSubscriptionOverview(overview.subscription_audit || null)
+      setCombinedOverview(overview.audit_risk || null)
     }).catch((error: any) => {
       if (!cancelled) setLoadError(localizeErrorMessage(error?.message || error))
     }).finally(() => { if (!cancelled) setRefreshing(false) })
     return () => { cancelled = true }
   }, [client, windowHours, refreshRevision])
 
-  const users = useMemo(() => {
+  const filteredUsers = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    return (overview?.users || []).filter(item => {
+    const items: Array<ConnectionAuditUser | SubscriptionAuditUser | CombinedAuditUser> = view === 'connections'
+      ? connectionOverview?.users || []
+      : view === 'subscriptions'
+        ? subscriptionOverview?.users || []
+        : combinedOverview?.users || []
+    return items.filter(item => {
       if (risk !== 'all' && item.risk_level !== risk) return false
       return !needle || item.username.toLowerCase().includes(needle) || String(item.nickname || '').toLowerCase().includes(needle)
     })
-  }, [overview, query, risk])
-  const openUser = async (user: ConnectionAuditUser) => {
+  }, [view, connectionOverview, subscriptionOverview, combinedOverview, query, risk])
+  const openConnectionUser = async (userID: number) => {
     setDetailLoading(true)
     setLoadError('')
     try {
-      const res = await client.request(`/audit/users/${user.user_id}?window_hours=${windowHours}`)
-      setDetail(res.connection_audit_user || null)
+      const res = await client.request(`/audit/users/${userID}?window_hours=${windowHours}`)
+      setConnectionDetail(res.connection_audit_user || null)
     } catch (error: any) {
       setLoadError(localizeErrorMessage(error?.message || error))
     } finally {
       setDetailLoading(false)
     }
   }
-  const enabled = Number(overview?.enabled_server_count || 0)
-  const geoAvailable = overview?.geo_database?.available !== false
+  const openSubscriptionUser = async (userID: number) => {
+    setDetailLoading(true)
+    setLoadError('')
+    try {
+      const res = await client.request(`/audit/subscriptions/users/${userID}?window_hours=${windowHours}`)
+      setSubscriptionDetail(res.subscription_audit_user || null)
+    } catch (error: any) {
+      setLoadError(localizeErrorMessage(error?.message || error))
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+  const resumeSubscription = async (user: SubscriptionAuditUser) => {
+    const confirmed = await dialogs.confirm({ title: `恢复 ${user.nickname || user.username} 的订阅？`, message: '历史审计记录会保留，新的风险窗口从恢复时间开始计算。', confirmText: '恢复拉取' })
+    if (!confirmed) return
+    try {
+      await client.request(`/users/${user.user_id}/subscription-access/resume`, { method: 'POST', body: '{}' })
+      setSubscriptionDetail(null)
+      setRefreshRevision(value => value + 1)
+      notify?.('订阅拉取权限已恢复', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    }
+  }
+  const enabled = Number(connectionOverview?.enabled_server_count || 0)
+  const geoAvailable = subscriptionOverview?.geo_database?.available !== false && connectionOverview?.geo_database?.available !== false
   return <Panel title="审计台" className="audit-console-panel">
     <div className="audit-console-tabs" role="tablist" aria-label="审计视图">
+      <button type="button" role="tab" aria-selected={view === 'combined'} className={view === 'combined' ? 'active' : ''} onClick={() => setView('combined')}><Gauge size={15} />综合风险</button>
+      <button type="button" role="tab" aria-selected={view === 'subscriptions'} className={view === 'subscriptions' ? 'active' : ''} onClick={() => setView('subscriptions')}><Download size={15} />订阅风险</button>
       <button type="button" role="tab" aria-selected={view === 'connections'} className={view === 'connections' ? 'active' : ''} onClick={() => setView('connections')}><Shield size={15} />连接风险</button>
       <button type="button" role="tab" aria-selected={view === 'operations'} className={view === 'operations' ? 'active' : ''} onClick={() => setView('operations')}><ClipboardList size={15} />操作日志</button>
     </div>
     {view === 'operations' ? <AuditLogs data={data} loading={loading} embedded /> : <>
       <div className="audit-overview-grid">
-        <div><span>启用服务器</span><strong>{enabled}</strong><small>{enabled ? '正在接收摘要' : '全部关闭'}</small></div>
-        <div><span>活跃用户</span><strong>{overview?.reporting_user_count || 0}</strong><small>{windowHours} 小时历史范围</small></div>
-        <div><span>高风险用户</span><strong>{overview?.elevated_risk_count || 0}</strong><small>高风险与严重</small></div>
-        <div><span>来源 IP</span><strong>{overview?.unique_source_ips || 0}</strong><small>{formatCompactAuditNumber(overview?.total_connections || 0)} 次连接</small></div>
+        {view === 'combined' ? <>
+          <div><span>审计用户</span><strong>{combinedOverview?.users?.length || 0}</strong><small>{windowHours} 小时历史范围</small></div>
+          <div><span>高风险用户</span><strong>{combinedOverview?.elevated_risk_count || 0}</strong><small>连接与订阅综合评分</small></div>
+          <div><span>订阅暂停</span><strong>{combinedOverview?.suspended_count || 0}</strong><small>等待管理员恢复</small></div>
+          <div><span>启用服务器</span><strong>{enabled}</strong><small>连接审计来源</small></div>
+        </> : view === 'subscriptions' ? <>
+          <div><span>拉取用户</span><strong>{subscriptionOverview?.reporting_user_count || 0}</strong><small>{windowHours} 小时历史范围</small></div>
+          <div><span>拉取次数</span><strong>{formatCompactAuditNumber(subscriptionOverview?.total_pulls || 0)}</strong><small>{subscriptionOverview?.unique_source_ips || 0} 个来源 IP</small></div>
+          <div><span>高风险用户</span><strong>{subscriptionOverview?.elevated_risk_count || 0}</strong><small>高风险与严重</small></div>
+          <div><span>已暂停</span><strong>{subscriptionOverview?.suspended_count || 0}</strong><small>仅阻断订阅拉取</small></div>
+        </> : <>
+          <div><span>启用服务器</span><strong>{enabled}</strong><small>{enabled ? '正在接收摘要' : '全部关闭'}</small></div>
+          <div><span>活跃用户</span><strong>{connectionOverview?.reporting_user_count || 0}</strong><small>{windowHours} 小时历史范围</small></div>
+          <div><span>高风险用户</span><strong>{connectionOverview?.elevated_risk_count || 0}</strong><small>高风险与严重</small></div>
+          <div><span>来源 IP</span><strong>{connectionOverview?.unique_source_ips || 0}</strong><small>{formatCompactAuditNumber(connectionOverview?.total_connections || 0)} 次连接</small></div>
+        </>}
       </div>
       <div className="audit-console-toolbar">
         <label className="log-search"><Search size={15} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索用户" /></label>
@@ -3947,23 +4073,49 @@ function AuditConsole({ data, client, loading }: any) {
         <button type="button" className="ghost icon-button" onClick={() => setRefreshRevision(value => value + 1)} disabled={refreshing} aria-label="刷新审计数据" title="刷新"><RefreshCw size={15} className={refreshing ? 'spin' : ''} /></button>
       </div>
       {loadError ? <p className="form-error">{loadError}</p> : null}
-	  {!geoAvailable ? <div className="audit-paused-notice"><Shield size={16} /><span>IP 归属库不可用，跨地域风险判定已暂停。{overview?.geo_database?.error ? ` ${overview.geo_database.error}` : ''}</span></div> : null}
-	  {!enabled && (overview?.reporting_user_count || 0) > 0 ? <div className="audit-paused-notice"><Shield size={16} /><span>当前没有服务器继续采集，以下为已保存的历史摘要。</span></div> : null}
-	  {refreshing && !overview ? <TableSkeleton /> : !enabled && !(overview?.reporting_user_count || 0) ? <div className="audit-disabled-state"><Shield size={24} /><strong>连接审计未启用</strong><span>可在创建或编辑服务器时开启。</span></div> : !users.length ? <p className="muted">当前筛选条件下暂无连接审计数据</p> : <div className="audit-user-table-wrap">
+	  {!geoAvailable ? <div className="audit-paused-notice"><Shield size={16} /><span>IP 归属库不可用，跨地域风险判定已暂停。</span></div> : null}
+	  {view === 'connections' && !enabled && (connectionOverview?.reporting_user_count || 0) > 0 ? <div className="audit-paused-notice"><Shield size={16} /><span>当前没有服务器继续采集，以下为已保存的历史摘要。</span></div> : null}
+	  {refreshing && !combinedOverview ? <TableSkeleton /> : !filteredUsers.length ? <p className="muted">当前筛选条件下暂无审计数据</p> : view === 'combined' ? <div className="audit-user-table-wrap">
+        <table className="audit-user-table"><thead><tr><th>用户</th><th>综合风险</th><th>连接分项</th><th>订阅分项</th><th>订阅状态</th><th>最后活动</th><th aria-label="操作" /></tr></thead><tbody>
+          {(filteredUsers as CombinedAuditUser[]).map(user => <tr key={user.user_id}>
+            <td><strong>{user.nickname || user.username}</strong><span>{user.nickname ? user.username : `用户 #${user.user_id}`}</span></td>
+            <td><span className={`audit-risk-pill ${user.risk_level}`}>{auditRiskLabel(user.risk_level)} · {user.risk_score}</span>{user.risk_signals?.[0] ? <small>{user.risk_signals[0]}</small> : null}</td>
+            <td><span className={`audit-risk-pill ${user.connection_risk_level || 'low'}`}>{auditRiskLabel(user.connection_risk_level || 'low')} · {user.connection_risk_score || 0}</span></td>
+            <td><span className={`audit-risk-pill ${user.subscription_risk_level || 'low'}`}>{auditRiskLabel(user.subscription_risk_level || 'low')} · {user.subscription_risk_score || 0}</span></td>
+            <td><span className={`status-pill ${user.subscription_suspended ? 'danger' : 'ok'}`}>{user.subscription_suspended ? '已暂停' : '正常'}</span></td>
+            <td>{formatTableTime(user.last_seen_at)}</td>
+            <td><div className="audit-row-actions"><button type="button" className="ghost" onClick={() => void openSubscriptionUser(user.user_id)} disabled={detailLoading || !user.subscription_observed}>订阅</button><button type="button" className="ghost" onClick={() => void openConnectionUser(user.user_id)} disabled={detailLoading || !user.connection_observed}>连接</button></div></td>
+          </tr>)}
+        </tbody></table>
+      </div> : view === 'subscriptions' ? <div className="audit-user-table-wrap">
+        <table className="audit-user-table"><thead><tr><th>用户</th><th>风险</th><th>来源</th><th>客户端</th><th>拉取 / 拒绝</th><th>状态</th><th>最后活动</th><th aria-label="操作" /></tr></thead><tbody>
+          {(filteredUsers as SubscriptionAuditUser[]).map(user => <tr key={user.user_id}>
+            <td><strong>{user.nickname || user.username}</strong><span>{user.nickname ? user.username : `用户 #${user.user_id}`}</span></td>
+            <td><span className={`audit-risk-pill ${user.risk_level}`}>{auditRiskLabel(user.risk_level)} · {user.risk_score}</span>{user.risk_signals?.[0] ? <small>{user.risk_signals[0]}</small> : null}</td>
+            <td><strong>{user.source_ip_count}</strong><span>{user.region_count} 个地域</span></td>
+            <td><strong>{user.client_format_count}</strong><span>种组合</span></td>
+            <td><strong>{formatCompactAuditNumber(user.pull_count)}</strong><span>{user.denied_count} 次拒绝</span></td>
+            <td><span className={`status-pill ${user.suspended ? 'danger' : 'ok'}`}>{user.suspended ? '已暂停' : '正常'}</span></td>
+            <td>{formatTableTime(user.last_seen_at)}</td>
+            <td><button type="button" className="ghost" onClick={() => void openSubscriptionUser(user.user_id)} disabled={detailLoading}>查看</button></td>
+          </tr>)}
+        </tbody></table>
+      </div> : <div className="audit-user-table-wrap">
         <table className="audit-user-table"><thead><tr><th>用户</th><th>风险</th><th>来源</th><th>服务器</th><th>连接 / 峰值</th><th>最后活动</th><th aria-label="操作" /></tr></thead><tbody>
-          {users.map(user => <tr key={user.user_id}>
+          {(filteredUsers as ConnectionAuditUser[]).map(user => <tr key={user.user_id}>
             <td><strong>{user.nickname || user.username}</strong><span>{user.nickname ? user.username : `用户 #${user.user_id}`}</span></td>
             <td><span className={`audit-risk-pill ${user.risk_level}`}>{auditRiskLabel(user.risk_level)} · {user.risk_score}</span>{user.risk_signals?.[0] ? <small>{user.risk_signals[0]}</small> : null}</td>
             <td><strong>{user.source_ip_count}</strong><span>{user.source_region_count || 0} 个地域 · {user.source_subnet_count} 个网段</span>{user.shared_source_ip_count ? <small>{user.shared_source_ip_count} 个共享出口 IP</small> : null}</td>
             <td><strong>{user.server_count}</strong><span>台</span></td>
             <td><strong>{formatCompactAuditNumber(user.connection_count)}</strong><span>峰值 {user.active_peak}</span></td>
             <td>{formatTableTime(user.last_seen_at)}</td>
-            <td><button type="button" className="ghost" onClick={() => void openUser(user)} disabled={detailLoading}>查看</button></td>
+            <td><button type="button" className="ghost" onClick={() => void openConnectionUser(user.user_id)} disabled={detailLoading}>查看</button></td>
           </tr>)}
         </tbody></table>
       </div>}
     </>}
-    <AnimatePresence>{detail && <ConnectionAuditUserDialog detail={detail} onClose={() => setDetail(null)} />}</AnimatePresence>
+    <AnimatePresence>{connectionDetail && <ConnectionAuditUserDialog detail={connectionDetail} onClose={() => setConnectionDetail(null)} />}</AnimatePresence>
+    <AnimatePresence>{subscriptionDetail && <SubscriptionAuditUserDialog detail={subscriptionDetail} canResume={isAdmin} onResume={resumeSubscription} onClose={() => setSubscriptionDetail(null)} />}</AnimatePresence>
   </Panel>
 }
 
@@ -3996,6 +4148,38 @@ function ConnectionAuditUserDialog({ detail, onClose }: { detail: ConnectionAudi
 
 function AuditDimensionList({ title, items }: { title: string; items: ConnectionAuditDimension[] }) {
   return <section><h3>{title}</h3>{!items?.length ? <p className="muted">暂无数据</p> : <div>{items.map(item => <div key={item.key}><span><strong>{item.label || '未标记'}</strong>{item.secondary ? <small>{item.secondary}</small> : null}</span><span>{formatCompactAuditNumber(item.connection_count)} 次</span></div>)}</div>}</section>
+}
+
+function SubscriptionAuditUserDialog({ detail, canResume, onResume, onClose }: { detail: SubscriptionAuditUserDetail; canResume: boolean; onResume: (user: SubscriptionAuditUser) => Promise<void>; onClose: () => void }) {
+  const user = detail.summary
+  const short = user.current_risk.short
+  const long = user.current_risk.long
+  return <MotionDialogPanel onCancel={onClose} className="audit-detail-dialog">
+    <header className="dialog-head"><div><h2>{user.nickname || user.username}</h2><p className="muted">{user.username} · {user.pull_count} 次拉取 · {user.source_ip_count} 个来源 IP</p></div><div className="dialog-head-actions">{user.suspended && canResume ? <button type="button" onClick={() => void onResume(user)}><RotateCcw size={14} />恢复拉取</button> : null}<button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></div></header>
+    <div className="dialog-body audit-detail-body">
+      <div className="audit-detail-risk"><span className={`audit-risk-pill ${user.risk_level}`}>{auditRiskLabel(user.risk_level)} · {user.risk_score}</span><div>{user.risk_signals?.length ? user.risk_signals.map(signal => <span key={signal}>{signal}</span>) : <span>当前窗口未达到风险阈值</span>}</div></div>
+      {user.suspended ? <div className="audit-paused-notice"><Shield size={16} /><span>{user.suspension_reason || '订阅拉取已暂停，等待管理员恢复。'}</span></div> : null}
+      <div className="audit-window-grid">
+        {[short, long].map(window => <div key={window.window_minutes}><span>{window.window_minutes < 60 ? `${window.window_minutes} 分钟` : `${window.window_minutes / 60} 小时`}</span><strong>{window.region_count} 地域 · {window.source_ip_count} IP</strong><small>{window.pull_count} 次拉取 · {window.client_format_count} 种客户端/格式</small></div>)}
+      </div>
+      <div className="audit-dimension-grid">
+        <SubscriptionAuditDimensionList title="来源 IP" items={detail.sources} />
+        <SubscriptionAuditDimensionList title="地域" items={detail.regions} />
+        <SubscriptionAuditDimensionList title="客户端" items={detail.clients} />
+        <SubscriptionAuditDimensionList title="订阅格式" items={detail.formats} />
+      </div>
+      <div className="audit-recent-head"><h3>最近拉取记录</h3><span>{detail.recent?.length || 0} 条</span></div>
+      <div className="audit-recent-list subscription-audit-recent">{(detail.recent || []).map(item => <div key={item.id}><code title={[item.source_country, item.source_province, item.source_city, item.source_isp].filter(Boolean).join(' / ')}>{item.source_ip}</code><span title={item.user_agent || ''}>{item.client_name || '未知客户端'}</span><strong>{item.format || '未知格式'}{item.age_encrypted ? ' · Age' : ''}</strong><span>{item.source_province || item.source_country || '未知地域'}</span><span className={item.outcome.startsWith('denied_') ? 'danger-text' : ''}>{subscriptionAuditOutcomeLabel(item.outcome)}</span><time>{formatTableTime(item.requested_at)}</time></div>)}</div>
+    </div>
+  </MotionDialogPanel>
+}
+
+function SubscriptionAuditDimensionList({ title, items }: { title: string; items: SubscriptionAuditDimension[] }) {
+  return <section><h3>{title}</h3>{!items?.length ? <p className="muted">暂无数据</p> : <div>{items.map(item => <div key={item.key}><span><strong>{item.label || '未标记'}</strong>{item.secondary ? <small>{item.secondary}</small> : null}</span><span>{formatCompactAuditNumber(item.pull_count)} 次</span></div>)}</div>}</section>
+}
+
+function subscriptionAuditOutcomeLabel(value: string) {
+  return ({ served: '已返回', denied_risk: '触发暂停', denied_suspended: '已拒绝', rejected_invalid_request: '请求无效' } as Record<string, string>)[value] || value
 }
 
 function AuditLogs({ data, loading, embedded = false }: any) {
@@ -9327,9 +9511,9 @@ function CopySubscriptionButton({ user }: { user: User }) {
   return (
     <button
       onClick={handleCopy}
-      disabled={!token || missingRequiredAgeKey}
+      disabled={!token || missingRequiredAgeKey || user.subscription_suspended}
       className="btn-custom btn-secondary user-subscription-button"
-      title={missingRequiredAgeKey ? '请先配置 Age 公钥' : user.subscription_burn_after_read ? '首次成功获取订阅内容后，此链接立即失效' : '复制 Mihomo 订阅链接'}
+      title={user.subscription_suspended ? '订阅拉取已暂停' : missingRequiredAgeKey ? '请先配置 Age 公钥' : user.subscription_burn_after_read ? '首次成功获取订阅内容后，此链接立即失效' : '复制 Mihomo 订阅链接'}
     >
       {copied ? (
         <>
@@ -9351,7 +9535,7 @@ function QuickOneTimeSubscriptionButton({ user, client, format = defaultSubscrip
   const [creating, setCreating] = useState(false)
   const [copied, setCopied] = useState(false)
   const useAge = encrypted || (isAgeSubscriptionFormat(format) && user.subscription_age_policy === 'required')
-  const disabled = creating || user.status !== 'active' || (useAge && !user.subscription_age_public_key)
+  const disabled = creating || user.status !== 'active' || Boolean(user.subscription_suspended) || (useAge && !user.subscription_age_public_key)
   const createAndCopy = async () => {
     if (disabled) return
     setCreating(true)
@@ -10345,6 +10529,10 @@ function MySubscriptions({ data, notify }: { data: any; notify?: (message: strin
   }, [])
 
   const copySubscription = async (encrypted: boolean) => {
+    if (user?.subscription_suspended) {
+      notify?.('订阅拉取已暂停，请联系管理员', 'warning')
+      return
+    }
     if (!user?.subscription_token) {
       notify?.('当前没有可用的订阅链接', 'warning')
       return
@@ -10377,11 +10565,11 @@ function MySubscriptions({ data, notify }: { data: any; notify?: (message: strin
       <section className="sub-section self-subscription-card">
         <div className="sub-section-head">
           <div><h3><User size={16} />我的订阅</h3><p className="muted">{user?.nickname || user?.username || '当前用户'} · {selectedFormat?.name || format}</p></div>
-          <span className={`sub-pill ${user?.subscription_token ? 'ok' : 'warn'}`}>{user?.subscription_token ? '可用' : '未签发'}</span>
+          <span className={`sub-pill ${user?.subscription_suspended ? 'danger' : user?.subscription_token ? 'ok' : 'warn'}`}>{user?.subscription_suspended ? '已暂停' : user?.subscription_token ? '可用' : '未签发'}</span>
         </div>
         <div className="self-subscription-actions">
-          {(!ageCapable || !ageRequired) && <button type="button" onClick={() => void copySubscription(false)} disabled={!user?.subscription_token}><Copy size={15} />复制普通订阅</button>}
-          {ageCapable && <button type="button" onClick={() => void copySubscription(true)} disabled={!user?.subscription_token || !ageReady}><Shield size={15} />复制 Age 订阅</button>}
+          {(!ageCapable || !ageRequired) && <button type="button" onClick={() => void copySubscription(false)} disabled={!user?.subscription_token || user.subscription_suspended}><Copy size={15} />复制普通订阅</button>}
+          {ageCapable && <button type="button" onClick={() => void copySubscription(true)} disabled={!user?.subscription_token || user.subscription_suspended || !ageReady}><Shield size={15} />复制 Age 订阅</button>}
           {ageCapable && !ageReady && <button type="button" className="ghost" onClick={() => goTab('account')}><SettingsIcon size={15} />配置 Age 公钥</button>}
         </div>
       </section>
@@ -10604,6 +10792,10 @@ function Subscriptions({ data, client, load, notify }: any) {
   }
 
   const copyUserSub = async (user: User, encrypted = false) => {
+    if (user.subscription_suspended) {
+      notify?.(`${user.username} 的订阅拉取已暂停`, 'warning')
+      return
+    }
     const ageCapable = isAgeSubscriptionFormat(subscriptionFormat)
     const useAge = ageCapable && (encrypted || ageRequired)
     if (useAge && !user.subscription_age_public_key) {
@@ -10688,9 +10880,11 @@ function Subscriptions({ data, client, load, notify }: any) {
                       <small>#{user.id}</small>
                     </div>
                   </div>
-                  <div>{cell(user.status, 'status')}</div>
+                  <div>{user.subscription_suspended ? <span className="status-pill danger">订阅暂停</span> : cell(user.status, 'status')}</div>
                   <div className="sub-user-token-state">
-                    {user.subscription_token
+                    {user.subscription_suspended
+                      ? <span className="sub-pill danger">风控暂停</span>
+                      : user.subscription_token
                       ? user.subscription_burn_after_read
                         ? <span className="sub-pill warn">一次性</span>
                         : <span className="sub-pill ok">长期有效</span>
@@ -10713,8 +10907,8 @@ function Subscriptions({ data, client, load, notify }: any) {
                     </button>
                   </div>
                   <div className="sub-user-actions">
-                    {(!isAgeSubscriptionFormat(subscriptionFormat) || !ageRequired) && <button type="button" className="ghost" onClick={() => void copyUserSub(user, false)} disabled={!user.subscription_token}>普通链接</button>}
-                    {isAgeSubscriptionFormat(subscriptionFormat) && <button type="button" className="ghost" onClick={() => void copyUserSub(user, true)} disabled={!user.subscription_token || !user.subscription_age_public_key || (!ageRequired && !user.subscription_age_enabled)}>Age 链接</button>}
+                    {(!isAgeSubscriptionFormat(subscriptionFormat) || !ageRequired) && <button type="button" className="ghost" onClick={() => void copyUserSub(user, false)} disabled={!user.subscription_token || user.subscription_suspended}>普通链接</button>}
+                    {isAgeSubscriptionFormat(subscriptionFormat) && <button type="button" className="ghost" onClick={() => void copyUserSub(user, true)} disabled={!user.subscription_token || user.subscription_suspended || !user.subscription_age_public_key || (!ageRequired && !user.subscription_age_enabled)}>Age 链接</button>}
                     <QuickOneTimeSubscriptionButton user={user} client={client} format={subscriptionFormat} encrypted={isAgeSubscriptionFormat(subscriptionFormat) && ageRequired} notify={notify} />
                     <button type="button" className="ghost" onClick={() => void rotateSub(client, user, load, dialogs, notify)}>{user.subscription_token ? '轮换' : '重新签发'}</button>
                     <button type="button" className="ghost danger-text" onClick={() => void revokeSub(client, user, load, dialogs, notify)} disabled={!user.subscription_token}>吊销</button>
@@ -10931,6 +11125,7 @@ const fallbackNotificationEventOptions: NotificationEventDefinition[] = [
   { value: 'server_online', label: '服务器恢复', description: '失联服务器重新连接时提醒', variables: ['ServerName', 'ServerID', 'Time'] },
   { value: 'traffic_quota_exceeded', label: '流量达到上限', description: '所选用户的周期流量达到上限时提醒', variables: ['UserName', 'UserID', 'Used', 'Limit', 'ResetAt', 'Time'] },
   { value: 'user_risk_detected', label: '异常使用', description: '已开启连接审计的服务器发现所选用户大量来源 IP、跨网段或异常并发时提醒', variables: ['UserName', 'UserID', 'RiskLevel', 'RiskScore', 'Signals', 'SourceIPCount', 'ActivePeak', 'Time'] },
+  { value: 'subscription_risk_detected', label: '订阅共享风险', description: '订阅拉取达到风险阈值或被自动暂停时提醒管理员', variables: ['UserName', 'UserID', 'RiskLevel', 'RiskScore', 'Signals', 'SourceIPCount', 'RegionCount', 'PullCount', 'Suspended', 'Time'] },
   { value: 'task_failed', label: '任务失败', description: '配置下发、更新或检测任务失败时提醒', variables: ['TaskType', 'TaskID', 'ServerName', 'Error', 'Time'] },
   { value: 'task_timeout', label: '任务超时', description: '任务等待或执行超过五分钟时提醒', variables: ['TaskType', 'TaskID', 'ServerName', 'Error', 'Time'] },
   { value: 'certificate_issuance_failed', label: '证书签发失败', description: '证书首次签发或自动续期失败时提醒', variables: ['CertificateName', 'Domains', 'Issuer', 'EABKeyID', 'Error', 'Time'] },
@@ -10946,6 +11141,7 @@ const fallbackNotificationTemplates: Record<string, NotificationTemplate> = {
   server_online: { title: '服务器恢复 · {{.ServerName}}', body: '{{.ServerName}} 已恢复在线\n时间：{{.Time}}' },
   traffic_quota_exceeded: { title: '流量达到上限 · {{.UserName}}', body: '{{.UserName}} 本周期流量已达到上限\n已用：{{.Used}} / {{.Limit}}\n重置：{{.ResetAt}}' },
   user_risk_detected: { title: '异常使用提醒 · {{.UserName}}', body: '{{.UserName}} 的连接行为达到{{.RiskLevel}}\n风险分：{{.RiskScore}}\n异常表现：{{.Signals}}\n来源 IP：{{.SourceIPCount}} 个\n并发峰值：{{.ActivePeak}}\n时间：{{.Time}}' },
+  subscription_risk_detected: { title: '订阅风险提醒 · {{.UserName}}', body: '{{.UserName}} 的订阅拉取达到{{.RiskLevel}}\n风险分：{{.RiskScore}}\n状态：{{.Suspended}}\n异常表现：{{.Signals}}\n来源 IP：{{.SourceIPCount}} 个\n地域：{{.RegionCount}} 个\n拉取：{{.PullCount}} 次\n时间：{{.Time}}' },
   task_failed: { title: '任务失败 · {{.TaskType}}', body: '服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}' },
   task_timeout: { title: '任务超时 · {{.TaskType}}', body: '服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}' },
   certificate_issuance_failed: { title: '证书签发失败 · {{.CertificateName}}', body: '证书：{{.CertificateName}}\n域名：{{.Domains}}\n签发机构：{{.Issuer}}\n外部账号：{{.EABKeyID}}\n原因：{{.Error}}\n时间：{{.Time}}' },
@@ -10984,7 +11180,7 @@ function emptyNotificationDraft(defaults: Record<string, NotificationTemplate>, 
     name: '',
     type,
     enabled: true,
-    events: eventOptions.filter(option => !isAdmin || option.value !== 'admin_announcement').map(option => option.value),
+    events: eventOptions.filter(option => option.value !== 'subscription_risk_detected' && (!isAdmin || option.value !== 'admin_announcement')).map(option => option.value),
     bot_token: '',
     chat_id: '',
     server_url: 'https://api.day.app',

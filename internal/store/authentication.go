@@ -11,6 +11,19 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+func (s *Store) RevokeUserSession(ctx context.Context, userID int64, tokenHash string, expiresAt time.Time) error {
+	_, _ = s.db.ExecContext(ctx, `delete from revoked_user_sessions where expires_at<=?`, now())
+	ts := now()
+	_, err := s.db.ExecContext(ctx, `insert into revoked_user_sessions(token_hash,user_id,expires_at,created_at) values(?,?,?,?) on conflict(token_hash) do update set user_id=excluded.user_id,expires_at=excluded.expires_at`, tokenHash, userID, expiresAt.UTC().Format(time.RFC3339Nano), ts)
+	return err
+}
+
+func (s *Store) UserSessionRevoked(ctx context.Context, tokenHash string) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx, `select exists(select 1 from revoked_user_sessions where token_hash=? and expires_at>?)`, tokenHash, now()).Scan(&exists)
+	return exists != 0, err
+}
+
 func (s *Store) GetUserAuthentication(ctx context.Context, userID int64) (model.UserAuthentication, error) {
 	var item model.UserAuthentication
 	var enabled int

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/version"
 )
 
@@ -29,6 +30,7 @@ const (
 	notificationServerOnline      = "server_online"
 	notificationTrafficQuota      = "traffic_quota_exceeded"
 	notificationUserRisk          = "user_risk_detected"
+	notificationSubscriptionRisk  = "subscription_risk_detected"
 	notificationTaskFailed        = "task_failed"
 	notificationTaskTimeout       = "task_timeout"
 	notificationCertificateFailed = "certificate_issuance_failed"
@@ -59,6 +61,7 @@ var notificationEventDefinitions = []notificationEventDefinition{
 	{notificationServerOnline, "服务器恢复", "失联服务器重新连接时提醒", []string{"ServerName", "ServerID", "Time"}},
 	{notificationTrafficQuota, "流量达到上限", "所选用户的周期流量达到上限时提醒", []string{"UserName", "UserID", "Used", "Limit", "ResetAt", "Time"}},
 	{notificationUserRisk, "异常使用", "已开启连接审计的服务器发现所选用户大量来源 IP、跨网段或异常并发时提醒", []string{"UserName", "UserID", "RiskLevel", "RiskScore", "Signals", "SourceIPCount", "ActivePeak", "Time"}},
+	{notificationSubscriptionRisk, "订阅共享风险", "订阅拉取达到风险阈值或被自动暂停时提醒管理员", []string{"UserName", "UserID", "RiskLevel", "RiskScore", "Signals", "SourceIPCount", "RegionCount", "PullCount", "Suspended", "Time"}},
 	{notificationTaskFailed, "任务失败", "配置下发、更新或检测任务失败时提醒", []string{"TaskType", "TaskID", "ServerName", "Error", "Time"}},
 	{notificationTaskTimeout, "任务超时", "任务等待或执行超过五分钟时提醒", []string{"TaskType", "TaskID", "ServerName", "Error", "Time"}},
 	{notificationCertificateFailed, "证书签发失败", "证书首次签发或自动续期失败时提醒", []string{"CertificateName", "Domains", "Issuer", "EABKeyID", "Error", "Time"}},
@@ -85,6 +88,10 @@ var defaultNotificationTemplates = map[string]model.NotificationTemplate{
 	notificationUserRisk: {
 		Title: "异常使用提醒 · {{.UserName}}",
 		Body:  "{{.UserName}} 的连接行为达到{{.RiskLevel}}\n风险分：{{.RiskScore}}\n异常表现：{{.Signals}}\n来源 IP：{{.SourceIPCount}} 个\n并发峰值：{{.ActivePeak}}\n时间：{{.Time}}",
+	},
+	notificationSubscriptionRisk: {
+		Title: "订阅风险提醒 · {{.UserName}}",
+		Body:  "{{.UserName}} 的订阅拉取达到{{.RiskLevel}}\n风险分：{{.RiskScore}}\n状态：{{.Suspended}}\n异常表现：{{.Signals}}\n来源 IP：{{.SourceIPCount}} 个\n地域：{{.RegionCount}} 个\n拉取：{{.PullCount}} 次\n时间：{{.Time}}",
 	},
 	notificationTaskFailed: {
 		Title: "任务失败 · {{.TaskType}}",
@@ -483,6 +490,7 @@ func allowedNotificationEventSet(role model.Role) map[string]bool {
 		allowed[notificationBackupFailed] = true
 		allowed[notificationUpdateFailed] = true
 		allowed[notificationDNSSyncFailed] = true
+		allowed[notificationSubscriptionRisk] = true
 	}
 	return allowed
 }
@@ -803,7 +811,7 @@ func (s *Server) enqueueForcedAdminNotification(ctx context.Context, event notif
 
 func notificationChannelEligible(channel model.NotificationChannel, ownerRole model.Role, event notificationEvent) bool {
 	switch event.Name {
-	case notificationServerOffline, notificationServerOnline, notificationTaskFailed, notificationTaskTimeout, notificationCertificateFailed, notificationCertificateExpiry, notificationBackupFailed, notificationUpdateFailed, notificationDNSSyncFailed:
+	case notificationServerOffline, notificationServerOnline, notificationTaskFailed, notificationTaskTimeout, notificationCertificateFailed, notificationCertificateExpiry, notificationBackupFailed, notificationUpdateFailed, notificationDNSSyncFailed, notificationSubscriptionRisk:
 		return roleAllows(ownerRole, model.RoleAdmin)
 	case notificationTrafficQuota, notificationUserRisk:
 		if channel.OwnerUserID == event.TargetUserID {
@@ -1218,6 +1226,48 @@ func (s *Server) notifyConnectionAuditRisks(ctx context.Context, userIDs []int64
 			_ = s.store.SetSetting(ctx, settingKey, string(encoded))
 		}
 	}
+}
+
+func (s *Server) notifySubscriptionAuditRisk(ctx context.Context, user model.User, decision store.SubscriptionPullDecision) {
+	if !decision.Allowed && !decision.JustSuspended {
+		return
+	}
+	if decision.Risk.Score < 25 && !decision.JustSuspended {
+		return
+	}
+	name := strings.TrimSpace(user.Nickname)
+	if name == "" {
+		name = user.Username
+	}
+	key := fmt.Sprintf("subscription-risk:%d:%s", user.ID, time.Now().UTC().Format("2006010215"))
+	if decision.JustSuspended {
+		key = fmt.Sprintf("subscription-suspended:%d:%d", user.ID, decision.AuditID)
+	}
+	riskLevel := map[string]string{"medium": "中风险", "high": "高风险", "critical": "严重风险"}[decision.Risk.Level]
+	if riskLevel == "" {
+		riskLevel = "低风险"
+	}
+	status := "继续允许拉取"
+	if decision.Access.Suspended || decision.JustSuspended {
+		status = "已暂停，等待管理员恢复"
+	}
+	s.enqueueNotificationEvent(ctx, notificationEvent{
+		Name:         notificationSubscriptionRisk,
+		Key:          key,
+		TargetUserID: user.ID,
+		Data: map[string]string{
+			"UserName":      name,
+			"UserID":        strconv.FormatInt(user.ID, 10),
+			"RiskLevel":     riskLevel,
+			"RiskScore":     strconv.Itoa(decision.Risk.Score),
+			"Signals":       strings.Join(decision.Risk.Signals, "；"),
+			"SourceIPCount": strconv.Itoa(max(decision.Risk.Short.SourceIPCount, decision.Risk.Long.SourceIPCount)),
+			"RegionCount":   strconv.Itoa(max(decision.Risk.Short.RegionCount, decision.Risk.Long.RegionCount)),
+			"PullCount":     strconv.Itoa(max(decision.Risk.Short.PullCount, decision.Risk.Long.PullCount)),
+			"Suspended":     status,
+			"Time":          s.notificationNow(ctx),
+		},
+	})
 }
 
 type connectionAuditNotificationState struct {

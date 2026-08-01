@@ -156,6 +156,9 @@ type User struct {
 	SubscriptionBurnedAt      *time.Time `json:"subscription_burned_at,omitempty"`
 	SubscriptionAgeEnabled    bool       `json:"subscription_age_enabled"`
 	SubscriptionAgePublicKey  string     `json:"subscription_age_public_key,omitempty"`
+	SubscriptionSuspended     bool       `json:"subscription_suspended"`
+	SubscriptionSuspendedAt   *time.Time `json:"subscription_suspended_at,omitempty"`
+	SubscriptionSuspendReason string     `json:"subscription_suspend_reason,omitempty"`
 	Protected                 bool       `json:"protected,omitempty"`
 	CreatedAt                 time.Time  `json:"created_at"`
 	UpdatedAt                 time.Time  `json:"updated_at"`
@@ -1561,6 +1564,151 @@ type ConnectionAuditUserDetail struct {
 	Servers      []ConnectionAuditDimension `json:"servers"`
 	Recent       []ConnectionAuditReport    `json:"recent"`
 	RiskEvents   []ConnectionAuditRiskEvent `json:"risk_events"`
+}
+
+type SubscriptionAuditThresholds struct {
+	RegionLimit       int `json:"region_limit"`
+	SourceIPLimit     int `json:"source_ip_limit"`
+	PullLimit         int `json:"pull_limit"`
+	ClientFormatLimit int `json:"client_format_limit"`
+}
+
+type SubscriptionAuditPolicy struct {
+	ShortWindowMinutes int                         `json:"short_window_minutes"`
+	LongWindowHours    int                         `json:"long_window_hours"`
+	Short              SubscriptionAuditThresholds `json:"short"`
+	Long               SubscriptionAuditThresholds `json:"long"`
+}
+
+type SubscriptionAuditWindowSnapshot struct {
+	WindowMinutes     int      `json:"window_minutes"`
+	PullCount         int      `json:"pull_count"`
+	SourceIPCount     int      `json:"source_ip_count"`
+	RegionCount       int      `json:"region_count"`
+	ClientFormatCount int      `json:"client_format_count"`
+	Regions           []string `json:"regions"`
+}
+
+type SubscriptionAuditRisk struct {
+	Level     string                          `json:"level"`
+	Score     int                             `json:"score"`
+	Signals   []string                        `json:"signals"`
+	HardBlock bool                            `json:"hard_block"`
+	Reason    string                          `json:"reason,omitempty"`
+	Short     SubscriptionAuditWindowSnapshot `json:"short"`
+	Long      SubscriptionAuditWindowSnapshot `json:"long"`
+}
+
+type SubscriptionPullAudit struct {
+	ID                  int64     `json:"id"`
+	UserID              int64     `json:"user_id"`
+	SourceIP            string    `json:"source_ip"`
+	SourceCountryCode   string    `json:"source_country_code,omitempty"`
+	SourceCountry       string    `json:"source_country,omitempty"`
+	SourceProvince      string    `json:"source_province,omitempty"`
+	SourceCity          string    `json:"source_city,omitempty"`
+	SourceISP           string    `json:"source_isp,omitempty"`
+	GeoDatabaseRevision string    `json:"geo_database_revision,omitempty"`
+	UserAgent           string    `json:"user_agent,omitempty"`
+	ClientName          string    `json:"client_name"`
+	Format              string    `json:"format"`
+	ProfileID           *int64    `json:"profile_id,omitempty"`
+	AgeEncrypted        bool      `json:"age_encrypted"`
+	TokenKind           string    `json:"token_kind"`
+	Outcome             string    `json:"outcome"`
+	Reason              string    `json:"reason,omitempty"`
+	RiskEligible        bool      `json:"-"`
+	RequestedAt         time.Time `json:"requested_at"`
+	CreatedAt           time.Time `json:"created_at"`
+}
+
+type SubscriptionAccessState struct {
+	UserID              int64                  `json:"user_id"`
+	Suspended           bool                   `json:"suspended"`
+	SuspendedAt         *time.Time             `json:"suspended_at,omitempty"`
+	Reason              string                 `json:"reason,omitempty"`
+	TriggerAuditID      *int64                 `json:"trigger_audit_id,omitempty"`
+	TriggerRisk         *SubscriptionAuditRisk `json:"trigger_risk,omitempty"`
+	EvaluationStartedAt time.Time              `json:"evaluation_started_at"`
+	ResumedAt           *time.Time             `json:"resumed_at,omitempty"`
+	ResumedBy           *int64                 `json:"resumed_by,omitempty"`
+	UpdatedAt           time.Time              `json:"updated_at"`
+}
+
+type SubscriptionAuditDimension struct {
+	Key        string    `json:"key"`
+	Label      string    `json:"label"`
+	Secondary  string    `json:"secondary,omitempty"`
+	PullCount  int64     `json:"pull_count"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+}
+
+type SubscriptionAuditUserSummary struct {
+	UserID            int64                 `json:"user_id"`
+	Username          string                `json:"username"`
+	Nickname          string                `json:"nickname"`
+	RiskLevel         string                `json:"risk_level"`
+	RiskScore         int                   `json:"risk_score"`
+	RiskSignals       []string              `json:"risk_signals"`
+	Suspended         bool                  `json:"suspended"`
+	SuspendedAt       *time.Time            `json:"suspended_at,omitempty"`
+	SuspensionReason  string                `json:"suspension_reason,omitempty"`
+	PullCount         int64                 `json:"pull_count"`
+	SuccessfulCount   int64                 `json:"successful_count"`
+	DeniedCount       int64                 `json:"denied_count"`
+	SourceIPCount     int                   `json:"source_ip_count"`
+	RegionCount       int                   `json:"region_count"`
+	ClientFormatCount int                   `json:"client_format_count"`
+	LastSeenAt        time.Time             `json:"last_seen_at"`
+	CurrentRisk       SubscriptionAuditRisk `json:"current_risk"`
+}
+
+type SubscriptionAuditOverview struct {
+	WindowHours       int                            `json:"window_hours"`
+	GeneratedAt       time.Time                      `json:"generated_at"`
+	GeoDatabase       GeoDatabaseStatus              `json:"geo_database"`
+	Policy            SubscriptionAuditPolicy        `json:"policy"`
+	ReportingUsers    int                            `json:"reporting_user_count"`
+	ElevatedRiskCount int                            `json:"elevated_risk_count"`
+	SuspendedCount    int                            `json:"suspended_count"`
+	TotalPulls        int64                          `json:"total_pulls"`
+	UniqueSourceIPs   int                            `json:"unique_source_ips"`
+	Users             []SubscriptionAuditUserSummary `json:"users"`
+}
+
+type SubscriptionAuditUserDetail struct {
+	Summary SubscriptionAuditUserSummary `json:"summary"`
+	Sources []SubscriptionAuditDimension `json:"sources"`
+	Regions []SubscriptionAuditDimension `json:"regions"`
+	Clients []SubscriptionAuditDimension `json:"clients"`
+	Formats []SubscriptionAuditDimension `json:"formats"`
+	Recent  []SubscriptionPullAudit      `json:"recent"`
+	Access  SubscriptionAccessState      `json:"access"`
+}
+
+type CombinedAuditUserSummary struct {
+	UserID                int64     `json:"user_id"`
+	Username              string    `json:"username"`
+	Nickname              string    `json:"nickname"`
+	RiskLevel             string    `json:"risk_level"`
+	RiskScore             int       `json:"risk_score"`
+	RiskSignals           []string  `json:"risk_signals"`
+	ConnectionRiskLevel   string    `json:"connection_risk_level"`
+	ConnectionRiskScore   int       `json:"connection_risk_score"`
+	ConnectionObserved    bool      `json:"connection_observed"`
+	SubscriptionRiskLevel string    `json:"subscription_risk_level"`
+	SubscriptionRiskScore int       `json:"subscription_risk_score"`
+	SubscriptionObserved  bool      `json:"subscription_observed"`
+	SubscriptionSuspended bool      `json:"subscription_suspended"`
+	LastSeenAt            time.Time `json:"last_seen_at"`
+}
+
+type CombinedAuditOverview struct {
+	WindowHours       int                        `json:"window_hours"`
+	GeneratedAt       time.Time                  `json:"generated_at"`
+	ElevatedRiskCount int                        `json:"elevated_risk_count"`
+	SuspendedCount    int                        `json:"suspended_count"`
+	Users             []CombinedAuditUserSummary `json:"users"`
 }
 
 type TrafficRuntimePolicy struct {

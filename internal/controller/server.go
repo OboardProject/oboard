@@ -46,6 +46,7 @@ const (
 	settingServerDefaultBBREnabled     = "server_default_bbr_enabled"
 	settingServerDefaultTimeCorrection = "server_default_time_correction_mode"
 	settingTimeCheckNTPServers         = "time_check_ntp_servers"
+	settingSubscriptionAuditPolicy     = "subscription_audit_policy"
 	timeCheckThresholdSeconds          = 30
 )
 
@@ -241,6 +242,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/audit-logs", s.auth(s.auditLogs, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/audit/overview", s.auth(s.connectionAuditOverview, model.RoleOperator))
 	mux.HandleFunc("/api/v1/audit/users/", s.auth(s.connectionAuditUser, model.RoleOperator))
+	mux.HandleFunc("/api/v1/audit/risk-overview", s.auth(s.combinedAuditOverview, model.RoleOperator))
+	mux.HandleFunc("/api/v1/audit/subscriptions/overview", s.auth(s.subscriptionAuditOverview, model.RoleOperator))
+	mux.HandleFunc("/api/v1/audit/subscriptions/users/", s.auth(s.subscriptionAuditUser, model.RoleOperator))
 	mux.HandleFunc("/api/v1/agent/enroll", s.agentEnroll)
 	mux.HandleFunc("/api/v1/agent/connect", s.agentConnect)
 	mux.HandleFunc("/api/v1/agent/task-results", s.agentTaskResults)
@@ -445,22 +449,23 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		write(w, 200, map[string]any{"settings": s.publicSettings(r.Context(), items)})
 	case http.MethodPost, http.MethodPatch:
 		var req struct {
-			ControllerURL               *string  `json:"controller_url"`
-			BasePath                    *string  `json:"base_path"`
-			CertificateAutoMatch        *bool    `json:"certificate_auto_match_enabled"`
-			CertificatePreference       *string  `json:"certificate_default_preference"`
-			CertificateAutoIssueCA      *string  `json:"certificate_auto_issue_acme_ca"`
-			CertificateAutoIssueEAB     *int64   `json:"certificate_auto_issue_google_eab_credential_id"`
-			SubscriptionAgePolicy       *string  `json:"subscription_age_policy"`
-			TrafficTimezone             *string  `json:"traffic_timezone"`
-			TrafficEnforcementMode      *string  `json:"traffic_enforcement_mode"`
-			ControllerLogMaxMB          *int     `json:"controller_log_max_mb"`
-			ControllerLogBackups        *int     `json:"controller_log_backups"`
-			ControllerAutoUpdate        *bool    `json:"controller_auto_update_enabled"`
-			ServerDefaultMTUMode        *string  `json:"server_default_mtu_mode"`
-			ServerDefaultBBREnabled     *bool    `json:"server_default_bbr_enabled"`
-			ServerDefaultTimeCorrection *string  `json:"server_default_time_correction_mode"`
-			TimeCheckNTPServers         []string `json:"time_check_ntp_servers"`
+			ControllerURL               *string                        `json:"controller_url"`
+			BasePath                    *string                        `json:"base_path"`
+			CertificateAutoMatch        *bool                          `json:"certificate_auto_match_enabled"`
+			CertificatePreference       *string                        `json:"certificate_default_preference"`
+			CertificateAutoIssueCA      *string                        `json:"certificate_auto_issue_acme_ca"`
+			CertificateAutoIssueEAB     *int64                         `json:"certificate_auto_issue_google_eab_credential_id"`
+			SubscriptionAgePolicy       *string                        `json:"subscription_age_policy"`
+			SubscriptionAuditPolicy     *model.SubscriptionAuditPolicy `json:"subscription_audit_policy"`
+			TrafficTimezone             *string                        `json:"traffic_timezone"`
+			TrafficEnforcementMode      *string                        `json:"traffic_enforcement_mode"`
+			ControllerLogMaxMB          *int                           `json:"controller_log_max_mb"`
+			ControllerLogBackups        *int                           `json:"controller_log_backups"`
+			ControllerAutoUpdate        *bool                          `json:"controller_auto_update_enabled"`
+			ServerDefaultMTUMode        *string                        `json:"server_default_mtu_mode"`
+			ServerDefaultBBREnabled     *bool                          `json:"server_default_bbr_enabled"`
+			ServerDefaultTimeCorrection *string                        `json:"server_default_time_correction_mode"`
+			TimeCheckNTPServers         []string                       `json:"time_check_ntp_servers"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -565,6 +570,22 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			changed = append(changed, settingSubscriptionAgePolicy)
+		}
+		if req.SubscriptionAuditPolicy != nil {
+			if err := store.ValidateSubscriptionAuditPolicy(*req.SubscriptionAuditPolicy); err != nil {
+				fail(w, err, http.StatusBadRequest)
+				return
+			}
+			raw, err := json.Marshal(req.SubscriptionAuditPolicy)
+			if err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), settingSubscriptionAuditPolicy, string(raw)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingSubscriptionAuditPolicy)
 		}
 		if req.TrafficTimezone != nil {
 			tz := strings.TrimSpace(*req.TrafficTimezone)
@@ -708,12 +729,18 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAuditPolicy: store.DefaultSubscriptionAuditPolicy(), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...)}
 	for key, value := range items {
-		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting {
+		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingSubscriptionAuditPolicy {
 			continue
 		}
 		out[key] = value
+	}
+	if raw := strings.TrimSpace(items[settingSubscriptionAuditPolicy]); raw != "" {
+		var policy model.SubscriptionAuditPolicy
+		if json.Unmarshal([]byte(raw), &policy) == nil && store.ValidateSubscriptionAuditPolicy(policy) == nil {
+			out[settingSubscriptionAuditPolicy] = policy
+		}
 	}
 	if raw := strings.TrimSpace(items[settingTimeCheckNTPServers]); raw != "" {
 		var servers []string
@@ -1488,11 +1515,14 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			err = addServers()
 		}
 		if err == nil {
-			var overview model.ConnectionAuditOverview
-			overview, err = s.store.ConnectionAuditOverview(ctx, intQuery(r, "window_hours", 24))
+			var connectionOverview model.ConnectionAuditOverview
+			var subscriptionOverview model.SubscriptionAuditOverview
+			var combinedOverview model.CombinedAuditOverview
+			connectionOverview, subscriptionOverview, combinedOverview, err = s.auditOverviewData(ctx, intQuery(r, "window_hours", 24))
 			if err == nil {
-				overview.GeoDatabase = s.geoIPStatus
-				out["connection_audit"] = overview
+				out["connection_audit"] = connectionOverview
+				out["subscription_audit"] = subscriptionOverview
+				out["audit_risk"] = combinedOverview
 			}
 		}
 	case "account":
@@ -1692,7 +1722,13 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("invalid session"), http.StatusUnauthorized)
 		return
 	}
-	if _, err := s.store.BumpSessionVersion(r.Context(), user.ID); err != nil {
+	token := currentSessionToken(r)
+	claims, ok := r.Context().Value(claimsKey).(security.TokenClaims)
+	if !ok || token == "" {
+		fail(w, errors.New("invalid session"), http.StatusUnauthorized)
+		return
+	}
+	if err := s.store.RevokeUserSession(r.Context(), user.ID, security.HashSecret(token), claims.Expiry); err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
@@ -1864,6 +1900,9 @@ func selfUserResponse(ctx context.Context, st *store.Store, user model.User, rol
 		"subscription_age_enabled":    user.SubscriptionAgeEnabled,
 		"subscription_age_public_key": user.SubscriptionAgePublicKey,
 		"subscription_age_policy":     normalizeSubscriptionAgePolicy(settings[settingSubscriptionAgePolicy]),
+		"subscription_suspended":      user.SubscriptionSuspended,
+		"subscription_suspended_at":   user.SubscriptionSuspendedAt,
+		"subscription_suspend_reason": user.SubscriptionSuspendReason,
 		"totp_enabled":                authentication.TOTPEnabled,
 		"passkey_count":               len(passkeys),
 	}
@@ -1908,6 +1947,18 @@ func (s *Server) auth(next http.HandlerFunc, min model.Role) http.HandlerFunc {
 				s.clearSessionCookies(w, r)
 			}
 			fail(w, err, 401)
+			return
+		}
+		revoked, err := s.store.UserSessionRevoked(r.Context(), security.HashSecret(token))
+		if err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
+		if revoked {
+			if cookieSession {
+				s.clearSessionCookies(w, r)
+			}
+			fail(w, errors.New("session revoked"), http.StatusUnauthorized)
 			return
 		}
 		if !hmac.Equal([]byte(claims.ClientBinding), []byte(s.sessionBindingForRequest(r))) {
@@ -7436,6 +7487,10 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 		s.userSubscriptionAge(w, r, id)
 		return
 	}
+	if len(parts) == 3 && parts[1] == "subscription-access" && parts[2] == "resume" {
+		s.resumeUserSubscriptionAccess(w, r, id)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		if id != 0 {
@@ -7719,6 +7774,10 @@ func (s *Server) userSubscriptionToken(w http.ResponseWriter, r *http.Request, i
 		}
 		if user.Status != "active" {
 			fail(w, errors.New("active user required for a one-time subscription link"), 400)
+			return
+		}
+		if user.SubscriptionSuspended {
+			fail(w, errors.New("subscription access is suspended"), http.StatusConflict)
 			return
 		}
 		token, err := security.RandomToken(24)
@@ -9567,6 +9626,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	format := core.NormalizeSubscriptionFormatForAPI(model.SubscriptionFormat(r.URL.Query().Get("format")))
 	if !core.IsSupportedSubscriptionFormat(format) {
+		s.recordRejectedSubscriptionPull(r, user.ID, string(format), nil, false, "unsupported subscription format")
 		fail(w, fmt.Errorf("unsupported subscription format %q", r.URL.Query().Get("format")), 400)
 		return
 	}
@@ -9577,6 +9637,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	ageRecipient, ageEncrypted, err := resolveSubscriptionAgeRecipient(r, *user, settings[settingSubscriptionAgePolicy], format)
 	if err != nil {
+		s.recordRejectedSubscriptionPull(r, user.ID, string(format), nil, false, err.Error())
 		status := http.StatusBadRequest
 		if errors.Is(err, errSubscriptionAgeKeyRequired) {
 			status = http.StatusPreconditionRequired
@@ -9588,13 +9649,19 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	var profile *model.SubscriptionProfile
 	profileID := int64Query(r, "profile_id", 0)
+	var requestedProfileID *int64
+	if profileID != 0 {
+		requestedProfileID = &profileID
+	}
 	if profileID != 0 {
 		profile, err = s.store.GetSubscriptionProfile(r.Context(), profileID)
 		if err != nil {
+			s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, "subscription profile not found")
 			fail(w, err, 404)
 			return
 		}
 		if !profile.Enabled {
+			s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, "subscription profile is disabled")
 			fail(w, errors.New("subscription profile is disabled"), 403)
 			return
 		}
@@ -9658,6 +9725,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		SSHServerHostKeys:            sshServerHostKeys,
 	})
 	if err != nil {
+		s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, "subscription generation failed")
 		fail(w, err, 500)
 		return
 	}
@@ -9665,11 +9733,13 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	if ageEncrypted {
 		body, err = encryptSubscriptionAgeArmor(sub, ageRecipient)
 		if err != nil {
+			s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, true, "subscription encryption failed")
 			fail(w, fmt.Errorf("encrypt subscription with age: %w", err), 500)
 			return
 		}
 	}
-	burned, err := s.store.ConsumeSubscriptionToken(r.Context(), user.ID, token)
+	event := s.newSubscriptionPullAudit(r, user.ID, string(format), requestedProfileID, ageEncrypted)
+	decision, err := s.store.AuthorizeSubscriptionPull(r.Context(), user.ID, token, event, s.subscriptionAuditPolicy(r.Context()))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			fail(w, errors.New("invalid subscription link"), 404)
@@ -9678,9 +9748,14 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	s.notifySubscriptionAuditRisk(r.Context(), *user, decision)
+	if !decision.Allowed {
+		fail(w, errors.New("subscription access suspended; contact an administrator"), http.StatusForbidden)
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
-	if burned {
+	if decision.Burned {
 		w.Header().Set("X-OBoard-Subscription", "burned-after-read")
 	}
 	if ageEncrypted {

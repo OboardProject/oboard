@@ -33,7 +33,7 @@ const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_tok
 
 const serverTelemetrySelectSQL = `select server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error from server_telemetry`
 
-const userSelectSQL = `select u.id,u.username,u.nickname,u.password_hash,coalesce(u.session_version,0),u.role,u.status,u.proxy_uuid,u.proxy_password,u.speed_limit_mbps,u.traffic_limit_bytes,u.traffic_used_bytes,u.traffic_reset_mode,u.traffic_reset_day,coalesce(u.subscription_token,''),coalesce(p.burn_after_read,0),p.burned_at,coalesce(a.enabled,0),coalesce(a.public_key,''),u.created_at,u.updated_at from users u left join subscription_token_policies p on p.user_id=u.id left join subscription_age_keys a on a.user_id=u.id`
+const userSelectSQL = `select u.id,u.username,u.nickname,u.password_hash,coalesce(u.session_version,0),u.role,u.status,u.proxy_uuid,u.proxy_password,u.speed_limit_mbps,u.traffic_limit_bytes,u.traffic_used_bytes,u.traffic_reset_mode,u.traffic_reset_day,coalesce(u.subscription_token,''),coalesce(p.burn_after_read,0),p.burned_at,coalesce(a.enabled,0),coalesce(a.public_key,''),coalesce(sa.suspended,0),sa.suspended_at,coalesce(sa.suspension_reason,''),u.created_at,u.updated_at from users u left join subscription_token_policies p on p.user_id=u.id left join subscription_age_keys a on a.user_id=u.id left join subscription_access_states sa on sa.user_id=u.id`
 
 func Open(path string) (*Store, error) {
 	return open(path, false)
@@ -140,9 +140,12 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists subscription_token_policies (user_id integer primary key references users(id) on delete cascade, burn_after_read integer not null default 0, burned_at text, updated_at text not null)`,
 		`create table if not exists subscription_one_time_tokens (token text primary key, user_id integer not null references users(id) on delete cascade, created_at text not null)`,
 		`create table if not exists subscription_age_keys (user_id integer primary key references users(id) on delete cascade, enabled integer not null default 0, public_key text not null default '', updated_at text not null)`,
+		`create table if not exists subscription_pull_audits (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, source_ip text not null, source_country_code text not null default '', source_country text not null default '', source_province text not null default '', source_city text not null default '', source_isp text not null default '', geo_database_revision text not null default '', user_agent text not null default '', client_name text not null default '', format text not null default '', profile_id integer, age_encrypted integer not null default 0, token_kind text not null default '', outcome text not null, reason text not null default '', risk_eligible integer not null default 0, requested_at text not null, created_at text not null)`,
+		`create table if not exists subscription_access_states (user_id integer primary key references users(id) on delete cascade, suspended integer not null default 0, suspended_at text, suspension_reason text not null default '', trigger_audit_id integer references subscription_pull_audits(id) on delete set null, trigger_snapshot_json text not null default '', evaluation_started_at text not null, resumed_at text, resumed_by integer references users(id) on delete set null, updated_at text not null)`,
 		`create table if not exists user_authentication (user_id integer primary key references users(id) on delete cascade, totp_enabled integer not null default 0, totp_secret_encrypted text not null default '', recovery_code_hashes_json text not null default '[]', totp_last_used_step integer not null default -1, webauthn_user_handle text unique, updated_at text not null)`,
 		`create table if not exists passkey_credentials (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, name text not null, credential_id text not null unique, credential_json text not null, created_at text not null, last_used_at text)`,
 		`create table if not exists auth_challenges (token_hash text primary key, kind text not null, user_id integer references users(id) on delete cascade, data_encrypted text not null, expires_at text not null, created_at text not null)`,
+		`create table if not exists revoked_user_sessions (token_hash text primary key, user_id integer not null references users(id) on delete cascade, expires_at text not null, created_at text not null)`,
 		`create table if not exists ssh_server_host_keys (server_id integer primary key references servers(id) on delete cascade, public_key text not null, fingerprint text not null, config_version integer not null, updated_at text not null)`,
 		`create table if not exists ssh_password_deployments (server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, password_digest text not null, config_version integer not null, updated_at text not null, primary key(server_id,user_id))`,
 		`create table if not exists servers (id integer primary key autoincrement, name text not null, agent_id text unique, agent_token_hash text, chain_secret text not null, enrollment_hash text, enrollment_expires_at text, entry_address text, public_ipv4 text not null default '', public_ipv6 text not null default '', region_code text not null default '', detected_region_code text not null default '', region_mode text not null default 'auto', entry_ip_mode text not null default 'auto', listen_ip text, ip_stack text not null default 'auto', udp_inbound_mode text not null default 'allow', mtu_mode text not null default 'detect', mtu_value integer not null default 0, mtu_probe_host text not null default '1.1.1.1', mtu_probe_port integer not null default 443, mtu_overhead_bytes integer not null default 0, bbr_enabled integer not null default 0, port_range_start integer not null default 10000, port_range_end integer not null default 20000, status text not null, os text, distro_id text not null default '', distro_version text not null default '', distro_name text not null default '', libc text not null default '', service_manager text not null default '', package_manager text not null default '', arch text, kernel text, cpu text, memory_bytes integer not null default 0, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, agent_memory_bytes integer not null default 0, disk_bytes integer not null default 0, agent_version text not null default '', agent_build text not null default '', sing_box_version text, connection_audit_enabled integer not null default 0, last_seen_at text, created_at text not null, updated_at text not null)`,
@@ -223,8 +226,12 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_subscription_assignments_user on subscription_assignments(user_id, enabled)`,
 		`create index if not exists idx_subscription_assignments_profile on subscription_assignments(profile_id, enabled)`,
 		`create index if not exists idx_subscription_one_time_tokens_user on subscription_one_time_tokens(user_id)`,
+		`create index if not exists idx_subscription_pull_audits_user_time on subscription_pull_audits(user_id,requested_at desc)`,
+		`create index if not exists idx_subscription_pull_audits_source_time on subscription_pull_audits(source_ip,requested_at desc)`,
+		`create index if not exists idx_subscription_pull_audits_time on subscription_pull_audits(requested_at desc)`,
 		`create index if not exists idx_passkey_credentials_user on passkey_credentials(user_id)`,
 		`create index if not exists idx_auth_challenges_expiry on auth_challenges(expires_at)`,
+		`create index if not exists idx_revoked_user_sessions_expiry on revoked_user_sessions(expires_at)`,
 		`create index if not exists idx_dns_credential_zones_credential on dns_credential_zones(credential_id, zone_name)`,
 		`create index if not exists idx_dns_credential_zones_server on dns_credential_zones(server_id)`,
 		`create index if not exists idx_proxy_path_port_allocations_server on proxy_path_port_allocations(server_id)`,
@@ -1171,12 +1178,16 @@ func scanUsers(rows *sql.Rows) ([]model.User, error) {
 		var burnAfterRead int
 		var burnedAt sql.NullString
 		var ageEnabled int
-		if err := rows.Scan(&u.ID, &u.Username, &u.Nickname, &u.PasswordHash, &u.SessionVersion, &u.Role, &u.Status, &u.ProxyUUID, &u.ProxyPassword, &u.SpeedLimitMbps, &u.TrafficLimitBytes, &u.TrafficUsedBytes, &u.TrafficResetMode, &u.TrafficResetDay, &u.SubscriptionToken, &burnAfterRead, &burnedAt, &ageEnabled, &u.SubscriptionAgePublicKey, &ca, &ua); err != nil {
+		var suspended int
+		var suspendedAt sql.NullString
+		if err := rows.Scan(&u.ID, &u.Username, &u.Nickname, &u.PasswordHash, &u.SessionVersion, &u.Role, &u.Status, &u.ProxyUUID, &u.ProxyPassword, &u.SpeedLimitMbps, &u.TrafficLimitBytes, &u.TrafficUsedBytes, &u.TrafficResetMode, &u.TrafficResetDay, &u.SubscriptionToken, &burnAfterRead, &burnedAt, &ageEnabled, &u.SubscriptionAgePublicKey, &suspended, &suspendedAt, &u.SubscriptionSuspendReason, &ca, &ua); err != nil {
 			return nil, err
 		}
 		u.SubscriptionBurnAfterRead = burnAfterRead != 0
 		u.SubscriptionBurnedAt = parseNullTime(burnedAt)
 		u.SubscriptionAgeEnabled = ageEnabled != 0
+		u.SubscriptionSuspended = suspended != 0
+		u.SubscriptionSuspendedAt = parseNullTime(suspendedAt)
 		u.TrafficResetMode = normalizeTrafficResetMode(u.TrafficResetMode)
 		u.TrafficResetDay = normalizeTrafficResetDay(u.TrafficResetDay)
 		u.CreatedAt = parseTime(ca)

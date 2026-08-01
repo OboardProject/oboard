@@ -233,6 +233,7 @@ type TokenClaims struct {
 	Role           string
 	SessionVersion int64
 	ClientBinding  string
+	SessionID      string
 	Expiry         time.Time
 }
 
@@ -243,9 +244,19 @@ func SignSession(secret string, claims TokenClaims) (string, error) {
 	if claims.ClientBinding == "" {
 		return "", errors.New("empty client binding")
 	}
-	// Payload includes session version so password changes can revoke tokens and
-	// a client binding so callers can reject a different user agent.
-	payload := fmt.Sprintf("%d|%s|%d|%s|%d", claims.Subject, claims.Role, claims.SessionVersion, claims.ClientBinding, claims.Expiry.Unix())
+	if claims.SessionID == "" {
+		var err error
+		claims.SessionID, err = RandomToken(16)
+		if err != nil {
+			return "", err
+		}
+	}
+	if strings.Contains(claims.SessionID, "|") {
+		return "", errors.New("invalid session ID")
+	}
+	// Session version supports account-wide revocation while the random session
+	// ID keeps separate logins independently revocable.
+	payload := fmt.Sprintf("%d|%s|%d|%s|%s|%d", claims.Subject, claims.Role, claims.SessionVersion, claims.ClientBinding, claims.SessionID, claims.Expiry.Unix())
 	sig := sign(secret, payload)
 	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + sig, nil
 }
@@ -264,7 +275,7 @@ func VerifySession(secret, token string) (TokenClaims, error) {
 		return TokenClaims{}, errors.New("invalid signature")
 	}
 	fields := strings.Split(payload, "|")
-	if len(fields) != 5 {
+	if len(fields) != 6 {
 		return TokenClaims{}, errors.New("invalid claims")
 	}
 	subject, err := strconv.ParseInt(fields[0], 10, 64)
@@ -278,11 +289,14 @@ func VerifySession(secret, token string) (TokenClaims, error) {
 	if fields[3] == "" {
 		return TokenClaims{}, errors.New("invalid client binding")
 	}
-	expiryUnix, err := strconv.ParseInt(fields[4], 10, 64)
+	if fields[4] == "" {
+		return TokenClaims{}, errors.New("invalid session ID")
+	}
+	expiryUnix, err := strconv.ParseInt(fields[5], 10, 64)
 	if err != nil {
 		return TokenClaims{}, err
 	}
-	claims := TokenClaims{Subject: subject, Role: fields[1], SessionVersion: version, ClientBinding: fields[3], Expiry: time.Unix(expiryUnix, 0)}
+	claims := TokenClaims{Subject: subject, Role: fields[1], SessionVersion: version, ClientBinding: fields[3], SessionID: fields[4], Expiry: time.Unix(expiryUnix, 0)}
 	if time.Now().After(claims.Expiry) {
 		return TokenClaims{}, errors.New("expired token")
 	}

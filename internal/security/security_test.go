@@ -42,6 +42,16 @@ func TestSessionToken(t *testing.T) {
 	if claims.Subject != 7 || claims.Role != "admin" || claims.ClientBinding != "ua-binding" {
 		t.Fatalf("bad claims: %#v", claims)
 	}
+	if claims.SessionID == "" {
+		t.Fatal("missing session ID")
+	}
+	second, err := SignSession("secret", TokenClaims{Subject: 7, Role: "admin", ClientBinding: "ua-binding", Expiry: claims.Expiry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == token {
+		t.Fatal("separate logins produced the same session token")
+	}
 	if _, err := VerifySession("other", token); err == nil {
 		t.Fatal("wrong secret should fail")
 	}

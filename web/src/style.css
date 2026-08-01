@@ -8902,6 +8902,9 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .audit-user-table td small,
 .audit-user-table td span:not(.audit-risk-pill) { margin-top: 3px; color: var(--muted); font-size: 11px; }
 
+.audit-row-actions { display: flex; gap: 6px; align-items: center; }
+.audit-row-actions button { min-width: 54px; }
+
 .audit-risk-pill {
   display: inline-flex !important;
   width: max-content;
@@ -8924,6 +8927,18 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .audit-detail-risk { display: flex; align-items: flex-start; gap: 14px; }
 .audit-detail-risk > div { display: flex; flex-wrap: wrap; gap: 6px; }
 .audit-detail-risk > div span { padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 11px; }
+
+.audit-window-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-block: 1px solid var(--border);
+}
+
+.audit-window-grid > div { display: grid; gap: 4px; padding: 13px 16px; }
+.audit-window-grid > div:first-child { border-right: 1px solid var(--border); }
+.audit-window-grid span,
+.audit-window-grid small { color: var(--muted); font-size: 11px; }
+.audit-window-grid strong { color: var(--text-strong); font-size: 13px; }
 
 .audit-dimension-grid {
   display: grid;
@@ -8952,6 +8967,13 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .audit-recent-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .audit-recent-list strong { color: var(--text-strong); }
 .audit-recent-list time { color: var(--muted); text-align: right; }
+.subscription-audit-recent > div { grid-template-columns: minmax(115px, .8fr) minmax(100px, .8fr) minmax(120px, 1fr) minmax(90px, .7fr) minmax(85px, .7fr) 130px; }
+
+.subscription-audit-settings {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
 
 .audit-log-intro {
   display: flex;
@@ -9123,6 +9145,8 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .audit-console-toolbar .log-search { grid-column: 1 / -1; }
   .audit-dimension-grid { grid-template-columns: 1fr; }
   .audit-detail-risk { display: grid; }
+  .audit-window-grid { grid-template-columns: 1fr; }
+  .audit-window-grid > div:first-child { border-right: 0; border-bottom: 1px solid var(--border); }
   .audit-recent-list > div { grid-template-columns: minmax(100px, 1fr) 42px minmax(150px, 1.4fr); }
   .audit-recent-list > div > :nth-child(n+4) { display: none; }
   .audit-risk-events > div:not(.audit-recent-head) { grid-template-columns: 76px minmax(0, 1fr); }
