@@ -6738,6 +6738,12 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     gap: 8px;
     border-radius: var(--radius-lg);
   }
+  .topbar:has(.topbar-apply) {
+    grid-template-areas:
+      "menu utility utility refresh"
+      "title title title title"
+      "apply apply apply apply";
+  }
   .topbar:has(.deploy-status-pill) {
     grid-template-areas:
       "menu utility utility refresh"
@@ -6760,6 +6766,11 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   }
   .topbar.topbar-quiet {
     grid-template-areas: "menu utility utility refresh";
+  }
+  .topbar.topbar-quiet:has(.topbar-apply) {
+    grid-template-areas:
+      "menu utility utility refresh"
+      "apply apply apply apply";
   }
   .topbar.topbar-quiet:has(.deploy-status-pill) {
     grid-template-areas:
@@ -6837,6 +6848,55 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .section-actions { width: 100%; justify-content: space-between; }
   .section-actions > button { flex: 1 1 auto; }
   .view-mode-toggle { flex: 0 0 auto; }
+  .server-management-panel {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .server-management-panel .section-toolbar > div:first-child {
+    width: 100%;
+    min-width: 0;
+  }
+  .server-management-panel .live-refresh-status {
+    max-width: 100%;
+    flex-wrap: wrap;
+    row-gap: 2px;
+    white-space: normal;
+  }
+  .server-management-panel .section-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    gap: 8px;
+  }
+  .server-management-panel .section-actions > button {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 8px;
+    flex: none;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .server-management-panel .section-actions > button:only-of-type {
+    grid-column: 1 / -1;
+  }
+  .server-management-panel .view-mode-toggle {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+  .server-management-panel .view-mode-toggle::before {
+    width: 44px;
+  }
+  .server-management-panel .view-mode-toggle:has(button:nth-child(2).active)::before {
+    transform: translateX(48px);
+  }
+  .server-management-panel .server-grid,
+  .server-management-panel .server-list,
+  .server-management-panel .server-card {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
   .server-grid { grid-template-columns: 1fr; }
   .server-meta { grid-template-columns: 1fr; }
   .panel-body,

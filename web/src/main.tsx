@@ -4415,7 +4415,7 @@ function Servers({ data, client, load, loading, notify }: any) {
   }
   const role: Role = data.session?.role || 'viewer'
   const enrolledCount = servers.filter(s => String(s.agent_id || '').trim()).length
-  return <section className="panel">
+  return <section className="panel server-management-panel">
     <div className="panel-body">
     <div className="section-toolbar">
       <div>
