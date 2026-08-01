@@ -1577,7 +1577,7 @@ function App() {
       const version = deployment.config_version ? `版本 ${deployment.config_version}` : '配置'
       const summary = deployment.summary || {}
       const total = Number(summary.total || 0)
-      showToast(setToast, total > 0 ? `${version} 已下发 · ${total} 个子任务，请在任务中心查看进度` : `${version} 已下发，请在任务中心查看进度`, 'success')
+      showToast(setToast, total > 0 ? `${version} 已下发 · 已为 ${total} 台服务器创建任务，请在任务中心查看进度` : `${version} 已下发，请在任务中心查看进度`, 'success')
     } catch (e: any) {
       showToast(setToast, e.message)
     }
@@ -4244,18 +4244,17 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 
   const groupedTasks = groupTasksForTimeline(data.agent_tasks || [])
   const recentTasks = groupedTasks.slice(0, 6).map((g: TaskGroup) => {
-    const summaryStatus = taskStatusSummary(g.tasks)
+    const summaryStatus = serverTaskStatusSummary(g.tasks)
     const status = deploymentStatusFromSummary(summaryStatus)
     const isSuccess = status === 'succeeded'
     const isRunning = status === 'running' || status === 'pending'
-    const serverCount = new Set(g.tasks.map((t: any) => t.server_id)).size
     const createdAt = String(g.tasks.map((t: any) => t.created_at).filter(Boolean).sort()[0] || '')
     return {
       id: g.id,
       title: g.title,
       subtitle: g.kind === 'single'
         ? (g.tasks[0]?.server_id ? taskServerLabel(data, g.tasks[0].server_id) : 'Agent 任务')
-        : `${serverCount} 台服务器 · ${g.tasks.length} 项`,
+        : `共 ${summaryStatus.total} 个任务`,
       status: isRunning ? 'running' : isSuccess ? 'success' : 'failed',
       createdAt,
     }
@@ -11810,7 +11809,6 @@ function groupTasksForTimeline(rows: any[]): TaskGroup[] {
       kind: tasks.length > 1 || serverCount > 1 ? 'batch' : 'single',
       id: `batch-${key}`,
       title: batchTitleForType(type),
-      subtitle: serverCount > 1 ? `${serverCount} 台服务器` : undefined,
       batchType: type,
       tasks,
       updated_at: maxTaskTime(tasks),
@@ -11857,10 +11855,9 @@ function taskServerLabel(data: any, serverID: number) {
 function TaskGroupCard({ group, data }: { group: TaskGroup; data: any }) {
   const [expanded, setExpanded] = useState(false)
   const [openServerID, setOpenServerID] = useState<number | null>(null)
-  const summary = taskStatusSummary(group.tasks)
+  const summary = serverTaskStatusSummary(group.tasks)
   const status = deploymentStatusFromSummary(summary)
   const serverIDs = Array.from(new Set(group.tasks.map(t => Number(t.server_id || 0)))).filter(Boolean).sort((a, b) => a - b)
-  const skipped = group.tasks.filter(t => parseJSONLoose(t.result_json)?.skipped || parseJSONLoose(t.payload_json)?.skipped).length
   const createdAt = String(group.tasks.map(t => t.created_at).filter(Boolean).sort()[0] || '')
 
   const byServer = new Map<number, any[]>()
@@ -11872,7 +11869,7 @@ function TaskGroupCard({ group, data }: { group: TaskGroup; data: any }) {
   const metaBits = [
     group.subtitle,
     serverIDs.length ? `${serverIDs.length} 台服务器` : '',
-    `${group.tasks.length} 项任务`,
+    `${summary.total} 项任务`,
   ].filter(Boolean)
 
   // Single-server single-task groups can open details directly without an extra empty layer.
@@ -11889,7 +11886,7 @@ function TaskGroupCard({ group, data }: { group: TaskGroup; data: any }) {
         <span className="task-stat"><em>{summary.pending}</em> 等待</span>
         <span className="task-stat"><em>{summary.running}</em> 执行中</span>
         <span className={`task-stat ${summary.failed ? 'is-fail' : ''}`}><em>{summary.failed}</em> 失败</span>
-        {skipped ? <span className="task-stat"><em>{skipped}</em> 跳过</span> : null}
+        {summary.skipped ? <span className="task-stat"><em>{summary.skipped}</em> 跳过</span> : null}
       </div>
       <div className="task-group-head-right">
         {cell(status, 'status')}
@@ -11916,7 +11913,7 @@ function TaskGroupCard({ group, data }: { group: TaskGroup; data: any }) {
                 <button type="button" className="task-server-toggle" onClick={() => setOpenServerID(open ? null : serverID)} aria-expanded={open}>
                   <div className="task-group-title-block">
                     <strong>{taskServerLabel(data, serverID)}</strong>
-                    <span>{tasks.length} 项 · 成功 {serverSummary.succeeded} · 失败 {serverSummary.failed} · 进行中 {serverSummary.pending + serverSummary.running}</span>
+                    <span>{tasks.length > 1 ? `${tasks.length} 个子任务 · ` : ''}成功 {serverSummary.succeeded} · 失败 {serverSummary.failed} · 进行中 {serverSummary.pending + serverSummary.running}</span>
                   </div>
                   <div className="task-group-head-right">
                     {cell(serverStatus, 'status')}
@@ -12015,6 +12012,33 @@ function taskStatusSummary(tasks: any[]) {
     else if (status === 'running') out.running++
     else if (status === 'succeeded') out.succeeded++
     else if (status.includes('fail') || status === 'timeout') out.failed++
+  })
+  return out
+}
+
+function serverTaskBuckets(tasks: any[]) {
+  const buckets = new Map<string, any[]>()
+  tasks.forEach((task, index) => {
+    const serverID = Number(task.server_id || 0)
+    const key = serverID > 0 ? `server-${serverID}` : `task-${task.id || index}`
+    buckets.set(key, [...(buckets.get(key) || []), task])
+  })
+  return Array.from(buckets.values())
+}
+
+function serverTaskStatusSummary(tasks: any[]) {
+  const out = { total: 0, pending: 0, running: 0, succeeded: 0, failed: 0, skipped: 0 }
+  serverTaskBuckets(tasks).forEach(serverTasks => {
+    out.total++
+    if (serverTasks.every(task => parseJSONLoose(task.result_json)?.skipped || parseJSONLoose(task.payload_json)?.skipped)) {
+      out.skipped++
+      return
+    }
+    const status = deploymentStatusFromSummary(taskStatusSummary(serverTasks))
+    if (status === 'failed' || status === 'partial_failed') out.failed++
+    else if (status === 'running') out.running++
+    else if (status === 'pending') out.pending++
+    else out.succeeded++
   })
   return out
 }
