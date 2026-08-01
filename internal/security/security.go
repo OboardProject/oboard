@@ -112,6 +112,13 @@ func HashSecret(secret string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func HashAPISecret(masterSecret, token string) string {
+	mac := hmac.New(sha256.New, []byte(masterSecret))
+	_, _ = mac.Write([]byte("oboard-api-token-v1\x00"))
+	_, _ = mac.Write([]byte(token))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 func EncryptSecret(masterSecret, purpose, plaintext string) (string, error) {
 	if masterSecret == "" {
 		return "", errors.New("empty encryption secret")

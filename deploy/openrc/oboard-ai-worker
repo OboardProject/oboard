@@ -1,0 +1,24 @@
+#!/sbin/openrc-run
+
+description="OBoard AI Worker"
+if [ -f /opt/oboard/config/controller.env ]; then
+	set -a
+	. /opt/oboard/config/controller.env
+	set +a
+fi
+command="/opt/oboard/oboard-ai-worker"
+command_args="--poll-interval 10s"
+command_user="oboard:oboard"
+pidfile="/run/${RC_SVCNAME}.pid"
+supervisor="supervise-daemon"
+respawn_delay=5
+output_log="/opt/oboard/data/logs/${RC_SVCNAME}.log"
+error_log="/opt/oboard/data/logs/${RC_SVCNAME}.log"
+
+depend() {
+	need net oboard-controller
+}
+
+start_pre() {
+	checkpath -d -m 0750 -o oboard:oboard /run/oboard/ai-worker /opt/oboard/data/logs
+}

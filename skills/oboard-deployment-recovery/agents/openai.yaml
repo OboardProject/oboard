@@ -1,0 +1,4 @@
+interface:
+  display_name: "OBoard Deployment Recovery"
+  short_description: "Diagnose and recover OBoard deployments"
+  default_prompt: "Use $oboard-deployment-recovery to inspect deployment state, plan recovery, and require Controller approval before applying changes."

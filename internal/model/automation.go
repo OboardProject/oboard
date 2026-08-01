@@ -1,0 +1,285 @@
+package model
+
+import (
+	"encoding/json"
+	"time"
+)
+
+type APIPrincipalType string
+
+const (
+	APIPrincipalServiceAccount APIPrincipalType = "service_account"
+	APIPrincipalOAuth          APIPrincipalType = "oauth"
+	APIPrincipalInternalAI     APIPrincipalType = "internal_ai"
+)
+
+type APIPrincipal struct {
+	ID                 string           `json:"id"`
+	OwnerUserID        *int64           `json:"owner_user_id,omitempty"`
+	Name               string           `json:"name"`
+	Type               APIPrincipalType `json:"type"`
+	Enabled            bool             `json:"enabled"`
+	Scopes             []string         `json:"scopes"`
+	ResourceFilter     json.RawMessage  `json:"resource_filter"`
+	AllowedCIDRs       []string         `json:"allowed_cidrs"`
+	RateLimitPerMinute int              `json:"rate_limit_per_minute"`
+	MaxConcurrency     int              `json:"max_concurrency"`
+	ExpiresAt          *time.Time       `json:"expires_at,omitempty"`
+	LastUsedAt         *time.Time       `json:"last_used_at,omitempty"`
+	CreatedAt          time.Time        `json:"created_at"`
+	UpdatedAt          time.Time        `json:"updated_at"`
+}
+
+type APIToken struct {
+	ID          string     `json:"id"`
+	PrincipalID string     `json:"principal_id"`
+	TokenHash   string     `json:"-"`
+	Prefix      string     `json:"prefix"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+type ApprovalMode string
+
+const (
+	ApprovalDenied    ApprovalMode = "denied"
+	ApprovalRequired  ApprovalMode = "required"
+	ApprovalAutomatic ApprovalMode = "automatic"
+)
+
+type ApprovalPolicy struct {
+	ID             string          `json:"id"`
+	PrincipalID    string          `json:"principal_id"`
+	Capability     string          `json:"capability"`
+	ResourceFilter json.RawMessage `json:"resource_filter"`
+	Mode           ApprovalMode    `json:"mode"`
+	AllowRisk4     bool            `json:"allow_risk4"`
+	ExpiresAt      *time.Time      `json:"expires_at,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
+type ChangesetStatus string
+
+const (
+	ChangesetDraft            ChangesetStatus = "draft"
+	ChangesetValidated        ChangesetStatus = "validated"
+	ChangesetAwaitingApproval ChangesetStatus = "awaiting_approval"
+	ChangesetApproved         ChangesetStatus = "approved"
+	ChangesetApplying         ChangesetStatus = "applying"
+	ChangesetSucceeded        ChangesetStatus = "succeeded"
+	ChangesetFailed           ChangesetStatus = "failed"
+	ChangesetExpired          ChangesetStatus = "expired"
+	ChangesetSuperseded       ChangesetStatus = "superseded"
+	ChangesetRollbackFailed   ChangesetStatus = "rollback_failed"
+)
+
+type AutomationOperation struct {
+	ID           string          `json:"id"`
+	ChangesetID  string          `json:"changeset_id"`
+	Position     int             `json:"position"`
+	Capability   string          `json:"capability"`
+	Input        json.RawMessage `json:"input"`
+	SecretRefs   []string        `json:"secret_refs,omitempty"`
+	ResourceRefs json.RawMessage `json:"resource_refs"`
+	RiskClass    int             `json:"risk_class"`
+	Status       string          `json:"status"`
+	Result       json.RawMessage `json:"result,omitempty"`
+	ErrorCode    string          `json:"error_code,omitempty"`
+	ErrorMessage string          `json:"error_message,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+	CompletedAt  *time.Time      `json:"completed_at,omitempty"`
+}
+
+type AutomationChangeset struct {
+	ID             string                `json:"id"`
+	PrincipalID    string                `json:"principal_id"`
+	ActorUserID    *int64                `json:"actor_user_id,omitempty"`
+	Status         ChangesetStatus       `json:"status"`
+	Reason         string                `json:"reason"`
+	IdempotencyKey string                `json:"idempotency_key"`
+	BaseRevisions  json.RawMessage       `json:"base_revisions"`
+	PlanHash       string                `json:"plan_hash"`
+	RiskClass      int                   `json:"risk_class"`
+	AutoApply      bool                  `json:"auto_apply"`
+	Validation     json.RawMessage       `json:"validation"`
+	BlastRadius    json.RawMessage       `json:"blast_radius"`
+	Result         json.RawMessage       `json:"result,omitempty"`
+	ExpiresAt      time.Time             `json:"expires_at"`
+	CreatedAt      time.Time             `json:"created_at"`
+	UpdatedAt      time.Time             `json:"updated_at"`
+	ValidatedAt    *time.Time            `json:"validated_at,omitempty"`
+	ApprovedAt     *time.Time            `json:"approved_at,omitempty"`
+	AppliedAt      *time.Time            `json:"applied_at,omitempty"`
+	CompletedAt    *time.Time            `json:"completed_at,omitempty"`
+	Operations     []AutomationOperation `json:"operations"`
+}
+
+type AutomationApproval struct {
+	ID           string    `json:"id"`
+	ChangesetID  string    `json:"changeset_id"`
+	ApproverID   int64     `json:"approver_id"`
+	Decision     string    `json:"decision"`
+	PlanHash     string    `json:"plan_hash"`
+	Comment      string    `json:"comment,omitempty"`
+	ApprovedRisk int       `json:"approved_risk"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type ToolCallAudit struct {
+	ID                 string          `json:"id"`
+	PrincipalID        string          `json:"principal_id"`
+	ClientName         string          `json:"client_name"`
+	ModelProvider      string          `json:"model_provider,omitempty"`
+	Capability         string          `json:"capability"`
+	Scope              string          `json:"scope,omitempty"`
+	DataClassification string          `json:"data_classification"`
+	AffectedResources  json.RawMessage `json:"affected_resources"`
+	ApprovalID         string          `json:"approval_id,omitempty"`
+	RequestID          string          `json:"request_id"`
+	ArgumentsHash      string          `json:"arguments_hash"`
+	Result             string          `json:"result"`
+	SourceIP           string          `json:"source_ip"`
+	CreatedAt          time.Time       `json:"created_at"`
+}
+
+type OAuthClient struct {
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	RedirectURIs   []string        `json:"redirect_uris"`
+	AllowedScopes  []string        `json:"allowed_scopes"`
+	ClientMetadata json.RawMessage `json:"client_metadata"`
+	Enabled        bool            `json:"enabled"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
+type OAuthAuthorizationCode struct {
+	CodeHash      string
+	ClientID      string
+	UserID        int64
+	PrincipalID   string
+	RedirectURI   string
+	Scopes        []string
+	Resource      string
+	CodeChallenge string
+	ExpiresAt     time.Time
+	CreatedAt     time.Time
+}
+
+type OAuthToken struct {
+	TokenHash   string
+	FamilyID    string
+	PrincipalID string
+	ClientID    string
+	UserID      int64
+	Scopes      []string
+	Resource    string
+	ExpiresAt   time.Time
+	ConsumedAt  *time.Time
+	RevokedAt   *time.Time
+	CreatedAt   time.Time
+}
+
+type AIProvider struct {
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	BaseURL             string     `json:"base_url"`
+	Model               string     `json:"model"`
+	Enabled             bool       `json:"enabled"`
+	AllowRawAudit       bool       `json:"allow_raw_audit"`
+	DailyTokenLimit     int64      `json:"daily_token_limit"`
+	HasCredential       bool       `json:"has_credential"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	LastUsedAt          *time.Time `json:"last_used_at,omitempty"`
+	CredentialEncrypted string     `json:"-"`
+}
+
+type AIAnalysisJob struct {
+	ID           string          `json:"id"`
+	Kind         string          `json:"kind"`
+	IncidentID   string          `json:"incident_id,omitempty"`
+	ProviderID   string          `json:"provider_id"`
+	Fingerprint  string          `json:"fingerprint"`
+	Status       string          `json:"status"`
+	Input        json.RawMessage `json:"input"`
+	Output       json.RawMessage `json:"output,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	Attempts     int             `json:"attempts"`
+	InputTokens  int64           `json:"input_tokens"`
+	OutputTokens int64           `json:"output_tokens"`
+	LeaseOwner   string          `json:"-"`
+	LeaseUntil   *time.Time      `json:"-"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+	CompletedAt  *time.Time      `json:"completed_at,omitempty"`
+}
+
+type AIFinding struct {
+	ID                 string    `json:"id"`
+	JobID              string    `json:"job_id"`
+	IncidentID         string    `json:"incident_id"`
+	Classification     string    `json:"classification"`
+	Confidence         float64   `json:"confidence"`
+	EvidenceRefs       []string  `json:"evidence_refs"`
+	CounterEvidence    []string  `json:"counter_evidence"`
+	RecommendedActions []string  `json:"recommended_actions"`
+	Summary            string    `json:"summary"`
+	ProviderID         string    `json:"provider_id"`
+	Model              string    `json:"model"`
+	PromptVersion      string    `json:"prompt_version"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+type AuditFeatureSnapshot struct {
+	ID              string          `json:"id"`
+	UserID          int64           `json:"user_id"`
+	Window          string          `json:"window"`
+	WindowStartedAt time.Time       `json:"window_started_at"`
+	WindowEndedAt   time.Time       `json:"window_ended_at"`
+	FeatureVersion  int             `json:"feature_version"`
+	RuleScore       int             `json:"rule_score"`
+	AnomalyScore    *int            `json:"anomaly_score,omitempty"`
+	Features        json.RawMessage `json:"features"`
+	Fingerprint     string          `json:"fingerprint"`
+	CreatedAt       time.Time       `json:"created_at"`
+}
+
+type AuditIncident struct {
+	ID               string     `json:"id"`
+	UserID           int64      `json:"user_id"`
+	Status           string     `json:"status"`
+	Classification   string     `json:"classification,omitempty"`
+	Severity         string     `json:"severity"`
+	RuleScore        int        `json:"rule_score"`
+	AnomalyScore     *int       `json:"anomaly_score,omitempty"`
+	Fingerprint      string     `json:"fingerprint"`
+	LatestSnapshotID string     `json:"latest_snapshot_id"`
+	OpenedAt         time.Time  `json:"opened_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	ResolvedAt       *time.Time `json:"resolved_at,omitempty"`
+}
+
+type IncidentBundle struct {
+	IncidentID           string          `json:"incident_id"`
+	UserID               string          `json:"user_id"`
+	RuleScore            int             `json:"rule_score"`
+	AnomalyScore         *int            `json:"anomaly_score,omitempty"`
+	Features             json.RawMessage `json:"features"`
+	RepresentativeEvents []any           `json:"representative_events"`
+	HistoricalBaseline   json.RawMessage `json:"historical_baseline"`
+	KnownExemptions      []string        `json:"known_exemptions"`
+	PrivacyMode          string          `json:"privacy_mode"`
+}
+
+type OperatorFeedback struct {
+	ID          string    `json:"id"`
+	IncidentID  string    `json:"incident_id"`
+	ActorUserID int64     `json:"actor_user_id"`
+	Label       string    `json:"label"`
+	Comment     string    `json:"comment,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}

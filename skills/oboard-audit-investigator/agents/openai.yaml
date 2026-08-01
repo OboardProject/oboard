@@ -1,0 +1,4 @@
+interface:
+  display_name: "OBoard Audit Investigator"
+  short_description: "Investigate structured OBoard audit incidents"
+  default_prompt: "Use $oboard-audit-investigator to investigate an OBoard incident with masked evidence and propose only reversible actions."

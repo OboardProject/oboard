@@ -27,6 +27,7 @@ func (subscriptionAuditGeoResolver) Status() model.GeoDatabaseStatus {
 func (subscriptionAuditGeoResolver) Close() {}
 
 func TestSubscriptionPullAuditSuspendsBeforeResponseAndAdminResumes(t *testing.T) {
+	t.Setenv("OBOARD_TRUSTED_PROXY_CIDRS", "127.0.0.0/8")
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -37,9 +38,9 @@ func TestSubscriptionPullAuditSuspendsBeforeResponseAndAdminResumes(t *testing.T
 	srv.geoIPStatus = srv.geoIP.Status()
 	h := srv.Handler()
 
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminToken := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	created := request(t, h, http.MethodPost, "/api/v1/users", adminToken, map[string]any{"username": "subscription-user", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminToken := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	created := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "subscription-user", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	user := created["user"].(map[string]any)
 	userID := int64(user["id"].(float64))
 	subscriptionToken := user["subscription_token"].(string)
@@ -71,7 +72,7 @@ func TestSubscriptionPullAuditSuspendsBeforeResponseAndAdminResumes(t *testing.T
 		t.Fatalf("subscription suspension changed the wrong state: %#v", stored)
 	}
 
-	detail := request(t, h, http.MethodGet, "/api/v1/audit/subscriptions/users/"+itoa(userID), adminToken, nil, http.StatusOK)["subscription_audit_user"].(map[string]any)
+	detail := request(t, h, http.MethodGet, "/api/v2/ui/audit/subscriptions/users/"+itoa(userID), adminToken, nil, http.StatusOK)["subscription_audit_user"].(map[string]any)
 	recent := detail["recent"].([]any)
 	if len(recent) != 3 {
 		t.Fatalf("recent pulls=%d, want 3", len(recent))
@@ -80,7 +81,7 @@ func TestSubscriptionPullAuditSuspendsBeforeResponseAndAdminResumes(t *testing.T
 	if latest["outcome"] != "denied_risk" || latest["client_name"] != "Shadowrocket" || latest["user_agent"] != "Shadowrocket/2.2.0ignored" {
 		t.Fatalf("unexpected latest audit: %#v", latest)
 	}
-	overviews := request(t, h, http.MethodGet, "/api/v1/audit/risk-overview?window_hours=24", adminToken, nil, http.StatusOK)
+	overviews := request(t, h, http.MethodGet, "/api/v2/ui/audit/risk-overview?window_hours=24", adminToken, nil, http.StatusOK)
 	for _, key := range []string{"connection_audit", "subscription_audit", "audit_risk"} {
 		if overviews[key] == nil {
 			t.Fatalf("combined audit response missing %q: %#v", key, overviews)
@@ -99,8 +100,8 @@ func TestSubscriptionPullAuditSuspendsBeforeResponseAndAdminResumes(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	request(t, h, http.MethodPost, "/api/v1/users/"+itoa(userID)+"/subscription-access/resume", operatorToken, map[string]any{}, http.StatusForbidden)
-	request(t, h, http.MethodPost, "/api/v1/users/"+itoa(userID)+"/subscription-access/resume", adminToken, map[string]any{}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/users/"+itoa(userID)+"/subscription-access/resume", operatorToken, map[string]any{}, http.StatusForbidden)
+	request(t, h, http.MethodPost, "/api/v2/ui/users/"+itoa(userID)+"/subscription-access/resume", adminToken, map[string]any{}, http.StatusOK)
 	if got := fetch(subscriptionToken, "208.67.222.222", "sing-box/1.12"); got.Code != http.StatusOK {
 		t.Fatalf("resumed pull status=%d body=%s", got.Code, got.Body.String())
 	}
@@ -108,7 +109,7 @@ func TestSubscriptionPullAuditSuspendsBeforeResponseAndAdminResumes(t *testing.T
 	if got := fetch("invalid-token", "1.0.0.1", "attacker"); got.Code != http.StatusNotFound {
 		t.Fatalf("invalid token status=%d", got.Code)
 	}
-	detail = request(t, h, http.MethodGet, "/api/v1/audit/subscriptions/users/"+itoa(userID), adminToken, nil, http.StatusOK)["subscription_audit_user"].(map[string]any)
+	detail = request(t, h, http.MethodGet, "/api/v2/ui/audit/subscriptions/users/"+itoa(userID), adminToken, nil, http.StatusOK)["subscription_audit_user"].(map[string]any)
 	if len(detail["recent"].([]any)) != 4 {
 		t.Fatal("invalid token request entered a user audit")
 	}
@@ -121,13 +122,13 @@ func TestSubscriptionAuditPolicySettingsValidation(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminToken := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminToken := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 	policy := store.DefaultSubscriptionAuditPolicy()
-	settings := request(t, h, http.MethodPost, "/api/v1/settings", adminToken, map[string]any{"subscription_audit_policy": policy}, http.StatusOK)["settings"].(map[string]any)
+	settings := request(t, h, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"subscription_audit_policy": policy}, http.StatusOK)["settings"].(map[string]any)
 	if settings[settingSubscriptionAuditPolicy] == nil {
 		t.Fatal("subscription audit policy missing from public settings")
 	}
 	policy.Long.RegionLimit = 2
-	request(t, h, http.MethodPost, "/api/v1/settings", adminToken, map[string]any{"subscription_audit_policy": policy}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"subscription_audit_policy": policy}, http.StatusBadRequest)
 }

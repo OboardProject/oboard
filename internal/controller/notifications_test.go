@@ -111,14 +111,14 @@ func TestNotificationChannelCRUDAndTestValidation(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
 	// Reject incomplete create.
 	bad := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string]any{"name": "ops", "type": "telegram", "enabled": true, "events": "server_offline", "config_json": `{"bot_token":"","chat_id":""}`})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/notification-channels", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ui/notification-channels", bytes.NewReader(body))
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	h.ServeHTTP(bad, req)
@@ -126,7 +126,7 @@ func TestNotificationChannelCRUDAndTestValidation(t *testing.T) {
 		t.Fatalf("incomplete create status = %d body=%s", bad.Code, bad.Body.String())
 	}
 
-	created := request(t, h, http.MethodPost, "/api/v1/notification-channels", token, map[string]any{
+	created := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "ops-tg", "type": "telegram", "enabled": true, "events": "server_offline,server_online",
 		"config_json": `{"bot_token":"123:abc","chat_id":"-1001"}`,
 	}, http.StatusCreated)
@@ -137,7 +137,7 @@ func TestNotificationChannelCRUDAndTestValidation(t *testing.T) {
 
 	// Test endpoint should fail transport (invalid token) but route must exist and validate.
 	testRec := httptest.NewRecorder()
-	testReq := httptest.NewRequest(http.MethodPost, "/api/v1/notification-channels/"+itoa(id)+"/test", bytes.NewReader([]byte("{}")))
+	testReq := httptest.NewRequest(http.MethodPost, "/api/v2/ui/notification-channels/"+itoa(id)+"/test", bytes.NewReader([]byte("{}")))
 	testReq.Header.Set("content-type", "application/json")
 	testReq.Header.Set("Authorization", "Bearer "+token)
 	h.ServeHTTP(testRec, testReq)
@@ -151,7 +151,7 @@ func TestNotificationChannelCRUDAndTestValidation(t *testing.T) {
 		"name": "draft", "type": "bark", "enabled": true, "events": "server_offline",
 		"config_json": `{"device_key":""}`,
 	})
-	draftReq := httptest.NewRequest(http.MethodPost, "/api/v1/notification-channels/test", bytes.NewReader(draftBody))
+	draftReq := httptest.NewRequest(http.MethodPost, "/api/v2/ui/notification-channels/test", bytes.NewReader(draftBody))
 	draftReq.Header.Set("content-type", "application/json")
 	draftReq.Header.Set("Authorization", "Bearer "+token)
 	h.ServeHTTP(draftRec, draftReq)
@@ -179,11 +179,11 @@ func TestNotificationChannelSecretsAreRedactedOnRead(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	created := request(t, h, http.MethodPost, "/api/v1/notification-channels", token, map[string]any{
+	created := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "ops-tg", "type": "telegram", "enabled": true, "events": "server_offline",
 		"config_json": `{"bot_token":"123:abc","chat_id":"-1001"}`,
 	}, http.StatusCreated)
@@ -195,7 +195,7 @@ func TestNotificationChannelSecretsAreRedactedOnRead(t *testing.T) {
 		t.Fatalf("create response leaked bot_token: %#v", channel)
 	}
 
-	listed := request(t, h, http.MethodGet, "/api/v1/notification-channels", token, nil, http.StatusOK)
+	listed := request(t, h, http.MethodGet, "/api/v2/ui/notification-channels", token, nil, http.StatusOK)
 	items := listed["notification_channels"].([]any)
 	if len(items) != 1 {
 		t.Fatalf("listed = %#v", listed)
@@ -292,16 +292,16 @@ func TestNotificationChannelRoleScopeOwnershipAndTemplates(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
-	createdUser := request(t, h, http.MethodPost, "/api/v1/users", adminToken, map[string]any{"username": "viewer", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	createdUser := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "viewer", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	viewerID := int64(createdUser["user"].(map[string]any)["id"].(float64))
 	adminID := int64(adminLogin["user"].(map[string]any)["id"].(float64))
-	viewerLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)
+	viewerLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)
 	viewerToken := viewerLogin["token"].(string)
 
-	page := request(t, h, http.MethodGet, "/api/v1/page-data?page=notifications", viewerToken, nil, http.StatusOK)
+	page := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=notifications", viewerToken, nil, http.StatusOK)
 	config := page["notification_config"].(map[string]any)
 	events := config["events"].([]any)
 	if len(events) != 3 {
@@ -315,15 +315,15 @@ func TestNotificationChannelRoleScopeOwnershipAndTemplates(t *testing.T) {
 		t.Fatalf("viewer event scope = %#v", seenEvents)
 	}
 
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", viewerToken, map[string]any{
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{
 		"name": "forbidden", "type": "telegram", "enabled": true, "events": "server_offline",
 		"config_json": `{"bot_token":"viewer-token","chat_id":"100"}`,
 	}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", viewerToken, map[string]any{
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{
 		"name": "wrong-user", "type": "telegram", "enabled": true, "events": notificationTrafficQuota,
 		"user_ids": []int64{adminID}, "config_json": `{"bot_token":"viewer-token","chat_id":"100"}`,
 	}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", viewerToken, map[string]any{
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{
 		"name": "wrong-risk-user", "type": "telegram", "enabled": true, "events": notificationUserRisk,
 		"user_ids": []int64{adminID}, "config_json": `{"bot_token":"viewer-token","chat_id":"100"}`,
 	}, http.StatusBadRequest)
@@ -331,7 +331,7 @@ func TestNotificationChannelRoleScopeOwnershipAndTemplates(t *testing.T) {
 	customTemplates := map[string]model.NotificationTemplate{
 		notificationTrafficQuota: {Title: "额度用完 · {{.UserName}}", Body: "{{.Used}} / {{.Limit}}，{{.ResetAt}} 重置"},
 	}
-	createdViewerChannel := request(t, h, http.MethodPost, "/api/v1/notification-channels", viewerToken, map[string]any{
+	createdViewerChannel := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{
 		"name": "viewer-bark", "type": "bark", "enabled": true, "events": notificationTrafficQuota + "," + notificationUserRisk + "," + notificationAdminAnnouncement,
 		"config_json": `{"device_key":"viewer-key"}`, "templates_json": mustJSON(t, customTemplates),
 	}, http.StatusCreated)
@@ -349,12 +349,12 @@ func TestNotificationChannelRoleScopeOwnershipAndTemplates(t *testing.T) {
 		t.Fatalf("default templates were not merged: %s (%v)", viewerChannel["templates_json"], err)
 	}
 
-	request(t, h, http.MethodGet, "/api/v1/notification-channels/"+itoa(viewerChannelID), adminToken, nil, http.StatusNotFound)
-	adminList := request(t, h, http.MethodGet, "/api/v1/notification-channels", adminToken, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v2/ui/notification-channels/"+itoa(viewerChannelID), adminToken, nil, http.StatusNotFound)
+	adminList := request(t, h, http.MethodGet, "/api/v2/ui/notification-channels", adminToken, nil, http.StatusOK)
 	if len(adminList["notification_channels"].([]any)) != 0 {
 		t.Fatalf("admin could list another user's channels: %#v", adminList)
 	}
-	createdAdminChannel := request(t, h, http.MethodPost, "/api/v1/notification-channels", adminToken, map[string]any{
+	createdAdminChannel := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{
 		"name": "admin-tg", "type": "telegram", "enabled": true,
 		"events":   notificationServerOffline + "," + notificationServerOnline + "," + notificationTrafficQuota + "," + notificationUserRisk + "," + notificationTaskFailed + "," + notificationTaskTimeout,
 		"user_ids": []int64{adminID, viewerID}, "config_json": `{"bot_token":"admin-token","chat_id":"200"}`,
@@ -363,7 +363,7 @@ func TestNotificationChannelRoleScopeOwnershipAndTemplates(t *testing.T) {
 	if len(adminChannel["user_ids"].([]any)) != 2 {
 		t.Fatalf("admin monitored users = %#v", adminChannel["user_ids"])
 	}
-	request(t, h, http.MethodGet, "/api/v1/notification-channels/"+itoa(int64(adminChannel["id"].(float64))), viewerToken, nil, http.StatusNotFound)
+	request(t, h, http.MethodGet, "/api/v2/ui/notification-channels/"+itoa(int64(adminChannel["id"].(float64))), viewerToken, nil, http.StatusNotFound)
 }
 
 func TestNotificationDispatchScopeTemplatesAndDedupe(t *testing.T) {
@@ -374,21 +374,21 @@ func TestNotificationDispatchScopeTemplatesAndDedupe(t *testing.T) {
 	defer db.Close()
 	hServer := newTestServer(db, "test-secret", "")
 	h := hServer.Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
 	adminID := int64(adminLogin["user"].(map[string]any)["id"].(float64))
-	createdUser := request(t, h, http.MethodPost, "/api/v1/users", adminToken, map[string]any{"username": "viewer", "nickname": "小王", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	createdUser := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "viewer", "nickname": "小王", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	viewerID := int64(createdUser["user"].(map[string]any)["id"].(float64))
-	viewerLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)
+	viewerLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)
 	viewerToken := viewerLogin["token"].(string)
 
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", viewerToken, map[string]any{
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{
 		"name": "viewer", "type": "telegram", "enabled": true, "events": notificationTrafficQuota + "," + notificationAdminAnnouncement,
 		"config_json":    `{"bot_token":"viewer-token","chat_id":"100"}`,
 		"templates_json": mustJSON(t, map[string]model.NotificationTemplate{notificationTrafficQuota: {Title: "自定义 · {{.UserName}}", Body: "剩余 0，已用 {{.Used}}"}}),
 	}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", adminToken, map[string]any{
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{
 		"name": "admin", "type": "telegram", "enabled": true,
 		"events":   notificationServerOffline + "," + notificationTrafficQuota + "," + notificationTaskFailed,
 		"user_ids": []int64{adminID, viewerID}, "config_json": `{"bot_token":"admin-token","chat_id":"200"}`,
@@ -460,16 +460,16 @@ func TestCertificateFailureNotificationCoversAllIssuersAndRedactsEABSecret(t *te
 	defer db.Close()
 	hServer := newTestServer(db, "test-secret", "")
 	h := hServer.Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "google-eab", "type": "telegram", "enabled": true, "events": notificationCertificateFailed,
 		"config_json": `{"bot_token":"admin-token","chat_id":"200"}`,
 	}, http.StatusCreated)
 
 	const hmacKey = "notification-secret-hmac"
-	created := request(t, h, http.MethodPost, "/api/v1/certificates", token, map[string]any{
+	created := request(t, h, http.MethodPost, "/api/v2/ui/certificates", token, map[string]any{
 		"name": "google-notify", "domains": []string{"notify.example.com"}, "challenge_type": model.CertificateChallengeDNSManual,
 		"acme_ca": "google", "eab_key_id": "notify-key-id", "eab_hmac_key": hmacKey,
 	}, http.StatusCreated)["certificate"].(map[string]any)
@@ -506,7 +506,7 @@ func TestCertificateFailureNotificationCoversAllIssuersAndRedactsEABSecret(t *te
 	if strings.Contains(stored.LastError, hmacKey) || !strings.Contains(stored.LastError, "[已隐藏]") {
 		t.Fatalf("stored certificate error was not redacted: %q", stored.LastError)
 	}
-	created = request(t, h, http.MethodPost, "/api/v1/certificates", token, map[string]any{
+	created = request(t, h, http.MethodPost, "/api/v2/ui/certificates", token, map[string]any{
 		"name": "letsencrypt-notify", "domains": []string{"le.example.com"}, "challenge_type": model.CertificateChallengeDNSManual,
 		"acme_ca": "letsencrypt",
 	}, http.StatusCreated)["certificate"].(map[string]any)
@@ -532,9 +532,9 @@ func TestHTTPCertificateTaskFailureQueuesCertificateNotification(t *testing.T) {
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "certificate", "type": "telegram", "enabled": true, "events": notificationCertificateFailed,
 		"config_json": `{"bot_token":"admin","chat_id":"1"}`,
 	}, http.StatusCreated)
@@ -589,14 +589,14 @@ func TestConnectionAuditRiskNotificationTargetsUserAndAdmin(t *testing.T) {
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
-	createdUser := request(t, h, http.MethodPost, "/api/v1/users", adminToken, map[string]any{"username": "viewer", "nickname": "小王", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	createdUser := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "viewer", "nickname": "小王", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	viewerID := int64(createdUser["user"].(map[string]any)["id"].(float64))
-	viewerToken := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)["token"].(string)
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", viewerToken, map[string]any{"name": "viewer-risk", "type": "telegram", "enabled": true, "events": notificationUserRisk, "config_json": `{"bot_token":"viewer","chat_id":"1"}`}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", adminToken, map[string]any{"name": "admin-risk", "type": "telegram", "enabled": true, "events": notificationUserRisk, "user_ids": []int64{viewerID}, "config_json": `{"bot_token":"admin","chat_id":"2"}`}, http.StatusCreated)
+	viewerToken := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{"name": "viewer-risk", "type": "telegram", "enabled": true, "events": notificationUserRisk, "config_json": `{"bot_token":"viewer","chat_id":"1"}`}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{"name": "admin-risk", "type": "telegram", "enabled": true, "events": notificationUserRisk, "user_ids": []int64{viewerID}, "config_json": `{"bot_token":"admin","chat_id":"2"}`}, http.StatusCreated)
 
 	server := model.Server{Name: "risk-node", AgentID: "risk-agent", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010}
 	if err := db.CreateServer(context.Background(), &server); err != nil {
@@ -648,9 +648,9 @@ func TestOperationalNotificationEventsUseAdminScope(t *testing.T) {
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "operations", "type": "telegram", "enabled": true,
 		"events":      notificationCertificateExpiry + "," + notificationBackupFailed + "," + notificationUpdateFailed + "," + notificationDNSSyncFailed,
 		"config_json": `{"bot_token":"admin","chat_id":"1"}`,
@@ -688,9 +688,9 @@ func TestScheduledUpdateFailureNotifiesOnlyWhenAutomaticUpdatesEnabled(t *testin
 	srv := newTestServer(db, "test-secret", "")
 	srv.controllerUpdater = controllerupdate.NewClient(filepath.Join(t.TempDir(), "missing-updater.sock"))
 	h := srv.Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "updates", "type": "telegram", "enabled": true, "events": notificationUpdateFailed,
 		"config_json": `{"bot_token":"admin","chat_id":"1"}`,
 	}, http.StatusCreated)
@@ -730,9 +730,9 @@ func TestCertificateRenewalExpiryNotificationRequiresUserAction(t *testing.T) {
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "certificates", "type": "telegram", "enabled": true, "events": notificationCertificateExpiry,
 		"config_json": `{"bot_token":"admin","chat_id":"1"}`,
 	}, http.StatusCreated)
@@ -805,15 +805,15 @@ func TestTaskTimeoutAndAdminAnnouncementQueue(t *testing.T) {
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
-	createdUser := request(t, h, http.MethodPost, "/api/v1/users", adminToken, map[string]any{"username": "viewer", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	createdUser := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "viewer", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	viewerID := int64(createdUser["user"].(map[string]any)["id"].(float64))
-	viewerLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)
+	viewerLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)
 	viewerToken := viewerLogin["token"].(string)
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", adminToken, map[string]any{"name": "admin", "type": "telegram", "enabled": true, "events": notificationTaskTimeout, "config_json": `{"bot_token":"admin","chat_id":"1"}`}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v1/notification-channels", viewerToken, map[string]any{"name": "viewer", "type": "telegram", "enabled": true, "events": notificationAdminAnnouncement, "config_json": `{"bot_token":"viewer","chat_id":"2"}`}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{"name": "admin", "type": "telegram", "enabled": true, "events": notificationTaskTimeout, "config_json": `{"bot_token":"admin","chat_id":"1"}`}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{"name": "viewer", "type": "telegram", "enabled": true, "events": notificationAdminAnnouncement, "config_json": `{"bot_token":"viewer","chat_id":"2"}`}, http.StatusCreated)
 
 	var sentMu sync.Mutex
 	sent := []string{}
@@ -837,13 +837,13 @@ func TestTaskTimeoutAndAdminAnnouncementQueue(t *testing.T) {
 	srv.expireTimedOutTasks(context.Background())
 	waitNotificationCount(t, srv, &sentMu, &sent, 1)
 
-	request(t, h, http.MethodPost, "/api/v1/notification-announcements", viewerToken, map[string]any{"title": "no", "body": "no", "user_ids": []int64{viewerID}}, http.StatusForbidden)
-	announcement := request(t, h, http.MethodPost, "/api/v1/notification-announcements", adminToken, map[string]any{"title": "维护", "body": "今晚维护", "user_ids": []int64{viewerID}}, http.StatusAccepted)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-announcements", viewerToken, map[string]any{"title": "no", "body": "no", "user_ids": []int64{viewerID}}, http.StatusForbidden)
+	announcement := request(t, h, http.MethodPost, "/api/v2/ui/notification-announcements", adminToken, map[string]any{"title": "维护", "body": "今晚维护", "user_ids": []int64{viewerID}}, http.StatusAccepted)
 	if announcement["queued_count"].(float64) != 1 {
 		t.Fatalf("announcement queued = %#v", announcement)
 	}
 	waitNotificationCount(t, srv, &sentMu, &sent, 2)
-	history := request(t, h, http.MethodGet, "/api/v1/notification-announcements", adminToken, nil, http.StatusOK)
+	history := request(t, h, http.MethodGet, "/api/v2/ui/notification-announcements", adminToken, nil, http.StatusOK)
 	if len(history["notification_announcements"].([]any)) != 1 {
 		t.Fatalf("announcement history = %#v", history)
 	}

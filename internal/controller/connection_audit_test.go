@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -37,7 +38,9 @@ func TestValidateConnectionAuditItem(t *testing.T) {
 	item := connectionAuditReportItem{
 		ReportID: "report-1", UserID: 7, SourceIP: "::ffff:198.51.100.7", SourceGeoCode: "us", Network: "TCP",
 		Destination: "example.com", DestinationPort: 443, OutboundTag: "direct", OutboundType: "direct",
-		ConnectionCount: 2, ActivePeak: 1, StartedAt: nowTime.Add(-time.Second).Format(time.RFC3339Nano), EndedAt: nowTime.Format(time.RFC3339Nano),
+		ConnectionCount: 2, ClosedCount: 2, DurationTotalMS: 1200, DurationMaxMS: 700, ActivePeak: 1,
+		BucketCapacity: 4096, CollectionStartedAt: nowTime.Add(-time.Minute).Format(time.RFC3339Nano), CollectionEndedAt: nowTime.Format(time.RFC3339Nano),
+		StartedAt: nowTime.Add(-time.Second).Format(time.RFC3339Nano), EndedAt: nowTime.Format(time.RFC3339Nano),
 	}
 	report, err := validateConnectionAuditItem(item, 3)
 	if err != nil {
@@ -54,6 +57,21 @@ func TestValidateConnectionAuditItem(t *testing.T) {
 	item.ActiveAtEnd = 2
 	if _, err := validateConnectionAuditItem(item, 3); err == nil {
 		t.Fatal("active_at_end greater than active_peak was accepted")
+	}
+	item.ActiveAtEnd = 0
+	item.CollectionGeneration = math.MaxInt64 + 1
+	if _, err := validateConnectionAuditItem(item, 3); err == nil {
+		t.Fatal("collection generation outside SQLite integer range was accepted")
+	}
+	item.CollectionGeneration = 1
+	item.StartedAt = nowTime.Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	if _, err := validateConnectionAuditItem(item, 3); err == nil {
+		t.Fatal("event outside collection window was accepted")
+	}
+	item.StartedAt = nowTime.Add(-time.Second).Format(time.RFC3339Nano)
+	item.ConnectionCount, item.ClosedCount, item.ActivePeak, item.ActiveAtEnd = 1, 2, 1, 1
+	if _, err := validateConnectionAuditItem(item, 3); err == nil {
+		t.Fatal("inconsistent connection counters were accepted")
 	}
 }
 
@@ -91,6 +109,8 @@ func TestAgentConnectionReportsAcknowledgeStaleItemsWithoutBlockingValidReports(
 			"report_id": reportID, "user_id": userID, "inbound_id": inbound.ID,
 			"source_ip": "198.51.100.7", "network": "tcp", "destination": "example.com", "destination_port": 443,
 			"connection_count": 1, "active_peak": 1, "active_at_end": 0,
+			"closed_count": 1, "duration_total_ms": 250, "duration_max_ms": 250,
+			"bucket_capacity": 4096, "collection_started_at": nowTime.Add(-time.Minute).Format(time.RFC3339Nano), "collection_ended_at": nowTime.Format(time.RFC3339Nano),
 			"started_at": nowTime.Add(-time.Second).Format(time.RFC3339Nano), "ended_at": nowTime.Format(time.RFC3339Nano),
 		}
 	}
@@ -159,6 +179,8 @@ func TestAgentConnectionReportsRejectCrossServerInbound(t *testing.T) {
 		"report_id": "cross-server-report", "user_id": user.ID, "inbound_id": inboundB.ID,
 		"source_ip": "198.51.100.31", "network": "tcp", "destination": "example.com", "destination_port": 443,
 		"connection_count": 1, "active_peak": 1, "active_at_end": 0,
+		"closed_count": 1, "duration_total_ms": 250, "duration_max_ms": 250,
+		"bucket_capacity": 4096, "collection_started_at": nowTime.Add(-time.Minute).Format(time.RFC3339Nano), "collection_ended_at": nowTime.Format(time.RFC3339Nano),
 		"started_at": nowTime.Add(-time.Second).Format(time.RFC3339Nano), "ended_at": nowTime.Format(time.RFC3339Nano),
 	}}})
 	if err != nil {
@@ -193,5 +215,5 @@ func TestViewerCannotReadConnectionAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request(t, newTestServer(db, "test-secret", "").Handler(), http.MethodGet, "/api/v1/audit/overview", token, nil, http.StatusForbidden)
+	request(t, newTestServer(db, "test-secret", "").Handler(), http.MethodGet, "/api/v2/ui/audit/overview", token, nil, http.StatusForbidden)
 }

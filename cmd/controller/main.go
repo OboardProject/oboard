@@ -96,6 +96,10 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	aiWorkerSocket := env("OBOARD_AI_WORKER_SOCKET", "/run/oboard/ai-worker/rpc.sock")
+	if err := app.StartAIWorkerRPC(ctx, aiWorkerSocket); err != nil {
+		log.Printf("configure AI Worker RPC: %v", err)
+	}
 	app.SetControllerBackupRestart(stop)
 	go app.StartMonitor(ctx)
 	go app.StartDNSDDNS(ctx)

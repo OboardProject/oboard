@@ -86,6 +86,7 @@ func TestExtractControllerArchiveAcceptsSelfUpdatePayload(t *testing.T) {
 	writeTestControllerArchive(t, archive, []archiveEntry{
 		{name: "bin/oboard-controller", content: "controller"},
 		{name: "bin/oboard-controller-updater", content: "updater"},
+		{name: "bin/oboard-ai-worker", content: "worker"},
 		{name: "web/dist/index.html", content: "web"},
 		{name: "downloads/release-manifest.json", content: "{}"},
 		{name: "downloads/geoip/manifest.json", content: "{}"},
@@ -96,7 +97,7 @@ func TestExtractControllerArchiveAcceptsSelfUpdatePayload(t *testing.T) {
 	if err := extractControllerArchive(archive, stage); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "web/dist/index.html", "downloads/release-manifest.json", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb"} {
+	for _, name := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "bin/oboard-ai-worker", "web/dist/index.html", "downloads/release-manifest.json", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb"} {
 		if info, err := os.Stat(filepath.Join(stage, filepath.FromSlash(name))); err != nil || !info.Mode().IsRegular() {
 			t.Fatalf("self-update payload did not extract %s: %v", name, err)
 		}
@@ -111,6 +112,7 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 	writeTestControllerArchive(t, archive, []archiveEntry{
 		{name: "bin/oboard-controller", content: "controller"},
 		{name: "bin/oboard-controller-updater", content: "updater"},
+		{name: "bin/oboard-ai-worker", content: "worker"},
 		{name: "web/dist/index.html", content: "web"},
 		{name: "web/dist/assets/app.js", content: "asset"},
 		{name: "downloads/release-manifest.json", content: "{}"},
@@ -125,6 +127,7 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 
 	assertFileMode(t, filepath.Join(stage, "bin/oboard-controller"), 0o755)
 	assertFileMode(t, filepath.Join(stage, "bin/oboard-controller-updater"), 0o755)
+	assertFileMode(t, filepath.Join(stage, "bin/oboard-ai-worker"), 0o755)
 	assertFileMode(t, filepath.Join(stage, "web/dist/index.html"), 0o644)
 	assertFileMode(t, filepath.Join(stage, "web/dist/assets/app.js"), 0o644)
 	assertFileMode(t, filepath.Join(stage, "downloads/release-manifest.json"), 0o644)
@@ -137,6 +140,7 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 	}{
 		{filepath.Join(stage, "bin/oboard-controller"), filepath.Join(installRoot, "oboard-controller")},
 		{filepath.Join(stage, "bin/oboard-controller-updater"), filepath.Join(installRoot, "oboard-controller-updater")},
+		{filepath.Join(stage, "bin/oboard-ai-worker"), filepath.Join(installRoot, "oboard-ai-worker")},
 		{filepath.Join(stage, "web/dist"), filepath.Join(installRoot, "web")},
 		{filepath.Join(stage, "downloads"), filepath.Join(installRoot, "downloads")},
 	} {
@@ -147,6 +151,7 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 
 	assertFileMode(t, filepath.Join(installRoot, "oboard-controller"), 0o755)
 	assertFileMode(t, filepath.Join(installRoot, "oboard-controller-updater"), 0o755)
+	assertFileMode(t, filepath.Join(installRoot, "oboard-ai-worker"), 0o755)
 	assertFileMode(t, filepath.Join(installRoot, "web"), 0o755)
 	assertFileMode(t, filepath.Join(installRoot, "web/assets"), 0o755)
 	assertFileMode(t, filepath.Join(installRoot, "web/index.html"), 0o644)

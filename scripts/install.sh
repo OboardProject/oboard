@@ -1014,25 +1014,31 @@ uninstall_controller() {
     systemd)
       systemctl disable --now oboard-controller.service >/dev/null 2>&1 || true
       systemctl disable --now oboard-controller-updater.service >/dev/null 2>&1 || true
+      systemctl disable --now oboard-ai-worker.service >/dev/null 2>&1 || true
       ;;
     openrc)
       rc-service oboard-controller stop >/dev/null 2>&1 || true
       rc-service oboard-controller-updater stop >/dev/null 2>&1 || true
+      rc-service oboard-ai-worker stop >/dev/null 2>&1 || true
       rc-update del oboard-controller default >/dev/null 2>&1 || true
       rc-update del oboard-controller-updater default >/dev/null 2>&1 || true
+      rc-update del oboard-ai-worker default >/dev/null 2>&1 || true
       ;;
   esac
 
   rm -f /etc/systemd/system/oboard-controller.service \
     /etc/systemd/system/oboard-controller-updater.service \
+    /etc/systemd/system/oboard-ai-worker.service \
     /etc/init.d/oboard-controller \
-    /etc/init.d/oboard-controller-updater
+    /etc/init.d/oboard-controller-updater \
+    /etc/init.d/oboard-ai-worker
   if [ "$service_manager" = systemd ]; then
     systemctl daemon-reload >/dev/null 2>&1
-    systemctl reset-failed oboard-controller.service oboard-controller-updater.service >/dev/null 2>&1 || true
+    systemctl reset-failed oboard-controller.service oboard-controller-updater.service oboard-ai-worker.service >/dev/null 2>&1 || true
   fi
   rm -f "$INSTALL_DIR/oboard-controller" \
     "$INSTALL_DIR/oboard-controller-updater" \
+    "$INSTALL_DIR/oboard-ai-worker" \
     "$INSTALL_DIR/oboard-controller.update-backup" \
     "$INSTALL_DIR/oboard-controller.update-new" \
     "$INSTALL_DIR/oboard-controller-updater.update-backup" \
@@ -1122,6 +1128,7 @@ install_component() {
   install_file_atomic "$work/bin/oboard-$component" "$INSTALL_DIR/oboard-$component" 0755
   if [ "$component" = controller ]; then
     install_file_atomic "$work/bin/oboard-controller-updater" "$INSTALL_DIR/oboard-controller-updater" 0755
+    install_file_atomic "$work/bin/oboard-ai-worker" "$INSTALL_DIR/oboard-ai-worker" 0755
   fi
 
   if [ "$os" = linux ] && [ "$service_manager" = systemd ] && [ -d "$work/deploy/systemd" ]; then
@@ -1144,6 +1151,7 @@ install_component() {
         configure_bootstrap_admin
         render_service_file "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/oboard-controller.service
         render_service_file "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/oboard-controller-updater.service
+        render_service_file "$work/deploy/systemd/oboard-ai-worker.service" /etc/systemd/system/oboard-ai-worker.service
         prepare_controller_updater_runtime
         systemctl daemon-reload >> "$INSTALL_LOG" 2>&1
         systemctl enable oboard-controller-updater >> "$INSTALL_LOG" 2>&1
@@ -1151,6 +1159,8 @@ install_component() {
         wait_for_controller_updater
         systemctl enable oboard-controller >> "$INSTALL_LOG" 2>&1
         start_controller_systemd
+        systemctl enable oboard-ai-worker >> "$INSTALL_LOG" 2>&1
+        systemctl restart oboard-ai-worker >> "$INSTALL_LOG" 2>&1
         clear_bootstrap_admin_password
         ;;
       agent)
@@ -1185,12 +1195,15 @@ install_component() {
         configure_bootstrap_admin
         render_service_file "$work/deploy/openrc/oboard-controller" /etc/init.d/oboard-controller 0755
         render_service_file "$work/deploy/openrc/oboard-controller-updater" /etc/init.d/oboard-controller-updater 0755
+        render_service_file "$work/deploy/openrc/oboard-ai-worker" /etc/init.d/oboard-ai-worker 0755
         prepare_controller_updater_runtime
         rc-update add oboard-controller-updater default >> "$INSTALL_LOG" 2>&1
         rc-service oboard-controller-updater restart >> "$INSTALL_LOG" 2>&1
         wait_for_controller_updater
         rc-update add oboard-controller default >> "$INSTALL_LOG" 2>&1
         start_controller_openrc
+        rc-update add oboard-ai-worker default >> "$INSTALL_LOG" 2>&1
+        rc-service oboard-ai-worker restart >> "$INSTALL_LOG" 2>&1
         clear_bootstrap_admin_password
         ;;
       agent)

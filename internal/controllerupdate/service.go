@@ -31,6 +31,7 @@ type ServiceConfig struct {
 	RuntimeStatePath   string
 	ControllerBinary   string
 	UpdaterBinary      string
+	AIWorkerBinary     string
 	WebRoot            string
 	DownloadsRoot      string
 	WorkRoot           string
@@ -62,6 +63,7 @@ func DefaultServiceConfig() ServiceConfig {
 		RuntimeStatePath:   filepath.Join(dataDir, RuntimeStateName),
 		ControllerBinary:   filepath.Join(installDir, "oboard-controller"),
 		UpdaterBinary:      filepath.Join(installDir, "oboard-controller-updater"),
+		AIWorkerBinary:     filepath.Join(installDir, "oboard-ai-worker"),
 		WebRoot:            filepath.Join(installDir, "web/dist"),
 		DownloadsRoot:      filepath.Join(installDir, "downloads"),
 		WorkRoot:           filepath.Join(dataDir, "controller-update"),
@@ -138,6 +140,9 @@ func NewService(config ServiceConfig) *Service {
 	}
 	if config.UpdaterBinary == "" {
 		config.UpdaterBinary = defaults.UpdaterBinary
+	}
+	if config.AIWorkerBinary == "" {
+		config.AIWorkerBinary = defaults.AIWorkerBinary
 	}
 	if config.WebRoot == "" {
 		config.WebRoot = defaults.WebRoot
@@ -606,7 +611,7 @@ func (s *Service) detectInstallation() (string, string, string) {
 
 func (s *Service) currentBuildInfo() BuildInfo {
 	info := BuildInfo{Version: version.Version, Build: version.Build, Commit: version.Commit, Date: version.Date}
-	for _, url := range s.healthURLs("/api/v1/version") {
+	for _, url := range s.healthURLs("/api/v2/ui/version") {
 		resp, err := s.config.HealthClient.Get(url)
 		if err != nil {
 			continue
@@ -785,7 +790,7 @@ func extractControllerArchive(archivePath, stage string) error {
 	var entries int
 	var extracted int64
 	allowed := func(path string) bool {
-		return path == "bin/oboard-controller" || path == "bin/oboard-controller-updater" || strings.HasPrefix(path, "web/dist/") || strings.HasPrefix(path, "downloads/")
+		return path == "bin/oboard-controller" || path == "bin/oboard-controller-updater" || path == "bin/oboard-ai-worker" || strings.HasPrefix(path, "web/dist/") || strings.HasPrefix(path, "downloads/")
 	}
 	for {
 		header, err := reader.Next()
@@ -839,7 +844,7 @@ func extractControllerArchive(archivePath, stage string) error {
 			return fmt.Errorf("truncated controller archive entry %q", name)
 		}
 	}
-	for _, required := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "web/dist/index.html", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb"} {
+	for _, required := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "bin/oboard-ai-worker", "web/dist/index.html", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb"} {
 		if info, err := stageRoot.Stat(filepath.FromSlash(required)); err != nil || !info.Mode().IsRegular() {
 			return fmt.Errorf("controller package is missing %s", required)
 		}
@@ -849,7 +854,7 @@ func extractControllerArchive(archivePath, stage string) error {
 
 func (s *Service) replaceBinaryProgram(ctx context.Context, stage string) error {
 	type target struct{ source, destination string }
-	targets := []target{{filepath.Join(stage, "bin/oboard-controller"), s.config.ControllerBinary}, {filepath.Join(stage, "bin/oboard-controller-updater"), s.config.UpdaterBinary}, {filepath.Join(stage, "web/dist"), s.config.WebRoot}, {filepath.Join(stage, "downloads"), s.config.DownloadsRoot}}
+	targets := []target{{filepath.Join(stage, "bin/oboard-controller"), s.config.ControllerBinary}, {filepath.Join(stage, "bin/oboard-controller-updater"), s.config.UpdaterBinary}, {filepath.Join(stage, "bin/oboard-ai-worker"), s.config.AIWorkerBinary}, {filepath.Join(stage, "web/dist"), s.config.WebRoot}, {filepath.Join(stage, "downloads"), s.config.DownloadsRoot}}
 	rollback := []func(){}
 	runRollback := func() {
 		for i := len(rollback) - 1; i >= 0; i-- {
@@ -857,7 +862,7 @@ func (s *Service) replaceBinaryProgram(ctx context.Context, stage string) error 
 		}
 	}
 	for index, item := range targets {
-		if _, err := os.Stat(item.source); os.IsNotExist(err) && index == 3 {
+		if _, err := os.Stat(item.source); os.IsNotExist(err) && index == 4 {
 			continue
 		} else if err != nil {
 			runRollback()
@@ -1010,10 +1015,22 @@ func (s *Service) restartAndWait(ctx context.Context) error {
 
 func (s *Service) restartController(ctx context.Context) error {
 	if _, err := os.Stat("/run/systemd/system"); err == nil {
-		return s.config.RunCommand(ctx, "systemctl", "restart", "oboard-controller.service")
+		if err := s.config.RunCommand(ctx, "systemctl", "restart", "oboard-controller.service"); err != nil {
+			return err
+		}
+		if _, err := os.Stat("/etc/systemd/system/oboard-ai-worker.service"); err == nil {
+			return s.config.RunCommand(ctx, "systemctl", "restart", "oboard-ai-worker.service")
+		}
+		return nil
 	}
 	if _, err := exec.LookPath("rc-service"); err == nil {
-		return s.config.RunCommand(ctx, "rc-service", "oboard-controller", "restart")
+		if err := s.config.RunCommand(ctx, "rc-service", "oboard-controller", "restart"); err != nil {
+			return err
+		}
+		if _, err := os.Stat("/etc/init.d/oboard-ai-worker"); err == nil {
+			return s.config.RunCommand(ctx, "rc-service", "oboard-ai-worker", "restart")
+		}
+		return nil
 	}
 	return errors.New("supported service manager not found")
 }

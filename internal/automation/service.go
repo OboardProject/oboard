@@ -1,0 +1,570 @@
+package automation
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/capability"
+	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/store"
+)
+
+type MutationHandler func(context.Context, application.Principal, json.RawMessage) (any, error)
+type RevisionResolver func(context.Context, application.Principal, json.RawMessage) (map[string]string, error)
+
+type MutationResult struct {
+	Public  any
+	OneTime any
+}
+
+type Service struct {
+	store             *store.Store
+	catalog           *capability.Catalog
+	mu                sync.RWMutex
+	handlers          map[string]MutationHandler
+	validators        map[string]MutationHandler
+	revisionResolvers map[string]RevisionResolver
+	now               func() time.Time
+}
+
+type CreateRequest struct {
+	Reason         string             `json:"reason"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	BaseRevisions  json.RawMessage    `json:"base_revisions"`
+	AutoApply      bool               `json:"auto_apply"`
+	Operations     []OperationRequest `json:"operations"`
+}
+
+type OperationRequest struct {
+	Capability   string          `json:"capability"`
+	Input        json.RawMessage `json:"input"`
+	SecretRefs   []string        `json:"secret_refs,omitempty"`
+	ResourceRefs json.RawMessage `json:"resource_refs"`
+}
+
+func NewService(store *store.Store, catalog *capability.Catalog) *Service {
+	return &Service{
+		store: store, catalog: catalog,
+		handlers: map[string]MutationHandler{}, validators: map[string]MutationHandler{}, revisionResolvers: map[string]RevisionResolver{},
+		now: time.Now,
+	}
+}
+
+func (s *Service) RegisterValidator(name string, handler MutationHandler) {
+	if _, ok := s.catalog.Get(name); !ok {
+		panic("register validator for unknown capability: " + name)
+	}
+	s.mu.Lock()
+	s.validators[name] = handler
+	s.mu.Unlock()
+}
+
+func (s *Service) Register(name string, handler MutationHandler) {
+	if _, ok := s.catalog.Get(name); !ok {
+		panic("register unknown capability: " + name)
+	}
+	s.mu.Lock()
+	s.handlers[name] = handler
+	s.mu.Unlock()
+}
+
+func (s *Service) RegisterRevisionResolver(name string, resolver RevisionResolver) {
+	if _, ok := s.catalog.Get(name); !ok {
+		panic("register revision resolver for unknown capability: " + name)
+	}
+	s.mu.Lock()
+	s.revisionResolvers[name] = resolver
+	s.mu.Unlock()
+}
+
+func (s *Service) Create(ctx context.Context, principal application.Principal, request CreateRequest) (*model.AutomationChangeset, error) {
+	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
+	if request.IdempotencyKey == "" || len(request.IdempotencyKey) > 128 {
+		return nil, errors.New("idempotency_key is required and must not exceed 128 characters")
+	}
+	if existing, err := s.store.FindAutomationChangesetByIdempotency(ctx, principal.ID, request.IdempotencyKey); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if len(request.Operations) == 0 || len(request.Operations) > 64 {
+		return nil, errors.New("changeset must contain between 1 and 64 operations")
+	}
+	id, err := prefixedID("chg")
+	if err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	baseRevisions, err := canonicalRevisions(request.BaseRevisions)
+	if err != nil {
+		return nil, err
+	}
+	item := &model.AutomationChangeset{
+		ID: id, PrincipalID: principal.ID, ActorUserID: principal.UserID, Status: model.ChangesetDraft,
+		Reason: strings.TrimSpace(request.Reason), IdempotencyKey: request.IdempotencyKey,
+		BaseRevisions: baseRevisions, AutoApply: request.AutoApply,
+		Validation: json.RawMessage(`{}`), BlastRadius: json.RawMessage(`{}`), Result: json.RawMessage(`{}`),
+		ExpiresAt: now.Add(30 * time.Minute), Operations: make([]model.AutomationOperation, 0, len(request.Operations)),
+	}
+	for position, requested := range request.Operations {
+		descriptor, authorized := s.catalog.Authorize(principal, requested.Capability)
+		if !authorized || descriptor.ReadOnly || !descriptor.Executable {
+			return nil, fmt.Errorf("capability %q is not authorized for changesets", requested.Capability)
+		}
+		if s.validator(requested.Capability) == nil || s.handler(requested.Capability) == nil {
+			return nil, fmt.Errorf("capability %q is not executable in this Controller build", requested.Capability)
+		}
+		opID, err := prefixedID("op")
+		if err != nil {
+			return nil, err
+		}
+		input, err := canonicalObject(requested.Input)
+		if err != nil {
+			return nil, fmt.Errorf("operation %d input: %w", position, err)
+		}
+		item.Operations = append(item.Operations, model.AutomationOperation{ID: opID, ChangesetID: id, Position: position, Capability: descriptor.Name, Input: input, SecretRefs: requested.SecretRefs, ResourceRefs: normalizedObject(requested.ResourceRefs), RiskClass: descriptor.RiskClass, Status: "pending", Result: json.RawMessage(`{}`)})
+		if descriptor.RiskClass > item.RiskClass {
+			item.RiskClass = descriptor.RiskClass
+		}
+	}
+	if err := s.store.CreateAutomationChangeset(ctx, item); err != nil {
+		if existing, findErr := s.store.FindAutomationChangesetByIdempotency(ctx, principal.ID, request.IdempotencyKey); findErr == nil {
+			return existing, nil
+		}
+		return nil, err
+	}
+	return item, nil
+}
+
+func (s *Service) Validate(ctx context.Context, principal application.Principal, id string) (*model.AutomationChangeset, error) {
+	item, err := s.authorizedChangeset(ctx, principal, id)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	if !item.ExpiresAt.After(now) {
+		item.Status = model.ChangesetExpired
+		_ = s.store.UpdateAutomationChangeset(ctx, item)
+		return item, errors.New("changeset expired")
+	}
+	if item.Status != model.ChangesetDraft && item.Status != model.ChangesetValidated && item.Status != model.ChangesetAwaitingApproval {
+		return nil, errors.New("changeset cannot be validated in its current state")
+	}
+	validationEvidence, err := s.validateOperations(ctx, principal, item)
+	if err != nil {
+		return nil, err
+	}
+	item.PlanHash, err = changesetHash(item)
+	if err != nil {
+		return nil, err
+	}
+	item.Validation = mustJSON(map[string]any{"valid": true, "warnings": []string{}, "validated_operations": len(item.Operations), "evidence": validationEvidence})
+	item.BlastRadius = mustJSON(blastRadius(item.Operations))
+	item.ValidatedAt = &now
+	item.Status = model.ChangesetAwaitingApproval
+	if automatic, policyErr := s.automaticAllowed(ctx, item); policyErr != nil {
+		return nil, policyErr
+	} else if automatic {
+		item.Status = model.ChangesetApproved
+		item.ApprovedAt = &now
+	}
+	if err := s.store.UpdateAutomationChangeset(ctx, item); err != nil {
+		return nil, err
+	}
+	if item.AutoApply && item.Status == model.ChangesetApproved {
+		return s.Apply(ctx, principal, item.ID)
+	}
+	return item, nil
+}
+
+func (s *Service) Approve(ctx context.Context, principal application.Principal, id, comment string) (*model.AutomationChangeset, error) {
+	if !principal.Interactive || principal.UserID == nil || principal.Role != model.RoleAdmin && principal.Role != model.RoleOperator {
+		return nil, errors.New("approval requires an interactive operator session")
+	}
+	item, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if item.Status != model.ChangesetAwaitingApproval || item.PlanHash == "" {
+		return nil, errors.New("changeset is not awaiting approval")
+	}
+	if item.RiskClass >= 4 && principal.Role != model.RoleAdmin {
+		return nil, errors.New("risk class 4 changes require an administrator")
+	}
+	approvalID, err := prefixedID("apr")
+	if err != nil {
+		return nil, err
+	}
+	approval := &model.AutomationApproval{ID: approvalID, ChangesetID: item.ID, ApproverID: *principal.UserID, Decision: "approved", PlanHash: item.PlanHash, Comment: strings.TrimSpace(comment), ApprovedRisk: item.RiskClass}
+	if err := s.store.CreateAutomationApproval(ctx, approval); err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	item.Status, item.ApprovedAt = model.ChangesetApproved, &now
+	if err := s.store.UpdateAutomationChangeset(ctx, item); err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+func (s *Service) Apply(ctx context.Context, principal application.Principal, id string) (*model.AutomationChangeset, error) {
+	item, err := s.authorizedChangeset(ctx, principal, id)
+	if err != nil {
+		return nil, err
+	}
+	if item.Status != model.ChangesetApproved {
+		return nil, errors.New("changeset is not approved")
+	}
+	if !item.ExpiresAt.After(s.now().UTC()) {
+		item.Status = model.ChangesetExpired
+		_ = s.store.UpdateAutomationChangeset(ctx, item)
+		return item, errors.New("changeset expired")
+	}
+	hash, err := changesetHash(item)
+	if err != nil || hash != item.PlanHash {
+		item.Status = model.ChangesetSuperseded
+		_ = s.store.UpdateAutomationChangeset(ctx, item)
+		return item, errors.New("changeset plan hash no longer matches")
+	}
+	if _, err := s.validateOperations(ctx, principal, item); err != nil {
+		item.Status = model.ChangesetSuperseded
+		_ = s.store.UpdateAutomationChangeset(ctx, item)
+		return item, fmt.Errorf("changeset state no longer matches the approved plan: %w", err)
+	}
+	if _, err := s.automaticAllowed(ctx, item); err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	claimed, err := s.store.ClaimAutomationChangesetApply(ctx, item.ID, now)
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		return nil, errors.New("changeset is already being applied")
+	}
+	item.Status, item.AppliedAt = model.ChangesetApplying, &now
+	persistedResults := make([]any, 0, len(item.Operations))
+	responseResults := make([]any, 0, len(item.Operations))
+	hasOneTimeResults := false
+	for index := range item.Operations {
+		op := &item.Operations[index]
+		handler := s.handler(op.Capability)
+		if handler == nil {
+			return s.failOperation(ctx, item, op, "capability_unavailable", "capability is not executable in this Controller build")
+		}
+		result, applyErr := handler(ctx, principal, op.Input)
+		completed := s.now().UTC()
+		op.CompletedAt = &completed
+		if applyErr != nil {
+			op.Status, op.ErrorCode, op.ErrorMessage = "failed", "apply_failed", applyErr.Error()
+			_ = s.store.UpdateAutomationOperation(ctx, op)
+			return s.failChangeset(ctx, item, applyErr)
+		}
+		publicResult, responseResult := result, result
+		if protected, ok := result.(MutationResult); ok {
+			publicResult = protected.Public
+			if protected.OneTime != nil {
+				responseResult = protected.OneTime
+				hasOneTimeResults = true
+			}
+		}
+		op.Status, op.Result = "succeeded", mustJSON(publicResult)
+		if err := s.store.UpdateAutomationOperation(ctx, op); err != nil {
+			return s.failChangeset(ctx, item, err)
+		}
+		persistedResults = append(persistedResults, publicResult)
+		responseResults = append(responseResults, responseResult)
+	}
+	completed := s.now().UTC()
+	item.Status, item.CompletedAt = model.ChangesetSucceeded, &completed
+	item.Result = mustJSON(map[string]any{"operations": persistedResults})
+	if err := s.store.UpdateAutomationChangeset(ctx, item); err != nil {
+		return nil, err
+	}
+	if hasOneTimeResults {
+		item.Result = mustJSON(map[string]any{"operations": responseResults})
+	}
+	return item, nil
+}
+
+func (s *Service) Get(ctx context.Context, id string) (*model.AutomationChangeset, error) {
+	return s.store.GetAutomationChangeset(ctx, id)
+}
+
+func (s *Service) List(ctx context.Context, principal application.Principal, limit int) ([]model.AutomationChangeset, error) {
+	if principal.Interactive && principal.Role == model.RoleAdmin {
+		return s.store.ListAutomationChangesets(ctx, "", limit)
+	}
+	return s.store.ListAutomationChangesets(ctx, principal.ID, limit)
+}
+
+func (s *Service) automaticAllowed(ctx context.Context, item *model.AutomationChangeset) (bool, error) {
+	automatic := true
+	for _, operation := range item.Operations {
+		policy, err := s.store.GetApprovalPolicy(ctx, item.PrincipalID, operation.Capability, s.now().UTC())
+		if errors.Is(err, sql.ErrNoRows) {
+			automatic = false
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if policy.Mode == model.ApprovalDenied {
+			return false, fmt.Errorf("approval policy denies capability %q", operation.Capability)
+		}
+		if policy.Mode != model.ApprovalAutomatic || operation.RiskClass >= 4 && !policy.AllowRisk4 {
+			automatic = false
+			continue
+		}
+		if !approvalFilterAllows(policy.ResourceFilter, operation.ResourceRefs) {
+			automatic = false
+		}
+	}
+	return automatic, nil
+}
+
+func approvalFilterAllows(policyFilter, operationRefs json.RawMessage) bool {
+	if len(policyFilter) == 0 || string(policyFilter) == "{}" || string(policyFilter) == "null" {
+		return true
+	}
+	var policy, refs map[string]json.RawMessage
+	if json.Unmarshal(policyFilter, &policy) != nil || json.Unmarshal(operationRefs, &refs) != nil {
+		return false
+	}
+	for key, allowedRaw := range policy {
+		actualRaw, ok := refs[key]
+		if !ok {
+			return false
+		}
+		var allowedValues, actualValues []int64
+		if json.Unmarshal(allowedRaw, &allowedValues) == nil && json.Unmarshal(actualRaw, &actualValues) == nil {
+			allowed := map[int64]bool{}
+			for _, value := range allowedValues {
+				allowed[value] = true
+			}
+			for _, value := range actualValues {
+				if !allowed[value] {
+					return false
+				}
+			}
+			continue
+		}
+		if string(allowedRaw) != string(actualRaw) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Service) authorizedChangeset(ctx context.Context, principal application.Principal, id string) (*model.AutomationChangeset, error) {
+	item, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if item.PrincipalID != principal.ID && !(principal.Interactive && principal.Role == model.RoleAdmin) {
+		return nil, sql.ErrNoRows
+	}
+	return item, nil
+}
+
+func (s *Service) handler(name string) MutationHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.handlers[name]
+}
+
+func (s *Service) validator(name string) MutationHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.validators[name]
+}
+
+func (s *Service) revisionResolver(name string) RevisionResolver {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.revisionResolvers[name]
+}
+
+func (s *Service) validateOperations(ctx context.Context, principal application.Principal, item *model.AutomationChangeset) ([]any, error) {
+	expected, err := decodeRevisions(item.BaseRevisions)
+	if err != nil {
+		return nil, err
+	}
+	current := map[string]string{}
+	evidence := make([]any, 0, len(item.Operations))
+	for _, operation := range item.Operations {
+		descriptor, ok := s.catalog.Authorize(principal, operation.Capability)
+		if !ok || descriptor.ReadOnly || !descriptor.Executable || descriptor.RiskClass != operation.RiskClass {
+			return nil, fmt.Errorf("operation capability %q is no longer authorized", operation.Capability)
+		}
+		validator := s.validator(operation.Capability)
+		if validator == nil || s.handler(operation.Capability) == nil {
+			return nil, fmt.Errorf("operation capability %q is not executable in this Controller build", operation.Capability)
+		}
+		validated, validateErr := validator(ctx, principal, operation.Input)
+		if validateErr != nil {
+			return nil, fmt.Errorf("validate %s: %w", operation.Capability, validateErr)
+		}
+		if resolver := s.revisionResolver(operation.Capability); resolver != nil {
+			resolved, resolveErr := resolver(ctx, principal, operation.Input)
+			if resolveErr != nil {
+				return nil, fmt.Errorf("resolve %s base revisions: %w", operation.Capability, resolveErr)
+			}
+			for key, revision := range resolved {
+				if existing, duplicate := current[key]; duplicate && existing != revision {
+					return nil, fmt.Errorf("resource %q resolved to conflicting revisions", key)
+				}
+				current[key] = revision
+			}
+		}
+		evidence = append(evidence, map[string]any{"operation_id": operation.ID, "capability": operation.Capability, "evidence": validated})
+	}
+	if err := compareRevisions(expected, current); err != nil {
+		return nil, err
+	}
+	return evidence, nil
+}
+
+func (s *Service) failOperation(ctx context.Context, item *model.AutomationChangeset, operation *model.AutomationOperation, code, message string) (*model.AutomationChangeset, error) {
+	now := s.now().UTC()
+	operation.Status, operation.ErrorCode, operation.ErrorMessage, operation.CompletedAt = "failed", code, message, &now
+	_ = s.store.UpdateAutomationOperation(ctx, operation)
+	return s.failChangeset(ctx, item, errors.New(message))
+}
+
+func (s *Service) failChangeset(ctx context.Context, item *model.AutomationChangeset, applyErr error) (*model.AutomationChangeset, error) {
+	now := s.now().UTC()
+	item.Status, item.CompletedAt = model.ChangesetFailed, &now
+	item.Result = mustJSON(map[string]any{"error": applyErr.Error()})
+	_ = s.store.UpdateAutomationChangeset(ctx, item)
+	return item, applyErr
+}
+
+func changesetHash(item *model.AutomationChangeset) (string, error) {
+	type hashOperation struct {
+		Capability   string          `json:"capability"`
+		Input        json.RawMessage `json:"input"`
+		ResourceRefs json.RawMessage `json:"resource_refs"`
+		RiskClass    int             `json:"risk_class"`
+	}
+	operations := make([]hashOperation, 0, len(item.Operations))
+	for _, operation := range item.Operations {
+		operations = append(operations, hashOperation{Capability: operation.Capability, Input: operation.Input, ResourceRefs: operation.ResourceRefs, RiskClass: operation.RiskClass})
+	}
+	payload, err := json.Marshal(struct {
+		BaseRevisions json.RawMessage `json:"base_revisions"`
+		Operations    []hashOperation `json:"operations"`
+	}{item.BaseRevisions, operations})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func canonicalObject(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		raw = json.RawMessage(`{}`)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, errors.New("input must be a JSON object")
+	}
+	encoded, err := json.Marshal(value)
+	return json.RawMessage(encoded), err
+}
+
+func normalizedObject(raw json.RawMessage) json.RawMessage {
+	value, err := canonicalObject(raw)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return value
+}
+
+func canonicalRevisions(raw json.RawMessage) (json.RawMessage, error) {
+	revisions, err := decodeRevisions(raw)
+	if err != nil {
+		return nil, fmt.Errorf("base_revisions: %w", err)
+	}
+	encoded, err := json.Marshal(revisions)
+	return json.RawMessage(encoded), err
+}
+
+func decodeRevisions(raw json.RawMessage) (map[string]string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return map[string]string{}, nil
+	}
+	var revisions map[string]string
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&revisions); err != nil || revisions == nil {
+		return nil, errors.New("must be an object whose values are revision strings")
+	}
+	for key, revision := range revisions {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(revision) == "" {
+			return nil, errors.New("resource keys and revision values must not be empty")
+		}
+	}
+	return revisions, nil
+}
+
+func compareRevisions(expected, current map[string]string) error {
+	if len(expected) != len(current) {
+		return fmt.Errorf("base revisions do not cover the current resource set")
+	}
+	for key, revision := range current {
+		if expected[key] != revision {
+			return fmt.Errorf("resource %q revision changed", key)
+		}
+	}
+	return nil
+}
+
+func prefixedID(prefix string) (string, error) {
+	random, err := security.RandomToken(18)
+	if err != nil {
+		return "", err
+	}
+	return prefix + "_" + random, nil
+}
+
+func mustJSON(value any) json.RawMessage {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return encoded
+}
+
+func blastRadius(operations []model.AutomationOperation) map[string]any {
+	capabilities := make([]string, 0, len(operations))
+	resources := map[string]struct{}{}
+	for _, operation := range operations {
+		capabilities = append(capabilities, operation.Capability)
+		var refs map[string]any
+		if json.Unmarshal(operation.ResourceRefs, &refs) == nil {
+			for key := range refs {
+				resources[key] = struct{}{}
+			}
+		}
+	}
+	sort.Strings(capabilities)
+	resourceKinds := make([]string, 0, len(resources))
+	for key := range resources {
+		resourceKinds = append(resourceKinds, key)
+	}
+	sort.Strings(resourceKinds)
+	return map[string]any{"operation_count": len(operations), "capabilities": capabilities, "resource_kinds": resourceKinds}
+}

@@ -21,5 +21,6 @@ echo "==> Building Web UI"
 echo "==> Building current-platform binaries"
 go -C "$CONTROLLER_DIR" build -o "$BUILD_DIR/oboard-controller" ./cmd/controller
 go -C "$CONTROLLER_DIR" build -o "$BUILD_DIR/oboard-controller-updater" ./cmd/controller-updater
+go -C "$CONTROLLER_DIR" build -o "$BUILD_DIR/oboard-ai-worker" ./cmd/ai-worker
 
 echo "==> Release verification passed"

@@ -20,7 +20,7 @@ depend() {
 }
 
 start_pre() {
-	checkpath -d -m 0750 -o oboard:oboard /opt/oboard/data /opt/oboard/data/logs /opt/oboard/web /opt/oboard/downloads
+	checkpath -d -m 0750 -o oboard:oboard /opt/oboard/data /opt/oboard/data/logs /opt/oboard/web /opt/oboard/downloads /run/oboard/ai-worker
 	if [ -f /opt/oboard/config/controller.env ]; then
 		set -a
 		. /opt/oboard/config/controller.env
@@ -34,5 +34,5 @@ start_pre() {
 	: ${OBOARD_LOG_BACKUPS:=5}
 	: ${OBOARD_STATIC:=/opt/oboard/web/dist}
 	: ${OBOARD_DOWNLOADS:=/opt/oboard/downloads}
-	export OBOARD_ADDR OBOARD_BASE_PATH OBOARD_DB OBOARD_STATIC OBOARD_DOWNLOADS OBOARD_SESSION_SECRET OBOARD_LOG_FILE OBOARD_LOG_MAX_MB OBOARD_LOG_BACKUPS
+	export OBOARD_ADDR OBOARD_BASE_PATH OBOARD_DB OBOARD_STATIC OBOARD_DOWNLOADS OBOARD_SESSION_SECRET OBOARD_LOG_FILE OBOARD_LOG_MAX_MB OBOARD_LOG_BACKUPS OBOARD_AI_WORKER_SOCKET OBOARD_TRUSTED_PROXY_CIDRS
 }

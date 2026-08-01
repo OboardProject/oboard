@@ -76,21 +76,21 @@ func TestControllerUpdateAPIAndBackupRetention(t *testing.T) {
 	app.controllerUpdater = controllerupdate.NewClient(socketPath)
 	app.controllerBackupDir = filepath.Join(root, "backups")
 	handler := app.Handler()
-	request(t, handler, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, handler, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := login["token"].(string)
-	status := request(t, handler, http.MethodGet, "/api/v1/controller-update", adminToken, nil, http.StatusOK)
+	status := request(t, handler, http.MethodGet, "/api/v2/ui/controller-update", adminToken, nil, http.StatusOK)
 	if _, exists := status["install_method"]; exists || status["channel"] != "pinned" || status["status"] != "pinned" {
 		t.Fatalf("unexpected update status: %#v", status)
 	}
-	request(t, handler, http.MethodPost, "/api/v1/controller-update/check", adminToken, nil, http.StatusOK)
-	request(t, handler, http.MethodPost, "/api/v1/settings", adminToken, map[string]any{"controller_auto_update_enabled": true}, http.StatusConflict)
-	request(t, handler, http.MethodPost, "/api/v1/controller-update/install", adminToken, nil, http.StatusConflict)
-	request(t, handler, http.MethodPost, "/api/v1/controller-update/cancel", adminToken, nil, http.StatusConflict)
+	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/check", adminToken, nil, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"controller_auto_update_enabled": true}, http.StatusConflict)
+	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/install", adminToken, nil, http.StatusConflict)
+	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/cancel", adminToken, nil, http.StatusConflict)
 
-	request(t, handler, http.MethodPost, "/api/v1/users", adminToken, map[string]any{"username": "viewer", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
-	viewerLogin := request(t, handler, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "viewer", "password": "long-user-password"}, http.StatusOK)
-	request(t, handler, http.MethodGet, "/api/v1/controller-update", viewerLogin["token"].(string), nil, http.StatusForbidden)
+	request(t, handler, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "viewer", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	viewerLogin := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-user-password"}, http.StatusOK)
+	request(t, handler, http.MethodGet, "/api/v2/ui/controller-update", viewerLogin["token"].(string), nil, http.StatusForbidden)
 
 	for i := 0; i < controllerBackupRetention+2; i++ {
 		if _, err := app.createControllerBackup(context.Background()); err != nil {

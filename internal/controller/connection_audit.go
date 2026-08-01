@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"errors"
+	"log"
+	"math"
 	"net/http"
 	"net/netip"
 	"strconv"
@@ -14,22 +16,30 @@ import (
 )
 
 type connectionAuditReportItem struct {
-	ReportID        string `json:"report_id"`
-	UserID          int64  `json:"user_id"`
-	InboundID       *int64 `json:"inbound_id"`
-	PathID          *int64 `json:"path_id"`
-	SourceIP        string `json:"source_ip"`
-	SourceGeoCode   string `json:"source_geo_code"`
-	Network         string `json:"network"`
-	Destination     string `json:"destination"`
-	DestinationPort int    `json:"destination_port"`
-	OutboundTag     string `json:"outbound_tag"`
-	OutboundType    string `json:"outbound_type"`
-	ConnectionCount int64  `json:"connection_count"`
-	ActivePeak      int64  `json:"active_peak"`
-	ActiveAtEnd     int64  `json:"active_at_end"`
-	StartedAt       string `json:"started_at"`
-	EndedAt         string `json:"ended_at"`
+	ReportID             string `json:"report_id"`
+	UserID               int64  `json:"user_id"`
+	InboundID            *int64 `json:"inbound_id"`
+	PathID               *int64 `json:"path_id"`
+	SourceIP             string `json:"source_ip"`
+	SourceGeoCode        string `json:"source_geo_code"`
+	Network              string `json:"network"`
+	Destination          string `json:"destination"`
+	DestinationPort      int    `json:"destination_port"`
+	OutboundTag          string `json:"outbound_tag"`
+	OutboundType         string `json:"outbound_type"`
+	ConnectionCount      int64  `json:"connection_count"`
+	ClosedCount          int64  `json:"closed_count"`
+	DurationTotalMS      int64  `json:"duration_total_ms"`
+	DurationMaxMS        int64  `json:"duration_max_ms"`
+	ActivePeak           int64  `json:"active_peak"`
+	ActiveAtEnd          int64  `json:"active_at_end"`
+	CollectionGeneration uint64 `json:"collection_generation"`
+	BucketCapacity       int    `json:"bucket_capacity"`
+	DroppedBucketCount   int64  `json:"dropped_bucket_count"`
+	CollectionStartedAt  string `json:"collection_started_at"`
+	CollectionEndedAt    string `json:"collection_ended_at"`
+	StartedAt            string `json:"started_at"`
+	EndedAt              string `json:"ended_at"`
 }
 
 func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) {
@@ -185,6 +195,9 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	s.notifyConnectionAuditRisks(r.Context(), riskUserIDs)
+	if err := s.auditIntel.EvaluateUsers(r.Context(), riskUserIDs); err != nil {
+		log.Printf("evaluate audit incidents: %v", err)
+	}
 	accepted = append(accepted, stored...)
 	write(w, http.StatusOK, map[string]any{"ok": true, "accepted_report_ids": accepted})
 }
@@ -215,8 +228,12 @@ func validateConnectionAuditItem(item connectionAuditReportItem, serverID int64)
 	if item.DestinationPort < 0 || item.DestinationPort > 65535 {
 		return model.ConnectionAuditReport{}, errors.New("connection audit destination_port is invalid")
 	}
-	if item.ConnectionCount < 0 || item.ActivePeak < 0 || item.ActiveAtEnd < 0 || item.ActiveAtEnd > item.ActivePeak || item.ConnectionCount > 1_000_000_000 || item.ActivePeak > 1_000_000 {
+	maxDurationMS := int64((31 * 24 * time.Hour) / time.Millisecond)
+	if item.ConnectionCount < 0 || item.ClosedCount < 0 || item.DurationTotalMS < 0 || item.DurationMaxMS < 0 || item.DurationMaxMS > item.DurationTotalMS || item.DurationMaxMS > maxDurationMS || item.ActivePeak < 0 || item.ActiveAtEnd < 0 || item.ActiveAtEnd > item.ActivePeak || item.ConnectionCount > 1_000_000_000 || item.ClosedCount > 1_000_000_000 || item.DurationTotalMS > maxDurationMS*1_000_000 || item.ActivePeak > 1_000_000 || item.ClosedCount+item.ActiveAtEnd > item.ConnectionCount+item.ActivePeak {
 		return model.ConnectionAuditReport{}, errors.New("connection audit counters are invalid")
+	}
+	if item.CollectionGeneration > math.MaxInt64 || item.BucketCapacity < 1 || item.BucketCapacity > 1_000_000 || item.DroppedBucketCount < 0 || item.DroppedBucketCount > 1_000_000_000 {
+		return model.ConnectionAuditReport{}, errors.New("connection audit collection coverage is invalid")
 	}
 	if item.ConnectionCount == 0 && item.ActiveAtEnd == 0 {
 		return model.ConnectionAuditReport{}, errors.New("connection audit report is empty")
@@ -233,11 +250,23 @@ func validateConnectionAuditItem(item connectionAuditReportItem, serverID int64)
 	if endedAt.After(nowTime.Add(5*time.Minute)) || startedAt.Before(nowTime.Add(-31*24*time.Hour)) {
 		return model.ConnectionAuditReport{}, errors.New("connection audit time is outside the accepted range")
 	}
+	collectionStartedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(item.CollectionStartedAt))
+	if err != nil {
+		return model.ConnectionAuditReport{}, errors.New("connection audit collection_started_at is invalid")
+	}
+	collectionEndedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(item.CollectionEndedAt))
+	if err != nil || collectionEndedAt.Before(collectionStartedAt) || collectionEndedAt.After(nowTime.Add(5*time.Minute)) || collectionStartedAt.Before(nowTime.Add(-31*24*time.Hour)) {
+		return model.ConnectionAuditReport{}, errors.New("connection audit collection_ended_at is invalid")
+	}
+	if startedAt.Before(collectionStartedAt) || endedAt.After(collectionEndedAt) {
+		return model.ConnectionAuditReport{}, errors.New("connection audit event is outside its collection window")
+	}
 	return model.ConnectionAuditReport{
 		ReportID: reportID, ServerID: serverID, UserID: item.UserID,
 		SourceIP: sourceIP.Unmap().String(), SourceGeoCode: geo, Network: network,
 		Destination: destination, DestinationPort: item.DestinationPort, OutboundTag: outboundTag, OutboundType: outboundType,
-		ConnectionCount: item.ConnectionCount, ActivePeak: item.ActivePeak, ActiveAtEnd: item.ActiveAtEnd,
+		ConnectionCount: item.ConnectionCount, ClosedCount: item.ClosedCount, DurationTotalMS: item.DurationTotalMS, DurationMaxMS: item.DurationMaxMS, ActivePeak: item.ActivePeak, ActiveAtEnd: item.ActiveAtEnd,
+		CollectionGeneration: item.CollectionGeneration, BucketCapacity: item.BucketCapacity, DroppedBucketCount: item.DroppedBucketCount, CollectionStartedAt: collectionStartedAt.UTC(), CollectionEndedAt: collectionEndedAt.UTC(),
 		StartedAt: startedAt.UTC(), EndedAt: endedAt.UTC(),
 	}, nil
 }

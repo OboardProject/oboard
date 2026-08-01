@@ -26,10 +26,10 @@ func TestControllerBackupSettingsAndRetention(t *testing.T) {
 	app := newTestServer(db, "test-session-secret-with-at-least-thirty-two-characters", "")
 	app.ConfigureControllerBackups(filepath.Join(root, "oboard.sqlite"))
 	h := app.Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	settings := request(t, h, http.MethodPut, "/api/v1/backups/settings", token, map[string]any{
+	settings := request(t, h, http.MethodPut, "/api/v2/ui/backups/settings", token, map[string]any{
 		"enabled":           true,
 		"schedule":          "daily",
 		"time":              "03:00",
@@ -53,13 +53,13 @@ func TestControllerBackupSettingsAndRetention(t *testing.T) {
 	if storedSettings[controllerBackupSecretsSetting] == "" || storedSettings[controllerBackupSecretsSetting] == "backup-recovery-password" {
 		t.Fatalf("backup recovery password was not encrypted: %#v", storedSettings[controllerBackupSecretsSetting])
 	}
-	first := request(t, h, http.MethodPost, "/api/v1/backups", token, map[string]any{"upload_remote": false}, http.StatusCreated)
+	first := request(t, h, http.MethodPost, "/api/v2/ui/backups", token, map[string]any{"upload_remote": false}, http.StatusCreated)
 	if first["backup"].(map[string]any)["local_status"] != "available" {
 		t.Fatalf("first backup = %#v", first)
 	}
-	second := request(t, h, http.MethodPost, "/api/v1/backups", token, map[string]any{"upload_remote": false}, http.StatusCreated)
+	second := request(t, h, http.MethodPost, "/api/v2/ui/backups", token, map[string]any{"upload_remote": false}, http.StatusCreated)
 	secondID := second["backup"].(map[string]any)["id"].(string)
-	listed := request(t, h, http.MethodGet, "/api/v1/backups", token, nil, http.StatusOK)
+	listed := request(t, h, http.MethodGet, "/api/v2/ui/backups", token, nil, http.StatusOK)
 	backups := listed["backups"].([]any)
 	if len(backups) != 2 {
 		t.Fatalf("backup records = %#v", backups)

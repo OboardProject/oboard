@@ -1,0 +1,26 @@
+[Unit]
+Description=OBoard AI Worker
+After=network-online.target oboard-controller.service
+Wants=network-online.target
+Requires=oboard-controller.service
+
+[Service]
+Type=simple
+ExecStart=/opt/oboard/oboard-ai-worker --poll-interval 10s
+Restart=on-failure
+RestartSec=5
+User=oboard
+Group=oboard
+EnvironmentFile=-/opt/oboard/config/controller.env
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/oboard/ai-worker
+LockPersonality=true
+MemoryDenyWriteExecute=true
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

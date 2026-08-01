@@ -28,33 +28,33 @@ func TestSystemLogsAdminAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := New(db, "test-secret", "", "", logs).Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	response := request(t, h, http.MethodGet, "/api/v1/system-logs?lines=20&q=unique", token, nil, http.StatusOK)
+	response := request(t, h, http.MethodGet, "/api/v2/ui/system-logs?lines=20&q=unique", token, nil, http.StatusOK)
 	snapshot := response["logs"].(map[string]any)
 	content := snapshot["content"].(string)
 	if !strings.Contains(content, "unique failure marker") || strings.Contains(content, "startup ready") {
 		t.Fatalf("unexpected filtered logs: %q", content)
 	}
 
-	request(t, h, http.MethodPost, "/api/v1/settings", token, map[string]any{"controller_log_max_mb": 2, "controller_log_backups": 1}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{"controller_log_max_mb": 2, "controller_log_backups": 1}, http.StatusOK)
 	config := logs.Config()
 	if config.MaxBytes != 2<<20 || config.Backups != 1 {
 		t.Fatalf("runtime log config = %#v", config)
 	}
 
-	request(t, h, http.MethodPost, "/api/v1/system-logs", token, map[string]any{"action": "rotate"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/system-logs", token, map[string]any{"action": "rotate"}, http.StatusOK)
 	download := httptest.NewRecorder()
-	downloadReq := httptest.NewRequest(http.MethodGet, "/api/v1/system-logs/download", nil)
+	downloadReq := httptest.NewRequest(http.MethodGet, "/api/v2/ui/system-logs/download", nil)
 	downloadReq.Header.Set("Authorization", "Bearer "+token)
 	h.ServeHTTP(download, downloadReq)
 	if download.Code != http.StatusOK || !strings.HasPrefix(download.Body.String(), "PK") {
 		t.Fatalf("log download status=%d body=%q", download.Code, download.Body.String())
 	}
 
-	request(t, h, http.MethodDelete, "/api/v1/system-logs", token, nil, http.StatusOK)
+	request(t, h, http.MethodDelete, "/api/v2/ui/system-logs", token, nil, http.StatusOK)
 	cleared, err := logs.Snapshot(100, "unique failure marker")
 	if err != nil {
 		t.Fatal(err)
@@ -75,22 +75,22 @@ func TestAgentLogSettingsAndControlTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	configTask := request(t, h, http.MethodPost, "/api/v1/servers/"+itoa(server.ID)+"/agent-config", token, map[string]any{
+	configTask := request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(server.ID)+"/agent-config", token, map[string]any{
 		"log_max_mb": 12, "log_backups": 0, "core_log_max_mb": 48, "core_log_backups": 4,
 	}, http.StatusAccepted)
 	if configTask["task"].(map[string]any)["type"] != "update_agent_config" {
 		t.Fatalf("unexpected config task: %#v", configTask)
 	}
-	request(t, h, http.MethodPost, "/api/v1/servers/"+itoa(server.ID)+"/agent-config", token, map[string]any{"log_max_mb": 0}, http.StatusBadRequest)
-	controlTask := request(t, h, http.MethodPost, "/api/v1/servers/"+itoa(server.ID)+"/logs/control", token, map[string]any{"action": "rotate", "services": "core"}, http.StatusAccepted)
+	request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(server.ID)+"/agent-config", token, map[string]any{"log_max_mb": 0}, http.StatusBadRequest)
+	controlTask := request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(server.ID)+"/logs/control", token, map[string]any{"action": "rotate", "services": "core"}, http.StatusAccepted)
 	if controlTask["task"].(map[string]any)["type"] != "manage_logs" {
 		t.Fatalf("unexpected log control task: %#v", controlTask)
 	}
-	request(t, h, http.MethodPost, "/api/v1/servers/"+itoa(server.ID)+"/logs/control", token, map[string]any{"action": "remove", "services": "all"}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(server.ID)+"/logs/control", token, map[string]any{"action": "remove", "services": "all"}, http.StatusBadRequest)
 }
 
 func TestSystemLogsRejectNonAdmin(t *testing.T) {
@@ -105,10 +105,10 @@ func TestSystemLogsRejectNonAdmin(t *testing.T) {
 	}
 	defer logs.Close()
 	h := New(db, "test-secret", "", "", logs).Handler()
-	request(t, h, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
-	request(t, h, http.MethodPost, "/api/v1/users", adminToken, map[string]any{"username": "viewer", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
-	viewerLogin := request(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "viewer", "password": "long-user-password"}, http.StatusOK)
-	request(t, h, http.MethodGet, "/api/v1/system-logs", viewerLogin["token"].(string), nil, http.StatusForbidden)
+	request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "viewer", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	viewerLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-user-password"}, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v2/ui/system-logs", viewerLogin["token"].(string), nil, http.StatusForbidden)
 }

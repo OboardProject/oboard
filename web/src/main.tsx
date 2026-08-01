@@ -59,7 +59,7 @@ import {
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
-  PanelLeftClose, PanelLeftOpen, RotateCcw
+  PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Key, Play, PauseCircle
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -605,6 +605,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   subscriptions: { label: '订阅', desc: '管理订阅配置、节点分组和用户分配。', group: '访问控制' },
   tasks: { label: '任务', desc: '查询配置下发、Agent 任务和部署回执。', group: '运维' },
   audit: { label: '审计台', desc: '分析连接来源、出口行为和操作记录。', group: '运维' },
+  automation: { label: '自动化', desc: '管理 API、MCP、审批策略、变更集与内置 AI。', group: '系统' },
   settings: { label: '设置', desc: '管理面板设置。', group: '系统' }
 }
 const navGroups = [
@@ -615,7 +616,7 @@ const navGroups = [
   { label: '访问控制', tabs: ['users', 'subscriptions'] },
   { label: '通知', tabs: ['notifications'] },
   { label: '运维审计', tabs: ['tasks', 'audit'] },
-  { label: '系统', tabs: ['settings'] },
+  { label: '系统', tabs: ['automation', 'settings'] },
   { label: '账户', tabs: ['account'] },
 ]
 
@@ -623,14 +624,14 @@ const roleRanks: Record<Role, number> = { viewer: 0, operator: 1, admin: 2 }
 const tabMinimumRole: Record<string, Role> = {
   account: 'viewer', dashboard: 'operator', tasks: 'operator', audit: 'operator',
   servers: 'operator', 'proxy-paths': 'operator',
-  users: 'admin', subscriptions: 'viewer', notifications: 'viewer', settings: 'admin',
+  users: 'admin', subscriptions: 'viewer', notifications: 'viewer', automation: 'admin', settings: 'admin',
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
 }
 
 const preloadTabsByRole: Record<Role, string[]> = {
   viewer: ['subscriptions', 'account', 'notifications'],
   operator: ['subscriptions', 'servers', 'proxy-paths', 'tasks', 'audit', 'mtu'],
-  admin: ['servers', 'proxy-paths', 'users', 'dns', 'dns-records', 'tasks', 'audit', 'settings'],
+  admin: ['servers', 'proxy-paths', 'users', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
 }
 
 function tabAllowedForRole(tab: string, role: Role) {
@@ -700,6 +701,7 @@ function getTabIcon(x: string) {
   if (x === 'notifications') return <Bell size={18} />
   if (x === 'tasks') return <CheckSquare size={18} />
   if (x === 'audit') return <ClipboardList size={18} />
+  if (x === 'automation') return <Bot size={18} />
   if (x === 'dns') return <Globe size={18} />
   if (x === 'dns-records') return <Database size={18} />
   if (x === 'settings') return <SettingsIcon size={18} />
@@ -1143,7 +1145,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
   const authHeaders: Record<string, string> = token && token !== 'cookie' ? { authorization: `Bearer ${token}` } : {}
   const csrfHeaders: Record<string, string> = token === 'cookie' && csrf ? { 'x-oboard-csrf': csrf } : {}
   async function request<T = any>(path: string, init: RequestInit = {}): Promise<T> {
-    const res = await fetch(appPath('/api/v1' + path), {
+    const res = await fetch(appPath('/api/v2/ui' + path), {
       ...init,
       credentials: 'same-origin',
       headers: {
@@ -1163,8 +1165,29 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
     }
     return data
   }
+  async function requestV2<T = any>(path: string, init: RequestInit = {}): Promise<T> {
+    const res = await fetch(appPath('/api/v2' + path), {
+      ...init,
+      credentials: 'same-origin',
+      headers: {
+        'content-type': 'application/json',
+        ...authHeaders,
+        ...csrfHeaders,
+        ...(init.headers || {})
+      }
+    })
+    const payload = await res.json().catch(() => ({})) as any
+    if (!res.ok) {
+      if (res.status === 401 && token && onUnauthorized) {
+        if (!onUnauthorized(token)) throw new SupersededAuthRequestError()
+        throw new Error('登录已过期，请重新登录')
+      }
+      throw new Error(localizeErrorMessage(payload?.error?.message || payload?.error || res.statusText))
+    }
+    return payload.data as T
+  }
   async function download(path: string): Promise<{ blob: Blob; filename: string }> {
-    const res = await fetch(appPath('/api/v1' + path), { credentials: 'same-origin', headers: authHeaders })
+    const res = await fetch(appPath('/api/v2/ui' + path), { credentials: 'same-origin', headers: authHeaders })
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
       throw new Error(localizeErrorMessage(data.error || res.statusText))
@@ -1174,12 +1197,12 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
     return { blob: await res.blob(), filename }
   }
   async function upload<T = any>(path: string, body: FormData): Promise<T> {
-    const res = await fetch(appPath('/api/v1' + path), { method: 'POST', body, credentials: 'same-origin', headers: { ...authHeaders, ...csrfHeaders } })
+    const res = await fetch(appPath('/api/v2/ui' + path), { method: 'POST', body, credentials: 'same-origin', headers: { ...authHeaders, ...csrfHeaders } })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(localizeErrorMessage(data.error || res.statusText))
     return data
   }
-  return { request, download, upload }
+  return { request, requestV2, download, upload }
 }
 
 function PortalLoader({ loading }: { loading: boolean }) {
@@ -1257,7 +1280,7 @@ function App() {
     let cancelled = false
     const restore = async () => {
       try {
-        const response = await fetch(appPath('/api/v1/auth/session'), { credentials: 'same-origin' })
+        const response = await fetch(appPath('/api/v2/ui/auth/session'), { credentials: 'same-origin' })
         const result = await response.json().catch(() => ({})) as { csrf_token?: string; user?: SessionUser; error?: string }
         if (cancelled) return
         if (response.status === 401) {
@@ -1346,6 +1369,11 @@ function App() {
   const load = async (targetTab?: string, opts?: { background?: boolean }) => {
     if (!token) return
     const page = typeof targetTab === 'string' && targetTab ? targetTab : tab
+    if (page === 'automation') {
+      setLoading(false)
+      setShowPortalLoader(false)
+      return
+    }
     const seq = ++loadSeq.current
     const requestToken = token
     const background = Boolean(opts?.background)
@@ -1384,7 +1412,7 @@ function App() {
     const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection
     if (connection?.saveData || connection?.effectiveType === 'slow-2g' || connection?.effectiveType === '2g') return
 
-    const pages = preloadTabsByRole[sessionUser.role].filter(page => page !== tab && !pageCacheRef.current[page] && !preloadedTabsRef.current.has(page))
+    const pages = preloadTabsByRole[sessionUser.role].filter(page => page !== tab && page !== 'automation' && !pageCacheRef.current[page] && !preloadedTabsRef.current.has(page))
     if (!pages.length) return
 
     let cancelled = false
@@ -2092,6 +2120,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
     : <MySubscriptions data={data} notify={notify} />
   if (tab === 'tasks') return <Tasks data={data} client={client} loading={loading} />
   if (tab === 'audit') return <AuditConsole data={data} client={client} loading={loading} notify={notify} />
+  if (tab === 'automation') return <AutomationWorkspace client={client} notify={notify} />
   if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} />
   return null
 }
@@ -2412,6 +2441,209 @@ function subscriptionAuditPreset(value: SubscriptionAuditPolicy): 'sensitive' | 
   return 'custom'
 }
 
+
+function AutomationWorkspace({ client, notify }: any) {
+  const dialogs = useDialogs()
+  const [view, setView] = useState<'access' | 'changes' | 'ai'>('access')
+  const [loading, setLoading] = useState(true)
+  const [working, setWorking] = useState('')
+  const [snapshot, setSnapshot] = useState<any>({ principals: [], oauth: [], policies: [], changesets: [], providers: [], jobs: [], findings: [], audits: [], capabilities: [] })
+  const [serviceDraft, setServiceDraft] = useState({ name: '', scopes: 'inventory:read servers:read topology:read audit:read', cidrs: '', serverIDs: '', userIDs: '', rate: 60, concurrency: 4 })
+  const [oauthDraft, setOAuthDraft] = useState({ name: '', redirects: 'http://127.0.0.1/callback', scopes: 'inventory:read servers:read topology:read audit:read' })
+  const [providerDraft, setProviderDraft] = useState({ name: '', baseURL: 'https://api.openai.com/v1', model: '', apiKey: '', dailyTokenLimit: 100000, allowRawAudit: false })
+  const [policyDraft, setPolicyDraft] = useState({ principalID: '', capability: '', mode: 'required', allowRisk4: false, serverIDs: '', userIDs: '' })
+
+  const splitValues = (value: string) => value.split(/[\s,]+/).map(item => item.trim()).filter(Boolean)
+  const numberValues = (value: string) => splitValues(value).map(Number).filter(item => Number.isInteger(item) && item > 0)
+  const resourceFilter = (serverIDs: string, userIDs: string) => {
+    const filter: Record<string, number[]> = {}
+    const servers = numberValues(serverIDs)
+    const users = numberValues(userIDs)
+    if (servers.length) filter.server_ids = servers
+    if (users.length) filter.user_ids = users
+    return filter
+  }
+  const refresh = async () => {
+    setLoading(true)
+    try {
+      const [principals, oauth, policies, changesets, providers, jobs, findings, audits, capabilities] = await Promise.all([
+        client.requestV2('/api-principals'), client.requestV2('/oauth-clients'), client.requestV2('/approval-policies'),
+        client.requestV2('/changesets'), client.requestV2('/ai/providers'), client.requestV2('/ai/jobs'),
+        client.requestV2('/ai/findings'), client.requestV2('/tool-audits'), client.requestV2('/capabilities')
+      ])
+      setSnapshot({ principals, oauth, policies, changesets, providers, jobs, findings, audits, capabilities })
+      setPolicyDraft(current => ({
+        ...current,
+        principalID: current.principalID || principals.find((item: any) => item.type === 'service_account')?.id || '',
+        capability: current.capability || capabilities.find((item: any) => item.executable)?.name || ''
+      }))
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { void refresh() }, [])
+
+  const createServiceAccount = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setWorking('service-create')
+    try {
+      await client.requestV2('/api-principals', { method: 'POST', body: JSON.stringify({
+        name: serviceDraft.name, scopes: splitValues(serviceDraft.scopes), allowed_cidrs: splitValues(serviceDraft.cidrs),
+        resource_filter: resourceFilter(serviceDraft.serverIDs, serviceDraft.userIDs), rate_limit_per_minute: serviceDraft.rate, max_concurrency: serviceDraft.concurrency
+      }) })
+      setServiceDraft(current => ({ ...current, name: '' }))
+      await refresh()
+      notify?.('Service Account 已创建', 'success')
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const issueToken = async (principal: any) => {
+    setWorking(`token-${principal.id}`)
+    try {
+      const result = await client.requestV2(`/api-principals/${principal.id}/tokens`, { method: 'POST', body: JSON.stringify({}) })
+      await dialogs.alert({ title: 'API Token 仅显示一次', message: result.token, confirmText: '已保存' })
+      await refresh()
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const togglePrincipal = async (principal: any) => {
+    setWorking(`principal-${principal.id}`)
+    try {
+      await client.requestV2(`/api-principals/${principal.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: !principal.enabled }) })
+      await refresh()
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const createOAuth = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setWorking('oauth-create')
+    try {
+      await client.requestV2('/oauth-clients', { method: 'POST', body: JSON.stringify({ client_name: oauthDraft.name, redirect_uris: splitValues(oauthDraft.redirects), scope: splitValues(oauthDraft.scopes).join(' ') }) })
+      setOAuthDraft(current => ({ ...current, name: '' }))
+      await refresh()
+      notify?.('OAuth Client 已创建', 'success')
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const toggleOAuth = async (clientItem: any) => {
+    setWorking(`oauth-${clientItem.id}`)
+    try {
+      await client.requestV2(`/oauth-clients/${clientItem.id}`, { method: 'PATCH', body: JSON.stringify({ client_name: clientItem.name, redirect_uris: clientItem.redirect_uris, scopes: clientItem.allowed_scopes, enabled: !clientItem.enabled }) })
+      await refresh()
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const savePolicy = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setWorking('policy-save')
+    try {
+      await client.requestV2('/approval-policies', { method: 'POST', body: JSON.stringify({ principal_id: policyDraft.principalID, capability: policyDraft.capability, mode: policyDraft.mode, allow_risk4: policyDraft.allowRisk4, resource_filter: resourceFilter(policyDraft.serverIDs, policyDraft.userIDs) }) })
+      await refresh()
+      notify?.('审批策略已保存', 'success')
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const changesetAction = async (item: any, action: 'approve' | 'apply' | 'validate') => {
+    setWorking(`${action}-${item.id}`)
+    try {
+      await client.requestV2(`/changesets/${item.id}/${action}`, { method: 'POST', body: JSON.stringify(action === 'approve' ? { comment: '由 OBoard 管理员审批' } : {}) })
+      await refresh()
+      notify?.(action === 'approve' ? '变更集已批准' : action === 'apply' ? '变更集已执行' : '变更集已校验', 'success')
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const createProvider = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setWorking('provider-create')
+    try {
+      await client.requestV2('/ai/providers', { method: 'POST', body: JSON.stringify({ name: providerDraft.name, base_url: providerDraft.baseURL, model: providerDraft.model, api_key: providerDraft.apiKey, enabled: true, allow_raw_audit: providerDraft.allowRawAudit, daily_token_limit: providerDraft.dailyTokenLimit }) })
+      setProviderDraft(current => ({ ...current, name: '', model: '', apiKey: '' }))
+      await refresh()
+      notify?.('AI Provider 已保存', 'success')
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const toggleProvider = async (provider: any) => {
+    setWorking(`provider-${provider.id}`)
+    try {
+      await client.requestV2(`/ai/providers/${provider.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: !provider.enabled }) })
+      await refresh()
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+
+  const serviceAccounts = snapshot.principals.filter((item: any) => item.type === 'service_account')
+  const executableCapabilities = snapshot.capabilities.filter((item: any) => item.executable)
+  return <Panel title="自动化" className="automation-panel">
+    <div className="audit-console-tabs automation-tabs" role="tablist" aria-label="自动化视图">
+      <button className={view === 'access' ? 'active' : ''} onClick={() => setView('access')}><Key size={15} />访问凭据</button>
+      <button className={view === 'changes' ? 'active' : ''} onClick={() => setView('changes')}><Workflow size={15} />审批与变更</button>
+      <button className={view === 'ai' ? 'active' : ''} onClick={() => setView('ai')}><Bot size={15} />AI 分析</button>
+      <button className="ghost icon-button automation-refresh" onClick={() => void refresh()} aria-label="刷新" title="刷新"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
+    </div>
+    {view === 'access' && <div className="automation-grid">
+      <section className="settings-card">
+        <div className="settings-card-head"><div><h3>Service Account</h3><p className="muted">用于 API、MCP 和外部 Agent，令牌只显示一次。</p></div></div>
+        <form className="form settings-form automation-form" onSubmit={createServiceAccount}>
+          <FormField label="名称"><input required value={serviceDraft.name} onChange={event => setServiceDraft({ ...serviceDraft, name: event.target.value })} /></FormField>
+          <FormField label="Scopes"><textarea required rows={2} value={serviceDraft.scopes} onChange={event => setServiceDraft({ ...serviceDraft, scopes: event.target.value })} /></FormField>
+          <FormField label="允许 CIDR"><input placeholder="留空允许任意来源" value={serviceDraft.cidrs} onChange={event => setServiceDraft({ ...serviceDraft, cidrs: event.target.value })} /></FormField>
+          <div className="two-column"><FormField label="服务器 ID"><input value={serviceDraft.serverIDs} onChange={event => setServiceDraft({ ...serviceDraft, serverIDs: event.target.value })} /></FormField><FormField label="用户 ID"><input value={serviceDraft.userIDs} onChange={event => setServiceDraft({ ...serviceDraft, userIDs: event.target.value })} /></FormField></div>
+          <div className="two-column"><FormField label="每分钟请求"><input type="number" min={1} max={10000} value={serviceDraft.rate} onChange={event => setServiceDraft({ ...serviceDraft, rate: Number(event.target.value) })} /></FormField><FormField label="最大并发"><input type="number" min={1} max={64} value={serviceDraft.concurrency} onChange={event => setServiceDraft({ ...serviceDraft, concurrency: Number(event.target.value) })} /></FormField></div>
+          <button disabled={Boolean(working)}><Plus size={14} />创建</button>
+        </form>
+        <div className="automation-list">{serviceAccounts.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{item.name}</strong><span>{item.scopes.join(' · ')}</span><small>{item.allowed_cidrs?.length ? item.allowed_cidrs.join(', ') : '任意来源'} · {item.rate_limit_per_minute}/分钟 · 并发 {item.max_concurrency}</small></div><div><button className="ghost icon-button" onClick={() => void issueToken(item)} title="签发 Token" aria-label="签发 Token"><KeyRound size={15} /></button><button className="ghost icon-button" onClick={() => void togglePrincipal(item)} title={item.enabled ? '禁用' : '启用'} aria-label={item.enabled ? '禁用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button></div></div>)}</div>
+      </section>
+      <section className="settings-card">
+        <div className="settings-card-head"><div><h3>OAuth 2.1 Client</h3><p className="muted">远程 MCP 使用 PKCE S256 和短期访问令牌。</p></div></div>
+        <form className="form settings-form automation-form" onSubmit={createOAuth}>
+          <FormField label="名称"><input required value={oauthDraft.name} onChange={event => setOAuthDraft({ ...oauthDraft, name: event.target.value })} /></FormField>
+          <FormField label="回调地址"><textarea required rows={2} value={oauthDraft.redirects} onChange={event => setOAuthDraft({ ...oauthDraft, redirects: event.target.value })} /></FormField>
+          <FormField label="Scopes"><textarea required rows={2} value={oauthDraft.scopes} onChange={event => setOAuthDraft({ ...oauthDraft, scopes: event.target.value })} /></FormField>
+          <button disabled={Boolean(working)}><Plus size={14} />注册</button>
+        </form>
+        <div className="automation-list">{snapshot.oauth.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{item.name}</strong><span>{item.allowed_scopes.join(' · ')}</span><small>{item.redirect_uris.join(', ')}</small></div><button className="ghost icon-button" onClick={() => void toggleOAuth(item)} title={item.enabled ? '禁用' : '启用'} aria-label={item.enabled ? '禁用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button></div>)}</div>
+      </section>
+    </div>}
+    {view === 'changes' && <div className="automation-grid">
+      <section className="settings-card">
+        <div className="settings-card-head"><div><h3>服务端审批策略</h3><p className="muted">默认都需人工审批；只有这里明确配置的机器主体可自动通过。</p></div></div>
+        <form className="form settings-form automation-form" onSubmit={savePolicy}>
+          <FormField label="Service Account"><select required value={policyDraft.principalID} onChange={event => setPolicyDraft({ ...policyDraft, principalID: event.target.value })}><option value="">选择主体</option>{serviceAccounts.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></FormField>
+          <FormField label="能力"><select required value={policyDraft.capability} onChange={event => setPolicyDraft({ ...policyDraft, capability: event.target.value })}><option value="">选择能力</option>{executableCapabilities.map((item: any) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></FormField>
+          <FormField label="处理方式"><select value={policyDraft.mode} onChange={event => setPolicyDraft({ ...policyDraft, mode: event.target.value })}><option value="required">人工审批</option><option value="automatic">自动批准</option><option value="denied">拒绝</option></select></FormField>
+          <div className="two-column"><FormField label="服务器 ID"><input value={policyDraft.serverIDs} onChange={event => setPolicyDraft({ ...policyDraft, serverIDs: event.target.value })} /></FormField><FormField label="用户 ID"><input value={policyDraft.userIDs} onChange={event => setPolicyDraft({ ...policyDraft, userIDs: event.target.value })} /></FormField></div>
+          <button disabled={Boolean(working)}><BadgeCheck size={14} />保存策略</button>
+        </form>
+        <div className="automation-list">{snapshot.policies.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{item.capability}</strong><span>{serviceAccounts.find((principal: any) => principal.id === item.principal_id)?.name || item.principal_id}</span><small>{item.mode === 'automatic' ? '自动批准' : item.mode === 'denied' ? '拒绝' : '人工审批'}</small></div></div>)}</div>
+      </section>
+      <section className="settings-card automation-changesets">
+        <div className="settings-card-head"><div><h3>Changeset</h3><p className="muted">校验计划哈希、影响范围并执行已批准变更。</p></div></div>
+        <div className="automation-list">{snapshot.changesets.length ? snapshot.changesets.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{item.reason || item.id}</strong><span>{item.operations.map((operation: any) => operation.capability).join(' · ')}</span><small>{item.status} · 风险 {item.risk_class} · {formatTableTime(item.created_at)}</small></div><div>{item.status === 'draft' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'validate')} title="校验" aria-label="校验"><ShieldCheck size={15} /></button>}{item.status === 'awaiting_approval' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'approve')} title="批准" aria-label="批准"><BadgeCheck size={15} /></button>}{item.status === 'approved' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'apply')} title="执行" aria-label="执行"><Play size={15} /></button>}</div></div>) : <p className="muted">暂无变更集</p>}</div>
+      </section>
+      <section className="settings-card automation-wide">
+        <div className="settings-card-head"><div><h3>Agent 调用审计</h3><p className="muted">记录主体、来源、能力和结果，不保存请求参数正文。</p></div></div>
+        <div className="table-wrap"><table><thead><tr><th>时间</th><th>主体</th><th>能力</th><th>来源</th><th>结果</th></tr></thead><tbody>{snapshot.audits.map((item: any) => <tr key={item.id}><td>{formatTableTime(item.created_at)}</td><td>{item.client_name || item.principal_id}</td><td>{item.capability}</td><td>{item.source_ip || '本机'}</td><td>{item.result}</td></tr>)}</tbody></table></div>
+      </section>
+    </div>}
+    {view === 'ai' && <div className="automation-grid">
+      <section className="settings-card">
+        <div className="settings-card-head"><div><h3>AI Provider</h3><p className="muted">内置 Worker 使用 OpenAI-compatible 端点，默认只发送脱敏 Incident Bundle。</p></div></div>
+        <form className="form settings-form automation-form" onSubmit={createProvider}>
+          <FormField label="名称"><input required value={providerDraft.name} onChange={event => setProviderDraft({ ...providerDraft, name: event.target.value })} /></FormField>
+          <FormField label="Base URL"><input required value={providerDraft.baseURL} onChange={event => setProviderDraft({ ...providerDraft, baseURL: event.target.value })} /></FormField>
+          <FormField label="模型"><input required value={providerDraft.model} onChange={event => setProviderDraft({ ...providerDraft, model: event.target.value })} /></FormField>
+          <FormField label="API Key"><input required type="password" autoComplete="new-password" value={providerDraft.apiKey} onChange={event => setProviderDraft({ ...providerDraft, apiKey: event.target.value })} /></FormField>
+          <FormField label="每日 Token 上限"><input type="number" min={0} value={providerDraft.dailyTokenLimit} onChange={event => setProviderDraft({ ...providerDraft, dailyTokenLimit: Number(event.target.value) })} /></FormField>
+          <label className="toggle-line"><input type="checkbox" checked={providerDraft.allowRawAudit} onChange={event => setProviderDraft({ ...providerDraft, allowRawAudit: event.target.checked })} /><span>允许发送原始审计字段</span></label>
+          <button disabled={Boolean(working)}><Plus size={14} />保存 Provider</button>
+        </form>
+        <div className="automation-list">{snapshot.providers.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{item.name}</strong><span>{item.model}</span><small>{item.daily_token_limit ? `每日 ${item.daily_token_limit} Token` : '不设日限额'} · {item.allow_raw_audit ? '原始字段已授权' : '脱敏模式'}</small></div><button className="ghost icon-button" onClick={() => void toggleProvider(item)} title={item.enabled ? '停用' : '启用'} aria-label={item.enabled ? '停用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button></div>)}</div>
+      </section>
+      <section className="settings-card">
+        <div className="settings-card-head"><div><h3>分析队列</h3><p className="muted">按事件触发、指纹去重，模型不可用时规则审计继续运行。</p></div></div>
+        <div className="automation-list">{snapshot.jobs.length ? snapshot.jobs.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{item.incident_id || item.kind}</strong><span>{item.status} · 尝试 {item.attempts}</span><small>{item.input_tokens + item.output_tokens} Token · {formatTableTime(item.created_at)}</small>{item.error && <small className="danger-text">{item.error}</small>}</div></div>) : <p className="muted">暂无 AI 分析任务</p>}</div>
+      </section>
+      <section className="settings-card automation-wide">
+        <div className="settings-card-head"><div><h3>AI 结论</h3><p className="muted">AI 只给出分类、置信度、证据与建议，实际处置仍由策略和管理员决定。</p></div></div>
+        <div className="automation-findings">{snapshot.findings.map((item: any) => <article key={item.id}><div><strong>{item.classification}</strong><span>{Math.round(item.confidence * 100)}%</span></div><p>{item.summary}</p><small>{item.model} · {formatTableTime(item.created_at)}</small></article>)}</div>
+      </section>
+    </div>}
+  </Panel>
+}
 
 function SettingsPage({ data, client, load, notify }: any) {
   const dialogs = useDialogs()

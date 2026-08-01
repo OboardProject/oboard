@@ -14,7 +14,7 @@ import (
 func TestRuntimeStateUsesCurrentBasePathForVersionAndHealth(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/current/api/v1/version":
+		case "/current/api/v2/ui/version":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"version":"dev","build":"running-build","commit":"running-commit","built_at":"2026-07-28T00:00:00Z"}`))
 		case "/current/healthz":

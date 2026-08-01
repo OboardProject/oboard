@@ -1,0 +1,280 @@
+package controller
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/store"
+)
+
+type bearerTransport struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	clone := request.Clone(request.Context())
+	clone.Header = request.Header.Clone()
+	clone.Header.Set("Authorization", "Bearer "+t.token)
+	return t.base.RoundTrip(clone)
+}
+
+func TestMCPUsesServicePrincipalAndRecordsAudit(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	principal := &model.APIPrincipal{ID: "prn_test", Name: "test MCP", Type: model.APIPrincipalServiceAccount, Enabled: true, Scopes: []string{"inventory:read"}, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2}
+	if err := db.CreateAPIPrincipal(context.Background(), principal); err != nil {
+		t.Fatal(err)
+	}
+	plain := "obk_test-token-value"
+	if err := db.CreateAPIToken(context.Background(), &model.APIToken{ID: "tok_test", PrincipalID: principal.ID, TokenHash: security.HashAPISecret("test-secret", plain), Prefix: "obk_test", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(newTestServer(db, "test-secret", "").Handler())
+	defer httpServer.Close()
+	httpClient := &http.Client{Transport: bearerTransport{token: plain, base: http.DefaultTransport}}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
+	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: httpServer.URL + "/mcp", HTTPClient: httpClient}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_query", Arguments: map[string]any{"capability": "inventory.read", "arguments": map[string]any{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError || result.StructuredContent == nil {
+		t.Fatalf("unexpected MCP result: %#v", result)
+	}
+	audits, err := db.ListToolCallAudits(context.Background(), principal.ID, 10)
+	if err != nil || len(audits) != 1 || audits[0].Capability != "inventory.read" {
+		t.Fatalf("tool audits = %#v, err=%v", audits, err)
+	}
+}
+
+func TestOAuthAuthorizationCodePKCEAndSingleUse(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	sessionToken := login["token"].(string)
+	client := &model.OAuthClient{ID: "oc_test", Name: "Codex", RedirectURIs: []string{"https://client.example/callback"}, AllowedScopes: []string{"inventory:read"}, ClientMetadata: json.RawMessage(`{}`), Enabled: true}
+	if err := db.CreateOAuthClient(context.Background(), client); err != nil {
+		t.Fatal(err)
+	}
+	verifier := strings.Repeat("a", 43)
+	sum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	form := url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {"inventory:read"}, "state": {"state-test"}, "resource": {"https://panel.example.com/mcp"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}, "decision": {"approve"}}
+	authorize := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	authorize.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	authorize.Header.Set("Authorization", "Bearer "+sessionToken)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, authorize)
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("authorize status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	location, err := url.Parse(recorder.Header().Get("Location"))
+	if err != nil || location.Query().Get("state") != "state-test" || location.Query().Get("code") == "" {
+		t.Fatalf("authorization redirect=%q err=%v", recorder.Header().Get("Location"), err)
+	}
+	code := location.Query().Get("code")
+	exchange := func() *httptest.ResponseRecorder {
+		values := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "code_verifier": {verifier}, "resource": {"https://panel.example.com/mcp"}}
+		req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(values.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, req)
+		return out
+	}
+	first := exchange()
+	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `"access_token":"oba_`) || !strings.Contains(first.Body.String(), `"refresh_token":"obr_`) {
+		t.Fatalf("first exchange status=%d body=%s", first.Code, first.Body.String())
+	}
+	second := exchange()
+	if second.Code != http.StatusBadRequest || !strings.Contains(second.Body.String(), `"error":"invalid_grant"`) {
+		t.Fatalf("second exchange status=%d body=%s", second.Code, second.Body.String())
+	}
+}
+
+func TestOAuthScopesCannotExceedCurrentUserRole(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	handler := newTestServer(db, "test-secret", "").Handler()
+	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	admin := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, handler, http.MethodPost, "/api/v2/ui/users", admin, map[string]any{"username": "viewer", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	viewer := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)["token"].(string)
+	client := &model.OAuthClient{ID: "oc_privileged", Name: "Privileged Client", RedirectURIs: []string{"https://client.example/callback"}, AllowedScopes: []string{"deployments:apply"}, ClientMetadata: json.RawMessage(`{}`), Enabled: true}
+	if err := db.CreateOAuthClient(context.Background(), client); err != nil {
+		t.Fatal(err)
+	}
+	verifier := strings.Repeat("b", 43)
+	sum := sha256.Sum256([]byte(verifier))
+	form := oauthTestAuthorizationForm(client, "deployments:apply", base64.RawURLEncoding.EncodeToString(sum[:]))
+	form.Set("decision", "approve")
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+viewer)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"error":"access_denied"`) {
+		t.Fatalf("viewer OAuth grant status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestOAuthClientScopeReductionInvalidatesAccessToken(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	request(t, server.Handler(), http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	user, err := db.GetUserByUsername(context.Background(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &model.OAuthClient{ID: "oc_scope_reduction", Name: "Scope Reduction", RedirectURIs: []string{"https://client.example/callback"}, AllowedScopes: []string{"inventory:read"}, ClientMetadata: json.RawMessage(`{}`), Enabled: true}
+	if err := db.CreateOAuthClient(context.Background(), client); err != nil {
+		t.Fatal(err)
+	}
+	principal, err := server.oauthPrincipal(httptest.NewRequest(http.MethodPost, "/oauth/authorize", nil), *user, *client, client.AllowedScopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := "oba_scope-reduction-token"
+	now := time.Now().UTC()
+	access := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", raw), PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Scopes: []string{"inventory:read"}, Resource: "https://panel.example.com/mcp", ExpiresAt: now.Add(time.Hour)}
+	refresh := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", "obr_scope-reduction-token"), FamilyID: "family", PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Scopes: access.Scopes, Resource: access.Resource, ExpiresAt: now.Add(time.Hour)}
+	if err := db.CreateOAuthTokens(context.Background(), access, refresh); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.authenticateOAuthToken(httptest.NewRequest(http.MethodPost, "/mcp", nil), raw); err != nil {
+		t.Fatalf("valid access token rejected: %v", err)
+	}
+	client.AllowedScopes = []string{"audit:read"}
+	if err := db.UpdateOAuthClient(context.Background(), client); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.authenticateOAuthToken(httptest.NewRequest(http.MethodPost, "/mcp", nil), raw); err == nil {
+		t.Fatal("access token survived removal of its scope from the OAuth client")
+	}
+}
+
+func TestOAuthAuthorizationDoesNotReenableDisabledPrincipal(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := newTestServer(db, "test-secret", "")
+	request(t, server.Handler(), http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	user, err := db.GetUserByUsername(context.Background(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := model.OAuthClient{ID: "oc_disabled_principal", Name: "Disabled Principal"}
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", nil)
+	principal, err := server.oauthPrincipal(req, *user, client, []string{"inventory:read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal.Enabled = false
+	if err := db.UpdateAPIPrincipal(context.Background(), principal); err != nil {
+		t.Fatal(err)
+	}
+	principal, err = server.oauthPrincipal(req, *user, client, []string{"inventory:read"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if principal.Enabled {
+		t.Fatal("new authorization re-enabled a disabled OAuth principal")
+	}
+}
+
+func TestOAuthConsentSupportsCookieSessionFormCSRF(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v2/ui/auth/login", strings.NewReader(`{"username":"admin","password":"very-secure-password"}`))
+	loginRequest.Header.Set("Content-Type", "application/json")
+	loginResponse := httptest.NewRecorder()
+	handler.ServeHTTP(loginResponse, loginRequest)
+	if loginResponse.Code != http.StatusOK || len(loginResponse.Result().Cookies()) != 1 {
+		t.Fatalf("login status=%d cookies=%#v", loginResponse.Code, loginResponse.Result().Cookies())
+	}
+	cookie := loginResponse.Result().Cookies()[0]
+	if cookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("OAuth browser session cookie SameSite=%v", cookie.SameSite)
+	}
+	client := &model.OAuthClient{ID: "oc_browser", Name: "Browser Client", RedirectURIs: []string{"https://client.example/callback"}, AllowedScopes: []string{"inventory:read"}, ClientMetadata: json.RawMessage(`{}`), Enabled: true}
+	if err := db.CreateOAuthClient(context.Background(), client); err != nil {
+		t.Fatal(err)
+	}
+	verifier := strings.Repeat("c", 43)
+	sum := sha256.Sum256([]byte(verifier))
+	form := oauthTestAuthorizationForm(client, "inventory:read", base64.RawURLEncoding.EncodeToString(sum[:]))
+	get := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+form.Encode(), nil)
+	get.AddCookie(cookie)
+	getResponse := httptest.NewRecorder()
+	handler.ServeHTTP(getResponse, get)
+	if getResponse.Code != http.StatusOK || !strings.Contains(getResponse.Body.String(), `_oboard_csrf`) {
+		t.Fatalf("consent status=%d body=%s", getResponse.Code, getResponse.Body.String())
+	}
+	form.Set("decision", "approve")
+	form.Set("_oboard_csrf", server.csrfTokenForSession(cookie.Value))
+	post := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	post.AddCookie(cookie)
+	postResponse := httptest.NewRecorder()
+	handler.ServeHTTP(postResponse, post)
+	if postResponse.Code != http.StatusFound {
+		t.Fatalf("consent submit status=%d body=%s", postResponse.Code, postResponse.Body.String())
+	}
+}
+
+func oauthTestAuthorizationForm(client *model.OAuthClient, scope, challenge string) url.Values {
+	return url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {scope}, "state": {"state-test"}, "resource": {"https://panel.example.com/mcp"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}}
+}

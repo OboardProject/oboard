@@ -30,7 +30,11 @@ import (
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/auditintel"
+	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/backup"
+	"github.com/OboardProject/oboard/internal/capability"
 	"github.com/OboardProject/oboard/internal/controllerupdate"
 	"github.com/OboardProject/oboard/internal/core"
 	oboardgeoip "github.com/OboardProject/oboard/internal/geoip"
@@ -56,6 +60,12 @@ type Server struct {
 	store         *store.Store
 	sessionSecret string
 	staticDir     string
+	application   *application.Service
+	capabilities  *capability.Catalog
+	automation    *automation.Service
+	auditIntel    *auditintel.Service
+	apiGateMu     sync.Mutex
+	apiInFlight   map[string]int
 	// basePath is the immutable startup fallback for direct test constructors.
 	// Runtime request handling reads basePaths instead.
 	basePath                      string
@@ -112,7 +122,9 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 		acmeHome = "./data/acme"
 	}
 	socketPath := strings.TrimSpace(os.Getenv("OBOARD_CONTROLLER_UPDATER_SOCKET"))
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}}
+	catalog := capability.NewCatalog()
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditintel.New(store, sessionSecret), apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}}
+	s.registerAutomationHandlers()
 	s.restoreBasePathState(context.Background(), basePath)
 	s.upgrader = websocket.Upgrader{CheckOrigin: s.checkOrigin, ReadBufferSize: 4096, WriteBufferSize: 4096}
 	return s
@@ -245,6 +257,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/audit/risk-overview", s.auth(s.combinedAuditOverview, model.RoleOperator))
 	mux.HandleFunc("/api/v1/audit/subscriptions/overview", s.auth(s.subscriptionAuditOverview, model.RoleOperator))
 	mux.HandleFunc("/api/v1/audit/subscriptions/users/", s.auth(s.subscriptionAuditUser, model.RoleOperator))
+	s.registerAPIV2Routes(mux)
+	s.registerOAuthRoutes(mux)
+	mcpHandler := s.newMCPHandler()
+	mux.HandleFunc("/mcp", s.apiAuth(mcpHandler.ServeHTTP, model.RoleViewer))
 	mux.HandleFunc("/api/v1/agent/enroll", s.agentEnroll)
 	mux.HandleFunc("/api/v1/agent/connect", s.agentConnect)
 	mux.HandleFunc("/api/v1/agent/task-results", s.agentTaskResults)
@@ -261,7 +277,31 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/downloads", notFound)
 	mux.HandleFunc("/downloads/", s.downloadArtifact)
 	mux.HandleFunc("/", s.static)
-	return s.withBasePath(s.requestLogger(s.withSecurityHeaders(mux)))
+	return s.withBasePath(s.requestLogger(s.withSecurityHeaders(s.managementAPIVersionGate(mux))))
+}
+
+func (s *Server) managementAPIVersionGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v2/ui/") {
+			relative := strings.TrimPrefix(r.URL.Path, "/api/v2/ui/")
+			if relative == "agent" || strings.HasPrefix(relative, "agent/") || relative == "subscriptions" || strings.HasPrefix(relative, "subscriptions/") {
+				http.NotFound(w, r)
+				return
+			}
+			request := r.Clone(r.Context())
+			request.URL = new(url.URL)
+			*request.URL = *r.URL
+			request.URL.Path = "/api/v1/" + strings.TrimPrefix(r.URL.Path, "/api/v2/ui/")
+			request.URL.RawPath = ""
+			next.ServeHTTP(w, request)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && !strings.HasPrefix(r.URL.Path, "/api/v1/agent/") && r.URL.Path != "/api/v1/subscriptions" && !strings.HasPrefix(r.URL.Path, "/api/v1/subscriptions/") {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func NormalizeBasePath(raw string) (string, error) {
@@ -2015,6 +2055,11 @@ func csrfRequired(method string) bool {
 
 func (s *Server) validCSRFToken(r *http.Request, sessionToken string) bool {
 	token := strings.TrimSpace(r.Header.Get("X-OBoard-CSRF"))
+	if token == "" && strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/x-www-form-urlencoded") {
+		if err := r.ParseForm(); err == nil {
+			token = strings.TrimSpace(r.Form.Get("_oboard_csrf"))
+		}
+	}
 	return token != "" && hmac.Equal([]byte(token), []byte(s.csrfTokenForSession(sessionToken)))
 }
 
@@ -2038,12 +2083,12 @@ func sessionClientBinding(secret, userAgent string) string {
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, sessionToken string, expiresAt time.Time) {
 	secure := requestUsesHTTPS(r)
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: sessionToken, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, Expires: expiresAt.UTC(), MaxAge: int(sessionLifetime / time.Second)}) // #nosec G124 -- Secure follows direct TLS or an explicitly trusted proxy; localhost HTTP remains supported for development.
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: sessionToken, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, Expires: expiresAt.UTC(), MaxAge: int(sessionLifetime / time.Second)}) // #nosec G124 -- Secure follows direct TLS or an explicitly trusted proxy; localhost HTTP remains supported for development.
 }
 
 func (s *Server) clearSessionCookies(w http.ResponseWriter, r *http.Request) {
 	secure := requestUsesHTTPS(r)
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, Expires: time.Unix(1, 0).UTC(), MaxAge: -1}) // #nosec G124 -- deletion must match the dynamically secured development or production cookie.
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, Expires: time.Unix(1, 0).UTC(), MaxAge: -1}) // #nosec G124 -- deletion must match the dynamically secured development or production cookie.
 }
 
 func requestUsesHTTPS(r *http.Request) bool {
@@ -2058,7 +2103,7 @@ func requestUsesHTTPS(r *http.Request) bool {
 
 func trustedProxyRequest(r *http.Request) bool {
 	peer, ok := requestPeerIP(r)
-	return (ok && peer.IsLoopback()) || security.EnvBool("OBOARD_TRUST_PROXY", false)
+	return ok && trustedProxyIP(peer)
 }
 
 func (s *Server) allowRate(w http.ResponseWriter, r *http.Request, key string, limit int, window time.Duration) bool {
@@ -2077,11 +2122,20 @@ func (s *Server) allowRate(w http.ResponseWriter, r *http.Request, key string, l
 
 func clientIP(r *http.Request) string {
 	peer, peerValid := requestPeerIP(r)
-	if trustedProxyRequest(r) {
-		if forwarded := normalizedIP(r.Header.Get("X-Real-IP")); forwarded != "" {
-			return forwarded
+	if peerValid && trustedProxyIP(peer) {
+		current := peer
+		forwarded := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+		for index := len(forwarded) - 1; index >= 0 && trustedProxyIP(current); index-- {
+			candidate, err := netip.ParseAddr(strings.TrimSpace(forwarded[index]))
+			if err != nil {
+				break
+			}
+			current = candidate.Unmap()
 		}
-		if forwarded := normalizedIP(lastHeaderValue(r.Header.Get("X-Forwarded-For"))); forwarded != "" {
+		if current != peer {
+			return current.String()
+		}
+		if forwarded := normalizedIP(r.Header.Get("X-Real-IP")); forwarded != "" {
 			return forwarded
 		}
 	}
@@ -2089,6 +2143,23 @@ func clientIP(r *http.Request) string {
 		return peer.String()
 	}
 	return r.RemoteAddr
+}
+
+func trustedProxyIP(ip netip.Addr) bool {
+	if !ip.IsValid() {
+		return false
+	}
+	for _, value := range strings.Split(os.Getenv("OBOARD_TRUSTED_PROXY_CIDRS"), ",") {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(value)
+		if err == nil && prefix.Contains(ip.Unmap()) {
+			return true
+		}
+	}
+	return false
 }
 
 func requestPeerIP(r *http.Request) (netip.Addr, bool) {
@@ -6875,6 +6946,28 @@ func (s *Server) validateProxyPathStep(ctx context.Context, v *model.ProxyPathSt
 	if v.Position <= 0 {
 		return errors.New("position must be >= 1")
 	}
+	if err := s.normalizeProxyPathStepCandidate(ctx, v); err != nil {
+		return err
+	}
+	steps, err := s.store.ListProxyPathStepsForPath(ctx, v.PathID)
+	if err != nil {
+		return err
+	}
+	for _, step := range steps {
+		if step.ID != currentID && step.Position == v.Position {
+			return errors.New("same path step position already exists")
+		}
+	}
+	if err := s.validateProxyPathServerLoop(ctx, path.InboundID, appendProxyPathStep(steps, *v, currentID)); err != nil {
+		return err
+	}
+	// Branch reuse is a property of the path set, not of one step. It is enforced
+	// when a path is created or enabled; repeating it here would reject adding a
+	// hop with an error about branch reuse that the operator cannot act on.
+	return nil
+}
+
+func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, v *model.ProxyPathStep) error {
 	if v.TransportMode == "" {
 		v.TransportMode = model.ProxyPathTransportSingBox
 	}
@@ -6964,21 +7057,6 @@ func (s *Server) validateProxyPathStep(ctx context.Context, v *model.ProxyPathSt
 	default:
 		return errors.New("node_type must be imported, server_inbound or warp")
 	}
-	steps, err := s.store.ListProxyPathStepsForPath(ctx, v.PathID)
-	if err != nil {
-		return err
-	}
-	for _, step := range steps {
-		if step.ID != currentID && step.Position == v.Position {
-			return errors.New("same path step position already exists")
-		}
-	}
-	if err := s.validateProxyPathServerLoop(ctx, path.InboundID, appendProxyPathStep(steps, *v, currentID)); err != nil {
-		return err
-	}
-	// Branch reuse is a property of the path set, not of one step. It is enforced
-	// when a path is created or enabled; repeating it here would reject adding a
-	// hop with an error about branch reuse that the operator cannot act on.
 	return nil
 }
 
@@ -11345,7 +11423,7 @@ verify_downloaded_release() {
 
 load_target_version() {
   need_base_url
-  version_json=$(curl -fsSL "$BASE_URL/api/v1/version" 2>/dev/null || true)
+  version_json=$(curl -fsSL "$BASE_URL/api/v2/ui/version" 2>/dev/null || true)
   TARGET_VERSION=$(printf '%s' "$version_json" | json_value agent_expected_version 2>/dev/null || true)
   TARGET_BUILD=$(printf '%s' "$version_json" | json_value agent_expected_build 2>/dev/null || true)
   TARGET_KERNEL_BUILD=$(printf '%s' "$version_json" | json_value kernel_build 2>/dev/null || true)
@@ -12081,7 +12159,7 @@ verify_downloaded_release() {
 }
 
 load_target_version() {
-  version_json=$(curl -fsSL "$BASE_URL/api/v1/version" 2>/dev/null || true)
+  version_json=$(curl -fsSL "$BASE_URL/api/v2/ui/version" 2>/dev/null || true)
   TARGET_VERSION=$(printf '%s' "$version_json" | json_value agent_expected_version 2>/dev/null || true)
   TARGET_BUILD=$(printf '%s' "$version_json" | json_value agent_expected_build 2>/dev/null || true)
   TARGET_KERNEL_BUILD=$(printf '%s' "$version_json" | json_value kernel_build 2>/dev/null || true)

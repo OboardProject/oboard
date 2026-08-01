@@ -200,6 +200,9 @@ install -m 0755 "$work/bin/oboard-controller" /opt/oboard/oboard-controller
 if [ -f "$work/bin/oboard-controller-updater" ]; then
   install -m 0755 "$work/bin/oboard-controller-updater" /opt/oboard/oboard-controller-updater
 fi
+if [ -f "$work/bin/oboard-ai-worker" ]; then
+  install -m 0755 "$work/bin/oboard-ai-worker" /opt/oboard/oboard-ai-worker
+fi
 rm -rf /opt/oboard/web/dist.new
 cp -R "$work/web/dist" /opt/oboard/web/dist.new
 chown -R oboard:oboard /opt/oboard/web/dist.new
@@ -265,12 +268,18 @@ fi
 if ! grep -q '^OBOARD_CONTROLLER_UPDATER_SOCKET=' /opt/oboard/config/controller.env; then
   printf 'OBOARD_CONTROLLER_UPDATER_SOCKET=/run/oboard/controller-updater.sock\n' >> /opt/oboard/config/controller.env
 fi
+if ! grep -q '^OBOARD_AI_WORKER_SOCKET=' /opt/oboard/config/controller.env; then
+  printf 'OBOARD_AI_WORKER_SOCKET=/run/oboard/ai-worker/rpc.sock\n' >> /opt/oboard/config/controller.env
+fi
 if ! grep -q '^OBOARD_BACKUP_DIR=' /opt/oboard/config/controller.env; then
   printf 'OBOARD_BACKUP_DIR=/opt/oboard/data/backups\n' >> /opt/oboard/config/controller.env
 fi
 chmod 0600 /opt/oboard/config/controller.env
 
 cp "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/oboard-controller.service
+if [ -f "$work/deploy/systemd/oboard-ai-worker.service" ]; then
+  cp "$work/deploy/systemd/oboard-ai-worker.service" /etc/systemd/system/oboard-ai-worker.service
+fi
 if [ -f "$work/deploy/systemd/oboard-controller-updater.service" ]; then
   cp "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/oboard-controller-updater.service
 fi
@@ -281,6 +290,10 @@ if [ -f /etc/systemd/system/oboard-controller-updater.service ]; then
 fi
 systemctl enable oboard-controller >/dev/null
 systemctl restart oboard-controller
+if [ -f /etc/systemd/system/oboard-ai-worker.service ]; then
+  systemctl enable oboard-ai-worker >/dev/null
+  systemctl restart oboard-ai-worker
+fi
 sleep 1
 systemctl --no-pager --full status oboard-controller | sed -n '1,18p'
 curl -fsS "http://127.0.0.1:$OBOARD_HTTP_PORT$OBOARD_BASE_PATH/healthz" >/dev/null

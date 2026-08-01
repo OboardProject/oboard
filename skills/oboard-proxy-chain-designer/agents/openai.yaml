@@ -1,0 +1,4 @@
+interface:
+  display_name: "OBoard Proxy Chain Designer"
+  short_description: "Plan validated OBoard proxy paths"
+  default_prompt: "Use $oboard-proxy-chain-designer to compare valid proxy paths and stop for Controller approval before applying changes."

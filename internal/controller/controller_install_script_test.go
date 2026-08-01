@@ -77,6 +77,7 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"almalinux",
 		"OBOARD_UPDATE_CHANNEL",
 		"oboard-controller-updater",
+		"oboard-ai-worker",
 		"prepare_controller_updater_runtime",
 		"wait_for_controller_updater",
 		"curl --unix-socket /run/oboard/controller-updater.sock",
@@ -266,8 +267,10 @@ func TestControllerDeploymentFilesUseSingleInstallRoot(t *testing.T) {
 	files := []string{
 		"deploy/systemd/oboard-controller.service",
 		"deploy/systemd/oboard-controller-updater.service",
+		"deploy/systemd/oboard-ai-worker.service",
 		"deploy/openrc/oboard-controller",
 		"deploy/openrc/oboard-controller-updater",
+		"deploy/openrc/oboard-ai-worker",
 		"deploy/controller.env.example",
 	}
 	for _, name := range files {

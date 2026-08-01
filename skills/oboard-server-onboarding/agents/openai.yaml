@@ -1,0 +1,4 @@
+interface:
+  display_name: "OBoard Server Onboarding"
+  short_description: "Plan and safely enroll an OBoard node"
+  default_prompt: "Use $oboard-server-onboarding to plan a node enrollment, obtain approval, and verify the registered Node Agent."

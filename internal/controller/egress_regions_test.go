@@ -63,10 +63,10 @@ func newExternalEgressControllerFixture(t *testing.T) externalEgressControllerFi
 func TestFullDeploymentAddsExternalEgressPlanAndManualProbeReusesActiveTask(t *testing.T) {
 	fixture := newExternalEgressControllerFixture(t)
 	handler := fixture.srv.Handler()
-	request(t, handler, http.MethodPost, "/api/v1/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, handler, http.MethodPost, "/api/v1/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 
-	deployment := request(t, handler, http.MethodPost, "/api/v1/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	deployment := request(t, handler, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 	tasks := deployment["tasks"].([]any)
 	if len(tasks) != 1 {
 		t.Fatalf("deployment tasks = %#v", tasks)
@@ -115,7 +115,7 @@ func TestFullDeploymentAddsExternalEgressPlanAndManualProbeReusesActiveTask(t *t
 	if deployedDigest != regeneratedDigest {
 		t.Fatalf("deployed and regenerated config digests differ: %s != %s", deployedDigest, regeneratedDigest)
 	}
-	pathURL := "/api/v1/proxy-paths/" + strconv.FormatInt(fixture.path.ID, 10) + "/probe-egress"
+	pathURL := "/api/v2/ui/proxy-paths/" + strconv.FormatInt(fixture.path.ID, 10) + "/probe-egress"
 	first := request(t, handler, http.MethodPost, pathURL, token, map[string]any{}, http.StatusAccepted)
 	if first["reused"] != false {
 		t.Fatalf("first manual probe unexpectedly reused a task: %#v", first)
@@ -146,7 +146,7 @@ func TestProbeProxyPathEgressRejectsUnsupportedAgentBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/proxy-paths/1/probe-egress", nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/v2/ui/proxy-paths/1/probe-egress", nil)
 	fixture.srv.probeProxyPathEgress(recorder, request, fixture.path.ID)
 	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "Agent") {
 		t.Fatalf("unsupported Agent response = %d %s", recorder.Code, recorder.Body.String())

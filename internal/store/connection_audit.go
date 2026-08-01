@@ -41,8 +41,8 @@ func (s *Store) AddConnectionAuditReports(ctx context.Context, reports []model.C
 		if strings.TrimSpace(report.ReportID) == "" || report.ServerID <= 0 || report.UserID <= 0 {
 			continue
 		}
-		res, err := tx.ExecContext(ctx, `insert or ignore into connection_audit_reports(report_id,server_id,user_id,inbound_id,path_id,source_ip,source_geo_code,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,network,destination,destination_port,outbound_tag,outbound_type,connection_count,active_peak,active_at_end,started_at,ended_at,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			report.ReportID, report.ServerID, report.UserID, report.InboundID, report.PathID, report.SourceIP, report.SourceGeoCode, report.SourceCountryCode, report.SourceCountry, report.SourceProvince, report.SourceCity, report.SourceISP, report.GeoDatabaseRevision, report.Network, report.Destination, report.DestinationPort, report.OutboundTag, report.OutboundType, report.ConnectionCount, report.ActivePeak, report.ActiveAtEnd, report.StartedAt.UTC().Format(time.RFC3339Nano), report.EndedAt.UTC().Format(time.RFC3339Nano), ts)
+		res, err := tx.ExecContext(ctx, `insert or ignore into connection_audit_reports(report_id,server_id,user_id,inbound_id,path_id,source_ip,source_geo_code,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,network,destination,destination_port,outbound_tag,outbound_type,connection_count,closed_count,duration_total_ms,duration_max_ms,active_peak,active_at_end,collection_generation,bucket_capacity,dropped_bucket_count,collection_started_at,collection_ended_at,started_at,ended_at,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			report.ReportID, report.ServerID, report.UserID, report.InboundID, report.PathID, report.SourceIP, report.SourceGeoCode, report.SourceCountryCode, report.SourceCountry, report.SourceProvince, report.SourceCity, report.SourceISP, report.GeoDatabaseRevision, report.Network, report.Destination, report.DestinationPort, report.OutboundTag, report.OutboundType, report.ConnectionCount, report.ClosedCount, report.DurationTotalMS, report.DurationMaxMS, report.ActivePeak, report.ActiveAtEnd, report.CollectionGeneration, report.BucketCapacity, report.DroppedBucketCount, report.CollectionStartedAt.UTC().Format(time.RFC3339Nano), report.CollectionEndedAt.UTC().Format(time.RFC3339Nano), report.StartedAt.UTC().Format(time.RFC3339Nano), report.EndedAt.UTC().Format(time.RFC3339Nano), ts)
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +250,7 @@ func (s *Store) connectionAuditDimensions(ctx context.Context, query string, arg
 }
 
 func (s *Store) listRecentConnectionAudits(ctx context.Context, userID int64, since string, limit int) ([]model.ConnectionAuditReport, error) {
-	rows, err := s.db.QueryContext(ctx, `select report_id,server_id,user_id,inbound_id,path_id,source_ip,source_geo_code,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,network,destination,destination_port,outbound_tag,outbound_type,connection_count,active_peak,active_at_end,started_at,ended_at,created_at from connection_audit_reports where user_id=? and ended_at>=? order by ended_at desc limit ?`, userID, since, limit)
+	rows, err := s.db.QueryContext(ctx, `select report_id,server_id,user_id,inbound_id,path_id,source_ip,source_geo_code,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,network,destination,destination_port,outbound_tag,outbound_type,connection_count,closed_count,duration_total_ms,duration_max_ms,active_peak,active_at_end,collection_generation,bucket_capacity,dropped_bucket_count,collection_started_at,collection_ended_at,started_at,ended_at,created_at from connection_audit_reports where user_id=? and ended_at>=? order by ended_at desc limit ?`, userID, since, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -259,8 +259,8 @@ func (s *Store) listRecentConnectionAudits(ctx context.Context, userID int64, si
 	for rows.Next() {
 		var item model.ConnectionAuditReport
 		var inboundID, pathID sql.NullInt64
-		var startedAt, endedAt, createdAt string
-		if err := rows.Scan(&item.ReportID, &item.ServerID, &item.UserID, &inboundID, &pathID, &item.SourceIP, &item.SourceGeoCode, &item.SourceCountryCode, &item.SourceCountry, &item.SourceProvince, &item.SourceCity, &item.SourceISP, &item.GeoDatabaseRevision, &item.Network, &item.Destination, &item.DestinationPort, &item.OutboundTag, &item.OutboundType, &item.ConnectionCount, &item.ActivePeak, &item.ActiveAtEnd, &startedAt, &endedAt, &createdAt); err != nil {
+		var collectionStartedAt, collectionEndedAt, startedAt, endedAt, createdAt string
+		if err := rows.Scan(&item.ReportID, &item.ServerID, &item.UserID, &inboundID, &pathID, &item.SourceIP, &item.SourceGeoCode, &item.SourceCountryCode, &item.SourceCountry, &item.SourceProvince, &item.SourceCity, &item.SourceISP, &item.GeoDatabaseRevision, &item.Network, &item.Destination, &item.DestinationPort, &item.OutboundTag, &item.OutboundType, &item.ConnectionCount, &item.ClosedCount, &item.DurationTotalMS, &item.DurationMaxMS, &item.ActivePeak, &item.ActiveAtEnd, &item.CollectionGeneration, &item.BucketCapacity, &item.DroppedBucketCount, &collectionStartedAt, &collectionEndedAt, &startedAt, &endedAt, &createdAt); err != nil {
 			return nil, err
 		}
 		if inboundID.Valid {
@@ -271,6 +271,8 @@ func (s *Store) listRecentConnectionAudits(ctx context.Context, userID int64, si
 		}
 		item.StartedAt = parseTime(startedAt)
 		item.EndedAt = parseTime(endedAt)
+		item.CollectionStartedAt = parseTime(collectionStartedAt)
+		item.CollectionEndedAt = parseTime(collectionEndedAt)
 		item.CreatedAt = parseTime(createdAt)
 		out = append(out, item)
 	}

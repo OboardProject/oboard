@@ -72,6 +72,7 @@ package_controller() {
   mkdir -p "$stage/bin" "$stage/deploy/systemd" "$stage/deploy/openrc" "$stage/docs"
   cp "$source" "$stage/bin/oboard-controller"
   cp "$OUT_DIR/bin/$os-$arch/oboard-controller-updater" "$stage/bin/oboard-controller-updater"
+  cp "$OUT_DIR/bin/$os-$arch/oboard-ai-worker" "$stage/bin/oboard-ai-worker"
   cp "$CONTROLLER_DIR/README.md" "$stage/README.md"
   cp "$CONTROLLER_DIR/LICENSE" "$stage/LICENSE"
   printf '%s\n' "$VERSION_VALUE" > "$stage/VERSION"
@@ -92,8 +93,10 @@ package_controller() {
   done
   cp "$CONTROLLER_DIR/deploy/systemd/oboard-controller.service" "$stage/deploy/systemd/"
   cp "$CONTROLLER_DIR/deploy/systemd/oboard-controller-updater.service" "$stage/deploy/systemd/"
+  cp "$CONTROLLER_DIR/deploy/systemd/oboard-ai-worker.service" "$stage/deploy/systemd/"
   cp "$CONTROLLER_DIR/deploy/openrc/oboard-controller" "$stage/deploy/openrc/"
   cp "$CONTROLLER_DIR/deploy/openrc/oboard-controller-updater" "$stage/deploy/openrc/"
+  cp "$CONTROLLER_DIR/deploy/openrc/oboard-ai-worker" "$stage/deploy/openrc/"
   cp "$CONTROLLER_DIR/deploy/controller.env.example" "$stage/deploy/"
 
   local archive="$OUT_DIR/oboard_controller_${ARTIFACT_VERSION}_${os}_${arch}.tar.gz"
@@ -115,6 +118,7 @@ for platform in $PLATFORMS; do
   mkdir -p "$OUT_DIR/bin/$os-$arch"
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-controller" ./cmd/controller
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-controller-updater" ./cmd/controller-updater
+  CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-ai-worker" ./cmd/ai-worker
   package_controller "$os" "$arch" "$OUT_DIR/bin/$os-$arch/oboard-controller" >/dev/null
 done
 
