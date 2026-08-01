@@ -4,6 +4,11 @@ set -euo pipefail
 CONTROLLER_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 BUILD_DIR=$(mktemp -d)
 trap 'rm -rf "$BUILD_DIR"' EXIT
+export GOWORK=off
+
+echo "==> Verifying Go module metadata"
+go -C "$CONTROLLER_DIR" mod tidy -diff
+go -C "$CONTROLLER_DIR" mod verify
 
 echo "==> Verifying pinned IP geolocation databases"
 "$CONTROLLER_DIR/scripts/fetch-ip2region.sh" "$BUILD_DIR/geoip"
