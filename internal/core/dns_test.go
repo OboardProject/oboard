@@ -109,6 +109,20 @@ func TestValidateDNSListRejectsWrongKindAndPrivateBootstrap(t *testing.T) {
 	}
 }
 
+func TestValidateDNSCandidateAllowsAtSignInDoHPath(t *testing.T) {
+	candidate := model.DNSCandidate{
+		Tag:       "novaxns",
+		Transport: model.DNSTransportDoH,
+		Server:    "global.novaxns.one",
+		Port:      443,
+		Path:      "/@hockey2168/dns-query",
+		TLSName:   "global.novaxns.one",
+	}
+	if err := ValidateDNSCandidate(candidate); err != nil {
+		t.Fatalf("custom DoH path rejected: %v", err)
+	}
+}
+
 func TestGeneratedConfigUsesCurrentDomainResolverShape(t *testing.T) {
 	config, err := GenerateServerConfig(
 		model.Server{ID: 1, Name: "edge", IPStack: model.IPStackPreferIPv6},

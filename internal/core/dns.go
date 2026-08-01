@@ -210,7 +210,7 @@ func ValidateDNSCandidate(c model.DNSCandidate) error {
 		}
 	}
 	if c.Path != "" {
-		if !strings.HasPrefix(c.Path, "/") || strings.Contains(c.Path, "://") || strings.Contains(c.Path, "@") || len(c.Path) > 256 {
+		if !strings.HasPrefix(c.Path, "/") || strings.Contains(c.Path, "://") || len(c.Path) > 256 {
 			return errors.New("dns path is invalid")
 		}
 		for _, r := range c.Path {

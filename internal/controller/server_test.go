@@ -169,7 +169,7 @@ func TestDNSListCRUDValidationAndDefaultProtection(t *testing.T) {
 	}, http.StatusBadRequest)
 	created := request(t, h, http.MethodPost, "/api/v1/dns-lists", token, map[string]any{
 		"name": "mixed encrypted", "kind": "encrypted", "candidates": []map[string]any{
-			{"tag": "one", "transport": "doh", "server": "dns.google", "port": 443, "path": "/dns-query", "tls_name": "dns.google"},
+			{"tag": "one", "transport": "doh", "server": "global.novaxns.one", "port": 443, "path": "/@hockey2168/dns-query", "tls_name": "global.novaxns.one"},
 			{"tag": "two", "transport": "doq", "server": "dns.quad9.net", "port": 853, "tls_name": "dns.quad9.net"},
 		},
 	}, http.StatusCreated)

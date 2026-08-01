@@ -24,6 +24,7 @@ import type {
   ProxyPathTransportMode,
   RegionMode,
   Server,
+  TimeCorrectionMode,
 } from './components/proxy-path/types'
 import { TransportDialog } from './components/proxy-path/TransportDialog'
 import {
@@ -144,7 +145,8 @@ type DNSTransport = 'udp' | 'tcp' | 'dot' | 'doh' | 'doq'
 type DNSListKind = 'encrypted' | 'bootstrap'
 type DNSCandidate = { tag: string; transport: DNSTransport; server: string; port: number; path?: string; tls_name?: string }
 type DNSList = { id: number; name: string; kind: DNSListKind; revision: number; candidates: DNSCandidate[]; enabled: boolean; protected: boolean; usage_count: number; created_at?: string; updated_at?: string }
-type DNSListDraft = { name: string; kind: DNSListKind; enabled: boolean; candidates: string }
+type DNSCandidateDraft = { id: number; name: string; address: string }
+type DNSListDraft = { name: string; kind: DNSListKind; enabled: boolean; candidates: DNSCandidateDraft[] }
 type ServerDNSPolicy = { server_id: number; encrypted_list_id: number; bootstrap_list_id: number; revision: number; strategy: string; auto_test: 'never' | 'first_apply' | 'periodic'; test_interval_seconds: number; encrypted_selected: DNSCandidate[]; bootstrap_selected: DNSCandidate[]; encrypted_selection_revision: number; bootstrap_selection_revision: number; last_attempt_at?: string; last_success_at?: string; last_error: string; needs_benchmark: boolean; updated_at?: string }
 type DNSBenchmarkItem = { tag: string; latency_ms: number; error?: string }
 type DNSBenchmarkGroup = { items: DNSBenchmarkItem[]; best_tags: string[] }
@@ -200,6 +202,9 @@ const entryIPModes: EntryIPMode[] = ['auto', 'ipv4', 'ipv6', 'custom']
 const dnsRecordTypes: DNSRecordTypes[] = ['a', 'aaaa', 'both']
 const udpModes = ['allow', 'block', 'uot']
 const mtuModes = ['disabled', 'detect', 'apply']
+const defaultVLESSRealityServerName = 'cdn.icloud-content.com'
+const timeCorrectionModes: TimeCorrectionMode[] = ['off', 'auto', 'ntp']
+const defaultTimeCheckNTPServers = ['time.cloudflare.com', 'time.google.com', 'pool.ntp.org']
 const trafficTimezones = [
   'Asia/Shanghai', 'UTC', 'Asia/Hong_Kong', 'Asia/Taipei', 'Asia/Tokyo', 'Asia/Seoul', 'Asia/Singapore', 'Asia/Bangkok', 'Asia/Jakarta', 'Asia/Kolkata', 'Asia/Dubai',
   'Australia/Sydney', 'Pacific/Auckland',
@@ -606,13 +611,13 @@ const roleRanks: Record<Role, number> = { viewer: 0, operator: 1, admin: 2 }
 const tabMinimumRole: Record<string, Role> = {
   account: 'viewer', dashboard: 'operator', tasks: 'operator', audit: 'operator',
   servers: 'operator', 'proxy-paths': 'operator',
-  users: 'admin', subscriptions: 'admin', notifications: 'viewer', settings: 'admin',
+  users: 'admin', subscriptions: 'viewer', notifications: 'viewer', settings: 'admin',
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
 }
 
 const preloadTabsByRole: Record<Role, string[]> = {
-  viewer: ['account', 'notifications'],
-  operator: ['servers', 'proxy-paths', 'tasks', 'audit', 'mtu'],
+  viewer: ['subscriptions', 'account', 'notifications'],
+  operator: ['subscriptions', 'servers', 'proxy-paths', 'tasks', 'audit', 'mtu'],
   admin: ['servers', 'proxy-paths', 'users', 'dns', 'dns-records', 'tasks', 'audit', 'settings'],
 }
 
@@ -722,7 +727,7 @@ const valueLabels: Record<string, string> = {
   detect: '仅检测', apply: '检测并应用', tcp_udp: 'TCP+UDP', builtin: '内置', wireguard: 'WireGuard', ssh: 'SSH', doh: 'DoH', dot: 'DoT', udp: 'UDP', tcp: 'TCP',
   cloudflare: 'Cloudflare', google: 'Google', quad9: 'Quad9', alidns: '阿里 DNS', dnspod: 'DNSPod', remote: '远程', local: '本地',
   apply_deployment: '应用部署', apply_core_config: '下发核心配置', probe_inbounds: '检查入口监听', probe_inbounds_external: '检查公网端口', probe_port_forwards: '探测端口转发', probe_external_egress: '探测第三方出口',
-  detect_mtu: 'MTU 检测', update_agent_config: '同步 Agent 配置', diagnose_network: '网络诊断',
+  detect_mtu: 'MTU 检测', check_time: '时间检测', update_agent_config: '同步 Agent 配置', diagnose_network: '网络诊断',
   collect_logs: '拉取日志', manage_logs: '管理日志',
   install_agent: '安装 Agent', update_agent: '更新 Agent', uninstall_agent: '卸载 Agent',
 }
@@ -1571,7 +1576,7 @@ function App() {
     users: '用户与分组管理',
     dns: 'DNS 设置',
     'dns-records': '域名解析',
-    subscriptions: '节点订阅分发',
+    subscriptions: sessionUser?.role === 'admin' ? '节点订阅分发' : '我的订阅',
     notifications: '通知中心',
     tasks: '任务部署中心',
     audit: '审计日志时间线',
@@ -1618,8 +1623,10 @@ function App() {
     }
   }
 
-  const current = tabMeta[tab] || { label: tab, desc: '', group: 'OBoard' }
   const currentRole = sessionUser?.role || 'viewer'
+  const current = tab === 'subscriptions' && currentRole !== 'admin'
+    ? { label: '订阅', desc: '选择客户端格式并获取自己的订阅链接。', group: '访问控制' }
+    : tabMeta[tab] || { label: tab, desc: '', group: 'OBoard' }
   const canOperate = roleRanks[currentRole] >= roleRanks.operator
   const visibleNavGroups = navGroups
     .map(group => ({ ...group, tabs: group.tabs.filter(item => tabAllowedForRole(item, currentRole)) }))
@@ -2066,7 +2073,9 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'port-forwards') return <PortForwards data={data} client={client} load={load} notify={notify} />
   if (tab === 'tunnels') return <Tunnels data={data} client={client} load={load} />
   if (tab === 'notifications') return <Notifications data={data} client={client} load={load} notify={notify} sessionUser={sessionUser} />
-  if (tab === 'subscriptions') return <Subscriptions data={data} client={client} load={load} notify={notify} />
+  if (tab === 'subscriptions') return sessionUser?.role === 'admin'
+    ? <Subscriptions data={data} client={client} load={load} notify={notify} />
+    : <MySubscriptions data={data} notify={notify} />
   if (tab === 'tasks') return <Tasks data={data} client={client} loading={loading} />
   if (tab === 'audit') return <AuditConsole data={data} client={client} loading={loading} />
   if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} />
@@ -2361,6 +2370,11 @@ function RecoveryCodesDialog({ codes, onClose }: { codes: string[]; onClose: () 
   </MotionDialogPanel>
 }
 
+function timeCheckNTPServerSettings(value: unknown) {
+  if (!Array.isArray(value) || value.length !== 3) return [...defaultTimeCheckNTPServers]
+  return value.map(item => String(item || ''))
+}
+
 
 function SettingsPage({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
@@ -2378,6 +2392,8 @@ function SettingsPage({ data, client, load, notify }: any) {
   const [controllerLogBackups, setControllerLogBackups] = useState(Number(data.settings?.controller_log_backups || 5))
   const [serverDefaultMTUMode, setServerDefaultMTUMode] = useState(String(data.settings?.server_default_mtu_mode || 'detect'))
   const [serverDefaultBBREnabled, setServerDefaultBBREnabled] = useState(String(data.settings?.server_default_bbr_enabled || 'false') === 'true')
+  const [serverDefaultTimeCorrectionMode, setServerDefaultTimeCorrectionMode] = useState<TimeCorrectionMode>((data.settings?.server_default_time_correction_mode || 'off') as TimeCorrectionMode)
+  const [timeCheckNTPServers, setTimeCheckNTPServers] = useState<string[]>(() => timeCheckNTPServerSettings(data.settings?.time_check_ntp_servers))
   const [saving, setSaving] = useState('')
   useEffect(() => { setControllerURL(savedURL || currentOrigin) }, [savedURL, currentOrigin])
   useEffect(() => { setBasePath(currentBasePath) }, [currentBasePath])
@@ -2395,7 +2411,9 @@ function SettingsPage({ data, client, load, notify }: any) {
   useEffect(() => {
     setServerDefaultMTUMode(String(data.settings?.server_default_mtu_mode || 'detect'))
     setServerDefaultBBREnabled(String(data.settings?.server_default_bbr_enabled || 'false') === 'true')
-  }, [data.settings?.server_default_mtu_mode, data.settings?.server_default_bbr_enabled])
+    setServerDefaultTimeCorrectionMode((data.settings?.server_default_time_correction_mode || 'off') as TimeCorrectionMode)
+    setTimeCheckNTPServers(timeCheckNTPServerSettings(data.settings?.time_check_ntp_servers))
+  }, [data.settings?.server_default_mtu_mode, data.settings?.server_default_bbr_enabled, data.settings?.server_default_time_correction_mode, data.settings?.time_check_ntp_servers])
   const runSave = async (key: string, action: () => Promise<void>, success: string) => {
     if (saving) return
     setSaving(key)
@@ -2476,7 +2494,12 @@ function SettingsPage({ data, client, load, notify }: any) {
   }
   const saveServerDefaults = async () => {
     await runSave('server-defaults', async () => {
-      await client.request('/settings', { method: 'POST', body: JSON.stringify({ server_default_mtu_mode: serverDefaultMTUMode, server_default_bbr_enabled: serverDefaultBBREnabled }) })
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({
+        server_default_mtu_mode: serverDefaultMTUMode,
+        server_default_bbr_enabled: serverDefaultBBREnabled,
+        server_default_time_correction_mode: serverDefaultTimeCorrectionMode,
+        time_check_ntp_servers: timeCheckNTPServers.map(value => value.trim()),
+      }) })
     }, '新服务器默认设置已保存')
   }
   return <section className="settings-shell">
@@ -2558,6 +2581,14 @@ function SettingsPage({ data, client, load, notify }: any) {
           </FormField>
           <FormField label="BBR + FQ" hint="首次安装 Agent 时尝试启用，失败不影响安装。">
             <label className="notification-enable-row"><input type="checkbox" checked={serverDefaultBBREnabled} onChange={event => setServerDefaultBBREnabled(event.target.checked)} aria-label="新服务器默认启用 BBR + FQ" /></label>
+          </FormField>
+          <FormField label="时间校准" hint="新服务器默认关闭；所有在线服务器仍会每天检测偏差。">
+            <TimeCorrectionSelector value={serverDefaultTimeCorrectionMode} onChange={setServerDefaultTimeCorrectionMode} compact />
+          </FormField>
+          <FormField label="NTP 时间源" hint="每天检测时并发查询，至少两个时间源返回结果后才使用。" full>
+            <div className="ntp-server-grid">
+              {timeCheckNTPServers.map((value, index) => <input key={index} value={value} onChange={event => setTimeCheckNTPServers(current => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} placeholder={defaultTimeCheckNTPServers[index]} aria-label={`NTP 时间源 ${index + 1}`} />)}
+            </div>
           </FormField>
           <div className="settings-actions"><button onClick={() => void saveServerDefaults()} disabled={Boolean(saving)}>{saving === 'server-defaults' ? '保存中...' : '保存默认值'}</button></div>
         </div>
@@ -4161,8 +4192,8 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
   )
 }
 
-function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean }) {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), port_range_start: 100, port_range_end: 65535, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connection_audit_enabled: true }
+function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode }) {
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: 100, port_range_end: 65535, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connection_audit_enabled: true }
 }
 
 function GridViewIcon() {
@@ -4290,9 +4321,16 @@ function Servers({ data, client, load, loading, notify }: any) {
     await load()
   }
   const updateServer = async (next: any) => {
-    await client.request(`/servers/${next.id}`, { method: 'PATCH', body: JSON.stringify(next) })
+    const modeChanged = editServer?.time_correction_mode !== next.time_correction_mode
+    const result = await client.request(`/servers/${next.id}`, { method: 'PATCH', body: JSON.stringify(next) })
     setEditServer(null)
     await load()
+    if (modeChanged) notify?.(result?.time_check_error ? `时间校准设置已保存，但检测未能启动：${result.time_check_error}` : '时间校准设置已保存，已开始检测', result?.time_check_error ? 'warning' : 'success')
+  }
+  const enableAutomaticTimeCorrection = async (server: Server) => {
+    const result = await client.request(`/servers/${server.id}`, { method: 'PATCH', body: JSON.stringify({ ...server, time_correction_mode: 'auto' }) })
+    await load()
+    notify?.(result?.time_check_error ? `已开启自动校时，但检测未能启动：${result.time_check_error}` : '已开启自动校时并开始检测', result?.time_check_error ? 'warning' : 'success')
   }
   const syncAgentConfig = async (server: Server, cfg: any) => {
     await client.request(`/servers/${server.id}/agent-config`, { method: 'POST', body: JSON.stringify(cfg) })
@@ -4372,6 +4410,7 @@ function Servers({ data, client, load, loading, notify }: any) {
     else if (type === 'logs') setLogServer(s)
     else if (type === 'diagnose') diagnose(s)
     else if (type === 'tasks') tasks(s)
+    else if (type === 'time-auto') await enableAutomaticTimeCorrection(s)
     else if (type === 'delete') remove(client, `/servers/${s.id}`, load, dialogs, s)
   }
   const role: Role = data.session?.role || 'viewer'
@@ -4698,6 +4737,9 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: Re
           <FormField label="BBR + FQ" hint="首次安装 Agent 时尝试启用，失败不影响安装。">
             <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.bbr_enabled)} onChange={e => update({ bbr_enabled: e.target.checked })} aria-label="安装时启用 BBR + FQ" /></label>
           </FormField>
+          <FormField label="时间校准" hint="开启后，Agent 接入时会立即检测。" full>
+            <TimeCorrectionSelector value={draft.time_correction_mode} onChange={value => update({ time_correction_mode: value })} />
+          </FormField>
           <FormField label="端口范围" hint="100-65535" full>
             <PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} />
           </FormField>
@@ -4766,6 +4808,7 @@ function ServerEditDialog({ server, onCancel, onSubmit }: { server: Server; onCa
           <FormField label="出口解析策略"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
           <FormField label="BBR + FQ" hint="下次重新安装 Agent 时尝试启用，失败不影响安装。"><label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.bbr_enabled)} onChange={e => update({ bbr_enabled: e.target.checked })} aria-label="安装时尝试启用 BBR + FQ" /></label></FormField>
+          <FormField label="时间校准" hint="切换模式后会立即检测时间偏差。" full><TimeCorrectionSelector value={draft.time_correction_mode || 'off'} onChange={value => update({ time_correction_mode: value })} /></FormField>
           <FormField label="端口范围" hint="100-65535" full><PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} /></FormField>
           <div className="form-section-title">监控与流量</div>
           <FormField label="回报模式" hint="轻量 20 秒，标准 10 秒。">
@@ -4795,7 +4838,6 @@ function AgentConfigDialog({ server, controllerURL, onCancel, onSubmit }: { serv
     reload_command: 'auto',
     restart_command: 'auto',
     time_sync_command: 'auto',
-    time_sync_interval_seconds: 86400,
     log_max_mb: 16,
     log_backups: 3,
     core_log_max_mb: 64,
@@ -4962,6 +5004,22 @@ function UDPModeSelector({ value, onChange }: { value: string; onChange: (value:
   return <Select variant="segmented" value={value} onChange={event => onChange(event.target.value)} aria-label="UDP 入站模式">
     {udpModes.map(mode => <option key={mode} value={mode}>{labelValue(mode)}</option>)}
   </Select>
+}
+
+function TimeCorrectionSelector({ value, onChange, compact = false }: { value: TimeCorrectionMode; onChange: (value: TimeCorrectionMode) => void; compact?: boolean }) {
+  const descriptions: Record<TimeCorrectionMode, string> = {
+    off: '仅检测偏差，超过 30 秒时提醒管理员。',
+    auto: '优先使用系统校时；容器无权限时自动使用逻辑校时。',
+    ntp: '不修改系统时钟，直接为 Agent 与内核使用逻辑校时。',
+  }
+  return <div className="time-correction-control">
+    <Select variant="segmented" value={value} onChange={event => onChange(event.target.value as TimeCorrectionMode)} aria-label="时间校准模式">
+      <option value="off">关闭</option>
+      <option value="auto">自动</option>
+      <option value="ntp">逻辑校时</option>
+    </Select>
+    {!compact && <small>{descriptions[value]}</small>}
+  </div>
 }
 
 function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: Server; role?: Role; onAction: (type: string, server: Server) => void }) {
@@ -5150,10 +5208,36 @@ function serverTrafficPeriodLabel(server: Server) {
   return '自然月重置'
 }
 
+function timeCorrectionModeLabel(mode?: TimeCorrectionMode) {
+  if (mode === 'auto') return '自动校时'
+  if (mode === 'ntp') return '逻辑校时'
+  return '仅检测'
+}
+
+function timeCheckStatusLabel(server: Server) {
+  switch (server.time_check_status) {
+    case 'ok': return '时间正常'
+    case 'corrected': return server.time_logical_active ? '逻辑校时生效' : '系统时间已校准'
+    case 'skewed': return '偏差过大'
+    case 'unavailable': return '检测失败'
+    case 'pending': return '等待检测'
+    default: return '尚未检测'
+  }
+}
+
+function formatTimeOffset(offsetMS: number) {
+  if (!Number.isFinite(offsetMS)) return '—'
+  const seconds = Number(offsetMS) / 1000
+  if (Math.abs(seconds) < 0.05) return '0 秒'
+  return `${seconds > 0 ? '+' : ''}${seconds.toFixed(Math.abs(seconds) >= 10 ? 1 : 2)} 秒`
+}
+
 function ServerCard({ server, samples, role, expectedBuild, onAction, layout = 'grid' }: { server: Server; samples: ServerMetricSample[]; role?: Role; expectedBuild?: string; onAction: (type: string, server: Server) => void; layout?: 'grid' | 'list' }) {
   const [updateInfoOpen, setUpdateInfoOpen] = useState(false)
   const outdated = Boolean(expectedBuild && server.agent_build && expectedBuild !== server.agent_build)
   const isOnline = server.status.toLowerCase() === 'online';
+  const clockSkewWarning = (server.time_correction_mode || 'off') === 'off' && server.time_check_status === 'skewed' && Math.abs(Number(server.time_offset_ms || 0)) >= 30_000
+  const unsupportedTimePaths = server.time_logical_active && Array.isArray(server.time_unsupported_paths) ? server.time_unsupported_paths : []
 
   return (
     <MotionCard tag="article" className={`server-card${layout === 'list' ? ' server-list-card' : ''}`} hoverEffect={false}>
@@ -5182,6 +5266,14 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
         </div>
       </div>
 
+      {clockSkewWarning && <div className="server-time-alert" role="alert">
+        <div><strong>时间偏差 {formatTimeOffset(server.time_offset_ms)}</strong><span>部分安全协议可能无法连接。</span></div>
+        {role !== 'viewer' && <button type="button" onClick={() => onAction('time-auto', server)}><CalendarSync size={13} />开启自动校时</button>}
+      </div>}
+      {unsupportedTimePaths.length > 0 && <div className="server-time-alert limitation" role="status">
+        <div><strong>部分路径不支持逻辑校时</strong><span title={unsupportedTimePaths.join('、')}>{unsupportedTimePaths.join('、')}</span></div>
+      </div>}
+
       {/* Meta grid */}
       <div className="server-meta" style={{
         display: 'grid',
@@ -5191,6 +5283,11 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
         fontSize: '12px'
       }}>
         {/* CPU & Memory bars */}
+        <div className={`server-time-summary status-${server.time_check_status || 'unknown'}`} style={{ gridColumn: 'span 2' }} title={server.time_check_error || undefined}>
+          <div><span>时间状态</span><small>{timeCorrectionModeLabel(server.time_correction_mode)}</small></div>
+          <strong>{timeCheckStatusLabel(server)}</strong>
+          <span>{server.time_checked_at ? `${formatTimeOffset(server.time_effective_offset_ms)} · ${formatTableTime(server.time_checked_at)}` : '等待首次检测'}</span>
+        </div>
         <div style={{ gridColumn: 'span 2' }}>
           <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, display: 'block', marginBottom: '6px' }}>系统资源</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -5334,8 +5431,16 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
             <ServerDetailItem label="上传速率" value={formatByteRate(server.network_upload_bps || 0)} />
             <ServerDetailItem label="周期流量" value={formatBytes((server.traffic_upload_bytes || 0) + (server.traffic_download_bytes || 0))} />
             <ServerDetailItem label="流量重置" value={serverTrafficPeriodLabel(server)} />
+            <ServerDetailItem label="时间校准" value={timeCorrectionModeLabel(server.time_correction_mode)} />
+            <ServerDetailItem label="时间状态" value={timeCheckStatusLabel(server)} />
+            <ServerDetailItem label="检测偏差" value={server.time_checked_at ? formatTimeOffset(server.time_offset_ms) : '—'} />
+            <ServerDetailItem label="生效后偏差" value={server.time_checked_at ? formatTimeOffset(server.time_effective_offset_ms) : '—'} />
+            <ServerDetailItem label="时间来源" value={server.time_check_source || '—'} />
+            <ServerDetailItem label="时间检测" value={server.time_checked_at ? formatTableTime(server.time_checked_at) : '尚未检测'} />
             <ServerDetailItem label="数据更新时间" value={server.telemetry_updated_at ? formatTableTime(server.telemetry_updated_at) : '—'} wide />
           </dl>
+          {server.time_check_error && <div className="server-time-alert limitation"><div><strong>时间检测未完整生效</strong><span>{server.time_check_error}</span></div></div>}
+          {server.time_logical_active && (server.time_unsupported_paths || []).length > 0 && <div className="server-time-alert limitation"><div><strong>Mieru/Reality 路径无法完整使用逻辑时间</strong><span>{(server.time_unsupported_paths || []).join('、')}</span></div></div>}
         </section>
       </div>
       <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
@@ -7653,11 +7758,15 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
   const setTransport = (patch: Record<string, any>) => updateConfig({ transport: { ...transport, ...patch } })
   const setReality = (patch: Record<string, any>) => setTLS({ reality: { ...reality, ...patch } })
   const setHandshake = (patch: Record<string, any>) => setReality({ handshake: { ...handshake, ...patch } })
+  const realityServerName = String(tls.server_name || handshake.server || defaultVLESSRealityServerName)
+  const setRealityServerName = (value: string) => {
+    const serverName = value || defaultVLESSRealityServerName
+    setTLS({ server_name: serverName, reality: { ...reality, handshake: { ...handshake, server: serverName } } })
+  }
   if (presetID === 'vless-reality') return <div className="preset-fields">
     <div className="form-section-title">TCP / Reality / Vision 设置</div>
     <div className="access-note compact"><strong>协议形态</strong><span>默认 TCP，自动使用 Vision flow（xtls-rprx-vision）。</span></div>
-    <FormField label="SNI 域名" hint="客户端连接使用的 SNI。"><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="cdn.icloud-content.com" /></FormField>
-    <FormField label="握手域名" hint="Reality 的伪装站点。"><input value={String(handshake.server || '')} onChange={e => setHandshake({ server: e.target.value })} placeholder="cdn.icloud-content.com" /></FormField>
+    <FormField label="SNI / 握手域名" hint="同时用于客户端 SNI 和 Reality 伪装站点；留空使用 cdn.icloud-content.com。"><input value={realityServerName === defaultVLESSRealityServerName ? '' : realityServerName} onChange={e => setRealityServerName(e.target.value)} placeholder={defaultVLESSRealityServerName} /></FormField>
     <FormField label="握手端口"><input value={Number(handshake.server_port || 443)} onChange={e => setHandshake({ server_port: Number(e.target.value) })} inputMode="numeric" /></FormField>
     <div className="reality-key-summary">
       <div><strong>Reality 密钥</strong><span>{realityKeyLoading ? '正在生成…' : String(reality.public_key || '').trim() ? `已生成 · 公钥 ${compactSecret(String(reality.public_key))}` : '保存时服务端会自动生成'}</span></div>
@@ -9876,22 +9985,33 @@ function parseDNSCandidate(value: string, fallback: DNSTransport, tag: string): 
   }
 }
 
-function serializeDNSListCandidates(candidates: DNSCandidate[]) {
-  return candidates.map(candidate => `${candidate.tag} | ${dnsCandidateInput(candidate)}`).join('\n')
+let dnsCandidateDraftSequence = 0
+
+function dnsCandidateDraft(name = '', address = ''): DNSCandidateDraft {
+  dnsCandidateDraftSequence += 1
+  return { id: dnsCandidateDraftSequence, name, address }
 }
 
-function parseDNSListCandidates(value: string, kind: DNSListKind) {
-  const candidates = value.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map((line, index) => {
-    const separator = line.indexOf('|')
-    if (separator < 1) throw new Error(`第 ${index + 1} 行需要使用“名称 | 服务地址”格式`)
-    const tag = line.slice(0, separator).trim()
-    const candidate = parseDNSCandidate(line.slice(separator + 1).trim(), kind === 'encrypted' ? 'doh' : 'udp', tag)
-    if (!candidate) throw new Error(`第 ${index + 1} 行地址无效`)
-  if (kind === 'encrypted' && !['doh', 'dot', 'doq'].includes(candidate.transport)) throw new Error('加密解析服务只支持 DoH、DoT 或 DoQ')
-  if (kind === 'bootstrap' && !['udp', 'tcp'].includes(candidate.transport)) throw new Error('基础解析服务只支持 UDP 或 TCP')
+function emptyDNSListCandidates() {
+  return [dnsCandidateDraft(), dnsCandidateDraft()]
+}
+
+function serializeDNSListCandidates(candidates: DNSCandidate[]) {
+  return candidates.map(candidate => dnsCandidateDraft(candidate.tag, dnsCandidateInput(candidate)))
+}
+
+function parseDNSListCandidates(value: DNSCandidateDraft[], kind: DNSListKind) {
+  if (value.length < 2 || value.length > 32) throw new Error('每个服务列表需要填写 2–32 个解析服务')
+  const candidates = value.map((entry, index) => {
+    const tag = entry.name.trim()
+    if (!tag) throw new Error(`请填写第 ${index + 1} 个解析服务的名称`)
+    if (/\s/.test(tag)) throw new Error(`第 ${index + 1} 个解析服务的名称不能包含空格`)
+    const candidate = parseDNSCandidate(entry.address, kind === 'encrypted' ? 'doh' : 'udp', tag)
+    if (!candidate) throw new Error(`请填写第 ${index + 1} 个解析服务的地址`)
+    if (kind === 'encrypted' && !['doh', 'dot', 'doq'].includes(candidate.transport)) throw new Error('加密解析服务只支持 DoH、DoT 或 DoQ')
+    if (kind === 'bootstrap' && !['udp', 'tcp'].includes(candidate.transport)) throw new Error('基础解析服务只支持 UDP 或 TCP')
     return candidate
   })
-  if (candidates.length < 2 || candidates.length > 32) throw new Error('每个服务列表需要填写 2–32 个解析服务')
   if (new Set(candidates.map(candidate => candidate.tag)).size !== candidates.length) throw new Error('每个解析服务的名称必须唯一')
   return candidates
 }
@@ -9905,7 +10025,14 @@ function DNSListDialog({ draft, setDraft, editing, saving, onCancel, onSave }: {
   onSave: () => void
 }) {
   const update = (patch: Partial<DNSListDraft>) => setDraft(current => ({ ...current, ...patch }))
+  const updateCandidate = (id: number, patch: Partial<Pick<DNSCandidateDraft, 'name' | 'address'>>) => {
+    setDraft(current => ({ ...current, candidates: current.candidates.map(candidate => candidate.id === id ? { ...candidate, ...patch } : candidate) }))
+  }
+  const addCandidate = () => setDraft(current => current.candidates.length >= 32 ? current : ({ ...current, candidates: [...current.candidates, dnsCandidateDraft()] }))
+  const removeCandidate = (id: number) => setDraft(current => current.candidates.length <= 2 ? current : ({ ...current, candidates: current.candidates.filter(candidate => candidate.id !== id) }))
   const typeLabel = draft.kind === 'encrypted' ? '加密解析' : '基础解析'
+  const addressPlaceholder = draft.kind === 'encrypted' ? 'https://cloudflare-dns.com/dns-query' : 'udp://1.1.1.1'
+  const canSave = Boolean(draft.name.trim()) && draft.candidates.length >= 2 && draft.candidates.every(candidate => candidate.name.trim() && candidate.address.trim())
   return <MotionDialogPanel onCancel={onCancel} className="dns-list-dialog">
     <header className="dialog-head">
       <div><h2>{editing ? '编辑解析服务列表' : '新建解析服务列表'}</h2><p className="muted">{editing ? editing.name : typeLabel}</p></div>
@@ -9914,12 +10041,26 @@ function DNSListDialog({ draft, setDraft, editing, saving, onCancel, onSave }: {
     <div className="dialog-body">
       <div className="form server-dialog-form labeled-form dns-list-dialog-form">
         <FormField label="列表名称" required><input value={draft.name} onChange={event => update({ name: event.target.value })} placeholder={draft.kind === 'encrypted' ? '海外加密解析' : '公网基础解析'} autoFocus /></FormField>
-        <FormField label="列表类型" required><Select variant="segmented" value={draft.kind} disabled={Boolean(editing)} onChange={event => update({ kind: event.target.value as DNSListKind, candidates: '' })}><option value="encrypted">加密解析</option><option value="bootstrap">基础解析</option></Select></FormField>
-        <FormField label="解析服务" hint="每行填写：名称 | 服务地址" required><textarea rows={8} value={draft.candidates} onChange={event => update({ candidates: event.target.value })} placeholder={draft.kind === 'encrypted' ? 'Cloudflare | https://cloudflare-dns.com/dns-query\nGoogle | tls://dns.google' : 'Cloudflare | udp://1.1.1.1\nGoogle | tcp://8.8.8.8'} /></FormField>
+        <FormField label="列表类型" required><Select variant="segmented" value={draft.kind} disabled={Boolean(editing)} onChange={event => update({ kind: event.target.value as DNSListKind, candidates: emptyDNSListCandidates() })}><option value="encrypted">加密解析</option><option value="bootstrap">基础解析</option></Select></FormField>
+        <section className="dns-candidate-editor" aria-labelledby="dns-candidate-editor-title">
+          <div className="dns-candidate-editor-head">
+            <div><h3 id="dns-candidate-editor-title">解析服务</h3><span>{draft.candidates.length} / 32</span></div>
+            <button type="button" className="ghost" onClick={addCandidate} disabled={draft.candidates.length >= 32 || saving}><Plus size={14} />添加解析服务</button>
+          </div>
+          <div className="dns-candidate-columns" aria-hidden="true"><span>序号</span><span>名称</span><span>服务地址</span><span>操作</span></div>
+          <div className="dns-candidate-list">
+            {draft.candidates.map((candidate, index) => <div className="dns-candidate-row" key={candidate.id}>
+              <span className="dns-candidate-index">{index + 1}</span>
+              <label><span>名称</span><input value={candidate.name} onChange={event => updateCandidate(candidate.id, { name: event.target.value })} placeholder={index === 0 ? 'Cloudflare' : 'Google'} disabled={saving} /></label>
+              <label><span>服务地址</span><input value={candidate.address} onChange={event => updateCandidate(candidate.id, { address: event.target.value })} placeholder={addressPlaceholder} inputMode="url" spellCheck={false} disabled={saving} /></label>
+              <button type="button" className="ghost icon-button danger-text" onClick={() => removeCandidate(candidate.id)} disabled={draft.candidates.length <= 2 || saving} aria-label={`删除第 ${index + 1} 个解析服务`} title={draft.candidates.length <= 2 ? '至少保留两个解析服务' : '删除解析服务'}><Trash2 size={14} /></button>
+            </div>)}
+          </div>
+        </section>
         <FormField label="使用状态"><div className="notification-enable-row"><input type="checkbox" checked={draft.enabled} disabled={Boolean(editing?.protected)} onChange={event => update({ enabled: event.target.checked })} /><span>{editing?.protected ? '默认列表始终启用' : draft.enabled ? '列表已启用' : '列表已停用'}</span></div></FormField>
       </div>
     </div>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button><button type="button" onClick={onSave} disabled={saving || !draft.name.trim() || !draft.candidates.trim()}>{saving ? '保存中…' : editing ? '保存修改' : '创建列表'}</button></footer>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button><button type="button" onClick={onSave} disabled={saving || !canSave}>{saving ? '保存中…' : editing ? '保存修改' : '创建列表'}</button></footer>
   </MotionDialogPanel>
 }
 
@@ -9928,10 +10069,10 @@ function DNSListSettings({ data, client, load, notify }: any) {
   const lists: DNSList[] = data.dns_lists || []
   const [filter, setFilter] = useState<DNSListKind>('encrypted')
   const [editing, setEditing] = useState<DNSList | null>(null)
-  const [draft, setDraft] = useState<DNSListDraft>({ name: '', kind: 'encrypted', enabled: true, candidates: '' })
+  const [draft, setDraft] = useState<DNSListDraft>(() => ({ name: '', kind: 'encrypted', enabled: true, candidates: emptyDNSListCandidates() }))
   const [editorOpen, setEditorOpen] = useState(false)
   const [working, setWorking] = useState('')
-  const openCreate = (kind = filter) => { setEditing(null); setDraft({ name: '', kind, enabled: true, candidates: '' }); setEditorOpen(true) }
+  const openCreate = (kind = filter) => { setEditing(null); setDraft({ name: '', kind, enabled: true, candidates: emptyDNSListCandidates() }); setEditorOpen(true) }
   const edit = (list: DNSList) => { setEditing(list); setDraft({ name: list.name, kind: list.kind, enabled: list.enabled, candidates: serializeDNSListCandidates(list.candidates) }); setEditorOpen(true) }
   const copy = (list: DNSList) => { setEditing(null); setFilter(list.kind); setDraft({ name: `${list.name} 副本`, kind: list.kind, enabled: true, candidates: serializeDNSListCandidates(list.candidates) }); setEditorOpen(true) }
   const closeEditor = () => { if (!working) setEditorOpen(false) }
@@ -10157,6 +10298,23 @@ function isAgeSubscriptionFormat(format: SubscriptionFormat) {
   return format === 'mihomo' || format === 'clash-meta' || format === 'clash'
 }
 
+const subscriptionClientFormats: Array<{ id: SubscriptionFormat; name: string; type: string }> = [
+  { id: 'mihomo', name: 'Mihomo', type: 'YAML Config' },
+  { id: 'sing-box', name: 'sing-box', type: 'Native JSON' },
+  { id: 'mieru', name: 'Mieru', type: 'mierus URI' },
+  { id: 'stash', name: 'Stash', type: 'YAML' },
+  { id: 'surge', name: 'Surge', type: 'Conf' },
+  { id: 'surge-mac', name: 'Surge Mac', type: 'Conf' },
+  { id: 'shadowrocket', name: 'Shadowrocket', type: 'URI' },
+  { id: 'qx', name: 'Quantumult X', type: 'Conf' },
+  { id: 'loon', name: 'Loon', type: 'Conf' },
+  { id: 'surfboard', name: 'Surfboard', type: 'Conf' },
+  { id: 'egern', name: 'Egern', type: 'YAML' },
+  { id: 'v2ray', name: 'V2Ray', type: 'Base64 URI' },
+  { id: 'v2ray-uri', name: 'V2Ray URI', type: 'URI' },
+  { id: 'clash', name: 'Clash', type: 'YAML' },
+]
+
 function subscriptionURLForToken(token: string, format: SubscriptionFormat, encrypted = false) {
   if (!token) return ''
 	const base = `${appControllerURL()}/api/v1/subscriptions/${token}`
@@ -10169,6 +10327,66 @@ function subscriptionURLForToken(token: string, format: SubscriptionFormat, encr
 
 function subscriptionURLForUser(user: User, format: SubscriptionFormat, encrypted = false) {
   return subscriptionURLForToken(user.subscription_token, format, encrypted)
+}
+
+function MySubscriptions({ data, notify }: { data: any; notify?: (message: string, tone?: ToastKind) => void }) {
+  const user: User | undefined = data.account_user || data.current_user
+  const [iconsReady, setIconsReady] = useState(false)
+  const [format, setFormat] = useState<SubscriptionFormat>(defaultSubscriptionFormat)
+  const ageRequired = user?.subscription_age_policy === 'required'
+  const ageCapable = isAgeSubscriptionFormat(format)
+  const ageReady = Boolean(user?.subscription_age_public_key) && (ageRequired || Boolean(user?.subscription_age_enabled))
+  const selectedFormat = subscriptionClientFormats.find(item => item.id === format)
+
+  useEffect(() => {
+    let active = true
+    preloadSubscriptionClientIcons().then(() => { if (active) setIconsReady(true) })
+    return () => { active = false }
+  }, [])
+
+  const copySubscription = async (encrypted: boolean) => {
+    if (!user?.subscription_token) {
+      notify?.('当前没有可用的订阅链接', 'warning')
+      return
+    }
+    const useAge = ageCapable && (encrypted || ageRequired)
+    if (useAge && !ageReady) {
+      notify?.('请先在我的账户中配置 Age 公钥', 'warning')
+      return
+    }
+    const ok = await copyText(subscriptionURLForUser(user, format, useAge))
+    notify?.(ok ? `${useAge ? 'Age 加密' : '普通'}订阅链接已复制` : '复制失败，请重试', ok ? 'success' : 'error')
+  }
+
+  return <Panel title="订阅" className="subscriptions-panel">
+    {!iconsReady ? <div className="subscription-page-loading" role="status" aria-live="polite">
+      <RefreshCw aria-hidden="true" />
+      <strong>正在加载订阅页面</strong>
+    </div> : <div className="subscription-page-content">
+      <section className="sub-section">
+        <div className="sub-section-head"><div><h3><LinkIcon size={16} />客户端格式</h3><p className="muted">当前选择：{selectedFormat?.name || format}</p></div></div>
+        <div className="sub-format-grid">
+          {subscriptionClientFormats.map(item => <button key={item.id} type="button" className={`sub-format-card ${format === item.id ? 'active' : ''}`} onClick={() => setFormat(item.id)}>
+            <div className="subscription-client-icon-shell">{renderFormatIcon(item.id)}</div>
+            <strong>{item.name}</strong>
+            <span>{item.type}</span>
+          </button>)}
+        </div>
+      </section>
+
+      <section className="sub-section self-subscription-card">
+        <div className="sub-section-head">
+          <div><h3><User size={16} />我的订阅</h3><p className="muted">{user?.nickname || user?.username || '当前用户'} · {selectedFormat?.name || format}</p></div>
+          <span className={`sub-pill ${user?.subscription_token ? 'ok' : 'warn'}`}>{user?.subscription_token ? '可用' : '未签发'}</span>
+        </div>
+        <div className="self-subscription-actions">
+          {(!ageCapable || !ageRequired) && <button type="button" onClick={() => void copySubscription(false)} disabled={!user?.subscription_token}><Copy size={15} />复制普通订阅</button>}
+          {ageCapable && <button type="button" onClick={() => void copySubscription(true)} disabled={!user?.subscription_token || !ageReady}><Shield size={15} />复制 Age 订阅</button>}
+          {ageCapable && !ageReady && <button type="button" className="ghost" onClick={() => goTab('account')}><SettingsIcon size={15} />配置 Age 公钥</button>}
+        </div>
+      </section>
+    </div>}
+  </Panel>
 }
 
 function proxyPathChainLabels(data: any, path: ProxyPath): string[] {
@@ -10265,23 +10483,6 @@ function Subscriptions({ data, client, load, notify }: any) {
   }, [servers, inbounds, paths])
 
   const activeProfile = profiles.find(p => p.id === activeProfileID) || null
-
-  const clientFormats = [
-    { id: 'mihomo', name: 'Mihomo', type: 'YAML Config' },
-    { id: 'sing-box', name: 'sing-box', type: 'Native JSON' },
-    { id: 'mieru', name: 'Mieru', type: 'mierus URI' },
-    { id: 'stash', name: 'Stash', type: 'YAML' },
-    { id: 'surge', name: 'Surge', type: 'Conf' },
-    { id: 'surge-mac', name: 'Surge Mac', type: 'Conf' },
-    { id: 'shadowrocket', name: 'Shadowrocket', type: 'URI' },
-    { id: 'qx', name: 'Quantumult X', type: 'Conf' },
-    { id: 'loon', name: 'Loon', type: 'Conf' },
-    { id: 'surfboard', name: 'Surfboard', type: 'Conf' },
-    { id: 'egern', name: 'Egern', type: 'YAML' },
-    { id: 'v2ray', name: 'V2Ray', type: 'Base64 URI' },
-    { id: 'v2ray-uri', name: 'V2Ray URI', type: 'URI' },
-    { id: 'clash', name: 'Clash', type: 'YAML' },
-  ]
 
   const toggleServerExpand = (serverID: number) => {
     setExpandedServers(prev => ({ ...prev, [serverID]: !prev[serverID] }))
@@ -10450,7 +10651,7 @@ function Subscriptions({ data, client, load, notify }: any) {
               </div>
             </div>
             <div className="sub-format-grid">
-              {clientFormats.map(fmt => {
+              {subscriptionClientFormats.map(fmt => {
                 const active = subscriptionFormat === fmt.id
                 return (
                   <button key={fmt.id} type="button" className={`sub-format-card ${active ? 'active' : ''}`} onClick={() => setSubscriptionFormat(fmt.id as SubscriptionFormat)}>
@@ -11342,7 +11543,7 @@ type TaskGroup = {
 
 const BATCHABLE_TASK_TYPES = new Set([
   'update_agent', 'update_agent_config', 'diagnose_network', 'detect_mtu',
-  'probe_inbounds', 'probe_inbounds_external', 'probe_port_forwards', 'probe_external_egress', 'collect_logs', 'manage_logs',
+  'probe_inbounds', 'probe_inbounds_external', 'probe_port_forwards', 'probe_external_egress', 'collect_logs', 'manage_logs', 'check_time',
 ])
 
 function TaskTimeline({ rows, data }: { rows: any[]; data: any }) {
@@ -11436,6 +11637,7 @@ function batchTitleForType(type: string) {
     case 'update_agent': return '更新 Agent'
     case 'update_agent_config': return '同步 Agent 配置'
     case 'detect_mtu': return 'MTU 检测'
+    case 'check_time': return '时间检测'
     case 'diagnose_network': return '网络诊断'
     case 'probe_inbounds': return '入口监听探测'
     case 'probe_inbounds_external': return '公网端口探测'
@@ -11649,7 +11851,7 @@ function redactTaskJSON(value: any): any {
 
 function taskSummaryFromPayload(type: string, payload: any) {
   if (type === 'apply_deployment') {
-    const count = [payload?.time_sync, payload?.config, payload?.port_forwards, payload?.inbound_probe, payload?.port_forward_probe, payload?.external_egress_probe, payload?.tunnels, payload?.dns_benchmark, payload?.mtu_detection].filter(Boolean).length
+    const count = [payload?.time_check, payload?.config, payload?.port_forwards, payload?.inbound_probe, payload?.port_forward_probe, payload?.external_egress_probe, payload?.tunnels, payload?.dns_benchmark, payload?.mtu_detection].filter(Boolean).length
     return `${count || 1} 个部署步骤`
   }
   if (type === 'apply_core_config' && payload?.skipped) return '配置未变化，已跳过'
@@ -11657,6 +11859,7 @@ function taskSummaryFromPayload(type: string, payload: any) {
   if (type === 'update_agent') return payload?.source ? `来源 ${labelValue(payload.source)}` : '更新 Agent 与内核'
   if (type === 'update_agent_config') return '同步 Agent 本机配置'
   if (type === 'detect_mtu') return payload?.mode ? `模式 ${labelValue(payload.mode)}` : 'MTU 检测'
+  if (type === 'check_time') return `模式 ${timeCorrectionModeLabel(payload?.correction_mode as TimeCorrectionMode)}`
   if (type === 'probe_inbounds' || type === 'probe_inbounds_external') return payload?.entry_targets?.length ? `${payload.entry_targets.length} 个入口` : '入口端口探测'
   if (type === 'probe_port_forwards') return payload?.rules?.length ? `${payload.rules.length} 条规则` : '端口转发探测'
   if (type === 'probe_external_egress') return payload?.targets?.length ? `${payload.targets.length} 条分支` : '第三方出口探测'

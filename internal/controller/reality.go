@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+const defaultVLESSRealityServerName = "cdn.icloud-content.com"
+
 type realityKeyPair struct {
 	PrivateKey string `json:"private_key"`
 	PublicKey  string `json:"public_key"`
@@ -94,6 +96,20 @@ func applyVLESSRealityDefaults(cfg map[string]any) error {
 	if !ok || !realityConfigEnabled(realityRaw) {
 		return nil
 	}
+	handshake, _ := realityRaw["handshake"].(map[string]any)
+	if handshake == nil {
+		handshake = map[string]any{}
+		realityRaw["handshake"] = handshake
+	}
+	serverName := strings.TrimSpace(stringFromMap(tlsRaw, "server_name"))
+	if serverName == "" {
+		serverName = strings.TrimSpace(stringFromMap(handshake, "server"))
+	}
+	if serverName == "" {
+		serverName = defaultVLESSRealityServerName
+	}
+	tlsRaw["server_name"] = serverName
+	handshake["server"] = serverName
 	privateKey := strings.TrimSpace(stringFromMap(realityRaw, "private_key"))
 	if privateKey == "" {
 		pair, err := generateRealityKeyPair()

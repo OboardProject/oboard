@@ -99,6 +99,14 @@ const (
 	MTUModeApply    MTUMode = "apply"
 )
 
+type TimeCorrectionMode string
+
+const (
+	TimeCorrectionOff  TimeCorrectionMode = "off"
+	TimeCorrectionAuto TimeCorrectionMode = "auto"
+	TimeCorrectionNTP  TimeCorrectionMode = "ntp"
+)
+
 type RouteAction string
 
 const (
@@ -246,70 +254,79 @@ type ControllerBackup struct {
 }
 
 type Server struct {
-	ID                       int64          `json:"id"`
-	Name                     string         `json:"name"`
-	AgentID                  string         `json:"agent_id"`
-	AgentTokenHash           string         `json:"-"`
-	ChainSecret              string         `json:"-"`
-	EnrollmentHash           string         `json:"-"`
-	EnrollmentExpiresAt      *time.Time     `json:"-"`
-	EntryAddress             string         `json:"entry_address"`
-	PublicIPv4               string         `json:"public_ipv4"`
-	PublicIPv6               string         `json:"public_ipv6"`
-	RegionCode               string         `json:"region_code"`
-	DetectedRegionCode       string         `json:"detected_region_code"`
-	RegionMode               string         `json:"region_mode"`
-	EntryIPMode              EntryIPMode    `json:"entry_ip_mode"`
-	ListenIP                 string         `json:"listen_ip"`
-	IPStack                  IPStack        `json:"ip_stack"`
-	UDPInboundMode           UDPInboundMode `json:"udp_inbound_mode"`
-	MTUMode                  MTUMode        `json:"mtu_mode"`
-	MTUValue                 int            `json:"mtu_value"`
-	MTUProbeHost             string         `json:"mtu_probe_host"`
-	MTUProbePort             int            `json:"mtu_probe_port"`
-	MTUOverheadBytes         int            `json:"mtu_overhead_bytes"`
-	BBREnabled               bool           `json:"bbr_enabled"`
-	PortRangeStart           int            `json:"port_range_start"`
-	PortRangeEnd             int            `json:"port_range_end"`
-	Status                   ServerStatus   `json:"status"`
-	OS                       string         `json:"os"`
-	DistroID                 string         `json:"distro_id"`
-	DistroVersion            string         `json:"distro_version"`
-	DistroName               string         `json:"distro_name"`
-	Libc                     string         `json:"libc"`
-	ServiceManager           string         `json:"service_manager"`
-	PackageManager           string         `json:"package_manager"`
-	Arch                     string         `json:"arch"`
-	Kernel                   string         `json:"kernel"`
-	CPU                      string         `json:"cpu"`
-	MemoryBytes              uint64         `json:"memory_bytes"`
-	CPUUsagePercent          float64        `json:"cpu_usage_percent"`
-	MemoryUsedBytes          uint64         `json:"memory_used_bytes"`
-	MemoryTotalBytes         uint64         `json:"memory_total_bytes"`
-	AgentMemoryBytes         uint64         `json:"agent_memory_bytes"`
-	DiskBytes                uint64         `json:"disk_bytes"`
-	AgentVersion             string         `json:"agent_version"`
-	AgentBuild               string         `json:"agent_build"`
-	SingBoxVersion           string         `json:"sing_box_version"`
-	MonitoringMode           string         `json:"monitoring_mode"`
-	TrafficResetMode         string         `json:"traffic_reset_mode"`
-	TrafficResetDay          int            `json:"traffic_reset_day"`
-	NetworkUploadBPS         uint64         `json:"network_upload_bps"`
-	NetworkDownloadBPS       uint64         `json:"network_download_bps"`
-	TrafficUploadBytes       uint64         `json:"traffic_upload_bytes"`
-	TrafficDownloadBytes     uint64         `json:"traffic_download_bytes"`
-	TrafficPeriodStart       string         `json:"traffic_period_start"`
-	TrafficPeriodEnd         string         `json:"traffic_period_end"`
-	ConnectivityProbeEnabled bool           `json:"connectivity_probe_enabled"`
-	ConnectionAuditEnabled   bool           `json:"connection_audit_enabled"`
-	ConnectivityStatus       string         `json:"connectivity_status"`
-	ConnectivityLatencyMS    int64          `json:"connectivity_latency_ms"`
-	ConnectivityCheckedAt    *time.Time     `json:"connectivity_checked_at,omitempty"`
-	ConnectivityError        string         `json:"connectivity_error"`
-	TelemetryUpdatedAt       *time.Time     `json:"telemetry_updated_at,omitempty"`
-	LastSeenAt               *time.Time     `json:"last_seen_at,omitempty"`
-	CreatedAt                time.Time      `json:"created_at"`
-	UpdatedAt                time.Time      `json:"updated_at"`
+	ID                       int64              `json:"id"`
+	Name                     string             `json:"name"`
+	AgentID                  string             `json:"agent_id"`
+	AgentTokenHash           string             `json:"-"`
+	ChainSecret              string             `json:"-"`
+	EnrollmentHash           string             `json:"-"`
+	EnrollmentExpiresAt      *time.Time         `json:"-"`
+	EntryAddress             string             `json:"entry_address"`
+	PublicIPv4               string             `json:"public_ipv4"`
+	PublicIPv6               string             `json:"public_ipv6"`
+	RegionCode               string             `json:"region_code"`
+	DetectedRegionCode       string             `json:"detected_region_code"`
+	RegionMode               string             `json:"region_mode"`
+	EntryIPMode              EntryIPMode        `json:"entry_ip_mode"`
+	ListenIP                 string             `json:"listen_ip"`
+	IPStack                  IPStack            `json:"ip_stack"`
+	UDPInboundMode           UDPInboundMode     `json:"udp_inbound_mode"`
+	MTUMode                  MTUMode            `json:"mtu_mode"`
+	MTUValue                 int                `json:"mtu_value"`
+	MTUProbeHost             string             `json:"mtu_probe_host"`
+	MTUProbePort             int                `json:"mtu_probe_port"`
+	MTUOverheadBytes         int                `json:"mtu_overhead_bytes"`
+	BBREnabled               bool               `json:"bbr_enabled"`
+	PortRangeStart           int                `json:"port_range_start"`
+	PortRangeEnd             int                `json:"port_range_end"`
+	Status                   ServerStatus       `json:"status"`
+	OS                       string             `json:"os"`
+	DistroID                 string             `json:"distro_id"`
+	DistroVersion            string             `json:"distro_version"`
+	DistroName               string             `json:"distro_name"`
+	Libc                     string             `json:"libc"`
+	ServiceManager           string             `json:"service_manager"`
+	PackageManager           string             `json:"package_manager"`
+	Arch                     string             `json:"arch"`
+	Kernel                   string             `json:"kernel"`
+	CPU                      string             `json:"cpu"`
+	MemoryBytes              uint64             `json:"memory_bytes"`
+	CPUUsagePercent          float64            `json:"cpu_usage_percent"`
+	MemoryUsedBytes          uint64             `json:"memory_used_bytes"`
+	MemoryTotalBytes         uint64             `json:"memory_total_bytes"`
+	AgentMemoryBytes         uint64             `json:"agent_memory_bytes"`
+	DiskBytes                uint64             `json:"disk_bytes"`
+	AgentVersion             string             `json:"agent_version"`
+	AgentBuild               string             `json:"agent_build"`
+	SingBoxVersion           string             `json:"sing_box_version"`
+	MonitoringMode           string             `json:"monitoring_mode"`
+	TrafficResetMode         string             `json:"traffic_reset_mode"`
+	TrafficResetDay          int                `json:"traffic_reset_day"`
+	NetworkUploadBPS         uint64             `json:"network_upload_bps"`
+	NetworkDownloadBPS       uint64             `json:"network_download_bps"`
+	TrafficUploadBytes       uint64             `json:"traffic_upload_bytes"`
+	TrafficDownloadBytes     uint64             `json:"traffic_download_bytes"`
+	TrafficPeriodStart       string             `json:"traffic_period_start"`
+	TrafficPeriodEnd         string             `json:"traffic_period_end"`
+	ConnectivityProbeEnabled bool               `json:"connectivity_probe_enabled"`
+	ConnectionAuditEnabled   bool               `json:"connection_audit_enabled"`
+	TimeCorrectionMode       TimeCorrectionMode `json:"time_correction_mode"`
+	TimeCheckStatus          string             `json:"time_check_status"`
+	TimeOffsetMS             int64              `json:"time_offset_ms"`
+	TimeEffectiveOffsetMS    int64              `json:"time_effective_offset_ms"`
+	TimeCheckSource          string             `json:"time_check_source"`
+	TimeCheckError           string             `json:"time_check_error"`
+	TimeLogicalActive        bool               `json:"time_logical_active"`
+	TimeUnsupportedPaths     []string           `json:"time_unsupported_paths,omitempty"`
+	TimeCheckedAt            *time.Time         `json:"time_checked_at,omitempty"`
+	ConnectivityStatus       string             `json:"connectivity_status"`
+	ConnectivityLatencyMS    int64              `json:"connectivity_latency_ms"`
+	ConnectivityCheckedAt    *time.Time         `json:"connectivity_checked_at,omitempty"`
+	ConnectivityError        string             `json:"connectivity_error"`
+	TelemetryUpdatedAt       *time.Time         `json:"telemetry_updated_at,omitempty"`
+	LastSeenAt               *time.Time         `json:"last_seen_at,omitempty"`
+	CreatedAt                time.Time          `json:"created_at"`
+	UpdatedAt                time.Time          `json:"updated_at"`
 }
 
 type Inbound struct {
@@ -1091,6 +1108,7 @@ const (
 	AgentTaskTypeBenchmarkDNS          = "benchmark_dns"
 	AgentTaskTypeCollectLogs           = "collect_logs"
 	AgentTaskTypeManageLogs            = "manage_logs"
+	AgentTaskTypeCheckTime             = "check_time"
 	AgentTaskTypeIssueCertificateHTTP  = "issue_certificate_http01"
 )
 
@@ -1143,7 +1161,7 @@ type DeploymentTaskPayload struct {
 	Config               ApplyCoreConfigTaskPayload `json:"config"`
 	ConfigChanged        bool                       `json:"config_changed"`
 	WARPRequests         []WARPRequestPlan          `json:"warp_requests,omitempty"`
-	TimeSync             *TimeSyncPlan              `json:"time_sync,omitempty"`
+	TimeCheck            *TimeCheckPlan             `json:"time_check,omitempty"`
 	PortForwards         PortForwardPlan            `json:"port_forwards"`
 	InboundProbe         *InboundProbePlan          `json:"inbound_probe,omitempty"`
 	ExternalInboundProbe *InboundProbePlan          `json:"external_inbound_probe,omitempty"`
@@ -1237,22 +1255,22 @@ type AgentUpdateRequest struct {
 }
 
 type AgentConfigPatch struct {
-	ControllerURL           string `json:"controller_url,omitempty"`
-	StateDir                string `json:"state_dir,omitempty"`
-	CoreBinary              string `json:"core_binary,omitempty"`
-	CoreService             string `json:"core_service,omitempty"`
-	CommandTimeoutSeconds   int    `json:"command_timeout_seconds,omitempty"`
-	ReloadCommand           string `json:"reload_command,omitempty"`
-	RestartCommand          string `json:"restart_command,omitempty"`
-	TimeSyncCommand         string `json:"time_sync_command,omitempty"`
-	TimeSyncIntervalSeconds int    `json:"time_sync_interval_seconds,omitempty"`
-	LogMaxMB                int    `json:"log_max_mb,omitempty"`
-	LogBackups              int    `json:"log_backups,omitempty"`
-	CoreLogMaxMB            int    `json:"core_log_max_mb,omitempty"`
-	CoreLogBackups          int    `json:"core_log_backups,omitempty"`
-	UpdateSource            string `json:"update_source,omitempty"`
-	AllowPanelUpdate        bool   `json:"allow_panel_update,omitempty"`
-	UpdateRepo              string `json:"update_repo,omitempty"`
+	ControllerURL         string             `json:"controller_url,omitempty"`
+	StateDir              string             `json:"state_dir,omitempty"`
+	CoreBinary            string             `json:"core_binary,omitempty"`
+	CoreService           string             `json:"core_service,omitempty"`
+	CommandTimeoutSeconds int                `json:"command_timeout_seconds,omitempty"`
+	ReloadCommand         string             `json:"reload_command,omitempty"`
+	RestartCommand        string             `json:"restart_command,omitempty"`
+	TimeSyncCommand       string             `json:"time_sync_command,omitempty"`
+	TimeCorrectionMode    TimeCorrectionMode `json:"time_correction_mode,omitempty"`
+	LogMaxMB              int                `json:"log_max_mb,omitempty"`
+	LogBackups            int                `json:"log_backups,omitempty"`
+	CoreLogMaxMB          int                `json:"core_log_max_mb,omitempty"`
+	CoreLogBackups        int                `json:"core_log_backups,omitempty"`
+	UpdateSource          string             `json:"update_source,omitempty"`
+	AllowPanelUpdate      bool               `json:"allow_panel_update,omitempty"`
+	UpdateRepo            string             `json:"update_repo,omitempty"`
 }
 
 type DiagnosticTarget struct {
@@ -1319,11 +1337,27 @@ type ManageLogsTaskPayload struct {
 	Services string `json:"services"`
 }
 
-type TimeSyncPlan struct {
-	Version         int64    `json:"version"`
-	Mode            string   `json:"mode"`
-	IntervalSeconds int      `json:"interval_seconds"`
-	Servers         []string `json:"servers"`
+type TimeCheckPlan struct {
+	Version          int64              `json:"version"`
+	CorrectionMode   TimeCorrectionMode `json:"correction_mode"`
+	ThresholdSeconds int                `json:"threshold_seconds"`
+	NTPServers       []string           `json:"ntp_servers"`
+	Force            bool               `json:"force,omitempty"`
+}
+
+type TimeCheckResult struct {
+	Status               string             `json:"status"`
+	CorrectionMode       TimeCorrectionMode `json:"correction_mode"`
+	RawOffsetMS          int64              `json:"raw_offset_ms"`
+	EffectiveOffsetMS    int64              `json:"effective_offset_ms"`
+	Source               string             `json:"source"`
+	CheckedAt            time.Time          `json:"checked_at"`
+	SystemSyncAttempted  bool               `json:"system_sync_attempted"`
+	SystemSyncSucceeded  bool               `json:"system_sync_succeeded"`
+	SystemSyncError      string             `json:"system_sync_error,omitempty"`
+	LogicalTimeActive    bool               `json:"logical_time_active"`
+	UnsupportedTimePaths []string           `json:"unsupported_time_paths,omitempty"`
+	Error                string             `json:"error,omitempty"`
 }
 
 type NotificationChannel struct {

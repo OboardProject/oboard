@@ -337,6 +337,17 @@ func TestPageDataIncludesMinimalCurrentUser(t *testing.T) {
 			t.Fatalf("current user leaked %s: %#v", sensitive, current)
 		}
 	}
+
+	subscriptions := request(t, h, http.MethodGet, "/api/v1/page-data?page=subscriptions", token, nil, http.StatusOK)
+	self := subscriptions["account_user"].(map[string]any)
+	if self["subscription_token"] != "private-subscription" {
+		t.Fatalf("self subscription token missing: %#v", self)
+	}
+	for _, privateAdminField := range []string{"users", "user_groups", "subscription_profiles", "subscription_assignments", "servers", "settings"} {
+		if _, ok := subscriptions[privateAdminField]; ok {
+			t.Fatalf("viewer subscription page leaked admin field %s: %#v", privateAdminField, subscriptions)
+		}
+	}
 }
 
 func TestDNSPagesKeepResolverAndDomainRecordsSeparate(t *testing.T) {

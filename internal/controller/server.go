@@ -42,9 +42,14 @@ import (
 )
 
 const (
-	settingServerDefaultMTUMode    = "server_default_mtu_mode"
-	settingServerDefaultBBREnabled = "server_default_bbr_enabled"
+	settingServerDefaultMTUMode        = "server_default_mtu_mode"
+	settingServerDefaultBBREnabled     = "server_default_bbr_enabled"
+	settingServerDefaultTimeCorrection = "server_default_time_correction_mode"
+	settingTimeCheckNTPServers         = "time_check_ntp_servers"
+	timeCheckThresholdSeconds          = 30
 )
+
+var defaultTimeCheckNTPServers = []string{"time.cloudflare.com", "time.google.com", "pool.ntp.org"}
 
 type Server struct {
 	store         *store.Store
@@ -440,20 +445,22 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		write(w, 200, map[string]any{"settings": s.publicSettings(r.Context(), items)})
 	case http.MethodPost, http.MethodPatch:
 		var req struct {
-			ControllerURL           *string `json:"controller_url"`
-			BasePath                *string `json:"base_path"`
-			CertificateAutoMatch    *bool   `json:"certificate_auto_match_enabled"`
-			CertificatePreference   *string `json:"certificate_default_preference"`
-			CertificateAutoIssueCA  *string `json:"certificate_auto_issue_acme_ca"`
-			CertificateAutoIssueEAB *int64  `json:"certificate_auto_issue_google_eab_credential_id"`
-			SubscriptionAgePolicy   *string `json:"subscription_age_policy"`
-			TrafficTimezone         *string `json:"traffic_timezone"`
-			TrafficEnforcementMode  *string `json:"traffic_enforcement_mode"`
-			ControllerLogMaxMB      *int    `json:"controller_log_max_mb"`
-			ControllerLogBackups    *int    `json:"controller_log_backups"`
-			ControllerAutoUpdate    *bool   `json:"controller_auto_update_enabled"`
-			ServerDefaultMTUMode    *string `json:"server_default_mtu_mode"`
-			ServerDefaultBBREnabled *bool   `json:"server_default_bbr_enabled"`
+			ControllerURL               *string  `json:"controller_url"`
+			BasePath                    *string  `json:"base_path"`
+			CertificateAutoMatch        *bool    `json:"certificate_auto_match_enabled"`
+			CertificatePreference       *string  `json:"certificate_default_preference"`
+			CertificateAutoIssueCA      *string  `json:"certificate_auto_issue_acme_ca"`
+			CertificateAutoIssueEAB     *int64   `json:"certificate_auto_issue_google_eab_credential_id"`
+			SubscriptionAgePolicy       *string  `json:"subscription_age_policy"`
+			TrafficTimezone             *string  `json:"traffic_timezone"`
+			TrafficEnforcementMode      *string  `json:"traffic_enforcement_mode"`
+			ControllerLogMaxMB          *int     `json:"controller_log_max_mb"`
+			ControllerLogBackups        *int     `json:"controller_log_backups"`
+			ControllerAutoUpdate        *bool    `json:"controller_auto_update_enabled"`
+			ServerDefaultMTUMode        *string  `json:"server_default_mtu_mode"`
+			ServerDefaultBBREnabled     *bool    `json:"server_default_bbr_enabled"`
+			ServerDefaultTimeCorrection *string  `json:"server_default_time_correction_mode"`
+			TimeCheckNTPServers         []string `json:"time_check_ntp_servers"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -657,6 +664,31 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, settingServerDefaultBBREnabled)
 		}
+		if req.ServerDefaultTimeCorrection != nil {
+			mode := normalizeControllerTimeCorrectionMode(model.TimeCorrectionMode(*req.ServerDefaultTimeCorrection))
+			if mode != model.TimeCorrectionMode(strings.ToLower(strings.TrimSpace(*req.ServerDefaultTimeCorrection))) {
+				fail(w, errors.New("server_default_time_correction_mode is invalid"), http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), settingServerDefaultTimeCorrection, string(mode)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingServerDefaultTimeCorrection)
+		}
+		if req.TimeCheckNTPServers != nil {
+			servers, err := normalizeTimeCheckNTPServers(req.TimeCheckNTPServers)
+			if err != nil {
+				fail(w, err, http.StatusBadRequest)
+				return
+			}
+			raw, _ := json.Marshal(servers)
+			if err := s.store.SetSetting(r.Context(), settingTimeCheckNTPServers, string(raw)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingTimeCheckNTPServers)
+		}
 		if len(changed) > 0 {
 			auditReq(s, r, "update", "settings", strings.Join(changed, ","))
 		}
@@ -676,12 +708,20 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...)}
 	for key, value := range items {
 		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting {
 			continue
 		}
 		out[key] = value
+	}
+	if raw := strings.TrimSpace(items[settingTimeCheckNTPServers]); raw != "" {
+		var servers []string
+		if json.Unmarshal([]byte(raw), &servers) == nil {
+			if normalized, err := normalizeTimeCheckNTPServers(servers); err == nil {
+				out[settingTimeCheckNTPServers] = normalized
+			}
+		}
 	}
 	if raw, ok := out["controller_url"].(string); ok && strings.TrimSpace(raw) != "" {
 		if normalized, err := s.normalizeControllerURL(raw); err == nil {
@@ -695,14 +735,67 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	return out
 }
 
-func serverCreationDefaults(settings map[string]string) (model.MTUMode, bool) {
+func serverCreationDefaults(settings map[string]string) (model.MTUMode, bool, model.TimeCorrectionMode) {
 	mode := model.MTUMode(strings.ToLower(strings.TrimSpace(settings[settingServerDefaultMTUMode])))
 	switch mode {
 	case model.MTUModeDisabled, model.MTUModeDetect, model.MTUModeApply:
 	default:
 		mode = model.MTUModeDetect
 	}
-	return mode, settingBool(settings, settingServerDefaultBBREnabled, false)
+	return mode, settingBool(settings, settingServerDefaultBBREnabled, false), normalizeControllerTimeCorrectionMode(model.TimeCorrectionMode(settings[settingServerDefaultTimeCorrection]))
+}
+
+func normalizeControllerTimeCorrectionMode(mode model.TimeCorrectionMode) model.TimeCorrectionMode {
+	switch model.TimeCorrectionMode(strings.ToLower(strings.TrimSpace(string(mode)))) {
+	case model.TimeCorrectionAuto:
+		return model.TimeCorrectionAuto
+	case model.TimeCorrectionNTP:
+		return model.TimeCorrectionNTP
+	default:
+		return model.TimeCorrectionOff
+	}
+}
+
+func normalizeTimeCheckNTPServers(values []string) ([]string, error) {
+	if len(values) != 3 {
+		return nil, errors.New("time_check_ntp_servers must contain exactly three servers")
+	}
+	out := make([]string, 0, 3)
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" || strings.Contains(value, "://") || strings.Contains(value, "/") {
+			return nil, errors.New("NTP 服务器必须是主机名或 IP")
+		}
+		if strings.HasPrefix(value, "[") {
+			if !strings.HasSuffix(value, "]") {
+				return nil, errors.New("NTP 服务器不能包含端口")
+			}
+			value = strings.TrimSuffix(strings.TrimPrefix(value, "["), "]")
+			if net.ParseIP(value) == nil {
+				return nil, errors.New("NTP 服务器包含无效 IPv6 地址")
+			}
+		}
+		if err := core.ValidateSafeHost(value); err != nil {
+			return nil, fmt.Errorf("invalid NTP server %q: %w", value, err)
+		}
+		if seen[value] {
+			return nil, errors.New("NTP 服务器不能重复")
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out, nil
+}
+
+func timeCheckNTPServers(settings map[string]string) []string {
+	var values []string
+	if json.Unmarshal([]byte(settings[settingTimeCheckNTPServers]), &values) == nil {
+		if normalized, err := normalizeTimeCheckNTPServers(values); err == nil {
+			return normalized
+		}
+	}
+	return append([]string(nil), defaultTimeCheckNTPServers...)
 }
 
 func (s *Server) ApplyRuntimeSettings(ctx context.Context) error {
@@ -849,8 +942,8 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		mtuMode, bbrEnabled := serverCreationDefaults(settings)
-		out["server_creation_defaults"] = map[string]any{"mtu_mode": mtuMode, "bbr_enabled": bbrEnabled}
+		mtuMode, bbrEnabled, timeMode := serverCreationDefaults(settings)
+		out["server_creation_defaults"] = map[string]any{"mtu_mode": mtuMode, "bbr_enabled": bbrEnabled, "time_correction_mode": timeMode}
 		return nil
 	}
 	addUsers := func() error {
@@ -1313,9 +1406,15 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			err = addGroups()
 		}
 	case "subscriptions":
-		if err = require(model.RoleAdmin); err == nil {
-			err = addUsers()
+		if !roleAllows(role, model.RoleAdmin) {
+			if user := currentUser(r); user != nil {
+				out["account_user"] = selfUserResponse(ctx, s.store, *user, role)
+			} else {
+				err = errors.New("invalid session")
+			}
+			break
 		}
+		err = addUsers()
 		if err == nil {
 			err = addSettings()
 		}
@@ -2032,8 +2131,9 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var input struct {
 			model.Server
-			MTUMode    *model.MTUMode `json:"mtu_mode"`
-			BBREnabled *bool          `json:"bbr_enabled"`
+			MTUMode            *model.MTUMode            `json:"mtu_mode"`
+			BBREnabled         *bool                     `json:"bbr_enabled"`
+			TimeCorrectionMode *model.TimeCorrectionMode `json:"time_correction_mode"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -2044,7 +2144,7 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, http.StatusInternalServerError)
 			return
 		}
-		defaultMTU, defaultBBR := serverCreationDefaults(settings)
+		defaultMTU, defaultBBR, defaultTimeMode := serverCreationDefaults(settings)
 		if input.MTUMode == nil {
 			v.MTUMode = defaultMTU
 		} else {
@@ -2054,6 +2154,11 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			v.BBREnabled = defaultBBR
 		} else {
 			v.BBREnabled = *input.BBREnabled
+		}
+		if input.TimeCorrectionMode == nil {
+			v.TimeCorrectionMode = defaultTimeMode
+		} else {
+			v.TimeCorrectionMode = *input.TimeCorrectionMode
 		}
 		if err := validateServer(&v); err != nil {
 			fail(w, err, 400)
@@ -2153,8 +2258,9 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPatch {
 		var input struct {
 			model.Server
-			MTUMode    *model.MTUMode `json:"mtu_mode"`
-			BBREnabled *bool          `json:"bbr_enabled"`
+			MTUMode            *model.MTUMode            `json:"mtu_mode"`
+			BBREnabled         *bool                     `json:"bbr_enabled"`
+			TimeCorrectionMode *model.TimeCorrectionMode `json:"time_correction_mode"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -2176,6 +2282,11 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		} else {
 			v.BBREnabled = *input.BBREnabled
 		}
+		if input.TimeCorrectionMode == nil {
+			v.TimeCorrectionMode = current.TimeCorrectionMode
+		} else {
+			v.TimeCorrectionMode = *input.TimeCorrectionMode
+		}
 		// Automatic region is Agent telemetry. Panel edits may select auto or a
 		// manual region, but cannot replace the last detected value.
 		v.DetectedRegionCode = current.DetectedRegionCode
@@ -2189,7 +2300,23 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		}
 		auditReq(s, r, "update", "server", fmt.Sprint(id))
 		updated, _ := s.store.GetServer(r.Context(), v.ID)
-		write(w, 200, map[string]any{"server": updated})
+		response := map[string]any{"server": updated}
+		if current.TimeCorrectionMode != v.TimeCorrectionMode {
+			if err := s.store.ResetServerTimeCheck(r.Context(), v.ID); err != nil {
+				fail(w, err, 500)
+				return
+			}
+			updated, _ = s.store.GetServer(r.Context(), v.ID)
+			response["server"] = updated
+		}
+		if current.TimeCorrectionMode != v.TimeCorrectionMode && strings.TrimSpace(current.AgentID) != "" && current.Status != model.ServerOffline {
+			if task, err := s.queueTimeCheck(r.Context(), *updated, true); err == nil {
+				response["time_check_task"] = task
+			} else {
+				response["time_check_error"] = err.Error()
+			}
+		}
+		write(w, 200, response)
 		return
 	}
 	if r.Method == http.MethodDelete {
@@ -2308,6 +2435,9 @@ func (s *Server) expireTimedOutTasks(ctx context.Context) {
 		}
 		if task.Type == model.AgentTaskTypeProbeExternalEgress || task.Type == model.AgentTaskTypeApplyDeployment {
 			_ = s.applyExternalEgressTaskResults(ctx, task.ServerID, task, "failed", task.ResultJSON)
+		}
+		if err := s.applyTimeCheckTaskResult(ctx, task, "failed", task.ResultJSON); err != nil {
+			log.Printf("apply timed out time check task %d: %v", task.ID, err)
 		}
 		s.notifyTaskFailure(ctx, task)
 	}
@@ -2612,7 +2742,7 @@ func (s *Server) serverAgentConfig(w http.ResponseWriter, r *http.Request, id in
 	allowed := map[string]bool{
 		"controller_url": true, "state_dir": true, "core_binary": true, "core_service": true,
 		"command_timeout_seconds": true,
-		"reload_command":          true, "restart_command": true, "time_sync_command": true, "time_sync_interval_seconds": true,
+		"reload_command":          true, "restart_command": true, "time_sync_command": true,
 		"log_max_mb": true, "log_backups": true, "core_log_max_mb": true, "core_log_backups": true,
 	}
 	clean := map[string]any{}
@@ -2654,10 +2784,6 @@ func (s *Server) serverAgentConfig(w http.ResponseWriter, r *http.Request, id in
 		}
 	}
 	if err := validateAgentIntegerSetting(clean, "command_timeout_seconds", 5, 120); err != nil {
-		fail(w, err, 400)
-		return
-	}
-	if err := validateAgentIntegerSetting(clean, "time_sync_interval_seconds", 300, 30*24*60*60); err != nil {
 		fail(w, err, 400)
 		return
 	}
@@ -3129,6 +3255,11 @@ func validateServer(v *model.Server) error {
 	}
 	v.TrafficResetMode = normalizeControllerTrafficResetMode(v.TrafficResetMode)
 	v.TrafficResetDay = normalizeControllerTrafficResetDay(v.TrafficResetDay)
+	normalizedTimeMode := normalizeControllerTimeCorrectionMode(v.TimeCorrectionMode)
+	if v.TimeCorrectionMode != "" && normalizedTimeMode != model.TimeCorrectionMode(strings.ToLower(strings.TrimSpace(string(v.TimeCorrectionMode)))) {
+		return errors.New("time_correction_mode must be off, auto, or ntp")
+	}
+	v.TimeCorrectionMode = normalizedTimeMode
 	if err := validateServerRegion(v); err != nil {
 		return err
 	}
@@ -8776,7 +8907,12 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		timePlan := model.TimeSyncPlan{Version: version, Mode: "first_apply", IntervalSeconds: 86400, Servers: []string{"pool.ntp.org", "time.cloudflare.com", "time.google.com"}}
+		settings, err := s.store.ListSettings(r.Context())
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		timePlan := model.TimeCheckPlan{Version: version, CorrectionMode: server.TimeCorrectionMode, ThresholdSeconds: timeCheckThresholdSeconds, NTPServers: timeCheckNTPServers(settings), Force: true}
 		var externalEgressProbe *model.ExternalEgressProbePlan
 		if targets := externalEgressTargetsByServer[server.ID]; len(targets) > 0 {
 			externalEgressProbe = &model.ExternalEgressProbePlan{Version: version, ExpectedConfigVersion: version, TimeoutMS: externalEgressTimeoutMS, Targets: targets}
@@ -8786,7 +8922,7 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 			Config:               model.ApplyCoreConfigTaskPayload{Config: cfg, Assets: managedAssets},
 			ConfigChanged:        configChanged,
 			WARPRequests:         warpRequests,
-			TimeSync:             &timePlan,
+			TimeCheck:            &timePlan,
 			PortForwards:         forwardPlan,
 			InboundProbe:         inboundProbe,
 			ExternalInboundProbe: externalInboundProbe,
@@ -9680,7 +9816,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(1 << 20) // 1 MiB max agent websocket frame
 	mode, _ := serverMonitoringPolicy(server)
 	var heartbeatInterval time.Duration
-	_ = conn.WriteJSON(map[string]any{"type": "hello", "server_id": server.ID, "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connection_audit_enabled": server.ConnectionAuditEnabled})
+	_ = conn.WriteJSON(map[string]any{"type": "hello", "ts": time.Now().UTC(), "server_id": server.ID, "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connection_audit_enabled": server.ConnectionAuditEnabled})
 	_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
 	var initial map[string]json.RawMessage
 	if err := conn.ReadJSON(&initial); err == nil {
@@ -9708,7 +9844,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			if task.Type == model.AgentTaskTypeIssueCertificateHTTP {
 				readDeadline = 20 * time.Minute
 			}
-			_ = conn.WriteJSON(map[string]any{"type": "task_request", "task": task, "signature_version": 2, "signature": signAgentTaskEnvelope(server.AgentTokenHash, *task)})
+			_ = conn.WriteJSON(map[string]any{"type": "task_request", "ts": time.Now().UTC(), "task": task, "signature_version": 2, "signature": signAgentTaskEnvelope(server.AgentTokenHash, *task)})
 		} else {
 			inFlightTaskID = 0
 			if latest, loadErr := s.store.GetServer(r.Context(), server.ID); loadErr == nil {
@@ -9939,6 +10075,10 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, http.StatusBadRequest)
 			return
 		}
+	}
+	if err := s.applyTimeCheckTaskResult(r.Context(), *task, req.Status, req.ResultJSON); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
 	}
 	if err := s.completeTaskWithNotification(r.Context(), req.TaskID, req.Status, req.ResultJSON); err != nil {
 		fail(w, err, 500)
@@ -12063,6 +12203,7 @@ with open(path, "r", encoding="utf-8") as f:
 data["reload_command"] = "auto"
 data["restart_command"] = "auto"
 data["time_sync_command"] = "auto"
+data.setdefault("time_correction_mode", "off")
 data.setdefault("core_binary", install_dir + "/oboard-sb")
 data.setdefault("core_service", "oboard-sb")
 data.setdefault("update_repo", "OboardProject/oboard-agent")

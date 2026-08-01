@@ -8,6 +8,7 @@ export type EntryIPMode = 'auto' | 'ipv4' | 'ipv6' | 'custom'
 export type RegionMode = 'auto' | 'manual'
 export type DNSRecordTypes = 'auto' | 'a' | 'aaaa' | 'both'
 export type CertificateMode = 'external' | 'auto' | 'exact' | 'wildcard' | 'explicit'
+export type TimeCorrectionMode = 'off' | 'auto' | 'ntp'
 
 export type Server = {
   id: number
@@ -59,6 +60,15 @@ export type Server = {
   traffic_period_end?: string
   connectivity_probe_enabled: boolean
   connection_audit_enabled: boolean
+  time_correction_mode: TimeCorrectionMode
+  time_check_status: string
+  time_offset_ms: number
+  time_effective_offset_ms: number
+  time_check_source: string
+  time_check_error: string
+  time_logical_active: boolean
+  time_unsupported_paths?: string[]
+  time_checked_at?: string
   connectivity_status: string
   connectivity_latency_ms: number
   connectivity_checked_at?: string

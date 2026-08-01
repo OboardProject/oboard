@@ -37,6 +37,7 @@ const (
 	notificationUpdateFailed      = "controller_update_failed"
 	notificationDNSSyncFailed     = "dns_sync_failed"
 	notificationAdminAnnouncement = "admin_announcement"
+	notificationServerClockSkew   = "server_clock_skew"
 )
 
 type notificationEvent struct {
@@ -117,6 +118,10 @@ var defaultNotificationTemplates = map[string]model.NotificationTemplate{
 		Title: "{{.Title}}",
 		Body:  "{{.Message}}\n\n来自：{{.Sender}}",
 	},
+	notificationServerClockSkew: {
+		Title: "服务器时间偏差过大 · {{.ServerName}}",
+		Body:  "服务器：{{.ServerName}}\n时间偏差：{{.Offset}}\n参考来源：{{.Source}}\n时间校准当前关闭，请在服务器设置中开启。\n检测时间：{{.Time}}",
+	},
 }
 
 func (s *Server) StartMonitor(ctx context.Context) {
@@ -128,6 +133,7 @@ func (s *Server) StartMonitor(ctx context.Context) {
 	s.checkOffline(ctx)
 	s.maybeFinalizeBasePathMigration(ctx)
 	s.schedulePeriodicInboundProbes(ctx)
+	s.scheduleDailyTimeChecks(ctx)
 	s.deliverPendingNotifications(ctx)
 	for {
 		select {
@@ -138,6 +144,7 @@ func (s *Server) StartMonitor(ctx context.Context) {
 			s.checkOffline(ctx)
 			s.maybeFinalizeBasePathMigration(ctx)
 			s.schedulePeriodicInboundProbes(ctx)
+			s.scheduleDailyTimeChecks(ctx)
 			s.deliverPendingNotifications(ctx)
 		}
 	}
@@ -745,6 +752,55 @@ func (s *Server) enqueueNotificationEvent(ctx context.Context, event notificatio
 	return queued
 }
 
+func (s *Server) enqueueForcedAdminNotification(ctx context.Context, event notificationEvent) int {
+	if strings.TrimSpace(event.Name) == "" || strings.TrimSpace(event.Key) == "" {
+		return 0
+	}
+	channels, err := s.store.ListEnabledNotificationChannelsUnfiltered(ctx)
+	if err != nil {
+		log.Printf("list notification channels for %s: %v", event.Name, err)
+		return 0
+	}
+	queued := 0
+	for _, channel := range channels {
+		if channel.Type != "telegram" && channel.Type != "bark" {
+			continue
+		}
+		owner, err := s.store.GetUser(ctx, channel.OwnerUserID)
+		if err != nil || owner.Status != "active" {
+			continue
+		}
+		role, err := s.store.EffectiveUserRole(ctx, *owner)
+		if err != nil || !roleAllows(role, model.RoleAdmin) {
+			continue
+		}
+		title, body, err := renderNotificationEvent(channel, event)
+		if err != nil {
+			log.Printf("render notification %s for channel %d: %v", event.Name, channel.ID, err)
+			continue
+		}
+		delivery := model.NotificationDelivery{ChannelID: channel.ID, Event: event.Name, EventKey: event.Key, Title: title, Body: body, NextAttemptAt: time.Now().UTC()}
+		inserted, err := s.store.QueueNotificationDelivery(ctx, &delivery)
+		if err != nil {
+			log.Printf("queue notification %s for channel %d: %v", event.Name, channel.ID, err)
+			continue
+		}
+		if inserted {
+			queued++
+		}
+	}
+	if queued > 0 {
+		s.notificationWG.Add(1)
+		go func(parent context.Context) {
+			defer s.notificationWG.Done()
+			deliveryCtx, cancel := context.WithTimeout(parent, 30*time.Second)
+			defer cancel()
+			s.deliverPendingNotifications(deliveryCtx)
+		}(context.WithoutCancel(ctx))
+	}
+	return queued
+}
+
 func notificationChannelEligible(channel model.NotificationChannel, ownerRole model.Role, event notificationEvent) bool {
 	switch event.Name {
 	case notificationServerOffline, notificationServerOnline, notificationTaskFailed, notificationTaskTimeout, notificationCertificateFailed, notificationCertificateExpiry, notificationBackupFailed, notificationUpdateFailed, notificationDNSSyncFailed:
@@ -1283,6 +1339,7 @@ func taskTypeNotificationLabel(taskType string) string {
 		model.AgentTaskTypeManageLogs:            "日志管理",
 		model.AgentTaskTypeDiagnoseNetwork:       "网络诊断",
 		model.AgentTaskTypeDetectMTU:             "MTU 检测",
+		model.AgentTaskTypeCheckTime:             "时间检测",
 	}
 	if label := labels[strings.TrimSpace(taskType)]; label != "" {
 		return label
