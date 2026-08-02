@@ -103,6 +103,7 @@ func (s *Server) runScheduledControllerUpdate(ctx context.Context) {
 		}
 		return
 	}
+	s.publishRealtime("controller_update")
 	if !status.UpdateAvailable || status.Channel == "pinned" || !autoUpdateEnabled {
 		return
 	}
@@ -125,6 +126,7 @@ func (s *Server) runScheduledControllerUpdate(ctx context.Context) {
 		s.notifyControllerUpdateFailure(ctx, "安装更新", status.Available.Version, publicErr.Error())
 		return
 	}
+	s.startControllerUpdateWatch()
 	_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
 }
 
@@ -223,6 +225,7 @@ func (s *Server) controllerUpdateInstall(w http.ResponseWriter, r *http.Request)
 		fail(w, publicErr, http.StatusBadGateway)
 		return
 	}
+	s.startControllerUpdateWatch()
 	status.BackupPath = backup
 	_ = s.store.SetSetting(r.Context(), controllerUpdateErrorSetting, "")
 	auditReq(s, r, "install", "controller_update", status.Channel+":"+status.Available.Version)
@@ -245,6 +248,63 @@ func (s *Server) controllerUpdateCancel(w http.ResponseWriter, r *http.Request) 
 	}
 	auditReq(s, r, "cancel", "controller_update", status.Channel+":"+status.Available.Version)
 	s.writeControllerUpdateStatus(w, r, status)
+}
+
+func (s *Server) startControllerUpdateWatch() {
+	s.controllerUpdateWatchMu.Lock()
+	if s.controllerUpdateWatching {
+		s.controllerUpdateWatchMu.Unlock()
+		return
+	}
+	s.controllerUpdateWatching = true
+	s.controllerUpdateWatchMu.Unlock()
+	go func() {
+		defer func() {
+			s.controllerUpdateWatchMu.Lock()
+			s.controllerUpdateWatching = false
+			s.controllerUpdateWatchMu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+		defer cancel()
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		previous := ""
+		activeSeen := false
+		idleSamples := 0
+		failures := 0
+		for {
+			status, err := s.controllerUpdater.Status(ctx)
+			if err != nil {
+				failures++
+				if failures >= 5 {
+					s.publishRealtime("controller_update")
+					return
+				}
+			} else {
+				failures = 0
+				digest := fmt.Sprintf("%s\x00%s\x00%s\x00%t\x00%t\x00%s", status.State, status.Current.Build, status.Available.Build, status.UpdateAvailable, status.CanCancel, status.LastError)
+				if digest != previous {
+					previous = digest
+					s.publishRealtime("controller_update")
+				}
+				active := status.State == "checking" || status.State == "downloading" || status.State == "ready" || status.State == "installing" || status.State == "cancelling"
+				activeSeen = activeSeen || active
+				if active {
+					idleSamples = 0
+				} else {
+					idleSamples++
+				}
+				if !active && (activeSeen || idleSamples >= 5) {
+					return
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 }
 
 func controllerUpdateOperationError(prefix string, status controllerupdate.Status, err error) error {

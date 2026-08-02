@@ -110,7 +110,9 @@ func (s *Server) recordRejectedSubscriptionPull(r *http.Request, userID int64, f
 	event.Outcome = "rejected_invalid_request"
 	event.Reason = boundedSubscriptionAuditReason(reason)
 	token := strings.TrimPrefix(r.URL.Path, "/api/v1/subscriptions/")
-	_ = s.store.AddRejectedSubscriptionPullAudit(r.Context(), token, event)
+	if s.store.AddRejectedSubscriptionPullAudit(r.Context(), token, event) == nil {
+		s.publishRealtime("audit", "subscriptions")
+	}
 }
 
 func boundedSubscriptionAuditReason(value string) string {

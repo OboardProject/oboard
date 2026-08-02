@@ -83,6 +83,7 @@ import surfboardClientIcon from './assets/subscription-clients/surfboard.png'
 import egernClientIcon from './assets/subscription-clients/egern.jpg'
 import v2rayNClientIcon from './assets/subscription-clients/v2rayn.png'
 import clashClassicClientIcon from './assets/subscription-clients/clash-classic.png'
+import { useRealtimeEvents, type RealtimeEvent, type RealtimeStatus } from './realtime'
 
 const appBasePath = (() => {
   const href = document.querySelector('base')?.getAttribute('href') || '/'
@@ -97,6 +98,12 @@ function appPath(path: string) {
 
 function appControllerURL() {
   return `${window.location.origin}${appBasePath}`
+}
+
+function appWebSocketURL(path: string) {
+  const url = new URL(appPath(path), window.location.href)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  return url.toString()
 }
 
 function stripAppBasePath(pathname: string) {
@@ -632,6 +639,28 @@ const preloadTabsByRole: Record<Role, string[]> = {
   viewer: ['subscriptions', 'account', 'notifications'],
   operator: ['subscriptions', 'servers', 'proxy-paths', 'tasks', 'audit', 'mtu'],
   admin: ['servers', 'proxy-paths', 'users', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
+}
+
+const realtimeResourcePages: Record<string, string[]> = {
+  account: ['account'],
+  notifications: ['notifications'],
+  subscriptions: ['subscriptions', 'account'],
+  servers: ['dashboard', 'servers', 'proxy-paths', 'subscriptions', 'tasks', 'audit', 'settings'],
+  server_metrics: ['dashboard', 'servers'],
+  tasks: ['dashboard', 'servers', 'proxy-paths', 'tasks', 'settings'],
+  deployments: ['dashboard', 'servers', 'proxy-paths', 'tasks'],
+  probes: ['servers', 'proxy-paths', 'dns', 'mtu', 'port-forwards', 'tasks'],
+  topology: ['servers', 'proxy-paths', 'subscriptions', 'settings'],
+  audit: ['dashboard', 'audit'],
+  mtu: ['servers', 'mtu'],
+  port_forwards: ['proxy-paths', 'port-forwards'],
+  tunnels: ['proxy-paths', 'tunnels'],
+  users: ['users', 'subscriptions', 'account', 'audit'],
+  dns: ['dns', 'dns-records', 'servers', 'settings'],
+  settings: ['dashboard', 'servers', 'subscriptions', 'settings'],
+  backups: ['settings'],
+  controller_update: ['settings'],
+  automation: ['automation'],
 }
 
 function tabAllowedForRole(tab: string, role: Role) {
@@ -1268,6 +1297,10 @@ function App() {
   const pageCacheRef = useRef<Record<string, any>>({})
   const pageRequestRef = useRef<Record<string, Promise<{ data: any; epoch: number }>>>({})
   const preloadedTabsRef = useRef(new Set<string>())
+  const realtimeRefreshTimerRef = useRef<number | undefined>(undefined)
+  const realtimeVisibleRefreshPendingRef = useRef(false)
+  const [realtimeRevision, setRealtimeRevision] = useState(0)
+  const [realtimeResources, setRealtimeResources] = useState<string[]>([])
   const { dialogs, dialog, setDialog } = useDialogController()
   const client = useMemo(() => api(token, failedToken => {
     if (failedToken !== activeTokenRef.current) return false
@@ -1437,6 +1470,52 @@ function App() {
       }
     }
   }
+
+  const handleRealtimeEvent = (event: RealtimeEvent) => {
+    const resync = event.type === 'ready' || event.type === 'resync_required'
+    const pages = new Set<string>()
+    if (resync || event.resources?.includes('all')) {
+      Object.keys(pageCacheRef.current).forEach(page => pages.add(page))
+      pages.add(tab)
+    } else if (event.type === 'invalidate') {
+      for (const resource of event.resources || []) {
+        for (const page of realtimeResourcePages[resource] || []) pages.add(page)
+      }
+    }
+    if (!pages.size) return
+    pages.forEach(page => {
+      delete pageCacheRef.current[page]
+      preloadedTabsRef.current.delete(page)
+    })
+    if (!pages.has(tab)) return
+    setRealtimeResources(resync ? ['all'] : event.resources || [])
+    setRealtimeRevision(value => value + 1)
+    if (document.visibilityState !== 'visible') {
+      realtimeVisibleRefreshPendingRef.current = true
+      return
+    }
+    if (realtimeRefreshTimerRef.current !== undefined) window.clearTimeout(realtimeRefreshTimerRef.current)
+    realtimeRefreshTimerRef.current = window.setTimeout(() => {
+      realtimeRefreshTimerRef.current = undefined
+      void load(tab, { background: true, forceFresh: true })
+    }, 200)
+  }
+
+  const realtimeStatus = useRealtimeEvents(Boolean(token), appWebSocketURL('/api/v2/ui/events'), handleRealtimeEvent)
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible' || !realtimeVisibleRefreshPendingRef.current) return
+      realtimeVisibleRefreshPendingRef.current = false
+      void load(tab, { background: true, forceFresh: true })
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [token, tab])
+
+  useEffect(() => () => {
+    if (realtimeRefreshTimerRef.current !== undefined) window.clearTimeout(realtimeRefreshTimerRef.current)
+  }, [])
 
   useEffect(() => {
     if (!token || !sessionUser || showPortalLoader) return
@@ -1902,7 +1981,7 @@ function App() {
             <div className="page-stage">
               <AnimatePresence initial={false} mode="popLayout">
                 <MotionPage key={tab}>
-                  {renderTab(tab, data, client, load, apply, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget)}
+                  {renderTab(tab, data, client, load, apply, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, realtimeRevision, realtimeResources)}
                 </MotionPage>
               </AnimatePresence>
             </div>
@@ -2147,10 +2226,10 @@ $ _`}</pre>
   )
 }
 
-function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: () => Promise<void>, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null) {
+function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: () => Promise<void>, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = []) {
   if (tab === 'account') return <AccountPage data={data} client={client} load={load} notify={notify} />
   if (tab === 'dashboard') return <Dashboard data={data} loading={loading} displayName={sessionUser?.nickname || data.current_user?.nickname || sessionUser?.username || data.current_user?.username || 'Admin'} attention={dashboardAttention} dismissAttention={dismissDashboardAttention} />
-  if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} />
+  if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={realtimeStatus} />
   if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} apply={apply} loading={loading} topbarTarget={proxyPathTopbarTarget} />
   if (tab === 'inbounds') return <Inbounds data={data} client={client} load={load} />
   if (tab === 'outbounds') return <Outbounds data={data} client={client} load={load} />
@@ -2166,10 +2245,10 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'subscriptions') return sessionUser?.role === 'admin'
     ? <Subscriptions data={data} client={client} load={load} notify={notify} />
     : <MySubscriptions data={data} notify={notify} />
-  if (tab === 'tasks') return <Tasks data={data} client={client} loading={loading} />
+  if (tab === 'tasks') return <Tasks data={data} client={client} loading={loading} realtimeStatus={realtimeStatus} />
   if (tab === 'audit') return <AuditConsole data={data} client={client} loading={loading} notify={notify} />
-  if (tab === 'automation') return <AutomationWorkspace client={client} notify={notify} />
-  if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} />
+  if (tab === 'automation') return <AutomationWorkspace client={client} notify={notify} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
+  if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
   return null
 }
 
@@ -2565,7 +2644,7 @@ function AutomationPermissionPicker({ capabilities, value, onChange }: { capabil
 }
 
 
-function AutomationWorkspace({ client, notify }: any) {
+function AutomationWorkspace({ client, notify, realtimeRevision, realtimeResources }: any) {
   const dialogs = useDialogs()
   const [view, setView] = useState<'access' | 'changes' | 'ai'>('access')
   const [loading, setLoading] = useState(true)
@@ -2616,6 +2695,9 @@ function AutomationWorkspace({ client, notify }: any) {
     }
   }
   useEffect(() => { void refresh() }, [])
+  useEffect(() => {
+    if (realtimeRevision > 0 && (realtimeResources.includes('automation') || realtimeResources.includes('all'))) void refresh()
+  }, [realtimeRevision, realtimeResources])
 
   const openServiceDialog = (principal?: any) => {
     setEditingServiceID(principal?.id || '')
@@ -2858,7 +2940,7 @@ function AutomationWorkspace({ client, notify }: any) {
   </Panel>
 }
 
-function SettingsPage({ data, client, load, notify }: any) {
+function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources }: any) {
   const dialogs = useDialogs()
   const [activeSection, setActiveSection] = useState<'connection' | 'servers' | 'certificates' | 'subscriptions' | 'traffic' | 'backups' | 'updates' | 'logs'>('connection')
   const currentOrigin = appControllerURL()
@@ -2882,10 +2964,10 @@ function SettingsPage({ data, client, load, notify }: any) {
   useEffect(() => { setControllerURL(savedURL || currentOrigin) }, [savedURL, currentOrigin])
   useEffect(() => { setBasePath(currentBasePath) }, [currentBasePath])
   useEffect(() => {
-    if (!migration.active) return
+    if (!migration.active || realtimeStatus === 'open') return
     const timer = window.setInterval(() => { void load('settings', { background: true }) }, 3000)
     return () => window.clearInterval(timer)
-  }, [migration.active, migration.config_version])
+  }, [migration.active, migration.config_version, realtimeStatus])
   useEffect(() => { setSubscriptionAgePolicy(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional') }, [data.settings?.subscription_age_policy])
   useEffect(() => {
     const policy = subscriptionAuditPolicyValue(data.settings?.subscription_audit_policy)
@@ -3155,7 +3237,7 @@ function SettingsPage({ data, client, load, notify }: any) {
         </div>
       </section>}
       {activeSection === 'backups' && <ControllerBackupPanel client={client} notify={notify} dialogs={dialogs} />}
-      {activeSection === 'updates' && <ControllerUpdatePanel data={data} client={client} load={load} notify={notify} dialogs={dialogs} />}
+      {activeSection === 'updates' && <ControllerUpdatePanel data={data} client={client} load={load} notify={notify} dialogs={dialogs} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />}
       {activeSection === 'logs' && <ControllerLogsPanel
         client={client}
         dialogs={dialogs}
@@ -3171,7 +3253,7 @@ function SettingsPage({ data, client, load, notify }: any) {
   </section>
 }
 
-function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
+function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeStatus, realtimeRevision, realtimeResources }: any) {
   const emptyStatus: ControllerUpdateStatus = {
     channel: '', current: { version: data.version?.version || '', build: data.version?.build || '', commit: data.version?.commit || '', date: data.version?.built_at || '' },
     available: { version: '', build: '', commit: '', date: '' }, update_available: false, auto_update_enabled: false, can_cancel: false, status: 'loading',
@@ -3252,10 +3334,13 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs }: any) {
   }
   useEffect(() => { void refresh() }, [])
   useEffect(() => {
-    if (!installExpected && !['downloading', 'ready', 'installing', 'cancelling', 'checking'].includes(snapshot.status)) return
+    if (realtimeRevision > 0 && realtimeStatus === 'open' && (realtimeResources.includes('controller_update') || realtimeResources.includes('all'))) void refresh(true)
+  }, [realtimeRevision, realtimeStatus, realtimeResources])
+  useEffect(() => {
+    if (realtimeStatus === 'open' || (!installExpected && !['downloading', 'ready', 'installing', 'cancelling', 'checking'].includes(snapshot.status))) return
     const timer = window.setInterval(() => { void refresh(true) }, 3000)
     return () => window.clearInterval(timer)
-  }, [snapshot.status, installExpected])
+  }, [snapshot.status, installExpected, realtimeStatus])
   useEffect(() => {
     if (!['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status) || installExpected) return
     installTargetBuildRef.current = snapshot.available?.build || ''
@@ -4832,7 +4917,7 @@ function ListViewIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12" /><path d="M8 12h12" /><path d="M8 18h12" /><circle cx="4" cy="6" r="1.2" /><circle cx="4" cy="12" r="1.2" /><circle cx="4" cy="18" r="1.2" /></svg>
 }
 
-function Servers({ data, client, load, loading, notify }: any) {
+function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const dialogs = useDialogs()
   const creationDefaults = data.server_creation_defaults || {}
   const [draft, setDraft] = useState(() => defaultServerDraft(creationDefaults))
@@ -4855,6 +4940,7 @@ function Servers({ data, client, load, loading, notify }: any) {
 
   useEffect(() => { setServers(data.servers || []) }, [data.servers])
   useEffect(() => { setServerMetrics(data.server_metrics || []) }, [data.server_metrics])
+  useEffect(() => { if (realtimeStatus === 'open') setServerRefreshFailed(false) }, [realtimeStatus])
 
   useEffect(() => {
     serversMountedRef.current = true
@@ -4883,6 +4969,7 @@ function Servers({ data, client, load, loading, notify }: any) {
   }, [client])
 
   useEffect(() => {
+    if (realtimeStatus === 'open') return
     let cancelled = false
     let timer: number | undefined
 
@@ -4908,7 +4995,7 @@ function Servers({ data, client, load, loading, notify }: any) {
       if (timer !== undefined) window.clearTimeout(timer)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [refreshServers])
+  }, [refreshServers, realtimeStatus])
 
   const serverRefreshedTime = serverRefreshedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
   const metricsByServer = useMemo(() => {
@@ -5047,9 +5134,9 @@ function Servers({ data, client, load, loading, notify }: any) {
     <div className="panel-body">
     <div className="section-toolbar">
       <div>
-        <div className={`live-refresh-status ${serverRefreshFailed ? 'is-error' : 'is-active'}`} title="服务器状态和资源数据每 5 秒更新">
+        <div className={`live-refresh-status ${serverRefreshFailed ? 'is-error' : 'is-active'}`} title={realtimeStatus === 'open' ? '服务器状态和资源数据实时更新' : '实时连接不可用，服务器数据每 5 秒更新'}>
           <span className="live-refresh-dot" aria-hidden="true" />
-          <span>{serverRefreshFailed ? '自动刷新暂时失败' : serverRefreshing ? '正在更新服务器' : '服务器数据自动刷新'}</span>
+          <span>{serverRefreshFailed ? '自动刷新暂时失败' : serverRefreshing ? '正在更新服务器' : realtimeStatus === 'open' ? '服务器数据实时更新' : realtimeStatus === 'connecting' ? '正在连接实时更新' : '服务器数据自动刷新'}</span>
           {serverRefreshedTime ? <time dateTime={serverRefreshedAt?.toISOString()}>更新于 {serverRefreshedTime}</time> : null}
         </div>
       </div>
@@ -12077,7 +12164,7 @@ function NotificationChannelDialog({
   </MotionDialogPanel>
 }
 
-function Tasks({ data, client, loading: pageLoading }: any) {
+function Tasks({ data, client, loading: pageLoading, realtimeStatus }: any) {
   const [rows, setRows] = useState<any[]>(data.agent_tasks || [])
   const [manualRefreshing, setManualRefreshing] = useState(false)
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false)
@@ -12090,6 +12177,7 @@ function Tasks({ data, client, loading: pageLoading }: any) {
   hasActiveTasksRef.current = hasActiveTasks
 
   useEffect(() => { setRows(data.agent_tasks || []) }, [data.agent_tasks])
+  useEffect(() => { if (realtimeStatus === 'open') setRefreshFailed(false) }, [realtimeStatus])
 
   useEffect(() => {
     mountedRef.current = true
@@ -12120,6 +12208,7 @@ function Tasks({ data, client, loading: pageLoading }: any) {
   }, [client])
 
   useEffect(() => {
+    if (realtimeStatus === 'open') return
     let cancelled = false
     let timer: number | undefined
 
@@ -12145,7 +12234,7 @@ function Tasks({ data, client, loading: pageLoading }: any) {
       if (timer !== undefined) window.clearTimeout(timer)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [loadTasks])
+  }, [loadTasks, realtimeStatus])
 
   const busy = manualRefreshing || pageLoading
   const refreshing = manualRefreshing || backgroundRefreshing
@@ -12157,9 +12246,9 @@ function Tasks({ data, client, loading: pageLoading }: any) {
         <p className="muted">一次下发、批量更新等操作会合并为一条记录。先看整体状态，再点开服务器，最后查看该服务器的具体子任务。</p>
       </div>
       <div className="section-actions">
-        <div className={`live-refresh-status ${refreshFailed ? 'is-error' : hasActiveTasks ? 'is-active' : ''}`} title={hasActiveTasks ? '进行中的任务每 3 秒更新' : '任务状态每 15 秒更新'}>
+        <div className={`live-refresh-status ${refreshFailed ? 'is-error' : realtimeStatus === 'open' || hasActiveTasks ? 'is-active' : ''}`} title={realtimeStatus === 'open' ? '任务状态实时更新' : hasActiveTasks ? '进行中的任务每 3 秒更新' : '任务状态每 15 秒更新'}>
           <span className="live-refresh-dot" aria-hidden="true" />
-          <span>{refreshFailed ? '自动刷新暂时失败' : refreshing ? '正在更新任务' : '自动刷新已开启'}</span>
+          <span>{refreshFailed ? '自动刷新暂时失败' : refreshing ? '正在更新任务' : realtimeStatus === 'open' ? '任务状态实时更新' : realtimeStatus === 'connecting' ? '正在连接实时更新' : '自动刷新已开启'}</span>
           {refreshedTime ? <time dateTime={lastRefreshedAt?.toISOString()}>更新于 {refreshedTime}</time> : null}
         </div>
         <button className="ghost" onClick={() => void loadTasks('manual')} disabled={refreshing}>{refreshing ? '刷新中…' : '刷新'}</button>

@@ -170,6 +170,9 @@ func (s *Server) checkOffline(ctx context.Context) {
 			Data: map[string]string{"ServerName": server.Name, "ServerID": fmt.Sprint(server.ID), "LastSeen": lastSeen(server.LastSeenAt), "Time": s.notificationNow(ctx)},
 		})
 	}
+	if len(items) > 0 {
+		s.publishRealtime("servers", "server_metrics")
+	}
 }
 
 func lastSeen(t *time.Time) string {

@@ -77,6 +77,7 @@ type Server struct {
 	acmeHome                      string
 	logs                          *oboardlog.Manager
 	upgrader                      websocket.Upgrader
+	realtime                      *realtimeBroker
 	probeMu                       sync.Mutex
 	activeProbes                  map[int64]bool
 	notificationMu                sync.Mutex
@@ -92,6 +93,8 @@ type Server struct {
 	controllerUpdatesConfigured   bool
 	controllerUpdateMu            sync.Mutex
 	controllerUpdateRunMu         sync.Mutex
+	controllerUpdateWatchMu       sync.Mutex
+	controllerUpdateWatching      bool
 	controllerLastLoginCheck      time.Time
 	backupManager                 *backup.Manager
 	backupConfigured              bool
@@ -123,7 +126,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	}
 	socketPath := strings.TrimSpace(os.Getenv("OBOARD_CONTROLLER_UPDATER_SOCKET"))
 	catalog := capability.NewCatalog()
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditintel.New(store, sessionSecret), apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditintel.New(store, sessionSecret), apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}}
 	s.registerAutomationHandlers()
 	s.restoreBasePathState(context.Background(), basePath)
 	s.upgrader = websocket.Upgrader{CheckOrigin: s.checkOrigin, ReadBufferSize: 4096, WriteBufferSize: 4096}
@@ -148,6 +151,9 @@ func (s *Server) ConfigureGeoIP(dir string) error {
 }
 
 func (s *Server) Close() {
+	if s.realtime != nil {
+		s.realtime.close()
+	}
 	if s.geoIP != nil {
 		s.geoIP.Close()
 	}
@@ -176,6 +182,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/me/passkeys/", s.auth(s.passkeys, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/subscription-age", s.auth(s.selfSubscriptionAge, model.RoleViewer))
 	mux.HandleFunc("/api/v1/page-data", s.auth(s.pageData, model.RoleViewer))
+	mux.HandleFunc("/api/v1/events", s.auth(s.uiEvents, model.RoleViewer))
 	mux.HandleFunc("/api/v1/dashboard/summary", s.auth(s.dashboard, model.RoleViewer))
 	mux.HandleFunc("/api/v1/settings/base-path/retry", s.auth(s.settingsBasePathRetry, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/settings", s.auth(s.settings, model.RoleAdmin))
@@ -277,7 +284,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/downloads", notFound)
 	mux.HandleFunc("/downloads/", s.downloadArtifact)
 	mux.HandleFunc("/", s.static)
-	return s.withBasePath(s.requestLogger(s.withSecurityHeaders(s.managementAPIVersionGate(mux))))
+	return s.withBasePath(s.requestLogger(s.withSecurityHeaders(s.realtimeInvalidation(s.managementAPIVersionGate(mux)))))
 }
 
 func (s *Server) managementAPIVersionGate(next http.Handler) http.Handler {
@@ -395,7 +402,7 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.URL.Path == "/api/v1/agent/connect" {
+		if r.URL.Path == "/api/v1/agent/connect" || r.URL.Path == "/api/v2/ui/events" {
 			// #nosec G706 -- every request-derived field is stripped of control characters by safeLogField.
 			log.Printf("http method=%s path=%s remote=%s status=websocket", safeLogField(r.Method), safeLogField(r.URL.Path), safeLogField(clientIP(r)))
 			next.ServeHTTP(w, r)
@@ -2567,6 +2574,9 @@ func (s *Server) expireTimedOutTasks(ctx context.Context) {
 		}
 		s.notifyTaskFailure(ctx, task)
 	}
+	if len(failed) > 0 {
+		s.publishRealtime("tasks", "deployments", "servers", "probes")
+	}
 }
 
 // agentTaskImmediateFailure returns a user-facing failure message when the
@@ -2641,11 +2651,13 @@ func (s *Server) createAgentTask(ctx context.Context, serverID int64, taskType, 
 			return model.AgentTask{}, err
 		}
 		s.notifyTaskFailure(ctx, task)
+		s.publishRealtime("tasks", "deployments", "servers")
 		return task, nil
 	}
 	if err := s.store.CreateTask(ctx, &task); err != nil {
 		return model.AgentTask{}, err
 	}
+	s.publishRealtime("tasks", "deployments")
 	return task, nil
 }
 
@@ -9836,6 +9848,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.notifySubscriptionAuditRisk(r.Context(), *user, decision)
+	s.publishRealtime("audit", "subscriptions", "users")
 	if !decision.Allowed {
 		fail(w, errors.New("subscription access suspended; contact an administrator"), http.StatusForbidden)
 		return
@@ -9999,6 +10012,8 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		})
 		if err := s.store.RequeueTaskIfRunning(context.Background(), inFlightTaskID, string(result)); err != nil {
 			log.Printf("requeue task %d after agent disconnect: %v", inFlightTaskID, err)
+		} else {
+			s.publishRealtime("tasks", "deployments")
 		}
 	}()
 	for {
@@ -10006,6 +10021,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		task, err := s.store.NextTask(r.Context(), server.ID)
 		if err == nil {
 			inFlightTaskID = task.ID
+			s.publishRealtime("tasks", "deployments")
 			readDeadline = 10 * time.Minute
 			if task.Type == model.AgentTaskTypeIssueCertificateHTTP {
 				readDeadline = 20 * time.Minute
@@ -10080,6 +10096,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 			old, next, err := s.store.UpsertHealthTransition(ctx, h, window)
 			if err == nil {
 				s.completeAgentUpdateAfterReconnect(ctx, server.ID, h.AgentBuild)
+				s.publishRealtime("servers", "server_metrics")
 			}
 			if err == nil && old == model.ServerOffline && next == model.ServerOnline {
 				s.enqueueNotificationEvent(ctx, notificationEvent{
@@ -10155,7 +10172,9 @@ func (s *Server) completeAgentUpdateAfterReconnect(ctx context.Context, serverID
 	})
 	if err := s.store.CompleteTask(ctx, task.ID, "succeeded", string(result)); err != nil {
 		log.Printf("complete agent update task %d after reconnect: %v", task.ID, err)
+		return
 	}
+	s.publishRealtime("tasks", "servers")
 }
 
 func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
@@ -10250,6 +10269,7 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	s.publishRealtime("tasks", "deployments", "servers", "probes", "topology")
 	if task.Type == model.AgentTaskTypeApplyCoreConfig {
 		if err := s.store.CompleteDNSBenchmarkApplyTask(r.Context(), task.ID, req.Status == "succeeded", req.ResultJSON); err != nil {
 			fail(w, err, 500)
