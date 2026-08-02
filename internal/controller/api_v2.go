@@ -886,6 +886,66 @@ func (s *Server) registerAutomationHandlers() {
 		steps, _ := s.store.ListProxyPathStepsForPath(ctx, path.ID)
 		return map[string]any{"proxy_path": s.resolvedProxyPath(ctx, *stored), "proxy_path_steps": publicProxyPathSteps(steps), "requires_deployment": true}, nil
 	})
+	s.automation.RegisterValidator("topology.reuse_inbound", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var request proxyPathReuseRequest
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		plan, err := s.planProxyPathReuse(ctx, request, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, serverID := range plan.AffectedServerIDs {
+			if !principal.AllowsInt64("server_ids", serverID) {
+				return nil, errors.New("proxy path reuse references an unauthorized server")
+			}
+		}
+		return map[string]any{
+			"source_count": plan.SourceCount, "result_path_count": plan.ResultPathCount,
+			"affected_servers": plan.AffectedServerIDs, "full_deployment_required": true,
+		}, nil
+	})
+	s.automation.RegisterRevisionResolver("topology.reuse_inbound", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		var request proxyPathReuseRequest
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		plan, err := s.planProxyPathReuse(ctx, request, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, serverID := range plan.AffectedServerIDs {
+			if !principal.AllowsInt64("server_ids", serverID) {
+				return nil, errors.New("proxy path reuse references an unauthorized server")
+			}
+		}
+		return map[string]string{"routing_topology": plan.Revision}, nil
+	})
+	s.automation.Register("topology.reuse_inbound", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var request proxyPathReuseRequest
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		plan, err := s.applyProxyPathReuseOperation(ctx, request, func(plan *proxyPathReusePlan) error {
+			for _, serverID := range plan.AffectedServerIDs {
+				if !principal.AllowsInt64("server_ids", serverID) {
+					return errors.New("proxy path reuse references an unauthorized server")
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		paths := make([]model.ProxyPath, 0, len(plan.Writes))
+		for _, write := range plan.Writes {
+			paths = append(paths, write.Path)
+		}
+		return map[string]any{
+			"proxy_paths": paths, "result_path_count": plan.ResultPathCount,
+			"affected_server_ids": plan.AffectedServerIDs, "requires_deployment": true,
+		}, nil
+	})
 	s.automation.RegisterValidator("deployments.apply", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		return s.application.PlanDeployment(ctx, principal, input)
 	})

@@ -818,7 +818,10 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 		}
 	}
 	sort.SliceStable(serviceKeys, func(i, j int) bool {
-		return proxyPathChainMethods[serviceKeys[i].Method] < proxyPathChainMethods[serviceKeys[j].Method]
+		if serviceKeys[i].Protocol == serviceKeys[j].Protocol {
+			return serviceKeys[i].Profile < serviceKeys[j].Profile
+		}
+		return serviceKeys[i].Protocol < serviceKeys[j].Protocol
 	})
 	stepsByPath := map[int64][]model.ProxyPathStep{}
 	for _, step := range opts.ProxyPathSteps {
@@ -830,12 +833,16 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 	out := []map[string]any{}
 	for _, serviceKey := range serviceKeys {
 		service := chainServices[serviceKey]
-		item, err := (ssAdapter{}).Inbound(service.Inbound, service.Users)
+		adapter, err := AdapterFor(service.Inbound.Protocol)
+		if err != nil {
+			return nil, err
+		}
+		item, err := adapter.Inbound(service.Inbound, service.Users)
 		if err != nil {
 			return nil, err
 		}
 		item["tag"] = service.Tag
-		applyServerNetworkPolicy(item, server, model.ProtocolSS, true)
+		applyServerNetworkPolicy(item, server, service.Inbound.Protocol, true)
 		out = append(out, item)
 	}
 	seen := map[string]bool{}

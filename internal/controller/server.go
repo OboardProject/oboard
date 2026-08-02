@@ -6480,6 +6480,14 @@ func (s *Server) validateExternalOutboundAccessGrant(ctx context.Context, v *mod
 func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/proxy-paths/")
 	parts := pathParts(r.URL.Path, "/api/v1/proxy-paths/")
+	if len(parts) > 0 && parts[0] == "reuse-preview" {
+		s.proxyPathReusePreview(w, r)
+		return
+	}
+	if len(parts) > 0 && parts[0] == "reuse" {
+		s.proxyPathReuseApply(w, r)
+		return
+	}
 	if id != 0 && len(parts) > 1 && parts[1] == "probe-egress" {
 		s.probeProxyPathEgress(w, r, id)
 		return
@@ -7262,14 +7270,13 @@ func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, v *model.P
 			}
 		}
 		if (v.InboundID == nil || *v.InboundID == 0) && v.TransportMode != model.ProxyPathTransportPortForward {
-			method := strings.ToLower(strings.TrimSpace(fmt.Sprint(cfg["chain_method"])))
-			if method == "" || method == "<nil>" {
-				method = core.DefaultProxyPathChainMethod
-			}
-			if err := core.ValidateProxyPathChainMethod(method); err != nil {
+			chainFields, err := normalizedProxyPathChainFields(cfg)
+			if err != nil {
 				return err
 			}
-			cfg["chain_method"] = method
+			for key, value := range chainFields {
+				cfg[key] = value
+			}
 		}
 		switch v.TransportMode {
 		case model.ProxyPathTransportTunnel:
@@ -7295,9 +7302,9 @@ func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, v *model.P
 // allowlist. Unknown keys are dropped so a client cannot inject a value that a
 // generator reads without validation, such as internal_port.
 func normalizeProxyPathChainConfig(v *model.ProxyPathStep, cfg map[string]any) error {
-	managed := map[string]any{}
-	if method := strings.TrimSpace(fmt.Sprint(cfg["chain_method"])); method != "" && method != "<nil>" {
-		managed["chain_method"] = method
+	managed, err := normalizedProxyPathChainFields(cfg)
+	if err != nil {
+		return err
 	}
 	b, err := json.Marshal(managed)
 	if err != nil {
@@ -7305,6 +7312,29 @@ func normalizeProxyPathChainConfig(v *model.ProxyPathStep, cfg map[string]any) e
 	}
 	v.ConfigJSON = string(b)
 	return nil
+}
+
+func normalizedProxyPathChainFields(cfg map[string]any) (map[string]any, error) {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	chain, err := core.ParseProxyPathChainConfig(string(b))
+	if err != nil {
+		return nil, err
+	}
+	managed := map[string]any{"chain_protocol": string(chain.Protocol)}
+	switch chain.Protocol {
+	case model.ProtocolSS:
+		managed["chain_method"] = chain.Method
+	case model.ProtocolVLESS:
+		managed["reality_handshake_server"] = chain.RealityHandshakeServer
+		managed["reality_handshake_port"] = chain.RealityHandshakePort
+	case model.ProtocolMieru:
+	default:
+		return nil, errors.New("链路协议必须是 shadowsocks、vless 或 mieru")
+	}
+	return managed, nil
 }
 
 // normalizeProxyPathForwardConfig rebuilds a transparent forward step's config
@@ -7361,8 +7391,14 @@ func normalizeProxyPathTunnelConfig(v *model.ProxyPathStep, cfg map[string]any) 
 			"managed_pair": true,
 			"ssh_port":     port,
 		}
-		if method := strings.TrimSpace(fmt.Sprint(cfg["chain_method"])); method != "" && method != "<nil>" {
-			managed["chain_method"] = method
+		if v.InboundID == nil || *v.InboundID == 0 {
+			chainFields, err := normalizedProxyPathChainFields(cfg)
+			if err != nil {
+				return err
+			}
+			for key, value := range chainFields {
+				managed[key] = value
+			}
 		}
 		cfg = managed
 	case model.TunnelTypeWireGuard:
@@ -7378,8 +7414,14 @@ func normalizeProxyPathTunnelConfig(v *model.ProxyPathStep, cfg map[string]any) 
 			"managed_pair":         true,
 			"persistent_keepalive": keepalive,
 		}
-		if method := strings.TrimSpace(fmt.Sprint(cfg["chain_method"])); method != "" && method != "<nil>" {
-			managed["chain_method"] = method
+		if v.InboundID == nil || *v.InboundID == 0 {
+			chainFields, err := normalizedProxyPathChainFields(cfg)
+			if err != nil {
+				return err
+			}
+			for key, value := range chainFields {
+				managed[key] = value
+			}
 		}
 		cfg = managed
 	default:

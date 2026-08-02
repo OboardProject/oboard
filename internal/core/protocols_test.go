@@ -210,7 +210,7 @@ func TestProxyPathServerOnlyMultiHopUsesSharedShadowsocksInbounds(t *testing.T) 
 	}
 
 	configB := mustServerConfig(t, serverB, []model.Inbound{rootInbound}, nil, opts)
-	sharedTag := proxyPathChainServiceTag(DefaultProxyPathChainMethod)
+	sharedTag := proxyPathChainServiceTag(proxyPathChainServiceKey{Protocol: model.ProtocolSS, Profile: DefaultProxyPathChainMethod})
 	if !hasInbound(configB, sharedTag, "__oboard_path_50_step_1") {
 		t.Fatalf("B missing shared internal inbound for step 1: %s", configB)
 	}
@@ -263,7 +263,7 @@ func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 	}
 
 	configB := mustServerConfig(t, serverB, []model.Inbound{rootInbound}, nil, opts)
-	sharedTag := proxyPathChainServiceTag(DefaultProxyPathChainMethod)
+	sharedTag := proxyPathChainServiceTag(proxyPathChainServiceKey{Protocol: model.ProtocolSS, Profile: DefaultProxyPathChainMethod})
 	if !hasInbound(configB, sharedTag, "__oboard_path_50_step_1") || !hasInbound(configB, sharedTag, "__oboard_path_51_step_1") || !hasInbound(configB, sharedTag, "__oboard_path_52_step_1") {
 		t.Fatalf("B should accept both branch identities: %s", configB)
 	}
@@ -578,10 +578,10 @@ func TestProxyPathImportedNodeCanBeMiddleDetourBeforeServerHop(t *testing.T) {
 	}
 
 	configB := mustServerConfig(t, serverB, []model.Inbound{rootInbound}, nil, opts)
-	if !hasInbound(configB, proxyPathChainServiceTag(DefaultProxyPathChainMethod), "__oboard_path_51_step_2") {
+	if !hasInbound(configB, proxyPathChainServiceTag(proxyPathChainServiceKey{Protocol: model.ProtocolSS, Profile: DefaultProxyPathChainMethod}), "__oboard_path_51_step_2") {
 		t.Fatalf("B missing shared internal inbound for imported detour path: %s", configB)
 	}
-	if !hasRoute(configB, proxyPathChainServiceTag(DefaultProxyPathChainMethod), "path-51-step-3") {
+	if !hasRoute(configB, proxyPathChainServiceTag(proxyPathChainServiceKey{Protocol: model.ProtocolSS, Profile: DefaultProxyPathChainMethod}), "path-51-step-3") {
 		t.Fatalf("B missing route from shared inbound to C: %s", configB)
 	}
 }
@@ -1762,7 +1762,7 @@ func TestProxyPathSSHTunnelConnectsSingBoxToManagedLocalForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := services[proxyPathChainServiceKey{ServerID: target.ID, Method: DefaultProxyPathChainMethod}]
+	service := services[proxyPathChainServiceKey{ServerID: target.ID, Protocol: model.ProtocolSS, Profile: DefaultProxyPathChainMethod}]
 	if service == nil || service.Inbound.Port == 0 {
 		t.Fatalf("SSH target shared chain service = %#v", services)
 	}

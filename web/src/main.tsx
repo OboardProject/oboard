@@ -48,7 +48,7 @@ import {
   snapGraphPosition,
 } from './components/proxy-path/layout'
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
-import type { TransportDialogTarget, TransportSelection } from './components/proxy-path/TransportDialog'
+import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
 import './style.css'
 import logo from './assets/logo.svg'
 import { 
@@ -6452,6 +6452,7 @@ function newCanvasWARPInstance(rootServerID: number, sequence: number): CanvasWA
 type TransportDialogRequest = {
   target: TransportDialogTarget
   current?: string
+	currentMode?: PathTransportMode
   resolve: (value: TransportSelection | null) => void
 }
 
@@ -6815,7 +6816,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	// before committing, instead of walking an unrevisable chain of prompts.
 	const openTransportDialog = (request: Omit<TransportDialogRequest, 'resolve'>) =>
 	  new Promise<TransportSelection | null>(resolve => setTransportRequest({ ...request, resolve }))
-	const chooseTransportForTarget = async (target: { node_type: 'imported' | 'server_inbound'; server_id?: number; inbound_id?: number }, current?: ProxyPathStep, sourceLabel?: string): Promise<TransportSelection | null> => {
+	const chooseTransportForTarget = async (target: { node_type: 'imported' | 'server_inbound'; server_id?: number; inbound_id?: number }, current?: ProxyPathStep, sourceLabel?: string, sources?: ProxyPathReuseSource[]): Promise<TransportSelection | null> => {
 	  const targetInbound = target.inbound_id ? entries.find(item => item.id === target.inbound_id) : null
 	  const targetServerID = target.server_id || targetInbound?.server_id
 	  const targetServer = targetServerID ? servers.find(item => item.id === targetServerID) || null : null
@@ -6829,11 +6830,27 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    target: {
 	      sourceLabel: sourceLabel || selected?.name || '当前节点',
 	      targetLabel,
-	      targetInboundLabel: targetInbound ? `${targetInbound.name || `入口 ${targetInbound.id}`} / ${labelProtocol(targetInbound.protocol)}:${targetInbound.port}` : undefined,
+	      targetServerID,
+	      targetInboundID: targetInbound?.id,
+	      sources,
 	      importedOnly: target.node_type === 'imported',
+	      editing: Boolean(current),
+	      staticTargetOptions: targetServerID ? proxyPathReusableTargetOptions(data, targetServerID) : undefined,
 	    },
 	    current: current?.config_json,
+	    currentMode: current?.transport_mode as PathTransportMode | undefined,
 	  })
+	}
+	const reuseControlledTarget = async (sources: ProxyPathReuseSource[], target: { node_type: 'server_inbound'; server_id?: number; inbound_id?: number }, sourceLabel?: string) => {
+	  const selection = await chooseTransportForTarget(target, undefined, sourceLabel, sources)
+	  if (!selection?.reuse_request) return [] as ProxyPathStep[]
+	  const result = await client.request('/proxy-paths/reuse', { method: 'POST', body: JSON.stringify(selection.reuse_request) }) as { proxy_path_steps?: ProxyPathStep[] }
+	  const targetSteps = (result.proxy_path_steps || []).filter(step => {
+	    if (selection.reuse_request?.target_kind === 'existing') return step.inbound_id === selection.reuse_request.target_inbound_id
+	    return step.node_type === 'server_inbound' && !step.inbound_id && step.server_id === selection.reuse_request?.target_server_id
+	  })
+	  await load()
+	  return targetSteps
 	}
 	const proxyPathDisplayName = (path: ProxyPath) => path.name || `路径 ${path.id}`
 	const confirmSharedAppend = async (count: number, targetLabel: string, names: string[] = [], mode: 'append' | 'create' = 'append') => {
@@ -7113,37 +7130,31 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  if (sourceEntity?.type === 'server' && conn.sourceHandle === 'server-shared') {
 	    const target = await targetStepForGraphTarget(conn.target)
 	    if (!target) return
+	    if (target.node_type === 'imported') {
+	      return dialogs.alert({ title: '请选择具体连接点', message: '共享服务器连接点不能直接连接导入节点，请从具体入口或路径连接点拖线。' })
+	    }
 	    const allSteps = (data.proxy_path_steps || []) as ProxyPathStep[]
 	    const terminalSteps = allSteps.filter(step => proxyPathStepNodeID(step) === conn.source && !allSteps.some(other => other.path_id === step.path_id && other.position > step.position))
 	    if (terminalSteps.length) {
-	      const stepPathName = (step: ProxyPathStep) => {
-	        const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === step.path_id)
-	        return path ? proxyPathDisplayName(path) : `路径 ${step.path_id}`
-	      }
-	      if (!await confirmSharedAppend(terminalSteps.length, targetEntity?.label || '目标节点', terminalSteps.map(stepPathName))) return
-	      const transport = await chooseTransportForTarget(target)
-	      if (!transport) return
-	      const createdSteps = await runSharedAppends(terminalSteps, stepPathName, step => appendPathAfterStep(step.id, { ...target, ...transport }))
+	      const createdSteps = await reuseControlledTarget(terminalSteps.map(step => ({ step_id: step.id })), target, sourceEntity.label)
 	      consumeCanvasServerTarget(conn.target, createdSteps)
 	      return
 	    }
 	    const serverEntries = entries.filter(entry => entry.server_id === sourceEntity.id && entry.enabled !== false)
 	    if (!serverEntries.length) return dialogs.alert({ title: '没有可共享的入口', message: '这台服务器还没有可用入口，无法创建共享后续路径。' })
-	    const entryLabel = (entry: Inbound) => `${entry.name || `入口 ${entry.id}`} / ${labelProtocol(entry.protocol)}:${entry.port}`
-	    if (!await confirmSharedAppend(serverEntries.length, targetEntity?.label || '目标节点', serverEntries.map(entryLabel), 'create')) return
-	    const transport = await chooseTransportForTarget(target)
-	    if (!transport) return
-	    const createdSteps = await runSharedAppends(serverEntries, entryLabel, entry => createPathFromEntry(entry, { ...target, ...transport }))
+	    const createdSteps = await reuseControlledTarget(serverEntries.map(entry => ({ inbound_id: entry.id })), target, sourceEntity.label)
 	    consumeCanvasServerTarget(conn.target, createdSteps)
 	    return
 	  }
 	  const sourcePathStepID = pathStepIDFromHandle(conn.sourceHandle)
 	  if (sourcePathStepID) {
 	    const target = await targetStepForGraphTarget(conn.target)
-	    const transport = target ? await chooseTransportForTarget(target) : null
-	    if (target && transport) {
-	      const created = await appendPathAfterStep(sourcePathStepID, { ...target, ...transport })
-	      if (created) consumeCanvasServerTarget(conn.target, [created])
+	    if (target?.node_type === 'server_inbound') {
+	      const created = await reuseControlledTarget([{ step_id: sourcePathStepID }], target)
+	      consumeCanvasServerTarget(conn.target, created)
+	    } else if (target) {
+	      const transport = await chooseTransportForTarget(target)
+	      if (transport) await appendPathAfterStep(sourcePathStepID, { ...target, ...transport })
 	    }
 	    return
 	  }
@@ -7158,23 +7169,21 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  if (sourceEntity?.type === 'entry' && (targetEntity?.type === 'entry' || targetEntity?.type === 'server')) {
 	    const entry = entries.find(x => x.id === sourceEntity.id)
 	    const target = await targetStepForGraphTarget(conn.target)
-	    const transport = target ? await chooseTransportForTarget(target) : null
-	    if (entry && target && transport) {
-	      const created = await createPathFromEntry(entry, { ...target, ...transport })
-	      if (created) consumeCanvasServerTarget(conn.target, [created])
+	    if (entry && target?.node_type === 'server_inbound') {
+	      const created = await reuseControlledTarget([{ inbound_id: entry.id }], target, sourceEntity.label)
+	      consumeCanvasServerTarget(conn.target, created)
 	    }
 	    return
 	  }
 	  if (sourceEntity?.type === 'imported' && (targetEntity?.type === 'entry' || targetEntity?.type === 'server')) {
 	    const candidates = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.node_type === 'imported' && step.external_outbound_id === sourceEntity.id)
 	    const target = await targetStepForGraphTarget(conn.target)
-	    const transport = target ? await chooseTransportForTarget(target) : null
-	    if (target && transport && candidates.length === 1) {
-	      const created = await appendPathAfterStep(candidates[0].id, { ...target, ...transport })
-	      if (created) consumeCanvasServerTarget(conn.target, [created])
+	    if (target?.node_type === 'server_inbound' && candidates.length === 1) {
+	      const created = await reuseControlledTarget([{ step_id: candidates[0].id }], target, sourceEntity.label)
+	      consumeCanvasServerTarget(conn.target, created)
 	    }
-	    else if (target && transport && !candidates.length) await dialogs.alert({ title: '无法追加链路', message: '请先从某个入口节点连到这个导入节点，再从导入节点继续连到服务器。' })
-	    else if (target && transport) await dialogs.alert({ title: '请选择继续连接点', message: '这个导入节点属于多条路径，请从导入节点旁边对应路径的小连接点拖线。' })
+	    else if (target && !candidates.length) await dialogs.alert({ title: '无法追加链路', message: '请先从某个入口节点连到这个导入节点，再从导入节点继续连到服务器。' })
+	    else if (target) await dialogs.alert({ title: '请选择继续连接点', message: '这个导入节点属于多条路径，请从导入节点旁边对应路径的小连接点拖线。' })
 	    return
 	  }
 	  if (sourceEntity?.type === 'server' && targetEntity?.type === 'imported') {
@@ -7185,10 +7194,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }
 	  if (sourceEntity?.type === 'server' && sourceHandleEntry && (targetEntity?.type === 'entry' || targetEntity?.type === 'server')) {
 	    const target = await targetStepForGraphTarget(conn.target)
-	    const transport = target ? await chooseTransportForTarget(target) : null
-	    if (target && transport) {
-	      const created = await createPathFromEntry(sourceHandleEntry, { ...target, ...transport })
-	      if (created) consumeCanvasServerTarget(conn.target, [created])
+	    if (target?.node_type === 'server_inbound') {
+	      const created = await reuseControlledTarget([{ inbound_id: sourceHandleEntry.id }], target, sourceEntity.label)
+	      consumeCanvasServerTarget(conn.target, created)
 	    }
 	    return
 	  }
@@ -7469,10 +7477,15 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const transport = await chooseTransportForTarget(step, step, proxyPathStepUpstreamLabel(data, step))
 	  if (!transport) return
 	  try {
+	    const selectedInbound = transport.target_inbound_id ? entries.find(item => item.id === transport.target_inbound_id) : undefined
+	    const targetPatch = transport.target_kind === 'existing'
+	      ? { server_id: selectedInbound?.server_id, inbound_id: selectedInbound?.id }
+	      : { server_id: transport.target_server_id || step.server_id, inbound_id: undefined }
+	    const stepPatch = { transport_mode: transport.transport_mode, processing_role: false, config_json: transport.config_json, ...targetPatch }
 	    const pathSteps: ProxyPathStep[] = (data.proxy_path_steps || []).filter((item: ProxyPathStep) => item.path_id === step.path_id)
-	    const candidateSteps = pathSteps.map(item => item.id === step.id ? { ...item, ...transport } : item)
+	    const candidateSteps = pathSteps.map(item => item.id === step.id ? { ...item, ...stepPatch } : item)
 	    if (transport.transport_mode === 'port_forward' && path && !await ensureTransparentPrefixCompatible(path.id, path.inbound_id, candidateSteps)) return
-	    await client.request(`/proxy-path-steps/${step.id}`, { method: 'PATCH', body: JSON.stringify({ ...step, ...transport }) })
+	    await client.request(`/proxy-path-steps/${step.id}`, { method: 'PATCH', body: JSON.stringify({ ...step, ...stepPatch }) })
 	    await load()
 	  } catch (e: any) {
 	    await dialogs.alert({ title: '更新失败', message: localizeErrorMessage(e.message || e) })
@@ -7769,7 +7782,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	<AnimatePresence>{transportRequest && <TransportDialog
 	  target={transportRequest.target}
 	  current={transportRequest.current}
+	  currentMode={transportRequest.currentMode}
 	  chainMethods={proxyPathChainMethods}
+	  onPreview={request => client.request('/proxy-paths/reuse-preview', { method: 'POST', body: JSON.stringify(request) }) as Promise<ProxyPathReusePreview>}
 	  onCancel={() => { transportRequest.resolve(null); setTransportRequest(null) }}
 	  onSubmit={selection => { transportRequest.resolve(selection); setTransportRequest(null) }}
 	/>}</AnimatePresence>
@@ -9220,6 +9235,45 @@ function graphStepServerID(step: ProxyPathStep, inboundByID: Map<number, Inbound
   return step.inbound_id ? inboundByID.get(step.inbound_id)?.server_id || 0 : 0
 }
 
+function proxyPathReusableTargetOptions(data: any, serverID: number): ProxyPathReuseTargetOption[] {
+  const enabledPaths = new Set<number>(((data.proxy_paths || []) as ProxyPath[]).filter(path => path.enabled !== false).map(path => path.id))
+  const inboundCounts = new Map<number, number>()
+  const generatedCounts = new Map<string, number>()
+  for (const step of (data.proxy_path_steps || []) as ProxyPathStep[]) {
+    if (!enabledPaths.has(step.path_id) || step.node_type !== 'server_inbound') continue
+    if (step.inbound_id) {
+      inboundCounts.set(step.inbound_id, (inboundCounts.get(step.inbound_id) || 0) + 1)
+      continue
+    }
+    if (step.server_id !== serverID) continue
+    const config = parseConfig(step.config_json || '{}') || {}
+    const protocol = config.chain_protocol === 'vless' || config.chain_protocol === 'mieru' ? config.chain_protocol : 'shadowsocks'
+    const key = protocol === 'shadowsocks'
+      ? `shadowsocks:${String(config.chain_method || '2022-blake3-aes-128-gcm')}`
+      : protocol === 'vless'
+        ? `vless:${String(config.reality_handshake_server || 'cdn.icloud-content.com').toLowerCase()}:${Number(config.reality_handshake_port || 443)}`
+        : 'mieru'
+    generatedCounts.set(key, (generatedCounts.get(key) || 0) + 1)
+  }
+  const generated: ProxyPathReuseTargetOption[] = [
+    { kind: 'generated', protocol: 'shadowsocks', chain_method: '2022-blake3-aes-128-gcm', label: 'SS 2022-128', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('shadowsocks:2022-blake3-aes-128-gcm') || 0, eligible: true },
+    { kind: 'generated', protocol: 'shadowsocks', chain_method: '2022-blake3-aes-256-gcm', label: 'SS 2022-256', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('shadowsocks:2022-blake3-aes-256-gcm') || 0, eligible: true },
+    { kind: 'generated', protocol: 'shadowsocks', chain_method: '2022-blake3-chacha20-poly1305', label: 'SS 2022-ChaCha20', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('shadowsocks:2022-blake3-chacha20-poly1305') || 0, eligible: true },
+    { kind: 'generated', protocol: 'vless', label: 'VLESS Reality', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('vless:cdn.icloud-content.com:443') || 0, eligible: true },
+    { kind: 'generated', protocol: 'mieru', label: 'Mieru TCP', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('mieru') || 0, eligible: true },
+  ]
+  const existing = ((data.inbounds || []) as Inbound[]).filter(inbound => {
+    if (inbound.server_id !== serverID || inbound.enabled === false || inbound.protocol === 'ssh') return false
+    if (inbound.protocol !== 'shadowsocks') return ['vless', 'hy2', 'anytls', 'mieru'].includes(inbound.protocol)
+    const method = String((parseConfig(inbound.config_json || '{}') || {}).method || '2022-blake3-aes-128-gcm').toLowerCase()
+    return method.startsWith('2022-')
+  }).map<ProxyPathReuseTargetOption>(inbound => ({
+    kind: 'existing', inbound_id: inbound.id, protocol: inbound.protocol, label: inbound.name || `入口 ${inbound.id}`, port: inbound.port,
+    visibility: 'existing_visible', active_reuse_count: inboundCounts.get(inbound.id) || 0, eligible: true,
+  }))
+  return [...generated, ...existing]
+}
+
 function proxyPathTransportPresentation(step: Pick<ProxyPathStep, 'node_type' | 'transport_mode' | 'config_json' | 'inbound_id'>) {
   if (step.node_type === 'warp') return { kind: 'warp' as const, title: 'WARP 出口' }
   const mode = step.transport_mode || 'singbox'
@@ -9230,7 +9284,11 @@ function proxyPathTransportPresentation(step: Pick<ProxyPathStep, 'node_type' | 
     return { kind: 'ssh' as const, title: 'SSH 隧道' }
   }
 	if (step.inbound_id) return { kind: 'singbox' as const, title: '已有入口链式代理' }
-  const method = String((parseConfig(step.config_json || '{}') || {}).chain_method || '2022-blake3-aes-128-gcm')
+	const config = parseConfig(step.config_json || '{}') || {}
+	const protocol = String(config.chain_protocol || 'shadowsocks')
+	if (protocol === 'vless') return { kind: 'singbox' as const, title: '共享 VLESS Reality 链式代理' }
+	if (protocol === 'mieru') return { kind: 'singbox' as const, title: '共享 Mieru TCP 链式代理' }
+	const method = String(config.chain_method || '2022-blake3-aes-128-gcm')
   const methodLabel = proxyPathChainMethods.find(item => item.value === method)?.label || method
   return { kind: 'singbox' as const, title: `共享 ${methodLabel} 链式代理` }
 }

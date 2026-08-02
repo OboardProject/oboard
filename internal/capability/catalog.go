@@ -129,6 +129,7 @@ func defaultDescriptors() []Descriptor {
 		{"servers.onboard", "servers:onboard", 2, true},
 		{"subscriptions.resume", "subscriptions:resume", 2, true},
 		{"topology.write", "topology:write", 3, true},
+		{"topology.reuse_inbound", "topology:write", 3, true},
 		{"deployments.apply", "deployments:apply", 3, true},
 	}
 	for _, domain := range writeDomains {

@@ -60,7 +60,7 @@ func TestSharedProxyPathShadowsocksServiceReusesPortAndRoutesByPath(t *testing.T
 
 	configB := mustServerConfig(t, serverB, opts.Inbounds, users, opts)
 	parsedB := parseSingBoxConfig(t, configB)
-	sharedTag := proxyPathChainServiceTag(DefaultProxyPathChainMethod)
+	sharedTag := proxyPathChainServiceTag(proxyPathChainServiceKey{Protocol: model.ProtocolSS, Profile: DefaultProxyPathChainMethod})
 	sharedCount := 0
 	var sharedInbound map[string]any
 	for _, inbound := range parsedB.Inbounds {
@@ -118,8 +118,8 @@ func TestSharedProxyPathShadowsocksMethodsUseSeparatePorts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service128 := services[proxyPathChainServiceKey{ServerID: serverB.ID, Method: DefaultProxyPathChainMethod}]
-	service256 := services[proxyPathChainServiceKey{ServerID: serverB.ID, Method: "2022-blake3-aes-256-gcm"}]
+	service128 := services[proxyPathChainServiceKey{ServerID: serverB.ID, Protocol: model.ProtocolSS, Profile: DefaultProxyPathChainMethod}]
+	service256 := services[proxyPathChainServiceKey{ServerID: serverB.ID, Protocol: model.ProtocolSS, Profile: "2022-blake3-aes-256-gcm"}]
 	if len(services) != 2 || service128 == nil || service256 == nil {
 		t.Fatalf("shared services = %#v", services)
 	}
@@ -135,6 +135,94 @@ func TestSharedProxyPathShadowsocksMethodsUseSeparatePorts(t *testing.T) {
 	configB := mustServerConfig(t, serverB, opts.Inbounds, nil, opts)
 	if !hasInbound(configB, service128.Tag, proxyPathInternalUser(path128, steps[0]).Username) || !hasInbound(configB, service256.Tag, proxyPathInternalUser(path256, steps[1]).Username) {
 		t.Fatalf("B did not emit both method services: %s", configB)
+	}
+}
+
+func TestSharedProxyPathVLESSRealityServiceReusesProfile(t *testing.T) {
+	serverA := model.Server{ID: 1, Name: "A", ChainSecret: "chain-a", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
+	serverB := model.Server{ID: 2, Name: "B", ChainSecret: "chain-b", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
+	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	paths := []model.ProxyPath{
+		{ID: 10, Name: "reality-one", InboundID: root.ID, Secret: "path-one", Enabled: true},
+		{ID: 20, Name: "reality-two", InboundID: root.ID, Secret: "path-two", Enabled: true},
+	}
+	bID := serverB.ID
+	steps := []model.ProxyPathStep{
+		{ID: 11, PathID: paths[0].ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &bID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{"chain_protocol":"vless","reality_handshake_server":"cdn.icloud-content.com","reality_handshake_port":443}`},
+		{ID: 21, PathID: paths[1].ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &bID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{"chain_protocol":"vless"}`},
+	}
+	opts := ConfigOptions{Servers: []model.Server{serverA, serverB}, Inbounds: []model.Inbound{root}, ProxyPaths: paths, ProxyPathSteps: steps}
+	services, err := buildProxyPathChainServices(paths, steps, opts.Servers, opts.Inbounds, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := proxyPathChainServiceKey{ServerID: serverB.ID, Protocol: model.ProtocolVLESS, Profile: "reality:cdn.icloud-content.com:443"}
+	service := services[key]
+	if len(services) != 1 || service == nil || len(service.Users) != 2 {
+		t.Fatalf("VLESS services = %#v", services)
+	}
+	var serviceConfig map[string]any
+	if err := json.Unmarshal([]byte(service.Inbound.ConfigJSON), &serviceConfig); err != nil {
+		t.Fatal(err)
+	}
+	tls := serviceConfig["tls"].(map[string]any)
+	reality := tls["reality"].(map[string]any)
+	handshake := reality["handshake"].(map[string]any)
+	if service.Inbound.Protocol != model.ProtocolVLESS || serviceConfig["flow"] != "xtls-rprx-vision" || tls["server_name"] != DefaultProxyPathRealityHandshakeServer || handshake["server"] != DefaultProxyPathRealityHandshakeServer || intFromAny(handshake["server_port"]) != 443 {
+		t.Fatalf("VLESS service config = %#v", serviceConfig)
+	}
+	if reality["private_key"] == "" || reality["public_key"] == "" || reality["short_id"] == "" {
+		t.Fatalf("VLESS Reality credentials missing: %#v", reality)
+	}
+	configA := mustServerConfig(t, serverA, opts.Inbounds, nil, opts)
+	outbound := findOutbound(configA, proxyPathStepTag(paths[0].ID, 1))
+	if outbound["type"] != "vless" || outbound["flow"] != "xtls-rprx-vision" || intFromAny(outbound["server_port"]) != service.Inbound.Port {
+		t.Fatalf("VLESS outbound = %#v", outbound)
+	}
+	configB := mustServerConfig(t, serverB, opts.Inbounds, nil, opts)
+	if !hasInbound(configB, service.Tag, proxyPathInternalUser(paths[0], steps[0]).Username) || !hasInbound(configB, service.Tag, proxyPathInternalUser(paths[1], steps[1]).Username) {
+		t.Fatalf("VLESS service did not contain both path users: %s", configB)
+	}
+}
+
+func TestGeneratedProxyPathMieruServiceUsesTCPAndMandatoryUserHint(t *testing.T) {
+	serverA := model.Server{ID: 1, Name: "A", ChainSecret: "chain-a", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
+	serverB := model.Server{ID: 2, Name: "B", ChainSecret: "chain-b", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
+	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 10, Name: "mieru", InboundID: root.ID, Secret: "path-mieru", Enabled: true}
+	bID := serverB.ID
+	step := model.ProxyPathStep{ID: 11, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &bID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{"chain_protocol":"mieru"}`}
+	opts := ConfigOptions{Servers: []model.Server{serverA, serverB}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{path}, ProxyPathSteps: []model.ProxyPathStep{step}}
+	services, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := services[proxyPathChainServiceKey{ServerID: serverB.ID, Protocol: model.ProtocolMieru, Profile: "tcp"}]
+	if len(services) != 1 || service == nil || service.Inbound.Protocol != model.ProtocolMieru {
+		t.Fatalf("Mieru services = %#v", services)
+	}
+	var serviceConfig map[string]any
+	if err := json.Unmarshal([]byte(service.Inbound.ConfigJSON), &serviceConfig); err != nil {
+		t.Fatal(err)
+	}
+	if serviceConfig["transport"] != "TCP" || serviceConfig["multiplexing"] != "MULTIPLEXING_DEFAULT" || serviceConfig["user_hint_is_mandatory"] != true {
+		t.Fatalf("Mieru service config = %#v", serviceConfig)
+	}
+	configA := mustServerConfig(t, serverA, opts.Inbounds, nil, opts)
+	outbound := findOutbound(configA, proxyPathStepTag(path.ID, 1))
+	if outbound["type"] != "mieru" || outbound["transport"] != "TCP" || outbound["multiplexing"] != "MULTIPLEXING_DEFAULT" || outbound["username"] == "" || outbound["password"] == "" {
+		t.Fatalf("Mieru outbound = %#v", outbound)
+	}
+	configB := mustServerConfig(t, serverB, opts.Inbounds, nil, opts)
+	parsed := parseSingBoxConfig(t, configB)
+	found := false
+	for _, inbound := range parsed.Inbounds {
+		if inbound["tag"] == service.Tag {
+			found = inbound["type"] == "mieru" && inbound["transport"] == "TCP" && inbound["user_hint_is_mandatory"] == true
+		}
+	}
+	if !found {
+		t.Fatalf("Mieru listener missing or invalid: %s", configB)
 	}
 }
 
@@ -465,7 +553,7 @@ func TestSyntheticProxyPathIDsUseDisjointFields(t *testing.T) {
 	}
 	// Generated inbound IDs are negative and must not overlap between the shared
 	// service range and the per-hop range.
-	if internal, chain := proxyPathInternalOutboundID(100000, 1), proxyPathChainServiceID(100000, DefaultProxyPathChainMethod); internal == chain {
+	if internal, chain := proxyPathInternalOutboundID(100000, 1), proxyPathChainServiceID(proxyPathChainServiceKey{ServerID: 100000, Protocol: model.ProtocolSS, Profile: DefaultProxyPathChainMethod}); internal == chain {
 		t.Fatalf("internal and chain ranges overlap at %d", internal)
 	}
 	if a, b := proxyPathInternalOutboundID(1, 5000), proxyPathInternalOutboundID(2, 1); a == b {
@@ -619,7 +707,7 @@ func TestPortLedgerKeepsAllocatedPortsStableAcrossTopologyChanges(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := proxyPathChainServiceKey{ServerID: target.ID, Method: DefaultProxyPathChainMethod}
+	key := proxyPathChainServiceKey{ServerID: target.ID, Protocol: model.ProtocolSS, Profile: DefaultProxyPathChainMethod}
 	originalPort := services[key].Inbound.Port
 	if originalPort == 0 {
 		t.Fatal("no port was allocated")

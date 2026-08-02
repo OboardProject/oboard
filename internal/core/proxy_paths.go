@@ -1,8 +1,10 @@
 package core
 
 import (
+	"crypto/ecdh"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +15,11 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-const DefaultProxyPathChainMethod = "2022-blake3-aes-128-gcm"
+const (
+	DefaultProxyPathChainMethod            = "2022-blake3-aes-128-gcm"
+	DefaultProxyPathRealityHandshakeServer = "cdn.icloud-content.com"
+	DefaultProxyPathRealityHandshakePort   = 443
+)
 
 var proxyPathChainMethods = map[string]int{
 	"2022-blake3-aes-128-gcm":       1,
@@ -125,15 +131,23 @@ func (l *ProxyPathPortLedger) Pending() []model.ProxyPathPortAllocation {
 
 type proxyPathChainServiceKey struct {
 	ServerID int64
-	Method   string
+	Protocol model.Protocol
+	Profile  string
 }
 
 type proxyPathChainService struct {
-	Key      proxyPathChainServiceKey
-	Inbound  model.Inbound
-	Tag      string
-	Password string
-	Users    []model.User
+	Key         proxyPathChainServiceKey
+	ChainConfig ProxyPathChainConfig
+	Inbound     model.Inbound
+	Tag         string
+	Users       []model.User
+}
+
+type ProxyPathChainConfig struct {
+	Protocol               model.Protocol
+	Method                 string
+	RealityHandshakeServer string
+	RealityHandshakePort   int
 }
 
 func ValidateProxyPathChainMethod(method string) error {
@@ -154,6 +168,58 @@ func normalizeProxyPathChainMethod(method string) string {
 
 func proxyPathStepChainMethod(step model.ProxyPathStep) string {
 	return normalizeProxyPathChainMethod(stringValue(parseStepConfig(step.ConfigJSON), "chain_method", ""))
+}
+
+func ParseProxyPathChainConfig(raw string) (ProxyPathChainConfig, error) {
+	cfg := parseStepConfig(raw)
+	protocol := model.Protocol(strings.ToLower(strings.TrimSpace(stringValue(cfg, "chain_protocol", string(model.ProtocolSS)))))
+	if protocol == "" {
+		protocol = model.ProtocolSS
+	}
+	out := ProxyPathChainConfig{Protocol: protocol}
+	switch protocol {
+	case model.ProtocolSS:
+		out.Method = normalizeProxyPathChainMethod(stringValue(cfg, "chain_method", ""))
+		if err := ValidateProxyPathChainMethod(out.Method); err != nil {
+			return ProxyPathChainConfig{}, err
+		}
+	case model.ProtocolVLESS:
+		out.RealityHandshakeServer = strings.ToLower(strings.TrimSpace(stringValue(cfg, "reality_handshake_server", DefaultProxyPathRealityHandshakeServer)))
+		out.RealityHandshakePort = intValueFromMap(cfg, "reality_handshake_port", DefaultProxyPathRealityHandshakePort)
+		if err := ValidateSafeHost(out.RealityHandshakeServer); err != nil {
+			return ProxyPathChainConfig{}, fmt.Errorf("Reality handshake server: %w", err)
+		}
+		if err := ValidatePort(out.RealityHandshakePort); err != nil {
+			return ProxyPathChainConfig{}, fmt.Errorf("Reality handshake port: %w", err)
+		}
+	case model.ProtocolMieru:
+	default:
+		return ProxyPathChainConfig{}, fmt.Errorf("unsupported generated proxy path protocol %q", protocol)
+	}
+	return out, nil
+}
+
+func proxyPathStepChainConfig(step model.ProxyPathStep) (ProxyPathChainConfig, error) {
+	return ParseProxyPathChainConfig(step.ConfigJSON)
+}
+
+func (c ProxyPathChainConfig) profile() string {
+	switch c.Protocol {
+	case model.ProtocolVLESS:
+		return fmt.Sprintf("reality:%s:%d", c.RealityHandshakeServer, c.RealityHandshakePort)
+	case model.ProtocolMieru:
+		return "tcp"
+	default:
+		return c.Method
+	}
+}
+
+func proxyPathChainServiceKeyForStep(step model.ProxyPathStep, serverID int64) (proxyPathChainServiceKey, error) {
+	cfg, err := proxyPathStepChainConfig(step)
+	if err != nil {
+		return proxyPathChainServiceKey{}, err
+	}
+	return proxyPathChainServiceKey{ServerID: serverID, Protocol: cfg.Protocol, Profile: cfg.profile()}, nil
 }
 
 func buildProxyPathChainServices(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound, ledger *ProxyPathPortLedger) (map[proxyPathChainServiceKey]*proxyPathChainService, error) {
@@ -188,18 +254,18 @@ func buildProxyPathChainServices(paths []model.ProxyPath, steps []model.ProxyPat
 		if mode == model.ProxyPathTransportPortForward || step.ServerID == nil || *step.ServerID == 0 {
 			continue
 		}
-		method := proxyPathStepChainMethod(step)
-		if err := ValidateProxyPathChainMethod(method); err != nil {
+		chainConfig, err := proxyPathStepChainConfig(step)
+		if err != nil {
 			return nil, fmt.Errorf("proxy path %s step %d: %w", path.Name, step.Position, err)
 		}
 		server, ok := serverByID[*step.ServerID]
 		if !ok {
 			return nil, fmt.Errorf("proxy path %s step %d: target server not found", path.Name, step.Position)
 		}
-		key := proxyPathChainServiceKey{ServerID: server.ID, Method: method}
+		key := proxyPathChainServiceKey{ServerID: server.ID, Protocol: chainConfig.Protocol, Profile: chainConfig.profile()}
 		service := services[key]
 		if service == nil {
-			service = &proxyPathChainService{Key: key}
+			service = &proxyPathChainService{Key: key, ChainConfig: chainConfig}
 			services[key] = service
 		}
 		service.Users = append(service.Users, proxyPathInternalUser(path, step))
@@ -215,29 +281,38 @@ func buildProxyPathChainServices(paths []model.ProxyPath, steps []model.ProxyPat
 	}
 	sort.SliceStable(keys, func(i, j int) bool {
 		if keys[i].ServerID == keys[j].ServerID {
-			return proxyPathChainMethods[keys[i].Method] < proxyPathChainMethods[keys[j].Method]
+			if keys[i].Protocol == keys[j].Protocol {
+				return keys[i].Profile < keys[j].Profile
+			}
+			return keys[i].Protocol < keys[j].Protocol
 		}
 		return keys[i].ServerID < keys[j].ServerID
 	})
 	for _, key := range keys {
 		service := services[key]
 		server := serverByID[key.ServerID]
-		methodIndex := proxyPathChainMethods[key.Method]
+		seed := int(stableProxyPathResourceID("proxy-path-chain-service", key.Protocol, key.Profile) % 1000000)
 		start, end := proxyPathServerPortRange(server)
-		port := ledger.resolve(model.ProxyPathPortKindChainService, key.Method, server.ID, func() int {
-			return proxyPathAvailablePortForProtocol(server, server.ID*977, methodIndex*131, start, end, model.ForwardProtocolTCPUDP, true, occupied)
+		portProtocol := model.ForwardProtocolTCP
+		if key.Protocol == model.ProtocolSS {
+			portProtocol = model.ForwardProtocolTCPUDP
+		}
+		port := ledger.resolve(model.ProxyPathPortKindChainService, proxyPathChainServiceScopeKey(key), server.ID, func() int {
+			return proxyPathAvailablePortForProtocol(server, server.ID*977, seed, start, end, portProtocol, true, occupied)
 		})
 		if port == 0 {
-			return nil, fmt.Errorf("server %s has no available port for shared Shadowsocks chain service", server.Name)
+			return nil, fmt.Errorf("server %s has no available port for shared %s chain service", server.Name, key.Protocol)
 		}
-		service.Tag = proxyPathChainServiceTag(key.Method)
-		service.Password = proxyPathChainServicePassword(server, key.Method)
-		configJSON, _ := json.Marshal(map[string]any{"method": key.Method, "password": service.Password})
+		service.Tag = proxyPathChainServiceTag(key)
+		configJSON, err := proxyPathChainServiceConfigJSON(server, key, service.ChainConfig)
+		if err != nil {
+			return nil, err
+		}
 		service.Inbound = model.Inbound{
-			ID:         proxyPathChainServiceID(key.ServerID, key.Method),
+			ID:         proxyPathChainServiceID(key),
 			ServerID:   key.ServerID,
-			Name:       fmt.Sprintf("共享链路 / %s", key.Method),
-			Protocol:   model.ProtocolSS,
+			Name:       fmt.Sprintf("共享链路 / %s", proxyPathChainServiceLabel(key)),
+			Protocol:   key.Protocol,
 			ListenIP:   firstNonEmpty(server.ListenIP, "0.0.0.0"),
 			Port:       port,
 			ConfigJSON: string(configJSON),
@@ -259,25 +334,89 @@ func proxyPathChainServiceForStep(services map[proxyPathChainServiceKey]*proxyPa
 	if mode == model.ProxyPathTransportPortForward {
 		return nil, false
 	}
-	service, ok := services[proxyPathChainServiceKey{ServerID: targetServerID, Method: proxyPathStepChainMethod(step)}]
+	key, err := proxyPathChainServiceKeyForStep(step, targetServerID)
+	if err != nil {
+		return nil, false
+	}
+	service, ok := services[key]
 	return service, ok
 }
 
-func proxyPathChainServiceTag(method string) string {
-	return "oboard-chain-ss-" + strings.NewReplacer("2022-blake3-", "", "-gcm", "", "-poly1305", "").Replace(method) + "-in"
+func proxyPathChainServiceScopeKey(key proxyPathChainServiceKey) string {
+	if key.Protocol == model.ProtocolSS {
+		return key.Profile
+	}
+	return string(key.Protocol) + ":" + key.Profile
 }
 
-// proxyPathChainServiceID derives the negative ID of a shared Shadowsocks
-// listener. Server ID and method index use disjoint bit fields, keeping this
-// range distinct from proxyPathInternalOutboundID for every reachable server ID.
-func proxyPathChainServiceID(serverID int64, method string) int64 {
-	return -(int64(1)<<41 + (serverID&0xffffff)<<4 + int64(proxyPathChainMethods[normalizeProxyPathChainMethod(method)])&0xf)
+func proxyPathChainServiceTag(key proxyPathChainServiceKey) string {
+	if key.Protocol == model.ProtocolSS {
+		return "oboard-chain-ss-" + strings.NewReplacer("2022-blake3-", "", "-gcm", "", "-poly1305", "").Replace(key.Profile) + "-in"
+	}
+	sum := sha256.Sum256([]byte(key.Profile))
+	return fmt.Sprintf("oboard-chain-%s-%s-in", key.Protocol, hex.EncodeToString(sum[:4]))
+}
+
+func proxyPathChainServiceID(key proxyPathChainServiceKey) int64 {
+	if key.Protocol == model.ProtocolSS {
+		return -(int64(1)<<41 + (key.ServerID&0xffffff)<<4 + int64(proxyPathChainMethods[normalizeProxyPathChainMethod(key.Profile)])&0xf)
+	}
+	return -stableProxyPathResourceID("proxy-path-chain-inbound", key.ServerID, key.Protocol, key.Profile)
+}
+
+func proxyPathChainServiceLabel(key proxyPathChainServiceKey) string {
+	switch key.Protocol {
+	case model.ProtocolVLESS:
+		return "VLESS Reality"
+	case model.ProtocolMieru:
+		return "Mieru TCP"
+	default:
+		return key.Profile
+	}
 }
 
 func proxyPathChainServicePassword(server model.Server, method string) string {
 	seed := proxyPathServerChainSeed(server)
 	sum := sha256.Sum256([]byte("oboard-chain-ss:" + seed + ":" + normalizeProxyPathChainMethod(method)))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func proxyPathChainServiceConfigJSON(server model.Server, key proxyPathChainServiceKey, chainConfig ProxyPathChainConfig) (string, error) {
+	var cfg map[string]any
+	switch key.Protocol {
+	case model.ProtocolSS:
+		cfg = map[string]any{"method": key.Profile, "password": proxyPathChainServicePassword(server, key.Profile)}
+	case model.ProtocolMieru:
+		cfg = map[string]any{"transport": "TCP", "multiplexing": "MULTIPLEXING_DEFAULT", "user_hint_is_mandatory": true}
+	case model.ProtocolVLESS:
+		privateSeed := sha256.Sum256([]byte("oboard-chain-vless-private:" + proxyPathServerChainSeed(server) + ":" + key.Profile))
+		privateKey, err := ecdh.X25519().NewPrivateKey(privateSeed[:])
+		if err != nil {
+			return "", err
+		}
+		shortSeed := sha256.Sum256([]byte("oboard-chain-vless-short-id:" + proxyPathServerChainSeed(server) + ":" + key.Profile))
+		cfg = map[string]any{
+			"flow": "xtls-rprx-vision",
+			"tls": map[string]any{
+				"enabled":     true,
+				"server_name": chainConfig.RealityHandshakeServer,
+				"reality": map[string]any{
+					"enabled":     true,
+					"private_key": base64.RawURLEncoding.EncodeToString(privateKey.Bytes()),
+					"public_key":  base64.RawURLEncoding.EncodeToString(privateKey.PublicKey().Bytes()),
+					"short_id":    hex.EncodeToString(shortSeed[:4]),
+					"handshake": map[string]any{
+						"server":      chainConfig.RealityHandshakeServer,
+						"server_port": chainConfig.RealityHandshakePort,
+					},
+				},
+			},
+		}
+	default:
+		return "", fmt.Errorf("unsupported generated proxy path protocol %q", key.Protocol)
+	}
+	b, err := json.Marshal(cfg)
+	return string(b), err
 }
 
 func stableProxyPathResourceID(kind string, values ...any) int64 {

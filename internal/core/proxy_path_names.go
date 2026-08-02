@@ -374,7 +374,12 @@ func proxyPathNameFeatures(path model.ProxyPath, steps []model.ProxyPathStep, in
 				if step.InboundID != nil && *step.InboundID != 0 {
 					feature = proxyProtocolName(inbounds[*step.InboundID].Protocol)
 				} else {
-					feature = proxyPathChainMethodName(proxyPathStepChainMethod(step))
+					chain, err := proxyPathStepChainConfig(step)
+					if err == nil && chain.Protocol != model.ProtocolSS {
+						feature = proxyProtocolName(chain.Protocol)
+					} else {
+						feature = proxyPathChainMethodName(proxyPathStepChainMethod(step))
+					}
 				}
 			}
 		}
