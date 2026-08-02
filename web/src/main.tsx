@@ -86,6 +86,14 @@ import clashClassicClientIcon from './assets/subscription-clients/clash-classic.
 import { PageDataRequestCoordinator } from './page-data'
 import { useRealtimeEvents, type RealtimeEvent, type RealtimeStatus } from './realtime'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
+import {
+  failedDNSBulkServerIDs,
+  hasDNSBulkPatch,
+  runDNSBulkAction,
+  type DNSBulkAction,
+  type DNSBulkPatch,
+  type DNSBulkResult,
+} from './dns-bulk'
 
 const appBasePath = (() => {
   const href = document.querySelector('base')?.getAttribute('href') || '/'
@@ -10953,6 +10961,111 @@ function DNSSettingsDialog({ server, policy, lists, benchmarks, client, onClose,
   </MotionDialogPanel>
 }
 
+type DNSBulkDraft = {
+  encryptedListID: string
+  bootstrapListID: string
+  strategy: string
+  autoTest: string
+}
+
+const emptyDNSBulkDraft: DNSBulkDraft = {
+  encryptedListID: '',
+  bootstrapListID: '',
+  strategy: '',
+  autoTest: '',
+}
+
+function dnsBulkPatch(draft: DNSBulkDraft): DNSBulkPatch {
+  const patch: DNSBulkPatch = {}
+  if (draft.encryptedListID) patch.encryptedListID = Number(draft.encryptedListID)
+  if (draft.bootstrapListID) patch.bootstrapListID = Number(draft.bootstrapListID)
+  if (draft.strategy) patch.strategy = draft.strategy
+  if (draft.autoTest) patch.hourlyTest = draft.autoTest === 'periodic'
+  return patch
+}
+
+function DNSBulkSettingsDialog({ policies, servers, lists, client, onClose, onSelectionChange, onChanged, notify }: {
+  policies: ServerDNSPolicy[]
+  servers: Server[]
+  lists: DNSList[]
+  client: ReturnType<typeof api>
+  onClose: () => void
+  onSelectionChange: (serverIDs: number[]) => void
+  onChanged: () => Promise<void>
+  notify?: (message: string, tone?: ToastKind) => void
+}) {
+  const [draft, setDraft] = useState<DNSBulkDraft>(emptyDNSBulkDraft)
+  const [working, setWorking] = useState<DNSBulkAction | ''>('')
+  const [failures, setFailures] = useState<DNSBulkResult[]>([])
+  const patch = dnsBulkPatch(draft)
+  const hasPatch = hasDNSBulkPatch(patch)
+  const serverNames = new Map(servers.map(server => [Number(server.id), server.name || `服务器 #${server.id}`]))
+  const updateDraft = (next: Partial<DNSBulkDraft>) => {
+    setDraft(current => ({ ...current, ...next }))
+    setFailures([])
+  }
+  const run = async (action: DNSBulkAction) => {
+    if (working || !policies.length || (action === 'save' && !hasPatch)) return
+    setWorking(action)
+    setFailures([])
+    try {
+      const results = await runDNSBulkAction(policies, patch, action, client.request, 4)
+      const failedIDs = failedDNSBulkServerIDs(results)
+      const succeeded = results.length - failedIDs.length
+      await onChanged()
+      if (!failedIDs.length) {
+        onSelectionChange([])
+        notify?.(
+          action === 'save'
+            ? `已保存 ${succeeded} 台服务器的解析设置`
+            : action === 'test'
+              ? `已为 ${succeeded} 台服务器开始解析检查`
+              : `已为 ${succeeded} 台服务器开始解析检查，成功后会自动应用`,
+          'success',
+        )
+        onClose()
+        return
+      }
+      const failedResults = results.filter(result => !result.ok)
+      setFailures(failedResults)
+      onSelectionChange(failedIDs)
+      notify?.(`批量操作完成：成功 ${succeeded} 台，失败 ${failedIDs.length} 台`, succeeded ? 'warning' : 'error')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+
+  return <MotionDialogPanel onCancel={working ? () => undefined : onClose} className="dns-bulk-settings-dialog">
+    <header className="dialog-head">
+      <div><h2>批量 DNS 设置</h2><p className="muted">{policies.length} 台服务器</p></div>
+      <button type="button" className="ghost dialog-close icon-button" onClick={onClose} disabled={Boolean(working)} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body dns-bulk-settings-body">
+      <div className="dns-bulk-targets dialog-detail">
+        <strong>目标服务器</strong>
+        <ul>{policies.map(policy => <li key={policy.server_id}>{serverNames.get(Number(policy.server_id)) || `服务器 #${policy.server_id}`}</li>)}</ul>
+      </div>
+      {failures.length > 0 && <div className="dns-bulk-failures" role="alert">
+        <strong>{failures.length} 台服务器未完成</strong>
+        <ul>{failures.map(result => <li key={result.serverID}><span>{serverNames.get(result.serverID) || `服务器 #${result.serverID}`}</span><small>{localizeErrorMessage(result.error)}</small></li>)}</ul>
+      </div>}
+      <div className="form dns-settings-form dns-bulk-settings-form labeled-form">
+        <FormField label="加密解析服务列表" full><Select value={draft.encryptedListID} onChange={event => updateDraft({ encryptedListID: event.target.value })}><option value="">保持各服务器当前设置</option>{lists.filter(list => list.kind === 'encrypted' && list.enabled).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
+        <FormField label="基础解析服务列表" full><Select value={draft.bootstrapListID} onChange={event => updateDraft({ bootstrapListID: event.target.value })}><option value="">保持各服务器当前设置</option>{lists.filter(list => list.kind === 'bootstrap' && list.enabled).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
+        <FormField label="IP 类型"><Select value={draft.strategy} onChange={event => updateDraft({ strategy: event.target.value })}><option value="">保持各服务器当前设置</option><option value="auto">跟随服务器</option><option value="prefer_ipv4">优先 IPv4</option><option value="prefer_ipv6">优先 IPv6</option><option value="ipv4_only">仅 IPv4</option><option value="ipv6_only">仅 IPv6</option></Select></FormField>
+        <FormField label="自动检查"><Select value={draft.autoTest} onChange={event => updateDraft({ autoTest: event.target.value })}><option value="">保持各服务器当前设置</option><option value="periodic">每小时自动检查</option><option value="first_apply">关闭自动检查</option></Select></FormField>
+      </div>
+    </div>
+    <footer className="dialog-actions dns-dialog-actions">
+      <button type="button" className="ghost" disabled={Boolean(working) || !hasPatch} onClick={() => void run('save')}>{working === 'save' ? '保存中...' : '仅保存'}</button>
+      <button type="button" className="ghost" disabled={Boolean(working)} onClick={() => void run('test')}><Gauge size={15} />{working === 'test' ? '检查中...' : '仅检查'}</button>
+      <button type="button" disabled={Boolean(working)} onClick={() => void run('test_and_apply')}><RefreshCw size={15} />{working === 'test_and_apply' ? '检查中...' : '检查并应用'}</button>
+    </footer>
+  </MotionDialogPanel>
+}
+
 function dnsBenchmarkStatusTone(status: string) {
   if (status === 'succeeded' || status === 'success') return 'ok'
   if (status === 'failed' || status === 'error') return 'danger'
@@ -11030,6 +11143,17 @@ function DNS({ data, client, load, notify }: any) {
   const lists: DNSList[] = data.dns_lists || []
   const policies: ServerDNSPolicy[] = data.server_dns_policies || []
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const [selectedServerIDs, setSelectedServerIDs] = useState<number[]>([])
+  const policyIDKey = policies.map(policy => policy.server_id).join(',')
+  useEffect(() => {
+    const available = new Set(policies.map(policy => Number(policy.server_id)))
+    setSelectedServerIDs(current => {
+      const next = current.filter(serverID => available.has(serverID))
+      return next.length === current.length ? current : next
+    })
+  }, [policyIDKey])
+  const selectedPolicies = policies.filter(policy => selectedServerIDs.includes(Number(policy.server_id)))
   const rows = policies.map(policy => ({
     id: policy.server_id,
     server: servers.find(server => server.id === policy.server_id)?.name || `#${policy.server_id}`,
@@ -11052,9 +11176,17 @@ function DNS({ data, client, load, notify }: any) {
           <button type="button" className="ghost" onClick={() => goTab('servers')}><ServerIcon size={15} />打开服务器设置</button>
         </div>
       </div>
-      <Table rows={rows} actions={(row: any) => <button onClick={() => void test(row._policy)}><Gauge size={14} />重新检查</button>} />
+      <div className="dns-policy-selection-toolbar" role="toolbar" aria-label="批量 DNS 设置">
+        <span>已选 <strong>{selectedServerIDs.length}</strong> 台</span>
+        <div>
+          {selectedServerIDs.length > 0 && <button type="button" className="ghost" onClick={() => setSelectedServerIDs([])}><Eraser size={14} />清空</button>}
+          <button type="button" onClick={() => setBulkOpen(true)} disabled={!selectedServerIDs.length}><Settings2 size={14} />批量设置</button>
+        </div>
+      </div>
+      <Table rows={rows} selection={{ selectedIDs: selectedServerIDs, onChange: setSelectedServerIDs, getRowID: (row: any) => Number(row.id), getRowLabel: (row: any) => String(row.server) }} actions={(row: any) => <button onClick={() => void test(row._policy)}><Gauge size={14} />重新检查</button>} />
     </Panel>
     <AnimatePresence>{historyOpen && <DNSBenchmarkHistoryDialog servers={servers} client={client} onClose={() => setHistoryOpen(false)} />}</AnimatePresence>
+    <AnimatePresence>{bulkOpen && selectedPolicies.length > 0 && <DNSBulkSettingsDialog policies={selectedPolicies} servers={servers} lists={lists} client={client} onClose={() => setBulkOpen(false)} onSelectionChange={setSelectedServerIDs} onChanged={load} notify={notify} />}</AnimatePresence>
   </div>
 }
 
@@ -13023,13 +13155,49 @@ function ProtocolForm({ value, setValue, servers, submit, outbound }: any) {
   return <div className="form"><Select value={value.server_id} onChange={e => setValue({ ...value, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><input value={value.name} onChange={e => setValue({ ...value, name: e.target.value })} placeholder="名称" /><Select value={value.protocol} onChange={e => setValue({ ...value, protocol: e.target.value as Protocol, config_json: ensureAuthConfig(value.config_json, e.target.value as Protocol) })}>{(outbound ? proxyProtocols : protocols).map(p => <option key={p} value={p}>{labelProtocol(p)}</option>)}</Select>{outbound ? <><input value={value.target_address} onChange={e => setValue({ ...value, target_address: e.target.value })} placeholder="目标地址" /><input value={value.target_port} onChange={e => setValue({ ...value, target_port: Number(e.target.value) })} placeholder="目标端口" /></> : <><input value={value.listen_ip} onChange={e => setValue({ ...value, listen_ip: e.target.value })} placeholder="监听 IP" /><input value={value.port} onChange={e => setValue({ ...value, port: Number(e.target.value) })} placeholder="监听端口" /></>}<AuthFields value={value} setValue={setValue} />{value.protocol === 'mieru' && <MieruConfigFields config={config} updateConfig={updateConfig} rangeKey={outbound ? 'server_ports' : 'listen_ports'} showUserHint={!outbound} />}<textarea value={value.config_json} onChange={e => setValue({ ...value, config_json: e.target.value })} placeholder="JSON 配置" /><button onClick={submit}>创建</button></div>
 }
 
-function Table({ rows, actions, loading: propLoading }: any) {
+type TableSelection = {
+  selectedIDs: number[]
+  onChange: (selectedIDs: number[]) => void
+  getRowID: (row: any) => number
+  getRowLabel?: (row: any) => string
+}
+
+function TableSelectionCheckbox({ checked, indeterminate = false, onChange, label }: { checked: boolean; indeterminate?: boolean; onChange: () => void; label: string }) {
+  const ref = useRef<HTMLInputElement | null>(null)
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate
+  }, [indeterminate])
+  return <input ref={ref} type="checkbox" checked={checked} onChange={onChange} aria-label={label} />
+}
+
+function Table({ rows, actions, loading: propLoading, selection }: { rows: any[]; actions?: (row: any) => React.ReactNode; loading?: boolean; selection?: TableSelection }) {
   const contextLoading = React.useContext(LoadingContext)
   const loading = propLoading !== undefined ? propLoading : contextLoading
   if (loading && !rows?.length) return <TableSkeleton />
   if (!rows?.length) return <p className="muted">暂无数据</p>
   const keys = Object.keys(rows[0]).filter(k => !k.startsWith('_') && !String(rows[0][k]).startsWith('argon2id'))
-  return <div className="table-wrap"><table><thead><tr>{keys.map(k => <th key={k}>{humanLabel(k)}</th>)}{actions && <th>操作</th>}</tr></thead><tbody>{rows.map((r: any, i: number) => <tr key={i}>{keys.map(k => <td key={k}>{cell(r[k], k)}</td>)}{actions && <td className="actions"><TableActions>{actions(r)}</TableActions></td>}</tr>)}</tbody></table></div>
+  const rowIDs = selection ? rows.map(selection.getRowID) : []
+  const selectedSet = new Set(selection?.selectedIDs || [])
+  const allSelected = Boolean(selection && rowIDs.length && rowIDs.every(rowID => selectedSet.has(rowID)))
+  const partiallySelected = Boolean(selection && !allSelected && rowIDs.some(rowID => selectedSet.has(rowID)))
+  const toggleAll = () => {
+    if (!selection) return
+    const visibleIDs = new Set(rowIDs)
+    selection.onChange(allSelected
+      ? selection.selectedIDs.filter(rowID => !visibleIDs.has(rowID))
+      : Array.from(new Set([...selection.selectedIDs, ...rowIDs])))
+  }
+  const toggleRow = (rowID: number) => {
+    if (!selection) return
+    selection.onChange(selectedSet.has(rowID)
+      ? selection.selectedIDs.filter(selectedID => selectedID !== rowID)
+      : [...selection.selectedIDs, rowID])
+  }
+  return <div className="table-wrap"><table className={selection ? 'table-selectable' : undefined}><thead><tr>{selection && <th className="table-selection-cell"><TableSelectionCheckbox checked={allSelected} indeterminate={partiallySelected} onChange={toggleAll} label={allSelected ? '取消选择全部服务器' : '选择全部服务器'} /></th>}{keys.map(k => <th key={k}>{humanLabel(k)}</th>)}{actions && <th>操作</th>}</tr></thead><tbody>{rows.map((r: any, i: number) => {
+    const rowID = selection?.getRowID(r)
+    const selected = rowID !== undefined && selectedSet.has(rowID)
+    return <tr key={selection ? rowID : i} className={selected ? 'table-row-selected' : undefined} aria-selected={selection ? selected : undefined}>{selection && <td className="table-selection-cell"><TableSelectionCheckbox checked={selected} onChange={() => toggleRow(rowID as number)} label={`${selected ? '取消选择' : '选择'}${selection.getRowLabel?.(r) || `第 ${i + 1} 行`}`} /></td>}{keys.map(k => <td key={k}>{cell(r[k], k)}</td>)}{actions && <td className="actions"><TableActions>{actions(r)}</TableActions></td>}</tr>
+  })}</tbody></table></div>
 }
 
 function TableActions({ children }: { children: React.ReactNode }) {
