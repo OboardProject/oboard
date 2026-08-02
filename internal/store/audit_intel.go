@@ -104,22 +104,6 @@ func scanAuditIncident(scanner interface{ Scan(...any) error }) (*model.AuditInc
 	return &item, nil
 }
 
-func (s *Store) CreateAIAnalysisJobIfAbsent(ctx context.Context, item *model.AIAnalysisJob, cooldown time.Duration) (bool, error) {
-	since := time.Now().UTC().Add(-cooldown).Format(time.RFC3339Nano)
-	var id string
-	if err := s.db.QueryRowContext(ctx, `select id from ai_analysis_jobs where fingerprint=? and created_at>=? order by created_at desc limit 1`, item.Fingerprint, since).Scan(&id); err == nil {
-		return false, nil
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return false, err
-	}
-	ts := now()
-	_, err := s.db.ExecContext(ctx, `insert into ai_analysis_jobs(id,kind,incident_id,provider_id,fingerprint,status,input_json,created_at,updated_at) values(?,?,?,?,?,'pending',?,?,?)`, item.ID, item.Kind, nullEmpty(item.IncidentID), item.ProviderID, item.Fingerprint, normalizedJSONObject(item.Input), ts, ts)
-	if err == nil {
-		item.Status, item.CreatedAt, item.UpdatedAt = "pending", parseTime(ts), parseTime(ts)
-	}
-	return err == nil, err
-}
-
 func (s *Store) CreateOperatorFeedback(ctx context.Context, item *model.OperatorFeedback) error {
 	if item == nil {
 		return errors.New("feedback is required")
@@ -130,10 +114,4 @@ func (s *Store) CreateOperatorFeedback(ctx context.Context, item *model.Operator
 		item.CreatedAt = parseTime(ts)
 	}
 	return err
-}
-
-func (s *Store) FirstEnabledAIProviderID(ctx context.Context) (string, error) {
-	var id string
-	err := s.db.QueryRowContext(ctx, `select id from ai_providers where enabled=1 order by created_at limit 1`).Scan(&id)
-	return id, err
 }

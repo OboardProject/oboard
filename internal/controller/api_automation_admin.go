@@ -155,32 +155,6 @@ func (s *Server) apiV2AIProvider(w http.ResponseWriter, r *http.Request) {
 	v2Write(w, r, http.StatusOK, item, nil)
 }
 
-func (s *Server) apiV2AIJobs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
-		return
-	}
-	items, err := s.store.ListAIAnalysisJobs(r.Context(), queryLimit(r, 50))
-	if err != nil {
-		v2HandleError(w, r, err)
-		return
-	}
-	v2Write(w, r, http.StatusOK, items, map[string]any{"count": len(items)})
-}
-
-func (s *Server) apiV2AIFindings(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
-		return
-	}
-	items, err := s.store.ListAIFindings(r.Context(), strings.TrimSpace(r.URL.Query().Get("incident_id")), queryLimit(r, 50))
-	if err != nil {
-		v2HandleError(w, r, err)
-		return
-	}
-	v2Write(w, r, http.StatusOK, items, map[string]any{"count": len(items)})
-}
-
 func (s *Server) apiV2ApprovalPolicies(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		items, err := s.store.ListApprovalPolicies(r.Context(), strings.TrimSpace(r.URL.Query().Get("principal_id")))

@@ -29,7 +29,12 @@ func TestRunOnceCompletesFindingWithoutReturningProviderCredential(t *testing.T)
 		if strings.Contains(string(body), apiKey) {
 			t.Fatal("provider credential leaked into model request body")
 		}
-		content, _ := json.Marshal(map[string]any{"classification": "possible_account_sharing", "confidence": 0.82, "evidence_refs": []string{"feature:regions"}, "counter_evidence": []string{"mobile_network"}, "recommended_actions": []string{"request_manual_review"}, "summary": "multiple concurrent regions"})
+		content, _ := json.Marshal(map[string]any{
+			"verdict": "attention", "risk_level": "medium", "confidence": 0.82, "summary": "multiple concurrent regions",
+			"dimensions":          []any{map[string]any{"kind": "connection", "risk_level": "medium", "summary": "multiple regions", "evidence_refs": []string{"user:1"}, "counter_evidence": []string{"mobile_network"}}},
+			"notable_subjects":    []any{map[string]any{"subject_ref": "user:1", "risk_level": "medium", "summary": "multiple regions", "evidence_refs": []string{"user:1"}}},
+			"recommended_actions": []string{"request_manual_review"}, "data_gaps": []string{}, "coverage_summary": "reviewed one user",
+		})
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": string(content)}}}, "usage": map[string]int{"prompt_tokens": 120, "completion_tokens": 40}})
 	}))
 	defer modelServer.Close()
@@ -39,7 +44,7 @@ func TestRunOnceCompletesFindingWithoutReturningProviderCredential(t *testing.T)
 	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/jobs/lease":
-			_ = json.NewEncoder(w).Encode(airpc.LeaseResponse{Job: &model.AIAnalysisJob{ID: "job-1", IncidentID: "incident-1", Input: json.RawMessage(`{"privacy_mode":"masked"}`)}, Provider: &airpc.Provider{ID: "provider-1", BaseURL: modelServer.URL, Model: "test-model", APIKey: apiKey}})
+			_ = json.NewEncoder(w).Encode(airpc.LeaseResponse{Job: &model.AuditReviewJob{ID: "job-1", ReviewID: "review-1", Input: json.RawMessage(`{"privacy_mode":"masked"}`)}, Provider: &airpc.Provider{ID: "provider-1", BaseURL: modelServer.URL, Model: "test-model", APIKey: apiKey}})
 		case "/v1/jobs/job-1/complete":
 			mu.Lock()
 			defer mu.Unlock()
@@ -63,7 +68,7 @@ func TestRunOnceCompletesFindingWithoutReturningProviderCredential(t *testing.T)
 	if strings.Contains(string(encoded), apiKey) {
 		t.Fatal("provider credential leaked into completion RPC")
 	}
-	if completed.WorkerID != "worker-1" || completed.Finding.IncidentID != "incident-1" || completed.Finding.Classification != "possible_account_sharing" || completed.InputTokens != 120 || completed.OutputTokens != 40 {
+	if completed.WorkerID != "worker-1" || completed.Report.Verdict != "attention" || completed.Report.RiskLevel != "medium" || completed.InputTokens != 120 || completed.OutputTokens != 40 {
 		t.Fatalf("unexpected completion: %#v", completed)
 	}
 }
@@ -77,7 +82,7 @@ func TestRunOnceReportsBoundedModelFailure(t *testing.T) {
 	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/jobs/lease":
-			_ = json.NewEncoder(w).Encode(airpc.LeaseResponse{Job: &model.AIAnalysisJob{ID: "job-2", IncidentID: "incident-2", Input: json.RawMessage(`{}`)}, Provider: &airpc.Provider{ID: "provider-1", BaseURL: modelServer.URL, Model: "test-model", APIKey: "secret"}})
+			_ = json.NewEncoder(w).Encode(airpc.LeaseResponse{Job: &model.AuditReviewJob{ID: "job-2", ReviewID: "review-2", Input: json.RawMessage(`{}`)}, Provider: &airpc.Provider{ID: "provider-1", BaseURL: modelServer.URL, Model: "test-model", APIKey: "secret"}})
 		case "/v1/jobs/job-2/fail":
 			var request airpc.FailRequest
 			_ = json.NewDecoder(r.Body).Decode(&request)

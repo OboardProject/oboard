@@ -12,7 +12,7 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
-func TestEvaluateUserCreatesDeterministicIncidentWithoutAIProvider(t *testing.T) {
+func TestEvaluateUserCreatesDeterministicIncidentWithoutQueuingAI(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -25,6 +25,9 @@ func TestEvaluateUserCreatesDeterministicIncidentWithoutAIProvider(t *testing.T)
 	}
 	server := &model.Server{Name: "audit-server", ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true}
 	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateAIProvider(ctx, &model.AIProvider{ID: "provider", Name: "provider", BaseURL: "http://127.0.0.1", Model: "model", CredentialEncrypted: "encrypted", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -53,6 +56,10 @@ func TestEvaluateUserCreatesDeterministicIncidentWithoutAIProvider(t *testing.T)
 	items, err := db.ListAuditIncidents(ctx, 10)
 	if err != nil || len(items) != 1 {
 		t.Fatalf("incidents=%#v err=%v", items, err)
+	}
+	reviews, err := db.ListAuditReviews(ctx, 10)
+	if err != nil || len(reviews) != 0 {
+		t.Fatalf("rule incident unexpectedly queued AI reviews=%#v err=%v", reviews, err)
 	}
 }
 

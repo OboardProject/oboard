@@ -43,8 +43,6 @@ func (s *Server) registerAPIV2Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v2/api-principals/", s.auth(s.apiPrincipalSubroutes, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/ai/providers", s.auth(s.apiV2AIProviders, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/ai/providers/", s.auth(s.apiV2AIProvider, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/ai/jobs", s.auth(s.apiV2AIJobs, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/ai/findings", s.auth(s.apiV2AIFindings, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/approval-policies", s.auth(s.apiV2ApprovalPolicies, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/approval-policies/", s.auth(s.apiV2ApprovalPolicy, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/tool-audits", s.auth(s.apiV2ToolAudits, model.RoleAdmin))
@@ -137,24 +135,6 @@ func (s *Server) apiV2AuditIncident(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		v2Write(w, r, http.StatusOK, item, nil)
-		return
-	}
-	if len(parts) == 2 && parts[1] == "analyze" && r.Method == http.MethodPost {
-		if !principal.HasScope("audit:analyze") {
-			v2Error(w, r, http.StatusForbidden, "scope_denied", "缺少 audit:analyze 权限")
-			return
-		}
-		item, err := s.application.GetAuditIncident(r.Context(), principal, parts[0])
-		if err != nil {
-			v2HandleError(w, r, err)
-			return
-		}
-		incident, err := s.auditIntel.EvaluateUser(r.Context(), item.UserID)
-		if err != nil {
-			v2HandleError(w, r, err)
-			return
-		}
-		v2Write(w, r, http.StatusAccepted, incident, nil)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "feedback" && r.Method == http.MethodPost {

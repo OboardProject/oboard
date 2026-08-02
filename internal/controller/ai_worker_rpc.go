@@ -9,12 +9,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/airpc"
-	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 )
 
@@ -70,7 +68,7 @@ func (s *Server) aiRPCLease(w http.ResponseWriter, r *http.Request) {
 	if !decodeInternalJSON(w, r, &request) || strings.TrimSpace(request.WorkerID) == "" || len(request.WorkerID) > 128 {
 		return
 	}
-	job, provider, err := s.store.LeaseAIAnalysisJob(r.Context(), request.WorkerID, time.Now().UTC(), 2*time.Minute)
+	job, provider, err := s.store.LeaseAuditReviewJob(r.Context(), request.WorkerID, time.Now().UTC(), 2*time.Minute)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSON(w, http.StatusOK, airpc.LeaseResponse{})
 		return
@@ -79,9 +77,20 @@ func (s *Server) aiRPCLease(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	review, err := s.store.GetAuditReview(r.Context(), job.ReviewID)
+	if err != nil {
+		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "review cannot be loaded")
+		http.Error(w, "review cannot be loaded", http.StatusInternalServerError)
+		return
+	}
+	if review.PrivacyMode == "raw" && !provider.AllowRawAudit {
+		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "provider raw audit authorization was revoked")
+		http.Error(w, "provider raw audit authorization was revoked", http.StatusConflict)
+		return
+	}
 	credential, err := security.DecryptSecret(s.sessionSecret, "ai-provider-credential:"+provider.ID, provider.CredentialEncrypted)
 	if err != nil {
-		_ = s.store.FailAIAnalysisJob(r.Context(), request.WorkerID, job.ID, "provider credential cannot be decrypted")
+		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "provider credential cannot be decrypted")
 		http.Error(w, "provider credential cannot be decrypted", http.StatusInternalServerError)
 		return
 	}
@@ -104,7 +113,12 @@ func (s *Server) aiRPCJob(w http.ResponseWriter, r *http.Request) {
 		if !decodeInternalJSON(w, r, &request) {
 			return
 		}
-		if err := validateAIFinding(&request.Finding); err != nil {
+		job, err := s.store.GetAuditReviewJobByID(r.Context(), parts[0])
+		if err != nil {
+			http.Error(w, "unknown review job", http.StatusNotFound)
+			return
+		}
+		if err := s.auditReviews.ValidateReport(r.Context(), job.ReviewID, &request.Report); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -112,12 +126,20 @@ func (s *Server) aiRPCJob(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid AI usage", http.StatusBadRequest)
 			return
 		}
-		request.Finding.JobID = parts[0]
-		job := &model.AIAnalysisJob{ID: parts[0], Output: request.RawOutput, InputTokens: request.InputTokens, OutputTokens: request.OutputTokens}
-		if err := s.store.CompleteAIAnalysisJob(r.Context(), request.WorkerID, job, &request.Finding); err != nil {
+		output, err := json.Marshal(request.Report)
+		if err != nil {
+			http.Error(w, "invalid AI report", http.StatusBadRequest)
+			return
+		}
+		if _, err := s.store.CompleteAuditReviewJob(r.Context(), request.WorkerID, parts[0], output, request.InputTokens, request.OutputTokens); err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
+		if err := s.auditReviews.Advance(r.Context(), job.ReviewID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.publishRealtime("audit", "ai-reviews")
 		w.WriteHeader(http.StatusNoContent)
 	case "fail":
 		var request airpc.FailRequest
@@ -129,7 +151,7 @@ func (s *Server) aiRPCJob(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid failure", http.StatusBadRequest)
 			return
 		}
-		if err := s.store.FailAIAnalysisJob(r.Context(), request.WorkerID, parts[0], request.Error); err != nil {
+		if err := s.store.FailAuditReviewJob(r.Context(), request.WorkerID, parts[0], request.Error); err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
@@ -137,26 +159,6 @@ func (s *Server) aiRPCJob(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
-}
-
-func validateAIFinding(item *model.AIFinding) error {
-	if item == nil || !slices.Contains([]string{"possible_account_sharing", "possible_abuse", "likely_legitimate", "insufficient_evidence"}, item.Classification) || item.Confidence < 0 || item.Confidence > 1 || strings.TrimSpace(item.IncidentID) == "" || strings.TrimSpace(item.ProviderID) == "" || strings.TrimSpace(item.Model) == "" || strings.TrimSpace(item.Summary) == "" || len(item.Summary) > 1000 || len(item.EvidenceRefs) > 32 || len(item.CounterEvidence) > 32 || len(item.RecommendedActions) > 16 {
-		return errors.New("AI finding does not match the required schema")
-	}
-	allowedActions := []string{"notify_admin", "request_manual_review", "propose_temporary_subscription_suspension", "continue_observation"}
-	for _, values := range [][]string{item.EvidenceRefs, item.CounterEvidence} {
-		for _, value := range values {
-			if strings.TrimSpace(value) == "" || len(value) > 500 {
-				return errors.New("AI finding evidence is invalid")
-			}
-		}
-	}
-	for _, action := range item.RecommendedActions {
-		if !slices.Contains(allowedActions, action) {
-			return errors.New("AI finding action is invalid")
-		}
-	}
-	return nil
 }
 
 func decodeInternalJSON(w http.ResponseWriter, r *http.Request, output any) bool {

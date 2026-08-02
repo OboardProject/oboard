@@ -214,6 +214,28 @@ type SubscriptionAccessState = { user_id: number; suspended: boolean; suspended_
 type SubscriptionAuditUserDetail = { summary: SubscriptionAuditUser; sources: SubscriptionAuditDimension[]; regions: SubscriptionAuditDimension[]; clients: SubscriptionAuditDimension[]; formats: SubscriptionAuditDimension[]; recent: SubscriptionPullAudit[]; access: SubscriptionAccessState }
 type CombinedAuditUser = { user_id: number; username: string; nickname: string; risk_level: AuditRiskLevel; risk_score: number; risk_signals: string[]; connection_risk_level: AuditRiskLevel; connection_risk_score: number; connection_observed: boolean; subscription_risk_level: AuditRiskLevel; subscription_risk_score: number; subscription_observed: boolean; subscription_suspended: boolean; last_seen_at: string }
 type CombinedAuditOverview = { window_hours: number; generated_at: string; elevated_risk_count: number; suspended_count: number; users: CombinedAuditUser[] }
+type AuditReviewSelector = { mode: 'all' | 'selected'; ids: number[] }
+type AuditReviewScope = { users: AuditReviewSelector; servers: AuditReviewSelector }
+type AuditReviewReport = {
+  verdict: 'normal' | 'attention' | 'high_risk' | 'insufficient_evidence'
+  risk_level: AuditRiskLevel | 'unknown'
+  confidence: number
+  summary: string
+  dimensions: Array<{ kind: 'subscription' | 'connection' | 'destination'; risk_level: AuditRiskLevel | 'unknown'; summary: string; evidence_refs: string[]; counter_evidence: string[] }>
+  notable_subjects: Array<{ subject_ref: string; risk_level: AuditRiskLevel | 'unknown'; summary: string; evidence_refs: string[] }>
+  recommended_actions: string[]
+  data_gaps: string[]
+  coverage_summary: string
+}
+type AuditReview = {
+  id: string; request_id: string; provider_id: string; requested_by: number; status: string
+  scope: AuditReviewScope; evidence_types: string[]; window_started_at: string; window_ended_at: string; snapshot_at: string
+  privacy_mode: 'masked' | 'raw'; resolved_user_ids: number[]; resolved_server_ids: number[]
+  job_count: number; completed_job_count: number; input_tokens: number; output_tokens: number
+  final_output?: AuditReviewReport; error?: string; created_at: string; updated_at: string; completed_at?: string
+}
+type AuditReviewEvidence = { ref: string; review_id: string; kind: string; user_id?: number; server_id?: number; payload: unknown; created_at: string }
+type AuditReviewJob = { id: string; review_id: string; provider_id: string; stage: number; position: number; kind: string; status: string; input?: unknown; output?: unknown; error?: string; attempts: number; input_tokens: number; output_tokens: number; created_at: string; updated_at: string; completed_at?: string }
 type LimitMode = 'inherit' | 'custom'
 type SessionUser = Pick<User, 'id' | 'username' | 'nickname' | 'role' | 'status' | 'totp_enabled' | 'passkey_count'>
 type UserDraft = { username: string; nickname: string; password?: string; role: Role; status: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; limit_mode: LimitMode }
@@ -2683,12 +2705,13 @@ function AutomationWorkspace({ client, notify, realtimeRevision, realtimeResourc
   const [view, setView] = useState<'access' | 'changes' | 'ai'>('access')
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState('')
-  const [snapshot, setSnapshot] = useState<any>({ principals: [], oauth: [], policies: [], changesets: [], providers: [], jobs: [], findings: [], audits: [], capabilities: [] })
+  const [snapshot, setSnapshot] = useState<any>({ principals: [], oauth: [], policies: [], changesets: [], providers: [], audits: [], capabilities: [] })
   const [serviceDialogOpen, setServiceDialogOpen] = useState(false)
   const [oauthDialogOpen, setOAuthDialogOpen] = useState(false)
   const [policyDialogOpen, setPolicyDialogOpen] = useState(false)
   const [editingServiceID, setEditingServiceID] = useState('')
   const [editingOAuthID, setEditingOAuthID] = useState('')
+  const [editingProviderID, setEditingProviderID] = useState('')
   const [serviceDraft, setServiceDraft] = useState({ name: '', scopes: [] as string[], cidrs: '', serverIDs: '', userIDs: '', rate: 60, concurrency: 4 })
   const [oauthDraft, setOAuthDraft] = useState({ name: '', redirects: 'http://127.0.0.1/callback', scopes: [] as string[] })
   const [providerDraft, setProviderDraft] = useState({ name: '', baseURL: 'https://api.openai.com/v1', model: '', apiKey: '', dailyTokenLimit: 100000, allowRawAudit: false })
@@ -2711,12 +2734,11 @@ function AutomationWorkspace({ client, notify, realtimeRevision, realtimeResourc
   const refresh = async () => {
     setLoading(true)
     try {
-      const [principals, oauth, policies, changesets, providers, jobs, findings, audits, capabilities] = await Promise.all([
+      const [principals, oauth, policies, changesets, providers, audits, capabilities] = await Promise.all([
         client.requestV2('/api-principals'), client.requestV2('/oauth-clients'), client.requestV2('/approval-policies'),
-        client.requestV2('/changesets'), client.requestV2('/ai/providers'), client.requestV2('/ai/jobs'),
-        client.requestV2('/ai/findings'), client.requestV2('/tool-audits'), client.requestV2('/capabilities')
+        client.requestV2('/changesets'), client.requestV2('/ai/providers'), client.requestV2('/tool-audits'), client.requestV2('/capabilities')
       ])
-      setSnapshot({ principals, oauth, policies, changesets, providers, jobs, findings, audits, capabilities })
+      setSnapshot({ principals, oauth, policies, changesets, providers, audits, capabilities })
       setPolicyDraft(current => ({
         ...current,
         principalID: current.principalID || principals.find((item: any) => item.type === 'service_account')?.id || '',
@@ -2816,14 +2838,25 @@ function AutomationWorkspace({ client, notify, realtimeRevision, realtimeResourc
       notify?.(action === 'approve' ? '变更集已批准' : action === 'apply' ? '变更集已执行' : '变更集已校验', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
-  const createProvider = async (event: React.FormEvent) => {
+  const editProvider = (provider: any) => {
+    setEditingProviderID(provider.id)
+    setProviderDraft({ name: provider.name, baseURL: provider.base_url, model: provider.model, apiKey: '', dailyTokenLimit: provider.daily_token_limit || 0, allowRawAudit: Boolean(provider.allow_raw_audit) })
+  }
+  const resetProviderDraft = () => {
+    setEditingProviderID('')
+    setProviderDraft({ name: '', baseURL: 'https://api.openai.com/v1', model: '', apiKey: '', dailyTokenLimit: 100000, allowRawAudit: false })
+  }
+  const saveProvider = async (event: React.FormEvent) => {
     event.preventDefault()
-    setWorking('provider-create')
+    setWorking(editingProviderID ? 'provider-update' : 'provider-create')
     try {
-      await client.requestV2('/ai/providers', { method: 'POST', body: JSON.stringify({ name: providerDraft.name, base_url: providerDraft.baseURL, model: providerDraft.model, api_key: providerDraft.apiKey, enabled: true, allow_raw_audit: providerDraft.allowRawAudit, daily_token_limit: providerDraft.dailyTokenLimit }) })
-      setProviderDraft(current => ({ ...current, name: '', model: '', apiKey: '' }))
+      const payload: Record<string, unknown> = { name: providerDraft.name, base_url: providerDraft.baseURL, model: providerDraft.model, allow_raw_audit: providerDraft.allowRawAudit, daily_token_limit: providerDraft.dailyTokenLimit }
+      if (!editingProviderID || providerDraft.apiKey.trim()) payload.api_key = providerDraft.apiKey
+      if (!editingProviderID) payload.enabled = true
+      await client.requestV2(editingProviderID ? `/ai/providers/${editingProviderID}` : '/ai/providers', { method: editingProviderID ? 'PATCH' : 'POST', body: JSON.stringify(payload) })
+      resetProviderDraft()
       await refresh()
-      notify?.('AI Provider 已保存', 'success')
+      notify?.(editingProviderID ? 'AI Provider 已更新' : 'AI Provider 已保存', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const toggleProvider = async (provider: any) => {
@@ -2831,6 +2864,17 @@ function AutomationWorkspace({ client, notify, realtimeRevision, realtimeResourc
     try {
       await client.requestV2(`/ai/providers/${provider.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: !provider.enabled }) })
       await refresh()
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const deleteProvider = async (provider: any) => {
+    const confirmed = await dialogs.confirm({ title: `删除 ${provider.name}？`, message: '已产生审查记录的 Provider 不能删除，只能停用。', confirmText: '删除', tone: 'danger' })
+    if (!confirmed) return
+    setWorking(`provider-delete-${provider.id}`)
+    try {
+      await client.requestV2(`/ai/providers/${provider.id}`, { method: 'DELETE' })
+      if (editingProviderID === provider.id) resetProviderDraft()
+      await refresh()
+      notify?.('AI Provider 已删除', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
 
@@ -2869,7 +2913,7 @@ function AutomationWorkspace({ client, notify, realtimeRevision, realtimeResourc
     <div className="audit-console-tabs automation-tabs" role="tablist" aria-label="自动化视图">
       <button className={view === 'access' ? 'active' : ''} onClick={() => setView('access')}><Key size={15} />访问凭据</button>
       <button className={view === 'changes' ? 'active' : ''} onClick={() => setView('changes')}><Workflow size={15} />审批与变更</button>
-      <button className={view === 'ai' ? 'active' : ''} onClick={() => setView('ai')}><Bot size={15} />AI 分析</button>
+      <button className={view === 'ai' ? 'active' : ''} onClick={() => setView('ai')}><Bot size={15} />AI Provider</button>
       <button className="ghost icon-button automation-refresh" onClick={() => void refresh()} aria-label="刷新" title="刷新"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
     </div>
     {view === 'access' && <div className="automation-grid">
@@ -2897,26 +2941,18 @@ function AutomationWorkspace({ client, notify, realtimeRevision, realtimeResourc
       </section>
     </div>}
     {view === 'ai' && <div className="automation-grid">
-      <section className="settings-card">
-        <div className="settings-card-head"><div><h3>AI Provider</h3><p className="muted">内置 Worker 使用 OpenAI-compatible 端点，默认只发送脱敏 Incident Bundle。</p></div></div>
-        <form className="form settings-form automation-form" onSubmit={createProvider}>
+      <section className="settings-card automation-wide">
+        <div className="settings-card-head"><div><h3>AI Provider</h3><p className="muted">供审计台的人工 AI 审查使用，默认发送脱敏的历史审计快照。</p></div></div>
+        <form className="form settings-form automation-form" onSubmit={saveProvider}>
           <FormField label="名称"><input required value={providerDraft.name} onChange={event => setProviderDraft({ ...providerDraft, name: event.target.value })} /></FormField>
           <FormField label="Base URL"><input required value={providerDraft.baseURL} onChange={event => setProviderDraft({ ...providerDraft, baseURL: event.target.value })} /></FormField>
           <FormField label="模型"><input required value={providerDraft.model} onChange={event => setProviderDraft({ ...providerDraft, model: event.target.value })} /></FormField>
-          <FormField label="API Key"><input required type="password" autoComplete="new-password" value={providerDraft.apiKey} onChange={event => setProviderDraft({ ...providerDraft, apiKey: event.target.value })} /></FormField>
+          <FormField label="API Key" hint={editingProviderID ? '留空保留当前 Key' : undefined}><input required={!editingProviderID} type="password" autoComplete="new-password" value={providerDraft.apiKey} onChange={event => setProviderDraft({ ...providerDraft, apiKey: event.target.value })} /></FormField>
           <FormField label="每日 Token 上限"><input type="number" min={0} value={providerDraft.dailyTokenLimit} onChange={event => setProviderDraft({ ...providerDraft, dailyTokenLimit: Number(event.target.value) })} /></FormField>
           <label className="toggle-line"><input type="checkbox" checked={providerDraft.allowRawAudit} onChange={event => setProviderDraft({ ...providerDraft, allowRawAudit: event.target.checked })} /><span>允许发送原始审计字段</span></label>
-          <button disabled={Boolean(working)}><Plus size={14} />保存 Provider</button>
+          <div className="automation-form-actions"><button disabled={Boolean(working)}>{editingProviderID ? <Edit3 size={14} /> : <Plus size={14} />}{editingProviderID ? '更新 Provider' : '保存 Provider'}</button>{editingProviderID && <button type="button" className="ghost" onClick={resetProviderDraft}>取消编辑</button>}</div>
         </form>
-        <div className="automation-list">{snapshot.providers.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{item.name}</strong><span>{item.model}</span><small>{item.daily_token_limit ? `每日 ${item.daily_token_limit} Token` : '不设日限额'} · {item.allow_raw_audit ? '原始字段已授权' : '脱敏模式'}</small></div><button className="ghost icon-button" onClick={() => void toggleProvider(item)} title={item.enabled ? '停用' : '启用'} aria-label={item.enabled ? '停用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button></div>)}</div>
-      </section>
-      <section className="settings-card">
-        <div className="settings-card-head"><div><h3>分析队列</h3><p className="muted">按事件触发、指纹去重，模型不可用时规则审计继续运行。</p></div></div>
-        <div className="automation-list">{snapshot.jobs.length ? snapshot.jobs.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{item.incident_id || item.kind}</strong><span>{item.status} · 尝试 {item.attempts}</span><small>{item.input_tokens + item.output_tokens} Token · {formatTableTime(item.created_at)}</small>{item.error && <small className="danger-text">{item.error}</small>}</div></div>) : <p className="muted">暂无 AI 分析任务</p>}</div>
-      </section>
-      <section className="settings-card automation-wide">
-        <div className="settings-card-head"><div><h3>AI 结论</h3><p className="muted">AI 只给出分类、置信度、证据与建议，实际处置仍由策略和管理员决定。</p></div></div>
-        <div className="automation-findings">{snapshot.findings.map((item: any) => <article key={item.id}><div><strong>{item.classification}</strong><span>{Math.round(item.confidence * 100)}%</span></div><p>{item.summary}</p><small>{item.model} · {formatTableTime(item.created_at)}</small></article>)}</div>
+        <div className="automation-list">{snapshot.providers.length ? snapshot.providers.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span></div><span>{item.model} · {item.base_url}</span><small>{item.daily_token_limit ? `每日 ${item.daily_token_limit} Token` : '不设日限额'} · {item.allow_raw_audit ? '原始字段已授权' : '脱敏模式'} · {item.has_credential ? 'Key 已配置' : '缺少 Key'}</small></div><div><button className="ghost icon-button" onClick={() => editProvider(item)} title="编辑或轮换 Key" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void toggleProvider(item)} title={item.enabled ? '停用' : '启用'} aria-label={item.enabled ? '停用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deleteProvider(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><Bot size={20} /><span>还没有 AI Provider</span></div>}</div>
       </section>
     </div>}
     <AnimatePresence>{serviceDialogOpen && <MotionDialogPanel onCancel={() => setServiceDialogOpen(false)} className="automation-dialog">
@@ -4572,7 +4608,7 @@ function ControllerLogsPanel({ client, dialogs, notify, maxMB, backups, setMaxMB
 
 function AuditConsole({ data, client, loading, notify }: any) {
   const dialogs = useDialogs()
-  const [view, setView] = useState<'combined' | 'subscriptions' | 'connections' | 'operations'>('combined')
+  const [view, setView] = useState<'combined' | 'subscriptions' | 'connections' | 'operations' | 'ai'>('combined')
   const [windowHours, setWindowHours] = useState(24)
   const [risk, setRisk] = useState<'all' | AuditRiskLevel>('all')
   const [query, setQuery] = useState('')
@@ -4657,9 +4693,10 @@ function AuditConsole({ data, client, loading, notify }: any) {
       <button type="button" role="tab" aria-selected={view === 'combined'} className={view === 'combined' ? 'active' : ''} onClick={() => setView('combined')}><Gauge size={15} />综合风险</button>
       <button type="button" role="tab" aria-selected={view === 'subscriptions'} className={view === 'subscriptions' ? 'active' : ''} onClick={() => setView('subscriptions')}><Download size={15} />订阅风险</button>
       <button type="button" role="tab" aria-selected={view === 'connections'} className={view === 'connections' ? 'active' : ''} onClick={() => setView('connections')}><Shield size={15} />连接风险</button>
+      {isAdmin && <button type="button" role="tab" aria-selected={view === 'ai'} className={view === 'ai' ? 'active' : ''} onClick={() => setView('ai')}><Bot size={15} />AI 审查</button>}
       <button type="button" role="tab" aria-selected={view === 'operations'} className={view === 'operations' ? 'active' : ''} onClick={() => setView('operations')}><ClipboardList size={15} />操作日志</button>
     </div>
-    {view === 'operations' ? <AuditLogs data={data} loading={loading} embedded /> : <>
+    {view === 'operations' ? <AuditLogs data={data} loading={loading} embedded /> : view === 'ai' && isAdmin ? <AIAuditReviews data={data} client={client} notify={notify} /> : <>
       <div className="audit-overview-grid">
         {view === 'combined' ? <>
           <div><span>审计用户</span><strong>{combinedOverview?.users?.length || 0}</strong><small>{windowHours} 小时历史范围</small></div>
@@ -4729,6 +4766,217 @@ function AuditConsole({ data, client, loading, notify }: any) {
     <AnimatePresence>{connectionDetail && <ConnectionAuditUserDialog detail={connectionDetail} onClose={() => setConnectionDetail(null)} />}</AnimatePresence>
     <AnimatePresence>{subscriptionDetail && <SubscriptionAuditUserDialog detail={subscriptionDetail} canResume={isAdmin} onResume={resumeSubscription} onClose={() => setSubscriptionDetail(null)} />}</AnimatePresence>
   </Panel>
+}
+
+const auditReviewEvidenceOptions = [
+  { value: 'subscription', label: '订阅拉取', description: '拉取频率、来源、客户端与拒绝记录' },
+  { value: 'connection', label: '节点连接', description: '连接来源、并发、服务器与出口摘要' },
+  { value: 'destination', label: '访问目标', description: '连接后的目标域名、地址、端口与次数' },
+]
+
+function localDateTimeValue(date: Date) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 16)
+}
+
+function AIAuditReviews({ data, client, notify }: any) {
+  const [providers, setProviders] = useState<any[]>([])
+  const [reviews, setReviews] = useState<AuditReview[]>([])
+  const [loadingReviews, setLoadingReviews] = useState(true)
+  const [working, setWorking] = useState('')
+  const [createOpen, setCreateOpen] = useState(false)
+  const [detail, setDetail] = useState<{ review: AuditReview; jobs: AuditReviewJob[] } | null>(null)
+  const [evidence, setEvidence] = useState<AuditReviewEvidence[]>([])
+  const [evidenceTotal, setEvidenceTotal] = useState(0)
+  const [draft, setDraft] = useState({
+    providerID: '', userMode: 'all' as 'all' | 'selected', userIDs: [] as string[], serverMode: 'all' as 'all' | 'selected', serverIDs: [] as string[],
+    evidenceTypes: ['subscription', 'connection', 'destination'], timeMode: 'preset' as 'preset' | 'custom', preset: '24h',
+    startedAt: localDateTimeValue(new Date(Date.now() - 24 * 60 * 60 * 1000)), endedAt: localDateTimeValue(new Date()),
+  })
+  const users: User[] = data.users || []
+  const servers: Server[] = data.servers || []
+
+  const refresh = async (quiet = false) => {
+    if (!quiet) setLoadingReviews(true)
+    try {
+      const [providerItems, response] = await Promise.all([client.requestV2('/ai/providers'), client.request('/audit/ai-reviews?limit=100')])
+      setProviders(providerItems || [])
+      setReviews(response.ai_audit_reviews || [])
+      setDraft(current => ({ ...current, providerID: current.providerID || providerItems.find((item: any) => item.enabled && item.has_credential)?.id || '' }))
+    } catch (error: any) {
+      if (!quiet) notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      if (!quiet) setLoadingReviews(false)
+    }
+  }
+  useEffect(() => {
+    void refresh()
+    const timer = window.setInterval(() => void refresh(true), 5000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const openDetail = async (reviewID: string) => {
+    setWorking(`detail-${reviewID}`)
+    try {
+      const [response, evidenceResponse] = await Promise.all([
+        client.request(`/audit/ai-reviews/${reviewID}`),
+        client.request(`/audit/ai-reviews/${reviewID}/evidence?limit=100&offset=0`),
+      ])
+      setDetail({ review: response.ai_audit_review, jobs: response.jobs || [] })
+      setEvidence(evidenceResponse.evidence || [])
+      setEvidenceTotal(Number(evidenceResponse.total || 0))
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  useEffect(() => {
+    if (!detail || detail.review.status !== 'queued' && detail.review.status !== 'running') return
+    const timer = window.setInterval(() => void openDetail(detail.review.id), 5000)
+    return () => window.clearInterval(timer)
+  }, [detail?.review.id, detail?.review.status])
+  const loadMoreEvidence = async () => {
+    if (!detail || evidence.length >= evidenceTotal) return
+    setWorking('evidence-more')
+    try {
+      const response = await client.request(`/audit/ai-reviews/${detail.review.id}/evidence?limit=100&offset=${evidence.length}`)
+      setEvidence(current => [...current, ...(response.evidence || [])])
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const createReview = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setWorking('create')
+    try {
+      const timeRange = draft.timeMode === 'preset'
+        ? { mode: 'preset', preset: draft.preset }
+        : { mode: 'custom', started_at: new Date(draft.startedAt).toISOString(), ended_at: new Date(draft.endedAt).toISOString() }
+      const response = await client.request('/audit/ai-reviews', { method: 'POST', body: JSON.stringify({
+        request_id: makeUUID(), provider_id: draft.providerID,
+        scope: {
+          users: { mode: draft.userMode, ids: draft.userMode === 'selected' ? draft.userIDs.map(Number) : [] },
+          servers: { mode: draft.serverMode, ids: draft.serverMode === 'selected' ? draft.serverIDs.map(Number) : [] },
+        },
+        evidence_types: draft.evidenceTypes, time_range: timeRange,
+      }) })
+      setCreateOpen(false)
+      await refresh(true)
+      notify?.('AI 审查已进入队列', 'success')
+      if (response.ai_audit_review?.id) void openDetail(response.ai_audit_review.id)
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const cancelReview = async (review: AuditReview) => {
+    setWorking(`cancel-${review.id}`)
+    try {
+      await client.request(`/audit/ai-reviews/${review.id}/cancel`, { method: 'POST', body: '{}' })
+      if (detail?.review.id === review.id) setDetail(null)
+      await refresh(true)
+      notify?.('AI 审查已取消', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const toggleEvidence = (value: string) => setDraft(current => ({ ...current, evidenceTypes: current.evidenceTypes.includes(value) ? current.evidenceTypes.filter(item => item !== value) : [...current.evidenceTypes, value] }))
+  const selectedProvider = providers.find(item => item.id === draft.providerID)
+  const canCreate = Boolean(draft.providerID && draft.evidenceTypes.length && (draft.userMode === 'all' || draft.userIDs.length) && (draft.serverMode === 'all' || draft.serverIDs.length) && (draft.timeMode === 'preset' || draft.startedAt && draft.endedAt))
+
+  return <div className="ai-review-workspace">
+    <div className="ai-review-head">
+      <div><strong>综合行为审查</strong><span>基于已保存的审计历史生成建议，不发起节点探测或自动处置。</span></div>
+      <div><button type="button" className="ghost icon-button" onClick={() => void refresh()} disabled={loadingReviews} title="刷新" aria-label="刷新 AI 审查"><RefreshCw size={15} className={loadingReviews ? 'spin' : ''} /></button><button type="button" onClick={() => setCreateOpen(true)} disabled={!providers.some(item => item.enabled && item.has_credential)}><Plus size={15} />新建审查</button></div>
+    </div>
+    {!providers.some(item => item.enabled && item.has_credential) && <div className="audit-paused-notice"><Bot size={16} /><span>请先在自动化页面配置并启用 AI Provider。</span></div>}
+    {loadingReviews && !reviews.length ? <TableSkeleton /> : !reviews.length ? <div className="automation-empty"><Bot size={22} /><span>暂无 AI 审查记录</span></div> : <div className="ai-review-list">{reviews.map(review => {
+      const report = review.final_output
+      const active = review.status === 'queued' || review.status === 'running'
+      const progress = review.job_count ? Math.round(review.completed_job_count / review.job_count * 100) : 0
+      return <article key={review.id} className="ai-review-row">
+        <div className="ai-review-row-main"><div><span className={`audit-risk-pill ${report?.risk_level || (review.status === 'failed' ? 'critical' : 'low')}`}>{auditReviewStatusLabel(review.status, report?.verdict)}</span><strong>{report?.summary || auditReviewScopeLabel(review, users, servers)}</strong></div><p>{auditReviewEvidenceLabel(review.evidence_types)} · {formatTableTime(review.window_started_at)} 至 {formatTableTime(review.window_ended_at)}</p><small>{review.resolved_user_ids.length} 个用户 · {review.resolved_server_ids.length} 台服务器 · {review.privacy_mode === 'raw' ? '原始字段' : '脱敏字段'} · {(review.input_tokens || 0) + (review.output_tokens || 0)} Token</small>{active && <div className="ai-review-progress"><span style={{ width: `${progress}%` }} /></div>}{review.error && <small className="danger-text">{review.error}</small>}</div>
+        <div className="ai-review-row-actions"><button type="button" className="ghost" onClick={() => void openDetail(review.id)} disabled={working === `detail-${review.id}`}>查看</button>{active && <button type="button" className="ghost danger-text" onClick={() => void cancelReview(review)} disabled={Boolean(working)}>取消</button>}</div>
+      </article>
+    })}</div>}
+    <AnimatePresence>{createOpen && <MotionDialogPanel onCancel={() => setCreateOpen(false)} className="ai-review-create-dialog">
+      <header className="dialog-head"><div><h2>新建 AI 审查</h2><p className="muted">指定对象、历史时间与审查维度。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => setCreateOpen(false)} aria-label="关闭" title="关闭"><XIcon /></button></header>
+      <div className="dialog-body"><form id="ai-review-create-form" className="form ai-review-create-form" onSubmit={createReview}>
+        <FormField label="AI Provider" required><Select value={draft.providerID} onChange={event => setDraft({ ...draft, providerID: event.target.value })}>{providers.filter(item => item.enabled && item.has_credential).map(item => <option key={item.id} value={item.id}>{item.name} · {item.model}</option>)}</Select>{selectedProvider?.allow_raw_audit && <small className="ai-review-privacy-warning">该 Provider 已获授权发送原始审计字段</small>}</FormField>
+        <div className="ai-review-scope-grid">
+          <section><div><strong>用户范围</strong><Select variant="segmented" value={draft.userMode} onChange={event => setDraft({ ...draft, userMode: event.target.value as 'all' | 'selected' })}><option value="all">全部用户</option><option value="selected">指定用户</option></Select></div>{draft.userMode === 'selected' && <SearchableMultiSelect value={draft.userIDs} onChange={userIDs => setDraft({ ...draft, userIDs })} options={users.map(user => ({ value: String(user.id), label: user.nickname || user.username, keywords: `${user.username} ${user.id}` }))} placeholder="选择用户" searchPlaceholder="搜索用户" />}</section>
+          <section><div><strong>服务器范围</strong><Select variant="segmented" value={draft.serverMode} onChange={event => setDraft({ ...draft, serverMode: event.target.value as 'all' | 'selected' })}><option value="all">全部服务器</option><option value="selected">指定服务器</option></Select></div>{draft.serverMode === 'selected' && <SearchableMultiSelect value={draft.serverIDs} onChange={serverIDs => setDraft({ ...draft, serverIDs })} options={servers.map(server => ({ value: String(server.id), label: server.name, keywords: `${server.id} ${server.public_ipv4 || ''} ${server.public_ipv6 || ''}` }))} placeholder="选择服务器" searchPlaceholder="搜索服务器" />}</section>
+        </div>
+        <div className="ai-review-evidence-picker">{auditReviewEvidenceOptions.map(option => <label key={option.value} className={draft.evidenceTypes.includes(option.value) ? 'selected' : ''}><input type="checkbox" checked={draft.evidenceTypes.includes(option.value)} onChange={() => toggleEvidence(option.value)} /><span><strong>{option.label}</strong><small>{option.description}</small></span></label>)}</div>
+        <FormField label="历史范围" required><Select variant="segmented" value={draft.timeMode === 'custom' ? 'custom' : draft.preset} onChange={event => event.target.value === 'custom' ? setDraft({ ...draft, timeMode: 'custom' }) : setDraft({ ...draft, timeMode: 'preset', preset: event.target.value })}><option value="1h">1 小时</option><option value="24h">24 小时</option><option value="7d">7 天</option><option value="30d">30 天</option><option value="custom">自定义</option></Select></FormField>
+        {draft.timeMode === 'custom' && <div className="two-column"><FormField label="开始时间" required><input type="datetime-local" required value={draft.startedAt} onChange={event => setDraft({ ...draft, startedAt: event.target.value })} /></FormField><FormField label="结束时间" required><input type="datetime-local" required value={draft.endedAt} onChange={event => setDraft({ ...draft, endedAt: event.target.value })} /></FormField></div>}
+      </form></div>
+      <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setCreateOpen(false)}>取消</button><button type="submit" form="ai-review-create-form" disabled={working === 'create' || !canCreate}><Bot size={15} />开始审查</button></footer>
+    </MotionDialogPanel>}</AnimatePresence>
+    <AnimatePresence>{detail && <AuditReviewDetailDialog detail={detail} evidence={evidence} evidenceTotal={evidenceTotal} client={client} working={working} onLoadMore={() => void loadMoreEvidence()} onClose={() => setDetail(null)} />}</AnimatePresence>
+  </div>
+}
+
+function AuditReviewDetailDialog({ detail, evidence, evidenceTotal, client, working, onLoadMore, onClose }: { detail: { review: AuditReview; jobs: AuditReviewJob[] }; evidence: AuditReviewEvidence[]; evidenceTotal: number; client: any; working: string; onLoadMore: () => void; onClose: () => void }) {
+  const dialogs = useDialogs()
+  const report = detail.review.final_output
+  const showJob = async (job: AuditReviewJob) => {
+    try {
+      const response = await client.request(`/audit/ai-reviews/${detail.review.id}/jobs/${job.id}`)
+      const item: AuditReviewJob = response.job
+      await dialogs.alert({ title: `任务阶段 ${item.stage + 1} · #${item.position + 1}`, message: <div className="ai-review-raw-grid"><section><strong>输入</strong><CopyBlock value={JSON.stringify(item.input || {}, null, 2)} /></section><section><strong>输出</strong><CopyBlock value={JSON.stringify(item.output || {}, null, 2)} /></section></div> })
+    } catch (error: any) {
+      await dialogs.alert({ title: '无法读取任务', message: localizeErrorMessage(error?.message || error) })
+    }
+  }
+  const showEvidence = (item: AuditReviewEvidence) => dialogs.alert({ title: item.ref, message: <div className="raw-log-copy"><CopyBlock value={JSON.stringify(item.payload || {}, null, 2)} /></div> })
+  return <MotionDialogPanel onCancel={onClose} className="audit-detail-dialog ai-review-detail-dialog">
+    <header className="dialog-head"><div><h2>AI 审查详情</h2><p className="muted">{formatTableTime(detail.review.created_at)} · {auditReviewStatusLabel(detail.review.status, report?.verdict)}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>
+    <div className="dialog-body ai-review-detail-body">
+      <div className="ai-review-detail-meta"><span>{auditReviewEvidenceLabel(detail.review.evidence_types)}</span><span>{detail.review.resolved_user_ids.length} 个用户</span><span>{detail.review.resolved_server_ids.length} 台服务器</span><span>{detail.review.privacy_mode === 'raw' ? '原始字段' : '脱敏字段'}</span><span>{detail.review.completed_job_count}/{detail.review.job_count} 个任务完成</span></div>
+      {report ? <div className="ai-review-report">
+        <section className="ai-review-report-summary"><span className={`audit-risk-pill ${report.risk_level}`}>{auditReviewVerdictLabel(report.verdict)} · {Math.round(report.confidence * 100)}%</span><h3>{report.summary}</h3><p>{report.coverage_summary}</p></section>
+        {report.dimensions?.length > 0 && <section><h3>分项判断</h3><div className="ai-review-report-list">{report.dimensions.map((item, index) => <article key={`${item.kind}-${index}`}><div><strong>{auditReviewEvidenceLabel([item.kind])}</strong><span className={`audit-risk-pill ${item.risk_level}`}>{auditReviewRiskLabel(item.risk_level)}</span></div><p>{item.summary}</p><small>证据：{item.evidence_refs.join('、') || '无'}{item.counter_evidence.length ? ` · 反证：${item.counter_evidence.join('、')}` : ''}</small></article>)}</div></section>}
+        {report.notable_subjects?.length > 0 && <section><h3>关注对象</h3><div className="ai-review-report-list">{report.notable_subjects.map((item, index) => <article key={`${item.subject_ref}-${index}`}><div><strong>{item.subject_ref}</strong><span className={`audit-risk-pill ${item.risk_level}`}>{auditReviewRiskLabel(item.risk_level)}</span></div><p>{item.summary}</p><small>{item.evidence_refs.join('、')}</small></article>)}</div></section>}
+        <div className="ai-review-report-columns"><section><h3>建议</h3>{report.recommended_actions?.length ? <ul>{report.recommended_actions.map(item => <li key={item}>{auditReviewActionLabel(item)}</li>)}</ul> : <p className="muted">无</p>}</section><section><h3>数据缺口</h3>{report.data_gaps?.length ? <ul>{report.data_gaps.map(item => <li key={item}>{item}</li>)}</ul> : <p className="muted">无</p>}</section></div>
+      </div> : <div className="ai-review-pending"><Bot size={20} /><strong>{detail.review.status === 'failed' ? '审查失败' : detail.review.status === 'cancelled' ? '审查已取消' : '正在生成综合判断'}</strong>{detail.review.error && <span>{detail.review.error}</span>}</div>}
+      <section className="ai-review-technical"><div className="audit-recent-head"><h3>证据快照</h3><span>{evidence.length}/{evidenceTotal}</span></div><div className="ai-review-technical-list">{evidence.map(item => <button type="button" className="ghost" key={item.ref} onClick={() => void showEvidence(item)}><span><strong>{item.ref}</strong><small>{item.kind}</small></span><Eye size={14} /></button>)}</div>{evidence.length < evidenceTotal && <button type="button" className="ghost" onClick={onLoadMore} disabled={working === 'evidence-more'}>加载更多证据</button>}</section>
+      <section className="ai-review-technical"><div className="audit-recent-head"><h3>模型任务</h3><span>{detail.jobs.length} 个</span></div><div className="ai-review-technical-list">{detail.jobs.map(job => <button type="button" className="ghost" key={job.id} onClick={() => void showJob(job)}><span><strong>阶段 {job.stage + 1} · 任务 {job.position + 1}</strong><small>{job.kind === 'synthesis' ? '综合归并' : '证据分析'} · {auditReviewStatusLabel(job.status)} · 尝试 {job.attempts}</small></span><Eye size={14} /></button>)}</div></section>
+    </div>
+  </MotionDialogPanel>
+}
+
+function auditReviewStatusLabel(status: string, verdict?: string) {
+  if (status === 'succeeded' && verdict) return auditReviewVerdictLabel(verdict)
+  return ({ queued: '等待处理', running: '审查中', succeeded: '已完成', failed: '失败', cancelled: '已取消', pending: '等待处理' } as Record<string, string>)[status] || status
+}
+
+function auditReviewVerdictLabel(value: string) {
+  return ({ normal: '正常', attention: '需要关注', high_risk: '高风险', insufficient_evidence: '证据不足' } as Record<string, string>)[value] || value
+}
+
+function auditReviewRiskLabel(value: string) {
+  return value === 'unknown' ? '未知' : auditRiskLabel(value as AuditRiskLevel)
+}
+
+function auditReviewEvidenceLabel(values: string[]) {
+  return values.map(value => ({ subscription: '订阅拉取', connection: '节点连接', destination: '访问目标' } as Record<string, string>)[value] || value).join('、')
+}
+
+function auditReviewActionLabel(value: string) {
+  return ({ notify_admin: '通知管理员', request_manual_review: '安排人工复核', continue_observation: '继续观察', inspect_user: '检查用户', inspect_server: '检查服务器', propose_temporary_subscription_suspension: '考虑临时暂停订阅拉取' } as Record<string, string>)[value] || value
+}
+
+function auditReviewScopeLabel(review: AuditReview, users: User[], servers: Server[]) {
+  const userLabel = review.scope.users.mode === 'all' ? '全部用户' : review.scope.users.ids.map(id => users.find(user => user.id === id)?.nickname || users.find(user => user.id === id)?.username || `用户 #${id}`).join('、')
+  const serverLabel = review.scope.servers.mode === 'all' ? '全部服务器' : review.scope.servers.ids.map(id => servers.find(server => server.id === id)?.name || `服务器 #${id}`).join('、')
+  return `${userLabel} × ${serverLabel}`
 }
 
 function auditRiskLabel(level: AuditRiskLevel) {

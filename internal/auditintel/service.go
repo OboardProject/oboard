@@ -71,7 +71,7 @@ func (s *Service) EvaluateUser(ctx context.Context, userID int64) (*model.AuditI
 	}
 	now := s.now().UTC()
 	windowStart := now.Add(-15 * time.Minute)
-	features, representative := extractFeatures(detail.Recent, windowStart, true)
+	features, _ := extractFeatures(detail.Recent, windowStart, true)
 	featuresJSON, _ := json.Marshal(features)
 	prior, err := s.store.ListAuditFeatureSnapshots(ctx, userID, "15m", 14)
 	if err != nil {
@@ -98,24 +98,6 @@ func (s *Service) EvaluateUser(ctx context.Context, userID int64) (*model.AuditI
 	incident := &model.AuditIncident{ID: incidentID, UserID: userID, Status: "open", Severity: severity(ruleScore, anomaly), RuleScore: ruleScore, AnomalyScore: anomaly, Fingerprint: fingerprint, LatestSnapshotID: snapshot.ID}
 	if err := s.store.UpsertAuditIncident(ctx, incident); err != nil {
 		return nil, err
-	}
-	providerID, err := s.store.FirstEnabledAIProviderID(ctx)
-	if err == nil {
-		privacyMode, bundleUserID := "masked", s.anonymizedUserID(userID)
-		if provider, providerErr := s.store.GetAIProvider(ctx, providerID); providerErr == nil && provider.AllowRawAudit {
-			privacyMode, bundleUserID = "raw", strconv.FormatInt(userID, 10)
-			_, representative = extractFeatures(detail.Recent, windowStart, false)
-		}
-		bundle := model.IncidentBundle{IncidentID: incident.ID, UserID: bundleUserID, RuleScore: ruleScore, AnomalyScore: anomaly, Features: featuresJSON, RepresentativeEvents: representative, HistoricalBaseline: baselineJSON(prior), KnownExemptions: []string{}, PrivacyMode: privacyMode}
-		input, _ := json.Marshal(bundle)
-		jobID, idErr := randomID("aij")
-		if idErr != nil {
-			return nil, idErr
-		}
-		_, err = s.store.CreateAIAnalysisJobIfAbsent(ctx, &model.AIAnalysisJob{ID: jobID, Kind: "audit_incident", IncidentID: incident.ID, ProviderID: providerID, Fingerprint: fingerprint, Input: input}, 6*time.Hour)
-		if err != nil {
-			return nil, err
-		}
 	}
 	return incident, nil
 }

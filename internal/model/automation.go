@@ -198,42 +198,6 @@ type AIProvider struct {
 	CredentialEncrypted string     `json:"-"`
 }
 
-type AIAnalysisJob struct {
-	ID           string          `json:"id"`
-	Kind         string          `json:"kind"`
-	IncidentID   string          `json:"incident_id,omitempty"`
-	ProviderID   string          `json:"provider_id"`
-	Fingerprint  string          `json:"fingerprint"`
-	Status       string          `json:"status"`
-	Input        json.RawMessage `json:"input"`
-	Output       json.RawMessage `json:"output,omitempty"`
-	Error        string          `json:"error,omitempty"`
-	Attempts     int             `json:"attempts"`
-	InputTokens  int64           `json:"input_tokens"`
-	OutputTokens int64           `json:"output_tokens"`
-	LeaseOwner   string          `json:"-"`
-	LeaseUntil   *time.Time      `json:"-"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
-	CompletedAt  *time.Time      `json:"completed_at,omitempty"`
-}
-
-type AIFinding struct {
-	ID                 string    `json:"id"`
-	JobID              string    `json:"job_id"`
-	IncidentID         string    `json:"incident_id"`
-	Classification     string    `json:"classification"`
-	Confidence         float64   `json:"confidence"`
-	EvidenceRefs       []string  `json:"evidence_refs"`
-	CounterEvidence    []string  `json:"counter_evidence"`
-	RecommendedActions []string  `json:"recommended_actions"`
-	Summary            string    `json:"summary"`
-	ProviderID         string    `json:"provider_id"`
-	Model              string    `json:"model"`
-	PromptVersion      string    `json:"prompt_version"`
-	CreatedAt          time.Time `json:"created_at"`
-}
-
 type AuditFeatureSnapshot struct {
 	ID              string          `json:"id"`
 	UserID          int64           `json:"user_id"`
@@ -261,18 +225,6 @@ type AuditIncident struct {
 	OpenedAt         time.Time  `json:"opened_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 	ResolvedAt       *time.Time `json:"resolved_at,omitempty"`
-}
-
-type IncidentBundle struct {
-	IncidentID           string          `json:"incident_id"`
-	UserID               string          `json:"user_id"`
-	RuleScore            int             `json:"rule_score"`
-	AnomalyScore         *int            `json:"anomaly_score,omitempty"`
-	Features             json.RawMessage `json:"features"`
-	RepresentativeEvents []any           `json:"representative_events"`
-	HistoricalBaseline   json.RawMessage `json:"historical_baseline"`
-	KnownExemptions      []string        `json:"known_exemptions"`
-	PrivacyMode          string          `json:"privacy_mode"`
 }
 
 type OperatorFeedback struct {

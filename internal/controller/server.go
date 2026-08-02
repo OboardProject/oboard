@@ -32,6 +32,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/auditintel"
+	"github.com/OboardProject/oboard/internal/auditreview"
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/backup"
 	"github.com/OboardProject/oboard/internal/capability"
@@ -73,6 +74,7 @@ type Server struct {
 	capabilities  *capability.Catalog
 	automation    *automation.Service
 	auditIntel    *auditintel.Service
+	auditReviews  *auditreview.Service
 	apiGateMu     sync.Mutex
 	apiInFlight   map[string]int
 	// basePath is the immutable startup fallback for direct test constructors.
@@ -137,7 +139,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	}
 	socketPath := strings.TrimSpace(os.Getenv("OBOARD_CONTROLLER_UPDATER_SOCKET"))
 	catalog := capability.NewCatalog()
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditintel.New(store, sessionSecret), apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditintel.New(store, sessionSecret), auditReviews: auditreview.New(store, sessionSecret), apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}}
 	s.initializeTrustedProxies()
 	s.registerAutomationHandlers()
 	s.restoreBasePathState(context.Background(), basePath)
@@ -276,6 +278,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/audit/risk-overview", s.auth(s.combinedAuditOverview, model.RoleOperator))
 	mux.HandleFunc("/api/v1/audit/subscriptions/overview", s.auth(s.subscriptionAuditOverview, model.RoleOperator))
 	mux.HandleFunc("/api/v1/audit/subscriptions/users/", s.auth(s.subscriptionAuditUser, model.RoleOperator))
+	mux.HandleFunc("/api/v1/audit/ai-reviews", s.auth(s.auditAIReviews, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/audit/ai-reviews/", s.auth(s.auditAIReview, model.RoleAdmin))
 	s.registerAPIV2Routes(mux)
 	s.registerOAuthRoutes(mux)
 	mcpHandler := s.newMCPHandler()
@@ -1738,6 +1742,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			err = addServers()
+		}
+		if err == nil && roleAllows(role, model.RoleAdmin) {
+			err = addUsers()
 		}
 		if err == nil {
 			var connectionOverview model.ConnectionAuditOverview
