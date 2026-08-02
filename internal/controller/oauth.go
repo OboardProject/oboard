@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
+	"io"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -35,7 +36,7 @@ func (s *Server) registerOAuthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/oauth/authorize", s.auth(s.oauthAuthorize, model.RoleViewer))
 	mux.HandleFunc("/oauth/token", s.oauthToken)
 	mux.HandleFunc("/oauth/revoke", s.oauthRevoke)
-	mux.HandleFunc("/oauth/register", s.auth(s.oauthRegister, model.RoleAdmin))
+	mux.HandleFunc("/oauth/register", s.oauthDynamicRegister)
 	mux.HandleFunc("/api/v2/oauth-clients", s.auth(s.oauthClients, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/oauth-clients/", s.auth(s.oauthClient, model.RoleAdmin))
 }
@@ -91,6 +92,94 @@ func (s *Server) oauthRegister(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"client_id": item.ID, "client_name": item.Name, "redirect_uris": item.RedirectURIs, "scope": strings.Join(item.AllowedScopes, " "), "token_endpoint_auth_method": "none"})
 }
 
+type oauthDynamicRegistrationRequest struct {
+	RedirectURIs            []string `json:"redirect_uris"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+	GrantTypes              []string `json:"grant_types"`
+	ResponseTypes           []string `json:"response_types"`
+	ClientName              string   `json:"client_name"`
+	Scope                   string   `json:"scope"`
+}
+
+func (s *Server) oauthDynamicRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		oauthError(w, http.StatusMethodNotAllowed, "invalid_request", "method not allowed")
+		return
+	}
+	allowed, err := s.store.AllowRate(r.Context(), security.HashSecret("oauth-register:"+clientIP(r)), 10, time.Hour, 10_000)
+	if err != nil {
+		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "registration rate limit is unavailable")
+		return
+	}
+	if !allowed {
+		oauthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "registration rate limit exceeded")
+		return
+	}
+	var input oauthDynamicRegistrationRequest
+	if !decodeOAuthRegistration(w, r, &input) {
+		return
+	}
+	if input.TokenEndpointAuthMethod != "" && input.TokenEndpointAuthMethod != "none" {
+		oauthError(w, http.StatusBadRequest, "invalid_client_metadata", "token_endpoint_auth_method must be none")
+		return
+	}
+	if !oauthRegistrationValuesAllowed(input.GrantTypes, "authorization_code", "refresh_token") || !oauthRegistrationValuesAllowed(input.ResponseTypes, "code") {
+		oauthError(w, http.StatusBadRequest, "invalid_client_metadata", "unsupported OAuth grant or response type")
+		return
+	}
+	scopes := strings.Fields(input.Scope)
+	if len(scopes) == 0 {
+		scopes = s.allCapabilityScopes()
+	}
+	if strings.TrimSpace(input.ClientName) == "" {
+		input.ClientName = "Remote MCP Client"
+	}
+	item, err := s.newOAuthClient(input.ClientName, input.RedirectURIs, scopes)
+	if err != nil {
+		oauthError(w, http.StatusBadRequest, "invalid_client_metadata", err.Error())
+		return
+	}
+	item.ClientMetadata = json.RawMessage(`{"registration":"dynamic"}`)
+	if err := s.store.CreateOAuthClient(r.Context(), item); err != nil {
+		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"client_id":                  item.ID,
+		"client_id_issued_at":        item.CreatedAt.Unix(),
+		"client_name":                item.Name,
+		"redirect_uris":              item.RedirectURIs,
+		"scope":                      strings.Join(item.AllowedScopes, " "),
+		"grant_types":                []string{"authorization_code", "refresh_token"},
+		"response_types":             []string{"code"},
+		"token_endpoint_auth_method": "none",
+	})
+}
+
+func decodeOAuthRegistration(w http.ResponseWriter, r *http.Request, output any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(output); err != nil {
+		oauthError(w, http.StatusBadRequest, "invalid_client_metadata", "invalid client metadata")
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		oauthError(w, http.StatusBadRequest, "invalid_client_metadata", "invalid client metadata")
+		return false
+	}
+	return true
+}
+
+func oauthRegistrationValuesAllowed(values []string, allowed ...string) bool {
+	for _, value := range values {
+		if !slices.Contains(allowed, value) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) oauthClients(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		s.oauthRegister(w, r)
@@ -128,11 +217,29 @@ func (s *Server) newOAuthClient(name string, redirects, scopes []string) (*model
 			return nil, errors.New("unknown scope: " + scope)
 		}
 	}
+	slices.Sort(scopes)
+	scopes = slices.Compact(scopes)
 	random, err := security.RandomToken(18)
 	if err != nil {
 		return nil, err
 	}
 	return &model.OAuthClient{ID: "oc_" + random, Name: name, RedirectURIs: slices.Compact(redirects), AllowedScopes: slices.Compact(scopes), ClientMetadata: json.RawMessage(`{}`), Enabled: true}, nil
+}
+
+func (s *Server) writeMCPAuthenticationRequired(w http.ResponseWriter, r *http.Request, invalidToken bool) {
+	base, err := s.publicBaseURL(r.Context())
+	if err != nil {
+		v2Error(w, r, http.StatusServiceUnavailable, "oauth_metadata_unavailable", err.Error())
+		return
+	}
+	challenge := "Bearer resource_metadata=" + strconv.Quote(base+"/.well-known/oauth-protected-resource")
+	code, message := "unauthorized", "需要 OAuth 登录或 Service Account Token"
+	if invalidToken {
+		challenge += `, error="invalid_token", error_description="The access token is invalid or expired"`
+		code, message = "invalid_token", "访问 Token 无效或已过期"
+	}
+	w.Header().Set("WWW-Authenticate", challenge)
+	v2Error(w, r, http.StatusUnauthorized, code, message)
 }
 
 type oauthAuthorizationRequest struct {

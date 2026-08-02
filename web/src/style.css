@@ -9091,6 +9091,26 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .automation-panel { min-width: 0; }
 .automation-tabs { display: flex; align-items: center; }
 .automation-tabs .automation-refresh { margin-left: auto; width: 34px; padding: 0; }
+.automation-access-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 14px;
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--border);
+}
+.automation-access-toolbar > div { display: grid; min-width: 0; gap: 2px; }
+.automation-access-toolbar strong { color: var(--text-strong); font-size: 13px; }
+.automation-access-toolbar span { color: var(--muted); font-size: 11px; }
+.automation-access-toolbar > button,
+.automation-token-issue {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
 .automation-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -9159,6 +9179,76 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 .automation-empty button { margin-top: 2px; }
 .automation-dialog { width: min(760px, 100%); max-height: min(90vh, 860px); }
+.automation-connect-dialog { width: min(920px, 100%); max-height: min(92vh, 920px); }
+.automation-connect-body,
+.automation-connect-results,
+.automation-token-setup { display: grid; gap: 16px; }
+.automation-connect-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.automation-connect-choices > div { display: grid; min-width: 0; gap: 7px; }
+.automation-connect-choices > div > span,
+.automation-connect-endpoint > span { color: var(--muted); font-size: 11px; }
+.automation-connect-segments {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  min-width: 0;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.automation-connect-segments button {
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 9px;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+}
+.automation-connect-segments button.active { color: var(--primary-contrast); background: var(--primary); }
+.automation-connect-endpoint { display: grid; gap: 7px; min-width: 0; }
+.automation-connect-endpoint .copy-block {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.automation-connect-notice,
+.automation-token-once,
+.automation-connect-blocked {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.automation-connect-notice > div,
+.automation-token-once > div,
+.automation-connect-blocked > div { display: grid; min-width: 0; gap: 2px; }
+.automation-connect-notice strong,
+.automation-token-once strong,
+.automation-connect-blocked strong { color: var(--text-strong); font-size: 12.5px; }
+.automation-connect-notice span,
+.automation-token-once span,
+.automation-connect-blocked span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.automation-token-once { border-color: color-mix(in srgb, var(--warning) 28%, var(--border)); background: color-mix(in srgb, var(--warning) 7%, var(--surface-solid)); }
+.automation-token-issue { justify-self: start; }
+.automation-connect-empty { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; }
+.automation-connect-output { display: grid; min-width: 0; gap: 7px; }
+.automation-connect-output-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.automation-connect-output-head strong { color: var(--text-strong); font-size: 12.5px; }
+.automation-connect-output-head span { color: var(--muted); font-size: 10.5px; text-align: right; }
+.automation-connect-results { padding-top: 2px; }
+.automation-connect-results > section + section { padding-top: 16px; border-top: 1px solid var(--border); }
+.automation-environment-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.automation-connect-prompt .command-copy pre { max-height: 340px; }
 .automation-dialog-form { display: grid; gap: 16px; }
 .automation-dialog-form .two-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .automation-permission-picker,
@@ -9270,6 +9360,17 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 	}
 	.automation-tabs button:not(.automation-refresh) svg { display: none; }
 	.automation-tabs .automation-refresh { margin-left: 0; }
+	.automation-access-toolbar { align-items: flex-start; }
+	.automation-access-toolbar > button { padding-inline: 10px; }
+	.automation-access-toolbar > button svg { display: none; }
+	.automation-connect-choices,
+	.automation-environment-grid { grid-template-columns: 1fr; }
+	.automation-connect-segments { grid-auto-flow: row; grid-auto-rows: minmax(34px, auto); }
+	.automation-connect-notice,
+	.automation-token-once,
+	.automation-connect-blocked { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+	.automation-connect-blocked > button { grid-column: 1 / -1; width: 100%; }
+	.automation-connect-empty { align-items: flex-start; flex-direction: column; }
 	.automation-form .form-field { grid-template-columns: minmax(0, 1fr); }
 	.automation-form .form-field-meta { padding-top: 0; }
 	.automation-form .form-field-control,

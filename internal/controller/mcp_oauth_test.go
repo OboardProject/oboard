@@ -68,6 +68,76 @@ func TestMCPUsesServicePrincipalAndRecordsAudit(t *testing.T) {
 	}
 }
 
+func TestMCPAuthenticationChallengeUsesConfiguredBasePath(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com/hidden"); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(db, "test-secret", "", "/hidden", nil).Handler()
+	for _, authorization := range []string{"", "Bearer oba_invalid"} {
+		req := httptest.NewRequest(http.MethodPost, "/hidden/mcp", nil)
+		if authorization != "" {
+			req.Header.Set("Authorization", authorization)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("authorization=%q status=%d body=%s", authorization, response.Code, response.Body.String())
+		}
+		want := `resource_metadata="https://panel.example.com/hidden/.well-known/oauth-protected-resource"`
+		if challenge := response.Header().Get("WWW-Authenticate"); !strings.Contains(challenge, want) {
+			t.Fatalf("authorization=%q challenge=%q, want %q", authorization, challenge, want)
+		}
+	}
+}
+
+func TestOAuthDynamicRegistrationIsPublicAndBounded(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := newTestServer(db, "test-secret", "").Handler()
+	register := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/oauth/register", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+	first := register(`{"client_name":"Codex","redirect_uris":["http://127.0.0.1:8765/callback"],"token_endpoint_auth_method":"none","grant_types":["authorization_code","refresh_token"],"response_types":["code"],"software_id":"codex"}`)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("registration status=%d body=%s", first.Code, first.Body.String())
+	}
+	var registration map[string]any
+	if err := json.Unmarshal(first.Body.Bytes(), &registration); err != nil {
+		t.Fatal(err)
+	}
+	clientID, _ := registration["client_id"].(string)
+	client, err := db.GetOAuthClient(context.Background(), clientID)
+	if err != nil || len(client.AllowedScopes) == 0 || !strings.Contains(string(client.ClientMetadata), `"registration":"dynamic"`) {
+		t.Fatalf("dynamic client=%#v err=%v", client, err)
+	}
+	invalid := register(`{"client_name":"Secret client","redirect_uris":["http://localhost:8765/callback"],"token_endpoint_auth_method":"client_secret_post"}`)
+	if invalid.Code != http.StatusBadRequest || !strings.Contains(invalid.Body.String(), "invalid_client_metadata") {
+		t.Fatalf("invalid registration status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+	for index := 0; index < 8; index++ {
+		response := register(`{"client_name":"Claude Code","redirect_uris":["http://localhost:8765/callback"]}`)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("registration %d status=%d body=%s", index, response.Code, response.Body.String())
+		}
+	}
+	limited := register(`{"client_name":"Limited","redirect_uris":["http://localhost:8765/callback"]}`)
+	if limited.Code != http.StatusTooManyRequests {
+		t.Fatalf("limited registration status=%d body=%s", limited.Code, limited.Body.String())
+	}
+}
+
 func TestOAuthAuthorizationCodePKCEAndSingleUse(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

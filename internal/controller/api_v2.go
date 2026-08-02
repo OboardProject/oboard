@@ -189,12 +189,20 @@ func (s *Server) apiAuth(next http.HandlerFunc, minimumRole model.Role) http.Han
 		if strings.HasPrefix(token, "oba_") {
 			stored, err := s.authenticateOAuthToken(r, token)
 			if err != nil {
+				if r.URL.Path == "/mcp" {
+					s.writeMCPAuthenticationRequired(w, r, true)
+					return
+				}
 				v2Error(w, r, http.StatusUnauthorized, "invalid_token", "OAuth access token 无效或已过期")
 				return
 			}
 			source, _ := netip.ParseAddr(clientIP(r))
 			principal := application.Principal{ID: stored.ID, UserID: stored.OwnerUserID, Name: stored.Name, Type: stored.Type, Scopes: stored.Scopes, ResourceFilter: stored.ResourceFilter, SourceIP: source, ClientName: r.Header.Get("User-Agent")}
 			s.machinePrincipalAuth(next, w, r, principal)
+			return
+		}
+		if r.URL.Path == "/mcp" {
+			s.writeMCPAuthenticationRequired(w, r, authorization != "")
 			return
 		}
 		s.auth(func(w http.ResponseWriter, r *http.Request) {
@@ -214,6 +222,10 @@ func (s *Server) machineAPIAuth(next http.HandlerFunc, w http.ResponseWriter, r 
 	now := time.Now().UTC()
 	stored, _, err := s.store.AuthenticateAPIToken(r.Context(), security.HashAPISecret(s.sessionSecret, token), now)
 	if err != nil {
+		if r.URL.Path == "/mcp" {
+			s.writeMCPAuthenticationRequired(w, r, true)
+			return
+		}
 		v2Error(w, r, http.StatusUnauthorized, "invalid_token", "API token 无效或已过期")
 		return
 	}
