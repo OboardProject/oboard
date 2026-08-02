@@ -1140,6 +1140,18 @@ class SupersededAuthRequestError extends Error {
   }
 }
 
+class APIRequestError extends Error {
+  status: number
+  payload: any
+
+  constructor(message: string, status: number, payload: any) {
+    super(message)
+    this.name = 'APIRequestError'
+    this.status = status
+    this.payload = payload
+  }
+}
+
 function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
   const csrf = token === 'cookie' ? sessionStorage.getItem('oboard.csrf') || '' : ''
   const authHeaders: Record<string, string> = token && token !== 'cookie' ? { authorization: `Bearer ${token}` } : {}
@@ -1161,7 +1173,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
         if (!onUnauthorized(token)) throw new SupersededAuthRequestError()
         throw new Error('登录已过期，请重新登录')
       }
-      throw new Error(localizeErrorMessage(data.error || res.statusText))
+      throw new APIRequestError(localizeErrorMessage(data.error || res.statusText), res.status, data)
     }
     return data
   }
@@ -1182,7 +1194,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
         if (!onUnauthorized(token)) throw new SupersededAuthRequestError()
         throw new Error('登录已过期，请重新登录')
       }
-      throw new Error(localizeErrorMessage(payload?.error?.message || payload?.error || res.statusText))
+      throw new APIRequestError(localizeErrorMessage(payload?.error?.message || payload?.error || res.statusText), res.status, payload)
     }
     return payload.data as T
   }
@@ -1250,10 +1262,11 @@ function App() {
   const [restoreError, setRestoreError] = useState('')
   const [, setAttentionDismissRevision] = useState(0)
   const loadSeq = useRef(0)
+  const pageRequestEpochRef = useRef(0)
   // Per-tab page-data cache so tab switches can crossfade into last-known content
   // instead of blanking the stage while the network request is in flight.
   const pageCacheRef = useRef<Record<string, any>>({})
-  const pageRequestRef = useRef<Record<string, Promise<any>>>({})
+  const pageRequestRef = useRef<Record<string, Promise<{ data: any; epoch: number }>>>({})
   const preloadedTabsRef = useRef(new Set<string>())
   const { dialogs, dialog, setDialog } = useDialogController()
   const client = useMemo(() => api(token, failedToken => {
@@ -1267,6 +1280,7 @@ function App() {
     setSessionUser(null)
     setData({})
     pageCacheRef.current = {}
+    pageRequestEpochRef.current++
     pageRequestRef.current = {}
     preloadedTabsRef.current.clear()
     showToast(setToast, '登录已过期，请重新登录')
@@ -1357,16 +1371,31 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isMobile, isSidebarOpen])
 
-  const requestPageData = (page: string) => {
+  const invalidatePageDataRequests = () => {
+    pageRequestEpochRef.current++
+    pageRequestRef.current = {}
+  }
+
+  const requestPageData = (page: string, forceFresh = false) => {
+    if (forceFresh) invalidatePageDataRequests()
     const pending = pageRequestRef.current[page]
     if (pending) return pending
+    const epoch = pageRequestEpochRef.current
     const request = client.request(`/page-data?page=${encodeURIComponent(page)}`)
-      .finally(() => { delete pageRequestRef.current[page] })
+      .then(data => ({ data, epoch }))
     pageRequestRef.current[page] = request
+    void request.then(
+      () => {
+        if (pageRequestRef.current[page] === request) delete pageRequestRef.current[page]
+      },
+      () => {
+        if (pageRequestRef.current[page] === request) delete pageRequestRef.current[page]
+      },
+    )
     return request
   }
 
-  const load = async (targetTab?: string, opts?: { background?: boolean }) => {
+  const load = async (targetTab?: string, opts?: { background?: boolean; forceFresh?: boolean }) => {
     if (!token) return
     const page = typeof targetTab === 'string' && targetTab ? targetTab : tab
     if (page === 'automation') {
@@ -1381,7 +1410,9 @@ function App() {
     // Background revalidation must not flash skeletons during a crossfade.
     if (!background) setLoading(true)
     try {
-      const next = await requestPageData(page)
+      const response = await requestPageData(page, Boolean(opts?.forceFresh))
+      if (response.epoch !== pageRequestEpochRef.current) return
+      const next = response.data
       if (requestToken !== activeTokenRef.current) return
       if (next.current_user && seq === loadSeq.current) {
         setSessionUser(next.current_user)
@@ -1422,8 +1453,10 @@ function App() {
         if (cancelled || requestToken !== activeTokenRef.current) return
         preloadedTabsRef.current.add(page)
         try {
-          const next = await requestPageData(page)
+          const response = await requestPageData(page)
           if (cancelled || requestToken !== activeTokenRef.current) return
+          if (response.epoch !== pageRequestEpochRef.current) continue
+          const next = response.data
           pageCacheRef.current[page] = { ...next, load_errors: [] as string[] }
         } catch {
           // Foreground navigation will retry and surface errors when needed.
@@ -1550,6 +1583,7 @@ function App() {
       setSessionUser(null)
       setData({})
       pageCacheRef.current = {}
+      pageRequestEpochRef.current++
       pageRequestRef.current = {}
       preloadedTabsRef.current.clear()
       setIsSidebarOpen(false)
@@ -1567,6 +1601,7 @@ function App() {
     setSessionUser(user)
     setData({})
     pageCacheRef.current = {}
+    pageRequestEpochRef.current++
     pageRequestRef.current = {}
     preloadedTabsRef.current.clear()
     setToast(null)
@@ -1601,7 +1636,7 @@ function App() {
       const deploymentStatus = { config_version: deployment.config_version, summary: deployment.summary, failure_dismissed: false }
       rememberDeploymentStatus(deploymentStatus)
       setData((old: any) => ({ ...old, last_deployment: deployment, deployment_status: deploymentStatus }))
-      await load()
+      await load(undefined, { forceFresh: true })
       const version = deployment.config_version ? `版本 ${deployment.config_version}` : '配置'
       const summary = deployment.summary || {}
       const total = Number(summary.total || 0)
@@ -1658,9 +1693,22 @@ function App() {
     try {
       const result = await client.request(`/deployments/${deploymentVersion}/dismiss-failure`, { method: 'POST', body: '{}' })
       const status = result.deployment_status || { ...data.deployment_status, failure_dismissed: true }
+      invalidatePageDataRequests()
       rememberDeploymentStatus(status)
       setData((old: any) => ({ ...old, deployment_status: status }))
     } catch (error: any) {
+      if (error instanceof APIRequestError && error.status === 409 && error.payload?.code === 'deployment_version_changed') {
+        const status = error.payload?.deployment_status
+        if (status) {
+          invalidatePageDataRequests()
+          rememberDeploymentStatus(status)
+          setData((old: any) => ({ ...old, deployment_status: status }))
+        } else {
+          await load(undefined, { background: true, forceFresh: true })
+        }
+        showToast(setToast, '下发状态已更新，请确认最新状态', 'warning')
+        return
+      }
       showToast(setToast, localizeErrorMessage(error?.message || error), 'error')
     }
   }

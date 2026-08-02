@@ -9340,7 +9340,16 @@ func (s *Server) dismissDeploymentFailure(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if len(latest) == 0 || latest[0].ConfigVersion != version {
-		fail(w, errors.New("only the latest deployment failure can be dismissed"), http.StatusConflict)
+		status, statusErr := s.deploymentStatus(r.Context(), latest)
+		if statusErr != nil {
+			fail(w, statusErr, http.StatusInternalServerError)
+			return
+		}
+		write(w, http.StatusConflict, map[string]any{
+			"error":             "only the latest deployment failure can be dismissed",
+			"code":              "deployment_version_changed",
+			"deployment_status": status,
+		})
 		return
 	}
 	summary := taskSummary(latest)

@@ -721,7 +721,15 @@ func TestDeploymentFailureDismissalPersistsUntilNextDeployment(t *testing.T) {
 	if status["config_version"] != float64(101) || status["failure_dismissed"] != false {
 		t.Fatalf("next deployment inherited previous dismissal: %#v", status)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/deployments/100/dismiss-failure", token, map[string]any{}, http.StatusConflict)
+	conflict := request(t, h, http.MethodPost, "/api/v2/ui/deployments/100/dismiss-failure", token, map[string]any{}, http.StatusConflict)
+	if conflict["code"] != "deployment_version_changed" {
+		t.Fatalf("dismiss conflict code = %#v", conflict["code"])
+	}
+	latestStatus := conflict["deployment_status"].(map[string]any)
+	if latestStatus["config_version"] != float64(101) || latestStatus["failure_dismissed"] != false {
+		t.Fatalf("dismiss conflict status = %#v", latestStatus)
+	}
+	request(t, h, http.MethodPost, "/api/v2/ui/deployments/101/dismiss-failure", token, map[string]any{}, http.StatusOK)
 }
 
 func TestPublicBaseURLPrefersConfiguredControllerURL(t *testing.T) {
