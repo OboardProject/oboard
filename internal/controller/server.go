@@ -9645,7 +9645,21 @@ func trustedForwardFootprint(config string, forwardPlan model.PortForwardPlan) (
 			return "", false, err
 		}
 		for _, receiver := range runtime.OBoard.TrustedForward.Receivers {
-			signature, err := json.Marshal(receiver)
+			// path_id identifies one current branch for diagnostics, but a shared
+			// transparent receiver can outlive that branch. It does not change the
+			// listener, framing, key, or target and therefore is not topology.
+			signature, err := json.Marshal(struct {
+				Version             int    `json:"version"`
+				ID                  string `json:"id"`
+				InboundTag          string `json:"inbound_tag"`
+				Network             string `json:"network"`
+				Listen              string `json:"listen"`
+				ListenPort          int    `json:"listen_port"`
+				Target              string `json:"target"`
+				TargetPort          int    `json:"target_port"`
+				Key                 string `json:"key"`
+				MaxClockSkewSeconds int    `json:"max_clock_skew_seconds"`
+			}{receiver.Version, receiver.ID, receiver.InboundTag, receiver.Network, receiver.Listen, receiver.ListenPort, receiver.Target, receiver.TargetPort, receiver.Key, receiver.MaxClockSkewSeconds})
 			if err != nil {
 				return "", false, err
 			}

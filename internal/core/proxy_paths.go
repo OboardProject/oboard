@@ -323,6 +323,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 	if err := validateProxyPathTransportSet(paths, stepsByPath, inboundByID); err != nil {
 		return nil, nil, err
 	}
+	transparentGroups := buildTransparentProxyPathGroups(paths, stepsByPath)
 	chainServices, err := buildProxyPathChainServices(paths, steps, servers, inbounds, ledger)
 	if err != nil {
 		return nil, nil, err
@@ -368,7 +369,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 			targetServerID, targetInbound, targetOK := proxyPathStepTargetServer(step, inboundByID)
 			var plannedInbound model.Inbound
 			if targetOK {
-				plannedInbound = proxyPathPlanTargetInbound(path, step, targetServerID, targetInbound, serverByID, inboundByID, chainServices, ledger)
+				plannedInbound = proxyPathPlanTargetInbound(path, step, targetServerID, targetInbound, serverByID, inboundByID, chainServices, transparentGroups[path.ID], ledger)
 				if step.TransportMode == model.ProxyPathTransportPortForward && step.ProcessingRole {
 					plannedInbound.Protocol = root.Protocol
 					plannedInbound.ConfigJSON = root.ConfigJSON
@@ -399,7 +400,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 					plan.Warnings = append(plan.Warnings, fmt.Sprintf("第 %d 跳端口转发需要目标服务器", step.Position))
 					continue
 				}
-				f, err := proxyPathManagedPortForward(path, step, root, previousServerID, targetServerID, sourceListenPort, plannedInbound, serverByID)
+				f, err := proxyPathManagedPortForward(path, step, root, previousServerID, targetServerID, sourceListenPort, plannedInbound, serverByID, transparentGroups[path.ID])
 				if err != nil {
 					if path.Enabled {
 						return nil, nil, err
@@ -451,10 +452,17 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 				if !ok || !entryOK || !processingOK {
 					return nil, nil, fmt.Errorf("代理路径 %s 无法生成可信转发凭据", path.Name)
 				}
+				group := transparentGroups[path.ID]
+				receiverID := proxyPathTrustedForwardReceiverID(path.ID, step.ID)
+				key := proxyPathTrustedForwardKey(entryServer, processingServer, path.ID, step.ID)
+				if group != nil {
+					receiverID = proxyPathSharedTrustedForwardReceiverID(group.InboundID, group.PrefixLength)
+					key = proxyPathSharedTrustedForwardKey(entryServer, processingServer, group.InboundID, group.PrefixLength)
+				}
 				plan.PortForwards[0].TrustedForward = &model.TrustedForwardSender{
 					Version:             1,
-					ReceiverID:          proxyPathTrustedForwardReceiverID(path.ID, step.ID),
-					Key:                 proxyPathTrustedForwardKey(entryServer, processingServer, path.ID, step.ID),
+					ReceiverID:          receiverID,
+					Key:                 key,
 					MaxClockSkewSeconds: 120,
 				}
 				break
@@ -466,9 +474,84 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 	return out, inboundByID, nil
 }
 
+type transparentProxyPathGroup struct {
+	InboundID    int64
+	PrefixLength int
+	OwnerPathID  int64
+	Paths        []model.ProxyPath
+}
+
+func buildTransparentProxyPathGroups(paths []model.ProxyPath, stepsByPath map[int64][]model.ProxyPathStep) map[int64]*transparentProxyPathGroup {
+	byInbound := map[int64]*transparentProxyPathGroup{}
+	byPath := map[int64]*transparentProxyPathGroup{}
+	for _, path := range paths {
+		if !path.Enabled {
+			continue
+		}
+		prefixLength := transparentProxyPathPrefixLength(orderedProxyPathSteps(stepsByPath[path.ID]))
+		if prefixLength == 0 {
+			continue
+		}
+		group := byInbound[path.InboundID]
+		if group == nil {
+			group = &transparentProxyPathGroup{InboundID: path.InboundID, PrefixLength: prefixLength, OwnerPathID: path.ID}
+			byInbound[path.InboundID] = group
+		}
+		if path.ID < group.OwnerPathID {
+			group.OwnerPathID = path.ID
+		}
+		group.Paths = append(group.Paths, path)
+		byPath[path.ID] = group
+	}
+	for _, group := range byInbound {
+		sort.SliceStable(group.Paths, func(i, j int) bool { return group.Paths[i].ID < group.Paths[j].ID })
+	}
+	return byPath
+}
+
+func transparentProxyPathPrefixLength(steps []model.ProxyPathStep) int {
+	length := 0
+	for _, step := range steps {
+		mode := step.TransportMode
+		if mode == "" {
+			mode = model.ProxyPathTransportSingBox
+		}
+		if mode != model.ProxyPathTransportPortForward {
+			break
+		}
+		length++
+	}
+	return length
+}
+
+func transparentProxyPathPrefixSignature(steps []model.ProxyPathStep) string {
+	type transparentStep struct {
+		ServerID   *int64 `json:"server_id,omitempty"`
+		InboundID  *int64 `json:"inbound_id,omitempty"`
+		ConfigJSON string `json:"config_json"`
+	}
+	prefix := make([]transparentStep, 0)
+	for _, step := range steps {
+		mode := step.TransportMode
+		if mode == "" {
+			mode = model.ProxyPathTransportSingBox
+		}
+		if mode != model.ProxyPathTransportPortForward {
+			break
+		}
+		prefix = append(prefix, transparentStep{ServerID: step.ServerID, InboundID: step.InboundID, ConfigJSON: canonicalJSONObject(step.ConfigJSON)})
+	}
+	if len(prefix) == 0 {
+		return ""
+	}
+	encoded, _ := json.Marshal(prefix)
+	return string(encoded)
+}
+
 func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int64][]model.ProxyPathStep, inboundByID map[int64]model.Inbound) error {
-	enabledByInbound := map[int64]int{}
-	transparentByInbound := map[int64]int{}
+	enabledByInbound := map[int64][]model.ProxyPath{}
+	transparentSignatureByInbound := map[int64]string{}
+	transparentCountByInbound := map[int64]int{}
 	directSignatures := map[string]bool{}
 	for _, path := range paths {
 		if !path.Enabled {
@@ -478,7 +561,7 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 		if !ok {
 			continue
 		}
-		enabledByInbound[path.InboundID]++
+		enabledByInbound[path.InboundID] = append(enabledByInbound[path.InboundID], path)
 		ordered := orderedProxyPathSteps(stepsByPath[path.ID])
 		for _, step := range ordered {
 			if step.InboundID == nil || *step.InboundID == 0 {
@@ -538,12 +621,24 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 			return err
 		}
 		if transparent {
-			transparentByInbound[path.InboundID]++
+			signature := transparentProxyPathPrefixSignature(ordered)
+			if previous := transparentSignatureByInbound[path.InboundID]; previous != "" && previous != signature {
+				return fmt.Errorf("入口 %d 的启用分支必须复用完全相同的透明转发前缀，并在处理加解密节点或其后分叉", path.InboundID)
+			}
+			transparentSignatureByInbound[path.InboundID] = signature
+			transparentCountByInbound[path.InboundID]++
 		}
 	}
-	for inboundID, count := range transparentByInbound {
-		if count > 0 && enabledByInbound[inboundID] != 1 {
-			return fmt.Errorf("入口 %d 包含透明端口转发时只能启用一条路径；同一入口端口不能同时绑定多条分支", inboundID)
+	for inboundID, signature := range transparentSignatureByInbound {
+		pathsForInbound := enabledByInbound[inboundID]
+		if signature == "" || transparentCountByInbound[inboundID] != len(pathsForInbound) {
+			return fmt.Errorf("入口 %d 使用透明转发时，所有启用分支都必须复用相同前缀，不能在处理加解密节点之前分叉", inboundID)
+		}
+		if len(pathsForInbound) > 1 {
+			root, ok := inboundByID[inboundID]
+			if !ok || !InboundSupportsMultipleUsers(root) {
+				return fmt.Errorf("入口 %d 的协议不支持通过多个用户名复用透明转发前缀", inboundID)
+			}
 		}
 	}
 	return nil
@@ -926,7 +1021,7 @@ func transparentForwardProtocol(inbound model.Inbound) model.ForwardProtocol {
 	}
 }
 
-func proxyPathPlanTargetInbound(path model.ProxyPath, step model.ProxyPathStep, targetServerID int64, targetInbound *model.Inbound, servers map[int64]model.Server, inbounds map[int64]model.Inbound, services map[proxyPathChainServiceKey]*proxyPathChainService, ledger *ProxyPathPortLedger) model.Inbound {
+func proxyPathPlanTargetInbound(path model.ProxyPath, step model.ProxyPathStep, targetServerID int64, targetInbound *model.Inbound, servers map[int64]model.Server, inbounds map[int64]model.Inbound, services map[proxyPathChainServiceKey]*proxyPathChainService, transparentGroup *transparentProxyPathGroup, ledger *ProxyPathPortLedger) model.Inbound {
 	if targetInbound != nil {
 		return *targetInbound
 	}
@@ -934,6 +1029,12 @@ func proxyPathPlanTargetInbound(path model.ProxyPath, step model.ProxyPathStep, 
 		return service.Inbound
 	}
 	server := servers[targetServerID]
+	if transparentGroup != nil && step.Position <= transparentGroup.PrefixLength {
+		if planned, ok := inbounds[proxyPathSharedTransparentInboundID(path.InboundID, step.Position)]; ok {
+			return planned
+		}
+		return proxyPathSharedTransparentInbound(path.InboundID, step, server, inbounds, ledger)
+	}
 	return proxyPathInternalInbound(path, step, server, inbounds, ledger)
 }
 
@@ -947,13 +1048,30 @@ func DerivedPortForwardsFromProxyPathsWithLedger(paths []model.ProxyPath, steps 
 		return nil, err
 	}
 	out := []model.PortForward{}
+	seen := map[int64]model.PortForward{}
 	for _, plan := range plans {
 		if !plan.Enabled {
 			continue
 		}
-		out = append(out, plan.PortForwards...)
+		for _, forward := range plan.PortForwards {
+			if previous, ok := seen[forward.ID]; ok {
+				if previous.SourceServerID != forward.SourceServerID || previous.TargetServerID != forward.TargetServerID || previous.ListenIP != forward.ListenIP || previous.ListenPort != forward.ListenPort || previous.TargetAddress != forward.TargetAddress || previous.TargetPort != forward.TargetPort || previous.Protocol != forward.Protocol || previous.Backend != forward.Backend || !sameTrustedForwardSender(previous.TrustedForward, forward.TrustedForward) {
+					return nil, fmt.Errorf("共享透明转发资源 %d 的投影不一致", forward.ID)
+				}
+				continue
+			}
+			seen[forward.ID] = forward
+			out = append(out, forward)
+		}
 	}
 	return out, nil
+}
+
+func sameTrustedForwardSender(left, right *model.TrustedForwardSender) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }
 
 func DerivedTunnelsFromProxyPaths(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound) ([]model.Tunnel, error) {
@@ -996,7 +1114,7 @@ func proxyPathStepTargetServer(step model.ProxyPathStep, inboundByID map[int64]m
 	return 0, nil, false
 }
 
-func proxyPathManagedPortForward(path model.ProxyPath, step model.ProxyPathStep, root model.Inbound, sourceServerID, targetServerID int64, listenPort int, targetInbound model.Inbound, servers map[int64]model.Server) (model.PortForward, error) {
+func proxyPathManagedPortForward(path model.ProxyPath, step model.ProxyPathStep, root model.Inbound, sourceServerID, targetServerID int64, listenPort int, targetInbound model.Inbound, servers map[int64]model.Server, transparentGroup *transparentProxyPathGroup) (model.PortForward, error) {
 	if sourceServerID == 0 || targetServerID == 0 || sourceServerID == targetServerID {
 		return model.PortForward{}, fmt.Errorf("路径 %s 第 %d 跳端口转发的源/目标服务器无效", path.Name, step.Position)
 	}
@@ -1020,7 +1138,15 @@ func proxyPathManagedPortForward(path model.ProxyPath, step model.ProxyPathStep,
 	if err != nil {
 		return model.PortForward{}, fmt.Errorf("路径 %s 第 %d 跳: %w", path.Name, step.Position, err)
 	}
-	return model.PortForward{ID: syntheticProxyPathID(path.ID, step.ID, 10), Name: fmt.Sprintf("%s / 第%d跳", firstNonEmpty(path.Name, "代理路径"), step.Position), SourceServerID: sourceServerID, TargetServerID: targetServerID, ListenIP: firstNonEmpty(stringValue(parseStepConfig(step.ConfigJSON), "listen_ip", ""), source.ListenIP, "0.0.0.0"), ListenPort: listenPort, TargetAddress: targetAddress, TargetPort: targetInbound.Port, Protocol: protocol, Backend: backend, ProbeMode: "apply", ProbeIntervalSeconds: 300, Priority: 1000 + step.Position, ConfigJSON: managedConfigJSON(path.ID, step.ID), Enabled: true}, nil
+	id := syntheticProxyPathID(path.ID, step.ID, 10)
+	name := fmt.Sprintf("%s / 第%d跳", firstNonEmpty(path.Name, "代理路径"), step.Position)
+	configJSON := managedConfigJSON(path.ID, step.ID)
+	if transparentGroup != nil {
+		id = stableProxyPathResourceID("proxy-path-transparent-forward", transparentGroup.InboundID, step.Position)
+		name = fmt.Sprintf("%s / 透明第%d跳", firstNonEmpty(root.Name, fmt.Sprintf("入口 %d", root.ID)), step.Position)
+		configJSON = managedTransparentConfigJSON(transparentGroup.InboundID, step.Position)
+	}
+	return model.PortForward{ID: id, Name: name, SourceServerID: sourceServerID, TargetServerID: targetServerID, ListenIP: firstNonEmpty(stringValue(parseStepConfig(step.ConfigJSON), "listen_ip", ""), source.ListenIP, "0.0.0.0"), ListenPort: listenPort, TargetAddress: targetAddress, TargetPort: targetInbound.Port, Protocol: protocol, Backend: backend, ProbeMode: "apply", ProbeIntervalSeconds: 300, Priority: 1000 + step.Position, ConfigJSON: configJSON, Enabled: true}, nil
 }
 
 func proxyPathReachableServerAddress(source, target model.Server) (string, error) {
@@ -1312,5 +1438,10 @@ func syntheticProxyPathID(pathID, stepID int64, kind int64) int64 {
 
 func managedConfigJSON(pathID, stepID int64) string {
 	b, _ := json.Marshal(map[string]any{"managed_by": "proxy_path", "path_id": pathID, "step_id": stepID})
+	return string(b)
+}
+
+func managedTransparentConfigJSON(inboundID int64, position int) string {
+	b, _ := json.Marshal(map[string]any{"managed_by": "proxy_path_transparent_prefix", "inbound_id": inboundID, "position": position})
 	return string(b)
 }

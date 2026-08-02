@@ -383,8 +383,8 @@ func TestTransparentPortForwardMovesUserProtocolToProcessingServer(t *testing.T)
 		t.Fatalf("unexpected port-forward plan: %#v", plans)
 	}
 	forward := plans[0].PortForwards[0]
-	if forward.ListenPort != 55778 || forward.TargetPort != 557 || forward.Protocol != model.ForwardProtocolTCP {
-		t.Fatalf("forward = %#v, want YT:55778 TCP -> WAWO:557", forward)
+	if forward.ListenPort != 55778 || forward.TargetPort <= 0 || forward.TargetPort == rootInbound.Port || forward.Protocol != model.ForwardProtocolTCP {
+		t.Fatalf("forward = %#v, want YT:55778 TCP -> one generated WAWO listener", forward)
 	}
 	if forward.TrustedForward == nil || forward.TrustedForward.Version != 1 || forward.TrustedForward.Key == "" {
 		t.Fatalf("transparent entry forward omitted trusted sender: %#v", forward)
@@ -395,7 +395,7 @@ func TestTransparentPortForwardMovesUserProtocolToProcessingServer(t *testing.T)
 	if err := json.Unmarshal([]byte(configB), &parsedB); err != nil {
 		t.Fatal(err)
 	}
-	processingTag := "oboard-path-1-step-1-in"
+	processingTag := proxyPathSharedTransparentInboundTag(rootInbound.ID, step.Position)
 	var processing map[string]any
 	for _, inbound := range parsedB.Inbounds {
 		if inbound["tag"] == processingTag {
@@ -520,7 +520,7 @@ func TestTransparentProcessingClonesEverySupportedInboundProtocol(t *testing.T) 
 				t.Fatalf("forward plan omitted trusted sender: %#v", plans[0].PortForwards)
 			}
 			targetConfig := parseSingBoxConfig(t, mustServerConfig(t, target, []model.Inbound{root}, []model.User{user}, opts))
-			processingTag := proxyPathInternalInboundTag(path.ID, step.Position)
+			processingTag := proxyPathSharedTransparentInboundTag(root.ID, step.Position)
 			found := false
 			for _, inbound := range targetConfig.Inbounds {
 				if inbound["tag"] == processingTag {

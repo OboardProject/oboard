@@ -6721,21 +6721,43 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }
 	  return createdSteps
 	}
-	const ensureTransparentPathExclusive = async (pathID: number, inboundID: number) => {
+	const canonicalTransparentConfig = (raw?: string) => {
+	  const normalize = (value: any): any => {
+	    if (Array.isArray(value)) return value.map(normalize)
+	    if (value && typeof value === 'object') {
+	      return Object.fromEntries(Object.keys(value).sort().map(key => [key, normalize(value[key])]))
+	    }
+	    return value
+	  }
+	  try { return JSON.stringify(normalize(JSON.parse(raw || '{}'))) } catch { return (raw || '').trim() }
+	}
+	const transparentPrefixSignature = (candidateSteps: Array<Partial<ProxyPathStep>>) => {
+	  const ordered = [...candidateSteps].sort((left, right) => (left.position || 0) - (right.position || 0) || (left.id || 0) - (right.id || 0))
+	  const prefix: Array<[number | null, number | null, string]> = []
+	  for (const step of ordered) {
+	    if ((step.transport_mode || 'singbox') !== 'port_forward') break
+	    prefix.push([step.server_id || null, step.inbound_id || null, canonicalTransparentConfig(step.config_json)])
+	  }
+	  return prefix.length ? JSON.stringify(prefix) : ''
+	}
+	const ensureTransparentPrefixCompatible = async (pathID: number, inboundID: number, candidateSteps: Array<Partial<ProxyPathStep>>) => {
 	  const siblings: ProxyPath[] = (data.proxy_paths || []).filter((path: ProxyPath) => path.enabled !== false && path.inbound_id === inboundID && path.id !== pathID)
-	  if (!siblings.length) return true
+	  const candidateSignature = transparentPrefixSignature(candidateSteps)
+	  const steps: ProxyPathStep[] = data.proxy_path_steps || []
+	  const incompatible = siblings.filter(path => transparentPrefixSignature(steps.filter(step => step.path_id === path.id)) !== candidateSignature)
+	  if (!incompatible.length) return true
 	  const ok = await dialogs.confirm({
-	    title: '端口转发将独占入口',
+	    title: '透明前缀必须一致',
 	    message: <div className="dialog-detail">
-	      <p>透明端口转发必须独占入口端口，因此以下 {siblings.length} 条分支及其后续节点会被删除，对应的订阅节点也会消失。</p>
-	      <ul>{siblings.map(path => <li key={path.id}>{proxyPathDisplayName(path)}</li>)}</ul>
+	      <p>同一入口的启用分支必须复用完全相同的透明转发前缀，并在处理加解密节点或其后分叉。以下 {incompatible.length} 条分支与当前前缀不一致，继续后会被删除，对应的订阅节点也会消失。</p>
+	      <ul>{incompatible.map(path => <li key={path.id}>{proxyPathDisplayName(path)}</li>)}</ul>
 	    </div>,
 	    tone: 'danger',
-	    confirmText: `删除这 ${siblings.length} 条分支`,
+	    confirmText: `删除这 ${incompatible.length} 条分支`,
 	  })
 	  if (!ok) return false
 	  const failures: string[] = []
-	  for (const path of siblings) {
+	  for (const path of incompatible) {
 	    try {
 	      await client.request(`/proxy-paths/${path.id}`, { method: 'DELETE' })
 	    } catch (error: any) {
@@ -6746,7 +6768,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    await dialogs.alert({
 	      title: '分支未全部删除',
 	      message: <div className="dialog-detail">
-	        <p>入口仍被其他分支占用，端口转发无法启用。请先处理：</p>
+	        <p>入口仍有不兼容分支，端口转发无法启用。请先处理：</p>
 	        <ul>{failures.map((item, index) => <li key={index}>{item}</li>)}</ul>
 	      </div>,
 	    })
@@ -6755,7 +6777,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  return true
 	}
 	const createPathFromEntry = async (entry: Inbound, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
-	  if (target.transport_mode === 'port_forward' && !await ensureTransparentPathExclusive(0, entry.id)) return null
+	  const candidateStep = { position: 1, transport_mode: 'singbox' as ProxyPathTransportMode, config_json: '{}', ...target }
+	  if (target.transport_mode === 'port_forward' && !await ensureTransparentPrefixCompatible(0, entry.id, [candidateStep])) return null
 	  const result = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: entry.id, enabled: true }) }) as { proxy_path?: ProxyPath }
 	  if (!result.proxy_path?.id) return null
 	  let createdStep: ProxyPathStep | null = null
@@ -6781,9 +6804,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    return null
 	  }
 	  const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === step.path_id)
-	  if (target.transport_mode === 'port_forward' && path && !await ensureTransparentPathExclusive(path.id, path.inbound_id)) return null
 	  const pathSteps = steps.filter(x => x.path_id === step.path_id)
 	  const nextPosition = Math.max(0, ...pathSteps.map(x => x.position || 0)) + 1
+	  const candidateStep = { position: nextPosition, transport_mode: 'singbox' as ProxyPathTransportMode, config_json: '{}', ...target }
+	  if (target.transport_mode === 'port_forward' && path && !await ensureTransparentPrefixCompatible(path.id, path.inbound_id, [...pathSteps, candidateStep])) return null
 	  const result = await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({ path_id: step.path_id, position: nextPosition, transport_mode: 'singbox', config_json: '{}', ...target }) }) as { proxy_path_step?: ProxyPathStep }
 	  await load()
 	  return result.proxy_path_step || null
@@ -7285,7 +7309,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const transport = await chooseTransportForTarget(step, step, proxyPathStepUpstreamLabel(data, step))
 	  if (!transport) return
 	  try {
-	    if (transport.transport_mode === 'port_forward' && path && !await ensureTransparentPathExclusive(path.id, path.inbound_id)) return
+	    const pathSteps: ProxyPathStep[] = (data.proxy_path_steps || []).filter((item: ProxyPathStep) => item.path_id === step.path_id)
+	    const candidateSteps = pathSteps.map(item => item.id === step.id ? { ...item, ...transport } : item)
+	    if (transport.transport_mode === 'port_forward' && path && !await ensureTransparentPrefixCompatible(path.id, path.inbound_id, candidateSteps)) return
 	    await client.request(`/proxy-path-steps/${step.id}`, { method: 'PATCH', body: JSON.stringify({ ...step, ...transport }) })
 	    await load()
 	  } catch (e: any) {

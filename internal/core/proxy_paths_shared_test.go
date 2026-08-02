@@ -305,6 +305,113 @@ func TestProxyPathAccountingUsesFirstDecryptingServer(t *testing.T) {
 	}
 }
 
+func TestTransparentPrefixBranchesShareForwardAndProcessingInbound(t *testing.T) {
+	entry := model.Server{ID: 1, Name: "entry", ChainSecret: "entry-secret", PublicIPv4: "198.51.100.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
+	processor := model.Server{ID: 2, Name: "processor", ChainSecret: "processor-secret", PublicIPv4: "198.51.100.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
+	exit := model.Server{ID: 3, Name: "exit", ChainSecret: "exit-secret", PublicIPv4: "198.51.100.3", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 32000, PortRangeEnd: 32100}
+	root := model.Inbound{ID: 17, ServerID: entry.ID, Name: "SS:8388", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: `{"method":"2022-blake3-aes-128-gcm","password":"entry-password"}`, Enabled: true}
+	chain := model.ProxyPath{ID: 29, Name: "entry-processor-exit", InboundID: root.ID, Secret: "chain-secret", Enabled: true}
+	direct := model.ProxyPath{ID: 30, Kind: model.ProxyPathKindDirect, Name: "entry-processor-direct", InboundID: root.ID, Secret: "direct-secret", Enabled: true}
+	processorID, exitID := processor.ID, exit.ID
+	steps := []model.ProxyPathStep{
+		{ID: 291, PathID: chain.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &processorID, TransportMode: model.ProxyPathTransportPortForward, ProcessingRole: true, ConfigJSON: `{}`},
+		{ID: 292, PathID: chain.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, ServerID: &exitID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`},
+		{ID: 301, PathID: direct.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &processorID, TransportMode: model.ProxyPathTransportPortForward, ProcessingRole: true, ConfigJSON: `{}`},
+	}
+	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "alice-password"}
+	opts := ConfigOptions{
+		Servers:        []model.Server{entry, processor, exit},
+		Inbounds:       []model.Inbound{root},
+		ProxyPaths:     []model.ProxyPath{chain, direct},
+		ProxyPathSteps: steps,
+		InboundUsers:   []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}},
+	}
+
+	plans, err := BuildProxyPathPlans(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 2 || len(plans[0].PortForwards) != 1 || len(plans[1].PortForwards) != 1 {
+		t.Fatalf("shared transparent plans = %#v", plans)
+	}
+	firstForward, secondForward := plans[0].PortForwards[0], plans[1].PortForwards[0]
+	if firstForward.ID != secondForward.ID || firstForward.ListenPort != root.Port || firstForward.TargetPort != secondForward.TargetPort || !sameTrustedForwardSender(firstForward.TrustedForward, secondForward.TrustedForward) {
+		t.Fatalf("transparent prefix was not shared: first=%#v second=%#v", firstForward, secondForward)
+	}
+	forwards, err := DerivedPortForwardsFromProxyPaths(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds)
+	if err != nil || len(forwards) != 1 {
+		t.Fatalf("derived shared forwards = %#v, err=%v", forwards, err)
+	}
+
+	entryConfig := mustServerConfig(t, entry, opts.Inbounds, []model.User{user}, opts)
+	if findInbound(entryConfig, tag("in", root.ID)) != nil {
+		t.Fatalf("entry server retained the decrypted protocol listener: %s", entryConfig)
+	}
+	processorConfig := mustServerConfig(t, processor, opts.Inbounds, []model.User{user}, opts)
+	processingTag := proxyPathSharedTransparentInboundTag(root.ID, 1)
+	parsed := parseSingBoxConfig(t, processorConfig)
+	processingCount := 0
+	for _, inbound := range parsed.Inbounds {
+		if inbound["tag"] == processingTag {
+			processingCount++
+		}
+	}
+	if processingCount != 1 || parsed.OBoard == nil || parsed.OBoard.TrustedForward == nil || len(parsed.OBoard.TrustedForward.Receivers) != 1 {
+		t.Fatalf("processor did not emit one shared processing surface: %s", processorConfig)
+	}
+	chainUser := proxyPathBranchUser(chain, root, user).Username
+	directUser := proxyPathBranchUser(direct, root, user).Username
+	if !hasInbound(processorConfig, processingTag, chainUser) || !hasInbound(processorConfig, processingTag, directUser) {
+		t.Fatalf("shared processing inbound is missing branch users: %s", processorConfig)
+	}
+	if !hasAuthUserRoute(processorConfig, processingTag, proxyPathStepTag(chain.ID, 2), chainUser) {
+		t.Fatalf("processor is missing the HKT branch route: %s", processorConfig)
+	}
+	if !hasAuthUserRoute(processorConfig, processingTag, "direct", directUser) {
+		t.Fatalf("processor is missing the direct branch route: %s", processorConfig)
+	}
+
+	singleForwards, err := DerivedPortForwardsFromProxyPaths([]model.ProxyPath{chain}, steps[:2], opts.Servers, opts.Inbounds)
+	if err != nil || len(singleForwards) != 1 || singleForwards[0].ID != forwards[0].ID || singleForwards[0].TargetPort != forwards[0].TargetPort || !sameTrustedForwardSender(singleForwards[0].TrustedForward, forwards[0].TrustedForward) {
+		t.Fatalf("shared resource changed after removing one branch: before=%#v after=%#v err=%v", forwards, singleForwards, err)
+	}
+}
+
+func TestTransparentPrefixBranchesRejectIncompatibleForks(t *testing.T) {
+	entry := model.Server{ID: 1, Name: "entry"}
+	processorA := model.Server{ID: 2, Name: "processor-a"}
+	processorB := model.Server{ID: 3, Name: "processor-b"}
+	root := model.Inbound{ID: 17, ServerID: entry.ID, Name: "entry", Protocol: model.ProtocolVLESS, Port: 443, Enabled: true}
+	first := model.ProxyPath{ID: 1, Name: "first", InboundID: root.ID, Enabled: true}
+	second := model.ProxyPath{ID: 2, Kind: model.ProxyPathKindDirect, Name: "second", InboundID: root.ID, Enabled: true}
+	aID, bID := processorA.ID, processorB.ID
+	firstStep := model.ProxyPathStep{ID: 11, PathID: first.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &aID, TransportMode: model.ProxyPathTransportPortForward, ProcessingRole: true, ConfigJSON: `{}`}
+
+	t.Run("different processor", func(t *testing.T) {
+		secondStep := model.ProxyPathStep{ID: 21, PathID: second.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &bID, TransportMode: model.ProxyPathTransportPortForward, ProcessingRole: true, ConfigJSON: `{}`}
+		if _, err := BuildProxyPathPlans([]model.ProxyPath{first, second}, []model.ProxyPathStep{firstStep, secondStep}, []model.Server{entry, processorA, processorB}, []model.Inbound{root}); err == nil || !strings.Contains(err.Error(), "完全相同的透明转发前缀") {
+			t.Fatalf("different transparent processors error = %v", err)
+		}
+	})
+
+	t.Run("root direct", func(t *testing.T) {
+		if _, err := BuildProxyPathPlans([]model.ProxyPath{first, second}, []model.ProxyPathStep{firstStep}, []model.Server{entry, processorA}, []model.Inbound{root}); err == nil || !strings.Contains(err.Error(), "所有启用分支") {
+			t.Fatalf("pre-processing fork error = %v", err)
+		}
+	})
+
+	t.Run("single-user protocol", func(t *testing.T) {
+		singleUserRoot := root
+		singleUserRoot.Protocol = model.ProtocolSS
+		singleUserRoot.ConfigJSON = `{"method":"aes-128-gcm","password":"password"}`
+		secondStep := firstStep
+		secondStep.ID, secondStep.PathID = 21, second.ID
+		if _, err := BuildProxyPathPlans([]model.ProxyPath{first, second}, []model.ProxyPathStep{firstStep, secondStep}, []model.Server{entry, processorA}, []model.Inbound{singleUserRoot}); err == nil || !strings.Contains(err.Error(), "多个用户名") {
+			t.Fatalf("single-user transparent branches error = %v", err)
+		}
+	})
+}
+
 func hasAuthUserRoute(raw, inboundTag, outboundTag, username string) bool {
 	var parsed SingBoxConfig
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
@@ -399,7 +506,7 @@ func TestTransparentPathForwardTargetsGeneratedProcessingPort(t *testing.T) {
 	}
 
 	configBack := mustServerConfig(t, back, opts.Inbounds, users, opts)
-	processing := findInbound(configBack, proxyPathInternalInboundTag(path.ID, 1))
+	processing := findInbound(configBack, proxyPathSharedTransparentInboundTag(root.ID, 1))
 	if processing == nil {
 		t.Fatalf("processing inbound missing on back server: %s", configBack)
 	}

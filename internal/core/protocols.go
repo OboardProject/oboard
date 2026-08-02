@@ -826,6 +826,7 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 	}
 	paths := append([]model.ProxyPath(nil), opts.ProxyPaths...)
 	sort.SliceStable(paths, func(i, j int) bool { return paths[i].ID < paths[j].ID })
+	transparentGroups := buildTransparentProxyPathGroups(paths, stepsByPath)
 	out := []map[string]any{}
 	for _, serviceKey := range serviceKeys {
 		service := chainServices[serviceKey]
@@ -867,7 +868,11 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 			if mode != model.ProxyPathTransportPortForward {
 				continue
 			}
+			group := transparentGroups[path.ID]
 			key := proxyPathInternalInboundTag(path.ID, step.Position)
+			if group != nil {
+				key = proxyPathSharedTransparentInboundTag(group.InboundID, group.PrefixLength)
+			}
 			if seen[key] {
 				continue
 			}
@@ -875,9 +880,17 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 			// Reuse the port the deployment projection already allocated. Deriving
 			// it again here would use a different occupancy set and could pick a
 			// port the derived forward does not target.
-			internal, planned := plannedInbounds[proxyPathInternalOutboundID(path.ID, step.Position)]
+			plannedID := proxyPathInternalOutboundID(path.ID, step.Position)
+			if group != nil {
+				plannedID = proxyPathSharedTransparentInboundID(group.InboundID, step.Position)
+			}
+			internal, planned := plannedInbounds[plannedID]
 			if !planned {
-				internal = proxyPathInternalInbound(path, step, server, inboundByID, opts.PortLedger)
+				if group != nil {
+					internal = proxyPathSharedTransparentInbound(group.InboundID, step, server, inboundByID, opts.PortLedger)
+				} else {
+					internal = proxyPathInternalInbound(path, step, server, inboundByID, opts.PortLedger)
+				}
 			}
 			inboundByID[internal.ID] = internal
 			if !step.ProcessingRole {
@@ -894,10 +907,21 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 			processingInbound.ID = internal.ID
 			processingInbound.ServerID = server.ID
 			processingInbound.Name = fmt.Sprintf("%s / 处理加解密", firstNonEmpty(path.Name, root.Name))
-			processingInbound = proxyPathTrustedInnerInbound(path, step, server, processingInbound, inboundByID, opts.PortLedger)
+			if group != nil {
+				processingInbound.Name = fmt.Sprintf("%s / 共享处理加解密", firstNonEmpty(root.Name, fmt.Sprintf("入口 %d", root.ID)))
+				processingInbound = proxyPathSharedTrustedInnerInbound(group.InboundID, group.PrefixLength, server, processingInbound, inboundByID, opts.PortLedger)
+			} else {
+				processingInbound = proxyPathTrustedInnerInbound(path, step, server, processingInbound, inboundByID, opts.PortLedger)
+			}
 			inboundByID[processingInbound.ID] = processingInbound
 			baseUsers := usersForInbound(root, users, opts.InboundUsers)
 			processingUsers := proxyPathBranchUsersForPath(path, root, baseUsers)
+			if group != nil {
+				processingUsers = nil
+				for _, branch := range group.Paths {
+					processingUsers = append(processingUsers, proxyPathBranchUsersForPath(branch, root, baseUsers)...)
+				}
+			}
 			if len(processingUsers) == 0 {
 				placeholderUsers, err := placeholderUsersForInbound(processingInbound, server.ChainSecret)
 				if err != nil {
@@ -929,17 +953,25 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 			if config.OBoard.TrustedForward == nil {
 				config.OBoard.TrustedForward = &OBoardTrustedForward{}
 			}
+			receiverID := proxyPathTrustedForwardReceiverID(path.ID, step.ID)
+			receiverPathID := path.ID
+			keyMaterial := proxyPathTrustedForwardKey(entryServer, server, path.ID, step.ID)
+			if group != nil {
+				receiverID = proxyPathSharedTrustedForwardReceiverID(group.InboundID, group.PrefixLength)
+				receiverPathID = group.OwnerPathID
+				keyMaterial = proxyPathSharedTrustedForwardKey(entryServer, server, group.InboundID, group.PrefixLength)
+			}
 			config.OBoard.TrustedForward.Receivers = append(config.OBoard.TrustedForward.Receivers, OBoardTrustedForwardReceiver{
 				Version:             1,
-				ID:                  proxyPathTrustedForwardReceiverID(path.ID, step.ID),
-				PathID:              path.ID,
+				ID:                  receiverID,
+				PathID:              receiverPathID,
 				InboundTag:          key,
 				Network:             string(transparentForwardProtocol(root)),
 				Listen:              firstNonEmpty(outerInbound.ListenIP, server.ListenIP, "0.0.0.0"),
 				ListenPort:          outerInbound.Port,
 				Target:              "127.0.0.1",
 				TargetPort:          processingInbound.Port,
-				Key:                 proxyPathTrustedForwardKey(entryServer, server, path.ID, step.ID),
+				Key:                 keyMaterial,
 				MaxClockSkewSeconds: 120,
 			})
 			out = append(out, item)
@@ -970,6 +1002,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 	}
 	paths := append([]model.ProxyPath(nil), opts.ProxyPaths...)
 	sort.SliceStable(paths, func(i, j int) bool { return paths[i].ID < paths[j].ID })
+	transparentGroups := buildTransparentProxyPathGroups(paths, stepsByPath)
 	chainServices, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, opts.PortLedger)
 	if err != nil {
 		return nil, nil, err
@@ -1035,7 +1068,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 			if step.TransportMode == model.ProxyPathTransportPortForward {
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
-					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices)
+					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
 					previousTag = ""
 				}
 				continue
@@ -1057,7 +1090,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 			if activeServerID != server.ID {
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
-					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices)
+					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
 					previousTag = ""
 				}
 				continue
@@ -1097,7 +1130,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 				}
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
-					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices)
+					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
 					previousTag = ""
 				}
 			}
@@ -1146,7 +1179,10 @@ func validateProxyPathForConfig(path model.ProxyPath, root model.Inbound, steps 
 	return nil
 }
 
-func proxyPathStepInboundIdentity(path model.ProxyPath, step model.ProxyPathStep, root model.Inbound, targetServerID int64, inboundByID map[int64]model.Inbound, users []model.User, opts ConfigOptions, services map[proxyPathChainServiceKey]*proxyPathChainService) (string, []string) {
+func proxyPathStepInboundIdentity(path model.ProxyPath, step model.ProxyPathStep, root model.Inbound, targetServerID int64, inboundByID map[int64]model.Inbound, users []model.User, opts ConfigOptions, services map[proxyPathChainServiceKey]*proxyPathChainService, transparentGroup *transparentProxyPathGroup) (string, []string) {
+	if transparentGroup != nil && step.Position == transparentGroup.PrefixLength {
+		return proxyPathSharedTransparentInboundTag(transparentGroup.InboundID, transparentGroup.PrefixLength), proxyPathBranchUsernames(path, root, usersForInbound(root, users, opts.InboundUsers))
+	}
 	if step.InboundID != nil && *step.InboundID != 0 {
 		inbound := inboundByID[*step.InboundID]
 		user := proxyPathLinkUser(path, inbound)
@@ -1197,11 +1233,36 @@ func proxyPathInternalInbound(path model.ProxyPath, step model.ProxyPathStep, se
 	return model.Inbound{ID: proxyPathInternalOutboundID(path.ID, step.Position), ServerID: server.ID, Name: fmt.Sprintf("%s / 第%d跳内部入口", firstNonEmpty(path.Name, "代理路径"), step.Position), Protocol: model.ProtocolVLESS, ListenIP: listenIP, Port: port, ConfigJSON: `{}`, Enabled: true}
 }
 
+func proxyPathSharedTransparentInboundID(inboundID int64, position int) int64 {
+	return -(int64(1)<<43 + (inboundID&0xffffff)<<12 + int64(position)&0xfff)
+}
+
+func proxyPathSharedTransparentInboundTag(inboundID int64, position int) string {
+	return fmt.Sprintf("oboard-inbound-%d-transparent-step-%d-in", inboundID, position)
+}
+
+func proxyPathSharedTransparentInbound(inboundID int64, step model.ProxyPathStep, server model.Server, inboundByID map[int64]model.Inbound, ledger *ProxyPathPortLedger) model.Inbound {
+	scopeKey := fmt.Sprintf("inbound:%d:%d", inboundID, step.Position)
+	port := ledger.resolve(model.ProxyPathPortKindInternal, scopeKey, server.ID, func() int {
+		return proxyPathInternalPort(server, inboundID, step.Position, inboundByID)
+	})
+	return model.Inbound{ID: proxyPathSharedTransparentInboundID(inboundID, step.Position), ServerID: server.ID, Name: fmt.Sprintf("入口 %d / 透明第%d跳内部入口", inboundID, step.Position), Protocol: model.ProtocolVLESS, ListenIP: firstNonEmpty(server.ListenIP, "0.0.0.0"), Port: port, ConfigJSON: `{}`, Enabled: true}
+}
+
 func proxyPathTrustedInnerInbound(path model.ProxyPath, step model.ProxyPathStep, server model.Server, outer model.Inbound, inboundByID map[int64]model.Inbound, ledger *ProxyPathPortLedger) model.Inbound {
 	inner := outer
 	inner.ListenIP = "127.0.0.1"
 	inner.Port = ledger.resolve(model.ProxyPathPortKindTrustedInner, fmt.Sprintf("%d:%d", path.ID, step.Position), server.ID, func() int {
 		return proxyPathAvailablePort(server, path.ID*193, step.Position*37, server.PortRangeStart, server.PortRangeEnd, inboundByID)
+	})
+	return inner
+}
+
+func proxyPathSharedTrustedInnerInbound(inboundID int64, position int, server model.Server, outer model.Inbound, inboundByID map[int64]model.Inbound, ledger *ProxyPathPortLedger) model.Inbound {
+	inner := outer
+	inner.ListenIP = "127.0.0.1"
+	inner.Port = ledger.resolve(model.ProxyPathPortKindTrustedInner, fmt.Sprintf("inbound:%d:%d", inboundID, position), server.ID, func() int {
+		return proxyPathAvailablePort(server, inboundID*193, position*37, server.PortRangeStart, server.PortRangeEnd, inboundByID)
 	})
 	return inner
 }

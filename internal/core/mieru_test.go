@@ -94,7 +94,7 @@ func TestMieruProxyPathIdentitiesUseRuntimeAliases(t *testing.T) {
 	target := model.Inbound{ID: 22, ServerID: 2, Protocol: model.ProtocolMieru}
 	targetID := target.ID
 	step := model.ProxyPathStep{InboundID: &targetID}
-	_, targetNames := proxyPathStepInboundIdentity(path, step, root, target.ServerID, map[int64]model.Inbound{target.ID: target}, nil, ConfigOptions{}, nil)
+	_, targetNames := proxyPathStepInboundIdentity(path, step, root, target.ServerID, map[int64]model.Inbound{target.ID: target}, nil, ConfigOptions{}, nil, nil)
 	if !reflect.DeepEqual(targetNames, []string{"oboard-ic"}) {
 		t.Fatalf("Mieru target auth users = %v", targetNames)
 	}

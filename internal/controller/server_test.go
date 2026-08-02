@@ -1703,7 +1703,8 @@ func TestProxyPathServerOnlyStepsPlanAndValidation(t *testing.T) {
 	pathID := int64(path["proxy_path"].(map[string]any)["id"].(float64))
 	transparentStep := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "port_forward"}, http.StatusCreated)
 	transparentStepID := int64(transparentStep["proxy_path_step"].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "port_forward", "processing_role": true}, http.StatusCreated)
+	processingStep := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "port_forward", "processing_role": true}, http.StatusCreated)
+	processingStepID := int64(processingStep["proxy_path_step"].(map[string]any)["id"].(float64))
 	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 3, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "singbox"}, http.StatusCreated)
 
 	plan := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(pathID)+"/plan", token, nil, http.StatusOK)
@@ -1715,6 +1716,20 @@ func TestProxyPathServerOnlyStepsPlanAndValidation(t *testing.T) {
 	listed := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths", token, nil, http.StatusOK)
 	if got := len(listed["proxy_paths"].([]any)); got != 1 {
 		t.Fatalf("failed transparent direct branch left partial path: %#v", listed)
+	}
+	branched := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": processingStepID}, http.StatusCreated)
+	branchedPath := branched["proxy_path"].(map[string]any)
+	if branchedPath["kind"] != "direct" || int64(branchedPath["branch_source_step_id"].(float64)) != processingStepID {
+		t.Fatalf("bad direct branch at transparent processing server: %#v", branched)
+	}
+	branchedSteps := branched["proxy_path_steps"].([]any)
+	if len(branchedSteps) != 2 || int64(branchedSteps[0].(map[string]any)["server_id"].(float64)) != serverBID || int64(branchedSteps[1].(map[string]any)["server_id"].(float64)) != serverCID {
+		t.Fatalf("processing-server direct branch did not preserve the transparent prefix: %#v", branched)
+	}
+	request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": processingStepID}, http.StatusBadRequest)
+	listed = request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths", token, nil, http.StatusOK)
+	if got := len(listed["proxy_paths"].([]any)); got != 2 {
+		t.Fatalf("failed duplicate transparent branch left a partial path: %#v", listed)
 	}
 
 	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 4, "node_type": "server_inbound", "server_id": serverAID, "transport_mode": "singbox"}, http.StatusBadRequest)
@@ -2938,5 +2953,22 @@ func TestTrustedForwardCoreRefreshRequiresMatchingFullDeployment(t *testing.T) {
 	changed.Rules[0].TrustedForward = &model.TrustedForwardSender{Version: 1, ReceiverID: "path-2", Key: sender.Key, MaxClockSkewSeconds: 120}
 	if err := srv.requireTrustedForwardDeploymentBaseline(ctx, *server, `{}`, changed); err == nil {
 		t.Fatal("trusted core refresh passed with a stale full deployment baseline")
+	}
+}
+
+func TestTrustedForwardFootprintIgnoresSharedReceiverOwnerPath(t *testing.T) {
+	config := func(pathID int64) string {
+		return fmt.Sprintf(`{"_oboard":{"trusted_forward":{"receivers":[{"version":1,"id":"inbound-17-transparent-step-1","path_id":%d,"inbound_tag":"oboard-inbound-17-transparent-step-1-in","network":"tcp","listen":"0.0.0.0","listen_port":31050,"target":"127.0.0.1","target_port":31051,"key":"receiver-key","max_clock_skew_seconds":120}]}}}`, pathID)
+	}
+	first, required, err := trustedForwardFootprint(config(29), model.PortForwardPlan{})
+	if err != nil || !required {
+		t.Fatalf("first shared receiver footprint = %q, required=%v, err=%v", first, required, err)
+	}
+	second, required, err := trustedForwardFootprint(config(30), model.PortForwardPlan{})
+	if err != nil || !required {
+		t.Fatalf("second shared receiver footprint = %q, required=%v, err=%v", second, required, err)
+	}
+	if first != second {
+		t.Fatalf("shared receiver owner path changed topology footprint: first=%s second=%s", first, second)
 	}
 }
