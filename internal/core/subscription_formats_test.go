@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -409,6 +410,59 @@ func TestEgernHTTPTransportAndURIFragmentArePreserved(t *testing.T) {
 	}
 	if !strings.Contains(uri, "allowInsecure=1") || !strings.HasSuffix(strings.TrimSpace(uri), "#Edge%2BA%20B") {
 		t.Fatalf("VLESS URI escaping/TLS options = %s", uri)
+	}
+}
+
+func TestMieruURIProfileUsesPercentEncodedSpaces(t *testing.T) {
+	node := SubscriptionNode{Name: "🇯🇵 沪日 | Mieru+", Raw: map[string]any{
+		"type": "mieru", "server": "mieru.example.com", "server_port": 25250,
+		"transport": "TCP", "username": "oboard-u7", "password": "mieru-pass",
+	}}
+
+	for _, format := range []model.SubscriptionFormat{model.SubscriptionFormatMieru, model.SubscriptionFormatShadowrocket} {
+		t.Run(string(format), func(t *testing.T) {
+			output, err := renderSubscriptionTarget([]SubscriptionNode{node}, format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(output, "profile=%F0%9F%87%AF%F0%9F%87%B5+") {
+				t.Fatalf("Mieru profile contains a form-encoded space: %s", output)
+			}
+			if !strings.Contains(output, "profile=%F0%9F%87%AF%F0%9F%87%B5%20%E6%B2%AA%E6%97%A5%20%7C%20Mieru%2B") {
+				t.Fatalf("Mieru profile is not URI encoded: %s", output)
+			}
+		})
+	}
+}
+
+func TestShadowrocketMieruURIEnablesUserHint(t *testing.T) {
+	node := SubscriptionNode{Name: "Mieru", Raw: map[string]any{
+		"type": "mieru", "server": "mieru.example.com", "server_port": 25250,
+		"transport": "TCP", "username": "oboard-u7", "password": "mieru-pass",
+	}}
+
+	output, err := renderSubscriptionTarget([]SubscriptionNode{node}, model.SubscriptionFormatShadowrocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shareURL, err := url.Parse(strings.TrimSpace(output))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := shareURL.Query().Get("user-hint-is-mandatory"); got != "true" {
+		t.Fatalf("Shadowrocket Mieru user hint = %q, want true: %s", got, output)
+	}
+
+	official, err := renderSubscriptionTarget([]SubscriptionNode{node}, model.SubscriptionFormatMieru)
+	if err != nil {
+		t.Fatal(err)
+	}
+	officialURL, err := url.Parse(strings.TrimSpace(official))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := officialURL.Query()["user-hint-is-mandatory"]; exists {
+		t.Fatalf("official Mieru URI unexpectedly received a Shadowrocket option: %s", official)
 	}
 }
 

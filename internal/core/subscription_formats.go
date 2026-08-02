@@ -547,7 +547,7 @@ func renderMieruTarget(proxies []subscriptionProxy) (string, error) {
 			Scheme:   "mierus",
 			User:     url.UserPassword(proxy.Username, proxy.Password),
 			Host:     subscriptionEndpoint(proxy.Server, 0),
-			RawQuery: query.Encode(),
+			RawQuery: encodeURIQuery(query),
 		}
 		lines = append(lines, shareURL.String())
 	}
@@ -1356,9 +1356,10 @@ func canonicalShareURI(proxy subscriptionProxy) (string, error) {
 			query.Add("port", portRange)
 			query.Add("protocol", strings.ToUpper(proxy.Network))
 		}
+		query.Set("user-hint-is-mandatory", "true")
 		setQueryIfNotEmpty(query, "multiplexing", proxy.Multiplexing)
 		setQueryIfNotEmpty(query, "traffic-pattern", proxy.TrafficPattern)
-		return (&url.URL{Scheme: "mierus", User: url.UserPassword(proxy.Username, proxy.Password), Host: subscriptionEndpoint(proxy.Server, 0), RawQuery: query.Encode()}).String(), nil
+		return (&url.URL{Scheme: "mierus", User: url.UserPassword(proxy.Username, proxy.Password), Host: subscriptionEndpoint(proxy.Server, 0), RawQuery: encodeURIQuery(query)}).String(), nil
 	default:
 		return "", fmt.Errorf("URI subscriptions do not support proxy type %q", proxy.Type)
 	}
@@ -1366,6 +1367,10 @@ func canonicalShareURI(proxy subscriptionProxy) (string, error) {
 
 func escapeURIComponent(value string) string {
 	return strings.ReplaceAll(url.QueryEscape(value), "+", "%20")
+}
+
+func encodeURIQuery(query url.Values) string {
+	return strings.ReplaceAll(query.Encode(), "+", "%20")
 }
 
 func appendURITransport(query url.Values, proxy subscriptionProxy) {
