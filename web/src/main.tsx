@@ -3141,7 +3141,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'servers' | 'certificates' | 'subscriptions' | 'traffic' | 'backups' | 'updates' | 'logs'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'servers' | 'certificates' | 'subscriptions' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3163,6 +3163,9 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [serverDefaultBBREnabled, setServerDefaultBBREnabled] = useState(String(data.settings?.server_default_bbr_enabled || 'false') === 'true')
   const [serverDefaultTimeCorrectionMode, setServerDefaultTimeCorrectionMode] = useState<TimeCorrectionMode>((data.settings?.server_default_time_correction_mode || 'off') as TimeCorrectionMode)
   const [timeCheckNTPServers, setTimeCheckNTPServers] = useState<string[]>(() => timeCheckNTPServerSettings(data.settings?.time_check_ntp_servers))
+  const [notificationOfflineAfter, setNotificationOfflineAfter] = useState(Number(data.settings?.notification_server_offline_after_seconds || 120))
+  const [notificationOnlineAfter, setNotificationOnlineAfter] = useState(Number(data.settings?.notification_server_online_after_seconds || 60))
+  const [notificationMergeOffline, setNotificationMergeOffline] = useState(data.settings?.notification_server_merge_offline !== false)
   const [saving, setSaving] = useState('')
   useEffect(() => { setControllerURL(savedURL || currentOrigin) }, [savedURL, currentOrigin])
   useEffect(() => { setBasePath(currentBasePath) }, [currentBasePath])
@@ -3178,6 +3181,11 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     setSubscriptionAuditPolicy(policy)
     setSubscriptionAuditPresetMode(subscriptionAuditPreset(policy))
   }, [data.settings?.subscription_audit_policy])
+  useEffect(() => {
+    setNotificationOfflineAfter(Number(data.settings?.notification_server_offline_after_seconds || 120))
+    setNotificationOnlineAfter(Number(data.settings?.notification_server_online_after_seconds || 60))
+    setNotificationMergeOffline(data.settings?.notification_server_merge_offline !== false)
+  }, [data.settings?.notification_server_offline_after_seconds, data.settings?.notification_server_online_after_seconds, data.settings?.notification_server_merge_offline])
   useEffect(() => { setTrafficTimezone(data.settings?.traffic_timezone || 'Asia/Shanghai'); setTrafficMode(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject') }, [data.settings?.traffic_timezone, data.settings?.traffic_enforcement_mode])
   useEffect(() => {
     setControllerLogMaxMB(Number(data.settings?.controller_log_max_mb || 32))
@@ -3312,6 +3320,15 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       }) })
     }, '新服务器默认设置已保存')
   }
+  const saveNotificationSettings = async () => {
+    await runSave('notifications', async () => {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({
+        notification_server_offline_after_seconds: notificationOfflineAfter,
+        notification_server_online_after_seconds: notificationOnlineAfter,
+        notification_server_merge_offline: notificationMergeOffline,
+      }) })
+    }, '通知提醒设置已保存')
+  }
   return <section className="settings-shell">
     <nav className="settings-tabs" role="tablist" aria-label="设置分类">
       <button className={activeSection === 'connection' ? 'active' : ''} role="tab" aria-selected={activeSection === 'connection'} onClick={() => setActiveSection('connection')}><LinkIcon size={15} />基础设置</button>
@@ -3319,6 +3336,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       <button className={activeSection === 'certificates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'certificates'} onClick={() => setActiveSection('certificates')}><Lock size={15} />证书</button>
       <button className={activeSection === 'subscriptions' ? 'active' : ''} role="tab" aria-selected={activeSection === 'subscriptions'} onClick={() => setActiveSection('subscriptions')}><Shield size={15} />订阅安全</button>
       <button className={activeSection === 'traffic' ? 'active' : ''} role="tab" aria-selected={activeSection === 'traffic'} onClick={() => setActiveSection('traffic')}><Gauge size={15} />流量控制</button>
+      <button className={activeSection === 'notifications' ? 'active' : ''} role="tab" aria-selected={activeSection === 'notifications'} onClick={() => setActiveSection('notifications')}><Bell size={15} />通知提醒</button>
       <button className={activeSection === 'backups' ? 'active' : ''} role="tab" aria-selected={activeSection === 'backups'} onClick={() => setActiveSection('backups')}><Database size={15} />数据备份</button>
       <button className={activeSection === 'updates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'updates'} onClick={() => setActiveSection('updates')}><Download size={15} />主控更新</button>
       <button className={activeSection === 'logs' ? 'active' : ''} role="tab" aria-selected={activeSection === 'logs'} onClick={() => setActiveSection('logs')}><FileText size={15} />运行日志</button>
@@ -3481,6 +3499,21 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </FormField>
           <div className="settings-actions"><button onClick={saveTraffic} disabled={Boolean(saving)}>{saving === 'traffic' ? '保存中...' : '保存流量设置'}</button></div>
           <p className="muted">Agent 会保留本地可用额度；面板暂时不可达时，节点仍会按已下发额度暂停超量用户。</p>
+        </div>
+      </section>}
+      {activeSection === 'notifications' && <section className="settings-card">
+        <div className="settings-card-head"><div><h3>服务器离线与恢复提醒</h3><p className="muted">统一控制离线判断时间和恢复提醒的延迟窗口，也可以为单台服务器单独覆盖。</p></div></div>
+        <div className="form settings-form single-field">
+          <FormField label="默认离线判断时间（秒）" hint="服务器超过该时长未上报心跳即判定离线并触发提醒；单台服务器可在服务器设置中单独覆盖。">
+            <input type="number" min={30} max={86400} value={notificationOfflineAfter} onChange={event => setNotificationOfflineAfter(Math.max(30, Number(event.target.value) || 120))} />
+          </FormField>
+          <FormField label="恢复提醒延迟（秒）" hint="服务器恢复在线后延迟该时长再提醒，短时间反复掉线不会频繁打扰。">
+            <input type="number" min={0} max={86400} value={notificationOnlineAfter} onChange={event => setNotificationOnlineAfter(Math.max(0, Number(event.target.value) || 0))} />
+          </FormField>
+          <FormField label="多台服务器同时离线时合并提醒" hint="开启后，同时失联的多台服务器会等各自的判断窗口结束，合并为一条通知发送。">
+            <label className="notification-enable-row"><input type="checkbox" checked={notificationMergeOffline} onChange={event => setNotificationMergeOffline(event.target.checked)} aria-label="合并离线提醒" /></label>
+          </FormField>
+          <div className="settings-actions"><button onClick={() => void saveNotificationSettings()} disabled={Boolean(saving)}>{saving === 'notifications' ? '保存中...' : '保存通知设置'}</button></div>
         </div>
       </section>}
       {activeSection === 'backups' && <ControllerBackupPanel client={client} notify={notify} dialogs={dialogs} />}
@@ -5365,7 +5398,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode }) {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: 100, port_range_end: 65535, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connection_audit_enabled: true }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: 100, port_range_end: 65535, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
 }
 
 function GridViewIcon() {
@@ -6011,6 +6044,12 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: Re
           <FormField label="连接审计" hint="记录来源 IP、目标与出口摘要。">
             <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.connection_audit_enabled)} onChange={e => update({ connection_audit_enabled: e.target.checked })} aria-label="启用连接审计" /></label>
           </FormField>
+          <FormField label="离线与恢复提醒" hint="关闭后不再提醒这台服务器的离线与恢复。">
+            <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.offline_notify_enabled)} onChange={e => update({ offline_notify_enabled: e.target.checked })} aria-label="启用离线与恢复提醒" /></label>
+          </FormField>
+          {Boolean(draft.offline_notify_enabled) && <FormField label="离线判断时间（秒）" hint="留空或 0 表示使用设置中的默认值。">
+            <input type="number" min={0} max={86400} value={Number(draft.offline_after_seconds) || 0} onChange={e => update({ offline_after_seconds: Math.max(0, Number(e.target.value) || 0) })} />
+          </FormField>}
 
           <div className="form-extra-row">
             <button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)} aria-haspopup="dialog">MTU 检测设置</button>
@@ -6085,6 +6124,12 @@ function ServerEditDialog({ server, onCancel, onSubmit }: { server: Server; onCa
           <FormField label="连接审计" hint="关闭后 Agent 停止采集、上报和本地审计状态写入。">
             <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.connection_audit_enabled)} onChange={e => update({ connection_audit_enabled: e.target.checked })} aria-label="启用连接审计" /></label>
           </FormField>
+          <FormField label="离线与恢复提醒" hint="关闭后不再提醒这台服务器的离线与恢复。">
+            <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.offline_notify_enabled)} onChange={e => update({ offline_notify_enabled: e.target.checked })} aria-label="启用离线与恢复提醒" /></label>
+          </FormField>
+          {Boolean(draft.offline_notify_enabled) && <FormField label="离线判断时间（秒）" hint="留空或 0 表示使用设置中的默认值。">
+            <input type="number" min={0} max={86400} value={Number(draft.offline_after_seconds) || 0} onChange={e => update({ offline_after_seconds: Math.max(0, Number(e.target.value) || 0) })} />
+          </FormField>}
           <div className="form-extra-row"><button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)}>MTU 检测设置</button><span>修改后会在下次部署重新检测。</span></div>
         </div>
       </div>
@@ -12577,11 +12622,12 @@ function Subscriptions({ data, client, load, notify }: any) {
 }
 
 const fallbackNotificationEventOptions: NotificationEventDefinition[] = [
-  { value: 'server_offline', label: '服务器失联', description: '服务器超过两分钟未连接时提醒', variables: ['ServerName', 'ServerID', 'LastSeen', 'Time'] },
-  { value: 'server_online', label: '服务器恢复', description: '失联服务器重新连接时提醒', variables: ['ServerName', 'ServerID', 'Time'] },
+  { value: 'server_offline', label: '服务器失联', description: '服务器超过设置的离线判断时间未连接时提醒', variables: ['ServerName', 'ServerID', 'LastSeen', 'Time'] },
+  { value: 'server_online', label: '服务器恢复', description: '失联服务器恢复在线并保持一段时间后提醒', variables: ['ServerName', 'ServerID', 'Time'] },
   { value: 'traffic_quota_exceeded', label: '流量达到上限', description: '所选用户的周期流量达到上限时提醒', variables: ['UserName', 'UserID', 'Used', 'Limit', 'ResetAt', 'Time'] },
   { value: 'user_risk_detected', label: '异常使用', description: '已开启连接审计的服务器发现所选用户大量来源 IP、跨网段或异常并发时提醒', variables: ['UserName', 'UserID', 'RiskLevel', 'RiskScore', 'Signals', 'SourceIPCount', 'ActivePeak', 'Time'] },
   { value: 'subscription_risk_detected', label: '订阅共享风险', description: '订阅拉取达到风险阈值或被自动暂停时提醒管理员', variables: ['UserName', 'UserID', 'RiskLevel', 'RiskScore', 'Signals', 'SourceIPCount', 'RegionCount', 'PullCount', 'Suspended', 'Time'] },
+  { value: 'subscription_abnormal', label: '订阅异常', description: '用户订阅在短时间内多次拉取失败或被暂停后仍反复尝试时提醒管理员', variables: ['UserName', 'UserID', 'Count', 'Window', 'Time'] },
   { value: 'task_failed', label: '任务失败', description: '配置下发、更新或检测任务失败时提醒', variables: ['TaskType', 'TaskID', 'ServerName', 'Error', 'Time'] },
   { value: 'task_timeout', label: '任务超时', description: '任务等待或执行超过五分钟时提醒', variables: ['TaskType', 'TaskID', 'ServerName', 'Error', 'Time'] },
   { value: 'certificate_issuance_failed', label: '证书签发失败', description: '证书首次签发或自动续期失败时提醒', variables: ['CertificateName', 'Domains', 'Issuer', 'EABKeyID', 'Error', 'Time'] },
@@ -12598,6 +12644,7 @@ const fallbackNotificationTemplates: Record<string, NotificationTemplate> = {
   traffic_quota_exceeded: { title: '流量达到上限 · {{.UserName}}', body: '{{.UserName}} 本周期流量已达到上限\n已用：{{.Used}} / {{.Limit}}\n重置：{{.ResetAt}}' },
   user_risk_detected: { title: '异常使用提醒 · {{.UserName}}', body: '{{.UserName}} 的连接行为达到{{.RiskLevel}}\n风险分：{{.RiskScore}}\n异常表现：{{.Signals}}\n来源 IP：{{.SourceIPCount}} 个\n并发峰值：{{.ActivePeak}}\n时间：{{.Time}}' },
   subscription_risk_detected: { title: '订阅风险提醒 · {{.UserName}}', body: '{{.UserName}} 的订阅拉取达到{{.RiskLevel}}\n风险分：{{.RiskScore}}\n状态：{{.Suspended}}\n异常表现：{{.Signals}}\n来源 IP：{{.SourceIPCount}} 个\n地域：{{.RegionCount}} 个\n拉取：{{.PullCount}} 次\n时间：{{.Time}}' },
+  subscription_abnormal: { title: '订阅异常提醒 · {{.UserName}}', body: '{{.UserName}} 的订阅在{{.Window}}内出现 {{.Count}} 次异常\n常见原因：订阅链接被分享、客户端配置错误或链接失效\n请登录面板检查该用户的订阅状态。\n时间：{{.Time}}' },
   task_failed: { title: '任务失败 · {{.TaskType}}', body: '服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}' },
   task_timeout: { title: '任务超时 · {{.TaskType}}', body: '服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}' },
   certificate_issuance_failed: { title: '证书签发失败 · {{.CertificateName}}', body: '证书：{{.CertificateName}}\n域名：{{.Domains}}\n签发机构：{{.Issuer}}\n外部账号：{{.EABKeyID}}\n原因：{{.Error}}\n时间：{{.Time}}' },
@@ -12618,8 +12665,11 @@ type NotificationDraft = {
   events: string[]
   bot_token: string
   chat_id: string
+  interactive: boolean
+  allowed_chat_ids: string
   server_url: string
   device_key: string
+  bark_group: string
   templates: Record<string, NotificationTemplate>
   user_ids: number[]
 }
@@ -12639,8 +12689,11 @@ function emptyNotificationDraft(defaults: Record<string, NotificationTemplate>, 
     events: eventOptions.filter(option => option.value !== 'subscription_risk_detected' && (!isAdmin || option.value !== 'admin_announcement')).map(option => option.value),
     bot_token: '',
     chat_id: '',
+    interactive: false,
+    allowed_chat_ids: '',
     server_url: 'https://api.day.app',
     device_key: '',
+    bark_group: '',
     templates: mergedNotificationTemplates('{}', defaults),
     user_ids: [ownerUserID],
   }
@@ -12657,8 +12710,11 @@ function notificationDraftFromChannel(channel: NotificationChannel, defaults: Re
     events: String(channel.events || '').split(',').map(x => x.trim()).filter(Boolean),
     bot_token: String(cfg.bot_token || ''),
     chat_id: String(cfg.chat_id ?? ''),
+    interactive: Boolean(cfg.interactive),
+    allowed_chat_ids: String(cfg.allowed_chat_ids || ''),
     server_url: String(cfg.server_url || 'https://api.day.app'),
     device_key: String(cfg.device_key || ''),
+    bark_group: String(cfg.group || ''),
     templates: mergedNotificationTemplates(channel.templates_json, defaults),
     user_ids: channel.user_ids || [],
   }
@@ -12667,8 +12723,8 @@ function notificationDraftFromChannel(channel: NotificationChannel, defaults: Re
 function notificationPayloadFromDraft(draft: NotificationDraft) {
   const events = draft.events.join(',')
   const config = draft.type === 'telegram'
-    ? { bot_token: draft.bot_token.trim(), chat_id: draft.chat_id.trim() }
-    : { server_url: draft.server_url.trim() || 'https://api.day.app', device_key: draft.device_key.trim() }
+    ? { bot_token: draft.bot_token.trim(), chat_id: draft.chat_id.trim(), interactive: draft.interactive, allowed_chat_ids: draft.interactive ? draft.allowed_chat_ids.trim() : '' }
+    : { server_url: draft.server_url.trim() || 'https://api.day.app', device_key: draft.device_key.trim(), group: draft.bark_group.trim() }
   return {
     name: draft.name.trim(),
     type: draft.type,
@@ -13071,12 +13127,23 @@ function NotificationChannelDialog({
           <FormField label="Chat ID" required hint="个人、群组或频道 ID。">
             <input value={draft.chat_id} onChange={e => update({ chat_id: e.target.value })} placeholder="-1001234567890" autoComplete="off" />
           </FormField>
+          <FormField label="启用互动指令" hint="开启后可在 Telegram 中向机器人发送指令查询状态、流量、用户和审计概览。">
+            <label className="notification-enable-row">
+              <input type="checkbox" checked={draft.interactive} onChange={e => update({ interactive: e.target.checked })} aria-label="启用互动指令" />
+            </label>
+          </FormField>
+          {draft.interactive && <FormField label="允许互动的 Chat ID" required hint="只有这些 Chat ID 能使用机器人指令，多个用英文逗号分隔。可在 @userinfobot 查询自己的 Chat ID。">
+            <textarea rows={3} value={draft.allowed_chat_ids} onChange={e => update({ allowed_chat_ids: e.target.value })} placeholder="123456789, -1001234567890" autoComplete="off" />
+          </FormField>}
         </> : <>
           <FormField label="Device Key" required hint="Bark 设备 Key。">
             <input value={draft.device_key} onChange={e => update({ device_key: e.target.value })} placeholder="device key" autoComplete="off" />
           </FormField>
           <FormField label="Server URL" hint="留空使用 Bark 官方地址。">
             <input value={draft.server_url} onChange={e => update({ server_url: e.target.value })} placeholder="https://api.day.app" autoComplete="off" />
+          </FormField>
+          <FormField label="通知分组" hint="Bark 会按分组在通知中心归类，便于分类管理。">
+            <input value={draft.bark_group} onChange={e => update({ bark_group: e.target.value })} placeholder="例如：OBoard 提醒" maxLength={64} autoComplete="off" />
           </FormField>
         </>}
       </div>

@@ -47,13 +47,16 @@ import (
 )
 
 const (
-	settingServerDefaultMTUMode        = "server_default_mtu_mode"
-	settingServerDefaultBBREnabled     = "server_default_bbr_enabled"
-	settingServerDefaultTimeCorrection = "server_default_time_correction_mode"
-	settingTimeCheckNTPServers         = "time_check_ntp_servers"
-	settingSubscriptionAuditPolicy     = "subscription_audit_policy"
-	settingTrustedProxyCIDRs           = "trusted_proxy_cidrs"
-	timeCheckThresholdSeconds          = 30
+	settingServerDefaultMTUMode           = "server_default_mtu_mode"
+	settingServerDefaultBBREnabled        = "server_default_bbr_enabled"
+	settingServerDefaultTimeCorrection    = "server_default_time_correction_mode"
+	settingTimeCheckNTPServers            = "time_check_ntp_servers"
+	settingSubscriptionAuditPolicy        = "subscription_audit_policy"
+	settingTrustedProxyCIDRs              = "trusted_proxy_cidrs"
+	settingNotificationServerOfflineAfter = "notification_server_offline_after_seconds"
+	settingNotificationServerOnlineAfter  = "notification_server_online_after_seconds"
+	settingNotificationServerMergeOffline = "notification_server_merge_offline"
+	timeCheckThresholdSeconds             = 30
 )
 
 var defaultTimeCheckNTPServers = []string{"time.cloudflare.com", "time.google.com", "pool.ntp.org"}
@@ -673,6 +676,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			ServerDefaultTimeCorrection *string                        `json:"server_default_time_correction_mode"`
 			TimeCheckNTPServers         []string                       `json:"time_check_ntp_servers"`
 			TrustedProxyCIDRs           *[]string                      `json:"trusted_proxy_cidrs"`
+			NotificationOfflineAfter    *int                           `json:"notification_server_offline_after_seconds"`
+			NotificationOnlineAfter     *int                           `json:"notification_server_online_after_seconds"`
+			NotificationMergeOffline    *bool                          `json:"notification_server_merge_offline"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -935,6 +941,35 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			s.applyTrustedProxyCIDRs(normalizedTrustedProxyCIDRs)
 			changed = append(changed, settingTrustedProxyCIDRs)
 		}
+		if req.NotificationOfflineAfter != nil {
+			if *req.NotificationOfflineAfter < 30 || *req.NotificationOfflineAfter > 86400 {
+				fail(w, errors.New("notification_server_offline_after_seconds must be between 30 and 86400"), http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), settingNotificationServerOfflineAfter, strconv.Itoa(*req.NotificationOfflineAfter)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingNotificationServerOfflineAfter)
+		}
+		if req.NotificationOnlineAfter != nil {
+			if *req.NotificationOnlineAfter < 0 || *req.NotificationOnlineAfter > 86400 {
+				fail(w, errors.New("notification_server_online_after_seconds must be between 0 and 86400"), http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), settingNotificationServerOnlineAfter, strconv.Itoa(*req.NotificationOnlineAfter)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingNotificationServerOnlineAfter)
+		}
+		if req.NotificationMergeOffline != nil {
+			if err := s.store.SetSetting(r.Context(), settingNotificationServerMergeOffline, strconv.FormatBool(*req.NotificationMergeOffline)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingNotificationServerMergeOffline)
+		}
 		if len(changed) > 0 {
 			auditReq(s, r, "update", "settings", strings.Join(changed, ","))
 		}
@@ -957,7 +992,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAuditPolicy: store.DefaultSubscriptionAuditPolicy(), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAuditPolicy: store.DefaultSubscriptionAuditPolicy(), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	for key, value := range items {
 		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingSubscriptionAuditPolicy || key == settingTrustedProxyCIDRs {
 			continue
@@ -2502,9 +2537,11 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var input struct {
 			model.Server
-			MTUMode            *model.MTUMode            `json:"mtu_mode"`
-			BBREnabled         *bool                     `json:"bbr_enabled"`
-			TimeCorrectionMode *model.TimeCorrectionMode `json:"time_correction_mode"`
+			MTUMode              *model.MTUMode            `json:"mtu_mode"`
+			BBREnabled           *bool                     `json:"bbr_enabled"`
+			TimeCorrectionMode   *model.TimeCorrectionMode `json:"time_correction_mode"`
+			OfflineNotifyEnabled *bool                     `json:"offline_notify_enabled"`
+			OfflineAfterSeconds  *int                      `json:"offline_after_seconds"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -2530,6 +2567,14 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			v.TimeCorrectionMode = defaultTimeMode
 		} else {
 			v.TimeCorrectionMode = *input.TimeCorrectionMode
+		}
+		if input.OfflineNotifyEnabled == nil {
+			v.OfflineNotifyEnabled = true
+		} else {
+			v.OfflineNotifyEnabled = *input.OfflineNotifyEnabled
+		}
+		if input.OfflineAfterSeconds != nil {
+			v.OfflineAfterSeconds = *input.OfflineAfterSeconds
 		}
 		if err := validateServer(&v); err != nil {
 			fail(w, err, 400)
@@ -2629,9 +2674,11 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPatch {
 		var input struct {
 			model.Server
-			MTUMode            *model.MTUMode            `json:"mtu_mode"`
-			BBREnabled         *bool                     `json:"bbr_enabled"`
-			TimeCorrectionMode *model.TimeCorrectionMode `json:"time_correction_mode"`
+			MTUMode              *model.MTUMode            `json:"mtu_mode"`
+			BBREnabled           *bool                     `json:"bbr_enabled"`
+			TimeCorrectionMode   *model.TimeCorrectionMode `json:"time_correction_mode"`
+			OfflineNotifyEnabled *bool                     `json:"offline_notify_enabled"`
+			OfflineAfterSeconds  *int                      `json:"offline_after_seconds"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -2657,6 +2704,16 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			v.TimeCorrectionMode = current.TimeCorrectionMode
 		} else {
 			v.TimeCorrectionMode = *input.TimeCorrectionMode
+		}
+		if input.OfflineNotifyEnabled == nil {
+			v.OfflineNotifyEnabled = current.OfflineNotifyEnabled
+		} else {
+			v.OfflineNotifyEnabled = *input.OfflineNotifyEnabled
+		}
+		if input.OfflineAfterSeconds == nil {
+			v.OfflineAfterSeconds = current.OfflineAfterSeconds
+		} else {
+			v.OfflineAfterSeconds = *input.OfflineAfterSeconds
 		}
 		// Automatic region is Agent telemetry. Panel edits may select auto or a
 		// manual region, but cannot replace the last detected value.
@@ -3593,6 +3650,9 @@ func scrubSensitiveValue(v any) {
 func validateServer(v *model.Server) error {
 	if v.Name == "" {
 		return errors.New("name required")
+	}
+	if v.OfflineAfterSeconds < 0 || v.OfflineAfterSeconds > 86400 {
+		return errors.New("offline_after_seconds must be between 0 and 86400")
 	}
 	if v.ListenIP == "" {
 		v.ListenIP = "0.0.0.0"
@@ -10162,6 +10222,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	s.notifySubscriptionAuditRisk(r.Context(), *user, decision)
 	s.publishRealtime("audit", "subscriptions", "users")
 	if !decision.Allowed {
+		s.maybeNotifySubscriptionAbnormal(r.Context(), user.ID)
 		fail(w, errors.New("subscription access suspended; contact an administrator"), http.StatusForbidden)
 		return
 	}
@@ -10415,11 +10476,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				s.publishRealtime("server_runtime", "server_metrics")
 			}
 			if err == nil && old == model.ServerOffline && next == model.ServerOnline {
-				s.enqueueNotificationEvent(ctx, notificationEvent{
-					Name: notificationServerOnline,
-					Key:  fmt.Sprintf("server:%d:online:%s", server.ID, h.Timestamp.UTC().Format(time.RFC3339Nano)),
-					Data: map[string]string{"ServerName": server.Name, "ServerID": fmt.Sprint(server.ID), "Time": s.notificationNow(ctx)},
-				})
+				s.handleServerRecovered(ctx, server.ID)
 			}
 		}
 	}

@@ -313,6 +313,8 @@ type Server struct {
 	TrafficPeriodEnd         string             `json:"traffic_period_end"`
 	ConnectivityProbeEnabled bool               `json:"connectivity_probe_enabled"`
 	ConnectionAuditEnabled   bool               `json:"connection_audit_enabled"`
+	OfflineNotifyEnabled     bool               `json:"offline_notify_enabled"`
+	OfflineAfterSeconds      int                `json:"offline_after_seconds"`
 	TimeCorrectionMode       TimeCorrectionMode `json:"time_correction_mode"`
 	TimeCheckStatus          string             `json:"time_check_status"`
 	TimeOffsetMS             int64              `json:"time_offset_ms"`
@@ -1409,6 +1411,16 @@ type NotificationDelivery struct {
 	UpdatedAt     time.Time           `json:"updated_at"`
 	SentAt        *time.Time          `json:"sent_at,omitempty"`
 	Channel       NotificationChannel `json:"channel"`
+}
+
+type ServerOfflineNotice struct {
+	ServerID   int64      `json:"server_id"`
+	Status     string     `json:"status"`
+	SinceAt    time.Time  `json:"since_at"`
+	NotifyAt   time.Time  `json:"notify_at"`
+	GroupKey   string     `json:"group_key"`
+	ServerName string     `json:"server_name"`
+	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
 }
 
 type AuditLog struct {

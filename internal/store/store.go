@@ -31,7 +31,7 @@ const (
 
 const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_token_hash,''),chain_secret,coalesce(enrollment_hash,''),enrollment_expires_at,entry_address,coalesce(public_ipv4,''),coalesce(public_ipv6,''),coalesce(region_code,''),coalesce(detected_region_code,''),coalesce(region_mode,'auto'),coalesce(entry_ip_mode,'auto'),listen_ip,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,status,os,coalesce(distro_id,''),coalesce(distro_version,''),coalesce(distro_name,''),coalesce(libc,''),coalesce(service_manager,''),coalesce(package_manager,''),arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,coalesce(agent_version,''),coalesce(agent_build,''),sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at from servers`
 
-const serverTelemetrySelectSQL = `select server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error from server_telemetry`
+const serverTelemetrySelectSQL = `select server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error,offline_notify_enabled,offline_after_seconds from server_telemetry`
 
 const userSelectSQL = `select u.id,u.username,u.nickname,u.password_hash,coalesce(u.session_version,0),u.role,u.status,u.proxy_uuid,u.proxy_password,u.speed_limit_mbps,u.traffic_limit_bytes,u.traffic_used_bytes,u.traffic_reset_mode,u.traffic_reset_day,coalesce(u.subscription_token,''),coalesce(p.burn_after_read,0),p.burned_at,coalesce(a.enabled,0),coalesce(a.public_key,''),coalesce(sa.suspended,0),sa.suspended_at,coalesce(sa.suspension_reason,''),u.created_at,u.updated_at from users u left join subscription_token_policies p on p.user_id=u.id left join subscription_age_keys a on a.user_id=u.id left join subscription_access_states sa on sa.user_id=u.id`
 
@@ -217,6 +217,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists notification_channel_user_targets (channel_id integer not null references notification_channels(id) on delete cascade, user_id integer not null references users(id) on delete cascade, created_at text not null, primary key(channel_id,user_id))`,
 		`create table if not exists notification_announcements (id integer primary key autoincrement, actor_user_id integer not null references users(id) on delete cascade, actor_name text not null, title text not null, body text not null, user_ids_json text not null default '[]', queued_count integer not null default 0, created_at text not null)`,
 		`create table if not exists notification_deliveries (id integer primary key autoincrement, channel_id integer not null references notification_channels(id) on delete cascade, event text not null, event_key text not null, title text not null, body text not null, status text not null default 'pending', attempts integer not null default 0, error text not null default '', next_attempt_at text not null, created_at text not null, updated_at text not null, sent_at text, unique(channel_id,event,event_key))`,
+		`create table if not exists server_offline_notices (server_id integer primary key references servers(id) on delete cascade, status text not null, since_at text not null, notify_at text not null, group_key text not null default '', notified integer not null default 0, updated_at text not null)`,
 		`create table if not exists subscription_profiles (id integer primary key autoincrement, name text not null unique, group_name text not null default 'default', description text not null default '', config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists subscription_assignments (id integer primary key autoincrement, profile_id integer not null references subscription_profiles(id) on delete cascade, user_id integer not null references users(id) on delete cascade, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, group_name text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create index if not exists idx_tasks_server_status on agent_tasks(server_id, status)`,
@@ -283,6 +284,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		name string
 		sql  string
 	}{
+		{"offline_notify_enabled", `alter table server_telemetry add column offline_notify_enabled integer not null default 1`},
+		{"offline_after_seconds", `alter table server_telemetry add column offline_after_seconds integer not null default 0`},
 		{"time_correction_mode", `alter table server_telemetry add column time_correction_mode text not null default 'off'`},
 		{"time_check_status", `alter table server_telemetry add column time_check_status text not null default 'unknown'`},
 		{"time_offset_ms", `alter table server_telemetry add column time_offset_ms integer not null default 0`},
@@ -1576,8 +1579,8 @@ func (s *Store) UpdateServerTelemetrySettings(ctx context.Context, server *model
 	server.TrafficResetMode = normalizeTrafficResetMode(server.TrafficResetMode)
 	server.TrafficResetDay = normalizeTrafficResetDay(server.TrafficResetDay)
 	server.TimeCorrectionMode = normalizeTimeCorrectionMode(server.TimeCorrectionMode)
-	_, err := s.db.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,time_correction_mode,updated_at) values(?,?,?,?,?,?,?)
-		on conflict(server_id) do update set monitoring_mode=excluded.monitoring_mode,traffic_reset_mode=excluded.traffic_reset_mode,traffic_reset_day=excluded.traffic_reset_day,connectivity_probe_enabled=excluded.connectivity_probe_enabled,time_correction_mode=excluded.time_correction_mode,updated_at=excluded.updated_at`, server.ID, server.MonitoringMode, server.TrafficResetMode, server.TrafficResetDay, boolInt(server.ConnectivityProbeEnabled), server.TimeCorrectionMode, now())
+	_, err := s.db.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,time_correction_mode,offline_notify_enabled,offline_after_seconds,updated_at) values(?,?,?,?,?,?,?,?,?)
+		on conflict(server_id) do update set monitoring_mode=excluded.monitoring_mode,traffic_reset_mode=excluded.traffic_reset_mode,traffic_reset_day=excluded.traffic_reset_day,connectivity_probe_enabled=excluded.connectivity_probe_enabled,time_correction_mode=excluded.time_correction_mode,offline_notify_enabled=excluded.offline_notify_enabled,offline_after_seconds=excluded.offline_after_seconds,updated_at=excluded.updated_at`, server.ID, server.MonitoringMode, server.TrafficResetMode, server.TrafficResetDay, boolInt(server.ConnectivityProbeEnabled), server.TimeCorrectionMode, boolInt(server.OfflineNotifyEnabled), server.OfflineAfterSeconds, now())
 	return err
 }
 
@@ -1590,6 +1593,8 @@ func (s *Store) attachServerTelemetry(ctx context.Context, servers []model.Serve
 		servers[i].MonitoringMode = "lightweight"
 		servers[i].TrafficResetMode = "monthly"
 		servers[i].TrafficResetDay = 1
+		servers[i].OfflineNotifyEnabled = true
+		servers[i].OfflineAfterSeconds = 0
 		servers[i].TimeCorrectionMode = model.TimeCorrectionOff
 		servers[i].TimeCheckStatus = "unknown"
 		servers[i].ConnectivityStatus = "disabled"
@@ -1603,12 +1608,12 @@ func (s *Store) attachServerTelemetry(ctx context.Context, servers []model.Serve
 	for rows.Next() {
 		var id int64
 		var mode, resetMode, correctionMode, timeStatus, timeSource, timeError, timeUnsupportedPathsJSON, periodStart, periodEnd, reportedAt, checkedAt, connectivityError string
-		var resetDay, probeEnabled, logicalActive, available int
+		var resetDay, probeEnabled, logicalActive, available, offlineNotifyEnabled, offlineAfterSeconds int
 		var timeOffset, timeEffectiveOffset int64
 		var up, down, upBPS, downBPS uint64
 		var latency int64
 		var timeChecked, reported, checked sql.NullString
-		if err := rows.Scan(&id, &mode, &resetMode, &resetDay, &probeEnabled, &correctionMode, &timeStatus, &timeOffset, &timeEffectiveOffset, &timeSource, &timeError, &logicalActive, &timeUnsupportedPathsJSON, &timeChecked, &periodStart, &periodEnd, &up, &down, &upBPS, &downBPS, &reported, &available, &latency, &checked, &connectivityError); err != nil {
+		if err := rows.Scan(&id, &mode, &resetMode, &resetDay, &probeEnabled, &correctionMode, &timeStatus, &timeOffset, &timeEffectiveOffset, &timeSource, &timeError, &logicalActive, &timeUnsupportedPathsJSON, &timeChecked, &periodStart, &periodEnd, &up, &down, &upBPS, &downBPS, &reported, &available, &latency, &checked, &connectivityError, &offlineNotifyEnabled, &offlineAfterSeconds); err != nil {
 			return err
 		}
 		server := byID[id]
@@ -1619,6 +1624,8 @@ func (s *Store) attachServerTelemetry(ctx context.Context, servers []model.Serve
 		server.TrafficResetMode = normalizeTrafficResetMode(resetMode)
 		server.TrafficResetDay = normalizeTrafficResetDay(resetDay)
 		server.ConnectivityProbeEnabled = probeEnabled == 1
+		server.OfflineNotifyEnabled = offlineNotifyEnabled != 0
+		server.OfflineAfterSeconds = offlineAfterSeconds
 		server.TimeCorrectionMode = normalizeTimeCorrectionMode(model.TimeCorrectionMode(correctionMode))
 		server.TimeCheckStatus = timeStatus
 		server.TimeOffsetMS = timeOffset
@@ -1947,17 +1954,31 @@ func cleanPublicIP(raw string) (string, string) {
 	return addr.String(), "ipv6"
 }
 
-func (s *Store) MarkStaleServersOffline(ctx context.Context, cutoff time.Time) ([]model.Server, error) {
-	rows, err := s.db.QueryContext(ctx, serverSelectSQL+` where status in ('online','degraded','unknown') and agent_id is not null and agent_id!='' and last_seen_at is not null and last_seen_at < ?`, cutoff.UTC().Format(time.RFC3339Nano))
+func (s *Store) MarkStaleServersOfflineEffective(ctx context.Context, now time.Time, defaultAfter time.Duration) ([]model.Server, error) {
+	items, err := s.ListServers(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	items, err := scanServers(rows)
-	if err != nil {
-		return nil, err
+	type staleItem struct {
+		server model.Server
 	}
-	if len(items) == 0 {
+	stale := []staleItem{}
+	for _, item := range items {
+		if item.Status != model.ServerOnline && item.Status != model.ServerDegraded && item.Status != model.ServerUnknown {
+			continue
+		}
+		if strings.TrimSpace(item.AgentID) == "" || item.LastSeenAt == nil {
+			continue
+		}
+		threshold := defaultAfter
+		if item.OfflineAfterSeconds > 0 {
+			threshold = time.Duration(item.OfflineAfterSeconds) * time.Second
+		}
+		if now.Sub(item.LastSeenAt.UTC()) >= threshold {
+			stale = append(stale, staleItem{server: item})
+		}
+	}
+	if len(stale) == 0 {
 		return nil, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1965,12 +1986,21 @@ func (s *Store) MarkStaleServersOffline(ctx context.Context, cutoff time.Time) (
 		return nil, err
 	}
 	defer tx.Rollback()
-	for _, item := range items {
-		if _, err := tx.ExecContext(ctx, `update servers set status='offline', updated_at=? where id=? and status!='offline'`, now(), item.ID); err != nil {
+	marked := []model.Server{}
+	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, item := range stale {
+		res, err := tx.ExecContext(ctx, `update servers set status='offline', updated_at=? where id=? and status!='offline'`, ts, item.server.ID)
+		if err != nil {
 			return nil, err
 		}
+		if n, err := res.RowsAffected(); err == nil && n == 1 {
+			marked = append(marked, item.server)
+		}
 	}
-	return items, tx.Commit()
+	if len(marked) == 0 {
+		return nil, tx.Commit()
+	}
+	return marked, tx.Commit()
 }
 
 func (s *Store) CreateInbound(ctx context.Context, v *model.Inbound) error {

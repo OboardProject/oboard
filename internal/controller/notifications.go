@@ -23,23 +23,28 @@ import (
 	"github.com/OboardProject/oboard/internal/version"
 )
 
-const offlineAfter = 2 * time.Minute
+const (
+	defaultNotificationOfflineAfterSeconds = 120
+	defaultNotificationOnlineAfterSeconds  = 60
+	notificationOfflineMergeGraceMinutes   = 10
+)
 
 const (
-	notificationServerOffline     = "server_offline"
-	notificationServerOnline      = "server_online"
-	notificationTrafficQuota      = "traffic_quota_exceeded"
-	notificationUserRisk          = "user_risk_detected"
-	notificationSubscriptionRisk  = "subscription_risk_detected"
-	notificationTaskFailed        = "task_failed"
-	notificationTaskTimeout       = "task_timeout"
-	notificationCertificateFailed = "certificate_issuance_failed"
-	notificationCertificateExpiry = "certificate_expiring"
-	notificationBackupFailed      = "backup_failed"
-	notificationUpdateFailed      = "controller_update_failed"
-	notificationDNSSyncFailed     = "dns_sync_failed"
-	notificationAdminAnnouncement = "admin_announcement"
-	notificationServerClockSkew   = "server_clock_skew"
+	notificationServerOffline        = "server_offline"
+	notificationServerOnline         = "server_online"
+	notificationTrafficQuota         = "traffic_quota_exceeded"
+	notificationUserRisk             = "user_risk_detected"
+	notificationSubscriptionRisk     = "subscription_risk_detected"
+	notificationSubscriptionAbnormal = "subscription_abnormal"
+	notificationTaskFailed           = "task_failed"
+	notificationTaskTimeout          = "task_timeout"
+	notificationCertificateFailed    = "certificate_issuance_failed"
+	notificationCertificateExpiry    = "certificate_expiring"
+	notificationBackupFailed         = "backup_failed"
+	notificationUpdateFailed         = "controller_update_failed"
+	notificationDNSSyncFailed        = "dns_sync_failed"
+	notificationAdminAnnouncement    = "admin_announcement"
+	notificationServerClockSkew      = "server_clock_skew"
 )
 
 type notificationEvent struct {
@@ -57,11 +62,12 @@ type notificationEventDefinition struct {
 }
 
 var notificationEventDefinitions = []notificationEventDefinition{
-	{notificationServerOffline, "服务器失联", "服务器超过两分钟未连接时提醒", []string{"ServerName", "ServerID", "LastSeen", "Time"}},
-	{notificationServerOnline, "服务器恢复", "失联服务器重新连接时提醒", []string{"ServerName", "ServerID", "Time"}},
+	{notificationServerOffline, "服务器失联", "服务器超过设置的离线判断时间未连接时提醒", []string{"ServerName", "ServerID", "LastSeen", "Time"}},
+	{notificationServerOnline, "服务器恢复", "失联服务器恢复在线并保持一段时间后提醒", []string{"ServerName", "ServerID", "Time"}},
 	{notificationTrafficQuota, "流量达到上限", "所选用户的周期流量达到上限时提醒", []string{"UserName", "UserID", "Used", "Limit", "ResetAt", "Time"}},
 	{notificationUserRisk, "异常使用", "已开启连接审计的服务器发现所选用户大量来源 IP、跨网段或异常并发时提醒", []string{"UserName", "UserID", "RiskLevel", "RiskScore", "Signals", "SourceIPCount", "ActivePeak", "Time"}},
 	{notificationSubscriptionRisk, "订阅共享风险", "订阅拉取达到风险阈值或被自动暂停时提醒管理员", []string{"UserName", "UserID", "RiskLevel", "RiskScore", "Signals", "SourceIPCount", "RegionCount", "PullCount", "Suspended", "Time"}},
+	{notificationSubscriptionAbnormal, "订阅异常", "用户订阅在短时间内多次拉取失败或被暂停后仍反复尝试时提醒管理员", []string{"UserName", "UserID", "Count", "Window", "Time"}},
 	{notificationTaskFailed, "任务失败", "配置下发、更新或检测任务失败时提醒", []string{"TaskType", "TaskID", "ServerName", "Error", "Time"}},
 	{notificationTaskTimeout, "任务超时", "任务等待或执行超过五分钟时提醒", []string{"TaskType", "TaskID", "ServerName", "Error", "Time"}},
 	{notificationCertificateFailed, "证书签发失败", "证书首次签发或自动续期失败时提醒", []string{"CertificateName", "Domains", "Issuer", "EABKeyID", "Error", "Time"}},
@@ -92,6 +98,10 @@ var defaultNotificationTemplates = map[string]model.NotificationTemplate{
 	notificationSubscriptionRisk: {
 		Title: "订阅风险提醒 · {{.UserName}}",
 		Body:  "{{.UserName}} 的订阅拉取达到{{.RiskLevel}}\n风险分：{{.RiskScore}}\n状态：{{.Suspended}}\n异常表现：{{.Signals}}\n来源 IP：{{.SourceIPCount}} 个\n地域：{{.RegionCount}} 个\n拉取：{{.PullCount}} 次\n时间：{{.Time}}",
+	},
+	notificationSubscriptionAbnormal: {
+		Title: "订阅异常提醒 · {{.UserName}}",
+		Body:  "{{.UserName}} 的订阅在{{.Window}}内出现 {{.Count}} 次异常\n常见原因：订阅链接被分享、客户端配置错误或链接失效\n请登录面板检查该用户的订阅状态。\n时间：{{.Time}}",
 	},
 	notificationTaskFailed: {
 		Title: "任务失败 · {{.TaskType}}",
@@ -132,6 +142,7 @@ var defaultNotificationTemplates = map[string]model.NotificationTemplate{
 }
 
 func (s *Server) StartMonitor(ctx context.Context) {
+	s.StartTelegramBots(ctx)
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	// Run once at start so long-lived controllers clear stale work without
@@ -158,20 +169,165 @@ func (s *Server) StartMonitor(ctx context.Context) {
 }
 
 func (s *Server) checkOffline(ctx context.Context) {
-	items, err := s.store.MarkStaleServersOffline(ctx, time.Now().UTC().Add(-offlineAfter))
+	s.checkOfflineAt(ctx, time.Now().UTC())
+}
+
+func (s *Server) checkOfflineAt(ctx context.Context, now time.Time) {
+	settings, _ := s.store.ListSettings(ctx)
+	defaultAfter := time.Duration(settingInt(settings, settingNotificationServerOfflineAfter, defaultNotificationOfflineAfterSeconds, 30, 86400)) * time.Second
+	merge := settingBool(settings, settingNotificationServerMergeOffline, true)
+	items, err := s.store.MarkStaleServersOfflineEffective(ctx, now, defaultAfter)
 	if err != nil {
 		log.Printf("offline monitor failed: %v", err)
 		return
 	}
 	for _, server := range items {
-		s.enqueueNotificationEvent(ctx, notificationEvent{
-			Name: notificationServerOffline,
-			Key:  fmt.Sprintf("server:%d:offline:%s", server.ID, lastSeen(server.LastSeenAt)),
-			Data: map[string]string{"ServerName": server.Name, "ServerID": fmt.Sprint(server.ID), "LastSeen": lastSeen(server.LastSeenAt), "Time": s.notificationNow(ctx)},
-		})
+		if !server.OfflineNotifyEnabled {
+			continue
+		}
+		since := now
+		if server.LastSeenAt != nil {
+			since = server.LastSeenAt.UTC()
+		}
+		groupKey := ""
+		notifyAt := now
+		if merge {
+			groupKey = since.Truncate(notificationOfflineMergeGraceMinutes * time.Minute).Format(time.RFC3339)
+			effectiveAfter := defaultAfter
+			if server.OfflineAfterSeconds > 0 {
+				effectiveAfter = time.Duration(server.OfflineAfterSeconds) * time.Second
+			}
+			notifyAt = now.Add(effectiveAfter)
+		}
+		if err := s.store.UpsertServerOfflineNotice(ctx, server.ID, store.ServerOfflineNoticeStatusOffline, since, notifyAt, groupKey); err != nil {
+			log.Printf("queue offline notice for server %d: %v", server.ID, err)
+			continue
+		}
+		if merge && groupKey != "" {
+			latest, err := s.store.ExtendOfflineNoticeGroup(ctx, groupKey, notifyAt)
+			if err != nil {
+				log.Printf("extend offline notice group %s: %v", groupKey, err)
+				continue
+			}
+			if err := s.store.UpsertServerOfflineNotice(ctx, server.ID, store.ServerOfflineNoticeStatusOffline, since, latest, groupKey); err != nil {
+				log.Printf("queue offline notice for server %d: %v", server.ID, err)
+			}
+		}
 	}
 	if len(items) > 0 {
 		s.publishRealtime("server_runtime", "server_metrics")
+	}
+	s.fireDueOfflineNotices(ctx, merge, now)
+	s.fireDueOnlineNotices(ctx, now)
+}
+
+func (s *Server) fireDueOfflineNotices(ctx context.Context, merge bool, now time.Time) {
+	due, err := s.store.ListDueOfflineNotices(ctx, now)
+	if err != nil {
+		log.Printf("list due offline notices: %v", err)
+		return
+	}
+	if len(due) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(due))
+	if merge {
+		if s.enqueueMergedOfflineNotification(ctx, due) > 0 {
+			for _, item := range due {
+				ids = append(ids, item.ServerID)
+			}
+		}
+	} else {
+		for _, item := range due {
+			queued := s.enqueueNotificationEvent(ctx, notificationEvent{
+				Name: notificationServerOffline,
+				Key:  fmt.Sprintf("server:%d:offline:%s", item.ServerID, lastSeen(item.LastSeenAt)),
+				Data: map[string]string{"ServerName": item.ServerName, "ServerID": fmt.Sprint(item.ServerID), "LastSeen": lastSeen(item.LastSeenAt), "Time": s.notificationNow(ctx)},
+			})
+			if queued > 0 {
+				ids = append(ids, item.ServerID)
+			}
+		}
+	}
+	if len(ids) > 0 {
+		if err := s.store.DeleteServerOfflineNotices(ctx, ids); err != nil {
+			log.Printf("delete offline notices: %v", err)
+		}
+	}
+}
+
+func (s *Server) enqueueMergedOfflineNotification(ctx context.Context, items []model.ServerOfflineNotice) int {
+	if len(items) == 0 {
+		return 0
+	}
+	names := make([]string, 0, len(items))
+	seenLines := make([]string, 0, len(items))
+	for _, item := range items {
+		names = append(names, item.ServerName)
+		seenLines = append(seenLines, item.ServerName+"（"+lastSeen(item.LastSeenAt)+"）")
+	}
+	ids := make([]int64, len(items))
+	for i := range items {
+		ids[i] = items[i].ServerID
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	idKey := ""
+	for i, id := range ids {
+		if i > 0 {
+			idKey += ","
+		}
+		idKey += strconv.FormatInt(id, 10)
+	}
+	groupedAt := items[0].NotifyAt.UTC().Format(time.RFC3339Nano)
+	return s.enqueueNotificationEvent(ctx, notificationEvent{
+		Name: notificationServerOffline,
+		Key:  fmt.Sprintf("servers:offline:merged:%s:%s", groupedAt, idKey),
+		Data: map[string]string{
+			"ServerName": strings.Join(names, "、"),
+			"ServerID":   fmt.Sprint(len(items)),
+			"LastSeen":   strings.Join(seenLines, "\n"),
+			"Time":       s.notificationNow(ctx),
+		},
+	})
+}
+
+func (s *Server) fireDueOnlineNotices(ctx context.Context, now time.Time) {
+	due, err := s.store.ListDueOnlineNotices(ctx, now)
+	if err != nil {
+		log.Printf("list due online notices: %v", err)
+		return
+	}
+	ids := make([]int64, 0, len(due))
+	for _, item := range due {
+		queued := s.enqueueNotificationEvent(ctx, notificationEvent{
+			Name: notificationServerOnline,
+			Key:  fmt.Sprintf("server:%d:online:%s", item.ServerID, item.SinceAt.Format(time.RFC3339Nano)),
+			Data: map[string]string{"ServerName": item.ServerName, "ServerID": fmt.Sprint(item.ServerID), "Time": s.notificationNow(ctx)},
+		})
+		if queued > 0 {
+			ids = append(ids, item.ServerID)
+		}
+	}
+	if len(ids) > 0 {
+		if err := s.store.DeleteServerOfflineNotices(ctx, ids); err != nil {
+			log.Printf("delete online notices: %v", err)
+		}
+	}
+}
+
+func (s *Server) handleServerRecovered(ctx context.Context, serverID int64) {
+	if err := s.store.CancelServerOfflineNotice(ctx, serverID); err != nil {
+		log.Printf("cancel offline notice for server %d: %v", serverID, err)
+	}
+	server, err := s.store.GetServer(ctx, serverID)
+	if err != nil || !server.OfflineNotifyEnabled {
+		return
+	}
+	settings, _ := s.store.ListSettings(ctx)
+	onlineAfter := time.Duration(settingInt(settings, settingNotificationServerOnlineAfter, defaultNotificationOnlineAfterSeconds, 0, 86400)) * time.Second
+	now := time.Now().UTC()
+	if err := s.store.UpsertServerOfflineNotice(ctx, serverID, store.ServerOfflineNoticeStatusOnline, now, now.Add(onlineAfter), ""); err != nil {
+		log.Printf("queue online notice for server %d: %v", serverID, err)
 	}
 }
 
@@ -428,6 +584,17 @@ func validateNotificationChannel(v *model.NotificationChannel, role model.Role) 
 		if strings.TrimSpace(botToken) == "" || strings.TrimSpace(chatID) == "" {
 			return errors.New("通知渠道 Telegram 需要填写 Bot Token 和 Chat ID")
 		}
+		if interactive, _ := tmp["interactive"].(bool); interactive {
+			allowed, _ := tmp["allowed_chat_ids"].(string)
+			if err := validateTelegramAllowedChatIDs(allowed); err != nil {
+				return err
+			}
+		}
+		encoded, err := json.Marshal(tmp)
+		if err != nil {
+			return err
+		}
+		v.ConfigJSON = string(encoded)
 	case "bark":
 		deviceKey, _ := tmp["device_key"].(string)
 		if strings.TrimSpace(deviceKey) == "" {
@@ -438,6 +605,21 @@ func validateNotificationChannel(v *model.NotificationChannel, role model.Role) 
 			tmp["server_url"] = "https://api.day.app"
 		} else if err := validateBarkServerURL(serverURL); err != nil {
 			return err
+		}
+		group, _ := tmp["group"].(string)
+		group = strings.TrimSpace(group)
+		if len([]rune(group)) > 64 {
+			return errors.New("Bark 通知分组名称不能超过 64 个字符")
+		}
+		for _, r := range group {
+			if r < 0x20 || r == 0x7f {
+				return errors.New("Bark 通知分组名称包含无效字符")
+			}
+		}
+		if group == "" {
+			delete(tmp, "group")
+		} else {
+			tmp["group"] = group
 		}
 		encoded, err := json.Marshal(tmp)
 		if err != nil {
@@ -450,6 +632,31 @@ func validateNotificationChannel(v *model.NotificationChannel, role model.Role) 
 		return err
 	}
 	v.TemplatesJSON = templatesJSON
+	return nil
+}
+
+func validateTelegramAllowedChatIDs(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return errors.New("启用 Telegram 互动后需要填写允许互动的 Chat ID")
+	}
+	seen := map[string]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+			return errors.New("Telegram 互动的 Chat ID 必须是数字，多个用英文逗号分隔")
+		}
+		if seen[value] {
+			return errors.New("Telegram 互动的 Chat ID 不能重复")
+		}
+		seen[value] = true
+	}
+	if len(seen) == 0 {
+		return errors.New("启用 Telegram 互动后需要填写允许互动的 Chat ID")
+	}
 	return nil
 }
 
@@ -494,6 +701,7 @@ func allowedNotificationEventSet(role model.Role) map[string]bool {
 		allowed[notificationUpdateFailed] = true
 		allowed[notificationDNSSyncFailed] = true
 		allowed[notificationSubscriptionRisk] = true
+		allowed[notificationSubscriptionAbnormal] = true
 	}
 	return allowed
 }
@@ -814,7 +1022,7 @@ func (s *Server) enqueueForcedAdminNotification(ctx context.Context, event notif
 
 func notificationChannelEligible(channel model.NotificationChannel, ownerRole model.Role, event notificationEvent) bool {
 	switch event.Name {
-	case notificationServerOffline, notificationServerOnline, notificationTaskFailed, notificationTaskTimeout, notificationCertificateFailed, notificationCertificateExpiry, notificationBackupFailed, notificationUpdateFailed, notificationDNSSyncFailed, notificationSubscriptionRisk:
+	case notificationServerOffline, notificationServerOnline, notificationTaskFailed, notificationTaskTimeout, notificationCertificateFailed, notificationCertificateExpiry, notificationBackupFailed, notificationUpdateFailed, notificationDNSSyncFailed, notificationSubscriptionRisk, notificationSubscriptionAbnormal:
 		return roleAllows(ownerRole, model.RoleAdmin)
 	case notificationTrafficQuota, notificationUserRisk:
 		if channel.OwnerUserID == event.TargetUserID {
@@ -1273,6 +1481,45 @@ func (s *Server) notifySubscriptionAuditRisk(ctx context.Context, user model.Use
 	})
 }
 
+const (
+	subscriptionAbnormalWindow    = time.Hour
+	subscriptionAbnormalThreshold = 3
+)
+
+func (s *Server) maybeNotifySubscriptionAbnormal(ctx context.Context, userID int64) {
+	if userID <= 0 {
+		return
+	}
+	count, err := s.store.CountRecentSubscriptionPullAbnormal(ctx, userID, time.Now().UTC().Add(-subscriptionAbnormalWindow))
+	if err != nil {
+		log.Printf("count abnormal subscription pulls: %v", err)
+		return
+	}
+	if count < subscriptionAbnormalThreshold {
+		return
+	}
+	user, err := s.store.GetUser(ctx, userID)
+	if err != nil {
+		return
+	}
+	name := strings.TrimSpace(user.Nickname)
+	if name == "" {
+		name = user.Username
+	}
+	s.enqueueNotificationEvent(ctx, notificationEvent{
+		Name:         notificationSubscriptionAbnormal,
+		Key:          fmt.Sprintf("subscription-abnormal:%d:%s", userID, time.Now().UTC().Format("2006010215")),
+		TargetUserID: userID,
+		Data: map[string]string{
+			"UserName": name,
+			"UserID":   strconv.FormatInt(userID, 10),
+			"Count":    strconv.Itoa(count),
+			"Window":   "最近 1 小时",
+			"Time":     s.notificationNow(ctx),
+		},
+	})
+}
+
 type connectionAuditNotificationState struct {
 	ActiveStartedAt time.Time `json:"active_started_at"`
 	ActiveEndedAt   time.Time `json:"active_ended_at"`
@@ -1473,6 +1720,7 @@ func sendNotification(ctx context.Context, channel model.NotificationChannel, ti
 		var cfg struct {
 			ServerURL string `json:"server_url"`
 			DeviceKey string `json:"device_key"`
+			Group     string `json:"group"`
 		}
 		if err := json.Unmarshal([]byte(channel.ConfigJSON), &cfg); err != nil {
 			return err
@@ -1486,7 +1734,7 @@ func sendNotification(ctx context.Context, channel model.NotificationChannel, ti
 		if cfg.DeviceKey == "" {
 			return errors.New("bark device_key required")
 		}
-		target := strings.TrimRight(cfg.ServerURL, "/") + "/" + url.PathEscape(cfg.DeviceKey) + "/" + url.PathEscape(title) + "/" + url.PathEscape(body)
+		target := barkNotificationTarget(cfg.ServerURL, cfg.DeviceKey, cfg.Group, title, body)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 		if err != nil {
 			return err
@@ -1495,6 +1743,16 @@ func sendNotification(ctx context.Context, channel model.NotificationChannel, ti
 	default:
 		return errors.New("unsupported notification channel")
 	}
+}
+
+func barkNotificationTarget(serverURL, deviceKey, group, title, body string) string {
+	target := strings.TrimRight(serverURL, "/") + "/" + url.PathEscape(deviceKey) + "/" + url.PathEscape(title) + "/" + url.PathEscape(body)
+	if strings.TrimSpace(group) != "" {
+		query := url.Values{}
+		query.Set("group", strings.TrimSpace(group))
+		target += "?" + query.Encode()
+	}
+	return target
 }
 
 func doNotify(req *http.Request) error {
