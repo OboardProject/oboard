@@ -85,6 +85,7 @@ import v2rayNClientIcon from './assets/subscription-clients/v2rayn.png'
 import clashClassicClientIcon from './assets/subscription-clients/clash-classic.png'
 import { PageDataRequestCoordinator } from './page-data'
 import { useRealtimeEvents, type RealtimeEvent, type RealtimeStatus } from './realtime'
+import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
@@ -124,6 +125,8 @@ function stripAppBasePath(pathname: string) {
 }
 
 type Role = 'admin' | 'operator' | 'viewer'
+type PageLoadOptions = { background?: boolean; forceFresh?: boolean }
+type PageLoad = (targetTab?: string, options?: PageLoadOptions) => Promise<void>
 type ControllerUpdateStatus = {
   channel: 'stable' | 'dev' | 'pinned' | ''
   current: { version: string; build: string; commit: string; date: string }
@@ -1419,7 +1422,7 @@ function App() {
     return pageRequestsRef.current.request(page, () => client.request(`/page-data?page=${encodeURIComponent(page)}`), forceFresh)
   }
 
-  const load = async (targetTab?: string, opts?: { background?: boolean; forceFresh?: boolean }) => {
+  const load: PageLoad = async (targetTab, opts) => {
     if (!token) return
     const page = typeof targetTab === 'string' && targetTab ? targetTab : tab
     if (page === 'automation') {
@@ -2256,7 +2259,7 @@ $ _`}</pre>
   )
 }
 
-function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: () => Promise<void>, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = []) {
+function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = []) {
   if (tab === 'account') return <AccountPage data={data} client={client} load={load} notify={notify} />
   if (tab === 'dashboard') return <Dashboard data={data} loading={loading} displayName={sessionUser?.nickname || data.current_user?.nickname || sessionUser?.username || data.current_user?.username || 'Admin'} attention={dashboardAttention} dismissAttention={dismissDashboardAttention} />
   if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={realtimeStatus} />
@@ -5015,8 +5018,11 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [serverRefreshedAt, setServerRefreshedAt] = useState<Date | null>(null)
   const serverRequestInFlightRef = useRef(false)
   const serversMountedRef = useRef(false)
+  const pendingDeleteServerIDsRef = useRef(new Set<number>())
 
-  useEffect(() => { setServers(data.servers || []) }, [data.servers])
+  useEffect(() => {
+    setServers(((data.servers || []) as Server[]).filter(server => !pendingDeleteServerIDsRef.current.has(server.id)))
+  }, [data.servers])
   useEffect(() => { setServerMetrics(data.server_metrics || []) }, [data.server_metrics])
   useEffect(() => { if (realtimeStatus === 'open') setServerRefreshFailed(false) }, [realtimeStatus])
 
@@ -5032,7 +5038,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     try {
       const res = await client.request('/servers')
       if (!serversMountedRef.current) return
-      const nextServers: Server[] = res.servers || []
+      const nextServers: Server[] = (res.servers || []).filter((server: Server) => !pendingDeleteServerIDsRef.current.has(server.id))
       setServers(nextServers)
       setServerMetrics(current => appendLiveServerMetrics(current, nextServers))
       setServerRefreshedAt(new Date())
@@ -5075,6 +5081,10 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     }
   }, [refreshServers, realtimeStatus])
 
+  const revalidateServers = () => {
+    void load(undefined, { background: true, forceFresh: true })
+  }
+
   const serverRefreshedTime = serverRefreshedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
   const metricsByServer = useMemo(() => {
     const grouped = new Map<number, ServerMetricSample[]>()
@@ -5108,22 +5118,41 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     notify?.(`已创建 ${s.name || '服务器'} 的网络诊断，请在任务中心查看结果`, 'success')
   }
   const createServer = async () => {
-    await client.request('/servers', { method: 'POST', body: JSON.stringify(draft) })
-    setCreateOpen(false)
-    setDraft(defaultServerDraft(creationDefaults))
-    await load()
+    try {
+      const result = await client.request('/servers', { method: 'POST', body: JSON.stringify(draft) }) as { server?: Server }
+      if (!result.server?.id) throw new Error('服务器已创建，但接口未返回服务器数据')
+      setServers(current => upsertServerSnapshot(current, result.server as Server))
+      setCreateOpen(false)
+      setDraft(defaultServerDraft(creationDefaults))
+      revalidateServers()
+      notify?.(`服务器 ${result.server.name || `#${result.server.id}`} 已添加`, 'success')
+    } catch (error: any) {
+      await dialogs.alert({ title: '添加服务器失败', message: localizeErrorMessage(error?.message || error) })
+    }
   }
   const updateServer = async (next: any) => {
-    const modeChanged = editServer?.time_correction_mode !== next.time_correction_mode
-    const result = await client.request(`/servers/${next.id}`, { method: 'PATCH', body: JSON.stringify(next) })
-    setEditServer(null)
-    await load()
-    if (modeChanged) notify?.(result?.time_check_error ? `时间校准设置已保存，但检测未能启动：${result.time_check_error}` : '时间校准设置已保存，已开始检测', result?.time_check_error ? 'warning' : 'success')
+    try {
+      const modeChanged = editServer?.time_correction_mode !== next.time_correction_mode
+      const result = await client.request(`/servers/${next.id}`, { method: 'PATCH', body: JSON.stringify(next) }) as { server?: Server; time_check_error?: string }
+      if (!result.server?.id) throw new Error('服务器设置已保存，但接口未返回服务器数据')
+      setServers(current => upsertServerSnapshot(current, result.server as Server))
+      setEditServer(null)
+      revalidateServers()
+      if (modeChanged) notify?.(result.time_check_error ? `时间校准设置已保存，但检测未能启动：${result.time_check_error}` : '时间校准设置已保存，已开始检测', result.time_check_error ? 'warning' : 'success')
+      else notify?.('服务器设置已保存', 'success')
+    } catch (error: any) {
+      await dialogs.alert({ title: '保存服务器失败', message: localizeErrorMessage(error?.message || error) })
+    }
   }
   const enableAutomaticTimeCorrection = async (server: Server) => {
-    const result = await client.request(`/servers/${server.id}`, { method: 'PATCH', body: JSON.stringify({ ...server, time_correction_mode: 'auto' }) })
-    await load()
-    notify?.(result?.time_check_error ? `已开启自动校时，但检测未能启动：${result.time_check_error}` : '已开启自动校时并开始检测', result?.time_check_error ? 'warning' : 'success')
+    try {
+      const result = await client.request(`/servers/${server.id}`, { method: 'PATCH', body: JSON.stringify({ ...server, time_correction_mode: 'auto' }) }) as { server?: Server; time_check_error?: string }
+      if (result.server?.id) setServers(current => upsertServerSnapshot(current, result.server as Server))
+      revalidateServers()
+      notify?.(result.time_check_error ? `已开启自动校时，但检测未能启动：${result.time_check_error}` : '已开启自动校时并开始检测', result.time_check_error ? 'warning' : 'success')
+    } catch (error: any) {
+      await dialogs.alert({ title: '开启自动校时失败', message: localizeErrorMessage(error?.message || error) })
+    }
   }
   const syncAgentConfig = async (server: Server, cfg: any) => {
     await client.request(`/servers/${server.id}/agent-config`, { method: 'POST', body: JSON.stringify(cfg) })
@@ -5192,6 +5221,32 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       notify?.(localizeErrorMessage(err?.message || err), 'error')
     }
   }
+  const deleteServer = async (server: Server) => {
+    const confirmed = await dialogs.confirm({
+      title: '确认删除',
+      tone: 'danger',
+      confirmText: '删除',
+      message: <div>
+        <p>即将删除：<strong>{resourceLabel(server, `服务器 #${server.id}`)}</strong></p>
+        <p className="muted">关联入口、链路和 DNS 记录也会被清理。删除失败时服务器会恢复显示。</p>
+      </div>,
+    })
+    if (!confirmed || pendingDeleteServerIDsRef.current.has(server.id)) return
+
+    pendingDeleteServerIDsRef.current.add(server.id)
+    setServers(current => removeServerSnapshot(current, server.id))
+    try {
+      await client.request(`/servers/${server.id}`, { method: 'DELETE' })
+      pendingDeleteServerIDsRef.current.delete(server.id)
+      revalidateServers()
+      notify?.(`服务器 ${server.name || `#${server.id}`} 已删除`, 'success')
+    } catch (error: any) {
+      pendingDeleteServerIDsRef.current.delete(server.id)
+      setServers(current => upsertServerSnapshot(current, server))
+      revalidateServers()
+      await dialogs.alert({ title: '删除服务器失败', message: localizeErrorMessage(error?.message || error) })
+    }
+  }
   const handleServerAction = async (type: string, s: Server) => {
     if (type === 'details') setDetailServer(s)
     else if (type === 'edit') setEditServer(s)
@@ -5204,7 +5259,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     else if (type === 'diagnose') diagnose(s)
     else if (type === 'tasks') tasks(s)
     else if (type === 'time-auto') await enableAutomaticTimeCorrection(s)
-    else if (type === 'delete') remove(client, `/servers/${s.id}`, load, dialogs, s)
+    else if (type === 'delete') await deleteServer(s)
   }
   const role: Role = data.session?.role || 'viewer'
   const enrolledCount = servers.filter(s => String(s.agent_id || '').trim()).length
@@ -5246,9 +5301,15 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} token={installTarget.token} controllerURL={effectiveControllerURL(data)} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
     <AnimatePresence>{mtuServer && <MTUSettingsDialog draft={serverToDraft(mtuServer)} nested={false} onCancel={() => setMtuServer(null)} onSave={async (patch) => {
-      await client.request(`/servers/${mtuServer.id}`, { method: 'PATCH', body: JSON.stringify({ ...mtuServer, ...patch }) })
-      setMtuServer(null)
-      await load()
+      try {
+        const result = await client.request(`/servers/${mtuServer.id}`, { method: 'PATCH', body: JSON.stringify({ ...mtuServer, ...patch }) }) as { server?: Server }
+        if (result.server?.id) setServers(current => upsertServerSnapshot(current, result.server as Server))
+        setMtuServer(null)
+        revalidateServers()
+        notify?.('MTU 设置已保存', 'success')
+      } catch (error: any) {
+        await dialogs.alert({ title: '保存 MTU 设置失败', message: localizeErrorMessage(error?.message || error) })
+      }
     }} />}</AnimatePresence>
     <AnimatePresence>{dnsServer && <DNSSettingsDialog
       server={dnsServer}
@@ -5497,10 +5558,21 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: Re
   const update = (patch: Partial<ReturnType<typeof defaultServerDraft>>) => setDraft(old => ({ ...old, ...patch }))
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
-  return <MotionDialogPanel onCancel={onCancel} className="server-dialog">
+  const [saving, setSaving] = useState(false)
+  const submit = async () => {
+    if (saving || !portRangeValid) return
+    setSaving(true)
+    try {
+      await onSubmit()
+    } finally {
+      setSaving(false)
+    }
+  }
+  const cancel = () => { if (!saving) onCancel() }
+  return <MotionDialogPanel onCancel={cancel} className="server-dialog">
       <header className="dialog-head">
         <div><h2 id="server-dialog-title">添加服务器</h2><p className="muted">设置名称、入口地址和网络策略。</p></div>
-        <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+        <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
       <div className="dialog-body">
         <div className="form server-dialog-form labeled-form">
@@ -5559,8 +5631,8 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: Re
         </div>
       </div>
       <footer className="dialog-actions">
-        <button className="ghost" onClick={onCancel}>取消</button>
-        <button onClick={onSubmit} disabled={!portRangeValid}>创建</button>
+        <button className="ghost" onClick={cancel} disabled={saving}>取消</button>
+        <button onClick={() => void submit()} disabled={saving || !portRangeValid}>{saving ? '创建中...' : '创建'}</button>
       </footer>
       {mtuDialogOpen && <MTUSettingsDialog draft={draft} onCancel={() => setMtuDialogOpen(false)} onSave={patch => { update(patch); setMtuDialogOpen(false) }} />}
   </MotionDialogPanel>
@@ -5580,11 +5652,22 @@ function ServerEditDialog({ server, onCancel, onSubmit }: { server: Server; onCa
   const [draft, setDraft] = useState<any>(() => serverToDraft(server))
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
+  const [saving, setSaving] = useState(false)
   const update = (patch: any) => setDraft((old: any) => ({ ...old, ...patch }))
-  return <MotionDialogPanel onCancel={onCancel} className="server-dialog">
+  const submit = async () => {
+    if (saving || !portRangeValid) return
+    setSaving(true)
+    try {
+      await onSubmit(draft)
+    } finally {
+      setSaving(false)
+    }
+  }
+  const cancel = () => { if (!saving) onCancel() }
+  return <MotionDialogPanel onCancel={cancel} className="server-dialog">
       <header className="dialog-head">
         <div><h2 id="server-edit-title">服务器设置</h2><p className="muted">设置 {server.name} 的入口地址和网络策略。</p></div>
-        <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+        <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
       <div className="dialog-body">
         <div className="form server-dialog-form labeled-form">
@@ -5617,7 +5700,7 @@ function ServerEditDialog({ server, onCancel, onSubmit }: { server: Server; onCa
           <div className="form-extra-row"><button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)}>MTU 检测设置</button><span>修改后会在下次部署重新检测。</span></div>
         </div>
       </div>
-      <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={() => onSubmit(draft)} disabled={!portRangeValid}>保存</button></footer>
+      <footer className="dialog-actions"><button className="ghost" onClick={cancel} disabled={saving}>取消</button><button onClick={() => void submit()} disabled={saving || !portRangeValid}>{saving ? '保存中...' : '保存'}</button></footer>
       {mtuDialogOpen && <MTUSettingsDialog draft={draft} onCancel={() => setMtuDialogOpen(false)} onSave={patch => { update(patch); setMtuDialogOpen(false) }} />}
   </MotionDialogPanel>
 }
@@ -5665,7 +5748,7 @@ function AgentConfigDialog({ server, controllerURL, onCancel, onSubmit }: { serv
   </MotionDialogPanel>
 }
 
-function MTUSettingsDialog({ draft, onCancel, onSave, nested = true }: { draft: ReturnType<typeof defaultServerDraft>; onCancel: () => void; onSave: (patch: Partial<ReturnType<typeof defaultServerDraft>>) => void; nested?: boolean }) {
+function MTUSettingsDialog({ draft, onCancel, onSave, nested = true }: { draft: ReturnType<typeof defaultServerDraft>; onCancel: () => void; onSave: (patch: Partial<ReturnType<typeof defaultServerDraft>>) => void | Promise<void>; nested?: boolean }) {
   const [value, setValue] = useState({
     mtu_mode: draft.mtu_mode,
     mtu_value: draft.mtu_value,
@@ -5673,11 +5756,22 @@ function MTUSettingsDialog({ draft, onCancel, onSave, nested = true }: { draft: 
     mtu_probe_port: draft.mtu_probe_port,
     mtu_overhead_bytes: draft.mtu_overhead_bytes,
   })
+  const [saving, setSaving] = useState(false)
   const update = (patch: Partial<typeof value>) => setValue(old => ({ ...old, ...patch }))
-  return <MotionDialogPanel onCancel={onCancel} className="mtu-dialog" nested={nested}>
+  const save = async () => {
+    if (saving) return
+    setSaving(true)
+    try {
+      await onSave(value)
+    } finally {
+      setSaving(false)
+    }
+  }
+  const cancel = () => { if (!saving) onCancel() }
+  return <MotionDialogPanel onCancel={cancel} className="mtu-dialog" nested={nested}>
       <header className="dialog-head">
         <div><h2 id="mtu-dialog-title">MTU 检测设置</h2><p className="muted">首次部署或设置变化时执行，不会随每次下发重复检测。</p></div>
-        <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+        <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
       <div className="dialog-body">
         <div className="form mtu-dialog-form labeled-form">
@@ -5699,8 +5793,8 @@ function MTUSettingsDialog({ draft, onCancel, onSave, nested = true }: { draft: 
         </div>
       </div>
       <footer className="dialog-actions">
-        <button className="ghost" onClick={onCancel}>取消</button>
-        <button onClick={() => onSave(value)}>保存设置</button>
+        <button className="ghost" onClick={cancel} disabled={saving}>取消</button>
+        <button onClick={() => void save()} disabled={saving}>{saving ? '保存中...' : '保存设置'}</button>
       </footer>
   </MotionDialogPanel>
 }
@@ -6289,21 +6383,23 @@ type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'ro
 const proxyToolDragType = 'application/oboard-proxy-tool'
 
 function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget }: any) {
-  const preferredRoot = (data.servers || []).find((server: Server) => (data.inbounds || []).some((entry: Inbound) => entry.server_id === server.id && entry.enabled !== false)) || (data.servers || [])[0]
+  const [servers, setServers] = useState<Server[]>(data.servers || [])
+  useEffect(() => { setServers(data.servers || []) }, [data.servers])
+  const visibleData = useMemo(() => ({ ...data, servers }), [data, servers])
+  const preferredRoot = servers.find((server: Server) => (visibleData.inbounds || []).some((entry: Inbound) => entry.server_id === server.id && entry.enabled !== false)) || servers[0]
   const [selectedServer, setSelectedServer] = useState<number>(preferredRoot?.id || 0)
   useEffect(() => {
-    const servers: Server[] = data.servers || []
     if (selectedServer && servers.some(server => server.id === selectedServer)) return
-    const next = servers.find(server => (data.inbounds || []).some((entry: Inbound) => entry.server_id === server.id && entry.enabled !== false)) || servers[0]
+    const next = servers.find(server => (visibleData.inbounds || []).some((entry: Inbound) => entry.server_id === server.id && entry.enabled !== false)) || servers[0]
     if (next) setSelectedServer(next.id)
-  }, [data.servers?.length, data.inbounds?.length, selectedServer])
-  if (loading && !data.servers?.length) return <Panel className="proxy-path-panel"><DashboardSkeleton /></Panel>
-  const conflicts = deploymentConflicts(data)
+  }, [servers, visibleData.inbounds, selectedServer])
+  if (loading && !servers.length) return <Panel className="proxy-path-panel"><DashboardSkeleton /></Panel>
+  const conflicts = deploymentConflicts(visibleData)
   return <Panel className="proxy-path-panel">
     {conflicts.length > 0 && <div className="error"><strong>下发前需要处理：</strong>{conflicts.map((x, i) => <div key={i}>{x}</div>)}</div>}
     <div className="proxy-shell">
       <ProxyGraphBoundary onRetry={load}>
-        <ProxyOverview data={data} client={client} load={load} selectedServer={selectedServer} setSelectedServer={setSelectedServer} topbarTarget={topbarTarget} />
+        <ProxyOverview data={visibleData} client={client} load={load} selectedServer={selectedServer} setSelectedServer={setSelectedServer} topbarTarget={topbarTarget} onServerSnapshot={(server: Server) => setServers(current => upsertServerSnapshot(current, server))} />
       </ProxyGraphBoundary>
     </div>
   </Panel>
@@ -6359,7 +6455,7 @@ type TransportDialogRequest = {
   resolve: (value: TransportSelection | null) => void
 }
 
-function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget }: any) {
+function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget, onServerSnapshot }: any) {
   const dialogs = useDialogs()
   const servers: Server[] = data.servers || []
   const entries: Inbound[] = data.inbounds || []
@@ -7113,10 +7209,12 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     if (!serverDraft) return
     try {
       const result = await client.request('/servers', { method: 'POST', body: JSON.stringify(serverDraft) }) as { server?: Server }
-      if (result.server?.id) placeGraphNode(`server-${result.server.id}`, serverDraftPosition.current || nextServerGraphPosition(data))
+      if (!result.server?.id) throw new Error('服务器已创建，但接口未返回服务器数据')
+      onServerSnapshot(result.server)
+      placeGraphNode(`server-${result.server.id}`, serverDraftPosition.current || nextServerGraphPosition(data))
       setServerDraft(null)
       serverDraftPosition.current = null
-      await load()
+      void load(undefined, { background: true, forceFresh: true })
     } catch (e: any) {
       await dialogs.alert({ title: '添加服务器失败', message: localizeErrorMessage(e.message || e) })
     }
