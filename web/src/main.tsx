@@ -85,6 +85,7 @@ import v2rayNClientIcon from './assets/subscription-clients/v2rayn.png'
 import clashClassicClientIcon from './assets/subscription-clients/clash-classic.png'
 import { PageDataRequestCoordinator } from './page-data'
 import { useRealtimeEvents, type RealtimeEvent, type RealtimeStatus } from './realtime'
+import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 
 const appBasePath = (() => {
   const href = document.querySelector('base')?.getAttribute('href') || '/'
@@ -765,7 +766,7 @@ const fieldLabels: Record<string, string> = {
 
 const valueLabels: Record<string, string> = {
   admin: '管理员', operator: '操作员', viewer: '只读', active: '活跃', online: '在线', offline: '离线', unknown: '未知', healthy: '健康', unhealthy: '异常',
-  enabled: '已启用', disabled: '已禁用', true: '启用', false: '禁用', succeeded: '成功', success: '成功', skipped: '已跳过', warning: '需关注', failed: '失败', partial_failed: '部分失败', timeout: '超时', error: '错误', pending: '等待中', running: '执行中', requested: '已请求', needed: '需要申请', ready: '就绪',
+  enabled: '已启用', disabled: '已禁用', true: '启用', false: '禁用', succeeded: '成功', success: '成功', skipped: '已跳过', stale: '已过期', warning: '需关注', failed: '失败', partial_failed: '部分失败', timeout: '超时', error: '错误', pending: '等待中', running: '执行中', requested: '已请求', needed: '需要申请', ready: '就绪',
   rollback_failed: '回滚失败', direct: '直连', block: '阻断', outbound: '出口', external: '导入节点', chain: '链式代理', warp: 'WARP', interface: '指定网卡', socks: 'SOCKS',
   global: '全局', server: '服务器', auto: '自动（IPv4 优先）', ipv4: 'IPv4', ipv6: 'IPv6', custom: '自定义', ipv4_only: '仅 IPv4', ipv6_only: '仅 IPv6', dual_stack: '双栈', prefer_ipv4: '优先 IPv4', prefer_ipv6: '优先 IPv6',
   a: 'A', aaaa: 'AAAA', both: 'A + AAAA',
@@ -10952,11 +10953,83 @@ function DNSSettingsDialog({ server, policy, lists, benchmarks, client, onClose,
   </MotionDialogPanel>
 }
 
+function dnsBenchmarkStatusTone(status: string) {
+  if (status === 'succeeded' || status === 'success') return 'ok'
+  if (status === 'failed' || status === 'error') return 'danger'
+  return 'warning'
+}
+
+function DNSBenchmarkHistoryDialog({ servers, client, onClose }: { servers: Server[]; client: ReturnType<typeof api>; onClose: () => void }) {
+  const [records, setRecords] = useState<DNSBenchmarkResult[]>([])
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [refreshRevision, setRefreshRevision] = useState(0)
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setLoadError('')
+    client.request('/dns-benchmarks?limit=500').then((response: any) => {
+      if (!active) return
+      setRecords(Array.isArray(response.dns_benchmarks) ? response.dns_benchmarks : [])
+    }).catch((error: any) => {
+      if (active) setLoadError(localizeErrorMessage(error?.message || error))
+    }).finally(() => {
+      if (active) setLoading(false)
+    })
+    return () => { active = false }
+  }, [client, refreshRevision])
+
+  const groups = useMemo(() => groupDNSBenchmarkResults(records, servers), [records, servers])
+  const visibleGroups = useMemo(() => filterDNSBenchmarkGroups(groups, query), [groups, query])
+  const subtitle = loading && !records.length
+    ? '正在加载检查记录'
+    : `${records.length} 条记录 · ${groups.length} 台服务器`
+
+  return <MotionDialogPanel onCancel={onClose} className="dns-benchmark-history-dialog">
+    <header className="dialog-head">
+      <div><h2>检查日志</h2><p className="muted">{subtitle}</p></div>
+      <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body dns-benchmark-history-body">
+      <div className="dns-benchmark-history-toolbar">
+        <label className="log-search dns-benchmark-search"><Search size={15} aria-hidden="true" /><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索服务器" aria-label="搜索服务器" /></label>
+        <span>{query.trim() ? `${visibleGroups.length} / ${groups.length} 台服务器` : `${groups.length} 台服务器`}</span>
+        <button type="button" className="ghost icon-button" onClick={() => setRefreshRevision(value => value + 1)} disabled={loading} aria-label="刷新检查日志" title="刷新"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
+      </div>
+      {loadError && <div className="dns-benchmark-load-error" role="alert"><span>{loadError}</span><button type="button" className="ghost" onClick={() => setRefreshRevision(value => value + 1)}>重试</button></div>}
+      {loading && !records.length ? <TableSkeleton /> : !groups.length ? <div className="dns-benchmark-empty">暂无检查记录</div> : !visibleGroups.length ? <div className="dns-benchmark-empty">未找到匹配的服务器</div> : <div className="dns-benchmark-server-groups">
+        {visibleGroups.map(group => {
+          const rows = group.records.map(result => ({
+            id: result.id,
+            encrypted: result.encrypted.best_tags.join(' · ') || '无可用项',
+            bootstrap: result.bootstrap.best_tags.join(' · ') || '无可用项',
+            status: result.status,
+            error: result.error,
+            checked_at: result.created_at,
+          }))
+          return <details className="dns-benchmark-server-group" key={group.serverID}>
+            <summary>
+              <ChevronRight size={17} className="dns-benchmark-group-chevron" aria-hidden="true" />
+              <span className="dns-benchmark-group-name"><strong>{group.serverName}</strong><small>#{group.serverID} · {group.records.length} 条记录</small></span>
+              <span className={`status-pill ${dnsBenchmarkStatusTone(group.latest.status)}`}>{labelValue(group.latest.status)}</span>
+              <time dateTime={group.latest.created_at}>{formatTableTime(group.latest.created_at)}</time>
+            </summary>
+            <div className="dns-benchmark-group-records"><Table rows={rows} loading={false} /></div>
+          </details>
+        })}
+      </div>}
+    </div>
+    <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
+  </MotionDialogPanel>
+}
+
 function DNS({ data, client, load, notify }: any) {
   const servers: Server[] = data.servers || []
   const lists: DNSList[] = data.dns_lists || []
   const policies: ServerDNSPolicy[] = data.server_dns_policies || []
-  const benchmarks: DNSBenchmarkResult[] = data.dns_benchmarks || []
+  const [historyOpen, setHistoryOpen] = useState(false)
   const rows = policies.map(policy => ({
     id: policy.server_id,
     server: servers.find(server => server.id === policy.server_id)?.name || `#${policy.server_id}`,
@@ -10968,9 +11041,21 @@ function DNS({ data, client, load, notify }: any) {
     last_success_at: policy.last_success_at || '',
     _policy: policy,
   }))
-  const resultRows = benchmarks.map(result => ({ id: result.id, server: servers.find(server => server.id === result.server_id)?.name || `#${result.server_id}`, encrypted: result.encrypted.best_tags.join(' · ') || '无可用项', bootstrap: result.bootstrap.best_tags.join(' · ') || '无可用项', status: result.status, error: result.error, checked_at: result.created_at }))
   const test = async (policy: ServerDNSPolicy) => { await client.request(`/servers/${policy.server_id}/dns-test`, { method: 'POST', body: JSON.stringify({ action: 'test' }) }); await load() }
-  return <div className="dns-settings-page"><DNSListSettings data={data} client={client} load={load} notify={notify} /><Panel title="服务器解析设置"><div className="section-toolbar"><div><h3>服务器解析策略</h3><p className="muted">每台服务器可以选择一组加密解析服务和一组基础解析服务。</p></div><button className="ghost" onClick={() => goTab('servers')}><ServerIcon size={15} />打开服务器设置</button></div><Table rows={rows} actions={(row: any) => <button onClick={() => void test(row._policy)}><Gauge size={14} />重新检查</button>} /><h3>检查记录</h3><Table rows={resultRows} /></Panel></div>
+  return <div className="dns-settings-page">
+    <DNSListSettings data={data} client={client} load={load} notify={notify} />
+    <Panel title="服务器解析设置">
+      <div className="section-toolbar">
+        <div><h3>服务器解析策略</h3><p className="muted">每台服务器可以选择一组加密解析服务和一组基础解析服务。</p></div>
+        <div className="section-actions">
+          <button type="button" className="ghost" onClick={() => setHistoryOpen(true)}><ClipboardList size={15} />检查日志</button>
+          <button type="button" className="ghost" onClick={() => goTab('servers')}><ServerIcon size={15} />打开服务器设置</button>
+        </div>
+      </div>
+      <Table rows={rows} actions={(row: any) => <button onClick={() => void test(row._policy)}><Gauge size={14} />重新检查</button>} />
+    </Panel>
+    <AnimatePresence>{historyOpen && <DNSBenchmarkHistoryDialog servers={servers} client={client} onClose={() => setHistoryOpen(false)} />}</AnimatePresence>
+  </div>
 }
 
 function MTU({ data, client, load, notify }: any) {
@@ -13075,7 +13160,7 @@ function cell(v: any, key = '') {
   if (lower === 'offline') return <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: 'var(--color-danger)', display: 'inline-block', boxShadow: '0 0 6px var(--color-danger)', verticalAlign: 'middle' }} title="离线" />
   if (['active', 'ready', 'succeeded', 'healthy', 'enabled'].includes(lower)) return <span className="badge success">{labelValue(s)}</span>
   if (['failed', 'error', 'disabled', 'rollback_failed', 'unhealthy'].includes(lower)) return <span className="badge danger">{labelValue(s)}</span>
-  if (['partial_failed', 'timeout', 'pending', 'running', 'requested', 'needed', 'detect', 'apply', 'unknown', 'periodic', 'warning', 'skipped'].includes(lower)) return <span className="badge warning">{labelValue(s)}</span>
+  if (['partial_failed', 'timeout', 'pending', 'running', 'requested', 'needed', 'detect', 'apply', 'unknown', 'periodic', 'warning', 'skipped', 'stale'].includes(lower)) return <span className="badge warning">{labelValue(s)}</span>
   if (s === '<redacted>') return <code>已脱敏</code>
   if (s.startsWith('{') || s.startsWith('[') || s.length > 64) return <code>{s}</code>
   return s
