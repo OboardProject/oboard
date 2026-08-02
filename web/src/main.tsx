@@ -72,6 +72,7 @@ import { AnimatePresence, LazyMotion, domAnimation, m, motion, useReducedMotion 
 import { MotionPage, MotionDialogPanel, MotionList, MotionCard } from './components/ui/motion'
 import { CustomSelect } from './components/ui/CustomSelect'
 import { SearchableMultiSelect } from './components/ui/SearchableMultiSelect'
+import { SearchableCombobox } from './components/ui/SearchableCombobox'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
 import clashMetaClientIcon from './assets/subscription-clients/clash-meta.png'
 import stashClientIcon from './assets/subscription-clients/stash.jpg'
@@ -96,6 +97,7 @@ import {
   type AutomationConnectAuth,
   type AutomationConnectClient,
 } from './automation-connect'
+import { formatTokenLimit, tokenDisplayToLimit, tokenLimitToDisplay, type TokenDisplayUnit } from './ai-provider'
 import {
   failedDNSBulkServerIDs,
   hasDNSBulkPatch,
@@ -1810,7 +1812,7 @@ function App() {
     subscriptions: sessionUser?.role === 'admin' ? '节点订阅分发' : '我的订阅',
     notifications: '通知中心',
     tasks: '任务部署中心',
-    audit: '审计日志时间线',
+    audit: '审计台',
     settings: '面板系统设置',
     account: '我的账户',
   }
@@ -1970,7 +1972,7 @@ function App() {
                     >
                       <p className="eyebrow">{current.group}</p>
                       <h1>{tabTitles[tab] || current.label}</h1>
-                      <p>{current.desc}</p>
+                      {tab !== 'audit' && <p>{current.desc}</p>}
                     </m.div>
                   </AnimatePresence>
                 </div>
@@ -4760,7 +4762,7 @@ function AuditConsole({ data, client, loading, notify }: any) {
   }
   const enabled = Number(connectionOverview?.enabled_server_count || 0)
   const geoAvailable = subscriptionOverview?.geo_database?.available !== false && connectionOverview?.geo_database?.available !== false
-  return <Panel title="审计台" className="audit-console-panel">
+  return <Panel className="audit-console-panel">
     <div className="audit-console-tabs" role="tablist" aria-label="审计视图">
       <button type="button" role="tab" aria-selected={view === 'combined'} className={view === 'combined' ? 'active' : ''} onClick={() => setView('combined')}><Gauge size={15} />综合风险</button>
       <button type="button" role="tab" aria-selected={view === 'subscriptions'} className={view === 'subscriptions' ? 'active' : ''} onClick={() => setView('subscriptions')}><Download size={15} />订阅风险</button>
