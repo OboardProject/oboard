@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { ArrowLeftRight, Eye, EyeOff, Shield, Workflow, X } from 'lucide-react'
+import { ArrowLeftRight, Check, Eye, EyeOff, Shield, Workflow, X } from 'lucide-react'
 import { MotionDialogPanel } from '../ui/motion'
 
 export type TransportMode = 'singbox' | 'port_forward' | 'tunnel'
@@ -133,9 +133,10 @@ export function TransportDialog({
   const keepaliveValue = Number(keepalive)
   const realityPortValue = Number(realityPort)
   const needsSSHPort = mode === 'tunnel' && tunnelKind === 'ssh'
+  const showRealitySettings = targetKind === 'generated' && chainProtocol === 'vless'
   const sshPortInvalid = needsSSHPort && (!Number.isInteger(sshPortValue) || sshPortValue < 1 || sshPortValue > 65535)
   const keepaliveInvalid = mode === 'tunnel' && tunnelKind === 'wireguard' && (!Number.isInteger(keepaliveValue) || keepaliveValue < 0 || keepaliveValue > 65535)
-  const realityInvalid = targetKind === 'generated' && chainProtocol === 'vless' && (realityServer.trim() === '' || !Number.isInteger(realityPortValue) || realityPortValue < 1 || realityPortValue > 65535)
+  const realityInvalid = showRealitySettings && (realityServer.trim() === '' || !Number.isInteger(realityPortValue) || realityPortValue < 1 || realityPortValue > 65535)
   const branchInvalid = targetKind === 'existing' && copyMode === 'single' && branchPathID <= 0
 
   const reuseRequest = useMemo<ProxyPathReuseRequest | null>(() => {
@@ -245,9 +246,14 @@ export function TransportDialog({
       </header>
       <div className="dialog-body transport-dialog-body">
         <div className="transport-mode-options" role="radiogroup" aria-label="传递方式">
-          {modeOptions.map(option => <button key={option.value} type="button" role="radio" aria-checked={mode === option.value} disabled={option.disabled} className={`transport-mode-option${mode === option.value ? ' is-active' : ''}`} onClick={() => setMode(option.value)}>
-            <span className="transport-mode-head">{option.icon}<strong>{option.label}</strong></span><span className="transport-mode-hint">{option.hint}</span>
-          </button>)}
+          {modeOptions.map(option => {
+            const active = mode === option.value
+            return <button key={option.value} type="button" role="radio" aria-checked={active} disabled={option.disabled} className={`transport-mode-option${active ? ' is-active' : ''}`} onClick={() => setMode(option.value)}>
+              <span className="transport-mode-head">{option.icon}<strong>{option.label}</strong></span>
+              <span className="transport-mode-hint">{option.hint}</span>
+              <Check className="transport-mode-check" size={14} aria-hidden />
+            </button>
+          })}
         </div>
 
         {!target.importedOnly && targetOptions.length > 0 && <div className="transport-target-groups">
@@ -255,15 +261,18 @@ export function TransportDialog({
           <TargetGroup title="已有入口" options={existingOptions} selected={selectedTarget} onChoose={chooseTarget} />
         </div>}
 
-        {targetKind === 'generated' && chainProtocol === 'vless' && <div className="transport-inline-fields">
-          <label className="transport-field"><span>Reality 握手域名</span><input value={realityServer} onChange={event => setRealityServer(event.target.value)} aria-invalid={realityInvalid} /></label>
-          <label className="transport-field"><span>握手端口</span><input type="number" min={1} max={65535} value={realityPort} onChange={event => setRealityPort(event.target.value)} aria-invalid={realityInvalid} /></label>
-          {realityInvalid && <small className="transport-field-error">请输入有效域名和 1 到 65535 的端口。</small>}
-        </div>}
-
-        {mode === 'tunnel' && <label className="transport-field"><span>隧道类型</span><select value={tunnelKind} onChange={event => setTunnelKind(event.target.value as TunnelKind)}><option value="ssh">SSH 隧道</option><option value="wireguard">WireGuard 隧道</option></select></label>}
-        {needsSSHPort && <label className="transport-field"><span>目标端隧道服务端口</span><input type="number" min={1} max={65535} value={sshPort} placeholder="1-65535" onChange={event => setSSHPort(event.target.value)} aria-invalid={sshPortInvalid} /><small className={sshPortInvalid ? 'transport-field-error' : 'muted'}>{sshPortInvalid ? '端口必须是 1 到 65535 的整数。' : '这是 OBoard 专用隧道服务端口，不是服务器登录端口。'}</small></label>}
-        {mode === 'tunnel' && tunnelKind === 'wireguard' && <label className="transport-field"><span>保活间隔（秒）</span><input type="number" min={0} max={65535} value={keepalive} onChange={event => setKeepalive(event.target.value)} aria-invalid={keepaliveInvalid} /><small className={keepaliveInvalid ? 'transport-field-error' : 'muted'}>{keepaliveInvalid ? '保活间隔必须是 0 到 65535 的整数。' : '0 表示不发送保活包。'}</small></label>}
+        <div className={`transport-mode-settings${showRealitySettings && !target.importedOnly ? ' has-two-rows' : ''}`}>
+          {showRealitySettings && <div className="transport-settings-row transport-reality-settings">
+            <label className="transport-field"><span>Reality 握手域名</span><input value={realityServer} onChange={event => setRealityServer(event.target.value)} aria-invalid={realityInvalid} /></label>
+            <label className="transport-field"><span>握手端口</span><input type="number" min={1} max={65535} value={realityPort} onChange={event => setRealityPort(event.target.value)} aria-invalid={realityInvalid} /></label>
+            {realityInvalid && <small className="transport-field-error">请输入有效域名和 1 到 65535 的端口。</small>}
+          </div>}
+          {mode === 'tunnel' && <div className="transport-settings-row">
+            <label className="transport-field"><span>隧道类型</span><select value={tunnelKind} onChange={event => setTunnelKind(event.target.value as TunnelKind)}><option value="ssh">SSH 隧道</option><option value="wireguard">WireGuard 隧道</option></select></label>
+            {needsSSHPort && <label className="transport-field"><span>目标端隧道服务端口</span><input type="number" min={1} max={65535} value={sshPort} placeholder="1-65535" onChange={event => setSSHPort(event.target.value)} aria-invalid={sshPortInvalid} /><small className={sshPortInvalid ? 'transport-field-error' : 'muted'}>{sshPortInvalid ? '端口必须是 1 到 65535 的整数。' : 'OBoard 专用服务端口，不是服务器登录端口。'}</small></label>}
+            {tunnelKind === 'wireguard' && <label className="transport-field"><span>保活间隔（秒）</span><input type="number" min={0} max={65535} value={keepalive} onChange={event => setKeepalive(event.target.value)} aria-invalid={keepaliveInvalid} /><small className={keepaliveInvalid ? 'transport-field-error' : 'muted'}>{keepaliveInvalid ? '保活间隔必须是 0 到 65535 的整数。' : '0 表示不发送保活包。'}</small></label>}
+          </div>}
+        </div>
 
         {reuseEnabled && targetKind === 'existing' && <section className="transport-branch-copy">
           <div><strong>复制已有分支</strong><span className="muted">只复制启用分支，复制后独立保存。</span></div>

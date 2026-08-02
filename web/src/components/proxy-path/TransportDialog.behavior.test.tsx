@@ -66,6 +66,34 @@ describe('TransportDialog preview', () => {
     expect(container.textContent).toContain('拓扑检查通过')
     expect(container.textContent).not.toContain('正在检查拓扑')
   })
+
+  it('keeps the mode settings region stable while switching transport modes', () => {
+    act(() => root.render(
+      <TransportDialog
+        target={{ sourceLabel: '入口 A', targetLabel: '服务器 B' }}
+        currentMode="singbox"
+        chainMethods={[]}
+        onCancel={() => {}}
+        onSubmit={() => {}}
+      />,
+    ))
+
+    const modeButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+    const settings = container.querySelector('.transport-mode-settings')
+    expect(modeButtons).toHaveLength(3)
+    expect(modeButtons[0].getAttribute('aria-checked')).toBe('true')
+    expect(settings).not.toBeNull()
+
+    act(() => modeButtons[2].click())
+    expect(modeButtons[2].getAttribute('aria-checked')).toBe('true')
+    expect(container.querySelector('.transport-mode-settings')).toBe(settings)
+    expect(settings?.textContent).toContain('隧道类型')
+
+    act(() => modeButtons[1].click())
+    expect(modeButtons[1].getAttribute('aria-checked')).toBe('true')
+    expect(container.querySelector('.transport-mode-settings')).toBe(settings)
+    expect(settings?.textContent).toBe('')
+  })
 })
 
 const previewResult: ProxyPathReusePreview = {
