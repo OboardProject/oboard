@@ -11148,39 +11148,56 @@ function DNSBulkSettingsDialog({ policies, servers, lists, client, onClose, onSe
   const [draft, setDraft] = useState<DNSBulkDraft>(emptyDNSBulkDraft)
   const [working, setWorking] = useState<DNSBulkAction | ''>('')
   const [failures, setFailures] = useState<DNSBulkResult[]>([])
+  const [skipped, setSkipped] = useState<DNSBulkResult[]>([])
   const patch = dnsBulkPatch(draft)
   const hasPatch = hasDNSBulkPatch(patch)
   const serverNames = new Map(servers.map(server => [Number(server.id), server.name || `服务器 #${server.id}`]))
+  const serverByID = new Map(servers.map(server => [Number(server.id), server]))
   const updateDraft = (next: Partial<DNSBulkDraft>) => {
     setDraft(current => ({ ...current, ...next }))
     setFailures([])
+    setSkipped([])
+  }
+  const checkAvailability = (serverID: number) => {
+    const server = serverByID.get(serverID)
+    if (!server?.agent_id?.trim()) return 'Agent 未接入，DNS 设置已保存，检查已跳过'
+    if (String(server.status || '').toLowerCase() === 'offline') return '服务器离线，DNS 设置已保存，检查已跳过'
+    return ''
   }
   const run = async (action: DNSBulkAction) => {
     if (working || !policies.length || (action === 'save' && !hasPatch)) return
     setWorking(action)
     setFailures([])
+    setSkipped([])
     try {
-      const results = await runDNSBulkAction(policies, patch, action, client.request, 4)
+      const results = await runDNSBulkAction(policies, patch, action, client.request, checkAvailability)
       const failedIDs = failedDNSBulkServerIDs(results)
-      const succeeded = results.length - failedIDs.length
+      const succeeded = results.filter(result => result.status === 'succeeded').length
+      const skippedResults = results.filter(result => result.status === 'skipped')
       await onChanged()
       if (!failedIDs.length) {
         onSelectionChange([])
-        notify?.(
-          action === 'save'
-            ? `已保存 ${succeeded} 台服务器的解析设置`
-            : action === 'test'
+        if (action === 'save') {
+          notify?.(`已保存 ${succeeded} 台服务器的解析设置`, 'success')
+        } else {
+          const started = succeeded > 0
+            ? action === 'test'
               ? `已为 ${succeeded} 台服务器开始解析检查`
-              : `已为 ${succeeded} 台服务器开始解析检查，成功后会自动应用`,
-          'success',
-        )
+              : `已为 ${succeeded} 台服务器开始解析检查，成功后会自动应用`
+            : '未启动解析检查'
+          const skippedSummary = skippedResults.length
+            ? `，${skippedResults.length} 台暂不可用，DNS 设置已保存并跳过检查`
+            : ''
+          notify?.(`${started}${skippedSummary}`, skippedResults.length ? 'warning' : 'success')
+        }
         onClose()
         return
       }
-      const failedResults = results.filter(result => !result.ok)
+      const failedResults = results.filter(result => result.status === 'failed')
       setFailures(failedResults)
+      setSkipped(skippedResults)
       onSelectionChange(failedIDs)
-      notify?.(`批量操作完成：成功 ${succeeded} 台，失败 ${failedIDs.length} 台`, succeeded ? 'warning' : 'error')
+      notify?.(`批量操作完成：成功 ${succeeded} 台，跳过 ${skippedResults.length} 台，失败 ${failedIDs.length} 台`, succeeded || skippedResults.length ? 'warning' : 'error')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -11200,7 +11217,11 @@ function DNSBulkSettingsDialog({ policies, servers, lists, client, onClose, onSe
       </div>
       {failures.length > 0 && <div className="dns-bulk-failures" role="alert">
         <strong>{failures.length} 台服务器未完成</strong>
-        <ul>{failures.map(result => <li key={result.serverID}><span>{serverNames.get(result.serverID) || `服务器 #${result.serverID}`}</span><small>{localizeErrorMessage(result.error)}</small></li>)}</ul>
+        <ul>{failures.map(result => <li key={result.serverID}><span>{serverNames.get(result.serverID) || `服务器 #${result.serverID}`}</span><small>{localizeErrorMessage(result.message)}</small></li>)}</ul>
+      </div>}
+      {skipped.length > 0 && <div className="dns-bulk-skipped" role="status">
+        <strong>{skipped.length} 台服务器已跳过检查</strong>
+        <ul>{skipped.map(result => <li key={result.serverID}><span>{serverNames.get(result.serverID) || `服务器 #${result.serverID}`}</span><small>{result.message}</small></li>)}</ul>
       </div>}
       <div className="form dns-settings-form dns-bulk-settings-form labeled-form">
         <FormField label="加密解析服务列表" full><Select value={draft.encryptedListID} onChange={event => updateDraft({ encryptedListID: event.target.value })}><option value="">保持各服务器当前设置</option>{lists.filter(list => list.kind === 'encrypted' && list.enabled).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>

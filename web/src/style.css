@@ -12979,7 +12979,8 @@ button.ui-btn-ghost:hover {
   gap: 7px;
 }
 .dns-bulk-targets > strong,
-.dns-bulk-failures > strong {
+.dns-bulk-failures > strong,
+.dns-bulk-skipped > strong {
   color: var(--text-strong);
   font-size: 12px;
 }
@@ -13004,14 +13005,25 @@ button.ui-btn-ghost:hover {
   background: color-mix(in srgb, var(--danger-soft) 44%, var(--surface-solid));
 }
 .dns-bulk-failures > strong { color: var(--danger); }
-.dns-bulk-failures ul {
+.dns-bulk-skipped {
+  display: grid;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning-soft) 44%, var(--surface-solid));
+}
+.dns-bulk-skipped > strong { color: var(--warning); }
+.dns-bulk-failures ul,
+.dns-bulk-skipped ul {
   max-height: 180px;
   margin: 0;
   padding: 0;
   overflow: auto;
   list-style: none;
 }
-.dns-bulk-failures li {
+.dns-bulk-failures li,
+.dns-bulk-skipped li {
   display: grid;
   grid-template-columns: minmax(110px, .35fr) minmax(0, 1fr);
   gap: 10px;
@@ -13019,7 +13031,10 @@ button.ui-btn-ghost:hover {
   border-top: 1px solid color-mix(in srgb, var(--danger) 16%, var(--border));
 }
 .dns-bulk-failures li:first-child { border-top: 0; }
-.dns-bulk-failures span {
+.dns-bulk-skipped li { border-top-color: color-mix(in srgb, var(--warning) 16%, var(--border)); }
+.dns-bulk-skipped li:first-child { border-top: 0; }
+.dns-bulk-failures span,
+.dns-bulk-skipped span {
   min-width: 0;
   overflow: hidden;
   color: var(--text-strong);
@@ -13029,6 +13044,11 @@ button.ui-btn-ghost:hover {
 }
 .dns-bulk-failures small {
   color: var(--danger);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.dns-bulk-skipped small {
+  color: var(--warning);
   font-size: 11px;
   overflow-wrap: anywhere;
 }
@@ -13288,7 +13308,7 @@ button.ui-btn-ghost:hover {
   .dns-bulk-targets ul { grid-template-columns: minmax(0, 1fr); }
   .dns-bulk-targets li:nth-child(2) { border-top: 1px solid var(--border); }
   .dns-bulk-targets li:nth-child(even) { padding-left: 0; border-left: 0; }
-  .dns-bulk-failures li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .dns-bulk-failures li, .dns-bulk-skipped li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .dns-benchmark-history-body { min-height: 0; padding: 12px; }
   .dns-benchmark-history-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 38px; }
   .dns-benchmark-history-toolbar .dns-benchmark-search { grid-column: 1 / -1; width: 100%; }

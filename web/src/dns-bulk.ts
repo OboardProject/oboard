@@ -26,11 +26,14 @@ export type DNSPolicyUpdatePayload = {
 
 export type DNSBulkResult = {
   serverID: number
-  ok: boolean
-  error: string
+  status: 'succeeded' | 'failed' | 'skipped'
+  message: string
 }
 
 type DNSBulkRequest = (path: string, init?: RequestInit) => Promise<any>
+type DNSBulkCheckAvailability = (serverID: number) => string
+
+const dnsPolicyRetryDelayMS = 250
 
 export function hasDNSBulkPatch(patch: DNSBulkPatch) {
   return patch.encryptedListID !== undefined
@@ -49,24 +52,37 @@ export function mergeDNSBulkPolicy(policy: DNSBulkPolicy, patch: DNSBulkPatch): 
   }
 }
 
-function errorText(error: unknown) {
+function isTransportError(error: unknown) {
+  return error instanceof TypeError
+}
+
+function errorText(error: unknown, stage: 'save' | 'test') {
+  if (isTransportError(error)) {
+    return stage === 'save'
+      ? '无法连接控制器，请检查网络后重试'
+      : '与控制器的连接中断，请先查看检查日志'
+  }
   if (error instanceof Error) return error.message
   if (typeof error === 'string') return error
   return '未知错误'
 }
 
 function immediateTaskFailure(task: any) {
-  if (task?.status !== 'failed') return ''
+  if (task?.status !== 'failed') return null
   if (typeof task?.result_json === 'string') {
     try {
       const result = JSON.parse(task.result_json)
-      if (typeof result?.error === 'string' && result.error) return result.error
-      if (typeof result?.message === 'string' && result.message) return result.message
+      const message = typeof result?.error === 'string' && result.error
+        ? result.error
+        : typeof result?.message === 'string' && result.message
+          ? result.message
+          : '暂时无法检查解析服务'
+      return { message, unavailable: result?.offline === true }
     } catch {
       // Fall through to the bounded generic message.
     }
   }
-  return '暂时无法检查解析服务'
+  return { message: '暂时无法检查解析服务', unavailable: false }
 }
 
 async function runForPolicy(
@@ -74,17 +90,38 @@ async function runForPolicy(
   patch: DNSBulkPatch,
   action: DNSBulkAction,
   request: DNSBulkRequest,
+  checkAvailability: DNSBulkCheckAvailability,
 ): Promise<DNSBulkResult> {
-  try {
-    await request(`/servers/${policy.server_id}/dns-policy`, {
-      method: 'PUT',
-      body: JSON.stringify(mergeDNSBulkPolicy(policy, patch)),
-    })
-  } catch (error) {
-    return { serverID: policy.server_id, ok: false, error: `保存失败：${errorText(error)}` }
+  const payload = mergeDNSBulkPolicy(policy, patch)
+  const policyChanged = hasDNSBulkPatch(patch) && (
+    payload.encrypted_list_id !== policy.encrypted_list_id
+    || payload.bootstrap_list_id !== policy.bootstrap_list_id
+    || payload.strategy !== policy.strategy
+    || payload.auto_test !== policy.auto_test
+    || payload.test_interval_seconds !== policy.test_interval_seconds
+  )
+  if (policyChanged) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await request(`/servers/${policy.server_id}/dns-policy`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        })
+        break
+      } catch (error) {
+        if (attempt === 0 && isTransportError(error)) {
+          await new Promise(resolve => setTimeout(resolve, dnsPolicyRetryDelayMS))
+          continue
+        }
+        return { serverID: policy.server_id, status: 'failed', message: `保存失败：${errorText(error, 'save')}` }
+      }
+    }
   }
 
-  if (action === 'save') return { serverID: policy.server_id, ok: true, error: '' }
+  if (action === 'save') return { serverID: policy.server_id, status: 'succeeded', message: '' }
+
+  const unavailableReason = checkAvailability(policy.server_id)
+  if (unavailableReason) return { serverID: policy.server_id, status: 'skipped', message: unavailableReason }
 
   try {
     const response = await request(`/servers/${policy.server_id}/dns-test`, {
@@ -92,10 +129,13 @@ async function runForPolicy(
       body: JSON.stringify({ action }),
     })
     const failure = immediateTaskFailure(response?.task)
-    if (failure) return { serverID: policy.server_id, ok: false, error: `检查失败：${failure}` }
-    return { serverID: policy.server_id, ok: true, error: '' }
+    if (failure?.unavailable) {
+      return { serverID: policy.server_id, status: 'skipped', message: `DNS 设置已保存，检查已跳过：${failure.message}` }
+    }
+    if (failure) return { serverID: policy.server_id, status: 'failed', message: `检查失败：${failure.message}` }
+    return { serverID: policy.server_id, status: 'succeeded', message: '' }
   } catch (error) {
-    return { serverID: policy.server_id, ok: false, error: `检查失败：${errorText(error)}` }
+    return { serverID: policy.server_id, status: 'failed', message: `检查状态未知：${errorText(error, 'test')}` }
   }
 }
 
@@ -104,22 +144,15 @@ export async function runDNSBulkAction(
   patch: DNSBulkPatch,
   action: DNSBulkAction,
   request: DNSBulkRequest,
-  concurrency = 4,
+  checkAvailability: DNSBulkCheckAvailability = () => '',
 ) {
-  const results = new Array<DNSBulkResult>(policies.length)
-  let nextIndex = 0
-  const workerCount = Math.min(Math.max(1, Math.floor(concurrency)), policies.length)
-
-  await Promise.all(Array.from({ length: workerCount }, async () => {
-    while (nextIndex < policies.length) {
-      const index = nextIndex++
-      results[index] = await runForPolicy(policies[index], patch, action, request)
-    }
-  }))
-
+  const results: DNSBulkResult[] = []
+  for (const policy of policies) {
+    results.push(await runForPolicy(policy, patch, action, request, checkAvailability))
+  }
   return results
 }
 
 export function failedDNSBulkServerIDs(results: readonly DNSBulkResult[]) {
-  return results.filter(result => !result.ok).map(result => result.serverID)
+  return results.filter(result => result.status === 'failed').map(result => result.serverID)
 }
