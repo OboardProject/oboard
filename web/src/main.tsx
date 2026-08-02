@@ -86,6 +86,7 @@ import clashClassicClientIcon from './assets/subscription-clients/clash-classic.
 import { PageDataRequestCoordinator } from './page-data'
 import { useRealtimeEvents, type RealtimeEvent, type RealtimeStatus } from './realtime'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
+import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
   failedDNSBulkServerIDs,
   hasDNSBulkPatch,
@@ -164,9 +165,9 @@ type DNSCandidate = { tag: string; transport: DNSTransport; server: string; port
 type DNSList = { id: number; name: string; kind: DNSListKind; revision: number; candidates: DNSCandidate[]; enabled: boolean; protected: boolean; usage_count: number; created_at?: string; updated_at?: string }
 type DNSCandidateDraft = { id: number; name: string; address: string }
 type DNSListDraft = { name: string; kind: DNSListKind; enabled: boolean; candidates: DNSCandidateDraft[] }
-type ServerDNSPolicy = { server_id: number; encrypted_list_id: number; bootstrap_list_id: number; revision: number; strategy: string; auto_test: 'never' | 'first_apply' | 'periodic'; test_interval_seconds: number; encrypted_selected: DNSCandidate[]; bootstrap_selected: DNSCandidate[]; encrypted_selection_revision: number; bootstrap_selection_revision: number; last_attempt_at?: string; last_success_at?: string; last_error: string; needs_benchmark: boolean; updated_at?: string }
+type ServerDNSPolicy = { server_id: number; encrypted_list_id: number; bootstrap_list_id: number; revision: number; strategy: string; auto_test: 'never' | 'first_apply' | 'periodic'; test_interval_seconds: number; encrypted_selected: DNSCandidate[] | null; bootstrap_selected: DNSCandidate[] | null; encrypted_selection_revision: number; bootstrap_selection_revision: number; last_attempt_at?: string; last_success_at?: string; last_error: string; needs_benchmark: boolean; updated_at?: string }
 type DNSBenchmarkItem = { tag: string; latency_ms: number; error?: string }
-type DNSBenchmarkGroup = { items: DNSBenchmarkItem[]; best_tags: string[] }
+type DNSBenchmarkGroup = { items: DNSBenchmarkItem[] | null; best_tags: string[] | null }
 type DNSBenchmarkResult = { id: number; report_id: string; request_id?: string; server_id: number; policy_revision: number; encrypted_list_id: number; encrypted_list_revision: number; bootstrap_list_id: number; bootstrap_list_revision: number; encrypted: DNSBenchmarkGroup; bootstrap: DNSBenchmarkGroup; status: string; error: string; created_at: string }
 type ForwardBackend = 'auto' | 'realm' | 'nft' | 'builtin'
 type ForwardProtocol = 'tcp' | 'udp' | 'tcp_udp'
@@ -11116,8 +11117,8 @@ function DNSBenchmarkHistoryDialog({ servers, client, onClose }: { servers: Serv
         {visibleGroups.map(group => {
           const rows = group.records.map(result => ({
             id: result.id,
-            encrypted: result.encrypted.best_tags.join(' · ') || '无可用项',
-            bootstrap: result.bootstrap.best_tags.join(' · ') || '无可用项',
+            encrypted: dnsTagListLabel(result.encrypted?.best_tags, '无可用项'),
+            bootstrap: dnsTagListLabel(result.bootstrap?.best_tags, '无可用项'),
             status: result.status,
             error: result.error,
             checked_at: result.created_at,
@@ -11159,8 +11160,8 @@ function DNS({ data, client, load, notify }: any) {
     server: servers.find(server => server.id === policy.server_id)?.name || `#${policy.server_id}`,
     encrypted_list: lists.find(list => list.id === policy.encrypted_list_id)?.name || '—',
     bootstrap_list: lists.find(list => list.id === policy.bootstrap_list_id)?.name || '—',
-    encrypted_selected: policy.encrypted_selected.map(candidate => candidate.tag).join(' · ') || '等待检查',
-    bootstrap_selected: policy.bootstrap_selected.map(candidate => candidate.tag).join(' · ') || '等待检查',
+    encrypted_selected: dnsSelectionLabel(policy.encrypted_selected),
+    bootstrap_selected: dnsSelectionLabel(policy.bootstrap_selected),
     status: isDNSPolicyStale(policy, lists) ? '等待重新检查' : policy.last_error ? '失败' : policy.last_success_at ? '正常' : '尚未检查',
     last_success_at: policy.last_success_at || '',
     _policy: policy,

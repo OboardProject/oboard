@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -1090,6 +1091,69 @@ func TestDNSListRevisionInvalidatesOnlyReferencedSelection(t *testing.T) {
 	}
 	if len(got.EncryptedSelected) != 0 || got.EncryptedSelectionRevision != 0 || len(got.BootstrapSelected) != 2 || !got.NeedsBenchmark {
 		t.Fatalf("invalidated policy = %#v", got)
+	}
+}
+
+func TestDNSPolicyInvalidationKeepsSelectionArraysNonNull(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "dns-server", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := s.GetServerDNSPolicy(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := s.GetDNSList(ctx, policy.EncryptedListID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap, err := s.GetDNSList(ctx, policy.BootstrapListID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	customEncrypted := &model.DNSList{Name: "custom encrypted", Kind: model.DNSListEncrypted, Revision: 1, Enabled: true, Candidates: append([]model.DNSCandidate(nil), encrypted.Candidates...)}
+	customBootstrap := &model.DNSList{Name: "custom bootstrap", Kind: model.DNSListBootstrap, Revision: 1, Enabled: true, Candidates: append([]model.DNSCandidate(nil), bootstrap.Candidates...)}
+	if err := s.CreateDNSList(ctx, customEncrypted); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateDNSList(ctx, customBootstrap); err != nil {
+		t.Fatal(err)
+	}
+	policy.EncryptedListID = customEncrypted.ID
+	policy.BootstrapListID = customBootstrap.ID
+	if err := s.UpdateServerDNSPolicy(ctx, policy); err != nil {
+		t.Fatal(err)
+	}
+	if policy.EncryptedSelected == nil || policy.BootstrapSelected == nil {
+		t.Fatalf("invalidated selections must be empty arrays: %#v", policy)
+	}
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if string(payload["encrypted_selected"]) != "[]" || string(payload["bootstrap_selected"]) != "[]" {
+		t.Fatalf("invalidated selections encoded as %s and %s", payload["encrypted_selected"], payload["bootstrap_selected"])
+	}
+
+	if _, err := s.db.ExecContext(ctx, `update server_dns_policies set encrypted_selected_json='null',bootstrap_selected_json='null' where server_id=?`, server.ID); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := s.GetServerDNSPolicy(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.EncryptedSelected == nil || loaded.BootstrapSelected == nil {
+		t.Fatalf("stored null selections were not normalized: %#v", loaded)
 	}
 }
 

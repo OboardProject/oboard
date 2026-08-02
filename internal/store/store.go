@@ -3369,6 +3369,12 @@ func scanDNSPolicy(scanner interface{ Scan(...any) error }) (*model.ServerDNSPol
 	if err := json.Unmarshal([]byte(bootstrap), &item.BootstrapSelected); err != nil {
 		return nil, err
 	}
+	if item.EncryptedSelected == nil {
+		item.EncryptedSelected = []model.DNSCandidate{}
+	}
+	if item.BootstrapSelected == nil {
+		item.BootstrapSelected = []model.DNSCandidate{}
+	}
 	item.LastAttemptAt = parseNullTime(attempted)
 	item.LastSuccessAt = parseNullTime(succeeded)
 	item.NeedsBenchmark = needsBenchmark == 1
@@ -3441,11 +3447,11 @@ func (s *Store) UpdateServerDNSPolicy(ctx context.Context, v *model.ServerDNSPol
 	v.EncryptedSelectionRevision = current.EncryptedSelectionRevision
 	v.BootstrapSelectionRevision = current.BootstrapSelectionRevision
 	if current.EncryptedListID != v.EncryptedListID {
-		v.EncryptedSelected = nil
+		v.EncryptedSelected = []model.DNSCandidate{}
 		v.EncryptedSelectionRevision = 0
 	}
 	if current.BootstrapListID != v.BootstrapListID {
-		v.BootstrapSelected = nil
+		v.BootstrapSelected = []model.DNSCandidate{}
 		v.BootstrapSelectionRevision = 0
 	}
 	v.LastAttemptAt = current.LastAttemptAt
