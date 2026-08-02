@@ -1285,7 +1285,7 @@ func proxyPathManagedPortForward(path model.ProxyPath, step model.ProxyPathStep,
 		name = fmt.Sprintf("%s / 透明第%d跳", firstNonEmpty(root.Name, fmt.Sprintf("入口 %d", root.ID)), step.Position)
 		configJSON = managedTransparentConfigJSON(transparentGroup.InboundID, step.Position)
 	}
-	return model.PortForward{ID: id, Name: name, SourceServerID: sourceServerID, TargetServerID: targetServerID, ListenIP: firstNonEmpty(stringValue(parseStepConfig(step.ConfigJSON), "listen_ip", ""), source.ListenIP, "0.0.0.0"), ListenPort: listenPort, TargetAddress: targetAddress, TargetPort: targetInbound.Port, Protocol: protocol, Backend: backend, ProbeMode: "apply", ProbeIntervalSeconds: 300, Priority: 1000 + step.Position, ConfigJSON: configJSON, Enabled: true}, nil
+	return model.PortForward{ID: id, Name: name, SourceServerID: sourceServerID, TargetServerID: targetServerID, ListenIP: EffectiveListenIP(source, firstNonEmpty(stringValue(parseStepConfig(step.ConfigJSON), "listen_ip", ""), source.ListenIP)), ListenPort: listenPort, TargetAddress: targetAddress, TargetPort: targetInbound.Port, Protocol: protocol, Backend: backend, ProbeMode: "apply", ProbeIntervalSeconds: 300, Priority: 1000 + step.Position, ConfigJSON: configJSON, Enabled: true}, nil
 }
 
 func proxyPathReachableServerAddress(source, target model.Server) (string, error) {

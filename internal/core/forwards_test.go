@@ -43,6 +43,31 @@ func TestBuildPortForwardPlanUsesDetectedAddressForSourceIPStack(t *testing.T) {
 	}
 }
 
+func TestBuildPortForwardPlanDerivesDualStackListen(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		source     model.Server
+		listenIP   string
+		wantListen string
+	}{
+		{name: "dual-stack derives v6 wildcard", source: model.Server{ID: 1, Name: "dual", PublicIPv4: "198.51.100.1", PublicIPv6: "2001:db8::1", ListenIP: "0.0.0.0"}, listenIP: "0.0.0.0", wantListen: "::"},
+		{name: "ipv4-only keeps v4 wildcard", source: model.Server{ID: 2, Name: "v4", PublicIPv4: "198.51.100.2", ListenIP: "0.0.0.0"}, listenIP: "", wantListen: "0.0.0.0"},
+		{name: "ipv6-only derives v6 wildcard", source: model.Server{ID: 3, Name: "v6", PublicIPv6: "2001:db8::3", ListenIP: "0.0.0.0"}, listenIP: "0.0.0.0", wantListen: "::"},
+		{name: "explicit specific listen preserved", source: model.Server{ID: 4, Name: "specific", PublicIPv4: "198.51.100.4", PublicIPv6: "2001:db8::4", ListenIP: "0.0.0.0"}, listenIP: "127.0.0.1", wantListen: "127.0.0.1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := model.Server{ID: 9, Name: "target", PublicIPv4: "203.0.113.9", PublicIPv6: "2001:db8::9"}
+			plan, err := BuildPortForwardPlan(10, tc.source, []model.Server{tc.source, target}, []model.PortForward{{ID: 1, Name: "fwd", SourceServerID: tc.source.ID, TargetServerID: target.ID, ListenIP: tc.listenIP, ListenPort: 443, TargetPort: 8443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendBuiltin, Enabled: true}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(plan.Rules) != 1 || plan.Rules[0].ListenIP != tc.wantListen {
+				t.Fatalf("plan = %#v, want listen %q", plan.Rules, tc.wantListen)
+			}
+		})
+	}
+}
+
 func TestBuildPortForwardPlanRejectsExplicitIncompatibleLiteral(t *testing.T) {
 	servers := []model.Server{
 		{ID: 1, Name: "source", PublicIPv4: "198.51.100.1", IPStack: model.IPStackIPv4Only},

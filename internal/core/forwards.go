@@ -55,6 +55,7 @@ func BuildPortForwardPlan(version int64, server model.Server, servers []model.Se
 		if err := ValidateListenIP(f.ListenIP); err != nil {
 			return model.PortForwardPlan{}, err
 		}
+		f.ListenIP = EffectiveListenIP(server, f.ListenIP)
 		if err := ValidatePort(f.ListenPort); err != nil {
 			return model.PortForwardPlan{}, fmt.Errorf("listen_port: %w", err)
 		}
