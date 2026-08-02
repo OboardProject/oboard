@@ -24,6 +24,7 @@ import (
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/version"
+	"go.yaml.in/yaml/v3"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -542,6 +543,25 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	nodes := readSubscription()
 	if len(nodes) != 1 || nodes[0]["type"] != "ssh" || nodes[0]["user"] != sshLoginName(user.ID) || nodes[0]["server"] != server.PublicIPv4 || nodes[0]["password"] != user.ProxyPassword {
 		t.Fatalf("matching SSH subscription = %#v", nodes)
+	}
+	egernRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(egernRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions/ssh-subscription-token?format=egern", nil))
+	if egernRecorder.Code != http.StatusOK {
+		t.Fatalf("Egern subscription status=%d body=%s", egernRecorder.Code, egernRecorder.Body.String())
+	}
+	var egernDocument struct {
+		Proxies []map[string]map[string]any `yaml:"proxies"`
+	}
+	if err := yaml.Unmarshal(egernRecorder.Body.Bytes(), &egernDocument); err != nil {
+		t.Fatal(err)
+	}
+	if len(egernDocument.Proxies) != 1 {
+		t.Fatalf("Egern SSH proxies = %#v", egernDocument.Proxies)
+	}
+	egernSSH := egernDocument.Proxies[0]["ssh"]
+	hostKeys, hostKeysOK := egernSSH["host_keys"].([]any)
+	if egernSSH["username"] != sshLoginName(user.ID) || egernSSH["server"] != server.PublicIPv4 || egernSSH["password"] != user.ProxyPassword || !hostKeysOK || len(hostKeys) != 1 || hostKeys[0] != hostIdentity.PublicKey {
+		t.Fatalf("Egern SSH subscription = %#v", egernDocument.Proxies[0])
 	}
 }
 

@@ -90,7 +90,7 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 		{format: model.SubscriptionFormatMihomo, proxyCount: 6, contains: []string{"reality-opts:", "obfs-password: obfs-pass", "type: mieru", "port-range: 25250-25252"}},
 		{format: model.SubscriptionFormatStash, proxyCount: 5, contains: []string{"auth: hy2-pass", "up-speed: 100", "down-speed: 200"}, excludes: []string{"type: mieru"}},
 		{format: model.SubscriptionFormatShadowrocket, proxyCount: 6, contains: []string{"vless://", "hysteria2://", "mierus://"}, excludes: []string{"proxies:", "proxy-groups:", "rules:"}},
-		{format: model.SubscriptionFormatEgern, proxyCount: 5, contains: []string{"type: shadowsocks", "method: chacha20-poly1305", "bandwidth: 100", "user_id:"}, excludes: []string{"type: mieru"}},
+		{format: model.SubscriptionFormatEgern, proxyCount: 5, contains: []string{"shadowsocks:", "method: chacha20-poly1305", "bandwidth: 100", "user_id:"}, excludes: []string{"mieru:"}},
 		{format: model.SubscriptionFormatLoon, proxyCount: 5, contains: []string{"=vless,", "=Hysteria2,", "udp-over-tcp=true"}, excludes: []string{"mieru"}},
 		{format: model.SubscriptionFormatQX, proxyCount: 4, contains: []string{"vless=", "anytls=", "udp-over-tcp=sp.v2"}, excludes: []string{"hysteria2=", "mieru"}},
 		{format: model.SubscriptionFormatSurge, proxyCount: 4, contains: []string{"=hysteria2,", "=anytls,", "download-bandwidth=200", "udp-relay=true"}, excludes: []string{"=vless,", "mieru"}},
@@ -168,9 +168,20 @@ func TestSSHSubscriptionTargetMappings(t *testing.T) {
 				usernameKey = "user"
 			}
 			if format == model.SubscriptionFormatEgern {
+				var ok bool
+				if len(proxy) != 1 {
+					t.Fatalf("Egern SSH wrapper = %#v", proxy)
+				}
+				proxy, ok = proxy["ssh"].(map[string]any)
+				if !ok {
+					t.Fatalf("Egern SSH wrapper = %#v", document.Proxies[0])
+				}
+				if _, exists := proxy["type"]; exists {
+					t.Fatalf("Egern SSH payload contains Clash type field: %#v", proxy)
+				}
 				hostKeyKey = "host_keys"
 			}
-			if proxy["type"] != "ssh" || proxy["server"] != "ssh.example.com" || intFromAny(proxy["port"]) != 2222 || proxy[usernameKey] != "oboard-7" || proxy["password"] != sshSubscriptionPassword || !stringSetContains(stringListFromAny(proxy[hostKeyKey]), sshSubscriptionHostKey) {
+			if (format != model.SubscriptionFormatEgern && proxy["type"] != "ssh") || proxy["server"] != "ssh.example.com" || intFromAny(proxy["port"]) != 2222 || proxy[usernameKey] != "oboard-7" || proxy["password"] != sshSubscriptionPassword || !stringSetContains(stringListFromAny(proxy[hostKeyKey]), sshSubscriptionHostKey) {
 				t.Fatalf("%s SSH mapping = %#v", format, proxy)
 			}
 		})
@@ -394,13 +405,15 @@ func TestEgernHTTPTransportAndURIFragmentArePreserved(t *testing.T) {
 	}
 	var parsed struct {
 		Proxies []struct {
-			Transport map[string]map[string]any `yaml:"transport"`
+			VLESS struct {
+				Transport map[string]map[string]any `yaml:"transport"`
+			} `yaml:"vless"`
 		} `yaml:"proxies"`
 	}
 	if err := yaml.Unmarshal([]byte(output), &parsed); err != nil {
 		t.Fatal(err)
 	}
-	httpTransport := parsed.Proxies[0].Transport["http"]
+	httpTransport := parsed.Proxies[0].VLESS.Transport["http"]
 	if httpTransport["path"] != "/edge" || httpTransport["sni"] != "edge.example.com" {
 		t.Fatalf("Egern HTTP transport = %#v", httpTransport)
 	}

@@ -780,15 +780,14 @@ func applyClashTLSMap(out map[string]any, tls subscriptionTLS) {
 
 func egernProxyMap(proxy subscriptionProxy) map[string]any {
 	out := map[string]any{"name": proxy.Name, "server": proxy.Server, "port": proxy.Port}
+	typeName := proxy.Type
 	switch proxy.Type {
 	case "vless":
-		out["type"] = "vless"
 		out["user_id"] = proxy.UUID
 		out["udp_relay"] = true
 		setNonEmpty(out, "flow", proxy.Flow)
 		out["transport"] = egernTransportMap(proxy)
 	case "hysteria2":
-		out["type"] = "hysteria2"
 		out["auth"] = proxy.Password
 		out["udp_relay"] = true
 		setNonEmpty(out, "sni", proxy.TLS.ServerName)
@@ -803,7 +802,6 @@ func egernProxyMap(proxy subscriptionProxy) map[string]any {
 			out["bandwidth"] = proxy.UpMbps
 		}
 	case "anytls":
-		out["type"] = "anytls"
 		out["password"] = proxy.Password
 		out["udp_relay"] = true
 		setNonEmpty(out, "sni", proxy.TLS.ServerName)
@@ -814,7 +812,7 @@ func egernProxyMap(proxy subscriptionProxy) map[string]any {
 			out["reality"] = reality
 		}
 	case "ss":
-		out["type"] = "shadowsocks"
+		typeName = "shadowsocks"
 		method := proxy.Method
 		if method == "chacha20-ietf-poly1305" {
 			method = "chacha20-poly1305"
@@ -823,17 +821,15 @@ func egernProxyMap(proxy subscriptionProxy) map[string]any {
 		out["password"] = proxy.Password
 		out["udp_relay"] = !proxy.UoT
 	case "socks5":
-		out["type"] = "socks5"
 		setNonEmpty(out, "username", proxy.Username)
 		setNonEmpty(out, "password", proxy.Password)
 		out["udp_relay"] = true
 	case "ssh":
-		out["type"] = "ssh"
 		out["username"] = proxy.Username
 		out["password"] = proxy.Password
 		out["host_keys"] = append([]string(nil), proxy.HostKeys...)
 	}
-	return out
+	return map[string]any{typeName: out}
 }
 
 func egernTransportMap(proxy subscriptionProxy) map[string]any {
