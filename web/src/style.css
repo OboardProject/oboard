@@ -9510,7 +9510,6 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 .task-card-list.compact { gap: 8px; margin-top: 10px; }
 .task-card-list.compact .task-card { padding: 10px; box-shadow: none; }
-.deployment-task-card { border-left: 3px solid var(--primary); }
 
 .inline-field-action { display: flex; gap: 8px; align-items: center; }
 .inline-field-action input { min-width: 0; flex: 1; }

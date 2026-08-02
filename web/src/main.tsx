@@ -786,7 +786,7 @@ const valueLabels: Record<string, string> = {
   detect: '仅检测', apply: '检测并应用', tcp_udp: 'TCP+UDP', builtin: '内置', wireguard: 'WireGuard', ssh: 'SSH', doh: 'DoH', dot: 'DoT', udp: 'UDP', tcp: 'TCP',
   cloudflare: 'Cloudflare', google: 'Google', quad9: 'Quad9', alidns: '阿里 DNS', dnspod: 'DNSPod', remote: '远程', local: '本地',
   apply_deployment: '应用部署', apply_core_config: '下发核心配置', probe_inbounds: '检查入口监听', probe_inbounds_external: '检查公网端口', probe_port_forwards: '探测端口转发', probe_external_egress: '探测第三方出口',
-  detect_mtu: 'MTU 检测', check_time: '时间检测', update_agent_config: '同步 Agent 配置', diagnose_network: '网络诊断',
+  benchmark_dns: '解析服务检查', detect_mtu: 'MTU 检测', check_time: '时间检测', update_agent_config: '同步 Agent 配置', diagnose_network: '网络诊断',
   collect_logs: '拉取日志', manage_logs: '管理日志',
   install_agent: '安装 Agent', update_agent: '更新 Agent', uninstall_agent: '卸载 Agent',
 }
@@ -12898,7 +12898,7 @@ function TaskGroupCard({ group, data }: { group: TaskGroup; data: any }) {
   // Single-server single-task groups can open details directly without an extra empty layer.
   const isFlatSingle = group.kind === 'single' && group.tasks.length === 1
 
-  return <MotionCard tag="article" className={`task-card task-group-card ${group.kind === 'deployment' ? 'deployment-task-card' : ''}`}>
+  return <MotionCard tag="article" className="task-card task-group-card">
     <button type="button" className="task-group-toggle" onClick={() => setExpanded(v => !v)} aria-expanded={expanded}>
       <div className="task-group-title-block">
         <strong>{group.title}</strong>
