@@ -998,14 +998,17 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		out["current_user"] = sessionUserResponse(*user, role)
 	}
 	ctx := r.Context()
-	addServers := func() error {
-		s.checkOffline(ctx)
+	addServerSnapshot := func() error {
 		items, err := s.store.ListServers(ctx)
 		if err != nil {
 			return err
 		}
 		out["servers"] = items
 		return nil
+	}
+	addServers := func() error {
+		s.checkOffline(ctx)
+		return addServerSnapshot()
 	}
 	addSettings := func() error {
 		items, err := s.store.ListSettings(ctx)
@@ -1368,7 +1371,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			out["summary"] = summary
 		}
 		if err == nil {
-			err = addServers()
+			err = addServerSnapshot()
 		}
 		if err == nil {
 			var inbounds []model.Inbound
@@ -2575,7 +2578,7 @@ func (s *Server) expireTimedOutTasks(ctx context.Context) {
 		s.notifyTaskFailure(ctx, task)
 	}
 	if len(failed) > 0 {
-		s.publishRealtime("tasks", "deployments", "servers", "probes")
+		s.publishRealtime(realtimeResourcesForTasks(failed)...)
 	}
 }
 
@@ -2651,13 +2654,13 @@ func (s *Server) createAgentTask(ctx context.Context, serverID int64, taskType, 
 			return model.AgentTask{}, err
 		}
 		s.notifyTaskFailure(ctx, task)
-		s.publishRealtime("tasks", "deployments", "servers")
+		s.publishRealtime(realtimeResourcesForTask(task.Type)...)
 		return task, nil
 	}
 	if err := s.store.CreateTask(ctx, &task); err != nil {
 		return model.AgentTask{}, err
 	}
-	s.publishRealtime("tasks", "deployments")
+	s.publishRealtime(realtimeResourcesForTask(task.Type)...)
 	return task, nil
 }
 
@@ -9995,6 +9998,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		s.processAgentSocketMessage(r.Context(), server, initial, clientIP(r))
 	}
 	var inFlightTaskID int64
+	var inFlightTaskType string
 	defer func() {
 		if inFlightTaskID == 0 {
 			return
@@ -10006,7 +10010,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.RequeueTaskIfRunning(context.Background(), inFlightTaskID, string(result)); err != nil {
 			log.Printf("requeue task %d after agent disconnect: %v", inFlightTaskID, err)
 		} else {
-			s.publishRealtime("tasks", "deployments")
+			s.publishRealtime(realtimeResourcesForTask(inFlightTaskType)...)
 		}
 	}()
 	for {
@@ -10014,7 +10018,8 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		task, err := s.store.NextTask(r.Context(), server.ID)
 		if err == nil {
 			inFlightTaskID = task.ID
-			s.publishRealtime("tasks", "deployments")
+			inFlightTaskType = task.Type
+			s.publishRealtime(realtimeResourcesForTask(task.Type)...)
 			readDeadline = 10 * time.Minute
 			if task.Type == model.AgentTaskTypeIssueCertificateHTTP {
 				readDeadline = 20 * time.Minute
@@ -10022,6 +10027,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			_ = conn.WriteJSON(map[string]any{"type": "task_request", "ts": time.Now().UTC(), "task": task, "signature_version": 2, "signature": signAgentTaskEnvelope(server.AgentTokenHash, *task)})
 		} else {
 			inFlightTaskID = 0
+			inFlightTaskType = ""
 			if latest, loadErr := s.store.GetServer(r.Context(), server.ID); loadErr == nil {
 				server = latest
 			}
@@ -10042,6 +10048,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		inFlightTaskID = 0
+		inFlightTaskType = ""
 		s.processAgentSocketMessage(r.Context(), server, msg, clientIP(r))
 	}
 }
@@ -10089,7 +10096,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 			old, next, err := s.store.UpsertHealthTransition(ctx, h, window)
 			if err == nil {
 				s.completeAgentUpdateAfterReconnect(ctx, server.ID, h.AgentBuild)
-				s.publishRealtime("servers", "server_metrics")
+				s.publishRealtime("server_runtime", "server_metrics")
 			}
 			if err == nil && old == model.ServerOffline && next == model.ServerOnline {
 				s.enqueueNotificationEvent(ctx, notificationEvent{
@@ -10167,7 +10174,7 @@ func (s *Server) completeAgentUpdateAfterReconnect(ctx context.Context, serverID
 		log.Printf("complete agent update task %d after reconnect: %v", task.ID, err)
 		return
 	}
-	s.publishRealtime("tasks", "servers")
+	s.publishRealtime(realtimeResourcesForTask(task.Type)...)
 }
 
 func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
@@ -10262,7 +10269,7 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	s.publishRealtime("tasks", "deployments", "servers", "probes", "topology")
+	defer s.publishRealtime(realtimeResourcesForTask(task.Type)...)
 	if task.Type == model.AgentTaskTypeApplyCoreConfig {
 		if err := s.store.CompleteDNSBenchmarkApplyTask(r.Context(), task.ID, req.Status == "succeeded", req.ResultJSON); err != nil {
 			fail(w, err, 500)

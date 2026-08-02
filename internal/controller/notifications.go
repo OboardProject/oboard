@@ -171,7 +171,7 @@ func (s *Server) checkOffline(ctx context.Context) {
 		})
 	}
 	if len(items) > 0 {
-		s.publishRealtime("servers", "server_metrics")
+		s.publishRealtime("server_runtime", "server_metrics")
 	}
 }
 

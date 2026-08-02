@@ -129,8 +129,46 @@ func TestUIRealtimeEventsRequireCookieAndSameOrigin(t *testing.T) {
 	if err := conn.ReadJSON(&event); err != nil {
 		t.Fatal(err)
 	}
-	if event.Type != "invalidate" || !slices.Contains(event.Resources, "servers") || !slices.Contains(event.Resources, "tasks") {
+	if event.Type != "invalidate" || !slices.Contains(event.Resources, "servers") || !slices.Contains(event.Resources, "topology") || slices.Contains(event.Resources, "tasks") || slices.Contains(event.Resources, "server_metrics") {
 		t.Fatalf("server mutation event = %#v", event)
+	}
+}
+
+func TestRealtimeResourcesForTaskAreScoped(t *testing.T) {
+	tests := []struct {
+		name     string
+		taskType string
+		want     []string
+	}{
+		{name: "deployment", taskType: model.AgentTaskTypeApplyDeployment, want: []string{"deployments", "probes", "servers", "subscriptions", "tasks", "topology"}},
+		{name: "dns", taskType: model.AgentTaskTypeBenchmarkDNS, want: []string{"dns", "probes", "servers", "tasks"}},
+		{name: "mtu", taskType: model.AgentTaskTypeDetectMTU, want: []string{"mtu", "servers", "tasks"}},
+		{name: "port forward probe", taskType: model.AgentTaskTypeProbePortForwards, want: []string{"port_forwards", "probes", "tasks"}},
+		{name: "agent update", taskType: model.AgentTaskTypeUpdateAgent, want: []string{"server_runtime", "tasks"}},
+		{name: "diagnostic", taskType: model.AgentTaskTypeDiagnoseNetwork, want: []string{"tasks"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := realtimeResourcesForTask(tt.taskType); !slices.Equal(got, tt.want) {
+				t.Fatalf("resources = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRealtimeRequestResourcesKeepRuntimeEventsNarrow(t *testing.T) {
+	tests := []struct {
+		path string
+		want []string
+	}{
+		{path: "/api/v2/ui/servers/1", want: []string{"servers", "topology", "subscriptions"}},
+		{path: "/api/v1/agent/traffic-reports", want: []string{"traffic"}},
+		{path: "/api/v1/agent/task-results", want: nil},
+	}
+	for _, tt := range tests {
+		if got := realtimeResourcesForRequest(tt.path); !slices.Equal(got, tt.want) {
+			t.Fatalf("%s resources = %v, want %v", tt.path, got, tt.want)
+		}
 	}
 }
 

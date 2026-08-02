@@ -7,11 +7,16 @@ export type RealtimeEvent = {
   protocol?: number
   sequence: number
   resources?: string[]
+  reconnected?: boolean
 }
+
+export const realtimeHandshakeTimeoutMS = 4_000
 
 export function useRealtimeEvents(enabled: boolean, url: string, onEvent: (event: RealtimeEvent) => void): RealtimeStatus {
   const [status, setStatus] = useState<RealtimeStatus>(enabled ? 'connecting' : 'fallback')
   const callbackRef = useRef(onEvent)
+  const enabledRef = useRef(enabled)
+  const enabling = enabled && !enabledRef.current
   callbackRef.current = onEvent
 
   useEffect(() => {
@@ -23,10 +28,20 @@ export function useRealtimeEvents(enabled: boolean, url: string, onEvent: (event
     let disposed = false
     let socket: WebSocket | null = null
     let reconnectTimer: number | undefined
+    let handshakeTimer: number | undefined
     let attempt = 0
+    let connectionFailed = false
+    let openedOnce = false
+
+    const clearHandshakeTimer = () => {
+      if (handshakeTimer === undefined) return
+      window.clearTimeout(handshakeTimer)
+      handshakeTimer = undefined
+    }
 
     const scheduleReconnect = () => {
       if (disposed || reconnectTimer !== undefined) return
+      connectionFailed = true
       setStatus('fallback')
       const base = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5))
       const delay = Math.round(base * (0.8 + Math.random() * 0.4))
@@ -39,9 +54,22 @@ export function useRealtimeEvents(enabled: boolean, url: string, onEvent: (event
 
     const connect = () => {
       if (disposed || socket) return
-      setStatus(current => current === 'open' ? 'open' : 'connecting')
-      const next = new WebSocket(url)
+      if (!connectionFailed && !openedOnce) setStatus('connecting')
+      let next: WebSocket
+      try {
+        next = new WebSocket(url)
+      } catch {
+        scheduleReconnect()
+        return
+      }
       socket = next
+      let ready = false
+      handshakeTimer = window.setTimeout(() => {
+        if (disposed || socket !== next || ready) return
+        connectionFailed = true
+        setStatus('fallback')
+        next.close(1000, 'realtime handshake timeout')
+      }, realtimeHandshakeTimeoutMS)
       next.onmessage = message => {
         let event: RealtimeEvent
         try {
@@ -55,13 +83,24 @@ export function useRealtimeEvents(enabled: boolean, url: string, onEvent: (event
             next.close(1002, 'unsupported protocol')
             return
           }
+          ready = true
+          clearHandshakeTimer()
+          const reconnected = connectionFailed || openedOnce
           attempt = 0
+          openedOnce = true
           setStatus('open')
+          callbackRef.current({ ...event, reconnected })
+          return
+        }
+        if (!ready) {
+          next.close(1002, 'ready event required')
+          return
         }
         callbackRef.current(event)
       }
       next.onerror = () => next.close()
       next.onclose = () => {
+        clearHandshakeTimer()
         if (socket === next) socket = null
         scheduleReconnect()
       }
@@ -81,14 +120,20 @@ export function useRealtimeEvents(enabled: boolean, url: string, onEvent: (event
       disposed = true
       window.removeEventListener('online', reconnectNow)
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
+      clearHandshakeTimer()
       if (socket) {
-		socket.onerror = null
-		socket.onmessage = null
+        socket.onerror = null
+        socket.onmessage = null
         socket.onclose = null
         socket.close(1000, 'session closed')
       }
     }
   }, [enabled, url])
 
-  return status
+  useEffect(() => {
+    enabledRef.current = enabled
+  }, [enabled])
+
+  if (!enabled) return 'fallback'
+  return enabling ? 'connecting' : status
 }

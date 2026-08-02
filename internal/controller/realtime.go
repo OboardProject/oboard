@@ -189,9 +189,9 @@ func normalizeRealtimeResources(resources []string) []string {
 
 func realtimeResourceRole(resource string) model.Role {
 	switch resource {
-	case "all", "account", "notifications", "subscriptions":
+	case "all", "account", "notifications", "subscriptions", "traffic":
 		return model.RoleViewer
-	case "servers", "server_metrics", "tasks", "deployments", "probes", "topology", "audit", "mtu", "port_forwards", "tunnels":
+	case "servers", "server_runtime", "server_metrics", "tasks", "deployments", "probes", "topology", "audit", "mtu", "port_forwards", "tunnels":
 		return model.RoleOperator
 	default:
 		return model.RoleAdmin
@@ -202,6 +202,41 @@ func (s *Server) publishRealtime(resources ...string) {
 	if s.realtime != nil {
 		s.realtime.publish(resources...)
 	}
+}
+
+func realtimeResourcesForTask(taskType string) []string {
+	resources := []string{"tasks"}
+	switch taskType {
+	case model.AgentTaskTypeApplyDeployment:
+		resources = append(resources, "deployments", "servers", "topology", "probes", "subscriptions")
+	case model.AgentTaskTypeApplyCoreConfig:
+		resources = append(resources, "deployments", "servers", "dns")
+	case model.AgentTaskTypeUpdateAgent:
+		resources = append(resources, "server_runtime")
+	case model.AgentTaskTypeUpdateAgentConfig:
+		resources = append(resources, "settings", "server_runtime")
+	case model.AgentTaskTypeProbeInbounds, model.AgentTaskTypeProbeInboundsExternal, model.AgentTaskTypeProbeExternalEgress:
+		resources = append(resources, "probes", "topology")
+	case model.AgentTaskTypeProbePortForwards:
+		resources = append(resources, "probes", "port_forwards")
+	case model.AgentTaskTypeDetectMTU:
+		resources = append(resources, "mtu", "servers")
+	case model.AgentTaskTypeBenchmarkDNS:
+		resources = append(resources, "dns", "probes", "servers")
+	case model.AgentTaskTypeCheckTime:
+		resources = append(resources, "servers")
+	case model.AgentTaskTypeIssueCertificateHTTP:
+		resources = append(resources, "settings", "topology")
+	}
+	return normalizeRealtimeResources(resources)
+}
+
+func realtimeResourcesForTasks(tasks []model.AgentTask) []string {
+	resources := make([]string, 0, len(tasks)+1)
+	for _, task := range tasks {
+		resources = append(resources, realtimeResourcesForTask(task.Type)...)
+	}
+	return normalizeRealtimeResources(resources)
 }
 
 func (s *Server) uiEvents(w http.ResponseWriter, r *http.Request) {
@@ -352,12 +387,18 @@ func realtimeResourcesForRequest(path string) []string {
 	}
 	segment := strings.Split(strings.Trim(path, "/"), "/")[0]
 	switch segment {
-	case "servers", "agents":
-		return []string{"servers", "server_metrics", "tasks", "deployments", "topology", "subscriptions"}
-	case "agent-tasks", "task-results", "deployments":
-		return []string{"tasks", "deployments", "servers"}
+	case "servers":
+		return []string{"servers", "topology", "subscriptions"}
+	case "agents":
+		return []string{"server_runtime"}
+	case "agent-tasks":
+		return []string{"tasks"}
+	case "task-results":
+		return nil
+	case "deployments":
+		return []string{"tasks", "deployments"}
 	case "traffic-reports":
-		return []string{"servers", "server_metrics", "users", "subscriptions"}
+		return []string{"traffic"}
 	case "connection-reports":
 		return []string{"audit"}
 	case "dns-benchmarks", "dns-lists":

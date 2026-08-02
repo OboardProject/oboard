@@ -83,6 +83,7 @@ import surfboardClientIcon from './assets/subscription-clients/surfboard.png'
 import egernClientIcon from './assets/subscription-clients/egern.jpg'
 import v2rayNClientIcon from './assets/subscription-clients/v2rayn.png'
 import clashClassicClientIcon from './assets/subscription-clients/clash-classic.png'
+import { PageDataRequestCoordinator } from './page-data'
 import { useRealtimeEvents, type RealtimeEvent, type RealtimeStatus } from './realtime'
 
 const appBasePath = (() => {
@@ -646,8 +647,10 @@ const realtimeResourcePages: Record<string, string[]> = {
   notifications: ['notifications'],
   subscriptions: ['subscriptions', 'account'],
   servers: ['dashboard', 'servers', 'proxy-paths', 'subscriptions', 'tasks', 'audit', 'settings'],
+  server_runtime: ['dashboard', 'servers'],
   server_metrics: ['dashboard', 'servers'],
-  tasks: ['dashboard', 'servers', 'proxy-paths', 'tasks', 'settings'],
+  traffic: ['dashboard', 'servers', 'users', 'subscriptions', 'account'],
+  tasks: ['dashboard', 'tasks'],
   deployments: ['dashboard', 'servers', 'proxy-paths', 'tasks'],
   probes: ['servers', 'proxy-paths', 'dns', 'mtu', 'port-forwards', 'tasks'],
   topology: ['servers', 'proxy-paths', 'subscriptions', 'settings'],
@@ -1271,6 +1274,8 @@ function App() {
   activeTokenRef.current = token
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(() => storedSessionUser())
   const [tab, setTab] = useState(() => tabFromPath(window.location.pathname))
+  const activeTabRef = useRef(tab)
+  activeTabRef.current = tab
   const [theme, setTheme] = useState<ThemeName>(() => normalizeTheme(localStorage.getItem('oboard.theme')))
   const [toast, setToast] = useState<ToastState>(null)
   const [loading, setLoading] = useState(false)
@@ -1279,11 +1284,11 @@ function App() {
   const [restoreError, setRestoreError] = useState('')
   const [, setAttentionDismissRevision] = useState(0)
   const loadSeq = useRef(0)
-  const pageRequestEpochRef = useRef(0)
+  const pageRequestsRef = useRef(new PageDataRequestCoordinator<any>())
   // Per-tab page-data cache so tab switches can crossfade into last-known content
   // instead of blanking the stage while the network request is in flight.
   const pageCacheRef = useRef<Record<string, any>>({})
-  const pageRequestRef = useRef<Record<string, Promise<{ data: any; epoch: number }>>>({})
+  const dirtyPagesRef = useRef(new Set<string>())
   const preloadedTabsRef = useRef(new Set<string>())
   const realtimeRefreshTimerRef = useRef<number | undefined>(undefined)
   const realtimeVisibleRefreshPendingRef = useRef(false)
@@ -1301,8 +1306,8 @@ function App() {
     setSessionUser(null)
     setData({})
     pageCacheRef.current = {}
-    pageRequestEpochRef.current++
-    pageRequestRef.current = {}
+    pageRequestsRef.current.reset()
+    dirtyPagesRef.current.clear()
     preloadedTabsRef.current.clear()
     showToast(setToast, '登录已过期，请重新登录')
     return true
@@ -1392,28 +1397,12 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isMobile, isSidebarOpen])
 
-  const invalidatePageDataRequests = () => {
-    pageRequestEpochRef.current++
-    pageRequestRef.current = {}
+  const invalidateActivePageDataRequests = () => {
+    pageRequestsRef.current.invalidateActive()
   }
 
   const requestPageData = (page: string, forceFresh = false) => {
-    if (forceFresh) invalidatePageDataRequests()
-    const pending = pageRequestRef.current[page]
-    if (pending) return pending
-    const epoch = pageRequestEpochRef.current
-    const request = client.request(`/page-data?page=${encodeURIComponent(page)}`)
-      .then(data => ({ data, epoch }))
-    pageRequestRef.current[page] = request
-    void request.then(
-      () => {
-        if (pageRequestRef.current[page] === request) delete pageRequestRef.current[page]
-      },
-      () => {
-        if (pageRequestRef.current[page] === request) delete pageRequestRef.current[page]
-      },
-    )
-    return request
+    return pageRequestsRef.current.request(page, () => client.request(`/page-data?page=${encodeURIComponent(page)}`), forceFresh)
   }
 
   const load = async (targetTab?: string, opts?: { background?: boolean; forceFresh?: boolean }) => {
@@ -1432,9 +1421,11 @@ function App() {
     if (!background) setLoading(true)
     try {
       const response = await requestPageData(page, Boolean(opts?.forceFresh))
-      if (response.epoch !== pageRequestEpochRef.current) return
+      if (!pageRequestsRef.current.isCurrent(page, response)) return
       const next = response.data
       if (requestToken !== activeTokenRef.current) return
+      const dirtiedDuringRequest = dirtyPagesRef.current.has(page)
+      if (background && dirtiedDuringRequest) return
       if (next.current_user && seq === loadSeq.current) {
         setSessionUser(next.current_user)
         sessionStorage.setItem('oboard.user', JSON.stringify(next.current_user))
@@ -1456,11 +1447,35 @@ function App() {
         setLoading(false)
         setShowPortalLoader(false)
       }
+      if (page === activeTabRef.current && dirtyPagesRef.current.has(page)) scheduleRealtimePageRefresh(page)
     }
   }
 
+  const scheduleRealtimePageRefresh = (page: string) => {
+    if (page !== activeTabRef.current) return
+    if (document.visibilityState !== 'visible') {
+      realtimeVisibleRefreshPendingRef.current = true
+      return
+    }
+    const pending = pageRequestsRef.current.pending(page)
+    if (pending) {
+      const retry = () => {
+        if (page === activeTabRef.current && dirtyPagesRef.current.has(page)) scheduleRealtimePageRefresh(page)
+      }
+      void pending.then(retry, retry)
+      return
+    }
+    if (realtimeRefreshTimerRef.current !== undefined) window.clearTimeout(realtimeRefreshTimerRef.current)
+    realtimeRefreshTimerRef.current = window.setTimeout(() => {
+      realtimeRefreshTimerRef.current = undefined
+      if (page !== activeTabRef.current) return
+      if (!dirtyPagesRef.current.delete(page)) return
+      void load(page, { background: true, forceFresh: true })
+    }, 200)
+  }
+
   const handleRealtimeEvent = (event: RealtimeEvent) => {
-    const resync = event.type === 'ready' || event.type === 'resync_required'
+    const resync = event.type === 'resync_required' || (event.type === 'ready' && event.reconnected === true)
     const pages = new Set<string>()
     if (resync || event.resources?.includes('all')) {
       Object.keys(pageCacheRef.current).forEach(page => pages.add(page))
@@ -1472,21 +1487,13 @@ function App() {
     }
     if (!pages.size) return
     pages.forEach(page => {
-      delete pageCacheRef.current[page]
+      dirtyPagesRef.current.add(page)
       preloadedTabsRef.current.delete(page)
     })
     if (!pages.has(tab)) return
     setRealtimeResources(resync ? ['all'] : event.resources || [])
     setRealtimeRevision(value => value + 1)
-    if (document.visibilityState !== 'visible') {
-      realtimeVisibleRefreshPendingRef.current = true
-      return
-    }
-    if (realtimeRefreshTimerRef.current !== undefined) window.clearTimeout(realtimeRefreshTimerRef.current)
-    realtimeRefreshTimerRef.current = window.setTimeout(() => {
-      realtimeRefreshTimerRef.current = undefined
-      void load(tab, { background: true, forceFresh: true })
-    }, 200)
+    scheduleRealtimePageRefresh(tab)
   }
 
   const realtimeStatus = useRealtimeEvents(Boolean(token), appWebSocketURL('/api/v2/ui/events'), handleRealtimeEvent)
@@ -1495,7 +1502,7 @@ function App() {
     const handleVisibilityChange = () => {
       if (document.visibilityState !== 'visible' || !realtimeVisibleRefreshPendingRef.current) return
       realtimeVisibleRefreshPendingRef.current = false
-      void load(tab, { background: true, forceFresh: true })
+      if (dirtyPagesRef.current.has(tab)) scheduleRealtimePageRefresh(tab)
     }
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
@@ -1522,7 +1529,11 @@ function App() {
         try {
           const response = await requestPageData(page)
           if (cancelled || requestToken !== activeTokenRef.current) return
-          if (response.epoch !== pageRequestEpochRef.current) continue
+          if (!pageRequestsRef.current.isCurrent(page, response)) continue
+          if (dirtyPagesRef.current.has(page)) {
+            preloadedTabsRef.current.delete(page)
+            continue
+          }
           const next = response.data
           pageCacheRef.current[page] = { ...next, load_errors: [] as string[] }
         } catch {
@@ -1553,11 +1564,40 @@ function App() {
       // Instant paint from cache, then silent revalidate.
       setData((old: any) => ({ ...old, ...cached, load_errors: [] }))
       setLoading(false)
-      void load(tab, { background: true })
+      const forceFresh = dirtyPagesRef.current.delete(tab)
+      void load(tab, { background: true, forceFresh })
       return
     }
-    void load(tab)
+    const forceFresh = dirtyPagesRef.current.delete(tab)
+    void load(tab, { forceFresh })
   }, [token, tab])
+
+  useEffect(() => {
+    if (!token || realtimeStatus !== 'fallback' || ['automation', 'servers', 'tasks', 'settings'].includes(tab)) return
+    let cancelled = false
+    let timer: number | undefined
+    const scheduleNext = () => {
+      if (cancelled || document.visibilityState !== 'visible') return
+      timer = window.setTimeout(runRefresh, 15_000)
+    }
+    const runRefresh = async () => {
+      if (cancelled || document.visibilityState !== 'visible') return
+      await load(tab, { background: true, forceFresh: true })
+      scheduleNext()
+    }
+    const handleVisibilityChange = () => {
+      if (timer !== undefined) window.clearTimeout(timer)
+      timer = undefined
+      if (document.visibilityState === 'visible') void runRefresh()
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    scheduleNext()
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [token, tab, realtimeStatus])
   useEffect(() => {
     // Keep document tokens in sync with React state (e.g. first paint / external restore).
     // Animated toggles already apply inside the View Transition callback.
@@ -1650,8 +1690,8 @@ function App() {
       setSessionUser(null)
       setData({})
       pageCacheRef.current = {}
-      pageRequestEpochRef.current++
-      pageRequestRef.current = {}
+      pageRequestsRef.current.reset()
+      dirtyPagesRef.current.clear()
       preloadedTabsRef.current.clear()
       setIsSidebarOpen(false)
     }
@@ -1668,8 +1708,8 @@ function App() {
     setSessionUser(user)
     setData({})
     pageCacheRef.current = {}
-    pageRequestEpochRef.current++
-    pageRequestRef.current = {}
+    pageRequestsRef.current.reset()
+    dirtyPagesRef.current.clear()
     preloadedTabsRef.current.clear()
     setToast(null)
     setShowPortalLoader(true)
@@ -1760,7 +1800,7 @@ function App() {
     try {
       const result = await client.request(`/deployments/${deploymentVersion}/dismiss-failure`, { method: 'POST', body: '{}' })
       const status = result.deployment_status || { ...data.deployment_status, failure_dismissed: true }
-      invalidatePageDataRequests()
+      invalidateActivePageDataRequests()
       rememberDeploymentStatus(status)
       setData((old: any) => ({ ...old, deployment_status: status }))
     } catch (error: any) {
@@ -2940,7 +2980,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   useEffect(() => { setControllerURL(savedURL || currentOrigin) }, [savedURL, currentOrigin])
   useEffect(() => { setBasePath(currentBasePath) }, [currentBasePath])
   useEffect(() => {
-    if (!migration.active || realtimeStatus === 'open') return
+    if (!migration.active || realtimeStatus !== 'fallback') return
     const timer = window.setInterval(() => { void load('settings', { background: true }) }, 3000)
     return () => window.clearInterval(timer)
   }, [migration.active, migration.config_version, realtimeStatus])
@@ -3313,7 +3353,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     if (realtimeRevision > 0 && realtimeStatus === 'open' && (realtimeResources.includes('controller_update') || realtimeResources.includes('all'))) void refresh(true)
   }, [realtimeRevision, realtimeStatus, realtimeResources])
   useEffect(() => {
-    if (realtimeStatus === 'open' || (!installExpected && !['downloading', 'ready', 'installing', 'cancelling', 'checking'].includes(snapshot.status))) return
+    if (realtimeStatus !== 'fallback' || (!installExpected && !['downloading', 'ready', 'installing', 'cancelling', 'checking'].includes(snapshot.status))) return
     const timer = window.setInterval(() => { void refresh(true) }, 3000)
     return () => window.clearInterval(timer)
   }, [snapshot.status, installExpected, realtimeStatus])
@@ -4945,7 +4985,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   }, [client])
 
   useEffect(() => {
-    if (realtimeStatus === 'open') return
+    if (realtimeStatus !== 'fallback') return
     let cancelled = false
     let timer: number | undefined
 
@@ -12184,7 +12224,7 @@ function Tasks({ data, client, loading: pageLoading, realtimeStatus }: any) {
   }, [client])
 
   useEffect(() => {
-    if (realtimeStatus === 'open') return
+    if (realtimeStatus !== 'fallback') return
     let cancelled = false
     let timer: number | undefined
 
