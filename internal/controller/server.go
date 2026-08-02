@@ -9351,26 +9351,19 @@ func (s *Server) dismissDeploymentFailure(w http.ResponseWriter, r *http.Request
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
-	if len(latest) == 0 || latest[0].ConfigVersion != version {
+	if len(latest) == 0 {
+		fail(w, errors.New("deployment has no failure"), http.StatusConflict)
+		return
+	}
+	version = latest[0].ConfigVersion
+	summary := taskSummary(latest)
+	if summary["pending"] > 0 || summary["running"] > 0 || summary["failed"] == 0 {
 		status, statusErr := s.deploymentStatus(r.Context(), latest)
 		if statusErr != nil {
 			fail(w, statusErr, http.StatusInternalServerError)
 			return
 		}
-		write(w, http.StatusConflict, map[string]any{
-			"error":             "only the latest deployment failure can be dismissed",
-			"code":              "deployment_version_changed",
-			"deployment_status": status,
-		})
-		return
-	}
-	summary := taskSummary(latest)
-	if summary["pending"] > 0 || summary["running"] > 0 {
-		fail(w, errors.New("deployment is still running"), http.StatusConflict)
-		return
-	}
-	if summary["failed"] == 0 {
-		fail(w, errors.New("deployment has no failure"), http.StatusConflict)
+		write(w, http.StatusOK, map[string]any{"deployment_status": status})
 		return
 	}
 	actor := currentUser(r)

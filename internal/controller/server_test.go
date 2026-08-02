@@ -721,15 +721,16 @@ func TestDeploymentFailureDismissalPersistsUntilNextDeployment(t *testing.T) {
 	if status["config_version"] != float64(101) || status["failure_dismissed"] != false {
 		t.Fatalf("next deployment inherited previous dismissal: %#v", status)
 	}
-	conflict := request(t, h, http.MethodPost, "/api/v2/ui/deployments/100/dismiss-failure", token, map[string]any{}, http.StatusConflict)
-	if conflict["code"] != "deployment_version_changed" {
-		t.Fatalf("dismiss conflict code = %#v", conflict["code"])
+	dismissedLatest := request(t, h, http.MethodPost, "/api/v2/ui/deployments/100/dismiss-failure", token, map[string]any{}, http.StatusOK)
+	latestStatus := dismissedLatest["deployment_status"].(map[string]any)
+	if latestStatus["config_version"] != float64(101) || latestStatus["failure_dismissed"] != true {
+		t.Fatalf("stale dismissal did not dismiss latest failure: %#v", latestStatus)
 	}
-	latestStatus := conflict["deployment_status"].(map[string]any)
-	if latestStatus["config_version"] != float64(101) || latestStatus["failure_dismissed"] != false {
-		t.Fatalf("dismiss conflict status = %#v", latestStatus)
+	page = request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=dashboard", token, nil, http.StatusOK)
+	status = page["deployment_status"].(map[string]any)
+	if status["config_version"] != float64(101) || status["failure_dismissed"] != true {
+		t.Fatalf("latest dismissal was not persisted: %#v", status)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/deployments/101/dismiss-failure", token, map[string]any{}, http.StatusOK)
 }
 
 func TestPublicBaseURLPrefersConfiguredControllerURL(t *testing.T) {

@@ -1169,18 +1169,6 @@ class SupersededAuthRequestError extends Error {
   }
 }
 
-class APIRequestError extends Error {
-  status: number
-  payload: any
-
-  constructor(message: string, status: number, payload: any) {
-    super(message)
-    this.name = 'APIRequestError'
-    this.status = status
-    this.payload = payload
-  }
-}
-
 function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
   const csrf = token === 'cookie' ? sessionStorage.getItem('oboard.csrf') || '' : ''
   const authHeaders: Record<string, string> = token && token !== 'cookie' ? { authorization: `Bearer ${token}` } : {}
@@ -1202,7 +1190,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
         if (!onUnauthorized(token)) throw new SupersededAuthRequestError()
         throw new Error('登录已过期，请重新登录')
       }
-      throw new APIRequestError(localizeErrorMessage(data.error || res.statusText), res.status, data)
+      throw new Error(localizeErrorMessage(data.error || res.statusText))
     }
     return data
   }
@@ -1223,7 +1211,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
         if (!onUnauthorized(token)) throw new SupersededAuthRequestError()
         throw new Error('登录已过期，请重新登录')
       }
-      throw new APIRequestError(localizeErrorMessage(payload?.error?.message || payload?.error || res.statusText), res.status, payload)
+      throw new Error(localizeErrorMessage(payload?.error?.message || payload?.error || res.statusText))
     }
     return payload.data as T
   }
@@ -1776,18 +1764,6 @@ function App() {
       rememberDeploymentStatus(status)
       setData((old: any) => ({ ...old, deployment_status: status }))
     } catch (error: any) {
-      if (error instanceof APIRequestError && error.status === 409 && error.payload?.code === 'deployment_version_changed') {
-        const status = error.payload?.deployment_status
-        if (status) {
-          invalidatePageDataRequests()
-          rememberDeploymentStatus(status)
-          setData((old: any) => ({ ...old, deployment_status: status }))
-        } else {
-          await load(undefined, { background: true, forceFresh: true })
-        }
-        showToast(setToast, '下发状态已更新，请确认最新状态', 'warning')
-        return
-      }
       showToast(setToast, localizeErrorMessage(error?.message || error), 'error')
     }
   }
