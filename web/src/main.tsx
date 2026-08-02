@@ -59,7 +59,7 @@ import {
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
-  PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Key, Play, PauseCircle
+  PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Key, Play, PauseCircle, AlertTriangle
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -86,6 +86,7 @@ import clashClassicClientIcon from './assets/subscription-clients/clash-classic.
 import { PageDataRequestCoordinator } from './page-data'
 import { useRealtimeEvents, type RealtimeEvent, type RealtimeStatus } from './realtime'
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
+import { getServerTimeIssue } from './server-time'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
@@ -5010,6 +5011,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [mtuServer, setMtuServer] = useState<Server | null>(null)
   const [dnsServer, setDNSServer] = useState<Server | null>(null)
   const [detailServer, setDetailServer] = useState<Server | null>(null)
+  const [timeDetailServer, setTimeDetailServer] = useState<Server | null>(null)
   const [view, setView] = useState<'grid' | 'list'>('grid')
   const [servers, setServers] = useState<Server[]>(data.servers || [])
   const [serverMetrics, setServerMetrics] = useState<ServerMetricSample[]>(data.server_metrics || [])
@@ -5249,6 +5251,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   }
   const handleServerAction = async (type: string, s: Server) => {
     if (type === 'details') setDetailServer(s)
+    else if (type === 'time-details') setTimeDetailServer(s)
     else if (type === 'edit') setEditServer(s)
     else if (type === 'mtu') setMtuServer(s)
     else if (type === 'dns') setDNSServer(s)
@@ -5258,7 +5261,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     else if (type === 'logs') setLogServer(s)
     else if (type === 'diagnose') diagnose(s)
     else if (type === 'tasks') tasks(s)
-    else if (type === 'time-auto') await enableAutomaticTimeCorrection(s)
     else if (type === 'delete') await deleteServer(s)
   }
   const role: Role = data.session?.role || 'viewer'
@@ -5297,6 +5299,15 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} />}</AnimatePresence>
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} onCancel={() => setEditServer(null)} onSubmit={updateServer} />}</AnimatePresence>
     <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} onClose={() => setDetailServer(null)} />}</AnimatePresence>
+    <AnimatePresence>{timeDetailServer && <ServerTimeDetailDialog
+      server={timeDetailServer}
+      role={role}
+      onEnableAuto={() => {
+        setTimeDetailServer(null)
+        void enableAutomaticTimeCorrection(timeDetailServer)
+      }}
+      onClose={() => setTimeDetailServer(null)}
+    />}</AnimatePresence>
     <AnimatePresence>{agentConfigServer && <AgentConfigDialog server={agentConfigServer} controllerURL={effectiveControllerURL(data)} onCancel={() => setAgentConfigServer(null)} onSubmit={cfg => syncAgentConfig(agentConfigServer, cfg)} />}</AnimatePresence>
     <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} token={installTarget.token} controllerURL={effectiveControllerURL(data)} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
@@ -6123,8 +6134,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
   const [updateInfoOpen, setUpdateInfoOpen] = useState(false)
   const outdated = Boolean(expectedBuild && server.agent_build && expectedBuild !== server.agent_build)
   const isOnline = server.status.toLowerCase() === 'online';
-  const clockSkewWarning = (server.time_correction_mode || 'off') === 'off' && server.time_check_status === 'skewed' && Math.abs(Number(server.time_offset_ms || 0)) >= 30_000
-  const unsupportedTimePaths = server.time_logical_active && Array.isArray(server.time_unsupported_paths) ? server.time_unsupported_paths : []
+  const timeIssue = getServerTimeIssue(server)
 
   return (
     <MotionCard tag="article" className={`server-card${layout === 'list' ? ' server-list-card' : ''}`} hoverEffect={false}>
@@ -6148,18 +6158,20 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
               </div>
             </div>
           )}
+          {timeIssue && <button
+            type="button"
+            className={`server-time-issue ${timeIssue.tone}`}
+            aria-label={`时间异常：${timeIssue.summary}，点击查看详情`}
+            title={`${timeIssue.summary}，点击查看详情`}
+            onClick={() => onAction('time-details', server)}
+          >
+            <AlertTriangle size={12} aria-hidden="true" />
+            <span>时间异常</span>
+          </button>}
           <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} aria-label={isOnline ? '在线' : '离线'} />
 		  <ServerActionsDropdown server={server} role={role} onAction={onAction} />
         </div>
       </div>
-
-      {clockSkewWarning && <div className="server-time-alert" role="alert">
-        <div><strong>时间偏差 {formatTimeOffset(server.time_offset_ms)}</strong><span>部分安全协议可能无法连接。</span></div>
-        {role !== 'viewer' && <button type="button" onClick={() => onAction('time-auto', server)}><CalendarSync size={13} />开启自动校时</button>}
-      </div>}
-      {unsupportedTimePaths.length > 0 && <div className="server-time-alert limitation" role="status">
-        <div><strong>部分路径不支持逻辑校时</strong><span title={unsupportedTimePaths.join('、')}>{unsupportedTimePaths.join('、')}</span></div>
-      </div>}
 
       {/* Meta grid */}
       <div className="server-meta" style={{
@@ -6170,11 +6182,6 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
         fontSize: '12px'
       }}>
         {/* CPU & Memory bars */}
-        <div className={`server-time-summary status-${server.time_check_status || 'unknown'}`} style={{ gridColumn: 'span 2' }} title={server.time_check_error || undefined}>
-          <div><span>时间状态</span><small>{timeCorrectionModeLabel(server.time_correction_mode)}</small></div>
-          <strong>{timeCheckStatusLabel(server)}</strong>
-          <span>{server.time_checked_at ? `${formatTimeOffset(server.time_effective_offset_ms)} · ${formatTableTime(server.time_checked_at)}` : '等待首次检测'}</span>
-        </div>
         <div style={{ gridColumn: 'span 2' }}>
           <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, display: 'block', marginBottom: '6px' }}>系统资源</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -6249,6 +6256,49 @@ function ServerDetailItem({ label, value, wide = false }: { label: string; value
       <dd>{value || '—'}</dd>
     </div>
   )
+}
+
+function ServerTimeDetailDialog({ server, role = 'viewer', onEnableAuto, onClose }: { server: Server; role?: Role; onEnableAuto: () => void; onClose: () => void }) {
+  const issue = getServerTimeIssue(server)
+  const unsupportedPaths = (server.time_unsupported_paths || []).filter(path => String(path).trim())
+  const canEnableAuto = role !== 'viewer'
+    && (server.time_correction_mode || 'off') === 'off'
+    && server.time_check_status === 'skewed'
+    && Math.abs(Number(server.time_offset_ms || 0)) >= 30_000
+
+  return <MotionDialogPanel onCancel={onClose} className="server-time-detail-dialog">
+    <header className="dialog-head server-time-detail-head">
+      <div className="server-time-detail-title">
+        <span className={`server-time-detail-icon ${issue?.tone || 'warning'}`}><AlertTriangle size={17} aria-hidden="true" /></span>
+        <div>
+          <h2>时间异常</h2>
+          <p>{server.name || `服务器 #${server.id}`} · {issue?.summary || timeCheckStatusLabel(server)}</p>
+        </div>
+      </div>
+      <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body server-time-detail-body">
+      <dl className="server-time-detail-grid">
+        <ServerDetailItem label="时间状态" value={timeCheckStatusLabel(server)} />
+        <ServerDetailItem label="校准模式" value={timeCorrectionModeLabel(server.time_correction_mode)} />
+        <ServerDetailItem label="检测偏差" value={server.time_checked_at ? formatTimeOffset(server.time_offset_ms) : '—'} />
+        <ServerDetailItem label="生效后偏差" value={server.time_checked_at ? formatTimeOffset(server.time_effective_offset_ms) : '—'} />
+        <ServerDetailItem label="时间来源" value={server.time_check_source || '—'} />
+        <ServerDetailItem label="最近检测" value={server.time_checked_at ? formatTableTime(server.time_checked_at) : '尚未检测'} />
+      </dl>
+      <div className={`server-time-detail-notice ${issue?.tone || 'warning'}`} role="alert">
+        <strong>{issue?.summary || '时间状态异常'}</strong>
+        {server.time_check_status === 'skewed' && <span>当前检测偏差为 {formatTimeOffset(server.time_offset_ms)}，部分安全协议可能无法连接。</span>}
+        {server.time_check_status === 'unavailable' && !server.time_check_error && <span>最近一次时间检测未能完成，请检查 Agent 与时间源的连接。</span>}
+        {server.time_check_error && <span>{server.time_check_error}</span>}
+        {unsupportedPaths.length > 0 && <span>以下路径无法完整使用逻辑时间：{unsupportedPaths.join('、')}</span>}
+      </div>
+    </div>
+    <footer className="dialog-actions server-time-detail-actions">
+      {canEnableAuto && <button type="button" onClick={onEnableAuto}><CalendarSync size={14} />开启自动校时</button>}
+      <button type="button" className={canEnableAuto ? 'ghost' : undefined} onClick={onClose}>关闭</button>
+    </footer>
+  </MotionDialogPanel>
 }
 
 function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () => void }) {

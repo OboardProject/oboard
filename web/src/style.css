@@ -1654,6 +1654,45 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   box-shadow: 0 0 6px var(--color-danger);
 }
 
+.server-time-issue {
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 4px 7px;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--warning) 32%, var(--border));
+  border-radius: var(--radius-full);
+  color: var(--warning);
+  background: var(--warning-soft);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: none;
+}
+
+.server-time-issue.danger {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--border));
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.server-time-issue:hover,
+.server-time-issue:focus-visible {
+  border-color: currentColor;
+  color: var(--warning);
+  background: var(--warning-soft);
+  box-shadow: none;
+  transform: none;
+}
+
+.server-time-issue.danger:hover,
+.server-time-issue.danger:focus-visible {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.server-time-issue:active { transform: none; }
+
 .server-version-warning {
   display: inline-flex;
   align-items: center;
@@ -1796,30 +1835,6 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.server-meta > .server-time-summary {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 3px 10px;
-  padding: 8px 10px;
-  background: var(--surface-solid);
-}
-
-.server-time-summary > div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.server-time-summary > div span { color: var(--text-strong); font-weight: 700; }
-.server-time-summary > strong { margin: 0; text-align: right; }
-.server-time-summary > span { grid-column: 1 / -1; }
-.server-time-summary.status-skewed > strong,
-.server-time-summary.status-unavailable > strong { color: var(--warning); }
-.server-time-summary.status-corrected > strong,
-.server-time-summary.status-ok > strong { color: var(--success); }
 
 .server-meta > .server-telemetry,
 .server-meta > .server-connectivity {
@@ -7100,6 +7115,88 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   max-height: min(90vh, 860px);
 }
 
+.server-time-detail-dialog {
+  width: min(460px, 100%);
+  max-height: min(90vh, 680px);
+}
+
+.server-time-detail-head,
+.server-time-detail-title {
+  display: flex;
+  align-items: center;
+}
+
+.server-time-detail-head { gap: 12px; }
+.server-time-detail-title { min-width: 0; gap: 10px; }
+.server-time-detail-title > div { min-width: 0; }
+.server-time-detail-title h2 { margin: 0; }
+.server-time-detail-title p {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-time-detail-icon {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.server-time-detail-icon.danger {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.server-time-detail-body {
+  display: grid;
+  gap: 12px;
+  background: var(--surface-2);
+}
+
+.server-time-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.server-time-detail-notice {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border));
+  border-radius: var(--radius-sm);
+  color: var(--text-strong);
+  background: var(--warning-soft);
+}
+
+.server-time-detail-notice.danger {
+  border-color: color-mix(in srgb, var(--danger) 24%, var(--border));
+  background: var(--danger-soft);
+}
+
+.server-time-detail-notice strong { font-size: 12px; }
+.server-time-detail-notice span {
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.server-time-detail-actions { justify-content: flex-end; }
+
 .server-detail-head,
 .server-detail-title,
 .server-detail-head-actions,
@@ -7184,6 +7281,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 @media (max-width: 620px) {
+  .server-time-detail-grid { grid-template-columns: minmax(0, 1fr); }
   .server-detail-head { align-items: flex-start; }
   .server-detail-status { display: none; }
   .server-detail-section { padding: 12px; }
