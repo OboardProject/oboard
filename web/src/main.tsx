@@ -59,7 +59,7 @@ import {
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
-  PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle
+  PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -11497,6 +11497,13 @@ function DNSListSettings({ data, client, load, notify }: any) {
       await load()
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
   }
+  const setDefault = async (list: DNSList) => {
+    try {
+      await client.request(`/dns-lists/${list.id}/set-default`, { method: 'POST' })
+      await load()
+      notify?.(`已将 ${list.name} 设为默认${list.kind === 'encrypted' ? '加密解析' : '基础解析'}列表`, 'success')
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
+  }
   const removeList = async (list: DNSList) => {
     const ok = await dialogs.confirm({ title: '删除服务列表', message: `确认删除 ${list.name}？`, confirmText: '删除', tone: 'danger' })
     if (!ok) return
@@ -11504,22 +11511,24 @@ function DNSListSettings({ data, client, load, notify }: any) {
   }
   const visible = lists.filter(list => list.kind === filter)
   return <section className="settings-card dns-lists-card">
-    <div className="settings-card-head"><div><h3>解析服务列表</h3><p className="muted">为服务器准备可复用的加密解析和基础解析服务。</p></div><button type="button" className="ghost" onClick={() => openCreate(filter)}><Plus size={14} />新建列表</button></div>
+    <div className="settings-card-head"><div><h3>解析服务列表</h3><p className="muted">为服务器准备可复用的加密解析和基础解析服务；标星列表是新建服务器默认使用的列表。</p></div><button type="button" className="ghost" onClick={() => openCreate(filter)}><Plus size={14} />新建列表</button></div>
     <div className="dns-list-toolbar"><Select variant="segmented" value={filter} onChange={event => setFilter(event.target.value as DNSListKind)}><option value="encrypted">加密解析</option><option value="bootstrap">基础解析</option></Select></div>
     <div className="dns-record-list">{visible.length ? visible.map(list => <div className="dns-record-row dns-list-row" key={list.id}>
         <span className="record-type">{list.kind === 'encrypted' ? '加密' : '基础'}</span>
-        <div className="record-main"><strong>{list.name}</strong><span>{Array.from(new Set(list.candidates.map(candidate => dnsTransportLabel(candidate.transport)))).join(' · ')}</span><small>{list.candidates.length} 个解析服务 · {list.usage_count} 台服务器使用</small></div>
+        <div className="record-main"><strong>{list.name}</strong><span>{Array.from(new Set(list.candidates.map(candidate => dnsTransportLabel(candidate.transport)))).join(' · ')}</span><small>{list.candidates.length} 个解析服务 · {list.usage_count} 台服务器使用{list.protected ? ' · 新建服务器默认使用' : ''}</small></div>
         <span className={`status-pill ${list.enabled ? 'ok' : 'warning'}`}>{list.enabled ? '启用' : '禁用'}</span>
-        <div className="record-actions"><button type="button" className="ghost icon-button" onClick={() => copy(list)} aria-label="复制" title="复制"><Copy size={14} /></button><button type="button" className="ghost icon-button" onClick={() => edit(list)} aria-label="编辑" title="编辑"><Edit3 size={14} /></button><button type="button" className="ghost icon-button" onClick={() => void toggle(list)} disabled={list.protected} aria-label={list.protected ? '默认列表始终启用' : list.enabled ? '禁用' : '启用'} title={list.protected ? '默认列表始终启用' : list.enabled ? '禁用' : '启用'}><CheckSquare size={14} /></button><button type="button" className="ghost icon-button danger-text" onClick={() => void removeList(list)} disabled={list.protected} aria-label={list.protected ? '默认列表不能删除' : '删除'} title={list.protected ? '默认列表不能删除' : '删除'}><Trash2 size={14} /></button></div>
+        {list.protected && <span className="status-pill managed">默认</span>}
+        <div className="record-actions">{!list.protected && <button type="button" className="ghost icon-button" onClick={() => void setDefault(list)} disabled={!list.enabled} aria-label={list.enabled ? '设为默认' : '启用后才能设为默认'} title={list.enabled ? '设为默认' : '启用后才能设为默认'}><Star size={14} /></button>}<button type="button" className="ghost icon-button" onClick={() => copy(list)} aria-label="复制" title="复制"><Copy size={14} /></button><button type="button" className="ghost icon-button" onClick={() => edit(list)} aria-label="编辑" title="编辑"><Edit3 size={14} /></button><button type="button" className="ghost icon-button" onClick={() => void toggle(list)} disabled={list.protected} aria-label={list.protected ? '默认列表始终启用' : list.enabled ? '禁用' : '启用'} title={list.protected ? '默认列表始终启用' : list.enabled ? '禁用' : '启用'}><CheckSquare size={14} /></button><button type="button" className="ghost icon-button danger-text" onClick={() => void removeList(list)} disabled={list.protected} aria-label={list.protected ? '默认列表不能删除' : '删除'} title={list.protected ? '默认列表不能删除' : '删除'}><Trash2 size={14} /></button></div>
       </div>) : <div className="empty-inline">暂无{filter === 'encrypted' ? '加密解析' : '基础解析'}列表</div>}</div>
     <AnimatePresence>{editorOpen && <DNSListDialog draft={draft} setDraft={setDraft} editing={editing} saving={working === 'save'} onCancel={closeEditor} onSave={() => void save()} />}</AnimatePresence>
   </section>
 }
 
 function dnsPolicyDraft(policy: ServerDNSPolicy | undefined, lists: DNSList[]) {
+  const fallbackListID = (kind: DNSListKind) => lists.find(list => list.kind === kind && list.enabled && list.protected)?.id || lists.find(list => list.kind === kind && list.enabled)?.id || 0
   return {
-    encryptedListID: Number(policy?.encrypted_list_id || lists.find(list => list.kind === 'encrypted' && list.enabled)?.id || 0),
-    bootstrapListID: Number(policy?.bootstrap_list_id || lists.find(list => list.kind === 'bootstrap' && list.enabled)?.id || 0),
+    encryptedListID: Number(policy?.encrypted_list_id || fallbackListID('encrypted')),
+    bootstrapListID: Number(policy?.bootstrap_list_id || fallbackListID('bootstrap')),
     strategy: policy?.strategy || 'auto',
     hourlyTest: policy?.auto_test === 'periodic',
   }

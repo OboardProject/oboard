@@ -1975,3 +1975,79 @@ func TestProxyPathStepPositionsAreCompactedAndUnique(t *testing.T) {
 		t.Fatal("duplicate (path_id, position) must be rejected by the unique index")
 	}
 }
+
+func TestSetDefaultDNSListPerKind(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	lists, err := s.ListDNSLists(ctx, false)
+	if err != nil || len(lists) != 2 {
+		t.Fatalf("default lists = %#v, err=%v", lists, err)
+	}
+	var encrypted, bootstrap model.DNSList
+	for _, list := range lists {
+		switch list.Kind {
+		case model.DNSListEncrypted:
+			encrypted = list
+		case model.DNSListBootstrap:
+			bootstrap = list
+		}
+	}
+	custom := &model.DNSList{Name: "custom encrypted", Kind: model.DNSListEncrypted, Revision: 1, Enabled: true, Candidates: append([]model.DNSCandidate(nil), encrypted.Candidates...)}
+	if err := s.CreateDNSList(ctx, custom); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.SetDefaultDNSList(ctx, custom.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Protected || !updated.Enabled {
+		t.Fatalf("promoted default list = %#v", updated)
+	}
+	after, _ := s.ListDNSLists(ctx, false)
+	var encryptedDefaults, bootstrapDefaults int
+	for _, list := range after {
+		if !list.Protected {
+			continue
+		}
+		if list.Kind == model.DNSListEncrypted {
+			encryptedDefaults++
+			if list.ID != custom.ID {
+				t.Fatalf("old default still protected: %#v", list)
+			}
+		} else {
+			bootstrapDefaults++
+		}
+	}
+	if encryptedDefaults != 1 || bootstrapDefaults != 1 {
+		t.Fatalf("defaults per kind = encrypted %d, bootstrap %d", encryptedDefaults, bootstrapDefaults)
+	}
+	server := &model.Server{Name: "dns-default-ref", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := s.GetServerDNSPolicy(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.EncryptedListID != custom.ID || policy.BootstrapListID != bootstrap.ID {
+		t.Fatalf("new server policy = %#v", policy)
+	}
+	disabled := &model.DNSList{Name: "disabled encrypted", Kind: model.DNSListEncrypted, Revision: 1, Enabled: true, Candidates: append([]model.DNSCandidate(nil), custom.Candidates...)}
+	if err := s.CreateDNSList(ctx, disabled); err != nil {
+		t.Fatal(err)
+	}
+	disabled.Enabled = false
+	if _, err := s.UpdateDNSList(ctx, disabled); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetDefaultDNSList(ctx, disabled.ID); err == nil {
+		t.Fatal("disabled dns list was set as default")
+	}
+	if _, err := s.SetDefaultDNSList(ctx, 999999); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("missing dns list error = %v", err)
+	}
+}

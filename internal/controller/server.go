@@ -8559,6 +8559,31 @@ func mergeUserPatch(dst *model.User, current *model.User) {
 
 func (s *Server) dnsLists(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/dns-lists/")
+	if r.Method == http.MethodPost {
+		parts := pathParts(r.URL.Path, "/api/v1/dns-lists/")
+		if len(parts) == 2 && parts[1] == "set-default" {
+			if id == 0 {
+				fail(w, errors.New("missing id"), 400)
+				return
+			}
+			item, err := s.store.SetDefaultDNSList(r.Context(), id)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					fail(w, err, 404)
+					return
+				}
+				if strings.Contains(err.Error(), "cannot be set as default") {
+					fail(w, err, 400)
+					return
+				}
+				fail(w, err, 500)
+				return
+			}
+			auditReq(s, r, "set_default", "dns_list", fmt.Sprint(id))
+			write(w, 200, map[string]any{"dns_list": item})
+			return
+		}
+	}
 	switch r.Method {
 	case http.MethodGet:
 		if id != 0 {

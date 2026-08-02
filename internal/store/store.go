@@ -3335,6 +3335,36 @@ func (s *Store) DeleteDNSList(ctx context.Context, id int64) error {
 	return err
 }
 
+// SetDefaultDNSList makes the given list the sole default of its kind. Newly
+// created server DNS policies use the default list of each kind. The previous
+// default of the same kind is demoted to an ordinary list.
+func (s *Store) SetDefaultDNSList(ctx context.Context, id int64) (*model.DNSList, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var kind model.DNSListKind
+	var enabled int
+	if err := tx.QueryRowContext(ctx, `select kind,enabled from dns_lists where id=?`, id).Scan(&kind, &enabled); err != nil {
+		return nil, err
+	}
+	if enabled == 0 {
+		return nil, errors.New("disabled dns list cannot be set as default")
+	}
+	ts := now()
+	if _, err := tx.ExecContext(ctx, `update dns_lists set protected=0,updated_at=? where kind=? and id<>?`, ts, kind, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `update dns_lists set protected=1,enabled=1,updated_at=? where id=?`, ts, id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.GetDNSList(ctx, id)
+}
+
 func (s *Store) EnsureServerDNSPolicy(ctx context.Context, serverID int64) (*model.ServerDNSPolicy, error) {
 	if item, err := s.GetServerDNSPolicy(ctx, serverID); err == nil {
 		return item, nil

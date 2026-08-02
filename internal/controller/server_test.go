@@ -3031,3 +3031,59 @@ func TestTrustedForwardFootprintIgnoresSharedReceiverOwnerPath(t *testing.T) {
 		t.Fatalf("shared receiver owner path changed topology footprint: first=%s second=%s", first, second)
 	}
 }
+
+func TestDNSListSetDefault(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+	listed := request(t, h, http.MethodGet, "/api/v2/ui/dns-lists", token, nil, http.StatusOK)
+	defaults := listed["dns_lists"].([]any)
+	var defaultBootstrapID int64
+	for _, raw := range defaults {
+		item := raw.(map[string]any)
+		if item["kind"] == "bootstrap" && item["protected"] == true {
+			defaultBootstrapID = int64(item["id"].(float64))
+		}
+	}
+	candidates := []map[string]any{
+		{"tag": "one", "transport": "doh", "server": "global.novaxns.one", "port": 443, "path": "/@hockey2168/dns-query", "tls_name": "global.novaxns.one"},
+		{"tag": "two", "transport": "doq", "server": "dns.quad9.net", "port": 853, "tls_name": "dns.quad9.net"},
+	}
+	created := request(t, h, http.MethodPost, "/api/v2/ui/dns-lists", token, map[string]any{"name": "default candidate", "kind": "encrypted", "candidates": candidates}, http.StatusCreated)
+	list := created["dns_list"].(map[string]any)
+	setDefault := request(t, h, http.MethodPost, fmt.Sprintf("/api/v2/ui/dns-lists/%d/set-default", int64(list["id"].(float64))), token, nil, http.StatusOK)["dns_list"].(map[string]any)
+	if setDefault["protected"] != true || setDefault["enabled"] != true {
+		t.Fatalf("set-default response = %#v", setDefault)
+	}
+	after := request(t, h, http.MethodGet, "/api/v2/ui/dns-lists", token, nil, http.StatusOK)["dns_lists"].([]any)
+	encryptedDefaults := 0
+	for _, raw := range after {
+		item := raw.(map[string]any)
+		switch item["kind"] {
+		case "encrypted":
+			if item["protected"] == true {
+				encryptedDefaults++
+				if int64(item["id"].(float64)) != int64(list["id"].(float64)) {
+					t.Fatalf("old default is still protected: %#v", item)
+				}
+			}
+		case "bootstrap":
+			if item["protected"] != true || int64(item["id"].(float64)) != defaultBootstrapID {
+				t.Fatalf("bootstrap default was demoted: %#v", item)
+			}
+		}
+	}
+	if encryptedDefaults != 1 {
+		t.Fatalf("encrypted defaults = %d, want 1", encryptedDefaults)
+	}
+	request(t, h, http.MethodPost, "/api/v2/ui/dns-lists/999999/set-default", token, nil, http.StatusNotFound)
+	disabled := request(t, h, http.MethodPost, "/api/v2/ui/dns-lists", token, map[string]any{"name": "disabled candidate", "kind": "encrypted", "candidates": candidates}, http.StatusCreated)["dns_list"].(map[string]any)
+	request(t, h, http.MethodPut, fmt.Sprintf("/api/v2/ui/dns-lists/%d", int64(disabled["id"].(float64))), token, map[string]any{"name": "disabled candidate", "kind": "encrypted", "enabled": false, "candidates": candidates}, http.StatusOK)
+	request(t, h, http.MethodPost, fmt.Sprintf("/api/v2/ui/dns-lists/%d/set-default", int64(disabled["id"].(float64))), token, nil, http.StatusBadRequest)
+}
