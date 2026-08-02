@@ -234,7 +234,6 @@ func TestSessionCookieSecureAttributeFollowsTrustedTransport(t *testing.T) {
 	localProxy := httptest.NewRequest(http.MethodGet, "http://controller/", nil)
 	localProxy.RemoteAddr = "127.0.0.1:53000"
 	localProxy.Header.Set("X-Forwarded-Proto", "https")
-	t.Setenv("OBOARD_TRUSTED_PROXY_CIDRS", "127.0.0.0/8")
 	assertSecure("local HTTPS proxy", localProxy, true)
 	if !webAuthnSupportedForRequest(localProxy) {
 		t.Fatal("passkeys should be available through a local HTTPS proxy")
@@ -253,7 +252,7 @@ func TestSessionCookieSecureAttributeFollowsTrustedTransport(t *testing.T) {
 }
 
 func TestClientIPUsesHeadersOnlyFromTrustedProxy(t *testing.T) {
-	t.Setenv("OBOARD_TRUSTED_PROXY_CIDRS", "127.0.0.0/8")
+	t.Setenv("OBOARD_TRUSTED_PROXY_CIDRS", "")
 
 	localProxy := httptest.NewRequest(http.MethodGet, "http://controller/", nil)
 	localProxy.RemoteAddr = "127.0.0.1:53000"
@@ -267,12 +266,12 @@ func TestClientIPUsesHeadersOnlyFromTrustedProxy(t *testing.T) {
 	if got := clientIP(localProxy); got != "198.51.100.8" {
 		t.Fatalf("local proxy forwarded client IP = %q, want 198.51.100.8", got)
 	}
-	t.Setenv("OBOARD_TRUSTED_PROXY_CIDRS", "127.0.0.0/8,198.51.100.0/24")
+	t.Setenv("OBOARD_TRUSTED_PROXY_CIDRS", "198.51.100.0/24")
 	if got := clientIP(localProxy); got != "192.0.2.9" {
 		t.Fatalf("trusted proxy chain client IP = %q, want 192.0.2.9", got)
 	}
 
-	t.Setenv("OBOARD_TRUSTED_PROXY_CIDRS", "127.0.0.0/8")
+	t.Setenv("OBOARD_TRUSTED_PROXY_CIDRS", "")
 	direct := httptest.NewRequest(http.MethodGet, "http://controller/", nil)
 	direct.RemoteAddr = "203.0.113.10:53000"
 	direct.Header.Set("X-Real-IP", "198.51.100.7")
@@ -280,6 +279,176 @@ func TestClientIPUsesHeadersOnlyFromTrustedProxy(t *testing.T) {
 	if got := clientIP(direct); got != "203.0.113.10" {
 		t.Fatalf("direct client IP = %q, want 203.0.113.10", got)
 	}
+}
+
+func TestNormalizeTrustedProxyCIDRs(t *testing.T) {
+	values, err := normalizeTrustedProxyCIDRs([]string{" 2001:db8::1 ", "192.0.2.9", "::ffff:192.0.2.9", "192.0.2.9/32", ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"192.0.2.9/32", "2001:db8::1/128"}
+	if fmt.Sprint(values) != fmt.Sprint(want) {
+		t.Fatalf("normalized trusted proxies = %v, want %v", values, want)
+	}
+	for _, invalid := range [][]string{{"not-an-ip"}, {"0.0.0.0/0"}, {"::/0"}, {"0.0.0.0"}} {
+		if _, err := normalizeTrustedProxyCIDRs(invalid); err == nil {
+			t.Fatalf("invalid trusted proxy list accepted: %v", invalid)
+		}
+	}
+	tooMany := make([]string, 65)
+	for index := range tooMany {
+		tooMany[index] = fmt.Sprintf("192.0.2.%d", index)
+	}
+	if _, err := normalizeTrustedProxyCIDRs(tooMany); err == nil {
+		t.Fatal("trusted proxy list larger than 64 entries was accepted")
+	}
+}
+
+func TestTrustedProxySettingsApplyImmediatelyAndPersist(t *testing.T) {
+	t.Setenv("OBOARD_TRUSTED_PROXY_CIDRS", "10.0.0.0/8")
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := newTestServer(db, "test-secret", "")
+	handler := app.Handler()
+	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+
+	before, _ := trustedProxyTestRequest(t, handler, http.MethodGet, "/api/v2/ui/me/authentication", token, nil, "172.18.0.2:43000", "198.51.100.40", "https", http.StatusOK)
+	if before["passkey_supported"] != false {
+		t.Fatalf("untrusted proxy enabled passkeys: %#v", before)
+	}
+
+	saved, response := trustedProxyTestRequest(t, handler, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{
+		"trusted_proxy_cidrs": []string{"2001:db8::1", "172.18.0.2", "172.18.0.2/32"},
+	}, "172.18.0.2:43000", "198.51.100.40", "https", http.StatusOK)
+	settings := saved["settings"].(map[string]any)
+	if got := fmt.Sprint(settings["trusted_proxy_cidrs"]); got != "[172.18.0.2/32 2001:db8::1/128]" {
+		t.Fatalf("saved trusted proxies = %s", got)
+	}
+	if got := fmt.Sprint(settings["trusted_proxy_environment_cidrs"]); got != "[10.0.0.0/8]" {
+		t.Fatalf("environment trusted proxies = %s", got)
+	}
+	status := saved["reverse_proxy_status"].(map[string]any)
+	if status["peer_trusted"] != true || status["https"] != true || status["client_ip"] != "198.51.100.40" {
+		t.Fatalf("trusted proxy status = %#v", status)
+	}
+	if len(response.Result().Cookies()) != 0 {
+		t.Fatal("bearer-authenticated settings request unexpectedly set a session cookie")
+	}
+
+	after, _ := trustedProxyTestRequest(t, handler, http.MethodGet, "/api/v2/ui/me/authentication", token, nil, "172.18.0.2:43000", "198.51.100.40", "https", http.StatusOK)
+	if after["passkey_supported"] != true {
+		t.Fatalf("trusted HTTPS proxy did not enable passkeys: %#v", after)
+	}
+	environmentStatus, _ := trustedProxyTestRequest(t, handler, http.MethodGet, "/api/v2/ui/settings", token, nil, "10.9.8.7:43000", "198.51.100.41", "https", http.StatusOK)
+	environmentProxy := environmentStatus["reverse_proxy_status"].(map[string]any)
+	if environmentProxy["peer_trusted"] != true || environmentProxy["client_ip"] != "198.51.100.41" {
+		t.Fatalf("environment proxy was not additive: %#v", environmentProxy)
+	}
+
+	audits, err := db.ListAuditPage(context.Background(), 10, 0, "update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundSettingsAudit := false
+	for _, audit := range audits {
+		if audit.Target == "settings" && strings.Contains(audit.Detail, settingTrustedProxyCIDRs) {
+			foundSettingsAudit = true
+			if audit.IP != "198.51.100.40" {
+				t.Fatalf("settings audit IP = %q, want real client IP", audit.IP)
+			}
+		}
+	}
+	if !foundSettingsAudit {
+		t.Fatal("trusted proxy settings audit was not recorded")
+	}
+
+	restarted := newTestServer(db, "test-secret", "").Handler()
+	restartedStatus, _ := trustedProxyTestRequest(t, restarted, http.MethodGet, "/api/v2/ui/settings", token, nil, "172.18.0.2:43000", "198.51.100.42", "https", http.StatusOK)
+	restartedProxy := restartedStatus["reverse_proxy_status"].(map[string]any)
+	if restartedProxy["peer_trusted"] != true || restartedProxy["https"] != true || restartedProxy["client_ip"] != "198.51.100.42" {
+		t.Fatalf("persisted trusted proxy status = %#v", restartedProxy)
+	}
+}
+
+func TestTrustedProxySettingsRefreshSecureSessionCookie(t *testing.T) {
+	t.Setenv("OBOARD_TRUSTED_PROXY_CIDRS", "")
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := newTestServer(db, "test-secret", "").Handler()
+	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"very-secure-password"}`)
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v2/ui/auth/login", loginBody)
+	loginRequest.RemoteAddr = "172.19.0.2:43000"
+	loginRequest.Header.Set("Content-Type", "application/json")
+	loginRequest.Header.Set("X-Forwarded-Proto", "https")
+	loginResponse := httptest.NewRecorder()
+	handler.ServeHTTP(loginResponse, loginRequest)
+	if loginResponse.Code != http.StatusOK {
+		t.Fatalf("login status = %d body=%s", loginResponse.Code, loginResponse.Body.String())
+	}
+	var login map[string]any
+	if err := json.Unmarshal(loginResponse.Body.Bytes(), &login); err != nil {
+		t.Fatal(err)
+	}
+	cookies := loginResponse.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Secure {
+		t.Fatalf("untrusted proxy login cookie = %#v, want non-Secure before configuration", cookies)
+	}
+
+	settingsBody := bytes.NewBufferString(`{"trusted_proxy_cidrs":["172.19.0.2"]}`)
+	settingsRequest := httptest.NewRequest(http.MethodPost, "/api/v2/ui/settings", settingsBody)
+	settingsRequest.RemoteAddr = "172.19.0.2:43000"
+	settingsRequest.Header.Set("Content-Type", "application/json")
+	settingsRequest.Header.Set("X-OBoard-CSRF", login["csrf_token"].(string))
+	settingsRequest.Header.Set("X-Forwarded-Proto", "https")
+	settingsRequest.AddCookie(cookies[0])
+	settingsResponse := httptest.NewRecorder()
+	handler.ServeHTTP(settingsResponse, settingsRequest)
+	if settingsResponse.Code != http.StatusOK {
+		t.Fatalf("settings status = %d body=%s", settingsResponse.Code, settingsResponse.Body.String())
+	}
+	refreshed := settingsResponse.Result().Cookies()
+	if len(refreshed) != 1 || !refreshed[0].Secure || refreshed[0].Value != cookies[0].Value {
+		t.Fatalf("refreshed trusted proxy cookie = %#v, want same session with Secure", refreshed)
+	}
+}
+
+func trustedProxyTestRequest(t *testing.T, handler http.Handler, method, path, token string, body any, remoteAddr, forwardedFor, forwardedProto string, wantStatus int) (map[string]any, *httptest.ResponseRecorder) {
+	t.Helper()
+	var payload []byte
+	if body != nil {
+		var err error
+		payload, err = json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(method, path, bytes.NewReader(payload))
+	req.RemoteAddr = remoteAddr
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Forwarded-For", forwardedFor)
+	req.Header.Set("X-Real-IP", forwardedFor)
+	req.Header.Set("X-Forwarded-Proto", forwardedProto)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != wantStatus {
+		t.Fatalf("%s %s: want %d got %d body=%s", method, path, wantStatus, response.Code, response.Body.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	return result, response
 }
 
 func TestUserDisableAndDirectRoleDemotionRevokeSessions(t *testing.T) {

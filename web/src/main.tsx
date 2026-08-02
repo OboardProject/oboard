@@ -830,6 +830,9 @@ const errorMessages: Record<string, string> = {
   'subscription_age_policy must be optional or required': '订阅加密策略无效',
   'subscription access is suspended': '订阅拉取已暂停，请先由管理员恢复',
   'subscription access suspended; contact an administrator': '订阅拉取已暂停，请联系管理员',
+  'trusted_proxy_cidrs must contain at most 64 entries': '受信代理最多填写 64 项',
+  'trusted proxy sources cannot include an all-addresses network': '受信代理不能使用 0.0.0.0/0 或 ::/0',
+  'trusted proxy sources cannot use an unspecified address': '受信代理不能使用未指定地址',
   '验证码或恢复码错误': '验证码或恢复码错误',
   '六位验证码错误': '六位验证码错误',
   '该账号无法使用通行密钥': '该账号尚未添加通行密钥，或当前环境不支持',
@@ -842,6 +845,7 @@ function localizeErrorMessage(message: unknown) {
   const raw = String(message || '').trim()
   if (!raw) return '操作失败，请稍后重试'
   if (raw.startsWith('invalid age public key:')) return 'Age 公钥格式无效'
+  if (raw.startsWith('invalid trusted proxy address ')) return `受信代理地址无效：${raw.slice('invalid trusted proxy address '.length)}`
   return errorMessages[raw] || errorMessages[raw.toLowerCase()] || raw
 }
 
@@ -2973,8 +2977,12 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
   const migration = data.settings?.base_path_migration || { active: false, current_path: currentBasePath, agents: [] }
+  const configuredTrustedProxyCIDRs: string[] = Array.isArray(data.settings?.trusted_proxy_cidrs) ? data.settings.trusted_proxy_cidrs.map(String) : []
+  const environmentTrustedProxyCIDRs: string[] = Array.isArray(data.settings?.trusted_proxy_environment_cidrs) ? data.settings.trusted_proxy_environment_cidrs.map(String) : []
+  const reverseProxyStatus = data.reverse_proxy_status || {}
   const [controllerURL, setControllerURL] = useState(savedURL || currentOrigin)
   const [basePath, setBasePath] = useState(currentBasePath)
+  const [trustedProxyCIDRs, setTrustedProxyCIDRs] = useState<string>(configuredTrustedProxyCIDRs.join('\n'))
   const [subscriptionAgePolicy, setSubscriptionAgePolicy] = useState<'optional' | 'required'>(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional')
   const [subscriptionAuditPolicy, setSubscriptionAuditPolicy] = useState<SubscriptionAuditPolicy>(() => subscriptionAuditPolicyValue(data.settings?.subscription_audit_policy))
   const [subscriptionAuditPresetMode, setSubscriptionAuditPresetMode] = useState<'sensitive' | 'balanced' | 'relaxed' | 'custom'>(() => subscriptionAuditPreset(subscriptionAuditPolicyValue(data.settings?.subscription_audit_policy)))
@@ -2989,6 +2997,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [saving, setSaving] = useState('')
   useEffect(() => { setControllerURL(savedURL || currentOrigin) }, [savedURL, currentOrigin])
   useEffect(() => { setBasePath(currentBasePath) }, [currentBasePath])
+  useEffect(() => { setTrustedProxyCIDRs(configuredTrustedProxyCIDRs.join('\n')) }, [data.settings?.trusted_proxy_cidrs])
   useEffect(() => {
     if (!migration.active || realtimeStatus !== 'fallback') return
     const timer = window.setInterval(() => { void load('settings', { background: true }) }, 3000)
@@ -3071,6 +3080,26 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       setSaving('')
     }
   }
+  const trustedProxyCIDRValues = trustedProxyCIDRs.split(/[\n,]/).map(value => value.trim()).filter(Boolean)
+  const saveTrustedProxies = async () => {
+    await runSave('trusted-proxies', async () => {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ trusted_proxy_cidrs: trustedProxyCIDRValues }) })
+    }, '受信代理设置已保存')
+  }
+  const addCurrentProxy = () => {
+    const suggested = String(reverseProxyStatus.suggested_cidr || '')
+    if (!suggested || trustedProxyCIDRValues.includes(suggested)) return
+    setTrustedProxyCIDRs([...trustedProxyCIDRValues, suggested].join('\n'))
+  }
+  const reverseProxyState = reverseProxyStatus.direct_tls
+    ? { label: '直连 HTTPS', tone: 'ok' }
+    : reverseProxyStatus.peer_trusted && reverseProxyStatus.https
+      ? { label: '代理已生效', tone: 'ok' }
+      : reverseProxyStatus.peer_trusted
+        ? { label: '缺少 HTTPS 标记', tone: 'warning' }
+        : reverseProxyStatus.forwarded_for_present || reverseProxyStatus.forwarded_real_ip_present || reverseProxyStatus.forwarded_proto
+          ? { label: '上游未受信', tone: 'danger' }
+          : { label: '未检测到代理', tone: 'warning' }
   const migrationStatusLabel = (status: string) => ({
     pending: '等待中', running: '更新中', succeeded: '已更新', failed: '失败', removed: '已移除',
   } as Record<string, string>)[status] || status
@@ -3181,6 +3210,29 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
               <RefreshCw size={14} className={saving === 'base-path-retry' ? 'spin' : ''} />{saving === 'base-path-retry' ? '重试中...' : '重试失败 Agent'}
             </button>}
           </div>}
+        </div>
+        <div className="trusted-proxy-settings">
+          <div className="trusted-proxy-settings-head">
+            <div><h3>反向代理</h3><p className="muted">仅受信来源可以声明访问协议和客户端地址。</p></div>
+            <span className={`status-pill ${reverseProxyState.tone}`}>{reverseProxyState.label}</span>
+          </div>
+          <div className="trusted-proxy-diagnostics" aria-live="polite">
+            <span><small>当前上游</small><strong>{reverseProxyStatus.peer_ip || '未知'}</strong></span>
+            <span><small>客户端地址</small><strong>{reverseProxyStatus.client_ip || '未知'}</strong></span>
+            <span><small>访问协议</small><strong>{reverseProxyStatus.https ? 'HTTPS' : 'HTTP'}</strong></span>
+          </div>
+          <div className="form settings-form single-field">
+            <FormField label="额外受信来源" hint="每行一个代理 IP 或 CIDR；本机回环地址已自动受信。" full>
+              <textarea rows={5} value={trustedProxyCIDRs} onChange={event => setTrustedProxyCIDRs(event.target.value)} placeholder={'172.18.0.2\n10.0.0.0/24'} />
+            </FormField>
+            {environmentTrustedProxyCIDRs.length > 0 && <p className="trusted-proxy-environment">系统配置：<code>{environmentTrustedProxyCIDRs.join(', ')}</code></p>}
+            <div className="settings-actions">
+              <button onClick={() => void saveTrustedProxies()} disabled={Boolean(saving)}><ShieldCheck size={14} />{saving === 'trusted-proxies' ? '保存中...' : '保存代理设置'}</button>
+              {reverseProxyStatus.suggested_cidr && !trustedProxyCIDRValues.includes(String(reverseProxyStatus.suggested_cidr)) && <button type="button" className="ghost" onClick={addCurrentProxy} disabled={Boolean(saving)}><Plus size={14} />添加当前上游</button>}
+            </div>
+          </div>
+          {!reverseProxyStatus.direct_tls && reverseProxyStatus.peer_trusted && !reverseProxyStatus.https && <p className="trusted-proxy-warning">请让反向代理覆盖发送 <code>X-Forwarded-Proto</code>。</p>}
+          <p className="muted">1Panel 直接接收访客连接时无需开启“真实 IP”；容器地址可能变化时填写实际 Docker 网段。仅在前面还有 CDN 或 FRP 时，才按服务商网段和指定 Header 开启。</p>
         </div>
       </section>}
       {activeSection === 'servers' && <section className="settings-card">

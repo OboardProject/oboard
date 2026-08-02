@@ -51,10 +51,19 @@ const (
 	settingServerDefaultTimeCorrection = "server_default_time_correction_mode"
 	settingTimeCheckNTPServers         = "time_check_ntp_servers"
 	settingSubscriptionAuditPolicy     = "subscription_audit_policy"
+	settingTrustedProxyCIDRs           = "trusted_proxy_cidrs"
 	timeCheckThresholdSeconds          = 30
 )
 
 var defaultTimeCheckNTPServers = []string{"time.cloudflare.com", "time.google.com", "pool.ntp.org"}
+
+var automaticTrustedProxyCIDRs = []string{"127.0.0.0/8", "::1/128"}
+
+type trustedProxyState struct {
+	prefixes []netip.Prefix
+}
+
+type trustedProxyStateContextKey struct{}
 
 type Server struct {
 	store         *store.Store
@@ -71,6 +80,8 @@ type Server struct {
 	basePath                      string
 	basePaths                     atomic.Pointer[basePathState]
 	basePathMigrationMu           sync.Mutex
+	trustedProxies                atomic.Pointer[trustedProxyState]
+	trustedProxyEnvironmentCIDRs  []string
 	allowedOrigins                map[string]bool
 	dnsEndpoints                  dnsProviderEndpoints
 	acmeCommand                   string
@@ -127,6 +138,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	socketPath := strings.TrimSpace(os.Getenv("OBOARD_CONTROLLER_UPDATER_SOCKET"))
 	catalog := capability.NewCatalog()
 	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditintel.New(store, sessionSecret), apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}}
+	s.initializeTrustedProxies()
 	s.registerAutomationHandlers()
 	s.restoreBasePathState(context.Background(), basePath)
 	s.upgrader = websocket.Upgrader{CheckOrigin: s.checkOrigin, ReadBufferSize: 4096, WriteBufferSize: 4096}
@@ -284,7 +296,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/downloads", notFound)
 	mux.HandleFunc("/downloads/", s.downloadArtifact)
 	mux.HandleFunc("/", s.static)
-	return s.withBasePath(s.requestLogger(s.withSecurityHeaders(s.realtimeInvalidation(s.managementAPIVersionGate(mux)))))
+	return s.withTrustedProxyState(s.withBasePath(s.requestLogger(s.withSecurityHeaders(s.realtimeInvalidation(s.managementAPIVersionGate(mux))))))
 }
 
 func (s *Server) managementAPIVersionGate(next http.Handler) http.Handler {
@@ -466,6 +478,137 @@ func parseAllowedOrigins(raw string) map[string]bool {
 	return out
 }
 
+func (s *Server) initializeTrustedProxies() {
+	environmentCIDRs, err := normalizeTrustedProxyCIDRs(strings.Split(os.Getenv("OBOARD_TRUSTED_PROXY_CIDRS"), ","))
+	if err != nil {
+		log.Printf("configure trusted proxy environment: %v", err)
+		environmentCIDRs = nil
+	}
+	s.trustedProxyEnvironmentCIDRs = environmentCIDRs
+	settings, err := s.store.ListSettings(context.Background())
+	if err != nil {
+		log.Printf("load trusted proxy settings: %v", err)
+		s.applyTrustedProxyCIDRs(nil)
+		return
+	}
+	configuredCIDRs, err := trustedProxyCIDRsFromSettings(settings)
+	if err != nil {
+		log.Printf("load trusted proxy settings: %v", err)
+		configuredCIDRs = nil
+	}
+	s.applyTrustedProxyCIDRs(configuredCIDRs)
+}
+
+func (s *Server) applyTrustedProxyCIDRs(configuredCIDRs []string) {
+	values := make([]string, 0, len(automaticTrustedProxyCIDRs)+len(s.trustedProxyEnvironmentCIDRs)+len(configuredCIDRs))
+	values = append(values, automaticTrustedProxyCIDRs...)
+	values = append(values, s.trustedProxyEnvironmentCIDRs...)
+	values = append(values, configuredCIDRs...)
+	prefixes := make([]netip.Prefix, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		prefix, err := parseTrustedProxyPrefix(value)
+		if err != nil || seen[prefix.String()] {
+			continue
+		}
+		seen[prefix.String()] = true
+		prefixes = append(prefixes, prefix)
+	}
+	s.trustedProxies.Store(&trustedProxyState{prefixes: prefixes})
+}
+
+func normalizeTrustedProxyCIDRs(values []string) ([]string, error) {
+	if len(values) > 64 {
+		return nil, errors.New("trusted_proxy_cidrs must contain at most 64 entries")
+	}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		prefix, err := parseTrustedProxyPrefix(value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted proxy address %q", value)
+		}
+		if prefix.Bits() == 0 {
+			return nil, errors.New("trusted proxy sources cannot include an all-addresses network")
+		}
+		if prefix.Addr().IsUnspecified() {
+			return nil, errors.New("trusted proxy sources cannot use an unspecified address")
+		}
+		canonical := prefix.String()
+		if !seen[canonical] {
+			seen[canonical] = true
+			out = append(out, canonical)
+		}
+	}
+	if len(out) > 64 {
+		return nil, errors.New("trusted_proxy_cidrs must contain at most 64 entries")
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func parseTrustedProxyPrefix(value string) (netip.Prefix, error) {
+	value = strings.TrimSpace(value)
+	if addr, err := netip.ParseAddr(value); err == nil {
+		addr = addr.Unmap()
+		return netip.PrefixFrom(addr, addr.BitLen()), nil
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	addr := prefix.Addr()
+	bits := prefix.Bits()
+	if addr.Is4In6() {
+		addr = addr.Unmap()
+		bits -= 96
+	}
+	if bits < 0 || bits > addr.BitLen() {
+		return netip.Prefix{}, errors.New("invalid mapped IPv4 prefix")
+	}
+	return netip.PrefixFrom(addr, bits).Masked(), nil
+}
+
+func trustedProxyCIDRsFromSettings(settings map[string]string) ([]string, error) {
+	raw := strings.TrimSpace(settings[settingTrustedProxyCIDRs])
+	if raw == "" {
+		return []string{}, nil
+	}
+	var values []string
+	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+		return nil, errors.New("stored trusted proxy settings are invalid")
+	}
+	return normalizeTrustedProxyCIDRs(values)
+}
+
+func (s *Server) withTrustedProxyState(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), trustedProxyStateContextKey{}, &s.trustedProxies)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func trustedProxyStateForRequest(r *http.Request) *trustedProxyState {
+	if source, ok := r.Context().Value(trustedProxyStateContextKey{}).(*atomic.Pointer[trustedProxyState]); ok {
+		if state := source.Load(); state != nil {
+			return state
+		}
+	}
+	environmentCIDRs, _ := normalizeTrustedProxyCIDRs(strings.Split(os.Getenv("OBOARD_TRUSTED_PROXY_CIDRS"), ","))
+	values := append(append([]string{}, automaticTrustedProxyCIDRs...), environmentCIDRs...)
+	prefixes := make([]netip.Prefix, 0, len(values))
+	for _, value := range values {
+		if prefix, err := parseTrustedProxyPrefix(value); err == nil {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	return &trustedProxyState{prefixes: prefixes}
+}
+
 func (s *Server) checkOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	return origin == "" || s.originAllowed(r, origin)
@@ -493,7 +636,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		write(w, 200, map[string]any{"settings": s.publicSettings(r.Context(), items)})
+		write(w, 200, map[string]any{"settings": s.publicSettings(r.Context(), items), "reverse_proxy_status": s.reverseProxyStatus(r)})
 	case http.MethodPost, http.MethodPatch:
 		var req struct {
 			ControllerURL               *string                        `json:"controller_url"`
@@ -513,9 +656,19 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			ServerDefaultBBREnabled     *bool                          `json:"server_default_bbr_enabled"`
 			ServerDefaultTimeCorrection *string                        `json:"server_default_time_correction_mode"`
 			TimeCheckNTPServers         []string                       `json:"time_check_ntp_servers"`
+			TrustedProxyCIDRs           *[]string                      `json:"trusted_proxy_cidrs"`
 		}
 		if !decode(w, r, &req) {
 			return
+		}
+		var normalizedTrustedProxyCIDRs []string
+		if req.TrustedProxyCIDRs != nil {
+			var err error
+			normalizedTrustedProxyCIDRs, err = normalizeTrustedProxyCIDRs(*req.TrustedProxyCIDRs)
+			if err != nil {
+				fail(w, err, http.StatusBadRequest)
+				return
+			}
 		}
 		if req.BasePath != nil && req.ControllerURL != nil {
 			fail(w, errors.New("base_path and controller_url must be updated separately"), http.StatusBadRequest)
@@ -757,6 +910,15 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, settingTimeCheckNTPServers)
 		}
+		if req.TrustedProxyCIDRs != nil {
+			raw, _ := json.Marshal(normalizedTrustedProxyCIDRs)
+			if err := s.store.SetSetting(r.Context(), settingTrustedProxyCIDRs, string(raw)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			s.applyTrustedProxyCIDRs(normalizedTrustedProxyCIDRs)
+			changed = append(changed, settingTrustedProxyCIDRs)
+		}
 		if len(changed) > 0 {
 			auditReq(s, r, "update", "settings", strings.Join(changed, ","))
 		}
@@ -765,7 +927,10 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		response := map[string]any{"settings": s.publicSettings(r.Context(), items)}
+		if req.TrustedProxyCIDRs != nil {
+			s.refreshSecureSessionCookie(w, r)
+		}
+		response := map[string]any{"settings": s.publicSettings(r.Context(), items), "reverse_proxy_status": s.reverseProxyStatus(r)}
 		if redirectPath != "" {
 			response["redirect_path"] = redirectPath
 		}
@@ -776,12 +941,15 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAuditPolicy: store.DefaultSubscriptionAuditPolicy(), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAuditPolicy: store.DefaultSubscriptionAuditPolicy(), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	for key, value := range items {
-		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingSubscriptionAuditPolicy {
+		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingSubscriptionAuditPolicy || key == settingTrustedProxyCIDRs {
 			continue
 		}
 		out[key] = value
+	}
+	if values, err := trustedProxyCIDRsFromSettings(items); err == nil {
+		out[settingTrustedProxyCIDRs] = values
 	}
 	if raw := strings.TrimSpace(items[settingSubscriptionAuditPolicy]); raw != "" {
 		var policy model.SubscriptionAuditPolicy
@@ -873,12 +1041,17 @@ func timeCheckNTPServers(settings map[string]string) []string {
 }
 
 func (s *Server) ApplyRuntimeSettings(ctx context.Context) error {
-	if s.logs == nil {
-		return nil
-	}
 	settings, err := s.store.ListSettings(ctx)
 	if err != nil {
 		return err
+	}
+	trustedProxyCIDRs, err := trustedProxyCIDRsFromSettings(settings)
+	if err != nil {
+		return err
+	}
+	s.applyTrustedProxyCIDRs(trustedProxyCIDRs)
+	if s.logs == nil {
+		return nil
 	}
 	maxMB := settingInt(settings, "controller_log_max_mb", 32, 1, 1024)
 	backups := settingInt(settings, "controller_log_backups", 5, 0, 20)
@@ -1016,6 +1189,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		out["settings"] = s.publicSettings(ctx, items)
+		out["reverse_proxy_status"] = s.reverseProxyStatus(r)
 		return nil
 	}
 	addServerCreationDefaults := func() error {
@@ -1178,6 +1352,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			out["user_group_members"] = members
 			out["external_outbound_access_grants"] = externalGrants
 			out["settings"] = s.publicSettings(ctx, settings)
+			out["reverse_proxy_status"] = s.reverseProxyStatus(r)
 		}
 		return nil
 	}
@@ -2113,7 +2288,7 @@ func requestUsesHTTPS(r *http.Request) bool {
 
 func trustedProxyRequest(r *http.Request) bool {
 	peer, ok := requestPeerIP(r)
-	return ok && trustedProxyIP(peer)
+	return ok && trustedProxyIP(r, peer)
 }
 
 func (s *Server) allowRate(w http.ResponseWriter, r *http.Request, key string, limit int, window time.Duration) bool {
@@ -2132,10 +2307,10 @@ func (s *Server) allowRate(w http.ResponseWriter, r *http.Request, key string, l
 
 func clientIP(r *http.Request) string {
 	peer, peerValid := requestPeerIP(r)
-	if peerValid && trustedProxyIP(peer) {
+	if peerValid && trustedProxyIP(r, peer) {
 		current := peer
 		forwarded := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
-		for index := len(forwarded) - 1; index >= 0 && trustedProxyIP(current); index-- {
+		for index := len(forwarded) - 1; index >= 0 && trustedProxyIP(r, current); index-- {
 			candidate, err := netip.ParseAddr(strings.TrimSpace(forwarded[index]))
 			if err != nil {
 				break
@@ -2155,21 +2330,62 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-func trustedProxyIP(ip netip.Addr) bool {
+func trustedProxyIP(r *http.Request, ip netip.Addr) bool {
 	if !ip.IsValid() {
 		return false
 	}
-	for _, value := range strings.Split(os.Getenv("OBOARD_TRUSTED_PROXY_CIDRS"), ",") {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		prefix, err := netip.ParsePrefix(value)
-		if err == nil && prefix.Contains(ip.Unmap()) {
+	for _, prefix := range trustedProxyStateForRequest(r).prefixes {
+		if prefix.Contains(ip.Unmap()) {
 			return true
 		}
 	}
 	return false
+}
+
+func (s *Server) reverseProxyStatus(r *http.Request) map[string]any {
+	peer, peerValid := requestPeerIP(r)
+	peerIP := ""
+	peerTrusted := false
+	suggestedCIDR := ""
+	if peerValid {
+		peer = peer.Unmap()
+		peerIP = peer.String()
+		peerTrusted = trustedProxyIP(r, peer)
+		if !peer.IsLoopback() {
+			suggestedCIDR = netip.PrefixFrom(peer, peer.BitLen()).String()
+		}
+	}
+	forwardedProto := strings.ToLower(lastHeaderValue(r.Header.Get("X-Forwarded-Proto")))
+	if forwardedProto != "http" && forwardedProto != "https" {
+		forwardedProto = ""
+	}
+	return map[string]any{
+		"peer_ip":                   peerIP,
+		"peer_trusted":              peerTrusted,
+		"client_ip":                 clientIP(r),
+		"https":                     requestUsesHTTPS(r),
+		"direct_tls":                r.TLS != nil,
+		"forwarded_for_present":     strings.TrimSpace(r.Header.Get("X-Forwarded-For")) != "",
+		"forwarded_real_ip_present": strings.TrimSpace(r.Header.Get("X-Real-IP")) != "",
+		"forwarded_proto":           forwardedProto,
+		"suggested_cidr":            suggestedCIDR,
+	}
+}
+
+func (s *Server) refreshSecureSessionCookie(w http.ResponseWriter, r *http.Request) {
+	if !requestUsesHTTPS(r) {
+		return
+	}
+	token := currentSessionToken(r)
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil || token == "" || !hmac.Equal([]byte(cookie.Value), []byte(token)) {
+		return
+	}
+	claims, ok := r.Context().Value(claimsKey).(security.TokenClaims)
+	if !ok || !claims.Expiry.After(time.Now()) {
+		return
+	}
+	s.setSessionCookie(w, r, token, claims.Expiry)
 }
 
 func requestPeerIP(r *http.Request) (netip.Addr, bool) {

@@ -6009,7 +6009,8 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .settings-actions > button.ghost { order: 1; }
 .settings-actions > button:not(.ghost) { order: 2; }
 
-.base-path-settings {
+.base-path-settings,
+.trusted-proxy-settings {
   display: grid;
   gap: 16px;
   padding-top: 18px;
@@ -6017,6 +6018,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .base-path-settings-head,
+.trusted-proxy-settings-head,
 .base-path-progress-head,
 .base-path-agent-row {
   display: flex;
@@ -6026,6 +6028,53 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .base-path-settings-head h3 { margin-bottom: 3px; }
+
+.trusted-proxy-settings-head h3 { margin-bottom: 3px; }
+
+.trusted-proxy-diagnostics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: 760px;
+  border-block: 1px solid var(--border);
+}
+
+.trusted-proxy-diagnostics > span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 11px 14px;
+  border-right: 1px solid var(--border);
+}
+
+.trusted-proxy-diagnostics > span:last-child { border-right: 0; }
+.trusted-proxy-diagnostics small { color: var(--muted); font-size: 11px; }
+.trusted-proxy-diagnostics strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trusted-proxy-settings textarea {
+  min-height: 118px;
+  resize: vertical;
+}
+
+.trusted-proxy-environment,
+.trusted-proxy-warning {
+  max-width: 760px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.trusted-proxy-environment code,
+.trusted-proxy-warning code {
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+
+.trusted-proxy-warning { color: var(--warning); }
 
 .base-path-migration {
   display: grid;
@@ -6138,7 +6187,11 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   }
   .base-path-route-row { grid-template-columns: minmax(0, 1fr); }
   .base-path-route-row > svg { transform: rotate(90deg); }
-  .base-path-settings-head { align-items: flex-start; }
+  .base-path-settings-head,
+  .trusted-proxy-settings-head { align-items: flex-start; }
+  .trusted-proxy-diagnostics { grid-template-columns: minmax(0, 1fr); }
+  .trusted-proxy-diagnostics > span { border-right: 0; border-bottom: 1px solid var(--border); }
+  .trusted-proxy-diagnostics > span:last-child { border-bottom: 0; }
   .dns-settings-summary > div { padding: 0 8px; }
   .dns-settings-summary strong { font-size: 12px; }
 }
