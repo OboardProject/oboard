@@ -102,6 +102,67 @@ func TestRunOnceReportsBoundedModelFailure(t *testing.T) {
 	}
 }
 
+func TestRunModelDiscoveryOnceReturnsSortedModelsWithoutCredential(t *testing.T) {
+	const apiKey = "model-list-secret"
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" || r.Method != http.MethodGet {
+			t.Fatalf("model request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer "+apiKey {
+			t.Fatalf("model authorization = %q", r.Header.Get("Authorization"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{map[string]string{"id": "z-model"}, map[string]string{"id": "a-model"}, map[string]string{"id": "z-model"}}})
+	}))
+	defer modelServer.Close()
+
+	completed := make(chan airpc.ModelDiscoveryCompleteRequest, 1)
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/model-discovery/lease":
+			_ = json.NewEncoder(w).Encode(airpc.ModelDiscoveryLeaseResponse{Request: &airpc.ModelDiscoveryRequest{ID: "discovery-1", BaseURL: modelServer.URL + "/v1", APIKey: apiKey}})
+		case "/v1/model-discovery/discovery-1/complete":
+			var request airpc.ModelDiscoveryCompleteRequest
+			_ = json.NewDecoder(r.Body).Decode(&request)
+			completed <- request
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer controller.Close()
+	if err := runModelDiscoveryOnce(context.Background(), controllerClient(t, controller.URL), "worker-models"); err != nil {
+		t.Fatal(err)
+	}
+	request := <-completed
+	encoded, _ := json.Marshal(request)
+	if strings.Contains(string(encoded), apiKey) {
+		t.Fatal("provider credential leaked into model discovery callback")
+	}
+	if request.WorkerID != "worker-models" || len(request.Models) != 2 || request.Models[0] != "a-model" || request.Models[1] != "z-model" {
+		t.Fatalf("unexpected completion: %#v", request)
+	}
+}
+
+func TestDiscoverModelsRejectsRedirectAndMalformedResponse(t *testing.T) {
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{map[string]string{"id": "redirected"}}})
+	}))
+	defer redirectTarget.Close()
+	redirectServer := httptest.NewServer(http.RedirectHandler(redirectTarget.URL, http.StatusFound))
+	defer redirectServer.Close()
+	if _, err := discoverModels(context.Background(), &airpc.ModelDiscoveryRequest{BaseURL: redirectServer.URL, APIKey: "secret"}); err == nil {
+		t.Fatal("redirected model endpoint was accepted")
+	}
+
+	malformed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":""}]}`))
+	}))
+	defer malformed.Close()
+	if _, err := discoverModels(context.Background(), &airpc.ModelDiscoveryRequest{BaseURL: malformed.URL, APIKey: "secret"}); err == nil {
+		t.Fatal("malformed model list was accepted")
+	}
+}
+
 func controllerClient(t *testing.T, baseURL string) *http.Client {
 	t.Helper()
 	target, err := url.Parse(baseURL)

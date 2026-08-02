@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -121,7 +120,7 @@ func (s *Server) apiV2AIProvider(w http.ResponseWriter, r *http.Request) {
 		item.Name = strings.TrimSpace(*request.Name)
 	}
 	if request.BaseURL != nil {
-		item.BaseURL = strings.TrimRight(strings.TrimSpace(*request.BaseURL), "/")
+		item.BaseURL = strings.TrimSpace(*request.BaseURL)
 	}
 	if request.Model != nil {
 		item.Model = strings.TrimSpace(*request.Model)
@@ -135,8 +134,8 @@ func (s *Server) apiV2AIProvider(w http.ResponseWriter, r *http.Request) {
 	if request.DailyTokenLimit != nil {
 		item.DailyTokenLimit = *request.DailyTokenLimit
 	}
-	parsed, parseErr := url.Parse(item.BaseURL)
-	if item.Name == "" || item.Model == "" || parseErr != nil || parsed.Host == "" || parsed.Scheme != "https" && !(parsed.Scheme == "http" && (parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost")) || item.DailyTokenLimit < 0 {
+	item.BaseURL, err = normalizeAIProviderBaseURL(item.BaseURL)
+	if item.Name == "" || item.Model == "" || err != nil || item.DailyTokenLimit < 0 {
 		v2Error(w, r, http.StatusBadRequest, "invalid_provider", "AI Provider 配置无效")
 		return
 	}

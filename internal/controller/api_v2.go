@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -43,6 +42,7 @@ func (s *Server) registerAPIV2Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v2/api-principals/", s.auth(s.apiPrincipalSubroutes, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/ai/providers", s.auth(s.apiV2AIProviders, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/ai/providers/", s.auth(s.apiV2AIProvider, model.RoleAdmin))
+	mux.HandleFunc("/api/v2/ai/provider-models", s.auth(s.apiV2AIProviderModels, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/approval-policies", s.auth(s.apiV2ApprovalPolicies, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/approval-policies/", s.auth(s.apiV2ApprovalPolicy, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/tool-audits", s.auth(s.apiV2ToolAudits, model.RoleAdmin))
@@ -70,9 +70,10 @@ func (s *Server) apiV2AIProviders(w http.ResponseWriter, r *http.Request) {
 		if !decodeV2(w, r, &request) {
 			return
 		}
-		request.Name, request.BaseURL, request.Model = strings.TrimSpace(request.Name), strings.TrimRight(strings.TrimSpace(request.BaseURL), "/"), strings.TrimSpace(request.Model)
-		parsed, err := url.Parse(request.BaseURL)
-		if request.Name == "" || request.Model == "" || request.APIKey == "" || err != nil || parsed.Host == "" || parsed.Scheme != "https" && !(parsed.Scheme == "http" && (parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost")) || request.DailyTokenLimit < 0 {
+		request.Name, request.Model, request.APIKey = strings.TrimSpace(request.Name), strings.TrimSpace(request.Model), strings.TrimSpace(request.APIKey)
+		baseURL, err := normalizeAIProviderBaseURL(request.BaseURL)
+		request.BaseURL = baseURL
+		if request.Name == "" || request.Model == "" || request.APIKey == "" || err != nil || request.DailyTokenLimit < 0 {
 			v2Error(w, r, http.StatusBadRequest, "invalid_provider", "AI Provider 配置无效")
 			return
 		}

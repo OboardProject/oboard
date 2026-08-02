@@ -9133,6 +9133,16 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .automation-form-actions { display: flex; align-items: center; gap: 8px; }
 .automation-form-actions button { display: inline-flex; align-items: center; gap: 6px; }
 .automation-form .two-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ai-provider-model-control { display: grid; grid-template-columns: minmax(0, 1fr) var(--control-height); gap: 8px; width: 100%; }
+.ai-provider-model-control > .icon-button { width: var(--control-height); height: var(--control-height); }
+.ai-provider-model-status,
+.ai-provider-token-preview { color: var(--muted); font-size: 12px; }
+.token-limit-input { display: grid; grid-template-columns: minmax(0, 1fr) 170px; width: 100%; }
+.token-limit-input > input { min-width: 0; border-radius: var(--radius-md) 0 0 var(--radius-md); font-variant-numeric: tabular-nums; }
+.token-limit-input .ui-segmented-select { min-width: 0; min-height: var(--control-height); border-left: 0; border-radius: 0 var(--radius-md) var(--radius-md) 0; }
+.token-limit-input .ui-segmented-select button { padding-inline: 4px; white-space: nowrap; overflow-wrap: normal; }
+.toggle-line { display: inline-flex; align-items: center; justify-self: start; gap: 8px; color: var(--text-strong); }
+.toggle-line input { width: 17px; height: 17px; min-height: 0; margin: 0; accent-color: var(--primary); }
 .automation-list { display: grid; gap: 0; }
 .automation-row {
   display: flex;
@@ -9381,6 +9391,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 		max-width: 100%;
 		width: 100%;
 	}
+	.token-limit-input { grid-template-columns: minmax(0, 1fr) 132px; }
   .automation-form .two-column, .automation-dialog-form .two-column, .automation-findings, .automation-permission-options { grid-template-columns: 1fr; }
   .automation-section-head { align-items: flex-start; flex-direction: row; }
   .automation-section-head > div { min-width: 0; }
@@ -12710,6 +12721,75 @@ button.ui-btn-ghost:hover {
   font-size: 12px;
 }
 .searchable-multi-select-clear:hover { color: var(--text-strong); background: var(--surface-2); transform: none; }
+
+.searchable-combobox {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px;
+  width: 100%;
+  min-width: 0;
+}
+
+.searchable-combobox > input {
+  min-width: 0;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+
+.searchable-combobox > button {
+  min-width: 40px;
+  min-height: var(--control-height);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1.5px solid var(--border);
+  border-left: 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+.searchable-combobox > button:hover:not(:disabled) { color: var(--text-strong); background: var(--surface); transform: none; }
+.searchable-combobox > button:disabled { opacity: 0.5; cursor: default; }
+.searchable-combobox.open > button svg { transform: rotate(180deg); }
+
+.searchable-combobox-menu {
+  position: absolute;
+  z-index: 70;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  display: grid;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.searchable-combobox-menu > button {
+  min-width: 0;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: transparent;
+  font-size: 13px;
+  text-align: left;
+}
+
+.searchable-combobox-menu > button span { min-width: 0; overflow-wrap: anywhere; }
+.searchable-combobox-menu > button:hover,
+.searchable-combobox-menu > button.highlighted,
+.searchable-combobox-menu > button.selected { color: var(--text-strong); background: var(--surface-2); transform: none; }
+.searchable-combobox-menu > button.selected { font-weight: 650; }
+.searchable-combobox-empty { padding: 14px 10px; color: var(--muted); font-size: 12px; text-align: center; }
 
 .ui-segmented-select {
   position: relative;

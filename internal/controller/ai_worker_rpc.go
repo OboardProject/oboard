@@ -45,6 +45,8 @@ func (s *Server) StartAIWorkerRPC(ctx context.Context, socketPath string) error 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/jobs/lease", s.aiRPCLease)
 	mux.HandleFunc("/v1/jobs/", s.aiRPCJob)
+	mux.HandleFunc("/v1/model-discovery/lease", s.aiRPCModelDiscoveryLease)
+	mux.HandleFunc("/v1/model-discovery/", s.aiRPCModelDiscoveryResult)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10}
 	go func() {
@@ -57,6 +59,71 @@ func (s *Server) StartAIWorkerRPC(ctx context.Context, socketPath string) error 
 	}()
 	go func() { _ = server.Serve(listener) }()
 	return nil
+}
+
+func (s *Server) aiRPCModelDiscoveryLease(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request airpc.ModelDiscoveryLeaseRequest
+	if !decodeInternalJSON(w, r, &request) || strings.TrimSpace(request.WorkerID) == "" || len(request.WorkerID) > 128 {
+		return
+	}
+	discovery, err := s.aiModelDiscoveries.lease(r.Context(), request.WorkerID)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			http.Error(w, "model discovery lease failed", http.StatusInternalServerError)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, airpc.ModelDiscoveryLeaseResponse{Request: discovery})
+}
+
+func (s *Server) aiRPCModelDiscoveryResult(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	parts := pathParts(r.URL.Path, "/v1/model-discovery/")
+	if len(parts) != 2 || parts[0] == "" {
+		http.NotFound(w, r)
+		return
+	}
+	switch parts[1] {
+	case "complete":
+		var request airpc.ModelDiscoveryCompleteRequest
+		if !decodeInternalJSON(w, r, &request) {
+			return
+		}
+		models, err := normalizeAIModelIDs(request.Models)
+		if strings.TrimSpace(request.WorkerID) == "" || err != nil {
+			http.Error(w, "invalid model discovery result", http.StatusBadRequest)
+			return
+		}
+		if err := s.aiModelDiscoveries.finish(parts[0], request.WorkerID, aiModelDiscoveryResult{models: models}); err != nil {
+			http.Error(w, "model discovery request is no longer active", http.StatusConflict)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case "fail":
+		var request airpc.ModelDiscoveryFailRequest
+		if !decodeInternalJSON(w, r, &request) {
+			return
+		}
+		request.Error = strings.TrimSpace(request.Error)
+		if request.WorkerID == "" || request.Error == "" || len(request.Error) > 1000 {
+			http.Error(w, "invalid model discovery failure", http.StatusBadRequest)
+			return
+		}
+		if err := s.aiModelDiscoveries.finish(parts[0], request.WorkerID, aiModelDiscoveryResult{err: errors.New("AI Provider model discovery failed")}); err != nil {
+			http.Error(w, "model discovery request is no longer active", http.StatusConflict)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.NotFound(w, r)
+	}
 }
 
 func (s *Server) aiRPCLease(w http.ResponseWriter, r *http.Request) {

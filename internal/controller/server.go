@@ -67,16 +67,18 @@ type trustedProxyState struct {
 type trustedProxyStateContextKey struct{}
 
 type Server struct {
-	store         *store.Store
-	sessionSecret string
-	staticDir     string
-	application   *application.Service
-	capabilities  *capability.Catalog
-	automation    *automation.Service
-	auditIntel    *auditintel.Service
-	auditReviews  *auditreview.Service
-	apiGateMu     sync.Mutex
-	apiInFlight   map[string]int
+	store                   *store.Store
+	sessionSecret           string
+	staticDir               string
+	application             *application.Service
+	capabilities            *capability.Catalog
+	automation              *automation.Service
+	auditIntel              *auditintel.Service
+	auditReviews            *auditreview.Service
+	aiModelDiscoveries      *aiModelDiscoveryQueue
+	aiModelDiscoveryTimeout time.Duration
+	apiGateMu               sync.Mutex
+	apiInFlight             map[string]int
 	// basePath is the immutable startup fallback for direct test constructors.
 	// Runtime request handling reads basePaths instead.
 	basePath                      string
@@ -139,7 +141,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	}
 	socketPath := strings.TrimSpace(os.Getenv("OBOARD_CONTROLLER_UPDATER_SOCKET"))
 	catalog := capability.NewCatalog()
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditintel.New(store, sessionSecret), auditReviews: auditreview.New(store, sessionSecret), apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditintel.New(store, sessionSecret), auditReviews: auditreview.New(store, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}}
 	s.initializeTrustedProxies()
 	s.registerAutomationHandlers()
 	s.restoreBasePathState(context.Background(), basePath)

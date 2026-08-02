@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -46,6 +48,21 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	log.Printf("OBoard AI Worker %s started", workerID)
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		runAuditLoop(ctx, client, workerID, *pollInterval)
+	}()
+	go func() {
+		defer workers.Done()
+		runModelDiscoveryLoop(ctx, client, workerID, *pollInterval)
+	}()
+	<-ctx.Done()
+	workers.Wait()
+}
+
+func runAuditLoop(ctx context.Context, client *http.Client, workerID string, pollInterval time.Duration) {
 	for {
 		if err := runOnce(ctx, client, workerID); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("AI job: %v", err)
@@ -53,9 +70,93 @@ func main() {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(*pollInterval):
+		case <-time.After(pollInterval):
 		}
 	}
+}
+
+func runModelDiscoveryLoop(ctx context.Context, client *http.Client, workerID string, retryInterval time.Duration) {
+	for {
+		if err := runModelDiscoveryOnce(ctx, client, workerID); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("AI model discovery: %v", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(retryInterval):
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+func runModelDiscoveryOnce(ctx context.Context, client *http.Client, workerID string) error {
+	var lease airpc.ModelDiscoveryLeaseResponse
+	if err := rpcJSON(ctx, client, http.MethodPost, "http://unix/v1/model-discovery/lease", airpc.ModelDiscoveryLeaseRequest{WorkerID: workerID}, &lease); err != nil {
+		return err
+	}
+	if lease.Request == nil {
+		return nil
+	}
+	models, err := discoverModels(ctx, lease.Request)
+	if err != nil {
+		failCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = rpcJSON(failCtx, client, http.MethodPost, "http://unix/v1/model-discovery/"+lease.Request.ID+"/fail", airpc.ModelDiscoveryFailRequest{WorkerID: workerID, Error: bounded(err.Error(), 1000)}, nil)
+		return err
+	}
+	completeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return rpcJSON(completeCtx, client, http.MethodPost, "http://unix/v1/model-discovery/"+lease.Request.ID+"/complete", airpc.ModelDiscoveryCompleteRequest{WorkerID: workerID, Models: models}, nil)
+}
+
+func discoverModels(ctx context.Context, discovery *airpc.ModelDiscoveryRequest) ([]string, error) {
+	if discovery == nil || len(discovery.BaseURL) == 0 || len(discovery.BaseURL) > 2048 || len(discovery.APIKey) == 0 || len(discovery.APIKey) > 8192 {
+		return nil, errors.New("invalid model discovery request")
+	}
+	endpoint := strings.TrimRight(discovery.BaseURL, "/") + "/models"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", "Bearer "+discovery.APIKey)
+	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	if err != nil || len(responseBody) > 1<<20 {
+		return nil, errors.New("model list response exceeds the allowed size")
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("model list endpoint returned HTTP %d", response.StatusCode)
+	}
+	var envelope struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(responseBody, &envelope) != nil || len(envelope.Data) == 0 || len(envelope.Data) > 1000 {
+		return nil, errors.New("model list response is not supported")
+	}
+	unique := make(map[string]struct{}, len(envelope.Data))
+	for _, item := range envelope.Data {
+		modelID := strings.TrimSpace(item.ID)
+		if modelID == "" || len(modelID) > 512 {
+			return nil, errors.New("model list contains an invalid model ID")
+		}
+		unique[modelID] = struct{}{}
+	}
+	models := make([]string, 0, len(unique))
+	for modelID := range unique {
+		models = append(models, modelID)
+	}
+	sort.Strings(models)
+	return models, nil
 }
 
 func runOnce(ctx context.Context, client *http.Client, workerID string) error {

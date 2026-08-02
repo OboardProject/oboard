@@ -30,3 +30,27 @@ type FailRequest struct {
 	WorkerID string `json:"worker_id"`
 	Error    string `json:"error"`
 }
+
+type ModelDiscoveryLeaseRequest struct {
+	WorkerID string `json:"worker_id"`
+}
+
+type ModelDiscoveryRequest struct {
+	ID      string `json:"id"`
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
+}
+
+type ModelDiscoveryLeaseResponse struct {
+	Request *ModelDiscoveryRequest `json:"request,omitempty"`
+}
+
+type ModelDiscoveryCompleteRequest struct {
+	WorkerID string   `json:"worker_id"`
+	Models   []string `json:"models"`
+}
+
+type ModelDiscoveryFailRequest struct {
+	WorkerID string `json:"worker_id"`
+	Error    string `json:"error"`
+}
