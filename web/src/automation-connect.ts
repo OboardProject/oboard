@@ -96,12 +96,19 @@ function clientConfig(client: AutomationConnectClient, auth: AutomationConnectAu
   return JSON.stringify({
     mcp: { name: 'oboard', transport: 'streamable-http', ...server },
     oauth: auth === 'oauth' ? {
-      protected_resource_metadata: `${baseURL}/.well-known/oauth-protected-resource`,
-      authorization_server_metadata: `${baseURL}/.well-known/oauth-authorization-server`,
+      protected_resource_metadata: automationWellKnownURL(baseURL, 'oauth-protected-resource', '/mcp'),
+      authorization_server_metadata: automationWellKnownURL(baseURL, 'oauth-authorization-server'),
       pkce: 'S256',
     } : undefined,
     api: { base_url: `${baseURL}/api/v2`, openapi: `${baseURL}/api/v2/openapi.json` },
   }, null, 2)
+}
+
+function automationWellKnownURL(baseURL: string, metadata: string, suffix = '') {
+  const parsed = new URL(baseURL)
+  const basePath = parsed.pathname.replace(/\/+$/, '')
+  parsed.pathname = `/.well-known/${metadata}${basePath === '/' ? '' : basePath}${suffix}`
+  return parsed.toString()
 }
 
 function posixQuote(value: string) {

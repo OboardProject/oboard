@@ -28,11 +28,14 @@ const (
 	oauthAuthorizationCodeTTL = 5 * time.Minute
 	oauthAccessTokenTTL       = 15 * time.Minute
 	oauthRefreshTokenTTL      = 30 * 24 * time.Hour
+
+	oauthAuthorizationMetadataPath = "/.well-known/oauth-authorization-server"
+	oauthProtectedResourcePath     = "/.well-known/oauth-protected-resource"
 )
 
 func (s *Server) registerOAuthRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/.well-known/oauth-authorization-server", s.oauthAuthorizationMetadata)
-	mux.HandleFunc("/.well-known/oauth-protected-resource", s.oauthProtectedResourceMetadata)
+	mux.HandleFunc(oauthAuthorizationMetadataPath, s.oauthAuthorizationMetadata)
+	mux.HandleFunc(oauthProtectedResourcePath, s.oauthProtectedResourceMetadata)
 	mux.HandleFunc("/oauth/authorize", s.auth(s.oauthAuthorize, model.RoleViewer))
 	mux.HandleFunc("/oauth/token", s.oauthToken)
 	mux.HandleFunc("/oauth/revoke", s.oauthRevoke)
@@ -52,6 +55,42 @@ func (s *Server) oauthAuthorizationMetadata(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"issuer": base, "authorization_endpoint": base + "/oauth/authorize", "token_endpoint": base + "/oauth/token", "revocation_endpoint": base + "/oauth/revoke", "registration_endpoint": base + "/oauth/register", "response_types_supported": []string{"code"}, "grant_types_supported": []string{"authorization_code", "refresh_token"}, "code_challenge_methods_supported": []string{"S256"}, "token_endpoint_auth_methods_supported": []string{"none"}, "scopes_supported": s.allCapabilityScopes(), "resource": base + "/mcp"})
+}
+
+func oauthAuthorizationMetadataURL(base string) string {
+	return oauthWellKnownURL(base, oauthAuthorizationMetadataPath, "")
+}
+
+func oauthProtectedResourceMetadataURL(base string) string {
+	return oauthWellKnownURL(base, oauthProtectedResourcePath, "/mcp")
+}
+
+func oauthWellKnownURL(base, prefix, suffix string) string {
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	basePath := strings.TrimRight(parsed.Path, "/")
+	parsed.Path = prefix + basePath + suffix
+	parsed.RawPath = ""
+	return parsed.String()
+}
+
+func (s *Server) matchOAuthWellKnownPath(requestPath string) (string, string, bool) {
+	state := s.basePathState()
+	basePaths := []string{state.Current}
+	if state.MigrationVersion > 0 && state.Previous != state.Current {
+		basePaths = append(basePaths, state.Previous)
+	}
+	for _, basePath := range basePaths {
+		if requestPath == oauthAuthorizationMetadataPath+basePath {
+			return basePath, oauthAuthorizationMetadataPath, true
+		}
+		if requestPath == oauthProtectedResourcePath+basePath+"/mcp" {
+			return basePath, oauthProtectedResourcePath, true
+		}
+	}
+	return "", "", false
 }
 
 func (s *Server) oauthProtectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
@@ -232,7 +271,7 @@ func (s *Server) writeMCPAuthenticationRequired(w http.ResponseWriter, r *http.R
 		v2Error(w, r, http.StatusServiceUnavailable, "oauth_metadata_unavailable", err.Error())
 		return
 	}
-	challenge := "Bearer resource_metadata=" + strconv.Quote(base+"/.well-known/oauth-protected-resource")
+	challenge := "Bearer resource_metadata=" + strconv.Quote(oauthProtectedResourceMetadataURL(base))
 	code, message := "unauthorized", "需要 OAuth 登录或 Service Account Token"
 	if invalidToken {
 		challenge += `, error="invalid_token", error_description="The access token is invalid or expired"`

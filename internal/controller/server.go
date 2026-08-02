@@ -364,6 +364,16 @@ func (s *Server) withBasePath(next http.Handler) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		if matched, target, ok := s.matchOAuthWellKnownPath(r.URL.Path); ok {
+			request := r.Clone(r.Context())
+			request.URL = new(url.URL)
+			*request.URL = *r.URL
+			request.URL.Path = target
+			request.URL.RawPath = ""
+			request = request.WithContext(context.WithValue(request.Context(), requestBasePathContextKey{}, matched))
+			next.ServeHTTP(w, request)
+			return
+		}
 		matched, ok := s.matchBasePath(r.URL.Path)
 		if !ok {
 			http.NotFound(w, r)

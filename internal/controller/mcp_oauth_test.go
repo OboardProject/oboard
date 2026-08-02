@@ -88,9 +88,59 @@ func TestMCPAuthenticationChallengeUsesConfiguredBasePath(t *testing.T) {
 		if response.Code != http.StatusUnauthorized {
 			t.Fatalf("authorization=%q status=%d body=%s", authorization, response.Code, response.Body.String())
 		}
-		want := `resource_metadata="https://panel.example.com/hidden/.well-known/oauth-protected-resource"`
+		want := `resource_metadata="https://panel.example.com/.well-known/oauth-protected-resource/hidden/mcp"`
 		if challenge := response.Header().Get("WWW-Authenticate"); !strings.Contains(challenge, want) {
 			t.Fatalf("authorization=%q challenge=%q, want %q", authorization, challenge, want)
+		}
+	}
+}
+
+func TestOAuthWellKnownMetadataUsesRFCPathsWithBasePath(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com/hidden"); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(db, "test-secret", "", "/hidden", nil).Handler()
+
+	authorization := httptest.NewRecorder()
+	handler.ServeHTTP(authorization, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server/hidden", nil))
+	if authorization.Code != http.StatusOK {
+		t.Fatalf("authorization metadata status=%d body=%s", authorization.Code, authorization.Body.String())
+	}
+	var authorizationMetadata map[string]any
+	if err := json.Unmarshal(authorization.Body.Bytes(), &authorizationMetadata); err != nil {
+		t.Fatal(err)
+	}
+	if authorizationMetadata["issuer"] != "https://panel.example.com/hidden" {
+		t.Fatalf("authorization metadata=%#v", authorizationMetadata)
+	}
+
+	resource := httptest.NewRecorder()
+	handler.ServeHTTP(resource, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource/hidden/mcp", nil))
+	if resource.Code != http.StatusOK {
+		t.Fatalf("protected resource metadata status=%d body=%s", resource.Code, resource.Body.String())
+	}
+	var resourceMetadata map[string]any
+	if err := json.Unmarshal(resource.Body.Bytes(), &resourceMetadata); err != nil {
+		t.Fatal(err)
+	}
+	if resourceMetadata["resource"] != "https://panel.example.com/hidden/mcp" {
+		t.Fatalf("protected resource metadata=%#v", resourceMetadata)
+	}
+
+	for _, path := range []string{
+		"/.well-known/oauth-authorization-server/hidden/extra",
+		"/.well-known/oauth-protected-resource/hidden",
+		"/healthz",
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("outside base path %s status=%d, want 404", path, response.Code)
 		}
 	}
 }

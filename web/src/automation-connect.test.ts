@@ -40,6 +40,13 @@ describe('automation MCP connection artifacts', () => {
     expect(claude.config).toContain('Bearer ${OBOARD_MCP_TOKEN}')
   })
 
+  it('uses RFC well-known locations when the controller has a base path', () => {
+    const generic = automationConnectArtifacts('generic', 'oauth', 'https://panel.example.com/qzq')
+    expect(generic.config).toContain('https://panel.example.com/.well-known/oauth-protected-resource/qzq/mcp')
+    expect(generic.config).toContain('https://panel.example.com/.well-known/oauth-authorization-server/qzq')
+    expect(generic.config).not.toContain('/qzq/.well-known/')
+  })
+
   it('keeps the one-time token only in separate environment commands', () => {
     const token = "obk_super-secret-token'quoted"
     const commands = serviceTokenEnvironmentCommands(token)
