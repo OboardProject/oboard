@@ -45,6 +45,64 @@ func TestProtocolAdaptersGenerateSingBoxBlocks(t *testing.T) {
 	}
 }
 
+func TestEffectiveListenIP(t *testing.T) {
+	cases := []struct {
+		name   string
+		server model.Server
+		stored string
+		want   string
+	}{
+		{name: "dual-stack auto", server: model.Server{PublicIPv4: "203.0.113.10", PublicIPv6: "2001:db8::10"}, stored: "0.0.0.0", want: "::"},
+		{name: "ipv6-only", server: model.Server{PublicIPv6: "2001:db8::10"}, stored: "0.0.0.0", want: "::"},
+		{name: "ipv4-only", server: model.Server{PublicIPv4: "203.0.113.10"}, stored: "0.0.0.0", want: "0.0.0.0"},
+		{name: "unknown addresses", server: model.Server{}, stored: "0.0.0.0", want: "0.0.0.0"},
+		{name: "empty stored", server: model.Server{PublicIPv6: "2001:db8::10"}, stored: "", want: "::"},
+		{name: "explicit ipv6 wildcard", server: model.Server{PublicIPv4: "203.0.113.10"}, stored: "::", want: "::"},
+		{name: "specific address preserved", server: model.Server{PublicIPv6: "2001:db8::10"}, stored: "127.0.0.1", want: "127.0.0.1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := EffectiveListenIP(tc.server, tc.stored); got != tc.want {
+				t.Fatalf("EffectiveListenIP(%+v, %q) = %q, want %q", tc.server, tc.stored, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGeneratedInboundListenFollowsDetectedFamilies(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		server model.Server
+		want   string
+	}{
+		{name: "dual-stack", server: model.Server{ID: 1, Name: "dual", PublicIPv4: "203.0.113.10", PublicIPv6: "2001:db8::10", ListenIP: "0.0.0.0"}, want: "::"},
+		{name: "ipv6-only", server: model.Server{ID: 2, Name: "v6", PublicIPv6: "2001:db8::11", ListenIP: "0.0.0.0"}, want: "::"},
+		{name: "ipv4-only", server: model.Server{ID: 3, Name: "v4", PublicIPv4: "203.0.113.11", ListenIP: "0.0.0.0"}, want: "0.0.0.0"},
+		{name: "explicit specific listen", server: model.Server{ID: 4, Name: "explicit", PublicIPv6: "2001:db8::12", ListenIP: "0.0.0.0"}, want: "127.0.0.1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			listenIP := tc.server.ListenIP
+			if tc.want == "127.0.0.1" {
+				listenIP = "127.0.0.1"
+			}
+			inbound := model.Inbound{ID: 10, ServerID: tc.server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: listenIP, Port: 443, ConfigJSON: `{}`, Enabled: true}
+			config, err := GenerateServerConfigWithOptions(tc.server, []model.Inbound{inbound}, nil, testDNSState(tc.server.ID), []model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111"}}, ConfigOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var parsed struct {
+				Inbounds []map[string]any `json:"inbounds"`
+			}
+			if err := json.Unmarshal([]byte(config), &parsed); err != nil {
+				t.Fatal(err)
+			}
+			if len(parsed.Inbounds) != 1 || parsed.Inbounds[0]["listen"] != tc.want {
+				t.Fatalf("generated inbounds = %#v, want listen %q", parsed.Inbounds, tc.want)
+			}
+		})
+	}
+}
+
 func TestConnectionAuditMetadataIsOnlyEmittedWhenEnabled(t *testing.T) {
 	disabled, err := GenerateServerConfigWithOptions(model.Server{ID: 1, Name: "edge"}, nil, nil, nil, nil, ConfigOptions{})
 	if err != nil {

@@ -374,6 +374,45 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	}
 }
 
+func TestSSHInboundPlanListenFollowsDetectedFamilies(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		server model.Server
+		want   string
+	}{
+		{name: "dual-stack", server: model.Server{Name: "ssh-dual", ListenIP: "0.0.0.0", PublicIPv4: "203.0.113.20", PublicIPv6: "2001:db8::20", PortRangeStart: 20000, PortRangeEnd: 20100, Status: model.ServerOnline}, want: "::"},
+		{name: "ipv4-only", server: model.Server{Name: "ssh-v4", ListenIP: "0.0.0.0", PublicIPv4: "203.0.113.21", PortRangeStart: 20000, PortRangeEnd: 20100, Status: model.ServerOnline}, want: "0.0.0.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := tc.server
+			if err := db.CreateServer(ctx, &server); err != nil {
+				t.Fatal(err)
+			}
+			inbound := &model.Inbound{ServerID: server.ID, Name: "ssh proxy", Protocol: model.ProtocolSSH, ListenIP: "0.0.0.0", Port: 2222, EntryIPMode: model.EntryIPModeAuto, ConfigJSON: `{"exposure_confirmed":true,"exposure_confirmation_version":"ssh-inbound-v1","access_mode":"restricted_proxy"}`, Enabled: true}
+			if err := db.CreateInbound(ctx, inbound); err != nil {
+				t.Fatal(err)
+			}
+			data, err := db.FullRoutingConfigData(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := buildSSHInboundPlan(2, server, data, effectiveInboundUsersForRouting(data), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(plan.Inbounds) != 1 || plan.Inbounds[0].ListenIP != tc.want {
+				t.Fatalf("SSH inbound plan = %#v, want listen %q", plan.Inbounds, tc.want)
+			}
+		})
+	}
+}
+
 func TestApplyDeploymentSSHStatePersistsOnlyValidatedTaskCredentials(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

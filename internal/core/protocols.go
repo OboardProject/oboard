@@ -305,6 +305,22 @@ func ValidateListenIP(ip string) error {
 	return nil
 }
 
+// EffectiveListenIP returns the address a server's sing-box listeners bind to.
+// A stored empty or "0.0.0.0" value means "auto": when the server has a public
+// IPv6 address, "::" is used because a wildcard IPv6 socket is dual stack on
+// Linux and serves both families from one port; otherwise "0.0.0.0" keeps
+// IPv4-only hosts working. Explicit "::" or specific addresses are preserved.
+func EffectiveListenIP(server model.Server, stored string) string {
+	value := strings.TrimSpace(stored)
+	if value != "" && value != "0.0.0.0" {
+		return value
+	}
+	if ip := net.ParseIP(strings.TrimSpace(server.PublicIPv6)); ip != nil && ip.To4() == nil {
+		return "::"
+	}
+	return "0.0.0.0"
+}
+
 // ValidateSafeHost accepts an IP or DNS hostname suitable for network probes
 // (ping/curl/ssh endpoint). It rejects option-like values and userinfo forms.
 func ValidateSafeHost(host string) error {
@@ -519,6 +535,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		if err != nil {
 			return "", err
 		}
+		item["listen"] = EffectiveListenIP(server, inbound.ListenIP)
 		applyServerNetworkPolicy(item, server, inbound.Protocol, true)
 		config.Inbounds = append(config.Inbounds, item)
 	}
@@ -842,6 +859,7 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 			return nil, err
 		}
 		item["tag"] = service.Tag
+		item["listen"] = EffectiveListenIP(server, service.Inbound.ListenIP)
 		applyServerNetworkPolicy(item, server, service.Inbound.Protocol, true)
 		out = append(out, item)
 	}
@@ -948,6 +966,7 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 				return nil, err
 			}
 			item["tag"] = key
+			item["listen"] = EffectiveListenIP(server, processingInbound.ListenIP)
 			applyServerNetworkPolicy(item, server, processingInbound.Protocol, true)
 			addRuntimeLimitsForInboundTag(config, root, processingUsers, opts, key)
 			entryServer, ok := serverByID[root.ServerID]
@@ -974,7 +993,7 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 				PathID:              receiverPathID,
 				InboundTag:          key,
 				Network:             string(transparentForwardProtocol(root)),
-				Listen:              firstNonEmpty(outerInbound.ListenIP, server.ListenIP, "0.0.0.0"),
+				Listen:              EffectiveListenIP(server, firstNonEmpty(outerInbound.ListenIP, server.ListenIP)),
 				ListenPort:          outerInbound.Port,
 				Target:              "127.0.0.1",
 				TargetPort:          processingInbound.Port,
@@ -1233,7 +1252,7 @@ func proxyPathInternalInbound(path model.ProxyPath, step model.ProxyPathStep, se
 		}
 		return proxyPathInternalPort(server, path.ID, step.Position, inboundByID)
 	})
-	listenIP := firstNonEmpty(server.ListenIP, "0.0.0.0")
+	listenIP := EffectiveListenIP(server, server.ListenIP)
 	if managedSSH {
 		listenIP = "127.0.0.1"
 	}
@@ -1253,7 +1272,7 @@ func proxyPathSharedTransparentInbound(inboundID int64, step model.ProxyPathStep
 	port := ledger.resolve(model.ProxyPathPortKindInternal, scopeKey, server.ID, func() int {
 		return proxyPathInternalPort(server, inboundID, step.Position, inboundByID)
 	})
-	return model.Inbound{ID: proxyPathSharedTransparentInboundID(inboundID, step.Position), ServerID: server.ID, Name: fmt.Sprintf("入口 %d / 透明第%d跳内部入口", inboundID, step.Position), Protocol: model.ProtocolVLESS, ListenIP: firstNonEmpty(server.ListenIP, "0.0.0.0"), Port: port, ConfigJSON: `{}`, Enabled: true}
+	return model.Inbound{ID: proxyPathSharedTransparentInboundID(inboundID, step.Position), ServerID: server.ID, Name: fmt.Sprintf("入口 %d / 透明第%d跳内部入口", inboundID, step.Position), Protocol: model.ProtocolVLESS, ListenIP: EffectiveListenIP(server, server.ListenIP), Port: port, ConfigJSON: `{}`, Enabled: true}
 }
 
 func proxyPathTrustedInnerInbound(path model.ProxyPath, step model.ProxyPathStep, server model.Server, outer model.Inbound, inboundByID map[int64]model.Inbound, ledger *ProxyPathPortLedger) model.Inbound {

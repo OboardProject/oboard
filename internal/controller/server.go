@@ -9435,7 +9435,7 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 		if strings.TrimSpace(address) == "" {
 			return model.SSHInboundPlan{}, fmt.Errorf("SSH 入口 %s 缺少可用的连接地址", inbound.Name)
 		}
-		entry := model.SSHInbound{InboundID: inbound.ID, ServerID: server.ID, Name: inbound.Name, ListenIP: inbound.ListenIP, Address: address, Username: "oboard", Port: inbound.Port, Enabled: true, Users: []model.SSHInboundUser{}, Policies: map[string]model.TrafficRuntimePolicy{}}
+		entry := model.SSHInbound{InboundID: inbound.ID, ServerID: server.ID, Name: inbound.Name, ListenIP: core.EffectiveListenIP(server, inbound.ListenIP), Address: address, Username: "oboard", Port: inbound.Port, Enabled: true, Users: []model.SSHInboundUser{}, Policies: map[string]model.TrafficRuntimePolicy{}}
 		seen := map[int64]bool{}
 		for _, userID := range bound[inbound.ID] {
 			if seen[userID] {
