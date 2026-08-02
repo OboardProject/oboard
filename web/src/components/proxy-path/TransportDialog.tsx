@@ -105,6 +105,7 @@ export function TransportDialog({
 }) {
   const existing = useMemo(() => parseConfig(current), [current])
   const reuseEnabled = Boolean(target.targetServerID && target.sources?.length && !target.importedOnly && !target.editing)
+  const previewAvailable = Boolean(onPreview)
   const initialProtocol = generatedProtocol(existing.chain_protocol)
   const [mode, setMode] = useState<TransportMode>(() => target.importedOnly ? 'singbox' : currentMode || 'singbox')
   const [targetKind, setTargetKind] = useState<'generated' | 'existing'>(() => target.targetInboundID ? 'existing' : 'generated')
@@ -125,6 +126,8 @@ export function TransportDialog({
   const [previewLoading, setPreviewLoading] = useState(reuseEnabled)
   const [previewError, setPreviewError] = useState('')
   const [saving, setSaving] = useState(false)
+  const previewHandlerRef = React.useRef(onPreview)
+  previewHandlerRef.current = onPreview
 
   const sshPortValue = Number(sshPort)
   const keepaliveValue = Number(keepalive)
@@ -156,12 +159,18 @@ export function TransportDialog({
   }, [reuseEnabled, target.targetServerID, target.sources, targetKind, targetInboundID, chainProtocol, chainMethod, realityServer, realityPortValue, mode, tunnelKind, sshPortValue, keepaliveValue, copyMode, branchPathID])
 
   useEffect(() => {
-    if (!reuseRequest || !onPreview || sshPortInvalid || keepaliveInvalid || realityInvalid || branchInvalid) return
+    if (!reuseRequest || !previewAvailable || !previewHandlerRef.current || sshPortInvalid || keepaliveInvalid || realityInvalid || branchInvalid) {
+      setPreview(null)
+      setPreviewLoading(false)
+      setPreviewError('')
+      return
+    }
     let active = true
+    const runPreview = previewHandlerRef.current
     setPreviewLoading(true)
     setPreviewError('')
     const timer = window.setTimeout(() => {
-      void onPreview(reuseRequest).then(result => {
+      void runPreview(reuseRequest).then(result => {
         if (!active) return
         setPreview(result)
         setPreviewError(result.error || '')
@@ -177,7 +186,7 @@ export function TransportDialog({
       active = false
       window.clearTimeout(timer)
     }
-  }, [reuseRequest, onPreview, sshPortInvalid, keepaliveInvalid, realityInvalid, branchInvalid])
+  }, [reuseRequest, previewAvailable, sshPortInvalid, keepaliveInvalid, realityInvalid, branchInvalid])
 
   const targetOptions = preview?.target_options || target.staticTargetOptions || []
   const generatedOptions = targetOptions.filter(option => option.kind === 'generated')
@@ -267,7 +276,13 @@ export function TransportDialog({
           {copyMode === 'all' && branchOptions.some(branch => !branch.eligible) && <div className="transport-invalid-branches">{branchOptions.filter(branch => !branch.eligible).map(branch => <span key={branch.path_id}><strong>{branch.name}</strong>{branch.reason || '无法复制'}</span>)}</div>}
         </section>}
 
-        <div className="transport-preview"><span>本次变更</span><strong>{describeSelection(target, mode, selectedTarget, tunnelKind, sshPortValue, preview)}</strong>{previewLoading && <small className="muted">正在检查拓扑...</small>}{previewError && <small className="transport-field-error">{previewError}</small>}</div>
+        <div className="transport-preview">
+          <span>本次变更</span>
+          <strong>{describeSelection(target, mode, selectedTarget, tunnelKind, sshPortValue, preview)}</strong>
+          {reuseEnabled && <div className="transport-preview-status" aria-live="polite">
+            {previewLoading ? <small className="muted">正在检查拓扑...</small> : previewError ? <small className="transport-field-error">{previewError}</small> : preview?.valid ? <small className="muted">拓扑检查通过</small> : null}
+          </div>}
+        </div>
       </div>
       <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" onClick={() => void submit()} disabled={saving || blocked}>{saving ? '保存中...' : '确定'}</button></footer>
     </MotionDialogPanel>

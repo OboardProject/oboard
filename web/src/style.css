@@ -3349,6 +3349,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .transport-preview span { color: var(--muted); font-size: 11px; font-weight: 700; }
 .transport-preview strong { min-width: 0; color: var(--text-strong); font-size: 13.5px; overflow-wrap: anywhere; }
 .transport-preview small { font-size: 10.5px; overflow-wrap: anywhere; }
+.transport-preview-status { display: flex; align-items: center; min-height: 16px; }
 
 @media (max-width: 620px) {
   .transport-mode-options,
