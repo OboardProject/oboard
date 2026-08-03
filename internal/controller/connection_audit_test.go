@@ -140,7 +140,7 @@ func TestAgentConnectionReportsAcknowledgeStaleItemsWithoutBlockingValidReports(
 	if !accepted["valid-report"] || !accepted["stale-report"] {
 		t.Fatalf("accepted report IDs = %#v", response.Accepted)
 	}
-	overview, err := db.ConnectionAuditOverview(ctx, 24)
+	overview, err := db.ConnectionAuditOverview(ctx, 24, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,6 +194,64 @@ func TestAgentConnectionReportsRejectCrossServerInbound(t *testing.T) {
 	newTestServer(db, "test-secret", "").Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("cross-server report status = %d, want 403: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAgentConnectionReportsRejectedWhenGlobalAuditDisabled(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{
+		Name: "audit-node", AgentID: "audit-agent", AgentTokenHash: security.HashSecret("audit-token"),
+		ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true,
+	}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSetting(ctx, settingConnectionAuditEnabled, "false"); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: "{}", Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "audit-off-user", PasswordHash: "unused", Role: model.RoleViewer, Status: "active", ProxyUUID: "44444444-4444-4444-8444-444444444444", ProxyPassword: "audit-off-password"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: inbound.ID, UserID: user.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	nowTime := time.Now().UTC()
+	body, err := json.Marshal(map[string]any{"items": []map[string]any{{
+		"report_id": "gated-report", "user_id": user.ID, "inbound_id": inbound.ID,
+		"source_ip": "198.51.100.9", "network": "tcp", "destination": "example.com", "destination_port": 443,
+		"connection_count": 1, "active_peak": 1, "active_at_end": 0,
+		"closed_count": 1, "duration_total_ms": 250, "duration_max_ms": 250,
+		"bucket_capacity": 4096, "collection_started_at": nowTime.Add(-time.Minute).Format(time.RFC3339Nano), "collection_ended_at": nowTime.Format(time.RFC3339Nano),
+		"started_at": nowTime.Add(-time.Second).Format(time.RFC3339Nano), "ended_at": nowTime.Format(time.RFC3339Nano),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/connection-reports", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Agent-ID", server.AgentID)
+	req.Header.Set("Authorization", "Bearer audit-token")
+	rr := httptest.NewRecorder()
+	newTestServer(db, "test-secret", "").Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("connection report status = %d, want 409: %s", rr.Code, rr.Body.String())
+	}
+	overview, err := db.ConnectionAuditOverview(ctx, 24, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.EnabledServerCount != 0 || overview.ReportingUserCount != 0 {
+		t.Fatalf("gated reports leaked into the overview: %#v", overview)
 	}
 }
 

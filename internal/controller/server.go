@@ -52,6 +52,10 @@ const (
 	settingServerDefaultBBREnabled        = "server_default_bbr_enabled"
 	settingServerDefaultTimeCorrection    = "server_default_time_correction_mode"
 	settingTimeCheckNTPServers            = "time_check_ntp_servers"
+	settingAuditEnabled                   = "audit_enabled"
+	settingSubscriptionAuditEnabled       = "subscription_audit_enabled"
+	settingConnectionAuditEnabled         = "connection_audit_enabled"
+	settingAuditAction                    = "audit_action"
 	settingSubscriptionAuditPolicy        = "subscription_audit_policy"
 	settingTrustedProxyCIDRs              = "trusted_proxy_cidrs"
 	settingNotificationServerOfflineAfter = "notification_server_offline_after_seconds"
@@ -669,6 +673,10 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			CertificateAutoIssueEAB     *int64                         `json:"certificate_auto_issue_google_eab_credential_id"`
 			SubscriptionAgePolicy       *string                        `json:"subscription_age_policy"`
 			SubscriptionAuditPolicy     *model.SubscriptionAuditPolicy `json:"subscription_audit_policy"`
+			AuditEnabled                *bool                          `json:"audit_enabled"`
+			SubscriptionAuditEnabled    *bool                          `json:"subscription_audit_enabled"`
+			ConnectionAuditEnabled      *bool                          `json:"connection_audit_enabled"`
+			AuditAction                 *string                        `json:"audit_action"`
 			TrafficTimezone             *string                        `json:"traffic_timezone"`
 			TrafficEnforcementMode      *string                        `json:"traffic_enforcement_mode"`
 			ControllerLogMaxMB          *int                           `json:"controller_log_max_mb"`
@@ -811,6 +819,39 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			changed = append(changed, settingSubscriptionAuditPolicy)
+		}
+		if req.AuditEnabled != nil {
+			if err := s.store.SetSetting(r.Context(), settingAuditEnabled, strconv.FormatBool(*req.AuditEnabled)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingAuditEnabled)
+		}
+		if req.SubscriptionAuditEnabled != nil {
+			if err := s.store.SetSetting(r.Context(), settingSubscriptionAuditEnabled, strconv.FormatBool(*req.SubscriptionAuditEnabled)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingSubscriptionAuditEnabled)
+		}
+		if req.ConnectionAuditEnabled != nil {
+			if err := s.store.SetSetting(r.Context(), settingConnectionAuditEnabled, strconv.FormatBool(*req.ConnectionAuditEnabled)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingConnectionAuditEnabled)
+		}
+		if req.AuditAction != nil {
+			action := strings.ToLower(strings.TrimSpace(*req.AuditAction))
+			if action != string(model.AuditActionRestrict) && action != string(model.AuditActionWarn) {
+				fail(w, errors.New("audit_action must be restrict or warn"), http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), settingAuditAction, action); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingAuditAction)
 		}
 		if req.TrafficTimezone != nil {
 			tz := strings.TrimSpace(*req.TrafficTimezone)
@@ -995,7 +1036,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAuditPolicy: store.DefaultSubscriptionAuditPolicy(), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAuditPolicy: store.DefaultSubscriptionAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	for key, value := range items {
 		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingSubscriptionAuditPolicy || key == settingTrustedProxyCIDRs {
 			continue
@@ -1614,7 +1655,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			var overview model.ConnectionAuditOverview
-			overview, err = s.store.ConnectionAuditOverview(ctx, 24)
+			overview, err = s.store.ConnectionAuditOverview(ctx, 24, s.connectionAuditEnabled(ctx))
 			if err == nil {
 				out["connection_audit"] = map[string]any{
 					"window_hours":        overview.WindowHours,
@@ -10219,7 +10260,11 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	event := s.newSubscriptionPullAudit(r, user.ID, string(format), requestedProfileID, ageEncrypted)
-	decision, err := s.store.AuthorizeSubscriptionPull(r.Context(), user.ID, token, event, s.subscriptionAuditPolicy(r.Context()))
+	auditState := s.auditSettingsState(r.Context())
+	decision, err := s.store.AuthorizeSubscriptionPull(r.Context(), user.ID, token, event, s.subscriptionAuditPolicy(r.Context()), store.SubscriptionAuditOptions{
+		AuditEnabled: auditState.Enabled && auditState.Subscription,
+		Action:       auditState.Action,
+	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			fail(w, errors.New("invalid subscription link"), 404)
@@ -10228,10 +10273,14 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	s.notifySubscriptionAuditRisk(r.Context(), *user, decision)
-	s.publishRealtime("audit", "subscriptions", "users")
+	if auditState.Enabled && auditState.Subscription {
+		s.notifySubscriptionAuditRisk(r.Context(), *user, decision)
+		s.publishRealtime("audit", "subscriptions", "users")
+	}
 	if !decision.Allowed {
-		s.maybeNotifySubscriptionAbnormal(r.Context(), user.ID)
+		if auditState.Enabled && auditState.Subscription {
+			s.maybeNotifySubscriptionAbnormal(r.Context(), user.ID)
+		}
 		fail(w, errors.New("subscription access suspended; contact an administrator"), http.StatusForbidden)
 		return
 	}
@@ -10329,7 +10378,7 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{Action: "agent_enroll", Target: "server", Detail: server.Name, IP: clientIP(r)})
 	log.Printf("agent enrolled server=%d(%s) agent_id=%s remote=%s", server.ID, safeLogField(server.Name), safeLogField(agentID), safeLogField(clientIP(r)))
-	write(w, 200, model.AgentEnrollResponse{ServerID: server.ID, AgentID: agentID, AgentToken: agentToken, ConnectionAuditEnabled: server.ConnectionAuditEnabled})
+	write(w, 200, model.AgentEnrollResponse{ServerID: server.ID, AgentID: agentID, AgentToken: agentToken, ConnectionAuditEnabled: s.effectiveConnectionAuditEnabled(r.Context(), server)})
 }
 
 func applyDetectedEntryIPs(server *model.Server, health model.HealthReport, remote string) {
@@ -10388,7 +10437,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	}()
 	mode, _ := serverMonitoringPolicy(server)
 	var heartbeatInterval time.Duration
-	_ = conn.WriteJSON(map[string]any{"type": "hello", "ts": time.Now().UTC(), "server_id": server.ID, "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connection_audit_enabled": server.ConnectionAuditEnabled})
+	_ = conn.WriteJSON(map[string]any{"type": "hello", "ts": time.Now().UTC(), "server_id": server.ID, "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connection_audit_enabled": s.effectiveConnectionAuditEnabled(r.Context(), server)})
 	_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
 	var initial map[string]json.RawMessage
 	if err := conn.ReadJSON(&initial); err == nil {
@@ -10435,7 +10484,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 				return
 			case <-time.After(heartbeatInterval):
 			}
-			_ = conn.WriteJSON(map[string]any{"type": "heartbeat", "ts": time.Now().UTC(), "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connection_audit_enabled": server.ConnectionAuditEnabled})
+			_ = conn.WriteJSON(map[string]any{"type": "heartbeat", "ts": time.Now().UTC(), "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connection_audit_enabled": s.effectiveConnectionAuditEnabled(r.Context(), server)})
 		}
 		var msg map[string]json.RawMessage
 		_ = conn.SetReadDeadline(time.Now().Add(readDeadline))

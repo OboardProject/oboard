@@ -61,7 +61,7 @@ func (s *Store) AddConnectionAuditReports(ctx context.Context, reports []model.C
 	return accepted, nil
 }
 
-func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int) (model.ConnectionAuditOverview, error) {
+func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, connectionAuditEnabled bool) (model.ConnectionAuditOverview, error) {
 	if windowHours < 1 {
 		windowHours = 24
 	}
@@ -73,6 +73,9 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int) (m
 	overview := model.ConnectionAuditOverview{WindowHours: windowHours, RiskWindowMinutes: int(connectionAuditRiskWindow / time.Minute), GeneratedAt: nowTime, Users: []model.ConnectionAuditUserSummary{}}
 	if err := s.db.QueryRowContext(ctx, `select count(*) from servers where connection_audit_enabled=1`).Scan(&overview.EnabledServerCount); err != nil {
 		return overview, err
+	}
+	if !connectionAuditEnabled {
+		overview.EnabledServerCount = 0
 	}
 	rows, err := s.db.QueryContext(ctx, `select r.user_id,u.username,u.nickname,count(distinct r.source_ip),count(distinct r.server_id),coalesce(sum(r.connection_count),0),coalesce(max(r.active_peak),0),count(*),max(r.ended_at)
 		from connection_audit_reports r join users u on u.id=r.user_id where r.ended_at>=? group by r.user_id,u.username,u.nickname`, since)
@@ -178,7 +181,7 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int) (m
 }
 
 func (s *Store) ConnectionAuditUserDetail(ctx context.Context, userID int64, windowHours int) (model.ConnectionAuditUserDetail, error) {
-	overview, err := s.ConnectionAuditOverview(ctx, windowHours)
+	overview, err := s.ConnectionAuditOverview(ctx, windowHours, true)
 	if err != nil {
 		return model.ConnectionAuditUserDetail{}, err
 	}

@@ -2629,6 +2629,10 @@ function subscriptionAuditPolicyValue(value: any): SubscriptionAuditPolicy {
   return cloneSubscriptionAuditPolicy(value as SubscriptionAuditPolicy)
 }
 
+function settingEnabled(value: any, fallback = true): boolean {
+  return String(value ?? fallback) !== 'false'
+}
+
 function subscriptionAuditPreset(value: SubscriptionAuditPolicy): 'sensitive' | 'balanced' | 'relaxed' | 'custom' {
   const encoded = JSON.stringify(value)
   for (const [key, preset] of Object.entries(subscriptionAuditPresets)) {
@@ -3177,7 +3181,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
         <form id="ai-provider-form" className="form automation-dialog-form" onSubmit={saveProvider}>
           <FormField label="名称" required><input autoFocus required value={providerDraft.name} onChange={event => setProviderDraft({ ...providerDraft, name: event.target.value })} placeholder="例如：OpenAI" /></FormField>
           <FormField label="OpenAI 兼容 API Base URL" required hint="填写版本根端点，例如 https://api.openai.com/v1；系统会在其后请求 /models 以及所选 API 的调用端点。"><input required value={providerDraft.baseURL} onChange={event => { setProviderDraft({ ...providerDraft, baseURL: event.target.value }); clearProviderModels() }} /></FormField>
-          <FormField label="API 格式" hint="兼容层/中转一般选择 Chat Completions；OpenAI 原生 Responses API 选择 Responses。"><Select value={providerDraft.apiFormat} onChange={event => { setProviderDraft({ ...providerDraft, apiFormat: event.target.value as AIProviderFormat }); clearProviderModels() }}><option value="chat_completions">Chat Completions（/chat/completions）</option><option value="responses">Responses（/responses）</option></Select></FormField>
+          <FormField label="API 格式" hint="兼容层/中转一般选择 Chat Completions；OpenAI 原生 Responses API 选择 Responses。实际审查默认请求严格 JSON Schema 输出，中转不支持时会自动降级为 json_object，再降级为纯文本提示词。"><Select value={providerDraft.apiFormat} onChange={event => { setProviderDraft({ ...providerDraft, apiFormat: event.target.value as AIProviderFormat }); clearProviderModels() }}><option value="chat_completions">Chat Completions（/chat/completions）</option><option value="responses">Responses（/responses）</option></Select></FormField>
           <FormField label="API Key" required={!editingProviderID} hint={editingProviderID ? '留空保留当前 Key' : undefined}><input required={!editingProviderID} type="password" autoComplete="new-password" value={providerDraft.apiKey} onChange={event => { setProviderDraft({ ...providerDraft, apiKey: event.target.value }); clearProviderModels() }} /></FormField>
           <FormField label="模型" required>
             <div className="ai-provider-model-control">
@@ -3279,7 +3283,7 @@ function AIProviderRawLogDialog({ client, onClose }: { client: ReturnType<typeof
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'servers' | 'certificates' | 'subscriptions' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'servers' | 'certificates' | 'subscriptions' | 'audit' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3293,6 +3297,10 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [subscriptionAgePolicy, setSubscriptionAgePolicy] = useState<'optional' | 'required'>(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional')
   const [subscriptionAuditPolicy, setSubscriptionAuditPolicy] = useState<SubscriptionAuditPolicy>(() => subscriptionAuditPolicyValue(data.settings?.subscription_audit_policy))
   const [subscriptionAuditPresetMode, setSubscriptionAuditPresetMode] = useState<'sensitive' | 'balanced' | 'relaxed' | 'custom'>(() => subscriptionAuditPreset(subscriptionAuditPolicyValue(data.settings?.subscription_audit_policy)))
+  const [auditEnabled, setAuditEnabled] = useState(settingEnabled(data.settings?.audit_enabled))
+  const [subscriptionAuditEnabled, setSubscriptionAuditEnabled] = useState(settingEnabled(data.settings?.subscription_audit_enabled))
+  const [connectionAuditEnabled, setConnectionAuditEnabled] = useState(settingEnabled(data.settings?.connection_audit_enabled))
+  const [auditAction, setAuditAction] = useState<'restrict' | 'warn'>(String(data.settings?.audit_action || 'restrict') === 'warn' ? 'warn' : 'restrict')
   const [trafficTimezone, setTrafficTimezone] = useState(data.settings?.traffic_timezone || 'Asia/Shanghai')
   const [trafficMode, setTrafficMode] = useState(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
   const [controllerLogMaxMB, setControllerLogMaxMB] = useState(Number(data.settings?.controller_log_max_mb || 32))
@@ -3319,6 +3327,12 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     setSubscriptionAuditPolicy(policy)
     setSubscriptionAuditPresetMode(subscriptionAuditPreset(policy))
   }, [data.settings?.subscription_audit_policy])
+  useEffect(() => {
+    setAuditEnabled(settingEnabled(data.settings?.audit_enabled))
+    setSubscriptionAuditEnabled(settingEnabled(data.settings?.subscription_audit_enabled))
+    setConnectionAuditEnabled(settingEnabled(data.settings?.connection_audit_enabled))
+    setAuditAction(String(data.settings?.audit_action || 'restrict') === 'warn' ? 'warn' : 'restrict')
+  }, [data.settings?.audit_enabled, data.settings?.subscription_audit_enabled, data.settings?.connection_audit_enabled, data.settings?.audit_action])
   useEffect(() => {
     setNotificationOfflineAfter(Number(data.settings?.notification_server_offline_after_seconds || 120))
     setNotificationOnlineAfter(Number(data.settings?.notification_server_online_after_seconds || 60))
@@ -3428,6 +3442,16 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: subscriptionAgePolicy, subscription_audit_policy: subscriptionAuditPolicy }) })
     }, '订阅安全策略已保存')
   }
+  const saveAuditSettings = async () => {
+    await runSave('audit', async () => {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({
+        audit_enabled: auditEnabled,
+        subscription_audit_enabled: subscriptionAuditEnabled,
+        connection_audit_enabled: connectionAuditEnabled,
+        audit_action: auditAction,
+      }) })
+    }, '审计设置已保存')
+  }
   const chooseSubscriptionAuditPreset = (value: string) => {
     if (value === 'custom') {
       setSubscriptionAuditPresetMode('custom')
@@ -3473,6 +3497,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       <button className={activeSection === 'servers' ? 'active' : ''} role="tab" aria-selected={activeSection === 'servers'} onClick={() => setActiveSection('servers')}><ServerIcon size={15} />服务器默认值</button>
       <button className={activeSection === 'certificates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'certificates'} onClick={() => setActiveSection('certificates')}><Lock size={15} />证书</button>
       <button className={activeSection === 'subscriptions' ? 'active' : ''} role="tab" aria-selected={activeSection === 'subscriptions'} onClick={() => setActiveSection('subscriptions')}><Shield size={15} />订阅安全</button>
+      <button className={activeSection === 'audit' ? 'active' : ''} role="tab" aria-selected={activeSection === 'audit'} onClick={() => setActiveSection('audit')}><ShieldCheck size={15} />审计</button>
       <button className={activeSection === 'traffic' ? 'active' : ''} role="tab" aria-selected={activeSection === 'traffic'} onClick={() => setActiveSection('traffic')}><Gauge size={15} />流量控制</button>
       <button className={activeSection === 'notifications' ? 'active' : ''} role="tab" aria-selected={activeSection === 'notifications'} onClick={() => setActiveSection('notifications')}><Bell size={15} />通知提醒</button>
       <button className={activeSection === 'backups' ? 'active' : ''} role="tab" aria-selected={activeSection === 'backups'} onClick={() => setActiveSection('backups')}><Database size={15} />数据备份</button>
@@ -3603,7 +3628,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </FormField>
         </div>
         <div className="subscription-audit-settings">
-          <div className="settings-card-head"><div><h3>拉取风控</h3><p className="muted">地域达到阈值后自动暂停，其他阈值用于风险评分与管理员通知。</p></div></div>
+          <div className="settings-card-head"><div><h3>拉取风控</h3><p className="muted">{auditAction === 'warn' ? '风险阈值仅触发管理员通知，不会自动暂停；评估与记录继续。' : '地域达到阈值后自动暂停，其他阈值用于风险评分与管理员通知。'}</p></div></div>
           <div className="form settings-form two-column">
             <FormField label="策略档位" full>
               <Select variant="segmented" value={subscriptionAuditPresetMode} onChange={event => chooseSubscriptionAuditPreset(event.target.value)} aria-label="订阅风控策略档位">
@@ -3618,6 +3643,27 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             </React.Fragment>)}
             <div className="settings-actions"><button onClick={saveSubscriptionSecurity} disabled={Boolean(saving)}>{saving === 'subscription-security' ? '保存中...' : '保存订阅安全策略'}</button></div>
           </div>
+        </div>
+      </section>}
+      {activeSection === 'audit' && <section className="settings-card">
+        <div className="settings-card-head"><div><h3>审计台</h3><p className="muted">统一控制订阅审计与连接审计的采集、风险评估、通知和 Agent 行为。</p></div></div>
+        <div className="form settings-form single-field">
+          <FormField label="总审计开关" hint="关闭后订阅审计与连接审计全部停止：Agent 立即停止采集与上报并清除本地审计状态，风险通知不再发送，历史数据保留可查。">
+            <label className="notification-enable-row"><input type="checkbox" checked={auditEnabled} onChange={event => setAuditEnabled(event.target.checked)} aria-label="启用总审计" /></label>
+          </FormField>
+          <FormField label="订阅审计" hint="关闭后订阅拉取不再记录、评分或触发暂停；已有暂停状态仍保持，需管理员手动恢复。">
+            <label className="notification-enable-row"><input type="checkbox" checked={auditEnabled && subscriptionAuditEnabled} disabled={!auditEnabled} onChange={event => setSubscriptionAuditEnabled(event.target.checked)} aria-label="启用订阅审计" /></label>
+          </FormField>
+          <FormField label="连接审计（全局）" hint="关闭后所有服务器的 Agent 停止采集、上报和本地审计状态写入；仍可在单台服务器上单独控制。">
+            <label className="notification-enable-row"><input type="checkbox" checked={auditEnabled && connectionAuditEnabled} disabled={!auditEnabled} onChange={event => setConnectionAuditEnabled(event.target.checked)} aria-label="启用连接审计" /></label>
+          </FormField>
+          <FormField label="风险阈值处理" hint="主动限制：订阅拉取达到硬阈值时自动暂停并通知管理员；仅警告：不暂停、只发送风险通知，评估与记录继续。">
+            <Select variant="segmented" value={auditAction} onChange={e => setAuditAction(e.target.value as 'restrict' | 'warn')} aria-label="审计风险阈值处理方式">
+              <option value="restrict">主动限制</option>
+              <option value="warn">仅警告</option>
+            </Select>
+          </FormField>
+          <div className="settings-actions"><button onClick={() => void saveAuditSettings()} disabled={Boolean(saving)}>{saving === 'audit' ? '保存中...' : '保存审计设置'}</button></div>
         </div>
       </section>}
       {activeSection === 'traffic' && <section className="settings-card">
@@ -4988,7 +5034,20 @@ function AuditConsole({ data, client, loading, notify }: any) {
   }
   const enabled = Number(connectionOverview?.enabled_server_count || 0)
   const geoAvailable = subscriptionOverview?.geo_database?.available !== false && connectionOverview?.geo_database?.available !== false
+  const auditMasterOff = !settingEnabled(data.settings?.audit_enabled)
+  const auditSubscriptionOff = auditMasterOff || !settingEnabled(data.settings?.subscription_audit_enabled)
+  const auditConnectionOff = auditMasterOff || !settingEnabled(data.settings?.connection_audit_enabled)
+  const auditWarnOnly = !auditMasterOff && String(data.settings?.audit_action || 'restrict') === 'warn'
   return <Panel className="audit-console-panel">
+    {(auditMasterOff || auditSubscriptionOff || auditConnectionOff || auditWarnOnly) && <div className={`audit-console-banner ${auditMasterOff ? 'danger' : 'warning'}`}>
+      <AlertTriangle size={16} />
+      <div>
+        <strong>{auditMasterOff ? '审计台已关闭' : auditWarnOnly ? '风险阈值仅警告，未启用主动限制' : '部分审计已关闭'}</strong>
+        <span>{auditMasterOff
+          ? '订阅审计与连接审计均已停止：Agent 不再采集或上报，风险通知已暂停，历史数据仍可查看。可在 设置 → 审计 中重新开启。'
+          : `${auditSubscriptionOff ? '订阅审计已关闭，拉取不再记录与评分；' : ''}${auditConnectionOff ? '连接审计已关闭，Agent 已停止采集与上报；' : ''}${auditWarnOnly ? '订阅拉取达到硬阈值只发送通知，不会自动暂停。' : ''}`}</span>
+      </div>
+    </div>}
     <div className="audit-console-tabs" role="tablist" aria-label="审计视图">
       <button type="button" role="tab" aria-selected={view === 'combined'} className={view === 'combined' ? 'active' : ''} onClick={() => setView('combined')}><Gauge size={15} />综合风险</button>
       <button type="button" role="tab" aria-selected={view === 'subscriptions'} className={view === 'subscriptions' ? 'active' : ''} onClick={() => setView('subscriptions')}><Download size={15} />订阅风险</button>
@@ -5863,8 +5922,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       : view === 'grid'
 		  ? <MotionList className="server-grid">{servers.map(s => <ServerCard key={s.id} server={s} samples={metricsByServer.get(Number(s.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} onAction={handleServerAction} />)}</MotionList>
       : <MotionList className="server-list">{servers.map(s => <ServerCard key={s.id} server={s} samples={metricsByServer.get(Number(s.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} onAction={handleServerAction} layout="list" />)}</MotionList>}
-    <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} />}</AnimatePresence>
-    <AnimatePresence>{editServer && <ServerEditDialog server={editServer} onCancel={() => setEditServer(null)} onSubmit={updateServer} />}</AnimatePresence>
+    <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
+    <AnimatePresence>{editServer && <ServerEditDialog server={editServer} onCancel={() => setEditServer(null)} onSubmit={updateServer} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} onClose={() => setDetailServer(null)} />}</AnimatePresence>
     <AnimatePresence>{timeDetailServer && <ServerTimeDetailDialog
       server={timeDetailServer}
@@ -6132,7 +6191,7 @@ function CommandCopyBlock({ value, buttonText = '复制命令' }: { value: strin
   </div>
 }
 
-function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: ReturnType<typeof defaultServerDraft>; setDraft: React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>; onCancel: () => void; onSubmit: () => Promise<void> }) {
+function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, connectionAuditGated }: { draft: ReturnType<typeof defaultServerDraft>; setDraft: React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>; onCancel: () => void; onSubmit: () => Promise<void>; connectionAuditGated?: boolean }) {
   const update = (patch: Partial<ReturnType<typeof defaultServerDraft>>) => setDraft(old => ({ ...old, ...patch }))
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
@@ -6203,6 +6262,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: Re
           </FormField>
           <FormField label="连接审计" hint="记录来源 IP、目标与出口摘要。">
             <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.connection_audit_enabled)} onChange={e => update({ connection_audit_enabled: e.target.checked })} aria-label="启用连接审计" /></label>
+            {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
           </FormField>
           <FormField label="离线与恢复提醒" hint="关闭后不再提醒这台服务器的离线与恢复。">
             <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.offline_notify_enabled)} onChange={e => update({ offline_notify_enabled: e.target.checked })} aria-label="启用离线与恢复提醒" /></label>
@@ -6235,7 +6295,7 @@ function serverToDraft(server: Server) {
   }
 }
 
-function ServerEditDialog({ server, onCancel, onSubmit }: { server: Server; onCancel: () => void; onSubmit: (server: any) => Promise<void> }) {
+function ServerEditDialog({ server, onCancel, onSubmit, connectionAuditGated }: { server: Server; onCancel: () => void; onSubmit: (server: any) => Promise<void>; connectionAuditGated?: boolean }) {
   const [draft, setDraft] = useState<any>(() => serverToDraft(server))
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
@@ -6284,6 +6344,7 @@ function ServerEditDialog({ server, onCancel, onSubmit }: { server: Server; onCa
           </FormField>
           <FormField label="连接审计" hint="关闭后 Agent 停止采集、上报和本地审计状态写入。">
             <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.connection_audit_enabled)} onChange={e => update({ connection_audit_enabled: e.target.checked })} aria-label="启用连接审计" /></label>
+            {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
           </FormField>
           <FormField label="离线与恢复提醒" hint="关闭后不再提醒这台服务器的离线与恢复。">
             <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.offline_notify_enabled)} onChange={e => update({ offline_notify_enabled: e.target.checked })} aria-label="启用离线与恢复提醒" /></label>
@@ -8405,7 +8466,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         </aside>}
       </div>
     </div>
-    <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} />}</AnimatePresence>
+    <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{entryDraft && <EntryDraftDialog mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} />}</AnimatePresence>
     <AnimatePresence>{editEntry && <EntryDraftDialog mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} />}</AnimatePresence>
     <AnimatePresence>{accessEntry && <EntryUsersDialog entry={accessEntry} data={data} client={client} load={load} onCancel={() => setAccessEntry(null)} />}</AnimatePresence>

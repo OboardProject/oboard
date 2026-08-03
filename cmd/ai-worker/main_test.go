@@ -403,3 +403,146 @@ func TestRunAITestOnceReportsHTTPErrorWithRedactedRawResponse(t *testing.T) {
 		t.Fatalf("AI test failure raw JSON = %#v", request)
 	}
 }
+
+func validReportJSON(t *testing.T) string {
+	t.Helper()
+	content, err := json.Marshal(map[string]any{
+		"verdict": "normal", "risk_level": "low", "confidence": 0.9, "summary": "ok",
+		"dimensions": []any{}, "notable_subjects": []any{}, "recommended_actions": []string{}, "data_gaps": []string{}, "coverage_summary": "ok",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(content)
+}
+
+func TestAnalyzeFallsBackFromJSONSchemaToJSONObject(t *testing.T) {
+	var mu sync.Mutex
+	var requested []string
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			ResponseFormat map[string]any `json:"response_format"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		format := ""
+		if payload.ResponseFormat != nil {
+			format, _ = payload.ResponseFormat["type"].(string)
+		}
+		mu.Lock()
+		requested = append(requested, format)
+		mu.Unlock()
+		if format == "json_schema" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"This response_format type is unavailable now","type":"invalid_request_error"}}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": validReportJSON(t)}}}, "usage": map[string]int{"prompt_tokens": 100, "completion_tokens": 30}})
+	}))
+	defer modelServer.Close()
+
+	report, inputTokens, outputTokens, err := analyze(context.Background(), &model.AuditReviewJob{Input: json.RawMessage(`{}`)}, &airpc.Provider{BaseURL: modelServer.URL, Model: "m", APIKey: "key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(requested, ",") != "json_schema,json_object" {
+		t.Fatalf("requested response formats = %#v", requested)
+	}
+	if report.Verdict != "normal" || inputTokens != 100 || outputTokens != 30 {
+		t.Fatalf("unexpected report: %#v", report)
+	}
+}
+
+func TestAnalyzeFallsBackToPromptOnlyWhenStructuredOutputUnsupported(t *testing.T) {
+	var mu sync.Mutex
+	var requested []string
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			ResponseFormat map[string]any `json:"response_format"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		format := ""
+		if payload.ResponseFormat != nil {
+			format, _ = payload.ResponseFormat["type"].(string)
+		}
+		mu.Lock()
+		requested = append(requested, format)
+		mu.Unlock()
+		if format != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"json_schema is not supported by this endpoint","type":"invalid_request_error"}}`))
+			return
+		}
+		content := "Sure, here is the review:\n```json\n" + validReportJSON(t) + "\n```\nLet me know if you need more."
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": content}}}, "usage": map[string]int{"prompt_tokens": 90, "completion_tokens": 20}})
+	}))
+	defer modelServer.Close()
+
+	report, inputTokens, outputTokens, err := analyze(context.Background(), &model.AuditReviewJob{Input: json.RawMessage(`{}`)}, &airpc.Provider{BaseURL: modelServer.URL, Model: "m", APIKey: "key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(requested, ",") != "json_schema,json_object," {
+		t.Fatalf("requested response formats = %#v", requested)
+	}
+	if report.Verdict != "normal" || inputTokens != 90 || outputTokens != 20 {
+		t.Fatalf("unexpected report: %#v", report)
+	}
+}
+
+func TestAnalyzeResponsesFormatFallsBackToChatCompletions(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		if r.URL.Path == "/responses" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"responses endpoint is not available"}}`))
+			return
+		}
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": validReportJSON(t)}}}, "usage": map[string]int{"prompt_tokens": 80, "completion_tokens": 15}})
+	}))
+	defer modelServer.Close()
+
+	report, inputTokens, outputTokens, err := analyze(context.Background(), &model.AuditReviewJob{Input: json.RawMessage(`{}`)}, &airpc.Provider{BaseURL: modelServer.URL, Model: "m", APIFormat: "responses", APIKey: "key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(paths, ",") != "/responses,/chat/completions" {
+		t.Fatalf("requested paths = %#v", paths)
+	}
+	if report.Verdict != "normal" || inputTokens != 80 || outputTokens != 15 {
+		t.Fatalf("unexpected report: %#v", report)
+	}
+}
+
+func TestExtractJSONContent(t *testing.T) {
+	raw, err := extractJSONContent(`{"a":1}`)
+	if err != nil || string(raw) != `{"a":1}` {
+		t.Fatalf("plain JSON = %s, %v", raw, err)
+	}
+	raw, err = extractJSONContent("```json\n{\"a\":1}\n```")
+	if err != nil || string(raw) != `{"a":1}` {
+		t.Fatalf("fenced JSON = %s, %v", raw, err)
+	}
+	raw, err = extractJSONContent(`prefix {"a":{"b":2}} suffix`)
+	if err != nil || string(raw) != `{"a":{"b":2}}` {
+		t.Fatalf("embedded JSON = %s, %v", raw, err)
+	}
+	if _, err = extractJSONContent("no json here"); err == nil {
+		t.Fatal("missing JSON was accepted")
+	}
+	if _, err = extractJSONContent(`{"a":`); err == nil {
+		t.Fatal("truncated JSON was accepted")
+	}
+}

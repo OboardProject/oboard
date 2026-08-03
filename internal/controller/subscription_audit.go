@@ -18,6 +18,45 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
+type auditSettingsState struct {
+	Enabled           bool
+	Subscription      bool
+	Connection        bool
+	Action            model.AuditAction
+}
+
+func (s *Server) auditSettingsState(ctx context.Context) auditSettingsState {
+	state := auditSettingsState{Enabled: true, Subscription: true, Connection: true, Action: model.AuditActionRestrict}
+	settings, err := s.store.ListSettings(ctx)
+	if err != nil {
+		return state
+	}
+	state.Enabled = settingBool(settings, settingAuditEnabled, true)
+	state.Subscription = settingBool(settings, settingSubscriptionAuditEnabled, true)
+	state.Connection = settingBool(settings, settingConnectionAuditEnabled, true)
+	switch strings.ToLower(strings.TrimSpace(settings[settingAuditAction])) {
+	case string(model.AuditActionWarn):
+		state.Action = model.AuditActionWarn
+	default:
+		state.Action = model.AuditActionRestrict
+	}
+	return state
+}
+
+func (s *Server) subscriptionAuditEnabled(ctx context.Context) bool {
+	state := s.auditSettingsState(ctx)
+	return state.Enabled && state.Subscription
+}
+
+func (s *Server) connectionAuditEnabled(ctx context.Context) bool {
+	state := s.auditSettingsState(ctx)
+	return state.Enabled && state.Connection
+}
+
+func (s *Server) effectiveConnectionAuditEnabled(ctx context.Context, server *model.Server) bool {
+	return server != nil && server.ConnectionAuditEnabled && s.connectionAuditEnabled(ctx)
+}
+
 func (s *Server) subscriptionAuditPolicy(ctx context.Context) model.SubscriptionAuditPolicy {
 	policy := store.DefaultSubscriptionAuditPolicy()
 	settings, err := s.store.ListSettings(ctx)
@@ -106,6 +145,9 @@ func subscriptionClientName(raw string) string {
 }
 
 func (s *Server) recordRejectedSubscriptionPull(r *http.Request, userID int64, format string, profileID *int64, ageEncrypted bool, reason string) {
+	if !s.subscriptionAuditEnabled(r.Context()) {
+		return
+	}
 	event := s.newSubscriptionPullAudit(r, userID, format, profileID, ageEncrypted)
 	event.Outcome = "rejected_invalid_request"
 	event.Reason = boundedSubscriptionAuditReason(reason)
@@ -192,7 +234,7 @@ func (s *Server) combinedAuditOverviewData(ctx context.Context, windowHours int)
 }
 
 func (s *Server) auditOverviewData(ctx context.Context, windowHours int) (model.ConnectionAuditOverview, model.SubscriptionAuditOverview, model.CombinedAuditOverview, error) {
-	connectionOverview, err := s.store.ConnectionAuditOverview(ctx, windowHours)
+	connectionOverview, err := s.store.ConnectionAuditOverview(ctx, windowHours, s.connectionAuditEnabled(ctx))
 	if err != nil {
 		return model.ConnectionAuditOverview{}, model.SubscriptionAuditOverview{}, model.CombinedAuditOverview{}, err
 	}

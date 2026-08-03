@@ -24,8 +24,14 @@ type SubscriptionPullDecision struct {
 	Allowed       bool
 	Burned        bool
 	JustSuspended bool
+	Warned        bool
 	Access        model.SubscriptionAccessState
 	Risk          model.SubscriptionAuditRisk
+}
+
+type SubscriptionAuditOptions struct {
+	AuditEnabled bool
+	Action       model.AuditAction
 }
 
 func DefaultSubscriptionAuditPolicy() model.SubscriptionAuditPolicy {
@@ -77,7 +83,7 @@ func ValidateSubscriptionAuditPolicy(policy model.SubscriptionAuditPolicy) error
 	return nil
 }
 
-func (s *Store) AuthorizeSubscriptionPull(ctx context.Context, userID int64, token string, event model.SubscriptionPullAudit, policy model.SubscriptionAuditPolicy) (SubscriptionPullDecision, error) {
+func (s *Store) AuthorizeSubscriptionPull(ctx context.Context, userID int64, token string, event model.SubscriptionPullAudit, policy model.SubscriptionAuditPolicy, options SubscriptionAuditOptions) (SubscriptionPullDecision, error) {
 	decision := SubscriptionPullDecision{}
 	if err := ValidateSubscriptionAuditPolicy(policy); err != nil {
 		return decision, err
@@ -109,12 +115,14 @@ func (s *Store) AuthorizeSubscriptionPull(ctx context.Context, userID int64, tok
 		state = model.SubscriptionAccessState{UserID: userID}
 	}
 	if state.Suspended {
-		event.Outcome = "denied_suspended"
-		event.Reason = state.Reason
-		event.RiskEligible = false
-		decision.AuditID, err = insertSubscriptionPullAudit(ctx, tx, event)
-		if err != nil {
-			return decision, err
+		if options.AuditEnabled {
+			event.Outcome = "denied_suspended"
+			event.Reason = state.Reason
+			event.RiskEligible = false
+			decision.AuditID, err = insertSubscriptionPullAudit(ctx, tx, event)
+			if err != nil {
+				return decision, err
+			}
 		}
 		decision.Access = state
 		if state.TriggerRisk != nil {
@@ -123,6 +131,15 @@ func (s *Store) AuthorizeSubscriptionPull(ctx context.Context, userID int64, tok
 		if err := pruneSubscriptionAudits(ctx, tx, event.RequestedAt); err != nil {
 			return decision, err
 		}
+		return decision, tx.Commit()
+	}
+	if !options.AuditEnabled {
+		decision.Burned, err = consumeSubscriptionTokenTx(ctx, tx, userID, token, tokenKind, event.RequestedAt)
+		if err != nil {
+			return decision, err
+		}
+		decision.Allowed = true
+		decision.Access = state
 		return decision, tx.Commit()
 	}
 	event.Outcome = "pending"
@@ -137,26 +154,39 @@ func (s *Store) AuthorizeSubscriptionPull(ctx context.Context, userID int64, tok
 	}
 	decision.Risk = risk
 	if risk.HardBlock {
-		if _, err := tx.ExecContext(ctx, `update subscription_pull_audits set outcome='denied_risk',reason=? where id=?`, risk.Reason, decision.AuditID); err != nil {
-			return decision, err
+		if options.Action == model.AuditActionWarn {
+			if _, err := tx.ExecContext(ctx, `update subscription_pull_audits set outcome='served_risk_warn',reason=? where id=?`, risk.Reason, decision.AuditID); err != nil {
+				return decision, err
+			}
+			decision.Burned, err = consumeSubscriptionTokenTx(ctx, tx, userID, token, tokenKind, event.RequestedAt)
+			if err != nil {
+				return decision, err
+			}
+			decision.Allowed = true
+			decision.Warned = true
+			decision.Access = state
+		} else {
+			if _, err := tx.ExecContext(ctx, `update subscription_pull_audits set outcome='denied_risk',reason=? where id=?`, risk.Reason, decision.AuditID); err != nil {
+				return decision, err
+			}
+			raw, err := json.Marshal(risk)
+			if err != nil {
+				return decision, err
+			}
+			ts := event.RequestedAt.Format(time.RFC3339Nano)
+			if _, err := tx.ExecContext(ctx, `insert into subscription_access_states(user_id,suspended,suspended_at,suspension_reason,trigger_audit_id,trigger_snapshot_json,evaluation_started_at,resumed_at,resumed_by,updated_at)
+				values(?,1,?,?,?,?,?,null,null,?)
+				on conflict(user_id) do update set suspended=1,suspended_at=excluded.suspended_at,suspension_reason=excluded.suspension_reason,trigger_audit_id=excluded.trigger_audit_id,trigger_snapshot_json=excluded.trigger_snapshot_json,updated_at=excluded.updated_at`,
+				userID, ts, risk.Reason, decision.AuditID, string(raw), subscriptionEvaluationStart(state, event.RequestedAt), ts); err != nil {
+				return decision, err
+			}
+			state, err = getSubscriptionAccessState(ctx, tx, userID)
+			if err != nil {
+				return decision, err
+			}
+			decision.Access = state
+			decision.JustSuspended = true
 		}
-		raw, err := json.Marshal(risk)
-		if err != nil {
-			return decision, err
-		}
-		ts := event.RequestedAt.Format(time.RFC3339Nano)
-		if _, err := tx.ExecContext(ctx, `insert into subscription_access_states(user_id,suspended,suspended_at,suspension_reason,trigger_audit_id,trigger_snapshot_json,evaluation_started_at,resumed_at,resumed_by,updated_at)
-			values(?,1,?,?,?,?,?,null,null,?)
-			on conflict(user_id) do update set suspended=1,suspended_at=excluded.suspended_at,suspension_reason=excluded.suspension_reason,trigger_audit_id=excluded.trigger_audit_id,trigger_snapshot_json=excluded.trigger_snapshot_json,updated_at=excluded.updated_at`,
-			userID, ts, risk.Reason, decision.AuditID, string(raw), subscriptionEvaluationStart(state, event.RequestedAt), ts); err != nil {
-			return decision, err
-		}
-		state, err = getSubscriptionAccessState(ctx, tx, userID)
-		if err != nil {
-			return decision, err
-		}
-		decision.Access = state
-		decision.JustSuspended = true
 	} else {
 		if _, err := tx.ExecContext(ctx, `update subscription_pull_audits set outcome='served' where id=?`, decision.AuditID); err != nil {
 			return decision, err

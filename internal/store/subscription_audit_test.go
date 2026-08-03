@@ -36,7 +36,7 @@ func TestSubscriptionAuditShortRegionThresholdSuspendsAndResumeResetsWindow(t *t
 	policy := DefaultSubscriptionAuditPolicy()
 	base := time.Now().UTC().Add(-time.Minute)
 	for index, item := range []struct{ ip, province string }{{"1.1.1.1", "广东"}, {"8.8.8.8", "北京"}, {"9.9.9.9", "上海"}} {
-		decision, err := s.AuthorizeSubscriptionPull(ctx, user.ID, user.SubscriptionToken, subscriptionAuditEvent(user.ID, item.ip, item.province, base.Add(time.Duration(index)*time.Second)), policy)
+		decision, err := s.AuthorizeSubscriptionPull(ctx, user.ID, user.SubscriptionToken, subscriptionAuditEvent(user.ID, item.ip, item.province, base.Add(time.Duration(index)*time.Second)), policy, SubscriptionAuditOptions{AuditEnabled: true, Action: model.AuditActionRestrict})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +54,7 @@ func TestSubscriptionAuditShortRegionThresholdSuspendsAndResumeResetsWindow(t *t
 	if !stored.SubscriptionSuspended || stored.SubscriptionToken != user.SubscriptionToken {
 		t.Fatalf("unexpected suspended user state: %#v", stored)
 	}
-	denied, err := s.AuthorizeSubscriptionPull(ctx, user.ID, user.SubscriptionToken, subscriptionAuditEvent(user.ID, "4.4.4.4", "浙江", time.Now().UTC()), policy)
+	denied, err := s.AuthorizeSubscriptionPull(ctx, user.ID, user.SubscriptionToken, subscriptionAuditEvent(user.ID, "4.4.4.4", "浙江", time.Now().UTC()), policy, SubscriptionAuditOptions{AuditEnabled: true, Action: model.AuditActionRestrict})
 	if err != nil || denied.Allowed || denied.JustSuspended {
 		t.Fatalf("suspended replay = %#v, err=%v", denied, err)
 	}
@@ -66,7 +66,7 @@ func TestSubscriptionAuditShortRegionThresholdSuspendsAndResumeResetsWindow(t *t
 		t.Fatalf("unexpected resumed state: %#v", state)
 	}
 	afterResume := time.Now().UTC().Add(time.Second)
-	allowed, err := s.AuthorizeSubscriptionPull(ctx, user.ID, user.SubscriptionToken, subscriptionAuditEvent(user.ID, "208.67.222.222", "江苏", afterResume), policy)
+	allowed, err := s.AuthorizeSubscriptionPull(ctx, user.ID, user.SubscriptionToken, subscriptionAuditEvent(user.ID, "208.67.222.222", "江苏", afterResume), policy, SubscriptionAuditOptions{AuditEnabled: true, Action: model.AuditActionRestrict})
 	if err != nil || !allowed.Allowed || allowed.Risk.Short.RegionCount != 1 {
 		t.Fatalf("old window was not reset: %#v, err=%v", allowed, err)
 	}
@@ -90,7 +90,7 @@ func TestSubscriptionAuditLongRegionThresholdAndNonRegionSignals(t *testing.T) {
 	user := createSubscriptionAuditUser(t, s, "long-window", "long-token", model.RoleViewer)
 	base := time.Now().UTC().Add(-4 * time.Hour)
 	for index, item := range []struct{ ip, province string }{{"1.1.1.1", "广东"}, {"8.8.8.8", "北京"}, {"9.9.9.9", "上海"}, {"208.67.222.222", "江苏"}} {
-		decision, err := s.AuthorizeSubscriptionPull(ctx, user.ID, user.SubscriptionToken, subscriptionAuditEvent(user.ID, item.ip, item.province, base.Add(time.Duration(index)*time.Hour)), policy)
+		decision, err := s.AuthorizeSubscriptionPull(ctx, user.ID, user.SubscriptionToken, subscriptionAuditEvent(user.ID, item.ip, item.province, base.Add(time.Duration(index)*time.Hour)), policy, SubscriptionAuditOptions{AuditEnabled: true, Action: model.AuditActionRestrict})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,11 +105,11 @@ func TestSubscriptionAuditLongRegionThresholdAndNonRegionSignals(t *testing.T) {
 	nonRegion := createSubscriptionAuditUser(t, s, "ip-risk", "ip-token", model.RoleViewer)
 	policy.Short.SourceIPLimit = 2
 	policy.Long.SourceIPLimit = 2
-	first, err := s.AuthorizeSubscriptionPull(ctx, nonRegion.ID, nonRegion.SubscriptionToken, subscriptionAuditEvent(nonRegion.ID, "4.2.2.1", "广东", time.Now().UTC()), policy)
+	first, err := s.AuthorizeSubscriptionPull(ctx, nonRegion.ID, nonRegion.SubscriptionToken, subscriptionAuditEvent(nonRegion.ID, "4.2.2.1", "广东", time.Now().UTC()), policy, SubscriptionAuditOptions{AuditEnabled: true, Action: model.AuditActionRestrict})
 	if err != nil || !first.Allowed {
 		t.Fatal(err)
 	}
-	second, err := s.AuthorizeSubscriptionPull(ctx, nonRegion.ID, nonRegion.SubscriptionToken, subscriptionAuditEvent(nonRegion.ID, "4.2.2.2", "广东", time.Now().UTC().Add(time.Second)), policy)
+	second, err := s.AuthorizeSubscriptionPull(ctx, nonRegion.ID, nonRegion.SubscriptionToken, subscriptionAuditEvent(nonRegion.ID, "4.2.2.2", "广东", time.Now().UTC().Add(time.Second)), policy, SubscriptionAuditOptions{AuditEnabled: true, Action: model.AuditActionRestrict})
 	if err != nil || !second.Allowed || second.JustSuspended || second.Risk.Score < 25 || second.Risk.HardBlock {
 		t.Fatalf("IP-only risk should alert without suspending: %#v, err=%v", second, err)
 	}
@@ -127,7 +127,7 @@ func TestSubscriptionAuditRiskBlockDoesNotConsumeOneTimeToken(t *testing.T) {
 	policy := DefaultSubscriptionAuditPolicy()
 	base := time.Now().UTC().Add(-time.Minute)
 	for index, item := range []struct{ ip, province string }{{"1.0.0.1", "广东"}, {"8.8.4.4", "北京"}} {
-		decision, err := s.AuthorizeSubscriptionPull(ctx, user.ID, user.SubscriptionToken, subscriptionAuditEvent(user.ID, item.ip, item.province, base.Add(time.Duration(index)*time.Second)), policy)
+		decision, err := s.AuthorizeSubscriptionPull(ctx, user.ID, user.SubscriptionToken, subscriptionAuditEvent(user.ID, item.ip, item.province, base.Add(time.Duration(index)*time.Second)), policy, SubscriptionAuditOptions{AuditEnabled: true, Action: model.AuditActionRestrict})
 		if err != nil || !decision.Allowed {
 			t.Fatalf("seed request failed: %#v %v", decision, err)
 		}
@@ -136,7 +136,7 @@ func TestSubscriptionAuditRiskBlockDoesNotConsumeOneTimeToken(t *testing.T) {
 	if err := s.CreateOneTimeSubscriptionToken(ctx, user.ID, oneTimeToken); err != nil {
 		t.Fatal(err)
 	}
-	blocked, err := s.AuthorizeSubscriptionPull(ctx, user.ID, oneTimeToken, subscriptionAuditEvent(user.ID, "9.9.9.10", "上海", base.Add(2*time.Second)), policy)
+	blocked, err := s.AuthorizeSubscriptionPull(ctx, user.ID, oneTimeToken, subscriptionAuditEvent(user.ID, "9.9.9.10", "上海", base.Add(2*time.Second)), policy, SubscriptionAuditOptions{AuditEnabled: true, Action: model.AuditActionRestrict})
 	if err != nil || blocked.Allowed || blocked.Burned {
 		t.Fatalf("risk request consumed token: %#v, err=%v", blocked, err)
 	}
@@ -146,9 +146,102 @@ func TestSubscriptionAuditRiskBlockDoesNotConsumeOneTimeToken(t *testing.T) {
 	if _, err := s.ResumeSubscriptionAccess(ctx, user.ID, admin.ID); err != nil {
 		t.Fatal(err)
 	}
-	allowed, err := s.AuthorizeSubscriptionPull(ctx, user.ID, oneTimeToken, subscriptionAuditEvent(user.ID, "9.9.9.10", "上海", time.Now().UTC().Add(time.Second)), policy)
+	allowed, err := s.AuthorizeSubscriptionPull(ctx, user.ID, oneTimeToken, subscriptionAuditEvent(user.ID, "9.9.9.10", "上海", time.Now().UTC().Add(time.Second)), policy, SubscriptionAuditOptions{AuditEnabled: true, Action: model.AuditActionRestrict})
 	if err != nil || !allowed.Allowed || !allowed.Burned {
 		t.Fatalf("resumed one-time token was not consumed: %#v, err=%v", allowed, err)
+	}
+	if _, err := s.GetUserBySubscriptionToken(ctx, oneTimeToken); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("consumed one-time token still resolves: %v", err)
+	}
+}
+
+func TestSubscriptionAuditWarnModeDoesNotSuspend(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	user := createSubscriptionAuditUser(t, s, "warn-mode", "warn-token", model.RoleViewer)
+	policy := DefaultSubscriptionAuditPolicy()
+	options := SubscriptionAuditOptions{AuditEnabled: true, Action: model.AuditActionWarn}
+	base := time.Now().UTC().Add(-time.Minute)
+	for index, item := range []struct{ ip, province string }{{"1.1.1.1", "广东"}, {"8.8.8.8", "北京"}, {"9.9.9.9", "上海"}} {
+		decision, err := s.AuthorizeSubscriptionPull(ctx, user.ID, user.SubscriptionToken, subscriptionAuditEvent(user.ID, item.ip, item.province, base.Add(time.Duration(index)*time.Second)), policy, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if index < 2 && !decision.Allowed {
+			t.Fatalf("request %d was unexpectedly denied: %#v", index, decision)
+		}
+		if index == 2 {
+			if !decision.Allowed || !decision.Risk.HardBlock || !decision.Warned || decision.JustSuspended {
+				t.Fatalf("warn mode did not keep the pull allowed: %#v", decision)
+			}
+			if decision.Access.Suspended {
+				t.Fatalf("warn mode suspended the user: %#v", decision)
+			}
+		}
+	}
+	stored, err := s.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SubscriptionSuspended {
+		t.Fatalf("warn mode suspended the stored user: %#v", stored)
+	}
+	detail, err := s.SubscriptionAuditUserDetail(ctx, user.ID, 24, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Recent) != 3 || detail.Recent[0].Outcome != "served_risk_warn" {
+		t.Fatalf("warn-mode outcomes were not recorded: %#v", detail.Recent)
+	}
+}
+
+func TestSubscriptionAuditDisabledSkipsRecordingAndEvaluation(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	user := createSubscriptionAuditUser(t, s, "audit-off", "audit-off-token", model.RoleViewer)
+	policy := DefaultSubscriptionAuditPolicy()
+	options := SubscriptionAuditOptions{AuditEnabled: false}
+	base := time.Now().UTC().Add(-time.Minute)
+	for index, item := range []struct{ ip, province string }{{"1.1.1.1", "广东"}, {"8.8.8.8", "北京"}, {"9.9.9.9", "上海"}} {
+		decision, err := s.AuthorizeSubscriptionPull(ctx, user.ID, user.SubscriptionToken, subscriptionAuditEvent(user.ID, item.ip, item.province, base.Add(time.Duration(index)*time.Second)), policy, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !decision.Allowed || decision.JustSuspended || decision.Risk.Score != 0 {
+			t.Fatalf("disabled audit request %d = %#v", index, decision)
+		}
+	}
+	stored, err := s.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SubscriptionSuspended {
+		t.Fatalf("disabled audit suspended the user: %#v", stored)
+	}
+	detail, err := s.SubscriptionAuditUserDetail(ctx, user.ID, 24, policy)
+	if !errors.Is(err, sql.ErrNoRows) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(detail.Recent) != 0 {
+			t.Fatalf("disabled audit recorded %d pulls", len(detail.Recent))
+		}
+	}
+	const oneTimeToken = "audit-off-one-time"
+	if err := s.CreateOneTimeSubscriptionToken(ctx, user.ID, oneTimeToken); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := s.AuthorizeSubscriptionPull(ctx, user.ID, oneTimeToken, subscriptionAuditEvent(user.ID, "208.67.222.222", "江苏", time.Now().UTC()), policy, options)
+	if err != nil || !decision.Allowed || !decision.Burned {
+		t.Fatalf("disabled audit did not consume one-time token: %#v, err=%v", decision, err)
 	}
 	if _, err := s.GetUserBySubscriptionToken(ctx, oneTimeToken); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("consumed one-time token still resolves: %v", err)

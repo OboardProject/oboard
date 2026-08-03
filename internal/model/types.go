@@ -1603,6 +1603,13 @@ type SubscriptionAuditThresholds struct {
 	ClientFormatLimit int `json:"client_format_limit"`
 }
 
+type AuditAction string
+
+const (
+	AuditActionRestrict AuditAction = "restrict"
+	AuditActionWarn     AuditAction = "warn"
+)
+
 type SubscriptionAuditPolicy struct {
 	ShortWindowMinutes int                         `json:"short_window_minutes"`
 	LongWindowHours    int                         `json:"long_window_hours"`

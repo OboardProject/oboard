@@ -9124,6 +9124,40 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   border-radius: var(--radius-md);
 }
 
+.audit-console-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 13px;
+}
+
+.audit-console-banner.danger {
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.audit-console-banner svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.audit-console-banner div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.audit-console-banner span {
+  color: var(--muted);
+}
+
 .audit-console-tabs {
   display: flex;
   gap: 4px;

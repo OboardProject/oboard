@@ -1402,6 +1402,9 @@ func (s *Server) notifyConnectionAuditRisks(ctx context.Context, userIDs []int64
 	if len(userIDs) == 0 {
 		return
 	}
+	if !s.connectionAuditEnabled(ctx) {
+		return
+	}
 	s.connectionAuditNotificationMu.Lock()
 	defer s.connectionAuditNotificationMu.Unlock()
 	settings, _ := s.store.ListSettings(ctx)
@@ -1479,6 +1482,9 @@ func (s *Server) notifyConnectionAuditRisks(ctx context.Context, userIDs []int64
 }
 
 func (s *Server) notifySubscriptionAuditRisk(ctx context.Context, user model.User, decision store.SubscriptionPullDecision) {
+	if !s.subscriptionAuditEnabled(ctx) {
+		return
+	}
 	if !decision.Allowed && !decision.JustSuspended {
 		return
 	}
@@ -1500,6 +1506,8 @@ func (s *Server) notifySubscriptionAuditRisk(ctx context.Context, user model.Use
 	status := "继续允许拉取"
 	if decision.Access.Suspended || decision.JustSuspended {
 		status = "已暂停，等待管理员恢复"
+	} else if decision.Warned {
+		status = "仅警告，未自动暂停"
 	}
 	s.enqueueNotificationEvent(ctx, notificationEvent{
 		Name:         notificationSubscriptionRisk,
@@ -1526,6 +1534,9 @@ const (
 )
 
 func (s *Server) maybeNotifySubscriptionAbnormal(ctx context.Context, userID int64) {
+	if !s.subscriptionAuditEnabled(ctx) {
+		return
+	}
 	if userID <= 0 {
 		return
 	}

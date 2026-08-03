@@ -132,3 +132,77 @@ func TestSubscriptionAuditPolicySettingsValidation(t *testing.T) {
 	policy.Long.RegionLimit = 2
 	request(t, h, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"subscription_audit_policy": policy}, http.StatusBadRequest)
 }
+
+func TestAuditSettingsRoundTripAndValidation(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminToken := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+
+	initial := request(t, h, http.MethodGet, "/api/v2/ui/settings", adminToken, nil, http.StatusOK)["settings"].(map[string]any)
+	auditSettingTrue := func(value any) bool { return value == true || value == "true" }
+	if !auditSettingTrue(initial[settingAuditEnabled]) || !auditSettingTrue(initial[settingSubscriptionAuditEnabled]) || !auditSettingTrue(initial[settingConnectionAuditEnabled]) || initial[settingAuditAction] != "restrict" {
+		t.Fatalf("unexpected audit defaults: %#v", initial)
+	}
+
+	updated := request(t, h, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{
+		"audit_enabled": false, "subscription_audit_enabled": false, "connection_audit_enabled": false, "audit_action": "warn",
+	}, http.StatusOK)["settings"].(map[string]any)
+	for key, want := range map[string]string{settingAuditEnabled: "false", settingSubscriptionAuditEnabled: "false", settingConnectionAuditEnabled: "false", settingAuditAction: "warn"} {
+		if got := updated[key]; got != want {
+			t.Fatalf("setting %s = %#v, want %s", key, got, want)
+		}
+	}
+	request(t, h, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"audit_action": "ban"}, http.StatusBadRequest)
+}
+
+func TestSubscriptionPullAuditDisabledServesWithoutRecordingOrSuspending(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	srv.geoIP = subscriptionAuditGeoResolver{}
+	srv.geoIPStatus = srv.geoIP.Status()
+	h := srv.Handler()
+
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminToken := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	created := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "audit-off-user", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	subscriptionToken := created["user"].(map[string]any)["subscription_token"].(string)
+	userID := int64(created["user"].(map[string]any)["id"].(float64))
+
+	request(t, h, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"subscription_audit_enabled": false}, http.StatusOK)
+
+	fetch := func(ip string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions/"+subscriptionToken+"?format=mihomo", nil)
+		req.RemoteAddr = "127.0.0.1:43210"
+		req.Header.Set("X-Real-IP", ip)
+		req.Header.Set("User-Agent", "Mihomo/1.19.0")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr
+	}
+	for _, ip := range []string{"1.1.1.1", "8.8.8.8", "9.9.9.9"} {
+		if got := fetch(ip); got.Code != http.StatusOK || got.Body.Len() == 0 {
+			t.Fatalf("pull from %s status=%d body=%s", ip, got.Code, got.Body.String())
+		}
+	}
+	stored, err := db.GetUser(context.Background(), userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.SubscriptionSuspended {
+		t.Fatalf("disabled audit suspended the user: %#v", stored)
+	}
+	overview := request(t, h, http.MethodGet, "/api/v2/ui/audit/subscriptions/overview?window_hours=24", adminToken, nil, http.StatusOK)["subscription_audit"].(map[string]any)
+	if overview["reporting_user_count"].(float64) != 0 || overview["total_pulls"].(float64) != 0 {
+		t.Fatalf("disabled audit recorded pulls: %#v", overview)
+	}
+}

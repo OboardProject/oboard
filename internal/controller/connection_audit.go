@@ -51,7 +51,7 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 		method(w)
 		return
 	}
-	if !server.ConnectionAuditEnabled {
+	if !s.effectiveConnectionAuditEnabled(r.Context(), server) {
 		fail(w, errors.New("connection audit is disabled for this server"), http.StatusConflict)
 		return
 	}
@@ -276,7 +276,7 @@ func (s *Server) connectionAuditOverview(w http.ResponseWriter, r *http.Request)
 		method(w)
 		return
 	}
-	overview, err := s.store.ConnectionAuditOverview(r.Context(), intQuery(r, "window_hours", 24))
+	overview, err := s.store.ConnectionAuditOverview(r.Context(), intQuery(r, "window_hours", 24), s.connectionAuditEnabled(r.Context()))
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return

@@ -30,6 +30,33 @@ func TestConnectionAuditDefaultsToDisabledForNewServer(t *testing.T) {
 	}
 }
 
+func TestConnectionAuditOverviewEnabledServerCountRespectsGlobalGate(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	server := &model.Server{Name: "audit-node", ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	enabled, err := s.ConnectionAuditOverview(ctx, 24, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabled.EnabledServerCount != 1 {
+		t.Fatalf("enabled server count = %d, want 1", enabled.EnabledServerCount)
+	}
+	gated, err := s.ConnectionAuditOverview(ctx, 24, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gated.EnabledServerCount != 0 {
+		t.Fatalf("gated enabled server count = %d, want 0", gated.EnabledServerCount)
+	}
+}
+
 func TestConnectionAuditReportsAreIdempotentAndRiskIsAggregated(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
@@ -65,7 +92,7 @@ func TestConnectionAuditReportsAreIdempotentAndRiskIsAggregated(t *testing.T) {
 	if accepted, err = s.AddConnectionAuditReports(ctx, reports[:1]); err != nil || len(accepted) != 1 {
 		t.Fatalf("idempotent retry = %v, %v", accepted, err)
 	}
-	overview, err := s.ConnectionAuditOverview(ctx, 24)
+	overview, err := s.ConnectionAuditOverview(ctx, 24, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +206,7 @@ func TestConnectionAuditOverviewKeepsHistoricalCrossRegionEvent(t *testing.T) {
 	if _, err := s.AddConnectionAuditReports(ctx, reports); err != nil {
 		t.Fatal(err)
 	}
-	overview, err := s.ConnectionAuditOverview(ctx, 24)
+	overview, err := s.ConnectionAuditOverview(ctx, 24, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +257,7 @@ func TestConnectionAuditDetectsSharedSourceIPsAcrossUsers(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	overview, err := s.ConnectionAuditOverview(ctx, 24)
+	overview, err := s.ConnectionAuditOverview(ctx, 24, true)
 	if err != nil {
 		t.Fatal(err)
 	}
