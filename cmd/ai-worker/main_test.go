@@ -141,6 +141,7 @@ func TestAnalyzeSurfacesProviderErrorMessageWithoutCredential(t *testing.T) {
 }
 
 func TestRunOnceReportsBoundedModelFailure(t *testing.T) {
+	const apiKey = "cred-XK9q7z-credential"
 	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte(`{"error":{"message":"upstream rejected the model request"}}`))
@@ -150,7 +151,7 @@ func TestRunOnceReportsBoundedModelFailure(t *testing.T) {
 	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/jobs/lease":
-			_ = json.NewEncoder(w).Encode(airpc.LeaseResponse{Job: &model.AuditReviewJob{ID: "job-2", ReviewID: "review-2", Input: json.RawMessage(`{}`)}, Provider: &airpc.Provider{ID: "provider-1", BaseURL: modelServer.URL, Model: "test-model", APIKey: "secret"}})
+			_ = json.NewEncoder(w).Encode(airpc.LeaseResponse{Job: &model.AuditReviewJob{ID: "job-2", ReviewID: "review-2", Input: json.RawMessage(`{}`)}, Provider: &airpc.Provider{ID: "provider-1", BaseURL: modelServer.URL, Model: "test-model", APIKey: apiKey}})
 		case "/v1/jobs/job-2/fail":
 			var request airpc.FailRequest
 			_ = json.NewDecoder(r.Body).Decode(&request)
@@ -165,11 +166,26 @@ func TestRunOnceReportsBoundedModelFailure(t *testing.T) {
 		t.Fatal("model failure was not returned")
 	}
 	request := <-failed
-	if request.WorkerID != "worker-2" || len(request.Error) > 1000 || strings.Contains(request.Error, "secret") {
+	if request.WorkerID != "worker-2" || len(request.Error) > 1000 || strings.Contains(request.Error, apiKey) {
 		t.Fatalf("unexpected failure RPC: %#v", request)
 	}
 	if len(request.ErrorDetail) == 0 || !strings.Contains(string(request.ErrorDetail), "upstream rejected the model request") || !strings.Contains(string(request.ErrorDetail), "HTTP 502") && !strings.Contains(string(request.ErrorDetail), "502") {
 		t.Fatalf("failure detail = %s", request.ErrorDetail)
+	}
+	var logDetail map[string]any
+	if err := json.Unmarshal(request.ErrorDetail, &logDetail); err != nil {
+		t.Fatalf("failure detail is not JSON: %v", err)
+	}
+	if logDetail["request_method"] != "POST" || logDetail["request_url"] != modelServer.URL+"/chat/completions" || logDetail["status"] != float64(502) {
+		t.Fatalf("failure detail fields = %#v", logDetail)
+	}
+	requestHeaders, ok := logDetail["request_headers"].(map[string]any)
+	if !ok || requestHeaders["Authorization"] != "Bearer [redacted]" {
+		t.Fatalf("failure request headers = %#v", logDetail["request_headers"])
+	}
+	encoded, _ := json.Marshal(logDetail)
+	if strings.Contains(string(encoded), apiKey) {
+		t.Fatal("provider credential leaked into failure detail")
 	}
 }
 

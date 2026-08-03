@@ -179,7 +179,7 @@ func normalizeErrorDetail(detail json.RawMessage) json.RawMessage {
 	if len(detail) == 0 || json.Unmarshal(detail, &object) != nil {
 		return nil
 	}
-	if len(detail) > 16<<10 {
+	if len(detail) > 96<<10 {
 		return nil
 	}
 	return detail

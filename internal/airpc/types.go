@@ -39,12 +39,16 @@ type FailRequest struct {
 }
 
 type ProviderLog struct {
-	Provider     string `json:"provider,omitempty"`
-	Model        string `json:"model,omitempty"`
-	APIFormat    string `json:"api_format,omitempty"`
-	Endpoint     string `json:"endpoint,omitempty"`
-	Status       int    `json:"status,omitempty"`
-	ResponseBody string `json:"response_body,omitempty"`
+	Provider       string            `json:"provider,omitempty"`
+	Model          string            `json:"model,omitempty"`
+	APIFormat      string            `json:"api_format,omitempty"`
+	RequestMethod  string            `json:"request_method,omitempty"`
+	RequestURL     string            `json:"request_url,omitempty"`
+	RequestHeaders map[string]string `json:"request_headers,omitempty"`
+	RequestBody    string            `json:"request_body,omitempty"`
+	Status         int               `json:"status,omitempty"`
+	ResponseHeaders map[string]string `json:"response_headers,omitempty"`
+	ResponseBody   string            `json:"response_body,omitempty"`
 }
 
 type ModelDiscoveryLeaseRequest struct {

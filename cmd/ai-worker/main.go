@@ -342,6 +342,7 @@ func analyze(ctx context.Context, job *model.AuditReviewJob, provider *airpc.Pro
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	requestHeaders := map[string]string{"Content-Type": "application/json", "Authorization": "Bearer [redacted]"}
 	client := &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
 	if err != nil {
@@ -353,7 +354,7 @@ func analyze(ctx context.Context, job *model.AuditReviewJob, provider *airpc.Pro
 		return model.AuditReviewReport{}, 0, 0, errors.New("model response exceeds the allowed size")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		logDetail := providerLog(provider, endpoint, response.StatusCode, responseBody)
+		logDetail := providerLog(provider, request.Method, request.URL.String(), requestHeaders, body, responseBody, response)
 		return model.AuditReviewReport{}, 0, 0, providerRequestError("model endpoint", response.StatusCode, responseBody, provider.APIKey, logDetail)
 	}
 	content, inputTokens, outputTokens, err := providerResponseContent(format, responseBody)
@@ -487,11 +488,28 @@ func modelErrorMessage(responseBody []byte, credential string) string {
 	return message
 }
 
-func providerLog(provider *airpc.Provider, endpoint string, status int, responseBody []byte) json.RawMessage {
+func providerLog(provider *airpc.Provider, method, requestURL string, requestHeaders map[string]string, requestBody, responseBody []byte, response *http.Response) json.RawMessage {
 	if provider == nil {
 		return nil
 	}
-	detail, err := json.Marshal(airpc.ProviderLog{Provider: provider.Name, Model: provider.Model, APIFormat: normalizeProviderFormat(provider.APIFormat), Endpoint: endpoint, Status: status, ResponseBody: boundedBytes(strings.TrimSpace(string(responseBody)), 8000)})
+	credential := provider.APIKey
+	status := 0
+	responseHeaders := map[string]string{}
+	if response != nil {
+		status = response.StatusCode
+		for key, values := range response.Header {
+			if len(values) > 0 {
+				responseHeaders[key] = redactCredential(strings.Join(values, ", "), credential)
+			}
+		}
+	}
+	detail, err := json.Marshal(airpc.ProviderLog{
+		Provider: provider.Name, Model: provider.Model, APIFormat: normalizeProviderFormat(provider.APIFormat),
+		RequestMethod: method, RequestURL: requestURL, RequestHeaders: requestHeaders,
+		RequestBody: compactJSON(boundedBytesBytes(requestBody, 32<<10)),
+		Status: status, ResponseHeaders: responseHeaders,
+		ResponseBody: boundedBytes(redactCredential(strings.TrimSpace(string(responseBody)), credential), 64<<10),
+	})
 	if err != nil {
 		return nil
 	}
@@ -515,6 +533,13 @@ func boundedBytes(value string, limit int) string {
 		return value
 	}
 	return value[:limit] + "…"
+}
+
+func boundedBytesBytes(value []byte, limit int) []byte {
+	if len(value) <= limit {
+		return value
+	}
+	return append(append([]byte{}, value[:limit]...), []byte("…")...)
 }
 
 type providerFailureError struct {

@@ -59,7 +59,7 @@ import {
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
-  PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2
+  PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -5080,6 +5080,7 @@ function localDateTimeValue(date: Date) {
 }
 
 function AIAuditReviews({ data, client, notify }: any) {
+  const dialogs = useDialogs()
   const [providers, setProviders] = useState<any[]>([])
   const [reviews, setReviews] = useState<AuditReview[]>([])
   const [loadingReviews, setLoadingReviews] = useState(true)
@@ -5125,6 +5126,23 @@ function AIAuditReviews({ data, client, notify }: any) {
       setDetail({ review: response.ai_audit_review, jobs: response.jobs || [] })
       setEvidence(evidenceResponse.evidence || [])
       setEvidenceTotal(Number(evidenceResponse.total || 0))
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const showReviewLog = async (reviewID: string) => {
+    setWorking(`log-${reviewID}`)
+    try {
+      const response = await client.request(`/audit/ai-reviews/${reviewID}/jobs`)
+      const jobs: AuditReviewJob[] = response.jobs || []
+      const failed = jobs.find(job => (job.status === 'failed' || job.error) && job.error_detail) || jobs.find(job => job.error_detail)
+      if (!failed) {
+        notify?.('该审查没有可用的错误原始日志', 'error')
+        return
+      }
+      await dialogs.alert({ title: 'AI 审查错误原始日志', message: <div className="ai-review-raw-grid"><section><strong>Provider 原始日志</strong><CopyBlock value={JSON.stringify(failed.error_detail, null, 2)} /></section>{failed.error ? <section><strong>错误信息</strong><CopyBlock value={failed.error} /></section> : null}</div> })
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -5202,7 +5220,7 @@ function AIAuditReviews({ data, client, notify }: any) {
       const progress = review.job_count ? Math.round(review.completed_job_count / review.job_count * 100) : 0
       return <article key={review.id} className="ai-review-row">
         <div className="ai-review-row-main"><div><span className={`audit-risk-pill ${report?.risk_level || (review.status === 'failed' ? 'critical' : 'low')}`}>{auditReviewStatusLabel(review.status, report?.verdict)}</span><strong>{report?.summary || auditReviewScopeLabel(review, users, servers)}</strong></div><p>{auditReviewEvidenceLabel(review.evidence_types)} · {formatTableTime(review.window_started_at)} 至 {formatTableTime(review.window_ended_at)}</p><small>{review.resolved_user_ids.length} 个用户 · {review.resolved_server_ids.length} 台服务器 · {review.privacy_mode === 'raw' ? '原始字段' : '脱敏字段'} · {(review.input_tokens || 0) + (review.output_tokens || 0)} Token</small>{active && <div className="ai-review-progress"><span style={{ width: `${progress}%` }} /></div>}{review.error && <small className="danger-text">{review.error}</small>}</div>
-        <div className="ai-review-row-actions"><button type="button" className="ghost" onClick={() => void openDetail(review.id)} disabled={working === `detail-${review.id}`}>查看</button>{active && <button type="button" className="ghost danger-text" onClick={() => void cancelReview(review)} disabled={Boolean(working)}>取消</button>}</div>
+        <div className="ai-review-row-actions"><button type="button" className="ghost" onClick={() => void openDetail(review.id)} disabled={working === `detail-${review.id}`}>查看</button>{review.status === 'failed' && review.error && <button type="button" className="ghost" onClick={() => void showReviewLog(review.id)} disabled={working === `log-${review.id}`}><Terminal size={14} />原始日志</button>}{active && <button type="button" className="ghost danger-text" onClick={() => void cancelReview(review)} disabled={Boolean(working)}>取消</button>}</div>
       </article>
     })}</div>}
     <AnimatePresence>{createOpen && <MotionDialogPanel onCancel={() => setCreateOpen(false)} className="ai-review-create-dialog">
@@ -5231,7 +5249,7 @@ function AuditReviewDetailDialog({ detail, evidence, evidenceTotal, client, work
       const response = await client.request(`/audit/ai-reviews/${detail.review.id}/jobs/${job.id}`)
       const item: AuditReviewJob = response.job
       const log = item.error_detail ? JSON.stringify(item.error_detail, null, 2) : ''
-      await dialogs.alert({ title: `任务阶段 ${item.stage + 1} · #${item.position + 1}${item.error ? '（失败）' : ''}`, message: <div className="ai-review-raw-grid">{log ? <section><strong>Provider 原始日志</strong><CopyBlock value={log} /></section> : null}<section><strong>输入</strong><CopyBlock value={JSON.stringify(item.input || {}, null, 2)} /></section><section><strong>输出</strong><CopyBlock value={JSON.stringify(item.output || {}, null, 2)} /></section></div> })
+      await dialogs.alert({ title: `任务阶段 ${item.stage + 1} · #${item.position + 1}${item.error ? '（失败）' : ''}`, message: <div className="ai-review-raw-grid">{log ? <section><strong>Provider 原始日志</strong><CopyBlock value={log} /></section> : null}{item.error ? <section><strong>错误信息</strong><CopyBlock value={item.error} /></section> : null}<section><strong>输入</strong><CopyBlock value={JSON.stringify(item.input || {}, null, 2)} /></section><section><strong>输出</strong><CopyBlock value={JSON.stringify(item.output || {}, null, 2)} /></section></div> })
     } catch (error: any) {
       await dialogs.alert({ title: '无法读取任务', message: localizeErrorMessage(error?.message || error) })
     }
