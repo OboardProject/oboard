@@ -57,6 +57,73 @@ func TestAgentInstallScriptBBRIsInstallOnly(t *testing.T) {
 	}
 }
 
+func TestAgentInstallScriptRegistersObagPath(t *testing.T) {
+	for _, installer := range []struct {
+		name   string
+		script string
+	}{{name: "install", script: testAgentInstallScript(t)}, {name: "self-update", script: testAgentSelfUpdateScript(t)}} {
+		t.Run(installer.name, func(t *testing.T) {
+			shell := testPOSIXShell(t)
+			root := t.TempDir()
+			profileDir := filepath.Join(root, "profile.d")
+			harness := strings.Join([]string{
+				"set -eu",
+				"INSTALL_DIR=/opt/oboard",
+				"OBOARD_PROFILE_DIR=" + shellQuote(profileDir),
+				"PATH=/usr/bin:/bin",
+				extractShellFunction(t, installer.script, "register_obag_path"),
+				"register_obag_path",
+				`grep -Fq '/opt/oboard' "$OBOARD_PROFILE_DIR/oboard-agent.sh"`,
+				"echo registered",
+			}, "\n")
+			output, err := exec.Command(shell, "-c", harness).CombinedOutput()
+			if err != nil {
+				t.Fatalf("register_obag_path failed: %v\n%s", err, output)
+			}
+			if !strings.Contains(string(output), "registered") {
+				t.Fatalf("register_obag_path did not register PATH:\n%s", output)
+			}
+			if _, err := os.Stat(filepath.Join(profileDir, "oboard-agent.sh")); err != nil {
+				t.Fatalf("profile snippet was not written: %v", err)
+			}
+			rerun := strings.Join([]string{
+				"set -eu",
+				"INSTALL_DIR=/opt/oboard",
+				"OBOARD_PROFILE_DIR=" + shellQuote(profileDir),
+				"PATH=/opt/oboard:/usr/bin:/bin",
+				extractShellFunction(t, installer.script, "register_obag_path"),
+				"register_obag_path",
+				"echo second-run-ok",
+			}, "\n")
+			if output, err := exec.Command(shell, "-c", rerun).CombinedOutput(); err != nil || !strings.Contains(string(output), "second-run-ok") {
+				t.Fatalf("register_obag_path is not idempotent: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+func TestAgentInstallScriptSkipsStandardPathRegistration(t *testing.T) {
+	script := testAgentInstallScript(t)
+	shell := testPOSIXShell(t)
+	root := t.TempDir()
+	profileDir := filepath.Join(root, "profile.d")
+	harness := strings.Join([]string{
+		"set -eu",
+		"INSTALL_DIR=/usr/local/bin",
+		"OBOARD_PROFILE_DIR=" + shellQuote(profileDir),
+		extractShellFunction(t, script, "register_obag_path"),
+		"register_obag_path",
+		`[ -e "$OBOARD_PROFILE_DIR/oboard-agent.sh" ] && exit 9 || echo standard-path-skipped`,
+	}, "\n")
+	output, err := exec.Command(shell, "-c", harness).CombinedOutput()
+	if err != nil {
+		t.Fatalf("standard path was registered anyway: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "standard-path-skipped") {
+		t.Fatalf("unexpected output:\n%s", output)
+	}
+}
+
 func TestAgentInstallScriptContinuesWhenBBRFQIsUnavailable(t *testing.T) {
 	script := testAgentInstallScript(t)
 	shell := testPOSIXShell(t)

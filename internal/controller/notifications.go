@@ -182,6 +182,11 @@ func (s *Server) checkOfflineAt(ctx context.Context, now time.Time) {
 		return
 	}
 	for _, server := range items {
+		lastSeen := ""
+		if server.LastSeenAt != nil {
+			lastSeen = server.LastSeenAt.UTC().Format(time.RFC3339)
+		}
+		log.Printf("server %d(%s) marked offline (last_seen=%s)", server.ID, safeLogField(server.Name), lastSeen)
 		if !server.OfflineNotifyEnabled {
 			continue
 		}

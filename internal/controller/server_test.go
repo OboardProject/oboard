@@ -925,6 +925,9 @@ func TestAgentInstallScriptsUseLowSpaceTempFallback(t *testing.T) {
 		if !strings.Contains(script, `ln -s "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/obag"`) {
 			t.Fatalf("%s does not install the obag management command", path)
 		}
+		if !strings.Contains(script, "register_obag_path") || !strings.Contains(script, "OBOARD_PROFILE_DIR:-/etc/profile.d") || !strings.Contains(script, "oboard-agent.sh") {
+			t.Fatalf("%s does not register the obag management command on PATH", path)
+		}
 		for _, want := range []string{"management_command=obag", "$management_command status", "$management_command check", "$management_command logs agent", "$management_command logs core"} {
 			if !strings.Contains(script, want) {
 				t.Fatalf("%s missing user management hint %q", path, want)
