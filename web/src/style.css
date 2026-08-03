@@ -389,7 +389,7 @@ button.ghost:disabled {
   box-shadow: 0 0 0 3px var(--danger-soft);
 }
 
-input:not([type="checkbox"]):not([type="radio"]),
+input:where(:not([type="checkbox"]):not([type="radio"])),
 select,
 textarea {
   width: 100%;
@@ -429,19 +429,19 @@ textarea {
 }
 input::placeholder,
 textarea::placeholder { color: var(--muted-2); }
-input:not([type="checkbox"]):not([type="radio"]):hover,
+input:where(:not([type="checkbox"]):not([type="radio"])):hover,
 select:hover,
 textarea:hover {
   border-color: color-mix(in srgb, var(--border-strong) 80%, var(--primary) 20%);
 }
-input:not([type="checkbox"]):not([type="radio"]):focus,
+input:where(:not([type="checkbox"]):not([type="radio"])):focus,
 select:focus,
 textarea:focus {
   border-color: color-mix(in srgb, var(--primary) 66%, var(--border));
   box-shadow: 0 0 0 3px var(--primary-soft);
   background: var(--surface-solid);
 }
-input:not([type="checkbox"]):not([type="radio"]):disabled,
+input:where(:not([type="checkbox"]):not([type="radio"])):disabled,
 select:disabled,
 textarea:disabled {
   opacity: 0.62;
@@ -1517,9 +1517,9 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   box-shadow: none;
 }
 
-.region-picker-panel .region-picker-search input:not([type="checkbox"]):not([type="radio"]):hover,
-.region-picker-panel .region-picker-search input:not([type="checkbox"]):not([type="radio"]):focus,
-.region-picker-panel .region-picker-search input:not([type="checkbox"]):not([type="radio"]):focus-visible {
+.region-picker-panel .region-picker-search input:where(:not([type="checkbox"]):not([type="radio"])):hover,
+.region-picker-panel .region-picker-search input:where(:not([type="checkbox"]):not([type="radio"])):focus,
+.region-picker-panel .region-picker-search input:where(:not([type="checkbox"]):not([type="radio"])):focus-visible {
   border: 0;
   outline: 0;
   background: transparent;
@@ -11950,7 +11950,7 @@ select:-webkit-autofill {
 }
 
 .login-input-wrap input:focus,
-.login-input-wrap input:not([type="checkbox"]):not([type="radio"]):focus {
+.login-input-wrap input:where(:not([type="checkbox"]):not([type="radio"])):focus {
   border-color: color-mix(in srgb, var(--primary) 70%, var(--border)) !important;
   box-shadow: 0 0 0 3px var(--primary-soft) !important;
 }
@@ -13215,7 +13215,7 @@ button.ui-btn-ghost:hover {
 .entry-access-settings-body > .access-note { margin-top: 12px; }
 
 @media (max-width: 720px) {
-  input:not([type="checkbox"]):not([type="radio"]),
+  input:where(:not([type="checkbox"]):not([type="radio"])),
   select,
   textarea,
   .custom-select-trigger {
