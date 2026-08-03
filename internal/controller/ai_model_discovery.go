@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -171,6 +172,17 @@ func normalizeAIProviderFormat(raw string) string {
 	default:
 		return aiProviderFormatChatCompletions
 	}
+}
+
+func normalizeErrorDetail(detail json.RawMessage) json.RawMessage {
+	var object map[string]any
+	if len(detail) == 0 || json.Unmarshal(detail, &object) != nil {
+		return nil
+	}
+	if len(detail) > 16<<10 {
+		return nil
+	}
+	return detail
 }
 
 func (s *Server) apiV2AIProviderModels(w http.ResponseWriter, r *http.Request) {

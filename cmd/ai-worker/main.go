@@ -137,11 +137,7 @@ func discoverModels(ctx context.Context, discovery *airpc.ModelDiscoveryRequest)
 		return nil, errors.New("model list response exceeds the allowed size")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		detail := modelErrorMessage(responseBody, discovery.APIKey)
-		if detail != "" {
-			return nil, fmt.Errorf("model list endpoint returned HTTP %d: %s", response.StatusCode, detail)
-		}
-		return nil, fmt.Errorf("model list endpoint returned HTTP %d", response.StatusCode)
+		return nil, providerRequestError("model list endpoint", response.StatusCode, responseBody, discovery.APIKey)
 	}
 	var envelope struct {
 		Data []struct {
@@ -323,7 +319,12 @@ func runOnce(ctx context.Context, client *http.Client, workerID string) error {
 	if err != nil {
 		failCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = rpcJSON(failCtx, client, http.MethodPost, "http://unix/v1/jobs/"+lease.Job.ID+"/fail", airpc.FailRequest{WorkerID: workerID, Error: bounded(err.Error(), 1000)}, nil)
+		failure := airpc.FailRequest{WorkerID: workerID, Error: bounded(err.Error(), 1000)}
+		var detail *providerFailureError
+		if errors.As(err, &detail) {
+			failure.ErrorDetail = detail.detail
+		}
+		_ = rpcJSON(failCtx, client, http.MethodPost, "http://unix/v1/jobs/"+lease.Job.ID+"/fail", failure, nil)
 		return err
 	}
 	request := airpc.CompleteRequest{WorkerID: workerID, Report: report, InputTokens: inputTokens, OutputTokens: outputTokens}
@@ -352,11 +353,8 @@ func analyze(ctx context.Context, job *model.AuditReviewJob, provider *airpc.Pro
 		return model.AuditReviewReport{}, 0, 0, errors.New("model response exceeds the allowed size")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		detail := modelErrorMessage(responseBody, provider.APIKey)
-		if detail != "" {
-			return model.AuditReviewReport{}, 0, 0, fmt.Errorf("model endpoint returned HTTP %d: %s", response.StatusCode, detail)
-		}
-		return model.AuditReviewReport{}, 0, 0, fmt.Errorf("model endpoint returned HTTP %d", response.StatusCode)
+		logDetail := providerLog(provider, endpoint, response.StatusCode, responseBody)
+		return model.AuditReviewReport{}, 0, 0, providerRequestError("model endpoint", response.StatusCode, responseBody, provider.APIKey, logDetail)
 	}
 	content, inputTokens, outputTokens, err := providerResponseContent(format, responseBody)
 	if err != nil {
@@ -487,6 +485,45 @@ func modelErrorMessage(responseBody []byte, credential string) string {
 		message = message[:300] + "…"
 	}
 	return message
+}
+
+func providerLog(provider *airpc.Provider, endpoint string, status int, responseBody []byte) json.RawMessage {
+	if provider == nil {
+		return nil
+	}
+	detail, err := json.Marshal(airpc.ProviderLog{Provider: provider.Name, Model: provider.Model, APIFormat: normalizeProviderFormat(provider.APIFormat), Endpoint: endpoint, Status: status, ResponseBody: boundedBytes(strings.TrimSpace(string(responseBody)), 8000)})
+	if err != nil {
+		return nil
+	}
+	return detail
+}
+
+func providerRequestError(prefix string, status int, responseBody []byte, credential string, logDetail ...json.RawMessage) error {
+	detail := modelErrorMessage(responseBody, credential)
+	var detailValue json.RawMessage
+	if len(logDetail) > 0 {
+		detailValue = logDetail[0]
+	}
+	if detail != "" {
+		return &providerFailureError{message: fmt.Sprintf("%s returned HTTP %d: %s", prefix, status, detail), detail: detailValue}
+	}
+	return &providerFailureError{message: fmt.Sprintf("%s returned HTTP %d", prefix, status), detail: detailValue}
+}
+
+func boundedBytes(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "…"
+}
+
+type providerFailureError struct {
+	message string
+	detail  json.RawMessage
+}
+
+func (e *providerFailureError) Error() string {
+	return e.message
 }
 
 func findingSchema() map[string]any {

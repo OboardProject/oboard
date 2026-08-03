@@ -1,6 +1,10 @@
 package airpc
 
-import "github.com/OboardProject/oboard/internal/model"
+import (
+	"encoding/json"
+
+	"github.com/OboardProject/oboard/internal/model"
+)
 
 type LeaseRequest struct {
 	WorkerID string `json:"worker_id"`
@@ -8,6 +12,7 @@ type LeaseRequest struct {
 
 type Provider struct {
 	ID            string `json:"id"`
+	Name          string `json:"name"`
 	BaseURL       string `json:"base_url"`
 	Model         string `json:"model"`
 	APIFormat     string `json:"api_format"`
@@ -28,8 +33,18 @@ type CompleteRequest struct {
 }
 
 type FailRequest struct {
-	WorkerID string `json:"worker_id"`
-	Error    string `json:"error"`
+	WorkerID    string          `json:"worker_id"`
+	Error       string          `json:"error"`
+	ErrorDetail json.RawMessage `json:"error_detail,omitempty"`
+}
+
+type ProviderLog struct {
+	Provider     string `json:"provider,omitempty"`
+	Model        string `json:"model,omitempty"`
+	APIFormat    string `json:"api_format,omitempty"`
+	Endpoint     string `json:"endpoint,omitempty"`
+	Status       int    `json:"status,omitempty"`
+	ResponseBody string `json:"response_body,omitempty"`
 }
 
 type ModelDiscoveryLeaseRequest struct {

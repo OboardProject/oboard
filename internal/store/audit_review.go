@@ -133,7 +133,7 @@ func (s *Store) ListAuditReviewEvidence(ctx context.Context, reviewID string, of
 }
 
 func (s *Store) ListAuditReviewJobs(ctx context.Context, reviewID string, includePayload bool) ([]model.AuditReviewJob, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,review_id,provider_id,stage,position,kind,status,input_json,output_json,error,attempts,input_tokens,output_tokens,lease_owner,lease_until,created_at,updated_at,completed_at from ai_audit_review_jobs where review_id=? order by stage,position`, reviewID)
+	rows, err := s.db.QueryContext(ctx, `select id,review_id,provider_id,stage,position,kind,status,input_json,output_json,error,error_detail,attempts,input_tokens,output_tokens,lease_owner,lease_until,created_at,updated_at,completed_at from ai_audit_review_jobs where review_id=? order by stage,position`, reviewID)
 	if err != nil {
 		return nil, err
 	}
@@ -153,21 +153,24 @@ func (s *Store) ListAuditReviewJobs(ctx context.Context, reviewID string, includ
 }
 
 func (s *Store) GetAuditReviewJob(ctx context.Context, reviewID, jobID string) (*model.AuditReviewJob, error) {
-	return scanAuditReviewJob(s.db.QueryRowContext(ctx, `select id,review_id,provider_id,stage,position,kind,status,input_json,output_json,error,attempts,input_tokens,output_tokens,lease_owner,lease_until,created_at,updated_at,completed_at from ai_audit_review_jobs where review_id=? and id=?`, reviewID, jobID))
+	return scanAuditReviewJob(s.db.QueryRowContext(ctx, `select id,review_id,provider_id,stage,position,kind,status,input_json,output_json,error,error_detail,attempts,input_tokens,output_tokens,lease_owner,lease_until,created_at,updated_at,completed_at from ai_audit_review_jobs where review_id=? and id=?`, reviewID, jobID))
 }
 
 func (s *Store) GetAuditReviewJobByID(ctx context.Context, jobID string) (*model.AuditReviewJob, error) {
-	return scanAuditReviewJob(s.db.QueryRowContext(ctx, `select id,review_id,provider_id,stage,position,kind,status,input_json,output_json,error,attempts,input_tokens,output_tokens,lease_owner,lease_until,created_at,updated_at,completed_at from ai_audit_review_jobs where id=?`, jobID))
+	return scanAuditReviewJob(s.db.QueryRowContext(ctx, `select id,review_id,provider_id,stage,position,kind,status,input_json,output_json,error,error_detail,attempts,input_tokens,output_tokens,lease_owner,lease_until,created_at,updated_at,completed_at from ai_audit_review_jobs where id=?`, jobID))
 }
 
 func scanAuditReviewJob(scanner interface{ Scan(...any) error }) (*model.AuditReviewJob, error) {
 	var item model.AuditReviewJob
-	var input, output, created, updated string
+	var input, output, errorDetail, created, updated string
 	var lease, completed sql.NullString
-	if err := scanner.Scan(&item.ID, &item.ReviewID, &item.ProviderID, &item.Stage, &item.Position, &item.Kind, &item.Status, &input, &output, &item.Error, &item.Attempts, &item.InputTokens, &item.OutputTokens, &item.LeaseOwner, &lease, &created, &updated, &completed); err != nil {
+	if err := scanner.Scan(&item.ID, &item.ReviewID, &item.ProviderID, &item.Stage, &item.Position, &item.Kind, &item.Status, &input, &output, &item.Error, &errorDetail, &item.Attempts, &item.InputTokens, &item.OutputTokens, &item.LeaseOwner, &lease, &created, &updated, &completed); err != nil {
 		return nil, err
 	}
 	item.Input, item.Output = json.RawMessage(input), json.RawMessage(output)
+	if errorDetail != "" {
+		item.ErrorDetail = json.RawMessage(errorDetail)
+	}
 	item.LeaseUntil, item.CompletedAt = nullableTime(lease), nullableTime(completed)
 	item.CreatedAt, item.UpdatedAt = parseTime(created), parseTime(updated)
 	return &item, nil
@@ -197,7 +200,7 @@ func (s *Store) LeaseAuditReviewJob(ctx context.Context, owner string, at time.T
 	if count, _ := result.RowsAffected(); count != 1 {
 		return nil, nil, sql.ErrNoRows
 	}
-	job, err := scanAuditReviewJob(tx.QueryRowContext(ctx, `select id,review_id,provider_id,stage,position,kind,status,input_json,output_json,error,attempts,input_tokens,output_tokens,lease_owner,lease_until,created_at,updated_at,completed_at from ai_audit_review_jobs where id=?`, id))
+	job, err := scanAuditReviewJob(tx.QueryRowContext(ctx, `select id,review_id,provider_id,stage,position,kind,status,input_json,output_json,error,error_detail,attempts,input_tokens,output_tokens,lease_owner,lease_until,created_at,updated_at,completed_at from ai_audit_review_jobs where id=?`, id))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -238,14 +241,14 @@ func (s *Store) CompleteAuditReviewJob(ctx context.Context, owner, jobID string,
 	if _, err := tx.ExecContext(ctx, `update ai_providers set last_used_at=?,updated_at=? where id=?`, ts, ts, providerID); err != nil {
 		return nil, err
 	}
-	job, err := scanAuditReviewJob(tx.QueryRowContext(ctx, `select id,review_id,provider_id,stage,position,kind,status,input_json,output_json,error,attempts,input_tokens,output_tokens,lease_owner,lease_until,created_at,updated_at,completed_at from ai_audit_review_jobs where id=?`, jobID))
+	job, err := scanAuditReviewJob(tx.QueryRowContext(ctx, `select id,review_id,provider_id,stage,position,kind,status,input_json,output_json,error,error_detail,attempts,input_tokens,output_tokens,lease_owner,lease_until,created_at,updated_at,completed_at from ai_audit_review_jobs where id=?`, jobID))
 	if err != nil {
 		return nil, err
 	}
 	return job, tx.Commit()
 }
 
-func (s *Store) FailAuditReviewJob(ctx context.Context, owner, jobID, message string) error {
+func (s *Store) FailAuditReviewJob(ctx context.Context, owner, jobID, message string, detail json.RawMessage) error {
 	var attempts int
 	var reviewID string
 	if err := s.db.QueryRowContext(ctx, `select attempts,review_id from ai_audit_review_jobs where id=? and status='running' and lease_owner=?`, jobID, owner).Scan(&attempts, &reviewID); err != nil {
@@ -261,7 +264,7 @@ func (s *Store) FailAuditReviewJob(ctx context.Context, owner, jobID, message st
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `update ai_audit_review_jobs set status=?,error=?,lease_owner='',lease_until=null,updated_at=?,completed_at=case when ?='failed' then ? else null end where id=? and status='running' and lease_owner=?`, status, message, ts, status, ts, jobID, owner); err != nil {
+	if _, err := tx.ExecContext(ctx, `update ai_audit_review_jobs set status=?,error=?,error_detail=?,lease_owner='',lease_until=null,updated_at=?,completed_at=case when ?='failed' then ? else null end where id=? and status='running' and lease_owner=?`, status, message, string(detail), ts, status, ts, jobID, owner); err != nil {
 		return err
 	}
 	if status == "failed" {

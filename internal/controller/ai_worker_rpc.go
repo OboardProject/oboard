@@ -148,22 +148,22 @@ func (s *Server) aiRPCLease(w http.ResponseWriter, r *http.Request) {
 	}
 	review, err := s.store.GetAuditReview(r.Context(), job.ReviewID)
 	if err != nil {
-		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "review cannot be loaded")
+		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "review cannot be loaded", nil)
 		http.Error(w, "review cannot be loaded", http.StatusInternalServerError)
 		return
 	}
 	if review.PrivacyMode == "raw" && !provider.AllowRawAudit {
-		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "provider raw audit authorization was revoked")
+		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "provider raw audit authorization was revoked", nil)
 		http.Error(w, "provider raw audit authorization was revoked", http.StatusConflict)
 		return
 	}
 	credential, err := security.DecryptSecret(s.sessionSecret, "ai-provider-credential:"+provider.ID, provider.CredentialEncrypted)
 	if err != nil {
-		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "provider credential cannot be decrypted")
+		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "provider credential cannot be decrypted", nil)
 		http.Error(w, "provider credential cannot be decrypted", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, airpc.LeaseResponse{Job: job, Provider: &airpc.Provider{ID: provider.ID, BaseURL: provider.BaseURL, Model: provider.Model, APIKey: credential, AllowRawAudit: provider.AllowRawAudit}})
+	writeJSON(w, http.StatusOK, airpc.LeaseResponse{Job: job, Provider: &airpc.Provider{ID: provider.ID, Name: provider.Name, BaseURL: provider.BaseURL, Model: provider.Model, APIFormat: provider.APIFormat, APIKey: credential, AllowRawAudit: provider.AllowRawAudit}})
 }
 
 func (s *Server) aiRPCJob(w http.ResponseWriter, r *http.Request) {
@@ -216,11 +216,12 @@ func (s *Server) aiRPCJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		request.Error = strings.TrimSpace(request.Error)
+		request.ErrorDetail = normalizeErrorDetail(request.ErrorDetail)
 		if request.WorkerID == "" || request.Error == "" || len(request.Error) > 1000 {
 			http.Error(w, "invalid failure", http.StatusBadRequest)
 			return
 		}
-		if err := s.store.FailAuditReviewJob(r.Context(), request.WorkerID, parts[0], request.Error); err != nil {
+		if err := s.store.FailAuditReviewJob(r.Context(), request.WorkerID, parts[0], request.Error, request.ErrorDetail); err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}

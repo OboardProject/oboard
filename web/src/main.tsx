@@ -246,7 +246,7 @@ type AuditReview = {
   final_output?: AuditReviewReport; error?: string; created_at: string; updated_at: string; completed_at?: string
 }
 type AuditReviewEvidence = { ref: string; review_id: string; kind: string; user_id?: number; server_id?: number; payload: unknown; created_at: string }
-type AuditReviewJob = { id: string; review_id: string; provider_id: string; stage: number; position: number; kind: string; status: string; input?: unknown; output?: unknown; error?: string; attempts: number; input_tokens: number; output_tokens: number; created_at: string; updated_at: string; completed_at?: string }
+type AuditReviewJob = { id: string; review_id: string; provider_id: string; stage: number; position: number; kind: string; status: string; input?: unknown; output?: unknown; error?: string; error_detail?: unknown; attempts: number; input_tokens: number; output_tokens: number; created_at: string; updated_at: string; completed_at?: string }
 type LimitMode = 'inherit' | 'custom'
 type SessionUser = Pick<User, 'id' | 'username' | 'nickname' | 'role' | 'status' | 'totp_enabled' | 'passkey_count'>
 type UserDraft = { username: string; nickname: string; password?: string; role: Role; status: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; limit_mode: LimitMode }
@@ -5230,7 +5230,8 @@ function AuditReviewDetailDialog({ detail, evidence, evidenceTotal, client, work
     try {
       const response = await client.request(`/audit/ai-reviews/${detail.review.id}/jobs/${job.id}`)
       const item: AuditReviewJob = response.job
-      await dialogs.alert({ title: `任务阶段 ${item.stage + 1} · #${item.position + 1}`, message: <div className="ai-review-raw-grid"><section><strong>输入</strong><CopyBlock value={JSON.stringify(item.input || {}, null, 2)} /></section><section><strong>输出</strong><CopyBlock value={JSON.stringify(item.output || {}, null, 2)} /></section></div> })
+      const log = item.error_detail ? JSON.stringify(item.error_detail, null, 2) : ''
+      await dialogs.alert({ title: `任务阶段 ${item.stage + 1} · #${item.position + 1}${item.error ? '（失败）' : ''}`, message: <div className="ai-review-raw-grid">{log ? <section><strong>Provider 原始日志</strong><CopyBlock value={log} /></section> : null}<section><strong>输入</strong><CopyBlock value={JSON.stringify(item.input || {}, null, 2)} /></section><section><strong>输出</strong><CopyBlock value={JSON.stringify(item.output || {}, null, 2)} /></section></div> })
     } catch (error: any) {
       await dialogs.alert({ title: '无法读取任务', message: localizeErrorMessage(error?.message || error) })
     }

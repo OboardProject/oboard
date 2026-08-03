@@ -67,6 +67,7 @@ type AuditReviewJob struct {
 	Input        json.RawMessage `json:"input,omitempty"`
 	Output       json.RawMessage `json:"output,omitempty"`
 	Error        string          `json:"error,omitempty"`
+	ErrorDetail  json.RawMessage `json:"error_detail,omitempty"`
 	Attempts     int             `json:"attempts"`
 	InputTokens  int64           `json:"input_tokens"`
 	OutputTokens int64           `json:"output_tokens"`

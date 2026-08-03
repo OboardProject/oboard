@@ -37,7 +37,7 @@ func TestAuditReviewRetryCancellationAndDailyBudget(t *testing.T) {
 		if err != nil || leased.ID != retryJob.ID {
 			t.Fatalf("retry lease %d job=%#v err=%v", attempt, leased, err)
 		}
-		if err := db.FailAuditReviewJob(ctx, "retry-worker", retryJob.ID, "temporary failure"); err != nil {
+		if err := db.FailAuditReviewJob(ctx, "retry-worker", retryJob.ID, "temporary failure", nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -75,6 +75,41 @@ func TestAuditReviewRetryCancellationAndDailyBudget(t *testing.T) {
 	}
 	if _, _, err := db.LeaseAuditReviewJob(ctx, "budget-worker", time.Now().UTC(), time.Minute); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("daily budget did not stop leasing: %v", err)
+	}
+}
+
+func TestAuditReviewJobPersistsErrorDetail(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "audit-review-detail.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	actor := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "33333333-3333-4333-8333-333333333333", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, actor); err != nil {
+		t.Fatal(err)
+	}
+	provider := &model.AIProvider{ID: "provider", Name: "provider", BaseURL: "http://127.0.0.1", Model: "model", CredentialEncrypted: "encrypted", Enabled: true}
+	if err := db.CreateAIProvider(ctx, provider); err != nil {
+		t.Fatal(err)
+	}
+	review, job := auditReviewFixture(actor.ID, provider.ID, "detail", "detail-job")
+	if err := db.CreateAuditReview(ctx, review, nil, []model.AuditReviewJob{job}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.LeaseAuditReviewJob(ctx, "detail-worker", time.Now().UTC(), time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	detail := json.RawMessage(`{"provider":"p","endpoint":"https://api.example.com/v1/chat/completions","status":400,"response_body":"{\"error\":{\"message\":\"unsupported\"}}"}`)
+	if err := db.FailAuditReviewJob(ctx, "detail-worker", job.ID, "model endpoint returned HTTP 400: unsupported", detail); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := db.GetAuditReviewJob(ctx, review.ID, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored.ErrorDetail) != string(detail) || stored.Error != "model endpoint returned HTTP 400: unsupported" {
+		t.Fatalf("stored job error=%q detail=%s", stored.Error, stored.ErrorDetail)
 	}
 }
 

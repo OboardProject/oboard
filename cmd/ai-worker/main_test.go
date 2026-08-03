@@ -142,7 +142,8 @@ func TestAnalyzeSurfacesProviderErrorMessageWithoutCredential(t *testing.T) {
 
 func TestRunOnceReportsBoundedModelFailure(t *testing.T) {
 	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, strings.Repeat("x", 2000), http.StatusBadGateway)
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":{"message":"upstream rejected the model request"}}`))
 	}))
 	defer modelServer.Close()
 	failed := make(chan airpc.FailRequest, 1)
@@ -166,6 +167,9 @@ func TestRunOnceReportsBoundedModelFailure(t *testing.T) {
 	request := <-failed
 	if request.WorkerID != "worker-2" || len(request.Error) > 1000 || strings.Contains(request.Error, "secret") {
 		t.Fatalf("unexpected failure RPC: %#v", request)
+	}
+	if len(request.ErrorDetail) == 0 || !strings.Contains(string(request.ErrorDetail), "upstream rejected the model request") || !strings.Contains(string(request.ErrorDetail), "HTTP 502") && !strings.Contains(string(request.ErrorDetail), "502") {
+		t.Fatalf("failure detail = %s", request.ErrorDetail)
 	}
 }
 
