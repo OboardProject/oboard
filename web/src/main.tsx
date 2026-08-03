@@ -59,7 +59,7 @@ import {
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
-  PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star
+  PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -2740,6 +2740,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
   const [providerModelsLoading, setProviderModelsLoading] = useState(false)
   const [providerTest, setProviderTest] = useState<any>(null)
   const [providerTestLoading, setProviderTestLoading] = useState(false)
+  const [providerTestOpen, setProviderTestOpen] = useState(false)
   const [aiRawLogOpen, setAiRawLogOpen] = useState(false)
   const [policyDraft, setPolicyDraft] = useState({ principalID: '', capability: '', mode: 'required', allowRisk4: false, serverIDs: '', userIDs: '' })
 
@@ -2931,6 +2932,8 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
     }
   }
   const testProviderConfig = async (payload: Record<string, string>) => {
+    setProviderTest(null)
+    setProviderTestOpen(true)
     setProviderTestLoading(true)
     try {
       const result = await client.requestV2('/ai/provider-test', { method: 'POST', body: JSON.stringify(payload) })
@@ -3195,12 +3198,12 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
       </div>
       <footer className="dialog-actions"><button type="button" className="ghost" onClick={closeProviderDialog}>取消</button><button type="button" className="ghost" disabled={providerTestLoading || !providerDraft.baseURL.trim() || !providerDraft.model.trim() || (!providerDraft.apiKey.trim() && !(snapshot.providers.find((item: any) => item.id === editingProviderID)?.has_credential))} onClick={testProviderDraft}><Send size={15} />{providerTestLoading ? '测试中...' : '测试连接'}</button><button type="submit" form="ai-provider-form" disabled={Boolean(working) || !providerDraft.name.trim() || !providerDraft.baseURL.trim() || !providerDraft.model.trim() || (!editingProviderID && !providerDraft.apiKey.trim())}>{editingProviderID ? '保存修改' : '创建 Provider'}</button></footer>
     </MotionDialogPanel>}</AnimatePresence>
-    <AnimatePresence>{providerTest && <AIProviderTestResultDialog result={providerTest} onClose={() => setProviderTest(null)} />}</AnimatePresence>
+    <AnimatePresence>{providerTestOpen && <AIProviderTestResultDialog result={providerTest} loading={providerTestLoading} onClose={() => { setProviderTestOpen(false); setProviderTest(null) }} />}</AnimatePresence>
     <AnimatePresence>{aiRawLogOpen && <AIProviderRawLogDialog client={client} onClose={() => setAiRawLogOpen(false)} />}</AnimatePresence>
   </Panel>
 }
 
-function AIProviderTestResultDialog({ result, onClose }: { result: any; onClose: () => void }) {
+function AIProviderTestResultDialog({ result, loading, onClose }: { result: any; loading?: boolean; onClose: () => void }) {
   const ok = Boolean(result?.ok)
   const requestJSON = typeof result?.request_json === 'string' ? result.request_json : ''
   const responseJSON = typeof result?.response_json === 'string' ? result.response_json : ''
@@ -3214,6 +3217,7 @@ function AIProviderTestResultDialog({ result, onClose }: { result: any; onClose:
       <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
     <div className="dialog-body">
+      {loading ? <div className="ai-test-loading"><Loader2 size={18} className="spin" /><span>正在发送测试请求，请稍候…</span></div> : <>
       <div className={`ai-test-banner ${ok ? 'is-ok' : 'is-failed'}`}>{ok ? <Check size={16} /> : <AlertTriangle size={16} />}<strong>{ok ? '连接成功' : '测试失败'}</strong><span>{String(result?.message || '')}</span></div>
       <div className="ai-test-meta">
         <span>HTTP {result?.status_code ?? '—'}</span>
@@ -3223,6 +3227,7 @@ function AIProviderTestResultDialog({ result, onClose }: { result: any; onClose:
       {requestJSON ? <><div className="ai-test-section-title">原始请求 <CopyBlock value={requestJSON} /></div><pre className="notification-raw-log-output">{requestJSON}</pre></> : null}
       {responseJSON ? <><div className="ai-test-section-title">原始响应 <CopyBlock value={responseJSON} /></div><pre className="notification-raw-log-output">{responseJSON}</pre></> : null}
       {!requestJSON && !responseJSON ? <div className="notification-raw-log-empty">没有可用的原始请求或响应（请求可能未到达 Provider）。</div> : null}
+      </>}
     </div>
     <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
   </MotionDialogPanel>

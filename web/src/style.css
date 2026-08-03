@@ -4857,7 +4857,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   color: var(--text-secondary);
   font-size: 13px;
 }
-.notification-raw-log-dialog .dialog-body { min-width: min(720px, 88vw); }
+.notification-raw-log-dialog { width: min(760px, 100%); }
 .notification-raw-log-dialog .dialog-actions { justify-content: flex-end; }
 .ai-test-banner { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--radius-md); font-size: 13px; }
 .ai-test-banner strong { white-space: nowrap; }
@@ -4870,6 +4870,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .ai-test-section-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 0 6px; font-size: 12px; font-weight: 600; }
 .ai-test-section-title .copy-block { max-width: 60%; }
 .ai-test-result-dialog .notification-raw-log-output { min-height: 120px; }
+.ai-test-loading { min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-secondary); font-size: 13px; }
 .notification-event-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .notification-target-summary { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .notification-event-chip {
