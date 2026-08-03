@@ -10,6 +10,7 @@ type Provider struct {
 	ID            string `json:"id"`
 	BaseURL       string `json:"base_url"`
 	Model         string `json:"model"`
+	APIFormat     string `json:"api_format"`
 	APIKey        string `json:"api_key"`
 	AllowRawAudit bool   `json:"allow_raw_audit"`
 }
@@ -36,9 +37,10 @@ type ModelDiscoveryLeaseRequest struct {
 }
 
 type ModelDiscoveryRequest struct {
-	ID      string `json:"id"`
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key"`
+	ID        string `json:"id"`
+	BaseURL   string `json:"base_url"`
+	APIFormat string `json:"api_format"`
+	APIKey    string `json:"api_key"`
 }
 
 type ModelDiscoveryLeaseResponse struct {

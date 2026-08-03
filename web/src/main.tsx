@@ -98,6 +98,8 @@ import {
   type AutomationConnectClient,
 } from './automation-connect'
 import { formatTokenLimit, tokenDisplayToLimit, tokenLimitToDisplay, type TokenDisplayUnit } from './ai-provider'
+
+type AIProviderFormat = 'chat_completions' | 'responses'
 import {
   failedDNSBulkServerIDs,
   hasDNSBulkPatch,
@@ -2729,7 +2731,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
   const [editingProviderID, setEditingProviderID] = useState('')
   const [serviceDraft, setServiceDraft] = useState({ name: '', scopes: [] as string[], cidrs: '', serverIDs: '', userIDs: '', rate: 60, concurrency: 4 })
   const [oauthDraft, setOAuthDraft] = useState({ name: '', redirects: 'http://127.0.0.1/callback', scopes: [] as string[] })
-  const [providerDraft, setProviderDraft] = useState({ name: '', baseURL: 'https://api.openai.com/v1', model: '', apiKey: '', tokenAmount: '100', tokenUnit: 'K' as TokenDisplayUnit, allowRawAudit: false })
+  const [providerDraft, setProviderDraft] = useState({ name: '', baseURL: 'https://api.openai.com/v1', model: '', apiFormat: 'chat_completions' as AIProviderFormat, apiKey: '', tokenAmount: '100', tokenUnit: 'K' as TokenDisplayUnit, allowRawAudit: false })
   const [providerModels, setProviderModels] = useState<string[]>([])
   const [providerModelsLoaded, setProviderModelsLoaded] = useState(false)
   const [providerModelsLoading, setProviderModelsLoading] = useState(false)
@@ -2875,13 +2877,13 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
   const editProvider = (provider: any) => {
     const tokenDisplay = tokenLimitToDisplay(provider.daily_token_limit || 0)
     setEditingProviderID(provider.id)
-    setProviderDraft({ name: provider.name, baseURL: provider.base_url, model: provider.model, apiKey: '', tokenAmount: tokenDisplay.amount, tokenUnit: tokenDisplay.unit, allowRawAudit: Boolean(provider.allow_raw_audit) })
+    setProviderDraft({ name: provider.name, baseURL: provider.base_url, model: provider.model, apiFormat: provider.api_format === 'responses' ? 'responses' : 'chat_completions', apiKey: '', tokenAmount: tokenDisplay.amount, tokenUnit: tokenDisplay.unit, allowRawAudit: Boolean(provider.allow_raw_audit) })
     setProviderModels([])
     setProviderModelsLoaded(false)
   }
   const resetProviderDraft = () => {
     setEditingProviderID('')
-    setProviderDraft({ name: '', baseURL: 'https://api.openai.com/v1', model: '', apiKey: '', tokenAmount: '100', tokenUnit: 'K', allowRawAudit: false })
+    setProviderDraft({ name: '', baseURL: 'https://api.openai.com/v1', model: '', apiFormat: 'chat_completions', apiKey: '', tokenAmount: '100', tokenUnit: 'K', allowRawAudit: false })
     setProviderModels([])
     setProviderModelsLoaded(false)
   }
@@ -2897,7 +2899,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
     }
     setProviderModelsLoading(true)
     try {
-      const payload: Record<string, string> = { base_url: providerDraft.baseURL }
+      const payload: Record<string, string> = { base_url: providerDraft.baseURL, api_format: providerDraft.apiFormat }
       if (editingProviderID) payload.provider_id = editingProviderID
       if (providerDraft.apiKey.trim()) payload.api_key = providerDraft.apiKey
       const result = await client.requestV2('/ai/provider-models', { method: 'POST', body: JSON.stringify(payload) })
@@ -2921,7 +2923,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
     }
     setWorking(editingProviderID ? 'provider-update' : 'provider-create')
     try {
-      const payload: Record<string, unknown> = { name: providerDraft.name, base_url: providerDraft.baseURL, model: providerDraft.model, allow_raw_audit: providerDraft.allowRawAudit, daily_token_limit: dailyTokenLimit }
+      const payload: Record<string, unknown> = { name: providerDraft.name, base_url: providerDraft.baseURL, model: providerDraft.model, api_format: providerDraft.apiFormat, allow_raw_audit: providerDraft.allowRawAudit, daily_token_limit: dailyTokenLimit }
       if (!editingProviderID || providerDraft.apiKey.trim()) payload.api_key = providerDraft.apiKey
       if (!editingProviderID) payload.enabled = true
       await client.requestV2(editingProviderID ? `/ai/providers/${editingProviderID}` : '/ai/providers', { method: editingProviderID ? 'PATCH' : 'POST', body: JSON.stringify(payload) })
@@ -3031,7 +3033,8 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
         <div className="settings-card-head"><div><h3>AI Provider</h3><p className="muted">供审计台的人工 AI 审查使用，默认发送脱敏的历史审计快照。</p></div></div>
         <form className="form settings-form automation-form" onSubmit={saveProvider}>
           <FormField label="名称"><input required value={providerDraft.name} onChange={event => setProviderDraft({ ...providerDraft, name: event.target.value })} /></FormField>
-          <FormField label="OpenAI 兼容 API Base URL" hint="填写版本根端点，例如 https://api.openai.com/v1；系统会在其后请求 /models 和 /chat/completions。"><input required value={providerDraft.baseURL} onChange={event => { setProviderDraft({ ...providerDraft, baseURL: event.target.value }); clearProviderModels() }} /></FormField>
+          <FormField label="OpenAI 兼容 API Base URL" hint="填写版本根端点，例如 https://api.openai.com/v1；系统会在其后请求 /models 以及所选 API 的调用端点。"><input required value={providerDraft.baseURL} onChange={event => { setProviderDraft({ ...providerDraft, baseURL: event.target.value }); clearProviderModels() }} /></FormField>
+          <FormField label="API 格式" hint="兼容层/中转一般选择 Chat Completions；OpenAI 原生 Responses API 选择 Responses。"><Select value={providerDraft.apiFormat} onChange={event => { setProviderDraft({ ...providerDraft, apiFormat: event.target.value as AIProviderFormat }); clearProviderModels() }}><option value="chat_completions">Chat Completions（/chat/completions）</option><option value="responses">Responses（/responses）</option></Select></FormField>
           <FormField label="API Key" hint={editingProviderID ? '留空保留当前 Key' : undefined}><input required={!editingProviderID} type="password" autoComplete="new-password" value={providerDraft.apiKey} onChange={event => { setProviderDraft({ ...providerDraft, apiKey: event.target.value }); clearProviderModels() }} /></FormField>
           <FormField label="模型">
             <div className="ai-provider-model-control">
@@ -3050,7 +3053,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
           <label className="toggle-line"><input type="checkbox" checked={providerDraft.allowRawAudit} onChange={event => setProviderDraft({ ...providerDraft, allowRawAudit: event.target.checked })} /><span>允许发送原始审计字段</span></label>
           <div className="automation-form-actions"><button disabled={Boolean(working)}>{editingProviderID ? <Edit3 size={14} /> : <Plus size={14} />}{editingProviderID ? '更新 Provider' : '保存 Provider'}</button>{editingProviderID && <button type="button" className="ghost" onClick={resetProviderDraft}>取消编辑</button>}</div>
         </form>
-        <div className="automation-list">{snapshot.providers.length ? snapshot.providers.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span></div><span>{item.model} · {item.base_url}</span><small>{item.daily_token_limit ? `每日 ${formatTokenLimit(item.daily_token_limit)}` : '不设日限额'} · {item.allow_raw_audit ? '原始字段已授权' : '脱敏模式'} · {item.has_credential ? 'Key 已配置' : '缺少 Key'}</small></div><div><button className="ghost icon-button" onClick={() => editProvider(item)} title="编辑或轮换 Key" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void toggleProvider(item)} title={item.enabled ? '停用' : '启用'} aria-label={item.enabled ? '停用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deleteProvider(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><Bot size={20} /><span>还没有 AI Provider</span></div>}</div>
+        <div className="automation-list">{snapshot.providers.length ? snapshot.providers.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span></div><span>{item.model} · {item.base_url}</span><small>{item.api_format === 'responses' ? 'Responses' : 'Chat Completions'} · {item.daily_token_limit ? `每日 ${formatTokenLimit(item.daily_token_limit)}` : '不设日限额'} · {item.allow_raw_audit ? '原始字段已授权' : '脱敏模式'} · {item.has_credential ? 'Key 已配置' : '缺少 Key'}</small></div><div><button className="ghost icon-button" onClick={() => editProvider(item)} title="编辑或轮换 Key" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void toggleProvider(item)} title={item.enabled ? '停用' : '启用'} aria-label={item.enabled ? '停用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deleteProvider(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><Bot size={20} /><span>还没有 AI Provider</span></div>}</div>
       </section>
     </div>}
     <AnimatePresence>{connectDialogOpen && <MotionDialogPanel onCancel={closeConnectDialog} className="automation-dialog automation-connect-dialog">

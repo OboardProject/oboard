@@ -188,6 +188,7 @@ type AIProvider struct {
 	Name                string     `json:"name"`
 	BaseURL             string     `json:"base_url"`
 	Model               string     `json:"model"`
+	APIFormat           string     `json:"api_format"`
 	Enabled             bool       `json:"enabled"`
 	AllowRawAudit       bool       `json:"allow_raw_audit"`
 	DailyTokenLimit     int64      `json:"daily_token_limit"`

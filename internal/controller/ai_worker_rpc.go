@@ -116,7 +116,7 @@ func (s *Server) aiRPCModelDiscoveryResult(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "invalid model discovery failure", http.StatusBadRequest)
 			return
 		}
-		if err := s.aiModelDiscoveries.finish(parts[0], request.WorkerID, aiModelDiscoveryResult{err: errors.New("AI Provider model discovery failed")}); err != nil {
+		if err := s.aiModelDiscoveries.finish(parts[0], request.WorkerID, aiModelDiscoveryResult{err: errors.New("AI Provider model discovery failed"), detail: request.Error}); err != nil {
 			http.Error(w, "model discovery request is no longer active", http.StatusConflict)
 			return
 		}

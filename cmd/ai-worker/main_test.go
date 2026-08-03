@@ -73,6 +73,73 @@ func TestRunOnceCompletesFindingWithoutReturningProviderCredential(t *testing.T)
 	}
 }
 
+func TestRunOnceSupportsResponsesAPIFormat(t *testing.T) {
+	const apiKey = "responses-secret"
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" || r.Method != http.MethodPost {
+			t.Fatalf("responses request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer "+apiKey {
+			t.Fatalf("responses authorization = %q", r.Header.Get("Authorization"))
+		}
+		var request struct {
+			Model       string                 `json:"model"`
+			Temperature int                    `json:"temperature"`
+			Input       []map[string]string    `json:"input"`
+			Extra       map[string]interface{} `json:"response_format"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Model != "responses-model" || request.Temperature != 0 || len(request.Input) != 2 || request.Input[1]["role"] != "user" || request.Extra != nil {
+			t.Fatalf("responses payload = %#v", request)
+		}
+		content, _ := json.Marshal(map[string]any{
+			"verdict": "normal", "risk_level": "low", "confidence": 0.9, "summary": "responses ok",
+			"dimensions": []any{}, "notable_subjects": []any{}, "recommended_actions": []string{}, "data_gaps": []string{}, "coverage_summary": "ok",
+		})
+		_ = json.NewEncoder(w).Encode(map[string]any{"output_text": string(content), "usage": map[string]int{"input_tokens": 200, "output_tokens": 60}})
+	}))
+	defer modelServer.Close()
+
+	var completed airpc.CompleteRequest
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/jobs/lease":
+			_ = json.NewEncoder(w).Encode(airpc.LeaseResponse{Job: &model.AuditReviewJob{ID: "job-responses", ReviewID: "review-responses", Input: json.RawMessage(`{"privacy_mode":"masked"}`)}, Provider: &airpc.Provider{ID: "provider-1", BaseURL: modelServer.URL, Model: "responses-model", APIFormat: "responses", APIKey: apiKey}})
+		case "/v1/jobs/job-responses/complete":
+			if err := json.NewDecoder(r.Body).Decode(&completed); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer controller.Close()
+
+	if err := runOnce(context.Background(), controllerClient(t, controller.URL), "worker-responses"); err != nil {
+		t.Fatal(err)
+	}
+	if completed.WorkerID != "worker-responses" || completed.Report.Verdict != "normal" || completed.InputTokens != 200 || completed.OutputTokens != 60 {
+		t.Fatalf("unexpected completion: %#v", completed)
+	}
+}
+
+func TestAnalyzeSurfacesProviderErrorMessageWithoutCredential(t *testing.T) {
+	const apiKey = "error-body-secret"
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key error-body-secret","type":"authentication_error"}}`))
+	}))
+	defer modelServer.Close()
+
+	_, _, _, err := analyze(context.Background(), &model.AuditReviewJob{Input: json.RawMessage(`{}`)}, &airpc.Provider{BaseURL: modelServer.URL, Model: "m", APIKey: apiKey})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 401") || !strings.Contains(err.Error(), "invalid api key") || strings.Contains(err.Error(), apiKey) {
+		t.Fatalf("provider error = %v", err)
+	}
+}
+
 func TestRunOnceReportsBoundedModelFailure(t *testing.T) {
 	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, strings.Repeat("x", 2000), http.StatusBadGateway)

@@ -108,6 +108,7 @@ func (s *Server) apiV2AIProvider(w http.ResponseWriter, r *http.Request) {
 		Name            *string `json:"name"`
 		BaseURL         *string `json:"base_url"`
 		Model           *string `json:"model"`
+		APIFormat       *string `json:"api_format"`
 		APIKey          *string `json:"api_key"`
 		Enabled         *bool   `json:"enabled"`
 		AllowRawAudit   *bool   `json:"allow_raw_audit"`
@@ -124,6 +125,9 @@ func (s *Server) apiV2AIProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	if request.Model != nil {
 		item.Model = strings.TrimSpace(*request.Model)
+	}
+	if request.APIFormat != nil {
+		item.APIFormat = normalizeAIProviderFormat(*request.APIFormat)
 	}
 	if request.Enabled != nil {
 		item.Enabled = *request.Enabled

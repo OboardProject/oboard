@@ -103,6 +103,56 @@ func TestAIProviderModelDiscoveryRejectsMissingCredentialAndTimesOut(t *testing.
 	request(t, handler, http.MethodPost, "/api/v2/ai/provider-models", token, map[string]any{"base_url": "https://api.example.com/v1", "api_key": "secret"}, http.StatusServiceUnavailable)
 }
 
+func TestAIModelDiscoveryFailureSurfacesWorkerDetail(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "model-discovery-detail.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := newTestServer(db, "test-secret", "")
+	server.aiModelDiscoveryTimeout = 5 * time.Second
+	socketFile, err := os.CreateTemp("/tmp", "oboard-ai-worker-detail-*.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	socketPath := socketFile.Name()
+	_ = socketFile.Close()
+	_ = os.Remove(socketPath)
+	t.Cleanup(func() { _ = os.Remove(socketPath) })
+	if err := server.StartAIWorkerRPC(ctx, socketPath); err != nil {
+		t.Fatal(err)
+	}
+	waitForSocket(t, socketPath)
+	workerClient := testUnixClient(socketPath)
+	handler := server.Handler()
+	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+
+	workerErr := make(chan error, 1)
+	go func() {
+		var lease airpc.ModelDiscoveryLeaseResponse
+		if err := testRPCJSON(workerClient, "/v1/model-discovery/lease", airpc.ModelDiscoveryLeaseRequest{WorkerID: "worker-detail"}, &lease); err != nil {
+			workerErr <- err
+			return
+		}
+		if lease.Request == nil {
+			workerErr <- fmt.Errorf("no discovery lease")
+			return
+		}
+		workerErr <- testRPCJSON(workerClient, "/v1/model-discovery/"+lease.Request.ID+"/fail", airpc.ModelDiscoveryFailRequest{WorkerID: "worker-detail", Error: "model list endpoint returned HTTP 401: invalid api key"}, nil)
+	}()
+	response := request(t, handler, http.MethodPost, "/api/v2/ai/provider-models", token, map[string]any{"base_url": "https://api.example.com/v1", "api_key": "secret", "api_format": "responses"}, http.StatusBadGateway)
+	if err := <-workerErr; err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(response)
+	if !strings.Contains(string(encoded), "HTTP 401") || strings.Contains(string(encoded), "secret") {
+		t.Fatalf("discovery failure response = %s", encoded)
+	}
+}
+
 func TestAIModelDiscoveryQueueIsBounded(t *testing.T) {
 	queue := newAIModelDiscoveryQueue()
 	for index := 0; index < aiModelDiscoveryCapacity; index++ {

@@ -62,6 +62,7 @@ func (s *Server) apiV2AIProviders(w http.ResponseWriter, r *http.Request) {
 			Name            string `json:"name"`
 			BaseURL         string `json:"base_url"`
 			Model           string `json:"model"`
+			APIFormat       string `json:"api_format"`
 			APIKey          string `json:"api_key"`
 			Enabled         bool   `json:"enabled"`
 			AllowRawAudit   bool   `json:"allow_raw_audit"`
@@ -88,7 +89,7 @@ func (s *Server) apiV2AIProviders(w http.ResponseWriter, r *http.Request) {
 			v2HandleError(w, r, err)
 			return
 		}
-		item := &model.AIProvider{ID: id, Name: request.Name, BaseURL: request.BaseURL, Model: request.Model, CredentialEncrypted: encrypted, Enabled: request.Enabled, AllowRawAudit: request.AllowRawAudit, DailyTokenLimit: request.DailyTokenLimit}
+		item := &model.AIProvider{ID: id, Name: request.Name, BaseURL: request.BaseURL, Model: request.Model, APIFormat: normalizeAIProviderFormat(request.APIFormat), CredentialEncrypted: encrypted, Enabled: request.Enabled, AllowRawAudit: request.AllowRawAudit, DailyTokenLimit: request.DailyTokenLimit}
 		if err := s.store.CreateAIProvider(r.Context(), item); err != nil {
 			v2HandleError(w, r, err)
 			return

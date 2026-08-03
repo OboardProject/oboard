@@ -22,6 +22,9 @@ const (
 	aiModelIDLimit            = 512
 	aiProviderBaseURLLimit    = 2048
 	aiProviderCredentialLimit = 8192
+
+	aiProviderFormatChatCompletions = "chat_completions"
+	aiProviderFormatResponses       = "responses"
 )
 
 var (
@@ -32,6 +35,7 @@ var (
 type aiModelDiscoveryResult struct {
 	models []string
 	err    error
+	detail string
 }
 
 type aiModelDiscoveryEntry struct {
@@ -151,6 +155,16 @@ func normalizeAIModelIDs(models []string) ([]string, error) {
 	return result, nil
 }
 
+func normalizeAIProviderFormat(raw string) string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	switch value {
+	case aiProviderFormatResponses:
+		return aiProviderFormatResponses
+	default:
+		return aiProviderFormatChatCompletions
+	}
+}
+
 func (s *Server) apiV2AIProviderModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
@@ -160,6 +174,7 @@ func (s *Server) apiV2AIProviderModels(w http.ResponseWriter, r *http.Request) {
 		ProviderID string `json:"provider_id"`
 		BaseURL    string `json:"base_url"`
 		APIKey     string `json:"api_key"`
+		APIFormat  string `json:"api_format"`
 	}
 	if !decodeV2(w, r, &request) {
 		return
@@ -195,7 +210,7 @@ func (s *Server) apiV2AIProviderModels(w http.ResponseWriter, r *http.Request) {
 		v2HandleError(w, r, err)
 		return
 	}
-	entry, err := s.aiModelDiscoveries.submit(airpc.ModelDiscoveryRequest{ID: "aim_" + random, BaseURL: baseURL, APIKey: credential})
+	entry, err := s.aiModelDiscoveries.submit(airpc.ModelDiscoveryRequest{ID: "aim_" + random, BaseURL: baseURL, APIFormat: normalizeAIProviderFormat(request.APIFormat), APIKey: credential})
 	if errors.Is(err, errAIModelDiscoveryBusy) {
 		v2Error(w, r, http.StatusTooManyRequests, "provider_models_busy", "模型拉取请求较多，请稍后重试")
 		return
@@ -214,7 +229,11 @@ func (s *Server) apiV2AIProviderModels(w http.ResponseWriter, r *http.Request) {
 		v2Error(w, r, http.StatusServiceUnavailable, "provider_models_unavailable", "AI Worker 未及时返回模型列表，请确认服务正在运行")
 	case result := <-entry.result:
 		if result.err != nil {
-			v2Error(w, r, http.StatusBadGateway, "provider_models_failed", "无法从 Provider 拉取模型，请检查 Base URL、API Key 和服务兼容性")
+			message := "无法从 Provider 拉取模型，请检查 Base URL、API Key 和服务兼容性"
+			if result.detail != "" {
+				message += "；" + result.detail
+			}
+			v2Error(w, r, http.StatusBadGateway, "provider_models_failed", message)
 			return
 		}
 		v2Write(w, r, http.StatusOK, map[string]any{"models": result.models}, map[string]any{"count": len(result.models)})
