@@ -43,6 +43,8 @@ func (s *Server) registerAPIV2Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v2/ai/providers", s.auth(s.apiV2AIProviders, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/ai/providers/", s.auth(s.apiV2AIProvider, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/ai/provider-models", s.auth(s.apiV2AIProviderModels, model.RoleAdmin))
+	mux.HandleFunc("/api/v2/ai/provider-test", s.auth(s.apiV2AIProviderTest, model.RoleAdmin))
+	mux.HandleFunc("/api/v2/ai/provider-test-logs", s.auth(s.apiV2AIProviderTestLogs, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/approval-policies", s.auth(s.apiV2ApprovalPolicies, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/approval-policies/", s.auth(s.apiV2ApprovalPolicy, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/tool-audits", s.auth(s.apiV2ToolAudits, model.RoleAdmin))

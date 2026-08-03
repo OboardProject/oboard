@@ -56,3 +56,39 @@ type ModelDiscoveryFailRequest struct {
 	WorkerID string `json:"worker_id"`
 	Error    string `json:"error"`
 }
+
+type AITestLeaseRequest struct {
+	WorkerID string `json:"worker_id"`
+}
+
+type AITestRequest struct {
+	ID         string `json:"id"`
+	ProviderID string `json:"provider_id,omitempty"`
+	Name       string `json:"name,omitempty"`
+	BaseURL    string `json:"base_url"`
+	APIFormat  string `json:"api_format"`
+	APIKey     string `json:"api_key"`
+	Model      string `json:"model"`
+}
+
+type AITestLeaseResponse struct {
+	Request *AITestRequest `json:"request,omitempty"`
+}
+
+type AITestCompleteRequest struct {
+	WorkerID     string `json:"worker_id"`
+	RequestJSON  string `json:"request_json"`
+	ResponseJSON string `json:"response_json"`
+	StatusCode   int    `json:"status_code"`
+	DurationMS   int64  `json:"duration_ms"`
+	Content      string `json:"content,omitempty"`
+}
+
+type AITestFailRequest struct {
+	WorkerID     string `json:"worker_id"`
+	Error        string `json:"error"`
+	RequestJSON  string `json:"request_json,omitempty"`
+	ResponseJSON string `json:"response_json,omitempty"`
+	StatusCode   int    `json:"status_code,omitempty"`
+	DurationMS   int64  `json:"duration_ms,omitempty"`
+}

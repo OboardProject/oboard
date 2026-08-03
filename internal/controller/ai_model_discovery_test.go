@@ -156,11 +156,12 @@ func TestAIModelDiscoveryFailureSurfacesWorkerDetail(t *testing.T) {
 func TestAIModelDiscoveryQueueIsBounded(t *testing.T) {
 	queue := newAIModelDiscoveryQueue()
 	for index := 0; index < aiModelDiscoveryCapacity; index++ {
-		if _, err := queue.submit(airpc.ModelDiscoveryRequest{ID: fmt.Sprintf("request-%d", index)}); err != nil {
+		id := fmt.Sprintf("request-%d", index)
+		if _, err := queue.submit(airpc.ModelDiscoveryRequest{ID: id}, id); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := queue.submit(airpc.ModelDiscoveryRequest{ID: "overflow"}); !errors.Is(err, errAIModelDiscoveryBusy) {
+	if _, err := queue.submit(airpc.ModelDiscoveryRequest{ID: "overflow"}, "overflow"); !errors.Is(err, errAIModelDiscoveryBusy) {
 		t.Fatalf("overflow error = %v", err)
 	}
 }

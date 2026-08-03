@@ -49,7 +49,7 @@ func main() {
 	defer stop()
 	log.Printf("OBoard AI Worker %s started", workerID)
 	var workers sync.WaitGroup
-	workers.Add(2)
+	workers.Add(3)
 	go func() {
 		defer workers.Done()
 		runAuditLoop(ctx, client, workerID, *pollInterval)
@@ -57,6 +57,10 @@ func main() {
 	go func() {
 		defer workers.Done()
 		runModelDiscoveryLoop(ctx, client, workerID, *pollInterval)
+	}()
+	go func() {
+		defer workers.Done()
+		runAITestLoop(ctx, client, workerID, *pollInterval)
 	}()
 	<-ctx.Done()
 	workers.Wait()
@@ -161,6 +165,150 @@ func discoverModels(ctx context.Context, discovery *airpc.ModelDiscoveryRequest)
 	}
 	sort.Strings(models)
 	return models, nil
+}
+
+type aiTestOutcome struct {
+	requestJSON  string
+	responseJSON string
+	statusCode   int
+	durationMS   int64
+	content      string
+	err          error
+}
+
+func runAITestLoop(ctx context.Context, client *http.Client, workerID string, retryInterval time.Duration) {
+	for {
+		if err := runAITestOnce(ctx, client, workerID); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("AI provider test: %v", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(retryInterval):
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+func runAITestOnce(ctx context.Context, client *http.Client, workerID string) error {
+	var lease airpc.AITestLeaseResponse
+	if err := rpcJSON(ctx, client, http.MethodPost, "http://unix/v1/ai-test/lease", airpc.AITestLeaseRequest{WorkerID: workerID}, &lease); err != nil {
+		return err
+	}
+	if lease.Request == nil {
+		return nil
+	}
+	outcome := testProvider(ctx, lease.Request)
+	if outcome.err != nil {
+		failCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = rpcJSON(failCtx, client, http.MethodPost, "http://unix/v1/ai-test/"+lease.Request.ID+"/fail", airpc.AITestFailRequest{WorkerID: workerID, Error: bounded(outcome.err.Error(), 1000), RequestJSON: outcome.requestJSON, ResponseJSON: outcome.responseJSON, StatusCode: outcome.statusCode, DurationMS: outcome.durationMS}, nil)
+		return outcome.err
+	}
+	completeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return rpcJSON(completeCtx, client, http.MethodPost, "http://unix/v1/ai-test/"+lease.Request.ID+"/complete", airpc.AITestCompleteRequest{WorkerID: workerID, RequestJSON: outcome.requestJSON, ResponseJSON: outcome.responseJSON, StatusCode: outcome.statusCode, DurationMS: outcome.durationMS, Content: outcome.content}, nil)
+}
+
+func testProvider(ctx context.Context, test *airpc.AITestRequest) aiTestOutcome {
+	outcome := aiTestOutcome{}
+	if test == nil || len(test.BaseURL) == 0 || len(test.BaseURL) > 2048 || len(test.APIKey) == 0 || len(test.APIKey) > 8192 || len(test.Model) == 0 || len(test.Model) > 512 {
+		outcome.err = errors.New("invalid AI provider test request")
+		return outcome
+	}
+	format := normalizeProviderFormat(test.APIFormat)
+	payload := aiTestPayload(format, test.Model)
+	body, _ := json.Marshal(payload)
+	outcome.requestJSON = compactJSON(body)
+	endpoint := strings.TrimRight(test.BaseURL, "/") + providerFormatPath(format)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		outcome.err = err
+		return outcome
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+test.APIKey)
+	started := time.Now()
+	client := &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(request)
+	outcome.durationMS = time.Since(started).Milliseconds()
+	if err != nil {
+		outcome.err = err
+		return outcome
+	}
+	defer response.Body.Close()
+	outcome.statusCode = response.StatusCode
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, (512<<10)+1))
+	if err != nil || len(responseBody) > 512<<10 {
+		outcome.err = errors.New("model response exceeds the allowed size")
+		return outcome
+	}
+	outcome.responseJSON = redactCredential(compactJSON(responseBody), test.APIKey)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		detail := modelErrorMessage(responseBody, test.APIKey)
+		if detail != "" {
+			outcome.err = fmt.Errorf("model endpoint returned HTTP %d: %s", response.StatusCode, detail)
+		} else {
+			outcome.err = fmt.Errorf("model endpoint returned HTTP %d", response.StatusCode)
+		}
+		return outcome
+	}
+	content, contentErr := aiTestContent(format, responseBody)
+	if contentErr != nil {
+		outcome.err = contentErr
+		return outcome
+	}
+	outcome.content = bounded(strings.TrimSpace(content), 500)
+	return outcome
+}
+
+func aiTestPayload(format, modelID string) map[string]any {
+	if format == "responses" {
+		return map[string]any{"model": modelID, "input": "Reply with exactly one word: ok", "max_output_tokens": 16}
+	}
+	return map[string]any{"model": modelID, "messages": []map[string]string{{"role": "user", "content": "Reply with exactly one word: ok"}}, "max_tokens": 16}
+}
+
+func aiTestContent(format string, responseBody []byte) (string, error) {
+	if format == "responses" {
+		var envelope struct {
+			OutputText string `json:"output_text"`
+		}
+		if json.Unmarshal(responseBody, &envelope) != nil || strings.TrimSpace(envelope.OutputText) == "" {
+			return "", errors.New("model response is not a supported responses API result")
+		}
+		return envelope.OutputText, nil
+	}
+	var envelope struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(responseBody, &envelope) != nil || len(envelope.Choices) != 1 {
+		return "", errors.New("model response is not a supported chat completion")
+	}
+	return envelope.Choices[0].Message.Content, nil
+}
+
+func compactJSON(raw []byte) string {
+	var value any
+	if json.Unmarshal(raw, &value) == nil {
+		if compact, err := json.Marshal(value); err == nil {
+			return string(compact)
+		}
+	}
+	return strings.Join(strings.Fields(strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r", " "), "\n", " ")), " ")
+}
+
+func redactCredential(value, credential string) string {
+	if credential != "" && strings.Contains(value, credential) {
+		return strings.ReplaceAll(value, credential, "[redacted]")
+	}
+	return value
 }
 
 func runOnce(ctx context.Context, client *http.Client, workerID string) error {

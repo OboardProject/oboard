@@ -38,30 +38,37 @@ type aiModelDiscoveryResult struct {
 	detail string
 }
 
-type aiModelDiscoveryEntry struct {
-	request  airpc.ModelDiscoveryRequest
+type aiTaskEntry[Request any, Result any] struct {
+	request  Request
+	id       string
 	workerID string
-	result   chan aiModelDiscoveryResult
+	result   chan Result
 }
 
-type aiModelDiscoveryQueue struct {
+type aiTaskQueue[Request any, Result any] struct {
 	mu      sync.Mutex
-	pending []*aiModelDiscoveryEntry
-	active  map[string]*aiModelDiscoveryEntry
+	pending []*aiTaskEntry[Request, Result]
+	active  map[string]*aiTaskEntry[Request, Result]
 	wake    chan struct{}
 }
 
-func newAIModelDiscoveryQueue() *aiModelDiscoveryQueue {
-	return &aiModelDiscoveryQueue{active: map[string]*aiModelDiscoveryEntry{}, wake: make(chan struct{}, 1)}
+func newAITaskQueue[Request any, Result any]() *aiTaskQueue[Request, Result] {
+	return &aiTaskQueue[Request, Result]{active: map[string]*aiTaskEntry[Request, Result]{}, wake: make(chan struct{}, 1)}
 }
 
-func (q *aiModelDiscoveryQueue) submit(request airpc.ModelDiscoveryRequest) (*aiModelDiscoveryEntry, error) {
+type aiModelDiscoveryQueue = aiTaskQueue[airpc.ModelDiscoveryRequest, aiModelDiscoveryResult]
+
+func newAIModelDiscoveryQueue() *aiModelDiscoveryQueue {
+	return newAITaskQueue[airpc.ModelDiscoveryRequest, aiModelDiscoveryResult]()
+}
+
+func (q *aiTaskQueue[Request, Result]) submit(request Request, id string) (*aiTaskEntry[Request, Result], error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.pending)+len(q.active) >= aiModelDiscoveryCapacity {
 		return nil, errAIModelDiscoveryBusy
 	}
-	entry := &aiModelDiscoveryEntry{request: request, result: make(chan aiModelDiscoveryResult, 1)}
+	entry := &aiTaskEntry[Request, Result]{request: request, id: id, result: make(chan Result, 1)}
 	q.pending = append(q.pending, entry)
 	select {
 	case q.wake <- struct{}{}:
@@ -70,7 +77,7 @@ func (q *aiModelDiscoveryQueue) submit(request airpc.ModelDiscoveryRequest) (*ai
 	return entry, nil
 }
 
-func (q *aiModelDiscoveryQueue) lease(ctx context.Context, workerID string) (*airpc.ModelDiscoveryRequest, error) {
+func (q *aiTaskQueue[Request, Result]) lease(ctx context.Context, workerID string) (*Request, error) {
 	timer := time.NewTimer(aiModelLeaseWait)
 	defer timer.Stop()
 	for {
@@ -79,7 +86,7 @@ func (q *aiModelDiscoveryQueue) lease(ctx context.Context, workerID string) (*ai
 			entry := q.pending[0]
 			q.pending = q.pending[1:]
 			entry.workerID = workerID
-			q.active[entry.request.ID] = entry
+			q.active[entry.id] = entry
 			request := entry.request
 			q.mu.Unlock()
 			return &request, nil
@@ -95,24 +102,25 @@ func (q *aiModelDiscoveryQueue) lease(ctx context.Context, workerID string) (*ai
 	}
 }
 
-func (q *aiModelDiscoveryQueue) finish(id, workerID string, result aiModelDiscoveryResult) error {
+func (q *aiTaskQueue[Request, Result]) finish(id, workerID string, result Result) (Request, error) {
 	q.mu.Lock()
 	entry, ok := q.active[id]
 	if !ok || entry.workerID != workerID {
 		q.mu.Unlock()
-		return errAIModelDiscoveryMissing
+		var zero Request
+		return zero, errAIModelDiscoveryMissing
 	}
 	delete(q.active, id)
 	q.mu.Unlock()
 	entry.result <- result
-	return nil
+	return entry.request, nil
 }
 
-func (q *aiModelDiscoveryQueue) cancel(id string) {
+func (q *aiTaskQueue[Request, Result]) cancel(id string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for index, entry := range q.pending {
-		if entry.request.ID == id {
+		if entry.id == id {
 			q.pending = append(q.pending[:index], q.pending[index+1:]...)
 			return
 		}
@@ -210,7 +218,8 @@ func (s *Server) apiV2AIProviderModels(w http.ResponseWriter, r *http.Request) {
 		v2HandleError(w, r, err)
 		return
 	}
-	entry, err := s.aiModelDiscoveries.submit(airpc.ModelDiscoveryRequest{ID: "aim_" + random, BaseURL: baseURL, APIFormat: normalizeAIProviderFormat(request.APIFormat), APIKey: credential})
+	requestID := "aim_" + random
+	entry, err := s.aiModelDiscoveries.submit(airpc.ModelDiscoveryRequest{ID: requestID, BaseURL: baseURL, APIFormat: normalizeAIProviderFormat(request.APIFormat), APIKey: credential}, requestID)
 	if errors.Is(err, errAIModelDiscoveryBusy) {
 		v2Error(w, r, http.StatusTooManyRequests, "provider_models_busy", "模型拉取请求较多，请稍后重试")
 		return

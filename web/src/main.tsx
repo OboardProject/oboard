@@ -2738,6 +2738,9 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
   const [providerModels, setProviderModels] = useState<string[]>([])
   const [providerModelsLoaded, setProviderModelsLoaded] = useState(false)
   const [providerModelsLoading, setProviderModelsLoading] = useState(false)
+  const [providerTest, setProviderTest] = useState<any>(null)
+  const [providerTestLoading, setProviderTestLoading] = useState(false)
+  const [aiRawLogOpen, setAiRawLogOpen] = useState(false)
   const [policyDraft, setPolicyDraft] = useState({ principalID: '', capability: '', mode: 'required', allowRisk4: false, serverIDs: '', userIDs: '' })
 
   const splitValues = (value: string) => value.split(/[\s,]+/).map(item => item.trim()).filter(Boolean)
@@ -2927,6 +2930,39 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
       setProviderModelsLoading(false)
     }
   }
+  const testProviderConfig = async (payload: Record<string, string>) => {
+    setProviderTestLoading(true)
+    try {
+      const result = await client.requestV2('/ai/provider-test', { method: 'POST', body: JSON.stringify(payload) })
+      setProviderTest(result)
+    } catch (error: any) {
+      setProviderTest({ ok: false, message: localizeErrorMessage(error?.message || error) })
+    } finally {
+      setProviderTestLoading(false)
+    }
+  }
+  const testProviderDraft = () => {
+    if (!providerDraft.baseURL.trim() || !providerDraft.model.trim()) {
+      notify?.('请先填写 Base URL 和模型 ID', 'error')
+      return
+    }
+    const editingProvider = snapshot.providers.find((item: any) => item.id === editingProviderID)
+    if (!providerDraft.apiKey.trim() && !editingProvider?.has_credential) {
+      notify?.('请先填写 API Key', 'error')
+      return
+    }
+    const payload: Record<string, string> = { base_url: providerDraft.baseURL, api_format: providerDraft.apiFormat, model: providerDraft.model }
+    if (editingProviderID) payload.provider_id = editingProviderID
+    if (providerDraft.apiKey.trim()) payload.api_key = providerDraft.apiKey
+    void testProviderConfig(payload)
+  }
+  const testProviderStored = (item: any) => {
+    if (!item.has_credential) {
+      notify?.('该 Provider 没有可用的 API Key，请先编辑并配置 Key', 'error')
+      return
+    }
+    void testProviderConfig({ provider_id: item.id, base_url: item.base_url, api_format: item.api_format, model: item.model })
+  }
   const saveProvider = async (event: React.FormEvent) => {
     event.preventDefault()
     const updating = Boolean(editingProviderID)
@@ -3045,8 +3081,8 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
     </div>}
     {view === 'ai' && <div className="automation-grid">
       <section className="settings-card automation-wide">
-        <div className="settings-card-head"><div><h3>AI Provider</h3><p className="muted">供审计台的人工 AI 审查使用，默认发送脱敏的历史审计快照。</p></div><button type="button" className="ghost" onClick={openProviderDialog}><Plus size={15} />添加 Provider</button></div>
-        <div className="automation-list">{snapshot.providers.length ? snapshot.providers.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span></div><span>{item.model} · {item.base_url}</span><small>{item.api_format === 'responses' ? 'Responses' : 'Chat Completions'} · {item.daily_token_limit ? `每日 ${formatTokenLimit(item.daily_token_limit)}` : '不设日限额'} · {item.allow_raw_audit ? '原始字段已授权' : '脱敏模式'} · {item.has_credential ? 'Key 已配置' : '缺少 Key'}</small></div><div><button className="ghost icon-button" onClick={() => editProvider(item)} title="编辑或轮换 Key" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void toggleProvider(item)} title={item.enabled ? '停用' : '启用'} aria-label={item.enabled ? '停用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deleteProvider(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><Bot size={20} /><span>还没有 AI Provider</span></div>}</div>
+        <div className="settings-card-head"><div><h3>AI Provider</h3><p className="muted">供审计台的人工 AI 审查使用，默认发送脱敏的历史审计快照。</p></div><div className="section-actions"><button type="button" className="ghost" onClick={() => setAiRawLogOpen(true)}><ClipboardList size={15} /><span>原始日志</span></button><button type="button" className="ghost" onClick={openProviderDialog}><Plus size={15} /><span>添加 Provider</span></button></div></div>
+        <div className="automation-list">{snapshot.providers.length ? snapshot.providers.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span></div><span>{item.model} · {item.base_url}</span><small>{item.api_format === 'responses' ? 'Responses' : 'Chat Completions'} · {item.daily_token_limit ? `每日 ${formatTokenLimit(item.daily_token_limit)}` : '不设日限额'} · {item.allow_raw_audit ? '原始字段已授权' : '脱敏模式'} · {item.has_credential ? 'Key 已配置' : '缺少 Key'}</small></div><div><button className="ghost icon-button" disabled={!item.has_credential} onClick={() => testProviderStored(item)} title="测试配置" aria-label={`测试 ${item.name}`}><Send size={15} /></button><button className="ghost icon-button" onClick={() => editProvider(item)} title="编辑或轮换 Key" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void toggleProvider(item)} title={item.enabled ? '停用' : '启用'} aria-label={item.enabled ? '停用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deleteProvider(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><Bot size={20} /><span>还没有 AI Provider</span></div>}</div>
       </section>
     </div>}
     <AnimatePresence>{connectDialogOpen && <MotionDialogPanel onCancel={closeConnectDialog} className="automation-dialog automation-connect-dialog">
@@ -3157,9 +3193,83 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
           <label className="toggle-line"><input type="checkbox" checked={providerDraft.allowRawAudit} onChange={event => setProviderDraft({ ...providerDraft, allowRawAudit: event.target.checked })} /><span>允许发送原始审计字段</span></label>
         </form>
       </div>
-      <footer className="dialog-actions"><button type="button" className="ghost" onClick={closeProviderDialog}>取消</button><button type="submit" form="ai-provider-form" disabled={Boolean(working) || !providerDraft.name.trim() || !providerDraft.baseURL.trim() || !providerDraft.model.trim() || (!editingProviderID && !providerDraft.apiKey.trim())}>{editingProviderID ? '保存修改' : '创建 Provider'}</button></footer>
+      <footer className="dialog-actions"><button type="button" className="ghost" onClick={closeProviderDialog}>取消</button><button type="button" className="ghost" disabled={providerTestLoading || !providerDraft.baseURL.trim() || !providerDraft.model.trim() || (!providerDraft.apiKey.trim() && !(snapshot.providers.find((item: any) => item.id === editingProviderID)?.has_credential))} onClick={testProviderDraft}><Send size={15} />{providerTestLoading ? '测试中...' : '测试连接'}</button><button type="submit" form="ai-provider-form" disabled={Boolean(working) || !providerDraft.name.trim() || !providerDraft.baseURL.trim() || !providerDraft.model.trim() || (!editingProviderID && !providerDraft.apiKey.trim())}>{editingProviderID ? '保存修改' : '创建 Provider'}</button></footer>
     </MotionDialogPanel>}</AnimatePresence>
+    <AnimatePresence>{providerTest && <AIProviderTestResultDialog result={providerTest} onClose={() => setProviderTest(null)} />}</AnimatePresence>
+    <AnimatePresence>{aiRawLogOpen && <AIProviderRawLogDialog client={client} onClose={() => setAiRawLogOpen(false)} />}</AnimatePresence>
   </Panel>
+}
+
+function AIProviderTestResultDialog({ result, onClose }: { result: any; onClose: () => void }) {
+  const ok = Boolean(result?.ok)
+  const requestJSON = typeof result?.request_json === 'string' ? result.request_json : ''
+  const responseJSON = typeof result?.response_json === 'string' ? result.response_json : ''
+  const duration = typeof result?.duration_ms === 'number' ? result.duration_ms : null
+  return <MotionDialogPanel onCancel={onClose} className="notification-raw-log-dialog ai-test-result-dialog">
+    <header className="dialog-head">
+      <div>
+        <h2>AI Provider 测试结果</h2>
+        <p className="muted">由 AI Worker 发送一次最小请求验证配置，原始请求与响应已自动脱敏。</p>
+      </div>
+      <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body">
+      <div className={`ai-test-banner ${ok ? 'is-ok' : 'is-failed'}`}>{ok ? <Check size={16} /> : <AlertTriangle size={16} />}<strong>{ok ? '连接成功' : '测试失败'}</strong><span>{String(result?.message || '')}</span></div>
+      <div className="ai-test-meta">
+        <span>HTTP {result?.status_code ?? '—'}</span>
+        <span>{duration === null ? '—' : `${duration} ms`}</span>
+        {result?.content ? <span className="ai-test-content">模型返回：{String(result.content)}</span> : null}
+      </div>
+      {requestJSON ? <><div className="ai-test-section-title">原始请求 <CopyBlock value={requestJSON} /></div><pre className="notification-raw-log-output">{requestJSON}</pre></> : null}
+      {responseJSON ? <><div className="ai-test-section-title">原始响应 <CopyBlock value={responseJSON} /></div><pre className="notification-raw-log-output">{responseJSON}</pre></> : null}
+      {!requestJSON && !responseJSON ? <div className="notification-raw-log-empty">没有可用的原始请求或响应（请求可能未到达 Provider）。</div> : null}
+    </div>
+    <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
+  </MotionDialogPanel>
+}
+
+function AIProviderRawLogDialog({ client, onClose }: { client: ReturnType<typeof api>; onClose: () => void }) {
+  const [lines, setLines] = useState(500)
+  const [content, setContent] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const load = async (count = lines) => {
+    setLoading(true)
+    setError('')
+    try {
+      const result = await client.requestV2(`/ai/provider-test-logs?lines=${count}`)
+      setContent(String(result?.logs?.content || ''))
+    } catch (e: any) {
+      setError(localizeErrorMessage(e?.message || e))
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { void load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  return <MotionDialogPanel onCancel={onClose} className="notification-raw-log-dialog">
+    <header className="dialog-head">
+      <div>
+        <h2>AI Provider 测试原始日志</h2>
+        <p className="muted">来自主控日志的测试记录，包含脱敏后的原始请求与响应。</p>
+      </div>
+      <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body">
+      <div className="notification-raw-log-toolbar">
+        <Select value={String(lines)} onChange={event => { const value = Number(event.target.value); setLines(value); void load(value) }} aria-label="行数">
+          <option value={200}>最近 200 行</option>
+          <option value={500}>最近 500 行</option>
+          <option value={1000}>最近 1000 行</option>
+        </Select>
+        <button type="button" className="ghost" onClick={() => void load()} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''} />刷新</button>
+        <button type="button" className="ghost" onClick={() => copyText(content)} disabled={!content}><Copy size={15} />复制</button>
+      </div>
+      {error
+        ? <div className="notification-raw-log-empty danger-text">{error}</div>
+        : <pre className="notification-raw-log-output">{loading ? '正在读取...' : content || '暂无测试记录，点击「测试连接」后会在这里留下原始日志。'}</pre>}
+    </div>
+    <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
+  </MotionDialogPanel>
 }
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources }: any) {

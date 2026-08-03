@@ -47,6 +47,8 @@ func (s *Server) StartAIWorkerRPC(ctx context.Context, socketPath string) error 
 	mux.HandleFunc("/v1/jobs/", s.aiRPCJob)
 	mux.HandleFunc("/v1/model-discovery/lease", s.aiRPCModelDiscoveryLease)
 	mux.HandleFunc("/v1/model-discovery/", s.aiRPCModelDiscoveryResult)
+	mux.HandleFunc("/v1/ai-test/lease", s.aiRPCAITestLease)
+	mux.HandleFunc("/v1/ai-test/", s.aiRPCAITestResult)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10}
 	go func() {
@@ -101,7 +103,7 @@ func (s *Server) aiRPCModelDiscoveryResult(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "invalid model discovery result", http.StatusBadRequest)
 			return
 		}
-		if err := s.aiModelDiscoveries.finish(parts[0], request.WorkerID, aiModelDiscoveryResult{models: models}); err != nil {
+		if _, err := s.aiModelDiscoveries.finish(parts[0], request.WorkerID, aiModelDiscoveryResult{models: models}); err != nil {
 			http.Error(w, "model discovery request is no longer active", http.StatusConflict)
 			return
 		}
@@ -116,7 +118,7 @@ func (s *Server) aiRPCModelDiscoveryResult(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "invalid model discovery failure", http.StatusBadRequest)
 			return
 		}
-		if err := s.aiModelDiscoveries.finish(parts[0], request.WorkerID, aiModelDiscoveryResult{err: errors.New("AI Provider model discovery failed"), detail: request.Error}); err != nil {
+		if _, err := s.aiModelDiscoveries.finish(parts[0], request.WorkerID, aiModelDiscoveryResult{err: errors.New("AI Provider model discovery failed"), detail: request.Error}); err != nil {
 			http.Error(w, "model discovery request is no longer active", http.StatusConflict)
 			return
 		}
@@ -238,4 +240,76 @@ func decodeInternalJSON(w http.ResponseWriter, r *http.Request, output any) bool
 		return false
 	}
 	return true
+}
+
+func (s *Server) aiRPCAITestLease(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request airpc.AITestLeaseRequest
+	if !decodeInternalJSON(w, r, &request) || strings.TrimSpace(request.WorkerID) == "" || len(request.WorkerID) > 128 {
+		return
+	}
+	test, err := s.aiTests.lease(r.Context(), request.WorkerID)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			http.Error(w, "AI provider test lease failed", http.StatusInternalServerError)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, airpc.AITestLeaseResponse{Request: test})
+}
+
+func (s *Server) aiRPCAITestResult(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	parts := pathParts(r.URL.Path, "/v1/ai-test/")
+	if len(parts) != 2 || parts[0] == "" {
+		http.NotFound(w, r)
+		return
+	}
+	switch parts[1] {
+	case "complete":
+		var request airpc.AITestCompleteRequest
+		if !decodeInternalJSON(w, r, &request) {
+			return
+		}
+		request.RequestJSON = strings.TrimSpace(request.RequestJSON)
+		request.ResponseJSON = strings.TrimSpace(request.ResponseJSON)
+		if strings.TrimSpace(request.WorkerID) == "" || request.StatusCode < 100 || request.StatusCode > 599 || request.DurationMS < 0 || request.DurationMS > 3_600_000 || len(request.RequestJSON) > aiTestRawJSONLimit || len(request.ResponseJSON) > aiTestRawJSONLimit || len(request.Content) > 500 {
+			http.Error(w, "invalid AI provider test result", http.StatusBadRequest)
+			return
+		}
+		requested, err := s.aiTests.finish(parts[0], request.WorkerID, aiTestResult{ok: true, requestJSON: request.RequestJSON, responseJSON: request.ResponseJSON, statusCode: request.StatusCode, durationMS: request.DurationMS, content: request.Content})
+		if err != nil {
+			http.Error(w, "AI provider test request is no longer active", http.StatusConflict)
+			return
+		}
+		recordAITestLog(requested, aiTestResult{ok: true, requestJSON: request.RequestJSON, responseJSON: request.ResponseJSON, statusCode: request.StatusCode, durationMS: request.DurationMS, content: request.Content})
+		w.WriteHeader(http.StatusNoContent)
+	case "fail":
+		var request airpc.AITestFailRequest
+		if !decodeInternalJSON(w, r, &request) {
+			return
+		}
+		request.Error = strings.TrimSpace(request.Error)
+		request.RequestJSON = strings.TrimSpace(request.RequestJSON)
+		request.ResponseJSON = strings.TrimSpace(request.ResponseJSON)
+		if strings.TrimSpace(request.WorkerID) == "" || request.Error == "" || len(request.Error) > 1000 || request.StatusCode < 0 || request.StatusCode > 599 || request.DurationMS < 0 || request.DurationMS > 3_600_000 || len(request.RequestJSON) > aiTestRawJSONLimit || len(request.ResponseJSON) > aiTestRawJSONLimit {
+			http.Error(w, "invalid AI provider test failure", http.StatusBadRequest)
+			return
+		}
+		requested, err := s.aiTests.finish(parts[0], request.WorkerID, aiTestResult{ok: false, requestJSON: request.RequestJSON, responseJSON: request.ResponseJSON, statusCode: request.StatusCode, durationMS: request.DurationMS, detail: request.Error})
+		if err != nil {
+			http.Error(w, "AI provider test request is no longer active", http.StatusConflict)
+			return
+		}
+		recordAITestLog(requested, aiTestResult{ok: false, requestJSON: request.RequestJSON, responseJSON: request.ResponseJSON, statusCode: request.StatusCode, durationMS: request.DurationMS, detail: request.Error})
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.NotFound(w, r)
+	}
 }

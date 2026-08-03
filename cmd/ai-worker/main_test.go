@@ -244,3 +244,142 @@ func controllerClient(t *testing.T, baseURL string) *http.Client {
 		return transport.RoundTrip(clone)
 	})}
 }
+
+func TestRunAITestOnceCompletesWithoutCredentialOrResponseFormat(t *testing.T) {
+	const apiKey = "ai-test-secret"
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" || r.Method != http.MethodPost {
+			t.Fatalf("test request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer "+apiKey {
+			t.Fatalf("test authorization = %q", r.Header.Get("Authorization"))
+		}
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), apiKey) {
+			t.Fatal("provider credential leaked into test request body")
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := payload["response_format"]; exists {
+			t.Fatal("config test must not require response_format")
+		}
+		if _, exists := payload["temperature"]; exists {
+			t.Fatal("config test payload must stay minimal")
+		}
+		if payload["max_tokens"] != float64(16) {
+			t.Fatalf("max_tokens = %#v", payload["max_tokens"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "ok"}}}, "usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 1}})
+	}))
+	defer modelServer.Close()
+
+	var completed airpc.AITestCompleteRequest
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/ai-test/lease":
+			_ = json.NewEncoder(w).Encode(airpc.AITestLeaseResponse{Request: &airpc.AITestRequest{ID: "test-1", BaseURL: modelServer.URL, APIKey: apiKey, Model: "test-model", APIFormat: "chat_completions"}})
+		case "/v1/ai-test/test-1/complete":
+			if err := json.NewDecoder(r.Body).Decode(&completed); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer controller.Close()
+
+	if err := runAITestOnce(context.Background(), controllerClient(t, controller.URL), "worker-ai-test"); err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(completed)
+	if strings.Contains(string(encoded), apiKey) {
+		t.Fatal("provider credential leaked into AI test completion RPC")
+	}
+	if completed.WorkerID != "worker-ai-test" || completed.StatusCode != 200 || completed.DurationMS < 0 || completed.Content != "ok" {
+		t.Fatalf("unexpected AI test completion: %#v", completed)
+	}
+	if !strings.Contains(completed.RequestJSON, `"messages"`) || !strings.Contains(completed.ResponseJSON, `"choices"`) {
+		t.Fatalf("raw JSON missing: %#v", completed)
+	}
+}
+
+func TestRunAITestOnceSupportsResponsesFormat(t *testing.T) {
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" || r.Method != http.MethodPost {
+			t.Fatalf("responses test request = %s %s", r.Method, r.URL.Path)
+		}
+		var payload map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if _, exists := payload["response_format"]; exists {
+			t.Fatal("responses config test must not require response_format")
+		}
+		if payload["max_output_tokens"] != float64(16) || payload["input"] != "Reply with exactly one word: ok" {
+			t.Fatalf("responses test payload = %#v", payload)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "ok", "usage": map[string]int{"input_tokens": 8, "output_tokens": 1}})
+	}))
+	defer modelServer.Close()
+
+	var completed airpc.AITestCompleteRequest
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/ai-test/lease":
+			_ = json.NewEncoder(w).Encode(airpc.AITestLeaseResponse{Request: &airpc.AITestRequest{ID: "test-responses", BaseURL: modelServer.URL, APIKey: "responses-key", Model: "responses-model", APIFormat: "responses"}})
+		case "/v1/ai-test/test-responses/complete":
+			if err := json.NewDecoder(r.Body).Decode(&completed); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer controller.Close()
+	if err := runAITestOnce(context.Background(), controllerClient(t, controller.URL), "worker-ai-responses"); err != nil {
+		t.Fatal(err)
+	}
+	if completed.WorkerID != "worker-ai-responses" || completed.StatusCode != 200 || completed.Content != "ok" {
+		t.Fatalf("unexpected AI test completion: %#v", completed)
+	}
+}
+
+func TestRunAITestOnceReportsHTTPErrorWithRedactedRawResponse(t *testing.T) {
+	const apiKey = "error-body-secret"
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key error-body-secret","type":"authentication_error"}}`))
+	}))
+	defer modelServer.Close()
+
+	failed := make(chan airpc.AITestFailRequest, 1)
+	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/ai-test/lease":
+			_ = json.NewEncoder(w).Encode(airpc.AITestLeaseResponse{Request: &airpc.AITestRequest{ID: "test-error", BaseURL: modelServer.URL, APIKey: apiKey, Model: "m"}})
+		case "/v1/ai-test/test-error/fail":
+			var request airpc.AITestFailRequest
+			_ = json.NewDecoder(r.Body).Decode(&request)
+			failed <- request
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer controller.Close()
+	if err := runAITestOnce(context.Background(), controllerClient(t, controller.URL), "worker-ai-error"); err == nil {
+		t.Fatal("model failure was not returned")
+	}
+	request := <-failed
+	if request.WorkerID != "worker-ai-error" || request.StatusCode != 401 || request.DurationMS < 0 {
+		t.Fatalf("unexpected AI test failure RPC: %#v", request)
+	}
+	if !strings.Contains(request.Error, "HTTP 401") || !strings.Contains(request.Error, "invalid api key") || strings.Contains(request.Error, apiKey) || len(request.Error) > 1000 {
+		t.Fatalf("AI test failure error = %q", request.Error)
+	}
+	if strings.Contains(request.ResponseJSON, apiKey) || !strings.Contains(request.ResponseJSON, "[redacted]") || request.RequestJSON == "" {
+		t.Fatalf("AI test failure raw JSON = %#v", request)
+	}
+}
