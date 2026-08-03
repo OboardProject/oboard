@@ -140,7 +140,7 @@ func TestServerTelemetryTimeColumnsMigrateFromPreviousSchema(t *testing.T) {
 		Source:               "ntp:test",
 		CheckedAt:            checked,
 		LogicalTimeActive:    true,
-		UnsupportedTimePaths: []string{"mieru"},
+		UnsupportedTimePaths: []string{"reality_outbound"},
 	}
 	if err := s.UpdateServerTimeCheck(ctx, server.ID, result); err != nil {
 		t.Fatalf("update time check after migration: %v", err)
@@ -149,7 +149,7 @@ func TestServerTelemetryTimeColumnsMigrateFromPreviousSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.TimeCheckStatus != result.Status || got.TimeOffsetMS != result.RawOffsetMS || got.TimeEffectiveOffsetMS != result.EffectiveOffsetMS || got.TimeCheckSource != result.Source || !got.TimeLogicalActive || got.TimeCheckedAt == nil || !got.TimeCheckedAt.Equal(checked) || len(got.TimeUnsupportedPaths) != 1 || got.TimeUnsupportedPaths[0] != "mieru" {
+	if got.TimeCheckStatus != result.Status || got.TimeOffsetMS != result.RawOffsetMS || got.TimeEffectiveOffsetMS != result.EffectiveOffsetMS || got.TimeCheckSource != result.Source || !got.TimeLogicalActive || got.TimeCheckedAt == nil || !got.TimeCheckedAt.Equal(checked) || len(got.TimeUnsupportedPaths) != 1 || got.TimeUnsupportedPaths[0] != "reality_outbound" {
 		t.Fatalf("updated server time state = %#v", got)
 	}
 }

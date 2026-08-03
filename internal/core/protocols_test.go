@@ -1900,6 +1900,71 @@ func TestProxyPathSSHTunnelConnectsSingBoxToManagedLocalForward(t *testing.T) {
 	}
 }
 
+func TestSSHRootUsesRelayOutboundAndManagedSSHTunnelContinues(t *testing.T) {
+	source := model.Server{ID: 1, Name: "A", PublicIPv4: "198.51.100.10", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
+	middle := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
+	exit := model.Server{ID: 3, Name: "C", PublicIPv4: "203.0.113.30", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 32000, PortRangeEnd: 32100}
+	root := model.Inbound{ID: 1, ServerID: source.ID, Name: "ssh-entry", Protocol: model.ProtocolSSH, ListenIP: "0.0.0.0", Port: 2222, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 80, Name: "SSH-A-B-C", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	middleID, exitID := middle.ID, exit.ID
+	privateKey, publicKey := testSSHKeyPair(t)
+	sshConfig, _ := json.Marshal(map[string]any{"type": "ssh", "ssh_port": 31080, "managed_pair": true, "client_private_key": privateKey, "client_public_key": publicKey})
+	steps := []model.ProxyPathStep{
+		{ID: 81, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &middleID, TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: string(sshConfig)},
+		{ID: 82, PathID: path.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, ServerID: &exitID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`},
+	}
+	opts := ConfigOptions{Servers: []model.Server{source, middle, exit}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{path}, ProxyPathSteps: steps}
+
+	routeKind, outboundTag, err := ProxyPathEntryRoute(path, steps, root, nil)
+	if err != nil || routeKind != "outbound" || outboundTag != proxyPathStepTag(path.ID, 1) {
+		t.Fatalf("SSH entry route = %q %q, %v", routeKind, outboundTag, err)
+	}
+	sourceConfig := parseSingBoxConfig(t, mustServerConfig(t, source, []model.Inbound{root}, nil, opts))
+	if hasInbound(string(mustJSON(t, sourceConfig)), tag("in", root.ID), "") {
+		t.Fatalf("SSH root leaked into sing-box inbounds: %#v", sourceConfig.Inbounds)
+	}
+	var firstOutbound map[string]any
+	for _, outbound := range sourceConfig.Outbounds {
+		if outbound["tag"] == outboundTag {
+			firstOutbound = outbound
+		}
+	}
+	if firstOutbound == nil || firstOutbound["server"] != "127.0.0.1" {
+		t.Fatalf("SSH tunnel first outbound = %#v", firstOutbound)
+	}
+	for _, rule := range mapList(sourceConfig.Route["rules"]) {
+		if stringSetContains(stringListFromAny(rule["inbound"]), tag("in", root.ID)) {
+			t.Fatalf("source contains a rule for nonexistent SSH sing-box inbound: %#v", rule)
+		}
+	}
+
+	middleConfig := parseSingBoxConfig(t, mustServerConfig(t, middle, []model.Inbound{root}, nil, opts))
+	wantNext := proxyPathStepTag(path.ID, 2)
+	foundContinuation := false
+	for _, rule := range mapList(middleConfig.Route["rules"]) {
+		if rule["outbound"] == wantNext {
+			foundContinuation = true
+		}
+	}
+	if !foundContinuation {
+		t.Fatalf("managed SSH tunnel did not continue through the middle server: %#v", middleConfig.Route["rules"])
+	}
+}
+
+func TestSSHRootDirectAndWARPEntryRoutes(t *testing.T) {
+	root := model.Inbound{ID: 4, ServerID: 7, Protocol: model.ProtocolSSH, Enabled: true}
+	direct := model.ProxyPath{ID: 40, Kind: model.ProxyPathKindDirect, InboundID: root.ID, Enabled: true}
+	if kind, tag, err := ProxyPathEntryRoute(direct, nil, root, nil); err != nil || kind != "direct" || tag != "" {
+		t.Fatalf("direct route = %q %q, %v", kind, tag, err)
+	}
+	warp := model.ProxyPath{ID: 41, InboundID: root.ID, Enabled: true}
+	steps := []model.ProxyPathStep{{ID: 1, PathID: warp.ID, Position: 1, NodeType: model.ProxyPathStepWARP}}
+	profiles := []model.WARPProfile{{ID: 9, ServerID: root.ServerID, Enabled: true}}
+	if kind, tag, err := ProxyPathEntryRoute(warp, steps, root, profiles); err != nil || kind != "outbound" || tag != "warp-9" {
+		t.Fatalf("WARP route = %q %q, %v", kind, tag, err)
+	}
+}
+
 func TestProxyPathSSHTunnelRequiresExplicitPort(t *testing.T) {
 	source := model.Server{ID: 1, Name: "source", PublicIPv4: "198.51.100.10", ListenIP: "0.0.0.0", PortRangeStart: 30000, PortRangeEnd: 30100}
 	target := model.Server{ID: 2, Name: "target", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", PortRangeStart: 31000, PortRangeEnd: 31100}

@@ -9744,11 +9744,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .audit-recent-list time { color: var(--muted); text-align: right; }
 .subscription-audit-recent > div { grid-template-columns: minmax(115px, .8fr) minmax(100px, .8fr) minmax(120px, 1fr) minmax(90px, .7fr) minmax(85px, .7fr) 130px; }
 
-.subscription-audit-settings {
-  margin-top: 24px;
-  padding-top: 24px;
-  border-top: 1px solid var(--border);
-}
+.audit-policy-settings { display: grid; gap: 18px; }
 
 .audit-log-intro {
   display: flex;
@@ -10495,7 +10491,10 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .flow .react-flow__node.server-graph-node .connect-source-bottom {
-  display: none;
+	display: none;
+}
+.flow .react-flow__node.server-graph-node .connect-source-bottom.server-generic-source-handle {
+	display: block;
 }
 .flow .react-flow__edge[data-auxiliary="true"] .react-flow__edge-path {
   pointer-events: none;
@@ -10524,8 +10523,8 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .flow .react-flow__node.server-graph-node .connect-target {
-  opacity: 0 !important;
-  background: transparent !important;
+	opacity: 1 !important;
+	background: transparent !important;
 }
 .flow .react-flow__node.server-graph-node .server-entry-target-handle {
   opacity: 1 !important;
@@ -11011,6 +11010,25 @@ button[aria-busy="true"] {
   background: color-mix(in srgb, var(--bg-card) 91%, var(--graph-imported));
 }
 .graph-card-server { --graph-node-accent: var(--graph-relay); }
+.server-graph-node .rf-node-custom { width: 260px; }
+
+.graph-source-dialog { width: min(520px, calc(100vw - 28px)); }
+.graph-source-options { display: grid; gap: 8px; max-height: min(420px, 55vh); overflow: auto; padding: 2px; }
+.graph-source-options label {
+	display: grid;
+	grid-template-columns: 20px minmax(0, 1fr);
+	align-items: center;
+	gap: 10px;
+	padding: 11px 12px;
+	border: 1px solid var(--border-color);
+	border-radius: 7px;
+	background: var(--bg-card);
+	cursor: pointer;
+}
+.graph-source-options label.is-selected { border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 7%, var(--bg-card)); }
+.graph-source-options label > span { min-width: 0; display: grid; gap: 2px; }
+.graph-source-options strong, .graph-source-options small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-source-options small { color: var(--text-secondary); }
 
 .flow .react-flow__node.graph-node:hover .rf-node-custom {
   border-color: color-mix(in srgb, var(--graph-node-accent) 68%, var(--border-color));

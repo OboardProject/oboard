@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -33,7 +34,7 @@ const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_tok
 
 const serverTelemetrySelectSQL = `select server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error,offline_notify_enabled,offline_after_seconds from server_telemetry`
 
-const userSelectSQL = `select u.id,u.username,u.nickname,u.password_hash,coalesce(u.session_version,0),u.role,u.status,u.proxy_uuid,u.proxy_password,u.speed_limit_mbps,u.traffic_limit_bytes,u.traffic_used_bytes,u.traffic_reset_mode,u.traffic_reset_day,coalesce(u.subscription_token,''),coalesce(p.burn_after_read,0),p.burned_at,coalesce(a.enabled,0),coalesce(a.public_key,''),coalesce(sa.suspended,0),sa.suspended_at,coalesce(sa.suspension_reason,''),u.created_at,u.updated_at from users u left join subscription_token_policies p on p.user_id=u.id left join subscription_age_keys a on a.user_id=u.id left join subscription_access_states sa on sa.user_id=u.id`
+const userSelectSQL = `select u.id,u.username,u.nickname,u.password_hash,coalesce(u.session_version,0),u.role,u.status,u.proxy_uuid,u.proxy_password,coalesce(sua.random_id,''),u.speed_limit_mbps,u.traffic_limit_bytes,u.traffic_used_bytes,u.traffic_reset_mode,u.traffic_reset_day,coalesce(u.subscription_token,''),coalesce(p.burn_after_read,0),p.burned_at,coalesce(a.enabled,0),coalesce(a.public_key,''),coalesce(sa.suspended,0),sa.suspended_at,coalesce(sa.suspension_reason,''),u.created_at,u.updated_at from users u left join ssh_user_aliases sua on sua.user_id=u.id left join subscription_token_policies p on p.user_id=u.id left join subscription_age_keys a on a.user_id=u.id left join subscription_access_states sa on sa.user_id=u.id`
 
 func Open(path string) (*Store, error) {
 	return open(path, false)
@@ -162,6 +163,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_ai_audit_review_jobs_queue on ai_audit_review_jobs(status,created_at)`,
 		`create index if not exists idx_ai_audit_review_evidence_review on ai_audit_review_evidence(review_id,kind,ref)`,
 		`create table if not exists users (id integer primary key autoincrement, username text not null unique, nickname text not null default '', password_hash text not null, session_version integer not null default 0, role text not null, status text not null, proxy_uuid text not null, proxy_password text not null, speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_used_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, subscription_token text unique, created_at text not null, updated_at text not null)`,
+		`create table if not exists ssh_user_aliases (user_id integer primary key references users(id) on delete cascade, random_id text not null unique, created_at text not null)`,
 		`create table if not exists subscription_token_policies (user_id integer primary key references users(id) on delete cascade, burn_after_read integer not null default 0, burned_at text, updated_at text not null)`,
 		`create table if not exists subscription_one_time_tokens (token text primary key, user_id integer not null references users(id) on delete cascade, created_at text not null)`,
 		`create table if not exists subscription_age_keys (user_id integer primary key references users(id) on delete cascade, enabled integer not null default 0, public_key text not null default '', updated_at text not null)`,
@@ -172,6 +174,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists auth_challenges (token_hash text primary key, kind text not null, user_id integer references users(id) on delete cascade, data_encrypted text not null, expires_at text not null, created_at text not null)`,
 		`create table if not exists revoked_user_sessions (token_hash text primary key, user_id integer not null references users(id) on delete cascade, expires_at text not null, created_at text not null)`,
 		`create table if not exists ssh_server_host_keys (server_id integer primary key references servers(id) on delete cascade, public_key text not null, fingerprint text not null, config_version integer not null, updated_at text not null)`,
+		`create table if not exists ssh_deployment_plans (server_id integer primary key references servers(id) on delete cascade, plan_digest text not null, config_version integer not null, updated_at text not null)`,
 		`create table if not exists ssh_password_deployments (server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, password_digest text not null, config_version integer not null, updated_at text not null, primary key(server_id,user_id))`,
 		`create table if not exists servers (id integer primary key autoincrement, name text not null, agent_id text unique, agent_token_hash text, chain_secret text not null, enrollment_hash text, enrollment_expires_at text, entry_address text, public_ipv4 text not null default '', public_ipv6 text not null default '', region_code text not null default '', detected_region_code text not null default '', region_mode text not null default 'auto', entry_ip_mode text not null default 'auto', listen_ip text, ip_stack text not null default 'auto', udp_inbound_mode text not null default 'allow', mtu_mode text not null default 'detect', mtu_value integer not null default 0, mtu_probe_host text not null default '1.1.1.1', mtu_probe_port integer not null default 443, mtu_overhead_bytes integer not null default 0, bbr_enabled integer not null default 0, port_range_start integer not null default 10000, port_range_end integer not null default 20000, status text not null, os text, distro_id text not null default '', distro_version text not null default '', distro_name text not null default '', libc text not null default '', service_manager text not null default '', package_manager text not null default '', arch text, kernel text, cpu text, memory_bytes integer not null default 0, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, agent_memory_bytes integer not null default 0, disk_bytes integer not null default 0, agent_version text not null default '', agent_build text not null default '', sing_box_version text, connection_audit_enabled integer not null default 0, last_seen_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_credentials (id integer primary key autoincrement, name text not null unique, provider text not null, zone_name text not null, zone_id text not null default '', config_encrypted text not null, enabled integer not null default 1, verified_at text, last_error text not null default '', created_at text not null, updated_at text not null)`,
@@ -386,6 +389,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.ensureBuiltinUserGroups(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureSSHUserAliases(ctx); err != nil {
 		return err
 	}
 	return s.ensureDefaultDNSLists(ctx)
@@ -883,6 +889,9 @@ func (s *Store) BootstrapAdmin(ctx context.Context, u *model.User) (created bool
 	if _, err := conn.ExecContext(ctx, `insert into subscription_age_keys(user_id,enabled,public_key,updated_at) values(?,?,?,?)`, u.ID, boolInt(u.SubscriptionAgeEnabled), strings.TrimSpace(u.SubscriptionAgePublicKey), ts); err != nil {
 		return false, err
 	}
+	if u.SSHRandomID, err = assignSSHUserAlias(ctx, conn, u.ID, ts); err != nil {
+		return false, err
+	}
 	if _, err := conn.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value,updated_at=excluded.updated_at`, bootstrapAdminSetting, fmt.Sprint(u.ID), ts); err != nil {
 		return false, err
 	}
@@ -920,7 +929,69 @@ func (s *Store) CreateUser(ctx context.Context, u *model.User) error {
 	if _, err := tx.ExecContext(ctx, `insert into subscription_age_keys(user_id,enabled,public_key,updated_at) values(?,?,?,?)`, u.ID, boolInt(u.SubscriptionAgeEnabled), strings.TrimSpace(u.SubscriptionAgePublicKey), ts); err != nil {
 		return err
 	}
+	if u.SSHRandomID, err = assignSSHUserAlias(ctx, tx, u.ID, ts); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+type sshAliasExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func assignSSHUserAlias(ctx context.Context, exec sshAliasExecutor, userID int64, createdAt string) (string, error) {
+	const firstID int64 = 100_000_000_000
+	span := big.NewInt(900_000_000_000)
+	for attempt := 0; attempt < 32; attempt++ {
+		value, err := rand.Int(rand.Reader, span)
+		if err != nil {
+			return "", err
+		}
+		alias := strconv.FormatInt(firstID+value.Int64(), 10)
+		if _, err := exec.ExecContext(ctx, `insert into ssh_user_aliases(user_id,random_id,created_at) values(?,?,?)`, userID, alias, createdAt); err == nil {
+			return alias, nil
+		} else if !strings.Contains(strings.ToLower(err.Error()), "unique") {
+			return "", err
+		}
+	}
+	return "", errors.New("could not allocate a unique SSH user alias")
+}
+
+func (s *Store) ensureSSHUserAliases(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `select id from users where not exists(select 1 from ssh_user_aliases where user_id=users.id) order by id`)
+	if err != nil {
+		return err
+	}
+	var userIDs []int64
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return errors.Join(err, rows.Close())
+		}
+		userIDs = append(userIDs, userID)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, userID := range userIDs {
+		if _, err := assignSSHUserAlias(ctx, tx, userID, now()); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) SSHUserAlias(ctx context.Context, userID int64) (string, error) {
+	var alias string
+	if err := s.db.QueryRowContext(ctx, `select random_id from ssh_user_aliases where user_id=?`, userID).Scan(&alias); err != nil {
+		return "", err
+	}
+	return alias, nil
 }
 
 func (s *Store) UpdateUser(ctx context.Context, u *model.User) error {
@@ -1228,7 +1299,7 @@ func scanUsers(rows *sql.Rows) ([]model.User, error) {
 		var ageEnabled int
 		var suspended int
 		var suspendedAt sql.NullString
-		if err := rows.Scan(&u.ID, &u.Username, &u.Nickname, &u.PasswordHash, &u.SessionVersion, &u.Role, &u.Status, &u.ProxyUUID, &u.ProxyPassword, &u.SpeedLimitMbps, &u.TrafficLimitBytes, &u.TrafficUsedBytes, &u.TrafficResetMode, &u.TrafficResetDay, &u.SubscriptionToken, &burnAfterRead, &burnedAt, &ageEnabled, &u.SubscriptionAgePublicKey, &suspended, &suspendedAt, &u.SubscriptionSuspendReason, &ca, &ua); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Nickname, &u.PasswordHash, &u.SessionVersion, &u.Role, &u.Status, &u.ProxyUUID, &u.ProxyPassword, &u.SSHRandomID, &u.SpeedLimitMbps, &u.TrafficLimitBytes, &u.TrafficUsedBytes, &u.TrafficResetMode, &u.TrafficResetDay, &u.SubscriptionToken, &burnAfterRead, &burnedAt, &ageEnabled, &u.SubscriptionAgePublicKey, &suspended, &suspendedAt, &u.SubscriptionSuspendReason, &ca, &ua); err != nil {
 			return nil, err
 		}
 		u.SubscriptionBurnAfterRead = burnAfterRead != 0
@@ -2214,6 +2285,9 @@ func (s *Store) ApplySSHDeploymentState(ctx context.Context, hostKey model.SSHSe
 	if _, err := tx.ExecContext(ctx, `insert into ssh_server_host_keys(server_id,public_key,fingerprint,config_version,updated_at) values(?,?,?,?,?) on conflict(server_id) do update set public_key=excluded.public_key,fingerprint=excluded.fingerprint,config_version=excluded.config_version,updated_at=excluded.updated_at`, hostKey.ServerID, hostKey.PublicKey, hostKey.Fingerprint, hostKey.ConfigVersion, ts); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `insert into ssh_deployment_plans(server_id,plan_digest,config_version,updated_at) values(?,?,?,?) on conflict(server_id) do update set plan_digest=excluded.plan_digest,config_version=excluded.config_version,updated_at=excluded.updated_at`, hostKey.ServerID, hostKey.PlanDigest, hostKey.ConfigVersion, ts); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `delete from ssh_password_deployments where server_id=?`, hostKey.ServerID); err != nil {
 		return err
 	}
@@ -2237,13 +2311,16 @@ func (s *Store) ClearSSHDeploymentState(ctx context.Context, serverID int64) err
 	if _, err := tx.ExecContext(ctx, `delete from ssh_server_host_keys where server_id=?`, serverID); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `delete from ssh_deployment_plans where server_id=?`, serverID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
 func (s *Store) GetSSHServerHostKey(ctx context.Context, serverID int64) (*model.SSHServerHostKey, error) {
 	var v model.SSHServerHostKey
 	var updatedAt string
-	err := s.db.QueryRowContext(ctx, `select server_id,public_key,fingerprint,config_version,updated_at from ssh_server_host_keys where server_id=?`, serverID).Scan(&v.ServerID, &v.PublicKey, &v.Fingerprint, &v.ConfigVersion, &updatedAt)
+	err := s.db.QueryRowContext(ctx, `select h.server_id,h.public_key,h.fingerprint,coalesce(p.plan_digest,''),h.config_version,h.updated_at from ssh_server_host_keys h left join ssh_deployment_plans p on p.server_id=h.server_id where h.server_id=?`, serverID).Scan(&v.ServerID, &v.PublicKey, &v.Fingerprint, &v.PlanDigest, &v.ConfigVersion, &updatedAt)
 	if err != nil {
 		return nil, err
 	}

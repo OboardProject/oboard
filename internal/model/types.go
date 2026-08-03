@@ -151,6 +151,7 @@ type User struct {
 	Status                    string     `json:"status"`
 	ProxyUUID                 string     `json:"proxy_uuid"`
 	ProxyPassword             string     `json:"proxy_password"`
+	SSHRandomID               string     `json:"-"`
 	SpeedLimitMbps            int        `json:"speed_limit_mbps"`
 	TrafficLimitBytes         int64      `json:"traffic_limit_bytes"`
 	TrafficUsedBytes          int64      `json:"traffic_used_bytes"`
@@ -511,6 +512,7 @@ type SSHServerHostKey struct {
 	ServerID      int64     `json:"server_id"`
 	PublicKey     string    `json:"public_key"`
 	Fingerprint   string    `json:"fingerprint"`
+	PlanDigest    string    `json:"-"`
 	ConfigVersion int64     `json:"config_version"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -1063,7 +1065,6 @@ type SSHInbound struct {
 	Name      string                          `json:"name"`
 	ListenIP  string                          `json:"listen_ip"`
 	Address   string                          `json:"address"`
-	Username  string                          `json:"username"`
 	Port      int                             `json:"port"`
 	Enabled   bool                            `json:"enabled"`
 	Users     []SSHInboundUser                `json:"users"`
@@ -1071,10 +1072,13 @@ type SSHInbound struct {
 }
 
 type SSHInboundUser struct {
-	UserID   int64  `json:"user_id"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Enabled  bool   `json:"enabled"`
+	UserID      int64  `json:"user_id"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	PathID      int64  `json:"path_id"`
+	RouteKind   string `json:"route_kind"`
+	OutboundTag string `json:"outbound_tag,omitempty"`
+	Enabled     bool   `json:"enabled"`
 }
 
 type PortForwardProbeResult struct {

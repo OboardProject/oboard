@@ -69,12 +69,13 @@ func TestSubscriptionRespectsInboundUserBindings(t *testing.T) {
 }
 
 func TestSSHSubscriptionRequiresDeployedHostAndAuthorization(t *testing.T) {
-	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "ssh-pass"}
+	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "ssh-pass", SSHRandomID: "123456789012"}
 	server := model.Server{ID: 1, Name: "tokyo", PublicIPv4: "203.0.113.10"}
 	inbound := model.Inbound{ID: 11, ServerID: server.ID, Name: "ssh", Protocol: model.ProtocolSSH, ListenIP: "0.0.0.0", Port: 2222, EntryIPMode: model.EntryIPModeIPv4, Enabled: true}
 	base := SubscriptionOptions{
 		InboundUsers:      []model.InboundUser{{InboundID: inbound.ID, UserID: user.ID, Enabled: true}},
 		SSHServerHostKeys: map[int64]string{server.ID: sshSubscriptionHostKey},
+		ProxyPaths:        []model.ProxyPath{{ID: 17, Kind: model.ProxyPathKindDirect, Name: "direct", InboundID: inbound.ID, Enabled: true}},
 	}
 	tests := []struct {
 		name   string
@@ -107,7 +108,7 @@ func TestSSHSubscriptionRequiresDeployedHostAndAuthorization(t *testing.T) {
 			}
 			if test.want == 1 {
 				raw := nodes[0].Raw
-				if raw["server"] != server.PublicIPv4 || raw["username"] != "oboard-7" || raw["password"] != user.ProxyPassword || !stringSetContains(stringListFromAny(raw["host_key"]), sshSubscriptionHostKey) {
+				if raw["server"] != server.PublicIPv4 || raw["username"] != "u123456789012-p17" || raw["password"] != user.ProxyPassword || !stringSetContains(stringListFromAny(raw["host_key"]), sshSubscriptionHostKey) {
 					t.Fatalf("SSH node = %#v", raw)
 				}
 			}

@@ -122,21 +122,26 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		}
 		if inbound.Protocol == model.ProtocolSSH {
 			hostKey := strings.TrimSpace(opts.SSHServerHostKeys[server.ID])
-			if strings.TrimSpace(user.ProxyPassword) == "" || hostKey == "" {
+			if strings.TrimSpace(user.ProxyPassword) == "" || strings.TrimSpace(user.SSHRandomID) == "" || hostKey == "" {
 				continue
 			}
-			raw := map[string]any{
-				"type":         "ssh",
-				"server":       server.EntryAddress,
-				"server_port":  inbound.Port,
-				"username":     fmt.Sprintf("oboard-%d", user.ID),
-				"password":     user.ProxyPassword,
-				"host_key":     []string{hostKey},
-				"oboard_group": group,
+			for _, path := range subscriptionBranchesForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps) {
+				branchName := strings.TrimSpace(path.Name)
+				if branchName == "" {
+					branchName = fmt.Sprintf("%s 分支 %d", standaloneName, path.ID)
+				}
+				raw := map[string]any{
+					"type":         "ssh",
+					"server":       server.EntryAddress,
+					"server_port":  inbound.Port,
+					"username":     fmt.Sprintf("u%s-p%d", user.SSHRandomID, path.ID),
+					"password":     user.ProxyPassword,
+					"host_key":     []string{hostKey},
+					"oboard_group": group,
+				}
+				nodes = append(nodes, SubscriptionNode{Name: branchName, Group: group, ServerID: server.ID, Inbound: inbound, Server: server, Raw: raw})
+				nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameProxyPath, resourceID: path.ID, serverID: server.ID, regionCode: path.EffectiveExitRegionCode})
 			}
-			nodes = append(nodes, SubscriptionNode{Name: standaloneName, Group: group, ServerID: server.ID, Inbound: inbound, Server: server, Raw: raw})
-			regionCode, _ := EffectiveServerRegion(server)
-			nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameStandalone, resourceID: inbound.ID, serverID: server.ID, regionCode: regionCode})
 			continue
 		}
 		adapter, err := AdapterFor(inbound.Protocol)

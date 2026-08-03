@@ -34,9 +34,7 @@ import {
   defaultEntryGraphPosition,
   defaultImportedGraphPosition,
   defaultServerGraphPosition,
-  graphEntryHandleLeft,
-  graphEntryHandleRatio,
-  graphPathHandleLeft,
+	graphPathHandleLeft,
   graphServerNodeWidth,
   layoutGraphLayer,
   loadGraphDirectExitInstances,
@@ -49,6 +47,7 @@ import {
 } from './components/proxy-path/layout'
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
 import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
+import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
 import './style.css'
 import logo from './assets/logo.svg'
 import { 
@@ -273,7 +272,7 @@ const udpModes = ['allow', 'block', 'uot']
 const mtuModes = ['disabled', 'detect', 'apply']
 const defaultVLESSRealityServerName = 'cdn.icloud-content.com'
 const timeCorrectionModes: TimeCorrectionMode[] = ['off', 'auto', 'ntp']
-const defaultTimeCheckNTPServers = ['time.cloudflare.com', 'time.google.com', 'pool.ntp.org']
+const defaultTimeCheckNTPServers = ['time.cloudflare.com', 'time.google.com', 'ntp.aliyun.com']
 const trafficTimezones = [
   'Asia/Shanghai', 'UTC', 'Asia/Hong_Kong', 'Asia/Taipei', 'Asia/Tokyo', 'Asia/Seoul', 'Asia/Singapore', 'Asia/Bangkok', 'Asia/Jakarta', 'Asia/Kolkata', 'Asia/Dubai',
   'Australia/Sydney', 'Pacific/Auckland',
@@ -3295,8 +3294,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [basePath, setBasePath] = useState(currentBasePath)
   const [trustedProxyCIDRs, setTrustedProxyCIDRs] = useState<string>(configuredTrustedProxyCIDRs.join('\n'))
   const [subscriptionAgePolicy, setSubscriptionAgePolicy] = useState<'optional' | 'required'>(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional')
-  const [subscriptionAuditPolicy, setSubscriptionAuditPolicy] = useState<SubscriptionAuditPolicy>(() => subscriptionAuditPolicyValue(data.settings?.subscription_audit_policy))
-  const [subscriptionAuditPresetMode, setSubscriptionAuditPresetMode] = useState<'sensitive' | 'balanced' | 'relaxed' | 'custom'>(() => subscriptionAuditPreset(subscriptionAuditPolicyValue(data.settings?.subscription_audit_policy)))
   const [auditEnabled, setAuditEnabled] = useState(settingEnabled(data.settings?.audit_enabled))
   const [subscriptionAuditEnabled, setSubscriptionAuditEnabled] = useState(settingEnabled(data.settings?.subscription_audit_enabled))
   const [connectionAuditEnabled, setConnectionAuditEnabled] = useState(settingEnabled(data.settings?.connection_audit_enabled))
@@ -3322,11 +3319,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     return () => window.clearInterval(timer)
   }, [migration.active, migration.config_version, realtimeStatus])
   useEffect(() => { setSubscriptionAgePolicy(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional') }, [data.settings?.subscription_age_policy])
-  useEffect(() => {
-    const policy = subscriptionAuditPolicyValue(data.settings?.subscription_audit_policy)
-    setSubscriptionAuditPolicy(policy)
-    setSubscriptionAuditPresetMode(subscriptionAuditPreset(policy))
-  }, [data.settings?.subscription_audit_policy])
   useEffect(() => {
     setAuditEnabled(settingEnabled(data.settings?.audit_enabled))
     setSubscriptionAuditEnabled(settingEnabled(data.settings?.subscription_audit_enabled))
@@ -3437,10 +3429,10 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ traffic_timezone: trafficTimezone.trim() || 'Asia/Shanghai', traffic_enforcement_mode: trafficMode }) })
     }, '流量控制设置已保存')
   }
-  const saveSubscriptionSecurity = async () => {
-    await runSave('subscription-security', async () => {
-      await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: subscriptionAgePolicy, subscription_audit_policy: subscriptionAuditPolicy }) })
-    }, '订阅安全策略已保存')
+  const saveSubscriptionAgePolicy = async () => {
+    await runSave('subscription-age', async () => {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: subscriptionAgePolicy }) })
+    }, '订阅加密策略已保存')
   }
   const saveAuditSettings = async () => {
     await runSave('audit', async () => {
@@ -3451,21 +3443,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         audit_action: auditAction,
       }) })
     }, '审计设置已保存')
-  }
-  const chooseSubscriptionAuditPreset = (value: string) => {
-    if (value === 'custom') {
-      setSubscriptionAuditPresetMode('custom')
-      return
-    }
-    const preset = subscriptionAuditPresets[value as keyof typeof subscriptionAuditPresets]
-    if (preset) {
-      setSubscriptionAuditPolicy(cloneSubscriptionAuditPolicy(preset))
-      setSubscriptionAuditPresetMode(value as 'sensitive' | 'balanced' | 'relaxed')
-    }
-  }
-  const updateSubscriptionAuditPolicy = (windowName: 'short' | 'long', key: keyof SubscriptionAuditThresholds, value: number) => {
-    setSubscriptionAuditPresetMode('custom')
-    setSubscriptionAuditPolicy(current => ({ ...current, [windowName]: { ...current[windowName], [key]: Math.max(2, value || 2) } }))
   }
   const saveControllerLogs = async () => {
     await runSave('controller-logs', async () => {
@@ -3626,23 +3603,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
               <option value="required">强制开启</option>
             </Select>
           </FormField>
-        </div>
-        <div className="subscription-audit-settings">
-          <div className="settings-card-head"><div><h3>拉取风控</h3><p className="muted">{auditAction === 'warn' ? '风险阈值仅触发管理员通知，不会自动暂停；评估与记录继续。' : '地域达到阈值后自动暂停，其他阈值用于风险评分与管理员通知。'}</p></div></div>
-          <div className="form settings-form two-column">
-            <FormField label="策略档位" full>
-              <Select variant="segmented" value={subscriptionAuditPresetMode} onChange={event => chooseSubscriptionAuditPreset(event.target.value)} aria-label="订阅风控策略档位">
-                <option value="sensitive">敏感</option><option value="balanced">均衡</option><option value="relaxed">宽松</option><option value="custom">自定义</option>
-              </Select>
-            </FormField>
-            <FormField label="短窗口（分钟）"><input type="number" min={5} max={1440} value={subscriptionAuditPolicy.short_window_minutes} onChange={event => { setSubscriptionAuditPresetMode('custom'); setSubscriptionAuditPolicy(current => ({ ...current, short_window_minutes: Math.max(5, Number(event.target.value) || 5) })) }} /></FormField>
-            <FormField label="长窗口（小时）"><input type="number" min={1} max={720} value={subscriptionAuditPolicy.long_window_hours} onChange={event => { setSubscriptionAuditPresetMode('custom'); setSubscriptionAuditPolicy(current => ({ ...current, long_window_hours: Math.max(1, Number(event.target.value) || 1) })) }} /></FormField>
-            {([['region_limit', '地域'], ['source_ip_limit', '独立 IP'], ['pull_limit', '拉取次数'], ['client_format_limit', '客户端/格式']] as [keyof SubscriptionAuditThresholds, string][]).map(([key, label]) => <React.Fragment key={key}>
-              <FormField label={`短窗口${label}`}><input type="number" min={2} value={subscriptionAuditPolicy.short[key]} onChange={event => updateSubscriptionAuditPolicy('short', key, Number(event.target.value))} /></FormField>
-              <FormField label={`长窗口${label}`}><input type="number" min={2} value={subscriptionAuditPolicy.long[key]} onChange={event => updateSubscriptionAuditPolicy('long', key, Number(event.target.value))} /></FormField>
-            </React.Fragment>)}
-            <div className="settings-actions"><button onClick={saveSubscriptionSecurity} disabled={Boolean(saving)}>{saving === 'subscription-security' ? '保存中...' : '保存订阅安全策略'}</button></div>
-          </div>
+          <div className="settings-actions"><button onClick={() => void saveSubscriptionAgePolicy()} disabled={Boolean(saving)}>{saving === 'subscription-age' ? '保存中...' : '保存加密策略'}</button></div>
         </div>
       </section>}
       {activeSection === 'audit' && <section className="settings-card">
@@ -4954,7 +4915,7 @@ function ControllerLogsPanel({ client, dialogs, notify, maxMB, backups, setMaxMB
 
 function AuditConsole({ data, client, loading, notify }: any) {
   const dialogs = useDialogs()
-  const [view, setView] = useState<'combined' | 'subscriptions' | 'connections' | 'operations' | 'ai'>('combined')
+  const [view, setView] = useState<'combined' | 'subscriptions' | 'connections' | 'policy' | 'operations' | 'ai'>('combined')
   const [windowHours, setWindowHours] = useState(24)
   const [risk, setRisk] = useState<'all' | AuditRiskLevel>('all')
   const [query, setQuery] = useState('')
@@ -5052,10 +5013,11 @@ function AuditConsole({ data, client, loading, notify }: any) {
       <button type="button" role="tab" aria-selected={view === 'combined'} className={view === 'combined' ? 'active' : ''} onClick={() => setView('combined')}><Gauge size={15} />综合风险</button>
       <button type="button" role="tab" aria-selected={view === 'subscriptions'} className={view === 'subscriptions' ? 'active' : ''} onClick={() => setView('subscriptions')}><Download size={15} />订阅风险</button>
       <button type="button" role="tab" aria-selected={view === 'connections'} className={view === 'connections' ? 'active' : ''} onClick={() => setView('connections')}><Shield size={15} />连接风险</button>
+      {isAdmin && <button type="button" role="tab" aria-selected={view === 'policy'} className={view === 'policy' ? 'active' : ''} onClick={() => setView('policy')}><Settings2 size={15} />拉取风控</button>}
       {isAdmin && <button type="button" role="tab" aria-selected={view === 'ai'} className={view === 'ai' ? 'active' : ''} onClick={() => setView('ai')}><Bot size={15} />AI 审查</button>}
       <button type="button" role="tab" aria-selected={view === 'operations'} className={view === 'operations' ? 'active' : ''} onClick={() => setView('operations')}><ClipboardList size={15} />操作日志</button>
     </div>
-    {view === 'operations' ? <AuditLogs data={data} loading={loading} embedded /> : view === 'ai' && isAdmin ? <AIAuditReviews data={data} client={client} notify={notify} /> : <>
+    {view === 'operations' ? <AuditLogs data={data} loading={loading} embedded /> : view === 'ai' && isAdmin ? <AIAuditReviews data={data} client={client} notify={notify} /> : view === 'policy' && isAdmin ? <SubscriptionAuditPolicySettings initialPolicy={subscriptionOverview?.policy || data.settings?.subscription_audit_policy} auditAction={String(data.settings?.audit_action || 'restrict')} client={client} notify={notify} onSaved={savedPolicy => setSubscriptionOverview(current => current ? { ...current, policy: savedPolicy } : current)} /> : <>
       <div className="audit-overview-grid">
         {view === 'combined' ? <>
           <div><span>审计用户</span><strong>{combinedOverview?.users?.length || 0}</strong><small>{windowHours} 小时历史范围</small></div>
@@ -5125,6 +5087,67 @@ function AuditConsole({ data, client, loading, notify }: any) {
     <AnimatePresence>{connectionDetail && <ConnectionAuditUserDialog detail={connectionDetail} onClose={() => setConnectionDetail(null)} />}</AnimatePresence>
     <AnimatePresence>{subscriptionDetail && <SubscriptionAuditUserDialog detail={subscriptionDetail} canResume={isAdmin} onResume={resumeSubscription} onClose={() => setSubscriptionDetail(null)} />}</AnimatePresence>
   </Panel>
+}
+
+function SubscriptionAuditPolicySettings({ initialPolicy, auditAction, client, notify, onSaved }: { initialPolicy: SubscriptionAuditPolicy | undefined; auditAction: string; client: any; notify?: (message: string, tone?: ToastKind) => void; onSaved: (policy: SubscriptionAuditPolicy) => void }) {
+  const [policy, setPolicy] = useState<SubscriptionAuditPolicy>(() => subscriptionAuditPolicyValue(initialPolicy))
+  const [presetMode, setPresetMode] = useState<'sensitive' | 'balanced' | 'relaxed' | 'custom'>(() => subscriptionAuditPreset(subscriptionAuditPolicyValue(initialPolicy)))
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    const nextPolicy = subscriptionAuditPolicyValue(initialPolicy)
+    setPolicy(nextPolicy)
+    setPresetMode(subscriptionAuditPreset(nextPolicy))
+  }, [initialPolicy])
+
+  const choosePreset = (value: string) => {
+    if (value === 'custom') {
+      setPresetMode('custom')
+      return
+    }
+    const preset = subscriptionAuditPresets[value as keyof typeof subscriptionAuditPresets]
+    if (!preset) return
+    setPolicy(cloneSubscriptionAuditPolicy(preset))
+    setPresetMode(value as 'sensitive' | 'balanced' | 'relaxed')
+  }
+  const updateThreshold = (windowName: 'short' | 'long', key: keyof SubscriptionAuditThresholds, value: number) => {
+    setPresetMode('custom')
+    setPolicy(current => ({ ...current, [windowName]: { ...current[windowName], [key]: Math.max(2, value || 2) } }))
+  }
+  const save = async () => {
+    if (saving) return
+    setSaving(true)
+    try {
+      const result = await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_audit_policy: policy }) })
+      const savedPolicy = subscriptionAuditPolicyValue(result?.settings?.subscription_audit_policy || policy)
+      setPolicy(savedPolicy)
+      setPresetMode(subscriptionAuditPreset(savedPolicy))
+      onSaved(savedPolicy)
+      notify?.('拉取风控策略已保存', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return <section className="audit-policy-settings">
+    <div className="settings-card-head"><div><h3>拉取风控</h3><p className="muted">{auditAction === 'warn' ? '风险阈值仅触发管理员通知，不会自动暂停；评估与记录继续。' : '地域达到阈值后自动暂停，其他阈值用于风险评分与管理员通知。'}</p></div></div>
+    <div className="form settings-form two-column">
+      <FormField label="策略档位" full>
+        <Select variant="segmented" value={presetMode} onChange={event => choosePreset(event.target.value)} aria-label="订阅风控策略档位">
+          <option value="sensitive">敏感</option><option value="balanced">均衡</option><option value="relaxed">宽松</option><option value="custom">自定义</option>
+        </Select>
+      </FormField>
+      <FormField label="短窗口（分钟）"><input type="number" min={5} max={1440} value={policy.short_window_minutes} onChange={event => { setPresetMode('custom'); setPolicy(current => ({ ...current, short_window_minutes: Math.max(5, Number(event.target.value) || 5) })) }} /></FormField>
+      <FormField label="长窗口（小时）"><input type="number" min={1} max={720} value={policy.long_window_hours} onChange={event => { setPresetMode('custom'); setPolicy(current => ({ ...current, long_window_hours: Math.max(1, Number(event.target.value) || 1) })) }} /></FormField>
+      {([['region_limit', '地域'], ['source_ip_limit', '独立 IP'], ['pull_limit', '拉取次数'], ['client_format_limit', '客户端/格式']] as [keyof SubscriptionAuditThresholds, string][]).map(([key, label]) => <React.Fragment key={key}>
+        <FormField label={`短窗口${label}`}><input type="number" min={2} value={policy.short[key]} onChange={event => updateThreshold('short', key, Number(event.target.value))} /></FormField>
+        <FormField label={`长窗口${label}`}><input type="number" min={2} value={policy.long[key]} onChange={event => updateThreshold('long', key, Number(event.target.value))} /></FormField>
+      </React.Fragment>)}
+      <div className="settings-actions"><button type="button" onClick={() => void save()} disabled={saving}>{saving ? '保存中...' : '保存拉取风控'}</button></div>
+    </div>
+  </section>
 }
 
 const auditReviewEvidenceOptions = [
@@ -7023,7 +7046,7 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
             <ServerDetailItem label="数据更新时间" value={server.telemetry_updated_at ? formatTableTime(server.telemetry_updated_at) : '—'} wide />
           </dl>
           {server.time_check_error && <div className="server-time-alert limitation"><div><strong>时间检测未完整生效</strong><span>{server.time_check_error}</span></div></div>}
-          {server.time_logical_active && (server.time_unsupported_paths || []).length > 0 && <div className="server-time-alert limitation"><div><strong>Mieru/Reality 路径无法完整使用逻辑时间</strong><span>{(server.time_unsupported_paths || []).join('、')}</span></div></div>}
+          {server.time_logical_active && (server.time_unsupported_paths || []).length > 0 && <div className="server-time-alert limitation"><div><strong>部分路径无法完整使用逻辑时间</strong><span>{(server.time_unsupported_paths || []).join('、')}</span></div></div>}
         </section>
       </div>
       <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
@@ -7151,6 +7174,7 @@ type TransportDialogRequest = {
 	currentMode?: PathTransportMode
   resolve: (value: TransportSelection | null) => void
 }
+type GraphSourceSelectionRequest = { title: string; options: GraphSourceOption[]; resolve: (value: ProxyPathReuseSource[] | null) => void }
 
 function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget, onServerSnapshot }: any) {
   const dialogs = useDialogs()
@@ -7193,6 +7217,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const [configNode, setConfigNode] = useState<ExternalOutbound | null>(null)
 	const [namingPath, setNamingPath] = useState<ProxyPath | null>(null)
 	const [transportRequest, setTransportRequest] = useState<TransportDialogRequest | null>(null)
+	const [sourceSelectionRequest, setSourceSelectionRequest] = useState<GraphSourceSelectionRequest | null>(null)
   const [graphMenu, setGraphMenu] = useState<{ x: number; y: number; entity: GraphEntity } | null>(null)
   const [activeGraphEntity, setActiveGraphEntity] = useState<GraphEntity | null>(null)
   useEffect(() => { setNodes(builtFlow.nodes); setEdges(builtFlow.edges) }, [builtFlow])
@@ -7512,6 +7537,22 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	// before committing, instead of walking an unrevisable chain of prompts.
 	const openTransportDialog = (request: Omit<TransportDialogRequest, 'resolve'>) =>
 	  new Promise<TransportSelection | null>(resolve => setTransportRequest({ ...request, resolve }))
+	const chooseServerSources = (nodeID: string, title: string) => {
+	  const options = (nodes.find(node => node.id === nodeID)?.data?.sourceOptions || []) as GraphSourceOption[]
+	  if (!options.length) {
+	    void dialogs.alert({ title: '没有可用来源', message: '这台服务器没有可作为链路起点的入口或可继续路径。' })
+	    return Promise.resolve(null)
+	  }
+	  return new Promise<ProxyPathReuseSource[] | null>(resolve => setSourceSelectionRequest({ title, options, resolve }))
+	}
+	const graphSourceLabel = (source: ProxyPathReuseSource) => {
+	  if (source.step_id) {
+	    const step = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(item => item.id === source.step_id)
+	    return step ? `路径 ${step.path_id}` : `路径步骤 ${source.step_id}`
+	  }
+	  const entry = entries.find(item => item.id === source.inbound_id)
+	  return entry?.name || `入口 ${source.inbound_id || ''}`.trim()
+	}
 	const chooseTransportForTarget = async (target: { node_type: 'imported' | 'server_inbound'; server_id?: number; inbound_id?: number }, current?: ProxyPathStep, sourceLabel?: string, sources?: ProxyPathReuseSource[]): Promise<TransportSelection | null> => {
 	  const targetInbound = target.inbound_id ? entries.find(item => item.id === target.inbound_id) : null
 	  const targetServerID = target.server_id || targetInbound?.server_id
@@ -7545,28 +7586,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    if (selection.reuse_request?.target_kind === 'existing') return step.inbound_id === selection.reuse_request.target_inbound_id
 	    return step.node_type === 'server_inbound' && !step.inbound_id && step.server_id === selection.reuse_request?.target_server_id
 	  })
-	  await load()
-	  return targetSteps
-	}
-	const proxyPathDisplayName = (path: ProxyPath) => path.name || `路径 ${path.id}`
-	const confirmSharedAppend = async (count: number, targetLabel: string, names: string[] = [], mode: 'append' | 'create' = 'append') => {
-	  if (count <= 1) return true
-	  const appending = mode === 'append'
-	  return dialogs.confirm({
-	    title: appending ? '追加到多条路径' : '为每个入口新建链路',
-	    message: <div className="dialog-detail">
-	      <p>
-	        {appending
-	          ? `会把 ${targetLabel || '目标节点'} 追加到以下 ${count} 条已有路径的末尾。`
-	          : `会为以下 ${count} 个入口各新建一条链路，出口都是 ${targetLabel || '目标节点'}。`}
-	        每条路径独立保存，需要下发配置后生效。
-	      </p>
-	      {names.length > 0 && <ul>{names.map((name, index) => <li key={index}>{name}</li>)}</ul>}
-	    </div>,
-	    confirmText: appending ? `追加到这 ${count} 条路径` : `新建这 ${count} 条链路`,
-	  })
-	}
-	// Every shared append is a separate request. Report what actually landed rather
+		  await load()
+		  return targetSteps
+		}
+		const proxyPathDisplayName = (path: ProxyPath) => path.name || `路径 ${path.id}`
+		// Every shared append is a separate request. Report what actually landed rather
 	// than stopping at the first failure and leaving the operator to guess which
 	// branches were modified.
 	const runSharedAppends = async <T,>(items: T[], label: (item: T) => string, append: (item: T) => Promise<ProxyPathStep | null>) => {
@@ -7733,10 +7757,60 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  })
 	}
 	const connect = async (conn: Connection) => {
-	  if (!conn.source || !conn.target) return
-	  const sourceEntity = graphEntity(conn.source)
-	  const targetEntity = graphEntity(conn.target)
-	  if (targetEntity?.type === 'warp') {
+		  if (!conn.source || !conn.target) return
+		  const sourceEntity = graphEntity(conn.source)
+		  const targetEntity = graphEntity(conn.target)
+			  if (conn.sourceHandle === SERVER_GRAPH_SOURCE_HANDLE) {
+			    const sources = await chooseServerSources(conn.source, sourceEntity?.label || '服务器')
+			    if (!sources?.length) return
+			    if (targetEntity?.type === 'direct') {
+			      if (targetEntity.path_id) return dialogs.alert({ title: '直接出口已连接', message: '请复制一个空白直接出口区块后再连接。' })
+			      const createdPaths: ProxyPath[] = []
+			      const failures: string[] = []
+			      for (const source of sources) {
+			        try {
+			          const created = source.step_id
+			            ? await createDirectBranch({ source_step_id: source.step_id })
+			            : source.inbound_id
+			              ? await createDirectBranch({ inbound_id: source.inbound_id })
+			              : null
+			          if (created) createdPaths.push(created)
+			        } catch (error: any) {
+			          failures.push(localizeErrorMessage(error?.message || error))
+			        }
+			      }
+			      consumeCanvasDirectTarget(conn.target, createdPaths)
+			      await load()
+			      if (failures.length) await dialogs.alert({ title: createdPaths.length ? '部分直接出口未添加' : '直接出口添加失败', message: failures.join('\n') })
+			      return
+			    }
+			    if (targetEntity?.type === 'warp') {
+			      const target = { node_type: 'warp' as const, transport_mode: 'singbox' as const, config_json: '{}' }
+			      const created = await runSharedAppends(sources, graphSourceLabel, source => {
+			        if (source.step_id) return appendPathAfterStep(source.step_id, target)
+			        const entry = entries.find(item => item.id === source.inbound_id)
+			        return entry ? createPathFromEntry(entry, target) : Promise.resolve(null)
+			      })
+		      consumeCanvasWARPTarget(conn.target, created)
+		      return
+		    }
+		    const target = await targetStepForGraphTarget(conn.target)
+		    if (!target) return
+		    if (target.node_type === 'server_inbound') {
+			      const created = await reuseControlledTarget(sources, target, sourceEntity?.label)
+		      consumeCanvasServerTarget(conn.target, created)
+		      return
+		    }
+			    const transport = await chooseTransportForTarget(target, undefined, sourceEntity?.label)
+		    if (!transport) return
+			    await runSharedAppends(sources, graphSourceLabel, source => {
+			      if (source.step_id) return appendPathAfterStep(source.step_id, { ...target, ...transport })
+			      const entry = entries.find(item => item.id === source.inbound_id)
+			      return entry ? createPathFromEntry(entry, { ...target, ...transport }) : Promise.resolve(null)
+			    })
+		    return
+		  }
+		  if (targetEntity?.type === 'warp') {
 	    const target = { node_type: 'warp' as const, transport_mode: 'singbox' as const, config_json: '{}' }
 	    const sourcePathStepID = pathStepIDFromHandle(conn.sourceHandle)
 	    if (sourcePathStepID) {
@@ -7746,31 +7820,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      if (created) consumeCanvasWARPTarget(conn.target, [created])
 	      return
 	    }
-	    const sourceHandleInboundID = inboundIDFromServerHandle(conn.sourceHandle)
-	    const sourceEntry = sourceEntity?.type === 'entry'
-	      ? entries.find(entry => entry.id === sourceEntity.id)
-	      : sourceHandleInboundID
-	        ? entries.find(entry => entry.id === sourceHandleInboundID && entry.server_id === sourceEntity?.id)
-	        : undefined
+	    const sourceEntry = sourceEntity?.type === 'entry' ? entries.find(entry => entry.id === sourceEntity.id) : undefined
 	    if (sourceEntry) {
 	      const created = await createPathFromEntry(sourceEntry, target)
 	      if (created) consumeCanvasWARPTarget(conn.target, [created])
-	      return
-	    }
-	    if (sourceEntity?.type === 'server' && conn.sourceHandle === 'server-shared') {
-	      const allSteps = (data.proxy_path_steps || []) as ProxyPathStep[]
-	      const terminalSteps = allSteps.filter(step => step.node_type === 'server_inbound' && proxyPathStepNodeID(step) === conn.source && !allSteps.some(other => other.path_id === step.path_id && other.position > step.position))
-	      if (terminalSteps.length) {
-	        if (!await confirmSharedAppend(terminalSteps.length, 'WARP')) return
-	        const created = await runSharedAppends(terminalSteps, step => `路径 ${step.path_id}`, step => appendPathAfterStep(step.id, target))
-	        consumeCanvasWARPTarget(conn.target, created)
-	        return
-	      }
-	      const serverEntries = entries.filter(entry => entry.server_id === sourceEntity.id && entry.enabled !== false)
-	      if (!serverEntries.length) return dialogs.alert({ title: '没有可用入口', message: '这台服务器还没有可连接到 WARP 的入口。' })
-	      if (!await confirmSharedAppend(serverEntries.length, 'WARP', serverEntries.map(entry => entry.name || `入口 ${entry.id}`), 'create')) return
-	      const created = await runSharedAppends(serverEntries, entry => entry.name || `入口 ${entry.id}`, entry => createPathFromEntry(entry, target))
-	      consumeCanvasWARPTarget(conn.target, created)
 	      return
 	    }
 	    return dialogs.alert({ title: '请选择服务器连接点', message: '从一级入口、服务器入口点或路径中的服务器继续连接点拖线到 WARP。' })
@@ -7788,12 +7841,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      }
 	      return
 	    }
-	    const sourceHandleInboundID = inboundIDFromServerHandle(conn.sourceHandle)
-	    const sourceEntry = sourceEntity?.type === 'entry'
-	      ? entries.find(entry => entry.id === sourceEntity.id)
-	      : sourceHandleInboundID
-	        ? entries.find(entry => entry.id === sourceHandleInboundID && entry.server_id === sourceEntity?.id)
-	        : undefined
+	    const sourceEntry = sourceEntity?.type === 'entry' ? entries.find(entry => entry.id === sourceEntity.id) : undefined
 	    if (sourceEntry) {
 	      const created = await createDirectBranch({ inbound_id: sourceEntry.id })
 	      if (created) {
@@ -7802,45 +7850,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      }
 	      return
 	    }
-	    if (sourceEntity?.type === 'server' && conn.sourceHandle === 'server-shared') {
-	      const candidates = entries.filter(entry => entry.server_id === sourceEntity.id && entry.enabled !== false)
-	      if (!candidates.length) return dialogs.alert({ title: '没有可用入口', message: '这台服务器没有可创建直接出口分支的入口。' })
-	      if (candidates.length > 1 && !await dialogs.confirm({ title: '添加直接出口', message: `会为 ${candidates.length} 个入口分别增加可选的本机直出分支。`, confirmText: '添加' })) return
-	      const failures: string[] = []
-	      const createdPaths: ProxyPath[] = []
-	      for (const entry of candidates) {
-	        try {
-	          const created = await createDirectBranch({ inbound_id: entry.id })
-	          if (created) createdPaths.push(created)
-	        } catch (error: any) {
-	          failures.push(`${entry.name || `入口 ${entry.id}`}：${localizeErrorMessage(error?.message || error)}`)
-	        }
-	      }
-	      consumeCanvasDirectTarget(conn.target, createdPaths)
-	      await load()
-	      if (failures.length) await dialogs.alert({ title: '部分直接出口未添加', message: failures.join('\n') })
-	      return
-	    }
 	    return dialogs.alert({ title: '请选择入口连接点', message: '直接出口需要连接一级入口节点或一级服务器上的具体入口点。' })
-	  }
-	  if (sourceEntity?.type === 'server' && conn.sourceHandle === 'server-shared') {
-	    const target = await targetStepForGraphTarget(conn.target)
-	    if (!target) return
-	    if (target.node_type === 'imported') {
-	      return dialogs.alert({ title: '请选择具体连接点', message: '共享服务器连接点不能直接连接导入节点，请从具体入口或路径连接点拖线。' })
-	    }
-	    const allSteps = (data.proxy_path_steps || []) as ProxyPathStep[]
-	    const terminalSteps = allSteps.filter(step => proxyPathStepNodeID(step) === conn.source && !allSteps.some(other => other.path_id === step.path_id && other.position > step.position))
-	    if (terminalSteps.length) {
-	      const createdSteps = await reuseControlledTarget(terminalSteps.map(step => ({ step_id: step.id })), target, sourceEntity.label)
-	      consumeCanvasServerTarget(conn.target, createdSteps)
-	      return
-	    }
-	    const serverEntries = entries.filter(entry => entry.server_id === sourceEntity.id && entry.enabled !== false)
-	    if (!serverEntries.length) return dialogs.alert({ title: '没有可共享的入口', message: '这台服务器还没有可用入口，无法创建共享后续路径。' })
-	    const createdSteps = await reuseControlledTarget(serverEntries.map(entry => ({ inbound_id: entry.id })), target, sourceEntity.label)
-	    consumeCanvasServerTarget(conn.target, createdSteps)
-	    return
 	  }
 	  const sourcePathStepID = pathStepIDFromHandle(conn.sourceHandle)
 	  if (sourcePathStepID) {
@@ -7854,8 +7864,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    }
 	    return
 	  }
-	  const sourceHandleInboundID = inboundIDFromServerHandle(conn.sourceHandle)
-	  const sourceHandleEntry = sourceHandleInboundID ? entries.find(x => x.id === sourceHandleInboundID) || null : null
 	  if (sourceEntity?.type === 'entry' && targetEntity?.type === 'imported') {
 	    const entry = entries.find(x => x.id === sourceEntity.id)
 	    const transport = await chooseTransportForTarget({ node_type: 'imported', external_outbound_id: targetEntity.id } as any, undefined, sourceEntity.label)
@@ -7880,20 +7888,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    }
 	    else if (target && !candidates.length) await dialogs.alert({ title: '无法追加链路', message: '请先从某个入口节点连到这个导入节点，再从导入节点继续连到服务器。' })
 	    else if (target) await dialogs.alert({ title: '请选择继续连接点', message: '这个导入节点属于多条路径，请从导入节点旁边对应路径的小连接点拖线。' })
-	    return
-	  }
-	  if (sourceEntity?.type === 'server' && targetEntity?.type === 'imported') {
-	    const entry = sourceHandleEntry && sourceHandleEntry.server_id === sourceEntity.id ? sourceHandleEntry : await chooseEntryForServer(sourceEntity.id, 'source')
-	    const transport = await chooseTransportForTarget({ node_type: 'imported', external_outbound_id: targetEntity.id } as any, undefined, sourceEntity.label)
-	    if (entry && transport) await createPathFromEntry(entry, { node_type: 'imported', external_outbound_id: targetEntity.id, ...transport })
-	    return
-	  }
-	  if (sourceEntity?.type === 'server' && sourceHandleEntry && (targetEntity?.type === 'entry' || targetEntity?.type === 'server')) {
-	    const target = await targetStepForGraphTarget(conn.target)
-	    if (target?.node_type === 'server_inbound') {
-	      const created = await reuseControlledTarget([{ inbound_id: sourceHandleEntry.id }], target, sourceEntity.label)
-	      consumeCanvasServerTarget(conn.target, created)
-	    }
 	    return
 	  }
 	  return dialogs.alert({ title: '请选择路径连接点', message: '从入口节点、一级服务器上的入口点，或路径中服务器/导入节点旁的继续连接点拖线。这样系统才能知道要追加哪一条代理路径。' })
@@ -8475,16 +8469,36 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     <AnimatePresence>{importDraft && <ImportNodeDialog draft={importDraft} setDraft={setImportDraft} servers={servers} onCancel={() => setImportDraft(null)} onSubmit={submitImportNode} />}</AnimatePresence>
     <AnimatePresence>{configNode && <ImportedNodeConfigDialog node={configNode} data={data} client={client} load={load} onClose={() => setConfigNode(null)} />}</AnimatePresence>
 	<AnimatePresence>{namingPath && <ProxyPathNameDialog path={namingPath} data={data} client={client} load={load} onClose={() => setNamingPath(null)} />}</AnimatePresence>
-	<AnimatePresence>{transportRequest && <TransportDialog
+		<AnimatePresence>{transportRequest && <TransportDialog
 	  target={transportRequest.target}
 	  current={transportRequest.current}
 	  currentMode={transportRequest.currentMode}
 	  chainMethods={proxyPathChainMethods}
 	  onPreview={request => client.request('/proxy-paths/reuse-preview', { method: 'POST', body: JSON.stringify(request) }) as Promise<ProxyPathReusePreview>}
 	  onCancel={() => { transportRequest.resolve(null); setTransportRequest(null) }}
-	  onSubmit={selection => { transportRequest.resolve(selection); setTransportRequest(null) }}
-	/>}</AnimatePresence>
-  </div>
+		  onSubmit={selection => { transportRequest.resolve(selection); setTransportRequest(null) }}
+		/>}</AnimatePresence>
+		<AnimatePresence>{sourceSelectionRequest && <GraphSourceSelectionDialog
+		  request={sourceSelectionRequest}
+		  onCancel={() => { sourceSelectionRequest.resolve(null); setSourceSelectionRequest(null) }}
+		  onSubmit={sources => { sourceSelectionRequest.resolve(sources); setSourceSelectionRequest(null) }}
+		/>}</AnimatePresence>
+	  </div>
+}
+
+function GraphSourceSelectionDialog({ request, onCancel, onSubmit }: { request: GraphSourceSelectionRequest; onCancel: () => void; onSubmit: (sources: ProxyPathReuseSource[]) => void }) {
+	const [selected, setSelected] = useState<string[]>([])
+	const toggle = (key: string) => setSelected(current => current.includes(key) ? current.filter(item => item !== key) : [...current, key])
+	return <MotionDialogPanel onCancel={onCancel} className="graph-source-dialog" aria-labelledby="graph-source-dialog-title">
+	  <header className="dialog-header"><div><h2 id="graph-source-dialog-title">选择来源</h2><p className="muted">{request.title}</p></div><button type="button" className="ghost icon-button" onClick={onCancel} aria-label="关闭"><X size={16} /></button></header>
+	  <div className="graph-source-options">
+	    {request.options.map(option => <label key={option.key} className={selected.includes(option.key) ? 'is-selected' : ''}>
+	      <input type="checkbox" checked={selected.includes(option.key)} onChange={() => toggle(option.key)} />
+	      <span><strong>{option.label}</strong><small>{option.detail}</small></span>
+	    </label>)}
+	  </div>
+	  <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" disabled={!selected.length} onClick={() => onSubmit(request.options.filter(option => selected.includes(option.key)).map(option => option.source))}>继续</button></footer>
+	</MotionDialogPanel>
 }
 
 type ProxyPathNameReference = { key: string; label: string; part: ProxyPathNamePart }
@@ -10117,7 +10131,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   const serverWidths = new Map<number, number>()
   const serverEntryCounts = new Map<number, number>()
   const serverEntryIndexes = new Map<number, number>()
-  visibleServers.forEach((s: Server, i: number) => {
+	visibleServers.forEach((s: Server, i: number) => {
     const id = `server-${s.id}`
     const position = positions[id] || defaultServerGraphPosition(i)
     serverPositions.set(s.id, position)
@@ -10126,7 +10140,9 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     serverEntries.forEach((entry, index) => serverEntryIndexes.set(entry.id, index))
     const serverWidth = graphServerNodeWidth(serverEntries.length)
     serverWidths.set(s.id, serverWidth)
-    nodes.push({ id, className: 'graph-node server-graph-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: s.id, label: s.name || `服务器 ${s.id}` } as GraphEntity, label: <GraphNode kind={s.id === rootID ? '一级服务器' : '服务器'} title={s.name} meta={`${labelValue(s.status || 'unknown')} · ${serverDefaultEntryAddress(s) || '无公网 IP'}`} entryHandles={serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))} pathHandles={continuationByNode.get(id) || []} role={displayRole(s.id, s.id === rootID)} status={s.status} ipv4={s.public_ipv4 || '未检测'} cpu={Math.round(s.cpu_usage_percent || 0)} memory={s.memory_total_bytes ? Math.round((s.memory_used_bytes / s.memory_total_bytes) * 100) : 0} /> } })
+	    const entrySources = serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))
+	    const pathSources = continuationByNode.get(id) || []
+	    nodes.push({ id, className: 'graph-node server-graph-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: s.id, label: s.name || `服务器 ${s.id}` } as GraphEntity, sourceOptions: graphServerSourceOptions(entrySources, pathSources), label: <GraphNode kind={s.id === rootID ? '一级服务器' : '服务器'} title={s.name} meta={`${labelValue(s.status || 'unknown')} · ${serverDefaultEntryAddress(s) || '无公网 IP'}`} entryHandles={entrySources} pathHandles={pathSources} role={displayRole(s.id, s.id === rootID)} status={s.status} ipv4={s.public_ipv4 || '未检测'} cpu={Math.round(s.cpu_usage_percent || 0)} memory={s.memory_total_bytes ? Math.round((s.memory_used_bytes / s.memory_total_bytes) * 100) : 0} /> } })
   })
   canvasServerInstances.forEach((instance, index) => {
     const server = (data.servers || []).find((item: Server) => item.id === instance.server_id) as Server | undefined
@@ -10135,7 +10151,8 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const serverEntries = entries.filter(x => x.server_id === server.id && x.enabled !== false).sort((a, b) => (a.port - b.port) || (a.id - b.id))
     const serverWidth = graphServerNodeWidth(serverEntries.length)
     const position = positions[id] || defaultServerGraphPosition(visibleServers.length + index)
-    nodes.push({ id, className: 'graph-node server-graph-node canvas-server-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: server.id, label: server.name || `服务器 ${server.id}`, node_id: id } as GraphEntity, label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${serverDefaultEntryAddress(server) || '无公网 IP'}`} entryHandles={serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
+	    const entrySources = serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))
+	    nodes.push({ id, className: 'graph-node server-graph-node canvas-server-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: server.id, label: server.name || `服务器 ${server.id}`, node_id: id } as GraphEntity, sourceOptions: graphServerSourceOptions(entrySources, []), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${serverDefaultEntryAddress(server) || '无公网 IP'}`} entryHandles={entrySources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
   })
   const entryIndexesByServer = new Map<number, number>()
   visibleEntries.forEach((x: Inbound, i: number) => {
@@ -10153,7 +10170,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       source: id,
       sourceHandle: 'source-bottom',
       target: `server-${x.server_id}`,
-      targetHandle: serverEntryTargetHandleID(x.id),
+	      targetHandle: 'target-top',
       label: '所属主机',
       type: 'straight',
       animated: false,
@@ -10197,7 +10214,8 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       const serverID = graphStepServerID(step, inboundByID)
       const server = (data.servers || []).find((item: Server) => item.id === serverID) as Server | undefined
       if (!server) return
-	  nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · 路径 ${path.id}`} pathHandles={continuationByNode.get(id) || []} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} exitRegion={step === pathSteps[pathSteps.length - 1] ? { code: path.effective_exit_region_code, status: path.exit_region_status } : undefined} /> } })
+		  const pathSources = continuationByNode.get(id) || []
+		  nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, sourceOptions: graphServerSourceOptions([], pathSources), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · 路径 ${path.id}`} pathHandles={pathSources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} exitRegion={step === pathSteps[pathSteps.length - 1] ? { code: path.effective_exit_region_code, status: path.exit_region_status } : undefined} /> } })
     })
   })
   const directPaths = visiblePaths.filter(path => path.kind === 'direct')
@@ -10254,7 +10272,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const pathSteps = (stepsByPath.get(path.id) || []).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
     const collapsedSource = collapsedDirectSourceByPath.get(path.id)
     let source = collapsedSource ? proxyPathStepNodeID(collapsedSource) : `server-${root.server_id}`
-    let sourceHandle: string | undefined = collapsedSource ? pathStepHandleID(collapsedSource.id) : serverEntryHandleID(root.id)
+	    let sourceHandle: string | undefined = collapsedSource ? pathStepHandleID(collapsedSource.id) : 'server-source'
     if (!collapsedSource) pathSteps.forEach((step, index) => {
       const target = proxyPathStepNodeID(step)
       if (!target) return
@@ -10418,19 +10436,6 @@ function serverEntryOptionLabel(data: any, server: Server) {
   return `${server.name || `服务器 ${server.id}`} / ${address || '入口地址待检测'} / ${protocolsText}`
 }
 
-function serverEntryHandleID(inboundID: number) {
-  return `server-entry-${inboundID}`
-}
-
-function serverEntryTargetHandleID(inboundID: number) {
-  return `server-entry-target-${inboundID}`
-}
-
-function inboundIDFromServerHandle(handle?: string | null) {
-  const match = /^server-entry-(\d+)$/.exec(handle || '')
-  return match ? Number(match[1]) : 0
-}
-
 function pathStepHandleID(stepID: number) {
   return `path-step-${stepID}`
 }
@@ -10440,8 +10445,8 @@ function pathStepIDFromHandle(handle?: string | null) {
   return match ? Number(match[1]) : 0
 }
 
-type GraphEntryHandle = { id: number; label: string; title: string }
-type GraphPathHandle = { step_id: number; label: string; title: string }
+type GraphEntryHandle = GraphEntrySource
+type GraphPathHandle = GraphPathSource
 
 function DirectExitGraphNode({ connected = false, title, meta, exitRegion }: { connected?: boolean; title: string; meta: string; exitRegion?: { code?: string; status?: string } }) {
   return <div className="direct-exit-card">
@@ -10493,14 +10498,6 @@ function GraphNode({
   exitRegion?: { code?: string; status?: string };
 }) {
   const isOnline = status === 'online'
-  const hasSharedPathHandle = entryHandles.length > 1 || pathHandles.length > 1
-  // One handle, two outcomes: append to the paths that already end here, or start
-  // one path per entry when none does. Label whichever one will actually happen.
-  const sharedAppendsToPaths = pathHandles.length > 1
-  const sharedHandleLabel = sharedAppendsToPaths ? '全部路径' : '全部入口'
-  const sharedHandleTitle = sharedAppendsToPaths
-    ? `向经过这里的 ${pathHandles.length} 条路径各追加同一个下一跳`
-    : `为这台服务器的 ${entryHandles.length} 个入口各新建一条链路`
   const metaParts = meta.split(' · ')
   const subtitle1 = metaParts[0] || ''
   const subtitle2 = metaParts[1] || ''
@@ -10544,34 +10541,21 @@ function GraphNode({
       {/* Handles */}
       <Handle id="target-top" className="connect-handle connect-target connect-target-top" type="target" position={Position.Top} />
       
-      {entryHandles.length ? entryHandles.map((entry, index) => {
-        const left = graphEntryHandleLeft(index, entryHandles.length, hasSharedPathHandle)
-        return (
-          <React.Fragment key={entry.id}>
-            <span className="server-entry-axis-line" style={{ left }} />
-            <Handle id={serverEntryTargetHandleID(entry.id)} className="connect-handle connect-target server-entry-target-handle" type="target" position={Position.Top} style={{ left }} />
-            <Handle id={serverEntryHandleID(entry.id)} className="connect-handle connect-source server-entry-source-handle" type="source" position={Position.Bottom} style={{ left }} />
-            <span className="server-entry-source-label" style={{ left }} title={`${entry.title} / ${entry.label}`}>{entry.label}</span>
-          </React.Fragment>
-        )
-      }) : !pathHandles.length ? <Handle id="source-bottom" className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} /> : null}
-
-      {hasSharedPathHandle && <>
-        {/* The same handle appends to every path that terminates here, or, when no
-            path does yet, creates one new path per entry. Name the actual effect. */}
-        <Handle id="server-shared" className="connect-handle connect-source server-shared-source-handle" type="source" position={Position.Bottom} title={sharedHandleTitle} />
-        <span className="server-shared-source-label">{sharedHandleLabel}</span>
-      </>}
-      
-      {pathHandles.map((path, index) => {
-        const left = graphPathHandleLeft(index, pathHandles.length)
+	  {isServer ? <Handle
+	    id={SERVER_GRAPH_SOURCE_HANDLE}
+	    className="connect-handle connect-source connect-source-bottom server-generic-source-handle"
+	    type="source"
+	    position={Position.Bottom}
+	    title="连接后选择来源"
+	  /> : pathHandles.length ? pathHandles.map((path, index) => {
+	    const left = graphPathHandleLeft(index, pathHandles.length)
         return (
           <React.Fragment key={path.step_id}>
             <Handle id={pathStepHandleID(path.step_id)} className="connect-handle connect-source path-step-source-handle" type="source" position={Position.Bottom} style={{ left }} />
             <span className="path-step-source-label" style={{ left }} title={path.title}>{path.label}</span>
           </React.Fragment>
         )
-      })}
+	  }) : <Handle id="source-bottom" className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} />}
 
       {/* Header */}
       <div className="rf-node-header">

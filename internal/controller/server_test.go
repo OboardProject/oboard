@@ -353,6 +353,10 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 		}
 	}
 	request(t, h, http.MethodPost, "/api/v2/ui/inbound-users", token, map[string]any{"inbound_id": inboundID, "user_id": user.ID, "enabled": true}, http.StatusCreated)
+	directPath := &model.ProxyPath{Kind: model.ProxyPathKindDirect, Name: "direct", InboundID: inboundID, Secret: "direct-secret", Enabled: true}
+	if err := db.CreateProxyPath(ctx, directPath); err != nil {
+		t.Fatal(err)
+	}
 
 	data, err := db.FullRoutingConfigData(ctx)
 	if err != nil {
@@ -366,7 +370,7 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Inbounds) != 1 || len(plan.Inbounds[0].Users) != 1 || plan.Inbounds[0].Users[0].Username != "oboard-"+strconv.FormatInt(user.ID, 10) || plan.Inbounds[0].Users[0].Password != user.ProxyPassword {
+	if len(plan.Inbounds) != 1 || len(plan.Inbounds[0].Users) != 1 || plan.Inbounds[0].Users[0].Username != sshLoginName(*user, directPath.ID) || plan.Inbounds[0].Users[0].Password != user.ProxyPassword || plan.Inbounds[0].Users[0].RouteKind != "direct" {
 		t.Fatalf("SSH inbound plan = %#v", plan)
 	}
 	if _, ok := plan.Inbounds[0].Policies["user:"+strconv.FormatInt(user.ID, 10)]; !ok {
@@ -440,7 +444,7 @@ func TestApplyDeploymentSSHStatePersistsOnlyValidatedTaskCredentials(t *testing.
 	hostIdentity := model.SSHServerHostKey{PublicKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostPublicKey))), Fingerprint: ssh.FingerprintSHA256(hostPublicKey)}
 	payload := model.DeploymentTaskPayload{Version: 19, SSHInbounds: model.SSHInboundPlan{Version: 19, Inbounds: []model.SSHInbound{{
 		InboundID: 31, ServerID: server.ID, Enabled: true,
-		Users: []model.SSHInboundUser{{UserID: user.ID, Username: sshLoginName(user.ID), Password: user.ProxyPassword, Enabled: true}},
+		Users: []model.SSHInboundUser{{UserID: user.ID, Username: sshLoginName(*user, 9), Password: user.ProxyPassword, PathID: 9, RouteKind: "direct", Enabled: true}},
 	}}}}
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -536,6 +540,10 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: inbound.ID, UserID: user.ID, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
+	path := &model.ProxyPath{Kind: model.ProxyPathKindDirect, Name: "direct", InboundID: inbound.ID, Secret: "direct-secret", Enabled: true}
+	if err := db.CreateProxyPath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
 	_, hostPrivateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -545,6 +553,15 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	hostIdentity := model.SSHServerHostKey{PublicKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostPublicKey))), Fingerprint: ssh.FingerprintSHA256(hostPublicKey)}
+	config, err := db.FullRoutingConfigData(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := buildSSHInboundPlan(0, *server, config, effectiveInboundUsersForRouting(config), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planDigest := sshInboundPlanDigest(plan)
 	handler := srv.Handler()
 	readSubscription := func() []map[string]any {
 		t.Helper()
@@ -576,11 +593,11 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	if nodes := readSubscription(); len(nodes) != 0 {
 		t.Fatalf("SSH subscription appeared for stale deployed password: %#v", nodes)
 	}
-	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, ConfigVersion: 24}, map[int64]string{user.ID: srv.sshPasswordDeploymentDigest(server.ID, user.ID, user.ProxyPassword)}); err != nil {
+	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, PlanDigest: planDigest, ConfigVersion: 24}, map[int64]string{user.ID: srv.sshPasswordDeploymentDigest(server.ID, user.ID, user.ProxyPassword)}); err != nil {
 		t.Fatal(err)
 	}
 	nodes := readSubscription()
-	if len(nodes) != 1 || nodes[0]["type"] != "ssh" || nodes[0]["user"] != sshLoginName(user.ID) || nodes[0]["server"] != server.PublicIPv4 || nodes[0]["password"] != user.ProxyPassword {
+	if len(nodes) != 1 || nodes[0]["type"] != "ssh" || nodes[0]["user"] != sshLoginName(*user, path.ID) || nodes[0]["server"] != server.PublicIPv4 || nodes[0]["password"] != user.ProxyPassword {
 		t.Fatalf("matching SSH subscription = %#v", nodes)
 	}
 	egernRecorder := httptest.NewRecorder()
@@ -599,8 +616,32 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	}
 	egernSSH := egernDocument.Proxies[0]["ssh"]
 	hostKeys, hostKeysOK := egernSSH["host_keys"].([]any)
-	if egernSSH["username"] != sshLoginName(user.ID) || egernSSH["server"] != server.PublicIPv4 || egernSSH["password"] != user.ProxyPassword || !hostKeysOK || len(hostKeys) != 1 || hostKeys[0] != hostIdentity.PublicKey {
+	if egernSSH["username"] != sshLoginName(*user, path.ID) || egernSSH["server"] != server.PublicIPv4 || egernSSH["password"] != user.ProxyPassword || !hostKeysOK || len(hostKeys) != 1 || hostKeys[0] != hostIdentity.PublicKey {
 		t.Fatalf("Egern SSH subscription = %#v", egernDocument.Proxies[0])
+	}
+}
+
+func TestSSHInboundPlanDigestTracksRoutesWithoutDerivingFromPasswords(t *testing.T) {
+	plan := model.SSHInboundPlan{Inbounds: []model.SSHInbound{{
+		InboundID: 1,
+		ServerID:  2,
+		ListenIP:  "0.0.0.0",
+		Address:   "203.0.113.10",
+		Port:      2222,
+		Enabled:   true,
+		Users: []model.SSHInboundUser{{
+			UserID: 3, Username: "u123456789012-p4", Password: "first-password", PathID: 4, RouteKind: "direct", Enabled: true,
+		}},
+	}}}
+	original := sshInboundPlanDigest(plan)
+	plan.Inbounds[0].Users[0].Password = "second-password"
+	if got := sshInboundPlanDigest(plan); got != original {
+		t.Fatalf("password-only change altered plan digest: %q != %q", got, original)
+	}
+	plan.Inbounds[0].Users[0].RouteKind = "outbound"
+	plan.Inbounds[0].Users[0].OutboundTag = "path-4-step-1"
+	if got := sshInboundPlanDigest(plan); got == original {
+		t.Fatal("route change did not alter plan digest")
 	}
 }
 

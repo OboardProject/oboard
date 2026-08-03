@@ -1044,6 +1044,17 @@ func ProxyPathRequiresAccountingPathID(inboundID int64, paths []model.ProxyPath,
 // validateProxyPathTransportSemantics returns true when the user protocol must
 // remain encrypted until a downstream processing server.
 func validateProxyPathTransportSemantics(path model.ProxyPath, root model.Inbound, steps []model.ProxyPathStep) (bool, error) {
+	if root.Protocol == model.ProtocolSSH {
+		for _, step := range steps {
+			mode := step.TransportMode
+			if mode == "" {
+				mode = model.ProxyPathTransportSingBox
+			}
+			if mode == model.ProxyPathTransportPortForward {
+				return false, fmt.Errorf("代理路径 %s 的 SSH 入口已在 Agent 解密，不能使用透明端口转发", path.Name)
+			}
+		}
+	}
 	processingIndex := -1
 	for index, step := range steps {
 		if !step.ProcessingRole {

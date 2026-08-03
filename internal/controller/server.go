@@ -64,7 +64,7 @@ const (
 	timeCheckThresholdSeconds             = 30
 )
 
-var defaultTimeCheckNTPServers = []string{"time.cloudflare.com", "time.google.com", "pool.ntp.org"}
+var defaultTimeCheckNTPServers = []string{"time.cloudflare.com", "time.google.com", "ntp.aliyun.com"}
 
 var automaticTrustedProxyCIDRs = []string{"127.0.0.0/8", "::1/128"}
 
@@ -1861,29 +1861,49 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				if configErr != nil {
 					err = configErr
 				} else {
-					servers := make(map[int64]model.Server, len(config.Servers))
-					for _, server := range config.Servers {
-						servers[server.ID] = server
+					bindings := effectiveInboundUsersForRouting(config)
+					deployed := map[int64]string{}
+					deployments, deploymentErr := s.store.ListSSHPasswordDeploymentsForUser(ctx, user.ID)
+					if deploymentErr != nil {
+						err = deploymentErr
+						break
 					}
-					allowed := make(map[int64]bool)
-					for _, binding := range effectiveInboundUsersForRouting(config) {
-						if binding.Enabled && binding.UserID == user.ID {
-							allowed[binding.InboundID] = true
-						}
+					for _, deployment := range deployments {
+						deployed[deployment.ServerID] = deployment.PasswordDigest
+					}
+					pathNames := make(map[int64]string, len(config.ProxyPaths))
+					for _, path := range core.ResolveProxyPathNames(config.ProxyPaths, config.ProxyPathSteps, config.Servers, config.Inbounds, config.ExternalOutbounds) {
+						pathNames[path.ID] = path.Name
 					}
 					accesses := make([]map[string]any, 0)
-					for _, inbound := range config.Inbounds {
-						server, ok := servers[inbound.ServerID]
-						if !ok || !allowed[inbound.ID] || !inbound.Enabled || inbound.Protocol != model.ProtocolSSH {
+					for _, server := range config.Servers {
+						if deployed[server.ID] != s.sshPasswordDeploymentDigest(server.ID, user.ID, user.ProxyPassword) {
 							continue
 						}
-						address := strings.TrimSpace(core.ResolveEntryAddress(inbound, server))
-						if address == "" {
+						plan, planErr := buildSSHInboundPlan(0, server, config, bindings, nil)
+						if planErr != nil {
+							err = planErr
+							break
+						}
+						hostKey, hostErr := s.store.GetSSHServerHostKey(ctx, server.ID)
+						if errors.Is(hostErr, sql.ErrNoRows) || (hostErr == nil && hostKey.PlanDigest != sshInboundPlanDigest(plan)) {
 							continue
 						}
-						accesses = append(accesses, map[string]any{"inbound_id": inbound.ID, "name": inbound.Name, "address": address, "port": inbound.Port, "username": sshLoginName(user.ID)})
+						if hostErr != nil {
+							err = hostErr
+							break
+						}
+						for _, inbound := range plan.Inbounds {
+							for _, access := range inbound.Users {
+								if access.Enabled && access.UserID == user.ID {
+									accesses = append(accesses, map[string]any{"inbound_id": inbound.InboundID, "path_id": access.PathID, "name": pathNames[access.PathID], "address": inbound.Address, "port": inbound.Port, "username": access.Username})
+								}
+							}
+						}
 					}
-					out["ssh_accesses"] = accesses
+					if err == nil {
+						out["ssh_accesses"] = accesses
+					}
 				}
 			}
 		}
@@ -2873,6 +2893,7 @@ func (s *Server) serverTasks(w http.ResponseWriter, r *http.Request, id int64) {
 const (
 	agentBuildMinDiagnosticsTask = "20260706000116"
 	agentBuildMinTrustedForward  = "20260729000000"
+	agentBuildMinSSHPathRelay    = "20260804000000"
 	// Pending and running tasks both expire after 5 minutes so the panel does
 	// not keep "waiting" forever for dead Agents or stuck executions.
 	agentTaskPendingTimeout = 5 * time.Minute
@@ -6962,12 +6983,9 @@ func (s *Server) validateProxyPath(ctx context.Context, v *model.ProxyPath) erro
 	if err := normalizeRegionSelection(&v.ExitRegionMode, &v.ExitRegionCode, "exit region"); err != nil {
 		return err
 	}
-	inbound, err := s.store.GetInbound(ctx, v.InboundID)
+	_, err := s.store.GetInbound(ctx, v.InboundID)
 	if err != nil {
 		return fmt.Errorf("inbound_id: %w", err)
-	}
-	if inbound.Protocol == model.ProtocolSSH {
-		return errors.New("SSH 入口是独立受限代理，不能加入代理链路")
 	}
 	if v.Enabled {
 		if err := s.validateInboundPathReuse(ctx, v.InboundID, v.ID); err != nil {
@@ -9258,6 +9276,25 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	resolveRoutingProxyPathNames(&data)
 	servers, in := data.Servers, data.Inbounds
+	inboundIndex := map[int64]model.Inbound{}
+	for _, inbound := range in {
+		inboundIndex[inbound.ID] = inbound
+	}
+	for _, path := range data.ProxyPaths {
+		root, ok := inboundIndex[path.InboundID]
+		if !path.Enabled || !ok || root.Protocol != model.ProtocolSSH {
+			continue
+		}
+		server, ok := serverByID(servers, root.ServerID)
+		if !ok || !agentBuildSupportsTask(server.AgentBuild, agentBuildMinSSHPathRelay) {
+			name := fmt.Sprintf("#%d", root.ServerID)
+			if ok {
+				name = server.Name
+			}
+			fail(w, fmt.Errorf("服务器 %s 的 Agent 不支持 SSH 链式代理；请先更新 Agent", name), http.StatusConflict)
+			return
+		}
+	}
 	externalEgressTargetsByServer := map[int64][]model.ExternalEgressProbeTarget{}
 	if request.ServerID == 0 {
 		targets := core.ExternalEgressProbeTargets(data.ProxyPaths, data.ProxyPathSteps, servers, in, data.ExternalOutbounds)
@@ -9562,6 +9599,19 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 			bound[binding.InboundID] = append(bound[binding.InboundID], binding.UserID)
 		}
 	}
+	pathsByInbound := map[int64][]model.ProxyPath{}
+	stepsByPath := map[int64][]model.ProxyPathStep{}
+	for _, path := range data.ProxyPaths {
+		if path.Enabled {
+			pathsByInbound[path.InboundID] = append(pathsByInbound[path.InboundID], path)
+		}
+	}
+	for _, step := range data.ProxyPathSteps {
+		stepsByPath[step.PathID] = append(stepsByPath[step.PathID], step)
+	}
+	for inboundID := range pathsByInbound {
+		sort.SliceStable(pathsByInbound[inboundID], func(i, j int) bool { return pathsByInbound[inboundID][i].ID < pathsByInbound[inboundID][j].ID })
+	}
 	for _, inbound := range data.Inbounds {
 		if !inbound.Enabled || inbound.ServerID != server.ID || inbound.Protocol != model.ProtocolSSH {
 			continue
@@ -9570,7 +9620,7 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 		if strings.TrimSpace(address) == "" {
 			return model.SSHInboundPlan{}, fmt.Errorf("SSH 入口 %s 缺少可用的连接地址", inbound.Name)
 		}
-		entry := model.SSHInbound{InboundID: inbound.ID, ServerID: server.ID, Name: inbound.Name, ListenIP: core.EffectiveListenIP(server, inbound.ListenIP), Address: address, Username: "oboard", Port: inbound.Port, Enabled: true, Users: []model.SSHInboundUser{}, Policies: map[string]model.TrafficRuntimePolicy{}}
+		entry := model.SSHInbound{InboundID: inbound.ID, ServerID: server.ID, Name: inbound.Name, ListenIP: core.EffectiveListenIP(server, inbound.ListenIP), Address: address, Port: inbound.Port, Enabled: true, Users: []model.SSHInboundUser{}, Policies: map[string]model.TrafficRuntimePolicy{}}
 		seen := map[int64]bool{}
 		for _, userID := range bound[inbound.ID] {
 			if seen[userID] {
@@ -9584,7 +9634,16 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 			if strings.TrimSpace(user.ProxyPassword) == "" {
 				continue
 			}
-			entry.Users = append(entry.Users, model.SSHInboundUser{UserID: user.ID, Username: sshLoginName(user.ID), Password: user.ProxyPassword, Enabled: true})
+			if strings.TrimSpace(user.SSHRandomID) == "" {
+				return model.SSHInboundPlan{}, fmt.Errorf("SSH 用户 %d 缺少随机登录标识", user.ID)
+			}
+			for _, path := range pathsByInbound[inbound.ID] {
+				routeKind, outboundTag, err := core.ProxyPathEntryRoute(path, stepsByPath[path.ID], inbound, data.WARPProfiles)
+				if err != nil {
+					return model.SSHInboundPlan{}, fmt.Errorf("SSH 路径 %s: %w", path.Name, err)
+				}
+				entry.Users = append(entry.Users, model.SSHInboundUser{UserID: user.ID, Username: sshLoginName(user, path.ID), Password: user.ProxyPassword, PathID: path.ID, RouteKind: routeKind, OutboundTag: outboundTag, Enabled: true})
+			}
 			if policy, ok := policies[user.ID]; ok {
 				policy.InboundID = inbound.ID
 				entry.Policies[fmt.Sprintf("user:%d", user.ID)] = policy
@@ -9595,7 +9654,40 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 	return plan, nil
 }
 
-func sshLoginName(userID int64) string { return fmt.Sprintf("oboard-%d", userID) }
+func sshLoginName(user model.User, pathID int64) string {
+	return fmt.Sprintf("u%s-p%d", user.SSHRandomID, pathID)
+}
+
+func sshInboundPlanDigest(plan model.SSHInboundPlan) string {
+	type digestUser struct {
+		UserID      int64  `json:"user_id"`
+		Username    string `json:"username"`
+		PathID      int64  `json:"path_id"`
+		RouteKind   string `json:"route_kind"`
+		OutboundTag string `json:"outbound_tag,omitempty"`
+	}
+	type digestInbound struct {
+		InboundID int64        `json:"inbound_id"`
+		ServerID  int64        `json:"server_id"`
+		ListenIP  string       `json:"listen_ip"`
+		Address   string       `json:"address"`
+		Port      int          `json:"port"`
+		Users     []digestUser `json:"users"`
+	}
+	canonical := make([]digestInbound, 0, len(plan.Inbounds))
+	for _, inbound := range plan.Inbounds {
+		item := digestInbound{InboundID: inbound.InboundID, ServerID: inbound.ServerID, ListenIP: inbound.ListenIP, Address: inbound.Address, Port: inbound.Port, Users: []digestUser{}}
+		for _, user := range inbound.Users {
+			if user.Enabled {
+				item.Users = append(item.Users, digestUser{UserID: user.UserID, Username: user.Username, PathID: user.PathID, RouteKind: user.RouteKind, OutboundTag: user.OutboundTag})
+			}
+		}
+		canonical = append(canonical, item)
+	}
+	encoded, _ := json.Marshal(canonical)
+	sum := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", sum[:])
+}
 
 func (s *Server) sshPasswordDeploymentDigest(serverID, userID int64, password string) string {
 	mac := hmac.New(sha256.New, []byte(s.sessionSecret))
@@ -10203,24 +10295,29 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	for _, deployment := range deployments {
 		deployedPasswordDigests[deployment.ServerID] = deployment.PasswordDigest
 	}
-	for _, server := range servers {
-		if deployedPasswordDigests[server.ID] != s.sshPasswordDeploymentDigest(server.ID, user.ID, user.ProxyPassword) {
-			continue
-		}
-		hostKey, hostErr := s.store.GetSSHServerHostKey(r.Context(), server.ID)
-		if hostErr == nil {
-			sshServerHostKeys[server.ID] = hostKey.PublicKey
-		} else if !errors.Is(hostErr, sql.ErrNoRows) {
-			fail(w, hostErr, 500)
-			return
-		}
-	}
 	assignments, err := s.store.ListSubscriptionAssignmentsForUser(r.Context(), user.ID)
 	if err != nil {
 		fail(w, err, 500)
 		return
 	}
 	inboundUsers := core.EffectiveInboundUsers(in, []model.User{*user}, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
+	for _, server := range servers {
+		if deployedPasswordDigests[server.ID] != s.sshPasswordDeploymentDigest(server.ID, user.ID, user.ProxyPassword) {
+			continue
+		}
+		plan, planErr := buildSSHInboundPlan(0, server, data, effectiveInboundUsersForRouting(data), nil)
+		if planErr != nil {
+			fail(w, planErr, 500)
+			return
+		}
+		hostKey, hostErr := s.store.GetSSHServerHostKey(r.Context(), server.ID)
+		if hostErr == nil && hostKey.PlanDigest == sshInboundPlanDigest(plan) {
+			sshServerHostKeys[server.ID] = hostKey.PublicKey
+		} else if hostErr != nil && !errors.Is(hostErr, sql.ErrNoRows) {
+			fail(w, hostErr, 500)
+			return
+		}
+	}
 	if profileID != 0 {
 		filtered := assignments[:0]
 		for _, assignment := range assignments {
@@ -10835,7 +10932,7 @@ func (s *Server) applyDeploymentSSHState(ctx context.Context, serverID int64, ta
 			passwordDigests[user.UserID] = digest
 		}
 	}
-	return s.store.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: serverID, PublicKey: canonicalHostKey, Fingerprint: hostFingerprint, ConfigVersion: version}, passwordDigests)
+	return s.store.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: serverID, PublicKey: canonicalHostKey, Fingerprint: hostFingerprint, PlanDigest: sshInboundPlanDigest(payload.SSHInbounds), ConfigVersion: version}, passwordDigests)
 }
 
 func allowedTaskStatus(status string) bool {

@@ -135,27 +135,8 @@ export function layoutGraphLayer(
   return { positions, extraHeight: GRAPH_LAYER_SECONDARY_OFFSET_Y }
 }
 
-// A server card widens with its entry count so every entry handle keeps a
-// readable slot along the bottom edge.
-export function graphServerNodeWidth(entryCount: number) {
-  return Math.max(GRAPH_ENTRY_NODE_WIDTH, Math.max(1, entryCount) * GRAPH_ENTRY_NODE_WIDTH)
-}
-
-// Horizontal position of one entry handle, as a fraction of the card width.
-// reserveCenter splits the handles around the middle so the shared "all entries"
-// handle has room of its own.
-export function graphEntryHandleRatio(index: number, count: number, reserveCenter = false) {
-  if (reserveCenter) {
-    const leftCount = Math.ceil(count / 2)
-    if (index < leftCount) return ((index + 1) / (leftCount + 1)) * 0.42
-    const rightCount = count - leftCount
-    return 0.58 + ((index - leftCount + 1) / (rightCount + 1)) * 0.42
-  }
-  return (index + 0.5) / Math.max(1, count)
-}
-
-export function graphEntryHandleLeft(index: number, count: number, reserveCenter = false) {
-  return `${graphEntryHandleRatio(index, count, reserveCenter) * 100}%`
+export function graphServerNodeWidth(_entryCount: number) {
+	return GRAPH_ENTRY_NODE_WIDTH
 }
 
 export function graphPathHandleLeft(index: number, count: number) {
@@ -171,13 +152,13 @@ export function defaultImportedGraphPosition(index: number): GraphPosition {
   return { x: 630, y: 670 + index * 370 }
 }
 
-// Entries sit above their server card, centered on their own handle.
+// Entry cards fan out above a fixed-width server card.
 export function defaultEntryGraphPosition(
   serverPosition: GraphPosition,
   index: number,
   total = 1,
   serverWidth = graphServerNodeWidth(total),
 ): GraphPosition {
-  const centerX = serverPosition.x + serverWidth * graphEntryHandleRatio(index, total)
+	const centerX = serverPosition.x + serverWidth / 2 + (index - (total - 1) / 2) * (GRAPH_ENTRY_NODE_WIDTH + 40)
   return { x: Math.round(centerX - GRAPH_ENTRY_NODE_WIDTH / 2), y: serverPosition.y - 170 }
 }

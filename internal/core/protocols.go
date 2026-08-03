@@ -1170,11 +1170,13 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 			previousTag = stepTag
 			if step.NodeType == model.ProxyPathStepServerInbound {
 				if previousTag != "" {
-					rule := map[string]any{"inbound": []string{activeInboundTag}, "action": "route", "outbound": previousTag}
-					if len(activeAuthUsers) > 0 {
-						rule["auth_user"] = activeAuthUsers
+					if root.Protocol != model.ProtocolSSH || activeServerID != root.ServerID {
+						rule := map[string]any{"inbound": []string{activeInboundTag}, "action": "route", "outbound": previousTag}
+						if len(activeAuthUsers) > 0 {
+							rule["auth_user"] = activeAuthUsers
+						}
+						rules = append(rules, rule)
 					}
-					rules = append(rules, rule)
 				}
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
@@ -1187,7 +1189,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 			if previousTag != "" {
 				return nil, nil, fmt.Errorf("直接出口分支 %s 必须结束于可控服务器", path.Name)
 			}
-			if activeServerID == server.ID {
+			if activeServerID == server.ID && (root.Protocol != model.ProtocolSSH || activeServerID != root.ServerID) {
 				rule := map[string]any{"inbound": []string{activeInboundTag}, "action": "route", "outbound": "direct"}
 				if len(activeAuthUsers) > 0 {
 					rule["auth_user"] = activeAuthUsers
@@ -1196,7 +1198,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 			}
 			continue
 		}
-		if previousTag != "" && activeServerID == server.ID {
+		if previousTag != "" && activeServerID == server.ID && (root.Protocol != model.ProtocolSSH || activeServerID != root.ServerID) {
 			rule := map[string]any{"inbound": []string{activeInboundTag}, "action": "route", "outbound": previousTag}
 			if len(activeAuthUsers) > 0 {
 				rule["auth_user"] = activeAuthUsers
@@ -1205,6 +1207,38 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 		}
 	}
 	return outbounds, rules, nil
+}
+
+func ProxyPathEntryRoute(path model.ProxyPath, steps []model.ProxyPathStep, root model.Inbound, warpProfiles []model.WARPProfile) (string, string, error) {
+	if !path.Enabled || path.InboundID != root.ID || root.Protocol != model.ProtocolSSH {
+		return "", "", errors.New("SSH 入口路径无效")
+	}
+	ordered := orderedProxyPathSteps(steps)
+	for _, step := range ordered {
+		mode := step.TransportMode
+		if mode == "" {
+			mode = model.ProxyPathTransportSingBox
+		}
+		if mode == model.ProxyPathTransportPortForward {
+			return "", "", errors.New("SSH 入口不能使用透明端口转发")
+		}
+	}
+	if len(ordered) == 0 {
+		if path.Kind == model.ProxyPathKindDirect {
+			return "direct", "", nil
+		}
+		return "", "", errors.New("SSH 普通代理路径至少需要一个步骤")
+	}
+	first := ordered[0]
+	if first.NodeType == model.ProxyPathStepWARP {
+		for _, profile := range warpProfiles {
+			if profile.ServerID == root.ServerID && profile.Enabled {
+				return "outbound", tag("warp", profile.ID), nil
+			}
+		}
+		return "", "", errors.New("SSH 入口路径需要可用的 WARP")
+	}
+	return "outbound", proxyPathStepTag(path.ID, first.Position), nil
 }
 
 func validateProxyPathForConfig(path model.ProxyPath, root model.Inbound, steps []model.ProxyPathStep) error {

@@ -542,7 +542,7 @@ func proxyPathReuseSources(data store.FullRoutingConfig, requests []proxyPathReu
 		}
 		if request.InboundID > 0 {
 			inbound, ok := inbounds[request.InboundID]
-			if !ok || !inbound.Enabled || inbound.Protocol == model.ProtocolSSH {
+			if !ok || !inbound.Enabled {
 				return nil, errors.New("来源入口不存在、已禁用或不支持代理路径")
 			}
 			key := fmt.Sprintf("inbound:%d", inbound.ID)
