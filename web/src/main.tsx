@@ -194,7 +194,7 @@ type TunnelType = 'wireguard' | 'ssh'
 type Tunnel = { id: number; name: string; source_server_id: number; target_server_id: number; type: TunnelType; local_address: string; peer_address: string; listen_port: number; target_endpoint: string; target_port: number; priority: number; config_json: string; enabled: boolean }
 type NotificationTemplate = { title: string; body: string }
 type NotificationEventDefinition = { value: string; label: string; description: string; variables: string[] }
-type NotificationChannel = { id: number; owner_user_id: number; owner_username?: string; name: string; type: 'telegram' | 'bark'; enabled: boolean; events: string; config_json: string; templates_json: string; user_ids: number[] }
+type NotificationChannel = { id: number; owner_user_id: number; owner_username?: string; name: string; type: 'telegram' | 'bark' | 'test'; enabled: boolean; events: string; config_json: string; templates_json: string; user_ids: number[] }
 type NotificationAnnouncement = { id: number; actor_user_id: number; actor_name: string; title: string; body: string; user_ids: number[]; queued_count: number; created_at: string }
 type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'interface'
 type RoutingRule = { id: number; server_id: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; enabled: boolean }
@@ -12689,7 +12689,7 @@ const userScopedNotificationEvents = new Set(['traffic_quota_exceeded', 'user_ri
 type NotificationDraft = {
   id: number
   name: string
-  type: 'telegram' | 'bark'
+  type: 'telegram' | 'bark' | 'test'
   enabled: boolean
   events: string[]
   bot_token: string
@@ -12709,7 +12709,7 @@ function mergedNotificationTemplates(raw: string | undefined, defaults: Record<s
   return Object.fromEntries(Object.entries(defaults).map(([event, value]) => [event, { ...value, ...(parsed[event] || {}) }]))
 }
 
-function emptyNotificationDraft(defaults: Record<string, NotificationTemplate>, eventOptions: NotificationEventDefinition[], isAdmin: boolean, ownerUserID: number, type: 'telegram' | 'bark' = 'telegram'): NotificationDraft {
+function emptyNotificationDraft(defaults: Record<string, NotificationTemplate>, eventOptions: NotificationEventDefinition[], isAdmin: boolean, ownerUserID: number, type: 'telegram' | 'bark' | 'test' = 'telegram'): NotificationDraft {
   return {
     id: 0,
     name: '',
@@ -12734,7 +12734,7 @@ function notificationDraftFromChannel(channel: NotificationChannel, defaults: Re
   return {
     id: channel.id,
     name: channel.name || '',
-    type: channel.type === 'bark' ? 'bark' : 'telegram',
+    type: channel.type === 'bark' ? 'bark' : channel.type === 'test' ? 'test' : 'telegram',
     enabled: channel.enabled !== false,
     events: String(channel.events || '').split(',').map(x => x.trim()).filter(Boolean),
     bot_token: String(cfg.bot_token || ''),
@@ -12753,7 +12753,9 @@ function notificationPayloadFromDraft(draft: NotificationDraft) {
   const events = draft.events.join(',')
   const config = draft.type === 'telegram'
     ? { bot_token: draft.bot_token.trim(), chat_id: draft.chat_id.trim(), interactive: draft.interactive, allowed_chat_ids: draft.interactive ? draft.allowed_chat_ids.trim() : '' }
-    : { server_url: draft.server_url.trim() || 'https://api.day.app', device_key: draft.device_key.trim(), group: draft.bark_group.trim() }
+    : draft.type === 'bark'
+      ? { server_url: draft.server_url.trim() || 'https://api.day.app', device_key: draft.device_key.trim(), group: draft.bark_group.trim() }
+      : {}
   return {
     name: draft.name.trim(),
     type: draft.type,
@@ -12777,6 +12779,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
   const [editor, setEditor] = useState<NotificationDraft | null>(null)
   const [saving, setSaving] = useState(false)
   const [testingID, setTestingID] = useState<number | 'draft' | null>(null)
+  const [rawLogOpen, setRawLogOpen] = useState(false)
   const [announcementTitle, setAnnouncementTitle] = useState('')
   const [announcementBody, setAnnouncementBody] = useState('')
   const [announcementAll, setAnnouncementAll] = useState(true)
@@ -12825,7 +12828,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
       } else {
         await client.request('/notification-channels/test', { method: 'POST', body: JSON.stringify(notificationPayloadFromDraft(target)) })
       }
-      notify?.('测试已发送，请到 Telegram / Bark 客户端确认是否收到“OBoard 测试通知”。', 'success')
+      notify?.(target.type === 'test' ? '测试已发送，请在「通知 → 原始日志」中查看记录。' : '测试已发送，请到 Telegram / Bark 客户端确认是否收到“OBoard 测试通知”。', 'success')
     } catch (e: any) {
       await dialogs.alert({ title: '测试失败', message: localizeErrorMessage(e.message || e) })
     } finally {
@@ -12877,10 +12880,11 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
     <div className="section-toolbar">
       <div>
         <h3>通知通道</h3>
-        <p className="muted">{isAdmin ? '接收服务器、证书、备份、域名、任务和用户风险提醒。' : '接收自己的流量、异常使用和管理员消息。'} 支持 Telegram 与 Bark。</p>
+        <p className="muted">{isAdmin ? '接收服务器、证书、备份、域名、任务和用户风险提醒。' : '接收自己的流量、异常使用和管理员消息。'} 支持 Telegram、Bark 与测试渠道。</p>
       </div>
       <div className="section-actions">
         {isAdmin && <button type="button" className="ghost" onClick={() => setAnnouncementOpen(true)}><Send size={15} /><span>发送通知</span></button>}
+        <button type="button" className="ghost" onClick={() => setRawLogOpen(true)}><ClipboardList size={15} /><span>原始日志</span></button>
         <button type="button" onClick={openCreate}><Plus size={15} /><span>新建通道</span></button>
       </div>
     </div>
@@ -12889,7 +12893,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
       <div className="notification-empty">
         <Bell size={22} />
         <strong>还没有通知通道</strong>
-        <span>点击右上角「新建通道」，配置 Telegram 或 Bark 后即可接收已选择的提醒。</span>
+        <span>点击右上角「新建通道」，配置 Telegram、Bark 或测试渠道后即可接收已选择的提醒。</span>
       </div>
     ) : (
       <MotionList className="notification-channel-list">
@@ -12899,12 +12903,12 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
           return <MotionCard key={channel.id} tag="article" className={`notification-channel-card ${enabled ? '' : 'is-disabled'}`}>
             <div className="notification-channel-main">
               <div className="notification-channel-icon" data-type={channel.type} aria-hidden="true">
-                {channel.type === 'bark' ? <Bell size={18} /> : <Globe size={18} />}
+                {channel.type === 'bark' ? <Bell size={18} /> : channel.type === 'test' ? <FileText size={18} /> : <Globe size={18} />}
               </div>
               <div className="notification-channel-copy">
                 <div className="notification-channel-title-row">
                   <strong>{channel.name}</strong>
-                  <span className={`notification-type-pill ${channel.type}`}>{channel.type === 'bark' ? 'Bark' : 'Telegram'}</span>
+                  <span className={`notification-type-pill ${channel.type}`}>{channel.type === 'bark' ? 'Bark' : channel.type === 'test' ? '测试' : 'Telegram'}</span>
                   <span className={`deploy-status-pill ${enabled ? 'ok' : 'warn'}`}>{enabled ? '已启用' : '已停用'}</span>
                 </div>
                 <div className="notification-event-chips">
@@ -12961,6 +12965,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
           ownerUserID={ownerUserID}
         />
       )}
+      {rawLogOpen && <NotificationRawLogDialog client={client} onClose={() => setRawLogOpen(false)} />}
     </AnimatePresence>
   </Panel>
 }
@@ -13042,6 +13047,50 @@ function NotificationAnnouncementDialog({
   </MotionDialogPanel>
 }
 
+function NotificationRawLogDialog({ client, onClose }: { client: ReturnType<typeof api>; onClose: () => void }) {
+  const [lines, setLines] = useState(500)
+  const [content, setContent] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const load = async (count = lines) => {
+    setLoading(true)
+    setError('')
+    try {
+      const result = await client.request(`/notification-channels/raw-log?lines=${count}`)
+      setContent(String(result.logs?.content || ''))
+    } catch (e: any) {
+      setError(localizeErrorMessage(e?.message || e))
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { void load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  return <MotionDialogPanel onCancel={onClose} className="notification-raw-log-dialog">
+    <header className="dialog-head">
+      <div>
+        <h2 id="notification-raw-log-title">通知原始日志</h2>
+        <p className="muted">测试渠道记录的消息原文，来自主控日志且自动脱敏。</p>
+      </div>
+      <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body">
+      <div className="notification-raw-log-toolbar">
+        <Select value={String(lines)} onChange={event => { const value = Number(event.target.value); setLines(value); void load(value) }} aria-label="行数">
+          <option value={200}>最近 200 行</option>
+          <option value={500}>最近 500 行</option>
+          <option value={1000}>最近 1000 行</option>
+        </Select>
+        <button type="button" className="ghost" onClick={() => void load()} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''} />刷新</button>
+        <button type="button" className="ghost" onClick={() => copyText(content)} disabled={!content}><Copy size={15} />复制</button>
+      </div>
+      {error
+        ? <div className="notification-raw-log-empty danger-text">{error}</div>
+        : <pre className="notification-raw-log-output">{loading ? '正在读取...' : content || '暂无测试渠道记录'}</pre>}
+    </div>
+    <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
+  </MotionDialogPanel>
+}
+
 function NotificationChannelDialog({
   draft,
   setDraft,
@@ -13077,7 +13126,7 @@ function NotificationChannelDialog({
       return { ...prev, events: has ? prev.events.filter(x => x !== event) : [...prev.events, event] }
     })
   }
-  const switchType = (type: 'telegram' | 'bark') => {
+  const switchType = (type: 'telegram' | 'bark' | 'test') => {
     setDraft(prev => prev ? { ...prev, type } : prev)
   }
   return <MotionDialogPanel onCancel={onCancel} className="notification-channel-dialog">
@@ -13095,9 +13144,10 @@ function NotificationChannelDialog({
         </FormField>
 
         <FormField label="通道类型" required>
-          <Select variant="segmented" value={draft.type} onChange={event => switchType(event.target.value as 'telegram' | 'bark')} aria-label="通道类型">
+          <Select variant="segmented" value={draft.type} onChange={event => switchType(event.target.value as 'telegram' | 'bark' | 'test')} aria-label="通道类型">
             <option value="telegram">Telegram</option>
             <option value="bark">Bark</option>
+            <option value="test">测试渠道</option>
           </Select>
         </FormField>
 
@@ -13164,7 +13214,7 @@ function NotificationChannelDialog({
           {draft.interactive && <FormField label="允许互动的 Chat ID" required hint="只有这些 Chat ID 能使用机器人指令，多个用英文逗号分隔。可在 @userinfobot 查询自己的 Chat ID。">
             <textarea rows={3} value={draft.allowed_chat_ids} onChange={e => update({ allowed_chat_ids: e.target.value })} placeholder="123456789, -1001234567890" autoComplete="off" />
           </FormField>}
-        </> : <>
+        </> : draft.type === 'bark' ? <>
           <FormField label="Device Key" required hint="Bark 设备 Key。">
             <input value={draft.device_key} onChange={e => update({ device_key: e.target.value })} placeholder="device key" autoComplete="off" />
           </FormField>
@@ -13174,7 +13224,12 @@ function NotificationChannelDialog({
           <FormField label="通知分组" hint="Bark 会按分组在通知中心归类，便于分类管理。">
             <input value={draft.bark_group} onChange={e => update({ bark_group: e.target.value })} placeholder="例如：OBoard 提醒" maxLength={64} autoComplete="off" />
           </FormField>
-        </>}
+        </> : (
+          <div className="notification-test-channel-hint">
+            <Info size={15} />
+            <span>测试渠道不调用外部服务，每次通知会以原始内容记录到主控日志，可在「通知 → 原始日志」中查看。</span>
+          </div>
+        )}
       </div>
     </div>
     <footer className="dialog-actions">

@@ -366,6 +366,16 @@ func (s *Server) notificationChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// GET /notification-channels/raw-log — raw messages recorded by test channels.
+	if len(parts) == 1 && parts[0] == "raw-log" {
+		if r.Method != http.MethodGet {
+			method(w)
+			return
+		}
+		s.notificationRawLog(w, r)
+		return
+	}
+
 	id := int64(0)
 	if len(parts) >= 1 && parts[0] != "" {
 		parsed, err := strconv.ParseInt(parts[0], 10, 64)
@@ -503,6 +513,28 @@ func (s *Server) notificationChannels(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) notificationRawLog(w http.ResponseWriter, r *http.Request) {
+	if s.logs == nil {
+		fail(w, errors.New("controller log storage is not configured"), http.StatusServiceUnavailable)
+		return
+	}
+	lines := 200
+	if raw := strings.TrimSpace(r.URL.Query().Get("lines")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 2000 {
+			fail(w, errors.New("lines must be between 1 and 2000"), 400)
+			return
+		}
+		lines = value
+	}
+	snapshot, err := s.logs.Snapshot(lines, "notification[test]")
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	write(w, 200, map[string]any{"logs": snapshot})
+}
+
 func (s *Server) testNotificationChannelByID(w http.ResponseWriter, r *http.Request, id, ownerUserID int64, role model.Role) {
 	item, err := s.store.GetNotificationChannel(r.Context(), id)
 	if err != nil || item.OwnerUserID != ownerUserID {
@@ -561,8 +593,8 @@ func validateNotificationChannel(v *model.NotificationChannel, role model.Role) 
 	if v.Name == "" {
 		return errors.New("请填写通道名称")
 	}
-	if v.Type != "telegram" && v.Type != "bark" {
-		return errors.New("通道类型仅支持 Telegram 或 Bark")
+	if v.Type != "telegram" && v.Type != "bark" && v.Type != "test" {
+		return errors.New("通道类型仅支持 Telegram、Bark 或测试")
 	}
 	events, err := normalizeNotificationEvents(v.Events, role)
 	if err != nil {
@@ -631,6 +663,8 @@ func validateNotificationChannel(v *model.NotificationChannel, role model.Role) 
 			return err
 		}
 		v.ConfigJSON = string(encoded)
+	case "test":
+		v.ConfigJSON = "{}"
 	}
 	templatesJSON, err := normalizeNotificationTemplates(v.TemplatesJSON, role)
 	if err != nil {
@@ -1745,6 +1779,9 @@ func sendNotification(ctx context.Context, channel model.NotificationChannel, ti
 			return err
 		}
 		return doNotify(req)
+	case "test":
+		log.Printf("notification[test] channel=%s title=%q body=%q", channel.Name, title, body)
+		return nil
 	default:
 		return errors.New("unsupported notification channel")
 	}

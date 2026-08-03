@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/controllerupdate"
+	oboardlog "github.com/OboardProject/oboard/internal/logging"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
@@ -874,4 +875,63 @@ func waitNotificationCount[T any](t *testing.T, server *Server, mu *sync.Mutex, 
 	mu.Lock()
 	defer mu.Unlock()
 	t.Fatalf("notification count = %d, want at least %d", len(*items), count)
+}
+
+func TestNotificationTestChannelAndRawLog(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	logs, err := oboardlog.New(filepath.Join(t.TempDir(), "controller.log"), oboardlog.Config{MaxBytes: 1 << 20, Backups: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logs.Close()
+	h := New(db, "test-secret", "", "", logs).Handler()
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+
+	created := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
+		"name": "调试", "type": "test", "enabled": true, "events": notificationTrafficQuota,
+		"config_json": "{}", "templates_json": "{}",
+	}, http.StatusCreated)
+	id := int64(created["notification_channel"].(map[string]any)["id"].(float64))
+	if id <= 0 {
+		t.Fatalf("test channel id = %d", id)
+	}
+
+	if err := sendNotification(context.Background(), model.NotificationChannel{Name: "调试", Type: "test"}, "OBoard 测试通知", "原始消息正文"); err != nil {
+		t.Fatalf("test channel delivery failed: %v", err)
+	}
+	request(t, h, http.MethodPost, fmt.Sprintf("/api/v2/ui/notification-channels/%d/test", id), token, map[string]any{}, http.StatusOK)
+
+	if _, err := logs.Write([]byte("unrelated log line\nnotification[test] channel=调试 title=\"OBoard 测试通知\" body=\"原始消息正文\"\n")); err != nil {
+		t.Fatal(err)
+	}
+	response := request(t, h, http.MethodGet, "/api/v2/ui/notification-channels/raw-log?lines=100", token, nil, http.StatusOK)
+	content := response["logs"].(map[string]any)["content"].(string)
+	if !strings.Contains(content, "notification[test]") || strings.Contains(content, "unrelated log line") {
+		t.Fatalf("raw log does not filter test channel records: %q", content)
+	}
+
+	invalid := request(t, h, http.MethodGet, "/api/v2/ui/notification-channels/raw-log?lines=9999", token, nil, http.StatusBadRequest)
+	if invalid == nil {
+		t.Fatal("raw log accepted out-of-range lines")
+	}
+}
+
+func TestNotificationChannelValidationRejectsUnknownType(t *testing.T) {
+	channel := model.NotificationChannel{Name: "未知", Type: "slack", Enabled: true, Events: notificationTrafficQuota, ConfigJSON: "{}"}
+	if err := validateNotificationChannel(&channel, model.RoleAdmin); err == nil {
+		t.Fatal("unknown channel type was accepted")
+	}
+	testChannel := model.NotificationChannel{Name: "调试", Type: "test", Enabled: true, Events: notificationTrafficQuota, ConfigJSON: "{}"}
+	if err := validateNotificationChannel(&testChannel, model.RoleAdmin); err != nil {
+		t.Fatalf("test channel type rejected: %v", err)
+	}
+	if testChannel.ConfigJSON != "{}" {
+		t.Fatalf("test channel config = %q", testChannel.ConfigJSON)
+	}
 }
