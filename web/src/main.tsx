@@ -12796,7 +12796,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
       } else {
         await client.request('/notification-channels/test', { method: 'POST', body: JSON.stringify(notificationPayloadFromDraft(target)) })
       }
-      await dialogs.alert({ title: '测试已发送', message: '请到 Telegram / Bark 客户端确认是否收到“OBoard 测试通知”。' })
+      notify?.('测试已发送，请到 Telegram / Bark 客户端确认是否收到“OBoard 测试通知”。', 'success')
     } catch (e: any) {
       await dialogs.alert({ title: '测试失败', message: localizeErrorMessage(e.message || e) })
     } finally {
