@@ -265,6 +265,8 @@ const proxyPathChainMethods = [
   { value: '2022-blake3-chacha20-poly1305', label: 'SS 2022-ChaCha20' },
 ]
 const ipStacks = ['auto', 'ipv4_only', 'ipv6_only', 'dual_stack', 'prefer_ipv4', 'prefer_ipv6']
+const listenModes = ['auto', 'dual', 'ipv4_only']
+const listenModeLabels: Record<string, string> = { auto: '自动', dual: '双栈', ipv4_only: '仅 IPv4' }
 const entryIPModes: EntryIPMode[] = ['auto', 'ipv4', 'ipv6', 'custom']
 const dnsRecordTypes: DNSRecordTypes[] = ['a', 'aaaa', 'both']
 const udpModes = ['allow', 'block', 'uot']
@@ -790,7 +792,7 @@ function getTabIcon(x: string) {
 const fieldLabels: Record<string, string> = {
   id: 'ID', server_id: '服务器', source_server_id: '源服务器', target_server_id: '目标服务器', next_server_id: '下一跳服务器', user_id: '用户', group_id: '用户组', subject_id: '授权对象', profile_id: '订阅配置', inbound_id: '入口', inbound_users: '入口用户', outbound_id: '出口', external_outbound_id: '导入节点', external_outbound_access_grants: '导入节点授权',
   name: '名称', region: '地区', region_code: '地区代码', region_mode: '地区来源', username: '用户名', nickname: '昵称', password: '密码', role: '角色', status: '状态', enabled: '启用', expose_to_users: '显示到订阅', protocol: '协议', type: '类型', scope: '作用域', action: '动作', priority: '优先级',
-  entry_address: '入口地址', public_ipv4: '检测 IPv4', public_ipv6: '检测 IPv6', entry_ip_mode: '入口地址策略', external_ip: '自定义入口地址', listen_ip: '监听 IP', listen_port: '监听端口', port: '端口', port_range: '端口范围', port_range_start: '端口范围起点', port_range_end: '端口范围终点', target_address: '目标地址', target_port: '目标端口', target_endpoint: '目标端点',
+  entry_address: '入口地址', public_ipv4: '检测 IPv4', public_ipv6: '检测 IPv6', interface_ipv6: '网卡 IPv6', entry_ip_mode: '入口地址策略', external_ip: '自定义入口地址', listen_ip: '监听 IP', listen_mode: '监听模式', listen_port: '监听端口', port: '端口', port_range: '端口范围', port_range_start: '端口范围起点', port_range_end: '端口范围终点', target_address: '目标地址', target_port: '目标端口', target_endpoint: '目标端点',
   dns_sync_enabled: '域名解析', dns_credential_id: '域名服务账号', dns_domain: '解析域名', dns_proxy_enabled: '代理访问', dns_record_types: '解析记录', ddns_enabled: '自动更新地址', ddns_interval_seconds: '更新间隔', dns_sync_status: '同步状态', dns_sync_error: '同步错误', dns_last_synced_at: '同步时间',
   subject_type: '授权类型', scope_type: '授权范围',
   ip_stack: 'IP 栈', udp_inbound_mode: 'UDP 入站', mtu_mode: 'MTU 模式', mtu_value: 'MTU 值', mtu_probe_host: 'MTU 探测主机', mtu_probe_port: 'MTU 探测端口', mtu_overhead_bytes: 'MTU 额外开销', bbr_enabled: 'BBR + FQ',
@@ -5094,7 +5096,7 @@ function AIAuditReviews({ data, client, notify }: any) {
         <FormField label="AI Provider" required><Select value={draft.providerID} onChange={event => setDraft({ ...draft, providerID: event.target.value })}>{providers.filter(item => item.enabled && item.has_credential).map(item => <option key={item.id} value={item.id}>{item.name} · {item.model}</option>)}</Select>{selectedProvider?.allow_raw_audit && <small className="ai-review-privacy-warning">该 Provider 已获授权发送原始审计字段</small>}</FormField>
         <div className="ai-review-scope-grid">
           <section><div><strong>用户范围</strong><Select variant="segmented" value={draft.userMode} onChange={event => setDraft({ ...draft, userMode: event.target.value as 'all' | 'selected' })}><option value="all">全部用户</option><option value="selected">指定用户</option></Select></div>{draft.userMode === 'selected' && <SearchableMultiSelect value={draft.userIDs} onChange={userIDs => setDraft({ ...draft, userIDs })} options={users.map(user => ({ value: String(user.id), label: user.nickname || user.username, keywords: `${user.username} ${user.id}` }))} placeholder="选择用户" searchPlaceholder="搜索用户" />}</section>
-          <section><div><strong>服务器范围</strong><Select variant="segmented" value={draft.serverMode} onChange={event => setDraft({ ...draft, serverMode: event.target.value as 'all' | 'selected' })}><option value="all">全部服务器</option><option value="selected">指定服务器</option></Select></div>{draft.serverMode === 'selected' && <SearchableMultiSelect value={draft.serverIDs} onChange={serverIDs => setDraft({ ...draft, serverIDs })} options={servers.map(server => ({ value: String(server.id), label: server.name, keywords: `${server.id} ${server.public_ipv4 || ''} ${server.public_ipv6 || ''}` }))} placeholder="选择服务器" searchPlaceholder="搜索服务器" />}</section>
+          <section><div><strong>服务器范围</strong><Select variant="segmented" value={draft.serverMode} onChange={event => setDraft({ ...draft, serverMode: event.target.value as 'all' | 'selected' })}><option value="all">全部服务器</option><option value="selected">指定服务器</option></Select></div>{draft.serverMode === 'selected' && <SearchableMultiSelect value={draft.serverIDs} onChange={serverIDs => setDraft({ ...draft, serverIDs })} options={servers.map(server => ({ value: String(server.id), label: server.name, keywords: `${server.id} ${server.public_ipv4 || ''} ${server.public_ipv6 || ''} ${server.interface_ipv6 || ''}` }))} placeholder="选择服务器" searchPlaceholder="搜索服务器" />}</section>
         </div>
         <div className="ai-review-evidence-picker">{auditReviewEvidenceOptions.map(option => <label key={option.value} className={draft.evidenceTypes.includes(option.value) ? 'selected' : ''}><input type="checkbox" checked={draft.evidenceTypes.includes(option.value)} onChange={() => toggleEvidence(option.value)} /><span><strong>{option.label}</strong><small>{option.description}</small></span></label>)}</div>
         <FormField label="历史范围" required><Select variant="segmented" value={draft.timeMode === 'custom' ? 'custom' : draft.preset} onChange={event => event.target.value === 'custom' ? setDraft({ ...draft, timeMode: 'custom' }) : setDraft({ ...draft, timeMode: 'preset', preset: event.target.value })}><option value="1h">1 小时</option><option value="24h">24 小时</option><option value="7d">7 天</option><option value="30d">30 天</option><option value="custom">自定义</option></Select></FormField>
@@ -5419,7 +5421,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode }) {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: 100, port_range_end: 65535, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: 100, port_range_end: 65535, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
 }
 
 function GridViewIcon() {
@@ -6028,9 +6030,12 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: Re
           </FormField>
           <FormField label="自定义入口地址" hint="可填写域名、IPv4 或 IPv6。">
             <input value={draft.entry_address} onChange={e => update({ entry_address: e.target.value })} placeholder="例如 1.2.3.4 或 example.com" />
-            <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6} />
+            <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
           </FormField>
-          <FormField label="监听 IP" hint="通常保持 0.0.0.0。">
+          <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。">
+            <Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select>
+          </FormField>
+          <FormField label="监听 IP" hint="通常保持 0.0.0.0；填写具体地址可覆盖监听模式。">
             <input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" />
           </FormField>
 
@@ -6125,9 +6130,10 @@ function ServerEditDialog({ server, onCancel, onSubmit }: { server: Server; onCa
           <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。"><Select value={draft.entry_ip_mode} onChange={e => update({ entry_ip_mode: e.target.value as EntryIPMode })}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="自定义入口地址" hint="选择自定义时使用。">
             <input value={draft.entry_address || ''} onChange={e => update({ entry_address: e.target.value })} placeholder="域名 / IPv4 / IPv6" />
-            <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6} />
+            <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
           </FormField>
-          <FormField label="监听 IP"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
+          <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
+          <FormField label="监听 IP" hint="填写具体地址可覆盖监听模式。"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
           <div className="form-section-title">网络策略</div>
           <FormField label="出口解析策略"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
@@ -6790,7 +6796,9 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
             <ServerDetailItem label="入口地址" value={serverDefaultEntryAddress(server) || '待检测'} wide />
             <ServerDetailItem label="公网 IPv4" value={server.public_ipv4 || '—'} />
             <ServerDetailItem label="公网 IPv6" value={server.public_ipv6 || '—'} />
+            <ServerDetailItem label="网卡 IPv6" value={server.interface_ipv6 || '—'} />
             <ServerDetailItem label="监听地址" value={server.listen_ip || '—'} />
+            <ServerDetailItem label="监听模式" value={listenModeLabels[server.listen_mode || 'auto'] || '自动'} />
             <ServerDetailItem label="入口模式" value={labelValue(server.entry_ip_mode || 'auto')} />
             <ServerDetailItem label="网络优先" value={labelValue(server.ip_stack || 'unknown')} />
             <ServerDetailItem label="UDP 模式" value={labelValue(server.udp_inbound_mode || 'unknown')} />
@@ -6835,16 +6843,16 @@ function serverDefaultEntryAddress(server?: Server) {
   if (!server) return ''
   const mode = server.entry_ip_mode || 'auto'
   if (mode === 'ipv4') return server.public_ipv4 || ''
-  if (mode === 'ipv6') return server.public_ipv6 || ''
+  if (mode === 'ipv6') return server.public_ipv6 || server.interface_ipv6 || ''
   if (mode === 'custom') return server.entry_address || ''
-  return server.public_ipv4 || server.public_ipv6 || ''
+  return server.public_ipv4 || server.public_ipv6 || server.interface_ipv6 || ''
 }
 function entryAddressByMode(server: Server | undefined, mode: EntryIPMode | undefined, customAddress = '') {
   const selectedMode = mode || 'auto'
   if (selectedMode === 'custom') return customAddress.trim()
   if (!server) return ''
   if (selectedMode === 'ipv4') return server.public_ipv4 || ''
-  if (selectedMode === 'ipv6') return server.public_ipv6 || ''
+  if (selectedMode === 'ipv6') return server.public_ipv6 || server.interface_ipv6 || ''
   return serverDefaultEntryAddress(server)
 }
 function entryAddressModeLabel(mode: EntryIPMode, server?: Server) {
@@ -6853,7 +6861,7 @@ function entryAddressModeLabel(mode: EntryIPMode, server?: Server) {
     return `使用服务器默认${server ? `（${labelValue(server.entry_ip_mode || 'auto')}${address ? ` · ${address}` : ' · 待检测'}）` : ''}`
   }
   if (mode === 'ipv4') return `使用 IPv4${server?.public_ipv4 ? `（${server.public_ipv4}）` : '（待检测）'}`
-  if (mode === 'ipv6') return `使用 IPv6${server?.public_ipv6 ? `（${server.public_ipv6}）` : '（待检测）'}`
+  if (mode === 'ipv6') return `使用 IPv6${server?.public_ipv6 || server?.interface_ipv6 ? `（${server.public_ipv6 || server.interface_ipv6}）` : '（待检测）'}`
   return '填写其他入口 IP / 域名'
 }
 function formatHostPort(host: string, port: number) {
@@ -8503,7 +8511,7 @@ function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNod
   }
   const normalizedQuery = nodeQuery.trim().toLowerCase()
   const filteredServers = normalizedQuery
-    ? availableServers.filter(server => [server.name, server.entry_address, server.public_ipv4, server.public_ipv6].some(value => String(value || '').toLowerCase().includes(normalizedQuery)))
+    ? availableServers.filter(server => [server.name, server.entry_address, server.public_ipv4, server.public_ipv6, server.interface_ipv6].some(value => String(value || '').toLowerCase().includes(normalizedQuery)))
     : availableServers
   const filteredImportedNodes = normalizedQuery
     ? importedNodes.filter(node => [node.name, node.protocol, node.target_address, node.target_port].some(value => String(value || '').toLowerCase().includes(normalizedQuery)))

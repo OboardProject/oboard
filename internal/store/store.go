@@ -29,7 +29,7 @@ const (
 	configVersionSetting  = "system.config_version_sequence"
 )
 
-const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_token_hash,''),chain_secret,coalesce(enrollment_hash,''),enrollment_expires_at,entry_address,coalesce(public_ipv4,''),coalesce(public_ipv6,''),coalesce(region_code,''),coalesce(detected_region_code,''),coalesce(region_mode,'auto'),coalesce(entry_ip_mode,'auto'),listen_ip,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,status,os,coalesce(distro_id,''),coalesce(distro_version,''),coalesce(distro_name,''),coalesce(libc,''),coalesce(service_manager,''),coalesce(package_manager,''),arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,coalesce(agent_version,''),coalesce(agent_build,''),sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at from servers`
+const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_token_hash,''),chain_secret,coalesce(enrollment_hash,''),enrollment_expires_at,entry_address,coalesce(public_ipv4,''),coalesce(public_ipv6,''),coalesce(interface_ipv6,''),coalesce(region_code,''),coalesce(detected_region_code,''),coalesce(region_mode,'auto'),coalesce(entry_ip_mode,'auto'),listen_ip,coalesce(listen_mode,'auto'),ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,status,os,coalesce(distro_id,''),coalesce(distro_version,''),coalesce(distro_name,''),coalesce(libc,''),coalesce(service_manager,''),coalesce(package_manager,''),arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,coalesce(agent_version,''),coalesce(agent_build,''),sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at from servers`
 
 const serverTelemetrySelectSQL = `select server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error,offline_notify_enabled,offline_after_seconds from server_telemetry`
 
@@ -278,6 +278,12 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "servers", "bbr_enabled", `alter table servers add column bbr_enabled integer not null default 0`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "servers", "listen_mode", `alter table servers add column listen_mode text not null default 'auto'`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "servers", "interface_ipv6", `alter table servers add column interface_ipv6 text not null default ''`); err != nil {
 		return err
 	}
 	serverTelemetryColumns := []struct {
@@ -1393,7 +1399,7 @@ func (s *Store) CreateServer(ctx context.Context, v *model.Server) error {
 	}
 	normalizeServerEntryIP(v)
 	normalizeServerRegion(v)
-	res, err := s.db.ExecContext(ctx, `insert into servers(name,agent_id,agent_token_hash,chain_secret,enrollment_hash,entry_address,public_ipv4,public_ipv6,region_code,detected_region_code,region_mode,entry_ip_mode,listen_ip,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,status,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,agent_version,agent_build,sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.Name, nullEmpty(v.AgentID), nullEmpty(v.AgentTokenHash), v.ChainSecret, nullEmpty(v.EnrollmentHash), v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into servers(name,agent_id,agent_token_hash,chain_secret,enrollment_hash,entry_address,public_ipv4,public_ipv6,interface_ipv6,region_code,detected_region_code,region_mode,entry_ip_mode,listen_ip,listen_mode,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,status,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,agent_version,agent_build,sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.Name, nullEmpty(v.AgentID), nullEmpty(v.AgentTokenHash), v.ChainSecret, nullEmpty(v.EnrollmentHash), v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -1412,7 +1418,7 @@ func (s *Store) UpdateServer(ctx context.Context, v *model.Server) error {
 	// Note: enrollment_hash is intentionally not cleared via empty string here —
 	// coalesce(nullif('',''), enrollment_hash) would preserve the old hash.
 	// Use SetServerEnrollmentHash / ClaimServerEnrollment for one-time token lifecycle.
-	_, err := s.db.ExecContext(ctx, `update servers set name=?, agent_id=coalesce(nullif(?,''),agent_id), agent_token_hash=coalesce(nullif(?,''),agent_token_hash), chain_secret=coalesce(nullif(?,''),chain_secret), enrollment_hash=coalesce(nullif(?,''),enrollment_hash), entry_address=?, public_ipv4=?, public_ipv6=?, region_code=?, detected_region_code=?, region_mode=?, entry_ip_mode=?, listen_ip=?, ip_stack=?, udp_inbound_mode=?, mtu_mode=?, mtu_value=?, mtu_probe_host=?, mtu_probe_port=?, mtu_overhead_bytes=?, bbr_enabled=?, port_range_start=?, port_range_end=?, status=?, os=?, distro_id=?, distro_version=?, distro_name=?, libc=?, service_manager=?, package_manager=?, arch=?, kernel=?, cpu=?, memory_bytes=?, cpu_usage_percent=?, memory_used_bytes=?, memory_total_bytes=?, agent_memory_bytes=?, disk_bytes=?, agent_version=?, agent_build=?, sing_box_version=?, connection_audit_enabled=?, last_seen_at=?, updated_at=? where id=?`, v.Name, v.AgentID, v.AgentTokenHash, v.ChainSecret, v.EnrollmentHash, v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), v.UpdatedAt.Format(time.RFC3339Nano), v.ID)
+	_, err := s.db.ExecContext(ctx, `update servers set name=?, agent_id=coalesce(nullif(?,''),agent_id), agent_token_hash=coalesce(nullif(?,''),agent_token_hash), chain_secret=coalesce(nullif(?,''),chain_secret), enrollment_hash=coalesce(nullif(?,''),enrollment_hash), entry_address=?, public_ipv4=?, public_ipv6=?, interface_ipv6=?, region_code=?, detected_region_code=?, region_mode=?, entry_ip_mode=?, listen_ip=?, listen_mode=?, ip_stack=?, udp_inbound_mode=?, mtu_mode=?, mtu_value=?, mtu_probe_host=?, mtu_probe_port=?, mtu_overhead_bytes=?, bbr_enabled=?, port_range_start=?, port_range_end=?, status=?, os=?, distro_id=?, distro_version=?, distro_name=?, libc=?, service_manager=?, package_manager=?, arch=?, kernel=?, cpu=?, memory_bytes=?, cpu_usage_percent=?, memory_used_bytes=?, memory_total_bytes=?, agent_memory_bytes=?, disk_bytes=?, agent_version=?, agent_build=?, sing_box_version=?, connection_audit_enabled=?, last_seen_at=?, updated_at=? where id=?`, v.Name, v.AgentID, v.AgentTokenHash, v.ChainSecret, v.EnrollmentHash, v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), v.UpdatedAt.Format(time.RFC3339Nano), v.ID)
 	if err != nil {
 		return err
 	}
@@ -1516,7 +1522,7 @@ func scanServers(rows *sql.Rows) ([]model.Server, error) {
 		var v model.Server
 		var last, enrollExp sql.NullString
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.Name, &v.AgentID, &v.AgentTokenHash, &v.ChainSecret, &v.EnrollmentHash, &enrollExp, &v.EntryAddress, &v.PublicIPv4, &v.PublicIPv6, &v.RegionCode, &v.DetectedRegionCode, &v.RegionMode, &v.EntryIPMode, &v.ListenIP, &v.IPStack, &v.UDPInboundMode, &v.MTUMode, &v.MTUValue, &v.MTUProbeHost, &v.MTUProbePort, &v.MTUOverheadBytes, &v.BBREnabled, &v.PortRangeStart, &v.PortRangeEnd, &v.Status, &v.OS, &v.DistroID, &v.DistroVersion, &v.DistroName, &v.Libc, &v.ServiceManager, &v.PackageManager, &v.Arch, &v.Kernel, &v.CPU, &v.MemoryBytes, &v.CPUUsagePercent, &v.MemoryUsedBytes, &v.MemoryTotalBytes, &v.AgentMemoryBytes, &v.DiskBytes, &v.AgentVersion, &v.AgentBuild, &v.SingBoxVersion, &v.ConnectionAuditEnabled, &last, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.Name, &v.AgentID, &v.AgentTokenHash, &v.ChainSecret, &v.EnrollmentHash, &enrollExp, &v.EntryAddress, &v.PublicIPv4, &v.PublicIPv6, &v.InterfaceIPv6, &v.RegionCode, &v.DetectedRegionCode, &v.RegionMode, &v.EntryIPMode, &v.ListenIP, &v.ListenMode, &v.IPStack, &v.UDPInboundMode, &v.MTUMode, &v.MTUValue, &v.MTUProbeHost, &v.MTUProbePort, &v.MTUOverheadBytes, &v.BBREnabled, &v.PortRangeStart, &v.PortRangeEnd, &v.Status, &v.OS, &v.DistroID, &v.DistroVersion, &v.DistroName, &v.Libc, &v.ServiceManager, &v.PackageManager, &v.Arch, &v.Kernel, &v.CPU, &v.MemoryBytes, &v.CPUUsagePercent, &v.MemoryUsedBytes, &v.MemoryTotalBytes, &v.AgentMemoryBytes, &v.DiskBytes, &v.AgentVersion, &v.AgentBuild, &v.SingBoxVersion, &v.ConnectionAuditEnabled, &last, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if enrollExp.Valid && enrollExp.String != "" {
@@ -1527,6 +1533,9 @@ func scanServers(rows *sql.Rows) ([]model.Server, error) {
 		normalizeServerRegion(&v)
 		if v.IPStack == "" {
 			v.IPStack = model.IPStackAuto
+		}
+		if v.ListenMode == "" {
+			v.ListenMode = model.ListenModeAuto
 		}
 		if v.UDPInboundMode == "" {
 			v.UDPInboundMode = model.UDPInboundAllow
@@ -1904,6 +1913,11 @@ func applyDetectedPublicIPs(server *model.Server, report model.HealthReport) {
 	}
 	if ip, family := cleanPublicIP(report.PublicIPv6); family == "ipv6" {
 		server.PublicIPv6 = ip
+	}
+	if ip, family := cleanPublicIP(report.InterfaceIPv6); family == "ipv6" {
+		server.InterfaceIPv6 = ip
+	} else {
+		server.InterfaceIPv6 = ""
 	}
 	normalizeServerEntryIP(server)
 }

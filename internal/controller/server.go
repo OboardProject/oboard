@@ -3657,6 +3657,9 @@ func validateServer(v *model.Server) error {
 	if v.ListenIP == "" {
 		v.ListenIP = "0.0.0.0"
 	}
+	if v.ListenMode == "" {
+		v.ListenMode = model.ListenModeAuto
+	}
 	if v.IPStack == "" {
 		v.IPStack = model.IPStackAuto
 	}
@@ -3700,6 +3703,9 @@ func validateServer(v *model.Server) error {
 		return err
 	}
 	if err := core.ValidateListenIP(v.ListenIP); err != nil {
+		return err
+	}
+	if err := core.ValidateListenMode(v.ListenMode); err != nil {
 		return err
 	}
 	if err := core.ValidateIPStack(v.IPStack); err != nil {
@@ -10335,6 +10341,11 @@ func applyDetectedEntryIPs(server *model.Server, health model.HealthReport, remo
 		if family == "ipv6" && server.PublicIPv6 == "" {
 			server.PublicIPv6 = ip
 		}
+	}
+	if ip, family := cleanPublicEntryIP(health.InterfaceIPv6); family == "ipv6" {
+		server.InterfaceIPv6 = ip
+	} else {
+		server.InterfaceIPv6 = ""
 	}
 }
 

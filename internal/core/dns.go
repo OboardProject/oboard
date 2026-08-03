@@ -269,6 +269,15 @@ func ValidateIPStack(v model.IPStack) error {
 	}
 }
 
+func ValidateListenMode(v model.ListenMode) error {
+	switch v {
+	case "", model.ListenModeAuto, model.ListenModeDual, model.ListenModeIPv4Only:
+		return nil
+	default:
+		return fmt.Errorf("unsupported listen_mode %q", v)
+	}
+}
+
 func ValidateUDPInboundMode(v model.UDPInboundMode) error {
 	switch v {
 	case "", model.UDPInboundAllow, model.UDPInboundBlock, model.UDPInboundUoT:

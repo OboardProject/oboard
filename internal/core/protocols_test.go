@@ -54,9 +54,14 @@ func TestEffectiveListenIP(t *testing.T) {
 	}{
 		{name: "dual-stack auto", server: model.Server{PublicIPv4: "203.0.113.10", PublicIPv6: "2001:db8::10"}, stored: "0.0.0.0", want: "::"},
 		{name: "ipv6-only", server: model.Server{PublicIPv6: "2001:db8::10"}, stored: "0.0.0.0", want: "::"},
+		{name: "interface ipv6 inbound-only", server: model.Server{PublicIPv4: "203.0.113.10", InterfaceIPv6: "2400:3200::10"}, stored: "0.0.0.0", want: "::"},
 		{name: "ipv4-only", server: model.Server{PublicIPv4: "203.0.113.10"}, stored: "0.0.0.0", want: "0.0.0.0"},
 		{name: "unknown addresses", server: model.Server{}, stored: "0.0.0.0", want: "0.0.0.0"},
 		{name: "empty stored", server: model.Server{PublicIPv6: "2001:db8::10"}, stored: "", want: "::"},
+		{name: "dual mode on ipv4-only host", server: model.Server{PublicIPv4: "203.0.113.10", ListenMode: model.ListenModeDual}, stored: "0.0.0.0", want: "::"},
+		{name: "ipv4-only mode on dual host", server: model.Server{PublicIPv4: "203.0.113.10", PublicIPv6: "2001:db8::10", ListenMode: model.ListenModeIPv4Only}, stored: "0.0.0.0", want: "0.0.0.0"},
+		{name: "ipv4-only mode ignores interface ipv6", server: model.Server{InterfaceIPv6: "2400:3200::10", ListenMode: model.ListenModeIPv4Only}, stored: "0.0.0.0", want: "0.0.0.0"},
+		{name: "explicit listen overrides dual mode", server: model.Server{PublicIPv6: "2001:db8::10", ListenMode: model.ListenModeDual}, stored: "127.0.0.1", want: "127.0.0.1"},
 		{name: "explicit ipv6 wildcard", server: model.Server{PublicIPv4: "203.0.113.10"}, stored: "::", want: "::"},
 		{name: "specific address preserved", server: model.Server{PublicIPv6: "2001:db8::10"}, stored: "127.0.0.1", want: "127.0.0.1"},
 	}
@@ -66,6 +71,36 @@ func TestEffectiveListenIP(t *testing.T) {
 				t.Fatalf("EffectiveListenIP(%+v, %q) = %q, want %q", tc.server, tc.stored, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestServerEntryIPv6PrefersPublicOverInterface(t *testing.T) {
+	cases := []struct {
+		name   string
+		server model.Server
+		want   string
+	}{
+		{name: "public wins", server: model.Server{PublicIPv6: "2001:db8::1", InterfaceIPv6: "2400:3200::1"}, want: "2001:db8::1"},
+		{name: "interface fallback", server: model.Server{InterfaceIPv6: "2400:3200::2"}, want: "2400:3200::2"},
+		{name: "none", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ServerEntryIPv6(tc.server); got != tc.want {
+				t.Fatalf("ServerEntryIPv6(%+v) = %q, want %q", tc.server, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveServerEntryAddressUsesInterfaceIPv6Fallback(t *testing.T) {
+	server := model.Server{EntryIPMode: model.EntryIPModeIPv6, InterfaceIPv6: "2400:3200::3"}
+	if got := ResolveServerEntryAddress(server); got != "2400:3200::3" {
+		t.Fatalf("ResolveServerEntryAddress = %q, want interface IPv6", got)
+	}
+	server = model.Server{EntryIPMode: model.EntryIPModeAuto, InterfaceIPv6: "2400:3200::4"}
+	if got := ResolveServerEntryAddress(server); got != "2400:3200::4" {
+		t.Fatalf("ResolveServerEntryAddress auto = %q, want interface IPv6", got)
 	}
 }
 

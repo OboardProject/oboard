@@ -14,9 +14,11 @@ type ServerDTO struct {
 	EntryAddress           string                   `json:"entry_address"`
 	PublicIPv4             string                   `json:"public_ipv4"`
 	PublicIPv6             string                   `json:"public_ipv6"`
+	InterfaceIPv6          string                   `json:"interface_ipv6"`
 	RegionCode             string                   `json:"region_code"`
 	DetectedRegionCode     string                   `json:"detected_region_code"`
 	IPStack                model.IPStack            `json:"ip_stack"`
+	ListenMode             model.ListenMode         `json:"listen_mode"`
 	UDPInboundMode         model.UDPInboundMode     `json:"udp_inbound_mode"`
 	MTUMode                model.MTUMode            `json:"mtu_mode"`
 	MTUValue               int                      `json:"mtu_value"`
@@ -111,7 +113,8 @@ func serverDTO(item model.Server) ServerDTO {
 	return ServerDTO{
 		ID: item.ID, Revision: revision(item.UpdatedAt), Name: item.Name, Status: item.Status,
 		EntryAddress: item.EntryAddress, PublicIPv4: item.PublicIPv4, PublicIPv6: item.PublicIPv6,
-		RegionCode: item.RegionCode, DetectedRegionCode: item.DetectedRegionCode, IPStack: item.IPStack,
+		InterfaceIPv6: item.InterfaceIPv6, RegionCode: item.RegionCode, DetectedRegionCode: item.DetectedRegionCode,
+		IPStack: item.IPStack, ListenMode: item.ListenMode,
 		UDPInboundMode: item.UDPInboundMode, MTUMode: item.MTUMode, MTUValue: item.MTUValue, BBREnabled: item.BBREnabled,
 		AgentConnected: item.AgentID != "", AgentVersion: item.AgentVersion, AgentBuild: item.AgentBuild,
 		KernelVersion: item.SingBoxVersion, ConnectionAuditEnabled: item.ConnectionAuditEnabled,

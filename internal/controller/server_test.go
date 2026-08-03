@@ -1224,6 +1224,42 @@ func TestServerMonitoringPolicyAndHealthSanitization(t *testing.T) {
 	}
 }
 
+func TestValidateServerListenMode(t *testing.T) {
+	server := &model.Server{Name: "s1", PortRangeStart: 10000, PortRangeEnd: 10010}
+	if err := validateServer(server); err != nil {
+		t.Fatalf("empty listen_mode must default: %v", err)
+	}
+	if server.ListenMode != model.ListenModeAuto {
+		t.Fatalf("listen_mode default = %q, want auto", server.ListenMode)
+	}
+	server.ListenMode = model.ListenModeDual
+	if err := validateServer(server); err != nil {
+		t.Fatalf("dual listen_mode rejected: %v", err)
+	}
+	server.ListenMode = model.ListenModeIPv4Only
+	if err := validateServer(server); err != nil {
+		t.Fatalf("ipv4_only listen_mode rejected: %v", err)
+	}
+	server.ListenMode = model.ListenMode("broken")
+	if err := validateServer(server); err == nil {
+		t.Fatal("invalid listen_mode accepted")
+	}
+}
+
+func TestApplyDetectedEntryIPsRecordsInterfaceIPv6(t *testing.T) {
+	server := &model.Server{}
+	health := model.HealthReport{InterfaceIPv6: "2400:3200::10"}
+	applyDetectedEntryIPs(server, health, "")
+	if server.InterfaceIPv6 != "2400:3200::10" {
+		t.Fatalf("interface ipv6 = %q, want recorded", server.InterfaceIPv6)
+	}
+	health = model.HealthReport{InterfaceIPv6: "fd00::1"}
+	applyDetectedEntryIPs(server, health, "")
+	if server.InterfaceIPv6 != "" {
+		t.Fatalf("ULA interface ipv6 = %q, want cleared", server.InterfaceIPv6)
+	}
+}
+
 func TestSubscriptionBurnAfterReadLifecycle(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

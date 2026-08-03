@@ -51,6 +51,8 @@ func TestBuildPortForwardPlanDerivesDualStackListen(t *testing.T) {
 		wantListen string
 	}{
 		{name: "dual-stack derives v6 wildcard", source: model.Server{ID: 1, Name: "dual", PublicIPv4: "198.51.100.1", PublicIPv6: "2001:db8::1", ListenIP: "0.0.0.0"}, listenIP: "0.0.0.0", wantListen: "::"},
+		{name: "interface ipv6 inbound-only derives v6 wildcard", source: model.Server{ID: 5, Name: "inbound-only-v6", PublicIPv4: "198.51.100.5", InterfaceIPv6: "2400:3200::5", ListenIP: "0.0.0.0"}, listenIP: "0.0.0.0", wantListen: "::"},
+		{name: "ipv4-only mode forces v4 wildcard", source: model.Server{ID: 6, Name: "forced-v4", PublicIPv4: "198.51.100.6", InterfaceIPv6: "2400:3200::6", ListenMode: model.ListenModeIPv4Only, ListenIP: "0.0.0.0"}, listenIP: "0.0.0.0", wantListen: "0.0.0.0"},
 		{name: "ipv4-only keeps v4 wildcard", source: model.Server{ID: 2, Name: "v4", PublicIPv4: "198.51.100.2", ListenIP: "0.0.0.0"}, listenIP: "", wantListen: "0.0.0.0"},
 		{name: "ipv6-only derives v6 wildcard", source: model.Server{ID: 3, Name: "v6", PublicIPv6: "2001:db8::3", ListenIP: "0.0.0.0"}, listenIP: "0.0.0.0", wantListen: "::"},
 		{name: "explicit specific listen preserved", source: model.Server{ID: 4, Name: "specific", PublicIPv4: "198.51.100.4", PublicIPv6: "2001:db8::4", ListenIP: "0.0.0.0"}, listenIP: "127.0.0.1", wantListen: "127.0.0.1"},

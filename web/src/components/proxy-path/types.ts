@@ -16,11 +16,13 @@ export type Server = {
   entry_address: string
   public_ipv4: string
   public_ipv6: string
+  interface_ipv6: string
   region_code: string
   detected_region_code: string
   region_mode: RegionMode
   entry_ip_mode: EntryIPMode
   listen_ip: string
+  listen_mode: string
   ip_stack: string
   udp_inbound_mode: string
   mtu_mode: string

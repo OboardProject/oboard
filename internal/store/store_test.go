@@ -154,6 +154,104 @@ func TestServerTelemetryTimeColumnsMigrateFromPreviousSchema(t *testing.T) {
 	}
 }
 
+func TestServerListenModeAndInterfaceIPv6PersistAndMigrate(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &model.Server{Name: "listen-mode", AgentID: "agent-listen", ListenMode: model.ListenModeDual, InterfaceIPv6: "2400:3200::1", Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ListenMode != model.ListenModeDual || stored.InterfaceIPv6 != "2400:3200::1" {
+		t.Fatalf("roundtrip = listen_mode=%q interface_ipv6=%q", stored.ListenMode, stored.InterfaceIPv6)
+	}
+
+	window := model.ServerTrafficWindow{Key: "2026-08-03", Start: time.Now().UTC(), End: time.Now().UTC().Add(time.Hour)}
+	report := model.HealthReport{AgentID: server.AgentID, Status: model.ServerOnline, InterfaceIPv6: "2400:3200::2", Timestamp: time.Now().UTC()}
+	if _, _, err := s.UpsertHealthTransition(ctx, report, window); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = s.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.InterfaceIPv6 != "2400:3200::2" {
+		t.Fatalf("health report did not overwrite interface_ipv6: %q", stored.InterfaceIPv6)
+	}
+	report.InterfaceIPv6 = ""
+	if _, _, err := s.UpsertHealthTransition(ctx, report, window); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = s.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.InterfaceIPv6 != "" {
+		t.Fatalf("empty health report did not clear interface_ipv6: %q", stored.InterfaceIPv6)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"listen_mode", "interface_ipv6"} {
+		if _, err := raw.Exec(`alter table servers drop column ` + column); err != nil {
+			t.Fatalf("drop %s: %v", column, err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("repeat migration: %v", err)
+	}
+	if err := s.CheckHealth(ctx); err != nil {
+		t.Fatalf("health check after migration: %v", err)
+	}
+	columns := map[string]bool{}
+	rows, err := s.db.QueryContext(ctx, `select name from pragma_table_info('servers')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		columns[name] = true
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"listen_mode", "interface_ipv6"} {
+		if !columns[column] {
+			t.Errorf("missing migrated column %q", column)
+		}
+	}
+	stored, err = s.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ListenMode != model.ListenModeAuto || stored.InterfaceIPv6 != "" {
+		t.Fatalf("migrated defaults = listen_mode=%q interface_ipv6=%q", stored.ListenMode, stored.InterfaceIPv6)
+	}
+}
+
 func TestProxyPathEgressAttemptsRetainOnlySameTopologySuccess(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

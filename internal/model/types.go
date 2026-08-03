@@ -57,6 +57,14 @@ const (
 	IPStackPreferIPv6 IPStack = "prefer_ipv6"
 )
 
+type ListenMode string
+
+const (
+	ListenModeAuto     ListenMode = "auto"
+	ListenModeDual     ListenMode = "dual"
+	ListenModeIPv4Only ListenMode = "ipv4_only"
+)
+
 type UDPInboundMode string
 
 const (
@@ -267,11 +275,13 @@ type Server struct {
 	EntryAddress             string             `json:"entry_address"`
 	PublicIPv4               string             `json:"public_ipv4"`
 	PublicIPv6               string             `json:"public_ipv6"`
+	InterfaceIPv6            string             `json:"interface_ipv6"`
 	RegionCode               string             `json:"region_code"`
 	DetectedRegionCode       string             `json:"detected_region_code"`
 	RegionMode               string             `json:"region_mode"`
 	EntryIPMode              EntryIPMode        `json:"entry_ip_mode"`
 	ListenIP                 string             `json:"listen_ip"`
+	ListenMode               ListenMode         `json:"listen_mode"`
 	IPStack                  IPStack            `json:"ip_stack"`
 	UDPInboundMode           UDPInboundMode     `json:"udp_inbound_mode"`
 	MTUMode                  MTUMode            `json:"mtu_mode"`
@@ -1757,6 +1767,7 @@ type HealthReport struct {
 	Status                    ServerStatus `json:"status"`
 	PublicIPv4                string       `json:"public_ipv4"`
 	PublicIPv6                string       `json:"public_ipv6"`
+	InterfaceIPv6             string       `json:"interface_ipv6"`
 	RegionCode                string       `json:"region_code"`
 	OS                        string       `json:"os"`
 	DistroID                  string       `json:"distro_id"`

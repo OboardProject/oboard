@@ -306,19 +306,41 @@ func ValidateListenIP(ip string) error {
 }
 
 // EffectiveListenIP returns the address a server's sing-box listeners bind to.
-// A stored empty or "0.0.0.0" value means "auto": when the server has a public
-// IPv6 address, "::" is used because a wildcard IPv6 socket is dual stack on
-// Linux and serves both families from one port; otherwise "0.0.0.0" keeps
+// A stored empty or "0.0.0.0" value falls through to the server listen_mode:
+// "dual" always binds "::", "ipv4_only" always binds "0.0.0.0", and "auto"
+// binds "::" when the server has IPv6 inbound capability (a public or
+// interface global IPv6 address) because a wildcard IPv6 socket is dual stack
+// on Linux and serves both families from one port; otherwise "0.0.0.0" keeps
 // IPv4-only hosts working. Explicit "::" or specific addresses are preserved.
 func EffectiveListenIP(server model.Server, stored string) string {
 	value := strings.TrimSpace(stored)
 	if value != "" && value != "0.0.0.0" {
 		return value
 	}
-	if ip := net.ParseIP(strings.TrimSpace(server.PublicIPv6)); ip != nil && ip.To4() == nil {
+	switch server.ListenMode {
+	case model.ListenModeDual:
+		return "::"
+	case model.ListenModeIPv4Only:
+		return "0.0.0.0"
+	}
+	if ServerHasIPv6Inbound(server) {
 		return "::"
 	}
 	return "0.0.0.0"
+}
+
+// ServerHasIPv6Inbound reports whether a server can accept IPv6 connections:
+// either egress-detected public IPv6 or a global IPv6 address assigned to a
+// local interface (covers inbound-only IPv6 hosts whose egress probe fails).
+func ServerHasIPv6Inbound(server model.Server) bool {
+	return strings.TrimSpace(server.PublicIPv6) != "" || strings.TrimSpace(server.InterfaceIPv6) != ""
+}
+
+// ServerEntryIPv6 returns the IPv6 address advertised for a server: the
+// egress-detected public address when available, otherwise the interface
+// global address (inbound-only IPv6 hosts).
+func ServerEntryIPv6(server model.Server) string {
+	return firstNonEmpty(strings.TrimSpace(server.PublicIPv6), strings.TrimSpace(server.InterfaceIPv6))
 }
 
 // ValidateSafeHost accepts an IP or DNS hostname suitable for network probes
@@ -1842,7 +1864,7 @@ func ResolveReachableServerEntryAddress(source, target model.Server) (string, er
 
 func resolveCompatibleServerAddress(source, target model.Server) (string, error) {
 	ipv4 := strings.TrimSpace(target.PublicIPv4)
-	ipv6 := strings.TrimSpace(target.PublicIPv6)
+	ipv6 := ServerEntryIPv6(target)
 	var candidates []string
 	switch EffectiveIPStack(source) {
 	case model.IPStackIPv6Only, model.IPStackPreferIPv6:
@@ -1871,7 +1893,7 @@ func entryAddressForMode(mode model.EntryIPMode, externalIP string, server model
 	case model.EntryIPModeIPv4:
 		return strings.TrimSpace(server.PublicIPv4)
 	case model.EntryIPModeIPv6:
-		return strings.TrimSpace(server.PublicIPv6)
+		return ServerEntryIPv6(server)
 	case model.EntryIPModeCustom:
 		if strings.TrimSpace(externalIP) != "" {
 			return strings.TrimSpace(externalIP)
@@ -1911,7 +1933,7 @@ func ResolveEntryAddress(inbound model.Inbound, server model.Server) string {
 	case model.EntryIPModeIPv4:
 		return strings.TrimSpace(server.PublicIPv4)
 	case model.EntryIPModeIPv6:
-		return strings.TrimSpace(server.PublicIPv6)
+		return ServerEntryIPv6(server)
 	case model.EntryIPModeCustom:
 		if strings.TrimSpace(inbound.ExternalIP) != "" {
 			return strings.TrimSpace(inbound.ExternalIP)
@@ -1926,14 +1948,14 @@ func ResolveServerEntryAddress(server model.Server) string {
 	case model.EntryIPModeIPv4:
 		return strings.TrimSpace(server.PublicIPv4)
 	case model.EntryIPModeIPv6:
-		return strings.TrimSpace(server.PublicIPv6)
+		return ServerEntryIPv6(server)
 	case model.EntryIPModeCustom:
 		return strings.TrimSpace(server.EntryAddress)
 	}
 	if strings.TrimSpace(server.PublicIPv4) != "" {
 		return strings.TrimSpace(server.PublicIPv4)
 	}
-	return strings.TrimSpace(server.PublicIPv6)
+	return ServerEntryIPv6(server)
 }
 
 func activeUsers(users []model.User) []model.User {
