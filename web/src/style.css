@@ -3509,6 +3509,72 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 .graph-dialog-form .form-field:has(textarea) { grid-column: 1 / -1; }
 
+.network-interface-picker {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.network-interface-input {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--control-height);
+  gap: 7px;
+}
+
+.network-interface-input > input { min-width: 0; }
+.network-interface-input > button {
+  width: var(--control-height);
+  min-width: var(--control-height);
+  height: var(--control-height);
+  min-height: var(--control-height);
+  padding: 0;
+}
+
+.network-interface-status {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.network-interface-status.error-text { color: var(--danger); }
+.network-interface-select .custom-select-trigger { min-height: 52px; height: auto; }
+.network-interface-select .custom-select-value { min-width: 0; width: 100%; }
+.network-interface-option {
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  gap: 3px;
+  text-align: left;
+}
+
+.network-interface-option > span {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.network-interface-option strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.network-interface-option small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .graph-inspector {
   position: relative;
   z-index: 2;
@@ -7433,6 +7499,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .form-field-meta {
+  position: relative;
   min-width: 0;
   display: grid;
   gap: 3px;
@@ -13358,10 +13425,13 @@ button.ui-btn-ghost:hover {
   }
 
   .form-field-help-popover {
-    left: auto;
-    right: -6px;
+    left: 0;
+    right: auto;
+    max-width: min(280px, 100%);
     transform: translateY(3px);
   }
+
+  .form-field-help { position: static; }
 
   .form-field-help:hover .form-field-help-popover,
   .form-field-help:focus-visible .form-field-help-popover,

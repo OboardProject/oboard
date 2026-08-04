@@ -1119,6 +1119,7 @@ const (
 	AgentTaskTypeUpdateAgent           = "update_agent"
 	AgentTaskTypeUpdateAgentConfig     = "update_agent_config"
 	AgentTaskTypeDiagnoseNetwork       = "diagnose_network"
+	AgentTaskTypeListNetworkInterfaces = "list_network_interfaces"
 	AgentTaskTypeProbeInbounds         = "probe_inbounds"
 	AgentTaskTypeProbeInboundsExternal = "probe_inbounds_external"
 	AgentTaskTypeProbePortForwards     = "probe_port_forwards"
@@ -1130,6 +1131,14 @@ const (
 	AgentTaskTypeCheckTime             = "check_time"
 	AgentTaskTypeIssueCertificateHTTP  = "issue_certificate_http01"
 )
+
+type NetworkInterfaceInfo struct {
+	Name      string   `json:"name"`
+	Up        bool     `json:"up"`
+	Running   bool     `json:"running"`
+	Loopback  bool     `json:"loopback"`
+	Addresses []string `json:"addresses"`
+}
 
 type DeploymentFailureDismissal struct {
 	ConfigVersion int64     `json:"config_version"`

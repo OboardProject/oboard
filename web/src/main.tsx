@@ -72,6 +72,7 @@ import { MotionPage, MotionDialogPanel, MotionList, MotionCard } from './compone
 import { CustomSelect } from './components/ui/CustomSelect'
 import { SearchableMultiSelect } from './components/ui/SearchableMultiSelect'
 import { SearchableCombobox } from './components/ui/SearchableCombobox'
+import { NetworkInterfacePicker } from './components/NetworkInterfacePicker'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
 import clashMetaClientIcon from './assets/subscription-clients/clash-meta.png'
 import stashClientIcon from './assets/subscription-clients/stash.jpg'
@@ -821,7 +822,7 @@ const valueLabels: Record<string, string> = {
   detect: '仅检测', apply: '检测并应用', tcp_udp: 'TCP+UDP', builtin: '内置', wireguard: 'WireGuard', ssh: 'SSH', doh: 'DoH', dot: 'DoT', udp: 'UDP', tcp: 'TCP',
   cloudflare: 'Cloudflare', google: 'Google', quad9: 'Quad9', alidns: '阿里 DNS', dnspod: 'DNSPod', remote: '远程', local: '本地',
   apply_deployment: '应用部署', apply_core_config: '下发核心配置', probe_inbounds: '检查入口监听', probe_inbounds_external: '检查公网端口', probe_port_forwards: '探测端口转发', probe_external_egress: '探测第三方出口',
-  benchmark_dns: '解析服务检查', detect_mtu: 'MTU 检测', check_time: '时间检测', update_agent_config: '同步 Agent 配置', diagnose_network: '网络诊断',
+  benchmark_dns: '解析服务检查', detect_mtu: 'MTU 检测', check_time: '时间检测', update_agent_config: '同步 Agent 配置', diagnose_network: '网络诊断', list_network_interfaces: '读取网卡',
   collect_logs: '拉取日志', manage_logs: '管理日志',
   install_agent: '安装 Agent', update_agent: '更新 Agent', uninstall_agent: '卸载 Agent',
 }
@@ -8467,7 +8468,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     <AnimatePresence>{entryDraft && <EntryDraftDialog mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} />}</AnimatePresence>
     <AnimatePresence>{editEntry && <EntryDraftDialog mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} />}</AnimatePresence>
     <AnimatePresence>{accessEntry && <EntryUsersDialog entry={accessEntry} data={data} client={client} load={load} onCancel={() => setAccessEntry(null)} />}</AnimatePresence>
-    <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} onCancel={() => setRoutingDraft(null)} onSubmit={submitRoutingDraft} />}</AnimatePresence>
+    <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} onCancel={() => setRoutingDraft(null)} onSubmit={submitRoutingDraft} />}</AnimatePresence>
     <AnimatePresence>{transportDraft && <TransportDraftDialog draft={transportDraft} setDraft={setTransportDraft} servers={servers} onCancel={() => setTransportDraft(null)} onSubmit={submitTransportDraft} />}</AnimatePresence>
     <AnimatePresence>{importDraft && <ImportNodeDialog draft={importDraft} setDraft={setImportDraft} servers={servers} onCancel={() => setImportDraft(null)} onSubmit={submitImportNode} />}</AnimatePresence>
     <AnimatePresence>{configNode && <ImportedNodeConfigDialog node={configNode} data={data} client={client} load={load} onClose={() => setConfigNode(null)} />}</AnimatePresence>
@@ -8900,7 +8901,7 @@ function defaultTransportDraft(servers: Server[], selected?: Server): TransportD
   }
 }
 
-function RoutingRuleDraftDialog({ draft, setDraft, data, onCancel, onSubmit }: { draft: RoutingDraft; setDraft: React.Dispatch<React.SetStateAction<RoutingDraft | null>>; data: any; onCancel: () => void; onSubmit: () => Promise<void> }) {
+function RoutingRuleDraftDialog({ draft, setDraft, data, client, onCancel, onSubmit }: { draft: RoutingDraft; setDraft: React.Dispatch<React.SetStateAction<RoutingDraft | null>>; data: any; client: ReturnType<typeof api>; onCancel: () => void; onSubmit: () => Promise<void> }) {
   const update = (patch: Partial<RoutingDraft>) => setDraft(old => old ? { ...old, ...patch } : old)
   const serverOutbounds = (data.outbounds || []).filter((x: Outbound) => x.server_id === Number(draft.server_id))
   const externalOutbounds = (data.external_outbounds || []).filter((x: ExternalOutbound) => x.scope === 'global' || !x.server_id || x.server_id === Number(draft.server_id))
@@ -8919,7 +8920,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, onCancel, onSubmit }: {
           <FormField label="处理方式"><Select value={draft.action} onChange={e => update({ action: e.target.value as RouteAction })}>{routeActions.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           {draft.action === 'outbound' && <FormField label="本机出口" required><Select value={draft.outbound_id} onChange={e => update({ outbound_id: Number(e.target.value) })}><option value={0}>选择出口</option>{serverOutbounds.map((x: Outbound) => <option value={x.id} key={x.id}>{x.name}</option>)}</Select></FormField>}
           {draft.action === 'external' && <FormField label="导入节点" required><Select value={draft.external_outbound_id} onChange={e => update({ external_outbound_id: Number(e.target.value) })}><option value={0}>选择导入节点</option>{externalOutbounds.map((x: ExternalOutbound) => <option value={x.id} key={x.id}>{x.name}</option>)}</Select></FormField>}
-          {draft.action === 'interface' && <FormField label="出口网卡" required hint="填写 Agent 主机上的网卡名，例如 eth1、ens6。"><input value={draft.interface_name} onChange={e => update({ interface_name: e.target.value })} placeholder="eth1" autoComplete="off" /></FormField>}
+          {draft.action === 'interface' && <FormField label="出口网卡" required hint="填写 Agent 主机上的网卡名，例如 eth1、ens6。"><NetworkInterfacePicker serverID={Number(draft.server_id)} value={draft.interface_name} onChange={interface_name => update({ interface_name })} client={client} /></FormField>}
           <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
         </div>
       </div>
@@ -13529,7 +13530,7 @@ type TaskGroup = {
 }
 
 const BATCHABLE_TASK_TYPES = new Set([
-  'update_agent', 'update_agent_config', 'diagnose_network', 'detect_mtu',
+  'update_agent', 'update_agent_config', 'diagnose_network', 'list_network_interfaces', 'detect_mtu',
   'probe_inbounds', 'probe_inbounds_external', 'probe_port_forwards', 'probe_external_egress', 'collect_logs', 'manage_logs', 'check_time',
 ])
 
@@ -13625,6 +13626,7 @@ function batchTitleForType(type: string) {
     case 'detect_mtu': return 'MTU 检测'
     case 'check_time': return '时间检测'
     case 'diagnose_network': return '网络诊断'
+    case 'list_network_interfaces': return '读取网卡'
     case 'probe_inbounds': return '入口监听探测'
     case 'probe_inbounds_external': return '公网端口探测'
     case 'probe_port_forwards': return '端口转发探测'

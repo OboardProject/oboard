@@ -2718,6 +2718,10 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.serverDiagnose(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "network-interfaces" {
+		s.serverNetworkInterfaces(w, r, id)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "logs" {
 		s.serverLogs(w, r, id)
 		return
@@ -2891,9 +2895,10 @@ func (s *Server) serverTasks(w http.ResponseWriter, r *http.Request, id int64) {
 }
 
 const (
-	agentBuildMinDiagnosticsTask = "20260706000116"
-	agentBuildMinTrustedForward  = "20260729000000"
-	agentBuildMinSSHPathRelay    = "20260804000000"
+	agentBuildMinDiagnosticsTask   = "20260706000116"
+	agentBuildMinTrustedForward    = "20260729000000"
+	agentBuildMinSSHPathRelay      = "20260804000000"
+	agentBuildMinNetworkInterfaces = "20260804155957"
 	// Pending and running tasks both expire after 5 minutes so the panel does
 	// not keep "waiting" forever for dead Agents or stuck executions.
 	agentTaskPendingTimeout = 5 * time.Minute
@@ -3431,6 +3436,29 @@ func (s *Server) serverDiagnose(w http.ResponseWriter, r *http.Request, id int64
 	}
 	auditReq(s, r, "diagnose", "server", fmt.Sprint(id))
 	write(w, 202, map[string]any{"task": task, "entry_targets": targets})
+}
+
+func (s *Server) serverNetworkInterfaces(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	server, err := s.store.GetServer(r.Context(), id)
+	if err != nil {
+		fail(w, err, http.StatusNotFound)
+		return
+	}
+	if strings.TrimSpace(server.AgentBuild) != "" && !agentBuildSupportsTask(server.AgentBuild, agentBuildMinNetworkInterfaces) {
+		fail(w, fmt.Errorf("服务器 Agent 版本过旧：当前构建 %s，请先更新 Agent 后再读取网卡", emptyDash(server.AgentBuild)), http.StatusConflict)
+		return
+	}
+	task, err := s.queueAgentTask(r.Context(), server.ID, model.AgentTaskTypeListNetworkInterfaces, map[string]any{}, time.Now().Unix())
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	auditReq(s, r, "inspect", "server-network-interfaces", fmt.Sprint(id))
+	write(w, http.StatusAccepted, map[string]any{"task": sanitizeTaskForRole(task, currentRole(r))})
 }
 
 func (s *Server) serverLogs(w http.ResponseWriter, r *http.Request, id int64) {
@@ -10754,6 +10782,12 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 	if task.ServerID != server.ID {
 		fail(w, errors.New("task does not belong to this agent"), 403)
 		return
+	}
+	if task.Type == model.AgentTaskTypeListNetworkInterfaces && req.Status == "succeeded" {
+		if err := validateNetworkInterfacesTaskResult(req.ResultJSON); err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
 	}
 	if task.Type == model.AgentTaskTypeIssueCertificateHTTP {
 		var payload model.IssueCertificateHTTPTaskPayload
