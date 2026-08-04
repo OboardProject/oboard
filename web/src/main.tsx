@@ -3215,13 +3215,13 @@ function AIProviderTestResultDialog({ result, loading, onClose }: { result: any;
     <header className="dialog-head">
       <div>
         <h2>AI Provider 测试结果</h2>
-        <p className="muted">由 AI Worker 发送一次最小请求验证配置，原始请求与响应已自动脱敏。</p>
+        <p className="muted">由 AI Worker 发送短请求验证配置，并确认模型返回可见且未截断的内容；原始请求与响应已自动脱敏。</p>
       </div>
       <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
     <div className="dialog-body">
       {loading ? <div className="ai-test-loading"><Loader2 size={18} className="spin" /><span>正在发送测试请求，请稍候…</span></div> : <>
-      <div className={`ai-test-banner ${ok ? 'is-ok' : 'is-failed'}`}>{ok ? <Check size={16} /> : <AlertTriangle size={16} />}<strong>{ok ? '连接成功' : '测试失败'}</strong><span>{String(result?.message || '')}</span></div>
+      <div className={`ai-test-banner ${ok ? 'is-ok' : 'is-failed'}`}>{ok ? <Check size={16} /> : <AlertTriangle size={16} />}<strong>{ok ? '测试通过' : '测试失败'}</strong><span>{String(result?.message || '')}</span></div>
       <div className="ai-test-meta">
         <span>HTTP {result?.status_code ?? '—'}</span>
         <span>{duration === null ? '—' : `${duration} ms`}</span>

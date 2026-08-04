@@ -140,6 +140,13 @@ func TestAnalyzeSurfacesProviderErrorMessageWithoutCredential(t *testing.T) {
 	}
 }
 
+func TestModelErrorMessageSupportsTopLevelProviderError(t *testing.T) {
+	message := modelErrorMessage([]byte(`{"type":"Router.Unavailable","modelID":"deepseek-v4-flash"}`), "")
+	if message != "Router.Unavailable (model: deepseek-v4-flash)" {
+		t.Fatalf("provider message = %q", message)
+	}
+}
+
 func TestRunOnceReportsBoundedModelFailure(t *testing.T) {
 	const apiKey = "cred-XK9q7z-credential"
 	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -288,7 +295,7 @@ func TestRunAITestOnceCompletesWithoutCredentialOrResponseFormat(t *testing.T) {
 		if _, exists := payload["temperature"]; exists {
 			t.Fatal("config test payload must stay minimal")
 		}
-		if payload["max_tokens"] != float64(16) {
+		if payload["max_tokens"] != float64(aiTestMaxTokens) {
 			t.Fatalf("max_tokens = %#v", payload["max_tokens"])
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "ok"}}}, "usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 1}})
@@ -336,7 +343,7 @@ func TestRunAITestOnceSupportsResponsesFormat(t *testing.T) {
 		if _, exists := payload["response_format"]; exists {
 			t.Fatal("responses config test must not require response_format")
 		}
-		if payload["max_output_tokens"] != float64(16) || payload["input"] != "Reply with exactly one word: ok" {
+		if payload["max_output_tokens"] != float64(aiTestMaxTokens) || payload["input"] != "Reply with exactly one word: ok" {
 			t.Fatalf("responses test payload = %#v", payload)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"output_text": "ok", "usage": map[string]int{"input_tokens": 8, "output_tokens": 1}})
@@ -401,6 +408,29 @@ func TestRunAITestOnceReportsHTTPErrorWithRedactedRawResponse(t *testing.T) {
 	}
 	if strings.Contains(request.ResponseJSON, apiKey) || !strings.Contains(request.ResponseJSON, "[redacted]") || request.RequestJSON == "" {
 		t.Fatalf("AI test failure raw JSON = %#v", request)
+	}
+}
+
+func TestAITestContentRejectsEmptyOrTruncatedChatCompletion(t *testing.T) {
+	if _, err := aiTestContent("chat_completions", []byte(`{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"reasoning"}}]}`)); err == nil || !strings.Contains(err.Error(), "no visible content") {
+		t.Fatalf("empty truncated response error = %v", err)
+	}
+	if _, err := aiTestContent("chat_completions", []byte(`{"choices":[{"finish_reason":"length","message":{"content":"partial"}}]}`)); err == nil || !strings.Contains(err.Error(), "truncated") {
+		t.Fatalf("truncated response error = %v", err)
+	}
+	if content, err := aiTestContent("chat_completions", []byte(`{"choices":[{"finish_reason":"stop","message":{"content":"ok"}}]}`)); err != nil || content != "ok" {
+		t.Fatalf("valid response = %q, %v", content, err)
+	}
+}
+
+func TestProviderResponseContentSupportsOfficialResponsesShape(t *testing.T) {
+	body := []byte(`{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":12,"output_tokens":3}}`)
+	content, inputTokens, outputTokens, err := providerResponseContent("responses", body)
+	if err != nil || content != "ok" || inputTokens != 12 || outputTokens != 3 {
+		t.Fatalf("responses result = %q, %d, %d, %v", content, inputTokens, outputTokens, err)
+	}
+	if _, _, _, err := providerResponseContent("responses", []byte(`{"status":"incomplete","output":[]}`)); err == nil || !strings.Contains(err.Error(), "truncated") {
+		t.Fatalf("incomplete responses error = %v", err)
 	}
 }
 
@@ -493,6 +523,39 @@ func TestAnalyzeFallsBackToPromptOnlyWhenStructuredOutputUnsupported(t *testing.
 	}
 }
 
+func TestAnalyzeFallsBackFromRouterUnavailableOnStructuredOutput(t *testing.T) {
+	var requested []string
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			ResponseFormat map[string]any `json:"response_format"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		format := ""
+		if payload.ResponseFormat != nil {
+			format, _ = payload.ResponseFormat["type"].(string)
+		}
+		requested = append(requested, format)
+		if format != "" {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"type":"Router.Unavailable","modelID":"m"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": validReportJSON(t)}}}, "usage": map[string]int{"prompt_tokens": 70, "completion_tokens": 18}})
+	}))
+	defer modelServer.Close()
+
+	report, inputTokens, outputTokens, err := analyze(context.Background(), &model.AuditReviewJob{Input: json.RawMessage(`{}`)}, &airpc.Provider{BaseURL: modelServer.URL, Model: "m", APIKey: "key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(requested, ",") != "json_schema,json_object," {
+		t.Fatalf("requested response formats = %#v", requested)
+	}
+	if report.Verdict != "normal" || inputTokens != 70 || outputTokens != 18 {
+		t.Fatalf("unexpected report: %#v", report)
+	}
+}
+
 func TestAnalyzeResponsesFormatFallsBackToChatCompletions(t *testing.T) {
 	var mu sync.Mutex
 	var paths []string
@@ -523,6 +586,21 @@ func TestAnalyzeResponsesFormatFallsBackToChatCompletions(t *testing.T) {
 	}
 	if report.Verdict != "normal" || inputTokens != 80 || outputTokens != 15 {
 		t.Fatalf("unexpected report: %#v", report)
+	}
+}
+
+func TestAuditPayloadBoundsOutputAndIncludesSchema(t *testing.T) {
+	chat := chatAuditPayload("m", `{}`, "")
+	if chat["max_tokens"] != auditMaxTokens {
+		t.Fatalf("chat max_tokens = %#v", chat["max_tokens"])
+	}
+	messages, ok := chat["messages"].([]map[string]string)
+	if !ok || len(messages) != 2 || !strings.Contains(messages[0]["content"], "Required JSON schema:") || !strings.Contains(messages[0]["content"], `"verdict"`) {
+		t.Fatalf("chat system prompt = %#v", chat["messages"])
+	}
+	responses := responsesAuditPayload("m", `{}`)
+	if responses["max_output_tokens"] != auditMaxTokens {
+		t.Fatalf("responses max_output_tokens = %#v", responses["max_output_tokens"])
 	}
 }
 

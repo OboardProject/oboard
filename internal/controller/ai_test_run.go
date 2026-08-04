@@ -114,7 +114,7 @@ func (s *Server) apiV2AIProviderTest(w http.ResponseWriter, r *http.Request) {
 			payload["content"] = result.content
 		}
 		if result.ok {
-			payload["message"] = "连接成功，模型返回正常"
+			payload["message"] = "短请求成功，模型返回了可见且未截断的内容"
 			v2Write(w, r, http.StatusOK, payload, nil)
 			return
 		}
