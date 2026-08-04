@@ -19,6 +19,9 @@ export interface CustomSelectProps {
   id?: string
   ariaLabel?: string
   required?: boolean
+  selectedLabel?: React.ReactNode
+  menuHeader?: React.ReactNode
+  emptyMessage?: React.ReactNode
 }
 
 type MenuPosition = {
@@ -40,6 +43,9 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   id,
   ariaLabel,
   required = false,
+  selectedLabel,
+  menuHeader,
+  emptyMessage = '没有匹配的选项',
 }) => {
   const [isOpen, setIsOpen] = useState(false)
   const [highlightedIndex, setHighlightedIndex] = useState(-1)
@@ -58,7 +64,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     const viewportPadding = 10
     const below = window.innerHeight - rect.bottom - viewportPadding
     const above = rect.top - viewportPadding
-    const desiredHeight = Math.min(280, Math.max(42, options.length * 40 + 2))
+    const desiredHeight = Math.min(menuHeader ? 420 : 280, Math.max(42, options.length * 40 + (menuHeader ? 112 : 2)))
     const placement: MenuPosition['placement'] = below >= Math.min(desiredHeight, 180) || below >= above ? 'bottom' : 'top'
     const available = Math.max(96, (placement === 'bottom' ? below : above) - gutter)
     const maxHeight = Math.min(desiredHeight, available)
@@ -68,16 +74,16 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       ? rect.bottom + gutter
       : Math.max(viewportPadding, rect.top - gutter - maxHeight)
     setMenuPosition({ top, left, width, maxHeight, placement })
-  }, [options.length])
+  }, [menuHeader, options.length])
 
   const openMenu = useCallback((preferredIndex = selectedIndex) => {
-    if (disabled || options.length === 0) return
+    if (disabled || (options.length === 0 && !menuHeader)) return
     const nextIndex = preferredIndex >= 0 && !options[preferredIndex]?.disabled
       ? preferredIndex
       : options.findIndex(option => !option.disabled)
     setHighlightedIndex(nextIndex)
     setIsOpen(true)
-  }, [disabled, options, selectedIndex])
+  }, [disabled, menuHeader, options, selectedIndex])
 
   const moveHighlight = useCallback((direction: 1 | -1) => {
     if (!options.length) return
@@ -134,6 +140,15 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       ?.scrollIntoView({ block: 'nearest' })
   }, [highlightedIndex, isOpen])
 
+  useEffect(() => {
+    if (!isOpen) return
+    if (highlightedIndex >= 0 && options[highlightedIndex] && !options[highlightedIndex].disabled) return
+    const nextIndex = selectedIndex >= 0 && !options[selectedIndex]?.disabled
+      ? selectedIndex
+      : options.findIndex(option => !option.disabled)
+    setHighlightedIndex(nextIndex)
+  }, [highlightedIndex, isOpen, options, selectedIndex])
+
   const handleTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
@@ -179,8 +194,8 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
           else openMenu()
         }}
       >
-        <span className={`custom-select-value${activeOption ? '' : ' placeholder'}`}>
-          {activeOption?.label ?? placeholder}
+        <span className={`custom-select-value${activeOption || selectedLabel != null ? '' : ' placeholder'}`}>
+          {selectedLabel ?? activeOption?.label ?? placeholder}
         </span>
         <ChevronDown size={14} className="custom-select-chevron" aria-hidden="true" />
       </button>
@@ -188,36 +203,37 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       {isOpen && menuPosition && createPortal(
         <div
           ref={menuRef}
-          id={listId}
           className={`custom-select-menu custom-select-menu-portal placement-${menuPosition.placement}`}
-          role="listbox"
           style={{ top: menuPosition.top, left: menuPosition.left, width: menuPosition.width, maxHeight: menuPosition.maxHeight }}
         >
-          {options.map((opt, index) => {
-            const isSelected = opt.value === value
-            const isHighlighted = index === highlightedIndex
-            return (
-              <button
-                key={opt.value}
-                id={`${listId}-option-${index}`}
-                data-option-index={index}
-                type="button"
-                role="option"
-                aria-selected={isSelected}
-                className={`custom-select-option${isSelected ? ' selected' : ''}${isHighlighted ? ' highlighted' : ''}`}
-                disabled={opt.disabled}
-                onMouseEnter={() => !opt.disabled && setHighlightedIndex(index)}
-                onClick={() => {
-                  if (opt.disabled) return
-                  onChange(opt.value)
-                  setIsOpen(false)
-                }}
-              >
-                <span>{opt.label}</span>
-                {isSelected ? <Check size={13} aria-hidden="true" /> : null}
-              </button>
-            )
-          })}
+          {menuHeader ? <div className="custom-select-menu-header">{menuHeader}</div> : null}
+          <div id={listId} className="custom-select-options" role="listbox">
+            {options.length ? options.map((opt, index) => {
+              const isSelected = opt.value === value
+              const isHighlighted = index === highlightedIndex
+              return (
+                <button
+                  key={opt.value}
+                  id={`${listId}-option-${index}`}
+                  data-option-index={index}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  className={`custom-select-option${isSelected ? ' selected' : ''}${isHighlighted ? ' highlighted' : ''}`}
+                  disabled={opt.disabled}
+                  onMouseEnter={() => !opt.disabled && setHighlightedIndex(index)}
+                  onClick={() => {
+                    if (opt.disabled) return
+                    onChange(opt.value)
+                    setIsOpen(false)
+                  }}
+                >
+                  <span>{opt.label}</span>
+                  {isSelected ? <Check size={13} aria-hidden="true" /> : null}
+                </button>
+              )
+            }) : <div className="custom-select-empty">{emptyMessage}</div>}
+          </div>
         </div>,
         document.body,
       )}

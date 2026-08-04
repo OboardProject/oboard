@@ -142,35 +142,39 @@ const (
 )
 
 type User struct {
-	ID                        int64      `json:"id"`
-	Username                  string     `json:"username"`
-	Nickname                  string     `json:"nickname"`
-	PasswordHash              string     `json:"-"`
-	SessionVersion            int64      `json:"-"`
-	Role                      Role       `json:"role"`
-	Status                    string     `json:"status"`
-	ProxyUUID                 string     `json:"proxy_uuid"`
-	ProxyPassword             string     `json:"proxy_password"`
-	SSHRandomID               string     `json:"-"`
-	SpeedLimitMbps            int        `json:"speed_limit_mbps"`
-	TrafficLimitBytes         int64      `json:"traffic_limit_bytes"`
-	TrafficUsedBytes          int64      `json:"traffic_used_bytes"`
-	TrafficResetMode          string     `json:"traffic_reset_mode"`
-	TrafficResetDay           int        `json:"traffic_reset_day"`
-	TrafficPeriodKey          string     `json:"traffic_period_key,omitempty"`
-	TrafficPeriodEnd          string     `json:"traffic_period_end,omitempty"`
-	TrafficQuotaState         string     `json:"traffic_quota_state,omitempty"`
-	SubscriptionToken         string     `json:"subscription_token,omitempty"`
-	SubscriptionBurnAfterRead bool       `json:"subscription_burn_after_read"`
-	SubscriptionBurnedAt      *time.Time `json:"subscription_burned_at,omitempty"`
-	SubscriptionAgeEnabled    bool       `json:"subscription_age_enabled"`
-	SubscriptionAgePublicKey  string     `json:"subscription_age_public_key,omitempty"`
-	SubscriptionSuspended     bool       `json:"subscription_suspended"`
-	SubscriptionSuspendedAt   *time.Time `json:"subscription_suspended_at,omitempty"`
-	SubscriptionSuspendReason string     `json:"subscription_suspend_reason,omitempty"`
-	Protected                 bool       `json:"protected,omitempty"`
-	CreatedAt                 time.Time  `json:"created_at"`
-	UpdatedAt                 time.Time  `json:"updated_at"`
+	ID                            int64                        `json:"id"`
+	Username                      string                       `json:"username"`
+	Nickname                      string                       `json:"nickname"`
+	PasswordHash                  string                       `json:"-"`
+	SessionVersion                int64                        `json:"-"`
+	Role                          Role                         `json:"role"`
+	Status                        string                       `json:"status"`
+	ProxyUUID                     string                       `json:"proxy_uuid"`
+	ProxyPassword                 string                       `json:"proxy_password"`
+	SSHRandomID                   string                       `json:"-"`
+	SpeedLimitMbps                int                          `json:"speed_limit_mbps"`
+	TrafficLimitBytes             int64                        `json:"traffic_limit_bytes"`
+	TrafficUsedBytes              int64                        `json:"traffic_used_bytes"`
+	TrafficResetMode              string                       `json:"traffic_reset_mode"`
+	TrafficResetDay               int                          `json:"traffic_reset_day"`
+	TrafficPeriodKey              string                       `json:"traffic_period_key,omitempty"`
+	TrafficPeriodEnd              string                       `json:"traffic_period_end,omitempty"`
+	TrafficQuotaState             string                       `json:"traffic_quota_state,omitempty"`
+	SubscriptionToken             string                       `json:"subscription_token,omitempty"`
+	SubscriptionBurnAfterRead     bool                         `json:"subscription_burn_after_read"`
+	SubscriptionBurnedAt          *time.Time                   `json:"subscription_burned_at,omitempty"`
+	SubscriptionAgeEnabled        bool                         `json:"subscription_age_enabled"`
+	SubscriptionAgePublicKey      string                       `json:"subscription_age_public_key,omitempty"`
+	SubscriptionSuspended         bool                         `json:"subscription_suspended"`
+	SubscriptionSuspendedAt       *time.Time                   `json:"subscription_suspended_at,omitempty"`
+	SubscriptionSuspendReason     string                       `json:"subscription_suspend_reason,omitempty"`
+	SubscriptionCustomPath        string                       `json:"subscription_custom_path,omitempty"`
+	SubscriptionCustomPathPolicy  SubscriptionCustomPathPolicy `json:"subscription_custom_path_policy"`
+	SubscriptionCustomPathEnabled bool                         `json:"subscription_custom_path_enabled"`
+	SubscriptionCustomPathSource  string                       `json:"subscription_custom_path_source,omitempty"`
+	Protected                     bool                         `json:"protected,omitempty"`
+	CreatedAt                     time.Time                    `json:"created_at"`
+	UpdatedAt                     time.Time                    `json:"updated_at"`
 }
 
 type UserAuthentication struct {
@@ -541,18 +545,42 @@ const (
 )
 
 type UserGroup struct {
-	ID                int64     `json:"id"`
-	Name              string    `json:"name"`
-	Description       string    `json:"description"`
-	Role              Role      `json:"role"`
-	SystemKey         string    `json:"system_key,omitempty"`
-	Enabled           bool      `json:"enabled"`
-	SpeedLimitMbps    int       `json:"speed_limit_mbps"`
-	TrafficLimitBytes int64     `json:"traffic_limit_bytes"`
-	TrafficResetMode  string    `json:"traffic_reset_mode"`
-	TrafficResetDay   int       `json:"traffic_reset_day"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                           int64                        `json:"id"`
+	Name                         string                       `json:"name"`
+	Description                  string                       `json:"description"`
+	Role                         Role                         `json:"role"`
+	SystemKey                    string                       `json:"system_key,omitempty"`
+	Enabled                      bool                         `json:"enabled"`
+	SpeedLimitMbps               int                          `json:"speed_limit_mbps"`
+	TrafficLimitBytes            int64                        `json:"traffic_limit_bytes"`
+	TrafficResetMode             string                       `json:"traffic_reset_mode"`
+	TrafficResetDay              int                          `json:"traffic_reset_day"`
+	SubscriptionCustomPathPolicy SubscriptionCustomPathPolicy `json:"subscription_custom_path_policy"`
+	CreatedAt                    time.Time                    `json:"created_at"`
+	UpdatedAt                    time.Time                    `json:"updated_at"`
+}
+
+type SubscriptionCustomPathMode string
+
+const (
+	SubscriptionCustomPathDisabled  SubscriptionCustomPathMode = "disabled"
+	SubscriptionCustomPathSelective SubscriptionCustomPathMode = "selective"
+	SubscriptionCustomPathEnabled   SubscriptionCustomPathMode = "enabled"
+)
+
+type SubscriptionCustomPathPolicy string
+
+const (
+	SubscriptionCustomPathInherit SubscriptionCustomPathPolicy = "inherit"
+	SubscriptionCustomPathAllow   SubscriptionCustomPathPolicy = "allow"
+	SubscriptionCustomPathDeny    SubscriptionCustomPathPolicy = "deny"
+)
+
+type SubscriptionCustomPath struct {
+	UserID    int64     `json:"user_id"`
+	Alias     string    `json:"alias"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type UserGroupMember struct {

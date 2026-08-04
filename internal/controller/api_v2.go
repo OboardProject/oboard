@@ -703,7 +703,7 @@ func (s *Server) newServicePrincipal(owner model.User, name string, scopes []str
 	canonicalFilter := map[string]any{}
 	for key, raw := range filterObject {
 		switch key {
-		case "server_ids", "user_ids", "proxy_path_ids":
+		case "server_ids", "user_ids", "group_ids", "proxy_path_ids":
 			var ids []int64
 			if json.Unmarshal(raw, &ids) != nil {
 				return nil, fmt.Errorf("resource_filter.%s must be an array of IDs", key)
@@ -734,6 +734,162 @@ func (s *Server) newServicePrincipal(owner model.User, name string, scopes []str
 }
 
 func (s *Server) registerAutomationHandlers() {
+	s.automation.RegisterValidator("subscriptions.custom_paths.set_alias", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var request struct {
+			UserID int64  `json:"user_id"`
+			Alias  string `json:"alias"`
+			Delete bool   `json:"delete"`
+		}
+		if err := strictAutomationInput(input, &request); err != nil || request.UserID <= 0 || !principal.AllowsInt64("user_ids", request.UserID) {
+			return nil, errors.New("authorized user_id is required")
+		}
+		state, err := s.application.SubscriptionCustomPathUser(ctx, principal, request.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if request.Delete {
+			if strings.TrimSpace(request.Alias) != "" {
+				return nil, errors.New("alias must be empty when delete is true")
+			}
+			return map[string]any{"user_id": request.UserID, "delete": true, "currently_configured": state.SubscriptionCustomPath != ""}, nil
+		}
+		alias, err := core.NormalizeSubscriptionCustomPathAlias(request.Alias)
+		if err != nil {
+			return nil, err
+		}
+		if !state.SubscriptionCustomPathEnabled {
+			return nil, errors.New("custom subscription path is not enabled for this user")
+		}
+		return map[string]any{"user_id": request.UserID, "alias": alias, "replaces_existing": state.SubscriptionCustomPath != ""}, nil
+	})
+	s.automation.RegisterRevisionResolver("subscriptions.custom_paths.set_alias", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		var request struct {
+			UserID int64 `json:"user_id"`
+		}
+		if err := json.Unmarshal(input, &request); err != nil || request.UserID <= 0 || !principal.AllowsInt64("user_ids", request.UserID) {
+			return nil, errors.New("authorized user_id is required")
+		}
+		user, err := s.store.GetUser(ctx, request.UserID)
+		if err != nil {
+			return nil, err
+		}
+		revision := user.UpdatedAt.UTC().Format(time.RFC3339Nano)
+		if path, err := s.store.GetSubscriptionCustomPathForUser(ctx, request.UserID); err == nil {
+			revision = path.UpdatedAt.UTC().Format(time.RFC3339Nano)
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		return map[string]string{"subscription_custom_path:user:" + strconv.FormatInt(request.UserID, 10): revision}, nil
+	})
+	s.automation.Register("subscriptions.custom_paths.set_alias", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var request struct {
+			UserID int64  `json:"user_id"`
+			Alias  string `json:"alias"`
+			Delete bool   `json:"delete"`
+		}
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		if request.Delete {
+			if err := s.application.DeleteSubscriptionCustomPath(ctx, principal, request.UserID); err != nil {
+				return nil, err
+			}
+			return map[string]any{"user_id": request.UserID, "deleted": true}, nil
+		}
+		item, err := s.application.SetSubscriptionCustomPath(ctx, principal, request.UserID, request.Alias)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"subscription_custom_path": item}, nil
+	})
+	s.automation.RegisterValidator("subscriptions.custom_paths.set_policy", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, err := decodeSubscriptionCustomPathPolicyOperation(input)
+		if err != nil {
+			return nil, err
+		}
+		switch request.TargetType {
+		case "global":
+			if request.TargetID != 0 || !principal.AllowsGlobal() {
+				return nil, errors.New("global resource access is required")
+			}
+			mode := model.SubscriptionCustomPathMode(request.Mode)
+			switch mode {
+			case model.SubscriptionCustomPathDisabled, model.SubscriptionCustomPathSelective, model.SubscriptionCustomPathEnabled:
+				return map[string]any{"target_type": "global", "mode": mode}, nil
+			default:
+				return nil, errors.New("global mode must be disabled, selective or enabled")
+			}
+		case "user":
+			if !principal.AllowsInt64("user_ids", request.TargetID) {
+				return nil, errors.New("authorized user target is required")
+			}
+			if _, err := s.store.GetUser(ctx, request.TargetID); err != nil {
+				return nil, err
+			}
+		case "group":
+			if !principal.AllowsInt64("group_ids", request.TargetID) {
+				return nil, errors.New("authorized group target is required")
+			}
+			if _, err := s.store.GetUserGroup(ctx, request.TargetID); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, errors.New("target_type must be global, user or group")
+		}
+		policy := model.SubscriptionCustomPathPolicy(request.Mode)
+		if err := core.ValidateSubscriptionCustomPathPolicy(policy); err != nil {
+			return nil, err
+		}
+		return map[string]any{"target_type": request.TargetType, "target_id": request.TargetID, "mode": policy}, nil
+	})
+	s.automation.RegisterRevisionResolver("subscriptions.custom_paths.set_policy", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		request, err := decodeSubscriptionCustomPathPolicyOperation(input)
+		if err != nil {
+			return nil, err
+		}
+		switch request.TargetType {
+		case "global":
+			if !principal.AllowsGlobal() {
+				return nil, errors.New("global resource access is required")
+			}
+			settings, err := s.store.ListSettings(ctx)
+			return map[string]string{"setting:" + application.SubscriptionCustomPathModeSetting: settings[application.SubscriptionCustomPathModeSetting]}, err
+		case "user":
+			user, err := s.store.GetUser(ctx, request.TargetID)
+			if err != nil || !principal.AllowsInt64("user_ids", request.TargetID) {
+				return nil, errors.New("authorized user target is required")
+			}
+			return map[string]string{"user:" + strconv.FormatInt(user.ID, 10): user.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
+		case "group":
+			group, err := s.store.GetUserGroup(ctx, request.TargetID)
+			if err != nil || !principal.AllowsInt64("group_ids", request.TargetID) {
+				return nil, errors.New("authorized group target is required")
+			}
+			return map[string]string{"group:" + strconv.FormatInt(group.ID, 10): group.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
+		default:
+			return nil, errors.New("target_type must be global, user or group")
+		}
+	})
+	s.automation.Register("subscriptions.custom_paths.set_policy", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, err := decodeSubscriptionCustomPathPolicyOperation(input)
+		if err != nil {
+			return nil, err
+		}
+		switch request.TargetType {
+		case "global":
+			err = s.application.SetSubscriptionCustomPathMode(ctx, principal, model.SubscriptionCustomPathMode(request.Mode))
+		case "user":
+			err = s.application.SetSubscriptionCustomPathUserPolicy(ctx, principal, request.TargetID, model.SubscriptionCustomPathPolicy(request.Mode))
+		case "group":
+			err = s.application.SetSubscriptionCustomPathGroupPolicy(ctx, principal, request.TargetID, model.SubscriptionCustomPathPolicy(request.Mode))
+		default:
+			err = errors.New("target_type must be global, user or group")
+		}
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"target_type": request.TargetType, "target_id": request.TargetID, "mode": request.Mode}, nil
+	})
 	s.automation.RegisterValidator("subscriptions.resume", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		var request struct {
 			UserID int64 `json:"user_id"`
@@ -983,6 +1139,25 @@ func (s *Server) registerAutomationHandlers() {
 		}
 		return s.runDeploymentOperation(ctx, principal, serverID)
 	})
+}
+
+type subscriptionCustomPathPolicyOperation struct {
+	TargetType string `json:"target_type"`
+	TargetID   int64  `json:"target_id"`
+	Mode       string `json:"mode"`
+}
+
+func decodeSubscriptionCustomPathPolicyOperation(input json.RawMessage) (subscriptionCustomPathPolicyOperation, error) {
+	var request subscriptionCustomPathPolicyOperation
+	if err := strictAutomationInput(input, &request); err != nil {
+		return request, err
+	}
+	request.TargetType = strings.ToLower(strings.TrimSpace(request.TargetType))
+	request.Mode = strings.ToLower(strings.TrimSpace(request.Mode))
+	if request.TargetType != "global" && request.TargetID <= 0 {
+		return request, errors.New("positive target_id is required")
+	}
+	return request, nil
 }
 
 type serverOnboardingOperation struct {

@@ -122,18 +122,22 @@ func defaultDescriptors() []Descriptor {
 		{Name: "audit.incident_response.plan", Description: "根据结构化风险证据生成可逆处置建议", InputSchema: object, OutputSchema: object, RequiredScopes: []string{"audit:analyze"}, ResourceTypes: []string{"user", "audit_incident"}, ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"source_ip", "destination", "user_identity"}, MCPEnabled: true},
 	}
 	writeDomains := []struct {
-		name, scope string
-		risk        int
-		executable  bool
+		name, scope    string
+		risk           int
+		executable     bool
+		classification DataClassification
+		sensitive      []string
 	}{
-		{"servers.onboard", "servers:onboard", 2, true},
-		{"subscriptions.resume", "subscriptions:resume", 2, true},
-		{"topology.write", "topology:write", 3, true},
-		{"topology.reuse_inbound", "topology:write", 3, true},
-		{"deployments.apply", "deployments:apply", 3, true},
+		{"servers.onboard", "servers:onboard", 2, true, DataInternal, nil},
+		{"subscriptions.resume", "subscriptions:resume", 2, true, DataInternal, nil},
+		{"subscriptions.custom_paths.set_alias", "subscriptions:manage", 2, true, DataSensitive, []string{"alias"}},
+		{"subscriptions.custom_paths.set_policy", "subscriptions:manage", 2, true, DataInternal, nil},
+		{"topology.write", "topology:write", 3, true, DataInternal, nil},
+		{"topology.reuse_inbound", "topology:write", 3, true, DataInternal, nil},
+		{"deployments.apply", "deployments:apply", 3, true, DataInternal, nil},
 	}
 	for _, domain := range writeDomains {
-		descriptors = append(descriptors, Descriptor{Name: domain.name, Description: "创建受验证和审批保护的管理变更", InputSchema: object, OutputSchema: object, RequiredScopes: []string{domain.scope}, RiskClass: domain.risk, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: domain.executable})
+		descriptors = append(descriptors, Descriptor{Name: domain.name, Description: "创建受验证和审批保护的管理变更", InputSchema: object, OutputSchema: object, RequiredScopes: []string{domain.scope}, RiskClass: domain.risk, ApprovalPolicy: "required", Idempotent: true, DataClassification: domain.classification, SensitiveFields: domain.sensitive, MCPEnabled: true, Executable: domain.executable})
 	}
 	return descriptors
 }

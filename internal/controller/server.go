@@ -207,6 +207,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/me/passkeys/register/finish", s.auth(s.passkeyRegisterFinish, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/passkeys/", s.auth(s.passkeys, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/subscription-age", s.auth(s.selfSubscriptionAge, model.RoleViewer))
+	mux.HandleFunc("/api/v1/me/subscription-custom-path", s.auth(s.selfSubscriptionCustomPath, model.RoleViewer))
 	mux.HandleFunc("/api/v1/page-data", s.auth(s.pageData, model.RoleViewer))
 	mux.HandleFunc("/api/v1/events", s.auth(s.uiEvents, model.RoleViewer))
 	mux.HandleFunc("/api/v1/dashboard/summary", s.auth(s.dashboard, model.RoleViewer))
@@ -284,6 +285,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/agent-tasks/", s.auth(s.agentTask, model.RoleOperator))
 	mux.HandleFunc("/api/v1/subscriptions", notFound)
 	mux.HandleFunc("/api/v1/subscriptions/", s.subscription)
+	mux.HandleFunc("/s", notFound)
+	mux.HandleFunc("/s/", s.subscriptionCustomPath)
 	mux.HandleFunc("/api/v1/audit-logs", s.auth(s.auditLogs, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/audit/overview", s.auth(s.connectionAuditOverview, model.RoleOperator))
 	mux.HandleFunc("/api/v1/audit/users/", s.auth(s.connectionAuditUser, model.RoleOperator))
@@ -469,6 +472,9 @@ func safeLogField(value string) string {
 func requestLogPath(path string) string {
 	if strings.HasPrefix(path, "/api/v1/subscriptions/") {
 		return "/api/v1/subscriptions/[redacted]"
+	}
+	if strings.HasPrefix(path, "/s/") {
+		return "/s/[redacted]"
 	}
 	return path
 }
@@ -672,6 +678,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			CertificateAutoIssueCA      *string                        `json:"certificate_auto_issue_acme_ca"`
 			CertificateAutoIssueEAB     *int64                         `json:"certificate_auto_issue_google_eab_credential_id"`
 			SubscriptionAgePolicy       *string                        `json:"subscription_age_policy"`
+			SubscriptionCustomPathMode  *string                        `json:"subscription_custom_path_mode"`
 			SubscriptionAuditPolicy     *model.SubscriptionAuditPolicy `json:"subscription_audit_policy"`
 			AuditEnabled                *bool                          `json:"audit_enabled"`
 			SubscriptionAuditEnabled    *bool                          `json:"subscription_audit_enabled"`
@@ -803,6 +810,20 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			changed = append(changed, settingSubscriptionAgePolicy)
+		}
+		if req.SubscriptionCustomPathMode != nil {
+			mode := model.SubscriptionCustomPathMode(strings.ToLower(strings.TrimSpace(*req.SubscriptionCustomPathMode)))
+			switch mode {
+			case model.SubscriptionCustomPathDisabled, model.SubscriptionCustomPathSelective, model.SubscriptionCustomPathEnabled:
+			default:
+				fail(w, errors.New("subscription_custom_path_mode must be disabled, selective or enabled"), http.StatusBadRequest)
+				return
+			}
+			if err := s.application.SetSubscriptionCustomPathMode(r.Context(), subscriptionCustomPathPrincipal(r), mode); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingSubscriptionCustomPathMode)
 		}
 		if req.SubscriptionAuditPolicy != nil {
 			if err := store.ValidateSubscriptionAuditPolicy(*req.SubscriptionAuditPolicy); err != nil {
@@ -1036,7 +1057,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAuditPolicy: store.DefaultSubscriptionAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionAuditPolicy: store.DefaultSubscriptionAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	for key, value := range items {
 		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingSubscriptionAuditPolicy || key == settingTrustedProxyCIDRs {
 			continue
@@ -1305,7 +1326,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 	addGroups := func() error {
-		groups, err := s.store.ListUserGroups(ctx)
+		groups, err := s.subscriptionCustomPathGroups(ctx)
 		if err != nil {
 			return err
 		}
@@ -1438,6 +1459,10 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			}
 			settings, err := s.store.ListSettings(ctx)
 			if err != nil {
+				return err
+			}
+			users = s.withTrafficStatus(ctx, users)
+			if err := s.enrichSubscriptionCustomPaths(ctx, users, groups, members); err != nil {
 				return err
 			}
 			out["users"] = users
@@ -2232,22 +2257,53 @@ func selfUserResponse(ctx context.Context, st *store.Store, user model.User, rol
 	settings, _ := st.ListSettings(ctx)
 	authentication, _ := st.GetUserAuthentication(ctx, user.ID)
 	passkeys, _ := st.ListPasskeyCredentials(ctx, user.ID)
+	customPath := user
+	groups, groupErr := st.ListUserGroups(ctx)
+	members, memberErr := st.ListUserGroupMembers(ctx)
+	userPolicies, groupPolicies, policyErr := st.SubscriptionCustomPathPolicies(ctx)
+	paths, pathErr := st.ListSubscriptionCustomPaths(ctx)
+	if groupErr == nil && memberErr == nil && policyErr == nil && pathErr == nil {
+		for index := range groups {
+			groups[index].SubscriptionCustomPathPolicy = model.SubscriptionCustomPathInherit
+			if policy, ok := groupPolicies[groups[index].ID]; ok {
+				groups[index].SubscriptionCustomPathPolicy = policy
+			}
+		}
+		customPath.SubscriptionCustomPathPolicy = model.SubscriptionCustomPathInherit
+		if policy, ok := userPolicies[user.ID]; ok {
+			customPath.SubscriptionCustomPathPolicy = policy
+		}
+		for _, item := range paths {
+			if item.UserID == user.ID {
+				customPath.SubscriptionCustomPath = item.Alias
+				break
+			}
+		}
+		mode := core.NormalizeSubscriptionCustomPathMode(settings[settingSubscriptionCustomPathMode])
+		items := []model.User{customPath}
+		core.ApplySubscriptionCustomPathPolicies(mode, items, groups, members)
+		customPath = items[0]
+	}
 	return map[string]any{
-		"id":                          user.ID,
-		"username":                    user.Username,
-		"nickname":                    user.Nickname,
-		"role":                        role,
-		"status":                      user.Status,
-		"protected":                   protected,
-		"subscription_token":          user.SubscriptionToken,
-		"subscription_age_enabled":    user.SubscriptionAgeEnabled,
-		"subscription_age_public_key": user.SubscriptionAgePublicKey,
-		"subscription_age_policy":     normalizeSubscriptionAgePolicy(settings[settingSubscriptionAgePolicy]),
-		"subscription_suspended":      user.SubscriptionSuspended,
-		"subscription_suspended_at":   user.SubscriptionSuspendedAt,
-		"subscription_suspend_reason": user.SubscriptionSuspendReason,
-		"totp_enabled":                authentication.TOTPEnabled,
-		"passkey_count":               len(passkeys),
+		"id":                               user.ID,
+		"username":                         user.Username,
+		"nickname":                         user.Nickname,
+		"role":                             role,
+		"status":                           user.Status,
+		"protected":                        protected,
+		"subscription_token":               user.SubscriptionToken,
+		"subscription_age_enabled":         user.SubscriptionAgeEnabled,
+		"subscription_age_public_key":      user.SubscriptionAgePublicKey,
+		"subscription_age_policy":          normalizeSubscriptionAgePolicy(settings[settingSubscriptionAgePolicy]),
+		"subscription_suspended":           user.SubscriptionSuspended,
+		"subscription_suspended_at":        user.SubscriptionSuspendedAt,
+		"subscription_suspend_reason":      user.SubscriptionSuspendReason,
+		"subscription_custom_path":         customPath.SubscriptionCustomPath,
+		"subscription_custom_path_policy":  customPath.SubscriptionCustomPathPolicy,
+		"subscription_custom_path_enabled": customPath.SubscriptionCustomPathEnabled,
+		"subscription_custom_path_source":  customPath.SubscriptionCustomPathSource,
+		"totp_enabled":                     authentication.TOTPEnabled,
+		"passkey_count":                    len(passkeys),
 	}
 }
 
@@ -4487,6 +4543,11 @@ func (s *Server) inboundUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) userGroups(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/user-groups/")
+	parts := pathParts(r.URL.Path, "/api/v1/user-groups/")
+	if len(parts) == 2 && parts[1] == "subscription-custom-path-policy" {
+		s.userGroupSubscriptionCustomPathPolicy(w, r, id)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		if id != 0 {
@@ -8013,6 +8074,14 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 		s.userSubscriptionAge(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "subscription-custom-path" {
+		s.userSubscriptionCustomPath(w, r, id)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "subscription-custom-path-policy" {
+		s.userSubscriptionCustomPathPolicy(w, r, id)
+		return
+	}
 	if len(parts) == 3 && parts[1] == "subscription-access" && parts[2] == "resume" {
 		s.resumeUserSubscriptionAccess(w, r, id)
 		return
@@ -8283,6 +8352,7 @@ func (s *Server) withTrafficStatus(ctx context.Context, users []model.User) []mo
 		users[i].TrafficPeriodEnd = period.EndsAt.Format(time.RFC3339Nano)
 		users[i].TrafficQuotaState = period.State
 	}
+	_ = s.enrichSubscriptionCustomPaths(ctx, users, groups, members)
 	return users
 }
 
@@ -8338,11 +8408,7 @@ func (s *Server) userSubscriptionToken(w http.ResponseWriter, r *http.Request, i
 			method(w)
 			return
 		}
-		if err := s.store.UpdateUserSubscriptionToken(r.Context(), id, ""); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.store.DeleteOneTimeSubscriptionTokensForUser(r.Context(), id); err != nil {
+		if err := s.store.RevokeSubscriptionCredentials(r.Context(), id); err != nil {
 			fail(w, err, 500)
 			return
 		}
@@ -10257,13 +10323,24 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("missing token"), 400)
 		return
 	}
-	if !s.allowRate(w, r, "subscription-token:"+token, 60, time.Minute) {
+	customCredential, custom := isSubscriptionCustomCredential(r)
+	rateKind := "subscription-token:"
+	if custom {
+		rateKind = "subscription-custom-path:"
+	}
+	if !s.allowRate(w, r, rateKind+token, 60, time.Minute) {
 		return
 	}
-	user, err := s.store.GetUserBySubscriptionToken(r.Context(), token)
-	if err != nil {
-		fail(w, errors.New("invalid subscription link"), 404)
-		return
+	var user *model.User
+	var err error
+	if custom {
+		user = &customCredential.User
+	} else {
+		user, err = s.store.GetUserBySubscriptionToken(r.Context(), token)
+		if err != nil {
+			fail(w, errors.New("invalid subscription link"), 404)
+			return
+		}
 	}
 	format := core.NormalizeSubscriptionFormatForAPI(model.SubscriptionFormat(r.URL.Query().Get("format")))
 	if !core.IsSupportedSubscriptionFormat(format) {
@@ -10386,7 +10463,11 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	event := s.newSubscriptionPullAudit(r, user.ID, string(format), requestedProfileID, ageEncrypted)
 	auditState := s.auditSettingsState(r.Context())
-	decision, err := s.store.AuthorizeSubscriptionPull(r.Context(), user.ID, token, event, s.subscriptionAuditPolicy(r.Context()), store.SubscriptionAuditOptions{
+	authorize := s.store.AuthorizeSubscriptionPull
+	if custom {
+		authorize = s.store.AuthorizeCustomSubscriptionPull
+	}
+	decision, err := authorize(r.Context(), user.ID, token, event, s.subscriptionAuditPolicy(r.Context()), store.SubscriptionAuditOptions{
 		AuditEnabled: auditState.Enabled && auditState.Subscription,
 		Action:       auditState.Action,
 	})

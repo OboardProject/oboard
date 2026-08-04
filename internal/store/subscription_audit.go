@@ -84,11 +84,19 @@ func ValidateSubscriptionAuditPolicy(policy model.SubscriptionAuditPolicy) error
 }
 
 func (s *Store) AuthorizeSubscriptionPull(ctx context.Context, userID int64, token string, event model.SubscriptionPullAudit, policy model.SubscriptionAuditPolicy, options SubscriptionAuditOptions) (SubscriptionPullDecision, error) {
+	return s.authorizeSubscriptionPull(ctx, userID, token, false, event, policy, options)
+}
+
+func (s *Store) AuthorizeCustomSubscriptionPull(ctx context.Context, userID int64, alias string, event model.SubscriptionPullAudit, policy model.SubscriptionAuditPolicy, options SubscriptionAuditOptions) (SubscriptionPullDecision, error) {
+	return s.authorizeSubscriptionPull(ctx, userID, alias, true, event, policy, options)
+}
+
+func (s *Store) authorizeSubscriptionPull(ctx context.Context, userID int64, credential string, custom bool, event model.SubscriptionPullAudit, policy model.SubscriptionAuditPolicy, options SubscriptionAuditOptions) (SubscriptionPullDecision, error) {
 	decision := SubscriptionPullDecision{}
 	if err := ValidateSubscriptionAuditPolicy(policy); err != nil {
 		return decision, err
 	}
-	if userID <= 0 || strings.TrimSpace(token) == "" {
+	if userID <= 0 || strings.TrimSpace(credential) == "" {
 		return decision, sql.ErrNoRows
 	}
 	if event.RequestedAt.IsZero() {
@@ -102,7 +110,7 @@ func (s *Store) AuthorizeSubscriptionPull(ctx context.Context, userID int64, tok
 		return decision, err
 	}
 	defer tx.Rollback()
-	tokenKind, err := subscriptionTokenKind(ctx, tx, userID, token)
+	tokenKind, err := subscriptionCredentialKind(ctx, tx, userID, credential, custom)
 	if err != nil {
 		return decision, err
 	}
@@ -134,7 +142,7 @@ func (s *Store) AuthorizeSubscriptionPull(ctx context.Context, userID int64, tok
 		return decision, tx.Commit()
 	}
 	if !options.AuditEnabled {
-		decision.Burned, err = consumeSubscriptionTokenTx(ctx, tx, userID, token, tokenKind, event.RequestedAt)
+		decision.Burned, err = consumeSubscriptionTokenTx(ctx, tx, userID, credential, tokenKind, event.RequestedAt)
 		if err != nil {
 			return decision, err
 		}
@@ -158,7 +166,7 @@ func (s *Store) AuthorizeSubscriptionPull(ctx context.Context, userID int64, tok
 			if _, err := tx.ExecContext(ctx, `update subscription_pull_audits set outcome='served_risk_warn',reason=? where id=?`, risk.Reason, decision.AuditID); err != nil {
 				return decision, err
 			}
-			decision.Burned, err = consumeSubscriptionTokenTx(ctx, tx, userID, token, tokenKind, event.RequestedAt)
+			decision.Burned, err = consumeSubscriptionTokenTx(ctx, tx, userID, credential, tokenKind, event.RequestedAt)
 			if err != nil {
 				return decision, err
 			}
@@ -191,7 +199,7 @@ func (s *Store) AuthorizeSubscriptionPull(ctx context.Context, userID int64, tok
 		if _, err := tx.ExecContext(ctx, `update subscription_pull_audits set outcome='served' where id=?`, decision.AuditID); err != nil {
 			return decision, err
 		}
-		decision.Burned, err = consumeSubscriptionTokenTx(ctx, tx, userID, token, tokenKind, event.RequestedAt)
+		decision.Burned, err = consumeSubscriptionTokenTx(ctx, tx, userID, credential, tokenKind, event.RequestedAt)
 		if err != nil {
 			return decision, err
 		}
@@ -202,6 +210,21 @@ func (s *Store) AuthorizeSubscriptionPull(ctx context.Context, userID int64, tok
 		return decision, err
 	}
 	return decision, tx.Commit()
+}
+
+func subscriptionCredentialKind(ctx context.Context, tx *sql.Tx, userID int64, credential string, custom bool) (string, error) {
+	if custom {
+		var exists int
+		err := tx.QueryRowContext(ctx, `select exists(select 1 from subscription_custom_paths p join users u on u.id=p.user_id where p.user_id=? and p.alias=? and u.status='active')`, userID, credential).Scan(&exists)
+		if err != nil || exists == 0 {
+			if err != nil {
+				return "", err
+			}
+			return "", sql.ErrNoRows
+		}
+		return "custom_path", nil
+	}
+	return subscriptionTokenKind(ctx, tx, userID, credential)
 }
 
 func subscriptionTokenKind(ctx context.Context, tx *sql.Tx, userID int64, token string) (string, error) {
@@ -230,6 +253,8 @@ func consumeSubscriptionTokenTx(ctx context.Context, tx *sql.Tx, userID int64, t
 	ts := at.UTC().Format(time.RFC3339Nano)
 	switch tokenKind {
 	case "persistent":
+		return false, nil
+	case "custom_path":
 		return false, nil
 	case "one_time":
 		res, err := tx.ExecContext(ctx, `delete from subscription_one_time_tokens where token=? and user_id=?`, token, userID)
@@ -267,6 +292,14 @@ func consumeSubscriptionTokenTx(ctx context.Context, tx *sql.Tx, userID int64, t
 }
 
 func (s *Store) AddRejectedSubscriptionPullAudit(ctx context.Context, token string, event model.SubscriptionPullAudit) error {
+	return s.addRejectedSubscriptionPullAudit(ctx, token, false, event)
+}
+
+func (s *Store) AddRejectedCustomSubscriptionPullAudit(ctx context.Context, alias string, event model.SubscriptionPullAudit) error {
+	return s.addRejectedSubscriptionPullAudit(ctx, alias, true, event)
+}
+
+func (s *Store) addRejectedSubscriptionPullAudit(ctx context.Context, credential string, custom bool, event model.SubscriptionPullAudit) error {
 	if event.UserID <= 0 {
 		return sql.ErrNoRows
 	}
@@ -282,7 +315,7 @@ func (s *Store) AddRejectedSubscriptionPullAudit(ctx context.Context, token stri
 		return err
 	}
 	defer tx.Rollback()
-	tokenKind, err := subscriptionTokenKind(ctx, tx, event.UserID, token)
+	tokenKind, err := subscriptionCredentialKind(ctx, tx, event.UserID, credential, custom)
 	if err != nil {
 		return err
 	}

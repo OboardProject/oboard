@@ -2299,6 +2299,59 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   gap: 7px;
   min-height: 38px;
 }
+.custom-path-editor {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr) repeat(4, auto);
+  align-items: center;
+  gap: 8px;
+}
+.custom-path-prefix {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  font-weight: 700;
+}
+.custom-path-editor button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+}
+.custom-path-group-policies {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+}
+.custom-path-group-policy {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.custom-path-group-policy strong,
+.custom-path-group-policy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-path-group-policy strong { color: var(--text-strong); font-size: 12.5px; }
+.custom-path-group-policy small { margin-top: 2px; color: var(--muted); font-size: 11px; }
+.sub-user-token-state {
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+.sub-user-token-state .sub-pill {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
 .sub-pill {
   display: inline-flex;
   align-items: center;
@@ -2320,6 +2373,8 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   .self-subscription-actions button {
     width: 100%;
   }
+  .custom-path-editor { grid-template-columns: auto minmax(0, 1fr); }
+  .custom-path-editor button { width: 100%; justify-content: center; }
 }
 
 .subscription-burn-toggle {
@@ -2774,6 +2829,109 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .graph-entry-select { width: 100%; }
 .proxy-path-entry-picker .custom-select-trigger { min-height: 36px; }
+.entry-server-option-label {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.entry-server-status {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  box-shadow: 0 0 6px var(--color-danger);
+}
+
+.entry-server-status.online {
+  background: var(--color-success);
+  box-shadow: 0 0 6px var(--color-success);
+}
+
+.entry-server-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entry-server-count {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.entry-server-menu-tools {
+  display: grid;
+  gap: 8px;
+}
+
+.entry-server-search {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--muted);
+}
+
+.entry-server-search:focus-within {
+  border-color: color-mix(in srgb, var(--primary) 66%, var(--border));
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.entry-server-search input {
+  min-width: 0;
+  width: 100%;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.entry-server-region-filters {
+  display: flex;
+  gap: 6px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.entry-server-region-filters button {
+  min-height: 28px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+  box-shadow: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.entry-server-region-filters button:hover,
+.entry-server-region-filters button.selected {
+  border-color: color-mix(in srgb, var(--primary) 46%, var(--border));
+  background: var(--primary-soft);
+  color: var(--primary);
+  transform: none;
+}
 .proxy-flow {
   position: relative;
   min-width: 0;
@@ -3742,13 +3900,13 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   pointer-events: all;
 }
 .flow .react-flow__handle.connect-target-top {
-  top: -18px;
+  top: 0;
   width: calc(100% + 20px);
   height: 36px;
   border-radius: 999px;
 }
 .flow .react-flow__handle.connect-source-bottom {
-  bottom: -16px;
+  bottom: 0;
   width: 34px;
   height: 34px;
   border-radius: 999px;
@@ -3758,7 +3916,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   content: '';
   position: absolute;
   left: 50%;
-  top: 50%;
+  top: 100%;
   width: 8px;
   height: 8px;
   border-radius: 999px;
@@ -6659,11 +6817,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   margin: 16px 0 18px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background:
-    linear-gradient(var(--border) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border) 1px, transparent 1px),
-    var(--surface-2);
-  background-size: 28px 28px;
+  background: var(--surface-2);
   overflow: hidden;
 }
 
@@ -10016,7 +10170,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   display: none !important;
 }
 .flow .react-flow__handle.server-entry-source-handle {
-  bottom: -12px;
+  bottom: 0;
   width: 24px;
   height: 24px;
   border-radius: 999px;
@@ -10024,9 +10178,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   transform: translate(-50%, 0);
 }
 .flow .react-flow__handle.server-entry-target-handle {
-  /* Absolute handles are positioned from the card's inner padding edge.
-     Offset the 4px accent border so the dot center sits on the outer edge. */
-  top: calc(-12px - var(--graph-node-top-border-width, 4px));
+  top: 0;
   width: 24px;
   height: 24px;
   border-radius: 999px;
@@ -10079,54 +10231,6 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   stroke: var(--graph-unhealthy) !important;
   stroke-dasharray: 5 5;
 }
-.graph-edge-label {
-  position: absolute;
-  z-index: 8;
-  max-width: 190px;
-  min-height: 34px;
-  display: grid;
-  grid-template-columns: 25px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 7px 5px 5px;
-  color: var(--text-strong);
-  border: 1px solid color-mix(in srgb, var(--edge-accent) 34%, var(--border));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-solid) 96%, var(--edge-accent));
-  box-shadow: 0 6px 18px rgba(15, 23, 42, .11);
-  pointer-events: none;
-  white-space: nowrap;
-}
-.graph-edge-label-direct { --edge-accent: var(--graph-direct); }
-.graph-edge-label-singbox { --edge-accent: var(--graph-chain); }
-.graph-edge-label-port_forward { --edge-accent: var(--graph-forward); }
-.graph-edge-label-wireguard { --edge-accent: var(--graph-wireguard); }
-.graph-edge-label-ssh { --edge-accent: var(--graph-ssh); }
-.graph-edge-label.is-unhealthy { --edge-accent: var(--graph-unhealthy); }
-.graph-edge-label.is-selected {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--edge-accent) 15%, transparent), 0 8px 22px rgba(15, 23, 42, .15);
-}
-.graph-edge-label-icon {
-  width: 25px;
-  height: 25px;
-  display: grid;
-  place-items: center;
-  color: var(--edge-accent);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--edge-accent) 11%, var(--surface-solid));
-}
-.graph-edge-label-copy { min-width: 0; display: grid; gap: 1px; }
-.graph-edge-label-copy strong,
-.graph-edge-label-copy small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.graph-edge-label-copy strong { color: var(--edge-accent); font-size: 9.5px; font-weight: 800; }
-.graph-edge-label-copy small { color: var(--muted); font-size: 8.5px; }
-.graph-edge-direction { color: var(--edge-accent); }
-
 .proxy-graph-legend {
   position: absolute;
   z-index: 12;
@@ -10161,7 +10265,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .proxy-graph-legend-section > strong { color: var(--muted); font-size: 8px; font-weight: 800; }
 .proxy-graph-legend-section > span { min-width: 0; display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 5px; }
 .proxy-graph-legend-section em { color: var(--text); font-size: 8.5px; font-style: normal; line-height: 1.2; }
-.legend-node { width: 14px; height: 9px; display: block; border: 1px solid currentColor; border-top-width: 3px; border-radius: 3px; background: var(--surface-solid); }
+.legend-node { width: 14px; height: 9px; display: block; border: 1px solid currentColor; border-radius: 3px; background: var(--surface-solid); }
 .legend-entry { color: var(--graph-entry); }
 .legend-gateway { color: var(--graph-gateway); }
 .legend-relay { color: var(--graph-relay); }
@@ -10273,7 +10377,6 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 @media (max-width: 820px) {
   .proxy-graph-legend { top: 10px; right: 10px; width: 176px; }
   .proxy-graph-legend-body { grid-template-columns: 1fr; }
-  .graph-edge-label { max-width: 150px; }
 }
 .flow .react-flow__handle.server-entry-target-handle::after {
   content: '';
@@ -10294,7 +10397,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   content: '';
   position: absolute;
   left: 50%;
-  top: 50%;
+  top: 100%;
   width: 8px;
   height: 8px;
   border-radius: 999px;
@@ -10349,7 +10452,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .flow .react-flow__handle.path-step-source-handle {
-  bottom: -12px;
+  bottom: 0;
   width: 24px;
   height: 24px;
   border-radius: 999px;
@@ -10361,7 +10464,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   content: '';
   position: absolute;
   left: 50%;
-  top: 50%;
+  top: 100%;
   width: 8px;
   height: 8px;
   border-radius: 999px;
@@ -10383,7 +10486,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .flow .react-flow__handle.server-shared-source-handle {
-  bottom: -12px;
+  bottom: 0;
   left: 50%;
   width: 24px;
   height: 24px;
@@ -10396,7 +10499,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   content: '';
   position: absolute;
   left: 50%;
-  top: 50%;
+  top: 100%;
   width: 8px;
   height: 8px;
   border: 1.5px solid var(--surface-solid);
@@ -11049,7 +11152,6 @@ button[aria-busy="true"] {
 /* ReactFlow Node Customizations */
 .rf-node-custom {
   --graph-node-accent: var(--graph-relay);
-  --graph-node-top-border-width: 4px;
   position: relative;
   width: 100%;
   min-height: 118px;
@@ -11058,7 +11160,6 @@ button[aria-busy="true"] {
   overflow: visible;
   color: var(--text-primary);
   border: 1px solid color-mix(in srgb, var(--graph-node-accent) 30%, var(--border-color));
-  border-top: var(--graph-node-top-border-width) solid var(--graph-node-accent);
   border-radius: 10px;
   background: color-mix(in srgb, var(--bg-card) 96%, var(--graph-node-accent));
   box-shadow: 0 8px 22px rgba(15, 23, 42, .08);
@@ -12735,7 +12836,9 @@ button.ui-btn-ghost:hover {
 .custom-select-menu {
   position: fixed;
   max-height: 220px;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-card);
@@ -12745,6 +12848,26 @@ button.ui-btn-ghost:hover {
   transform-origin: top center;
 }
 .custom-select-menu.placement-top { transform-origin: bottom center; }
+
+.custom-select-menu-header {
+  flex: 0 0 auto;
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.custom-select-options {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.custom-select-empty {
+  padding: 24px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
 
 .custom-select-option {
   width: 100%;

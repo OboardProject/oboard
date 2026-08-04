@@ -6,6 +6,7 @@ export type GraphPosition = { x: number; y: number }
 export type GraphDirectExitInstance = { instance_id: string; root_server_id: number }
 export type GraphLayerNode = { id: string; width: number; terminal: boolean }
 export type GraphLayerLayout = { positions: Record<string, GraphPosition>; extraHeight: number }
+export type GraphLayoutEdge = { source: string; target: string }
 
 export const GRAPH_ENTRY_NODE_WIDTH = 260
 export const GRAPH_LAYER_SIBLING_GAP = 100
@@ -133,6 +134,154 @@ export function layoutGraphLayer(
   })
 
   return { positions, extraHeight: GRAPH_LAYER_SECONDARY_OFFSET_Y }
+}
+
+export function minimizeGraphLayerCrossings(
+  layers: string[][],
+  edges: GraphLayoutEdge[],
+  compareNodes: (left: string, right: string) => number,
+): string[][] {
+  const ordered = layers.map(layer => layer.slice().sort(compareNodes))
+  const layerByNode = new Map<string, number>()
+  ordered.forEach((layer, layerIndex) => layer.forEach(nodeID => layerByNode.set(nodeID, layerIndex)))
+
+  const incoming = new Map<string, string[]>()
+  const outgoing = new Map<string, string[]>()
+  edges.forEach(edge => {
+    const sourceLayer = layerByNode.get(edge.source)
+    const targetLayer = layerByNode.get(edge.target)
+    if (sourceLayer === undefined || targetLayer === undefined || sourceLayer === targetLayer) return
+    incoming.set(edge.target, [...(incoming.get(edge.target) || []), edge.source])
+    outgoing.set(edge.source, [...(outgoing.get(edge.source) || []), edge.target])
+  })
+
+  const reorder = (layerIndex: number, neighbors: Map<string, string[]>) => {
+    const layer = ordered[layerIndex]
+    const previousIndex = new Map(layer.map((nodeID, index) => [nodeID, index]))
+    const ranks = new Map<string, number>()
+    ordered.forEach(nodes => {
+      const denominator = Math.max(1, nodes.length - 1)
+      nodes.forEach((nodeID, index) => ranks.set(nodeID, index / denominator))
+    })
+    const barycenter = (nodeID: string) => {
+      const linkedRanks = (neighbors.get(nodeID) || [])
+        .map(neighborID => ranks.get(neighborID))
+        .filter((rank): rank is number => rank !== undefined)
+      if (!linkedRanks.length) return undefined
+      return linkedRanks.reduce((sum, rank) => sum + rank, 0) / linkedRanks.length
+    }
+    layer.sort((left, right) => {
+      const leftCenter = barycenter(left)
+      const rightCenter = barycenter(right)
+      if (leftCenter !== undefined && rightCenter !== undefined && Math.abs(leftCenter - rightCenter) > 1e-9) {
+        return leftCenter - rightCenter
+      }
+      if (leftCenter !== undefined && rightCenter === undefined) return -1
+      if (leftCenter === undefined && rightCenter !== undefined) return 1
+      return (previousIndex.get(left) || 0) - (previousIndex.get(right) || 0) || compareNodes(left, right)
+    })
+  }
+
+  // Alternating downward and upward sweeps is the standard barycentric pass
+  // used by layered graph layouts. A few bounded passes are enough for this
+  // small operator-facing graph and keep the result deterministic.
+  for (let pass = 0; pass < 4; pass++) {
+    for (let layerIndex = 1; layerIndex < ordered.length; layerIndex++) reorder(layerIndex, incoming)
+    for (let layerIndex = ordered.length - 2; layerIndex > 0; layerIndex--) reorder(layerIndex, outgoing)
+  }
+  return ordered
+}
+
+export function layoutGraphLanes(
+  layers: GraphLayerNode[][],
+  edges: GraphLayoutEdge[],
+  centerX: number,
+  originY: number,
+  layerGap: number,
+  siblingGap = GRAPH_LAYER_SIBLING_GAP,
+): Record<string, GraphPosition> {
+  const nodeByID = new Map(layers.flat().map(node => [node.id, node]))
+  const layerByNode = new Map<string, number>()
+  layers.forEach((layer, layerIndex) => layer.forEach(node => layerByNode.set(node.id, layerIndex)))
+  const incoming = new Map<string, string[]>()
+  edges.forEach(edge => {
+    const sourceLayer = layerByNode.get(edge.source)
+    const targetLayer = layerByNode.get(edge.target)
+    if (sourceLayer === undefined || targetLayer === undefined || sourceLayer >= targetLayer) return
+    incoming.set(edge.target, [...(incoming.get(edge.target) || []), edge.source])
+  })
+
+  const laneByNode = new Map<string, number>()
+  layers.forEach((layer, layerIndex) => {
+    const used = new Set<number>()
+    const preferredLane = (nodeID: string) => {
+      const parentLanes = (incoming.get(nodeID) || [])
+        .map(parentID => laneByNode.get(parentID))
+        .filter((lane): lane is number => lane !== undefined)
+      if (!parentLanes.length) return undefined
+      return parentLanes.reduce((sum, lane) => sum + lane, 0) / parentLanes.length
+    }
+    const nearestFreeLane = (preferred: number) => {
+      const center = Math.round(preferred)
+      if (!used.has(center)) return center
+      for (let offset = 1; offset <= layer.length + used.size; offset++) {
+        if (!used.has(center + offset)) return center + offset
+        if (!used.has(center - offset)) return center - offset
+      }
+      return center + used.size + 1
+    }
+
+    if (layerIndex === 0) {
+      layer.forEach((node, index) => {
+        const lane = index
+        laneByNode.set(node.id, lane)
+        used.add(lane)
+      })
+      return
+    }
+
+    // Reserve each upstream node's lane for its first child. This keeps the
+    // main continuation vertical before secondary branches occupy side lanes.
+    const primaryChildren = new Set<string>()
+    const claimedParents = new Set<string>()
+    layer.forEach(node => {
+      for (const parentID of incoming.get(node.id) || []) {
+        if (claimedParents.has(parentID) || laneByNode.get(parentID) === undefined) continue
+        claimedParents.add(parentID)
+        primaryChildren.add(node.id)
+      }
+    })
+    const place = (node: GraphLayerNode) => {
+      const preferred = preferredLane(node.id)
+      const fallback = used.size ? Math.max(...used) + 1 : 0
+      const lane = nearestFreeLane(preferred ?? fallback)
+      laneByNode.set(node.id, lane)
+      used.add(lane)
+    }
+    layer.filter(node => primaryChildren.has(node.id)).forEach(place)
+    layer.filter(node => !primaryChildren.has(node.id)).forEach(place)
+  })
+
+  const maxWidth = Math.max(GRAPH_ENTRY_NODE_WIDTH, ...Array.from(nodeByID.values(), node => node.width))
+  const columnStep = maxWidth + siblingGap
+  const rawPositions: Record<string, GraphPosition> = {}
+  layers.forEach((layer, layerIndex) => {
+    layer.forEach(node => {
+      const lane = laneByNode.get(node.id) || 0
+      rawPositions[node.id] = {
+        x: lane * columnStep - node.width / 2,
+        y: originY + layerIndex * layerGap,
+      }
+    })
+  })
+  const nodes = Array.from(nodeByID.values())
+  const minX = Math.min(...nodes.map(node => rawPositions[node.id].x))
+  const maxX = Math.max(...nodes.map(node => rawPositions[node.id].x + node.width))
+  const shiftX = centerX - (minX + maxX) / 2
+  return Object.fromEntries(nodes.map(node => [
+    node.id,
+    snapGraphPosition({ x: rawPositions[node.id].x + shiftX, y: rawPositions[node.id].y }),
+  ]))
 }
 
 export function graphServerNodeWidth(_entryCount: number) {

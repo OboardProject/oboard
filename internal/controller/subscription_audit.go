@@ -19,10 +19,10 @@ import (
 )
 
 type auditSettingsState struct {
-	Enabled           bool
-	Subscription      bool
-	Connection        bool
-	Action            model.AuditAction
+	Enabled      bool
+	Subscription bool
+	Connection   bool
+	Action       model.AuditAction
 }
 
 func (s *Server) auditSettingsState(ctx context.Context) auditSettingsState {
@@ -152,7 +152,11 @@ func (s *Server) recordRejectedSubscriptionPull(r *http.Request, userID int64, f
 	event.Outcome = "rejected_invalid_request"
 	event.Reason = boundedSubscriptionAuditReason(reason)
 	token := strings.TrimPrefix(r.URL.Path, "/api/v1/subscriptions/")
-	if s.store.AddRejectedSubscriptionPullAudit(r.Context(), token, event) == nil {
+	add := s.store.AddRejectedSubscriptionPullAudit
+	if _, custom := isSubscriptionCustomCredential(r); custom {
+		add = s.store.AddRejectedCustomSubscriptionPullAudit
+	}
+	if add(r.Context(), token, event) == nil {
 		s.publishRealtime("audit", "subscriptions")
 		s.maybeNotifySubscriptionAbnormal(r.Context(), userID)
 	}

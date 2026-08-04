@@ -7,7 +7,7 @@ import {
   normalizeTheme,
   toggleThemeWithTransition,
 } from './theme'
-import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, MarkerType, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getStraightPath, getViewportForBounds } from 'reactflow'
+import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, Controls, Edge, EdgeChange, Handle, MarkerType, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getSmoothStepPath, getViewportForBounds } from 'reactflow'
 import type { EdgeProps, ReactFlowInstance } from 'reactflow'
 import 'reactflow/dist/style.css'
 import type {
@@ -34,9 +34,10 @@ import {
   defaultEntryGraphPosition,
   defaultImportedGraphPosition,
   defaultServerGraphPosition,
-	graphPathHandleLeft,
+  graphPathHandleLeft,
   graphServerNodeWidth,
-  layoutGraphLayer,
+  layoutGraphLanes,
+  minimizeGraphLayerCrossings,
   loadGraphDirectExitInstances,
   loadGraphPositions,
   loadGraphToolboxPosition,
@@ -167,11 +168,13 @@ type InboundUser = { id: number; inbound_id: number; user_id: number; enabled: b
 type SSHAccess = { inbound_id: number; name: string; address: string; port: number; username: string }
 type AccessSubjectType = 'user' | 'group'
 type AccessScopeType = 'global' | 'server' | 'inbound'
-type UserGroup = { id: number; name: string; description: string; role: Role; system_key?: string; enabled: boolean; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number }
+type SubscriptionCustomPathPolicy = 'inherit' | 'allow' | 'deny'
+type SubscriptionCustomPathMode = 'disabled' | 'selective' | 'enabled'
+type UserGroup = { id: number; name: string; description: string; role: Role; system_key?: string; enabled: boolean; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; subscription_custom_path_policy?: SubscriptionCustomPathPolicy }
 type UserGroupMember = { id: number; group_id: number; user_id: number; enabled: boolean }
 type InboundAccessGrant = { id: number; subject_type: AccessSubjectType; subject_id: number; scope_type: AccessScopeType; server_id?: number; inbound_id?: number; enabled: boolean }
 type Outbound = { id: number; server_id: number; next_server_id?: number; name: string; protocol: Protocol; target_address: string; target_port: number; config_json: string; enabled: boolean }
-type User = { id: number; username: string; nickname: string; role: Role; status: string; protected?: boolean; proxy_uuid: string; proxy_password: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_used_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; traffic_period_key?: string; traffic_period_end?: string; traffic_quota_state?: string; subscription_token: string; subscription_burn_after_read: boolean; subscription_burned_at?: string; subscription_age_enabled: boolean; subscription_age_public_key?: string; subscription_age_policy?: 'optional' | 'required'; subscription_suspended?: boolean; subscription_suspended_at?: string; subscription_suspend_reason?: string; totp_enabled?: boolean; passkey_count?: number }
+type User = { id: number; username: string; nickname: string; role: Role; status: string; protected?: boolean; proxy_uuid: string; proxy_password: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_used_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; traffic_period_key?: string; traffic_period_end?: string; traffic_quota_state?: string; subscription_token: string; subscription_burn_after_read: boolean; subscription_burned_at?: string; subscription_age_enabled: boolean; subscription_age_public_key?: string; subscription_age_policy?: 'optional' | 'required'; subscription_suspended?: boolean; subscription_suspended_at?: string; subscription_suspend_reason?: string; subscription_custom_path?: string; subscription_custom_path_policy?: SubscriptionCustomPathPolicy; subscription_custom_path_enabled?: boolean; subscription_custom_path_source?: string; totp_enabled?: boolean; passkey_count?: number }
 type PasskeyCredential = { id: number; name: string; created_at: string; last_used_at?: string }
 type AuthenticationStatus = { totp_enabled: boolean; recovery_codes_remaining: number; passkeys: PasskeyCredential[]; passkey_supported: boolean }
 type DNSTransport = 'udp' | 'tcp' | 'dot' | 'doh' | 'doq'
@@ -2316,7 +2319,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'notifications') return <Notifications data={data} client={client} load={load} notify={notify} sessionUser={sessionUser} />
   if (tab === 'subscriptions') return sessionUser?.role === 'admin'
     ? <Subscriptions data={data} client={client} load={load} notify={notify} />
-    : <MySubscriptions data={data} notify={notify} />
+    : <MySubscriptions data={data} client={client} load={load} notify={notify} />
   if (tab === 'tasks') return <Tasks data={data} client={client} loading={loading} realtimeStatus={realtimeStatus} />
   if (tab === 'audit') return <AuditConsole data={data} client={client} loading={loading} notify={notify} />
   if (tab === 'automation') return <AutomationWorkspace data={data} client={client} notify={notify} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
@@ -7188,6 +7191,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const selectedEntries = selected ? entries.filter(x => x.server_id === selected.id) : []
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(() => window.innerWidth <= 820)
+  const [entryServerQuery, setEntryServerQuery] = useState('')
+  const [entryServerRegion, setEntryServerRegion] = useState('all')
   const [toolboxPosition, setToolboxPosition] = useState<GraphPosition>(() => loadGraphToolboxPosition())
   const [toolboxDragging, setToolboxDragging] = useState(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
@@ -7208,6 +7213,14 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const canvasDirectExitSequence = useRef(0)
 	const canvasWARPSequence = useRef(0)
 	const builtFlow = useMemo(() => editableProxyFlow(data, positions, selected?.id || 0, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances), [data.servers, data.inbounds, data.external_outbounds, data.warp_profiles, data.proxy_paths, data.proxy_path_steps, data.port_forwards, data.tunnels, positions, selected?.id, canvasImportedIDs.join(','), canvasServerInstances.map(item => `${item.instance_id}:${item.server_id}`).join(','), canvasDirectExitInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasWARPInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(',')])
+  const graphTopologyFingerprint = builtFlow.edges
+    .map(edge => `${edge.id}:${edge.source}:${edge.sourceHandle || ''}>${edge.target}:${edge.targetHandle || ''}`)
+    .sort()
+    .join('|')
+  const graphTopologyFingerprintRef = useRef(graphTopologyFingerprint)
+  const autoArrangeGraphRef = useRef<() => void>(() => undefined)
+  const connectionArrangeTimer = useRef<number | null>(null)
+  graphTopologyFingerprintRef.current = graphTopologyFingerprint
   const [nodes, setNodes] = useState<Node[]>(builtFlow.nodes)
   const [edges, setEdges] = useState<Edge[]>(builtFlow.edges)
   const [serverDraft, setServerDraft] = useState<ReturnType<typeof defaultServerDraft> | null>(null)
@@ -7314,6 +7327,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   useEffect(() => () => {
     if (initialSafeFitFrame.current !== null) window.cancelAnimationFrame(initialSafeFitFrame.current)
     if (serverSafeFitTimer.current !== null) window.clearTimeout(serverSafeFitTimer.current)
+    if (connectionArrangeTimer.current !== null) window.clearTimeout(connectionArrangeTimer.current)
   }, [])
   useEffect(() => {
     if (!flowInstance || !selected?.id || pendingServerSafeFit.current !== selected.id) return
@@ -7398,6 +7412,19 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     setPositions(next)
     saveGraphPositions(next)
     window.setTimeout(() => fitGraphToSafeArea(280), 40)
+  }
+  autoArrangeGraphRef.current = autoArrangeGraph
+  const normalizeConnectedGraph = (previousFingerprint: string, attempt = 0) => {
+    if (graphTopologyFingerprintRef.current !== previousFingerprint) {
+      autoArrangeGraphRef.current()
+      connectionArrangeTimer.current = null
+      return
+    }
+    if (attempt >= 24) {
+      connectionArrangeTimer.current = null
+      return
+    }
+    connectionArrangeTimer.current = window.setTimeout(() => normalizeConnectedGraph(previousFingerprint, attempt + 1), 40)
   }
   const selectEntryServer = (value: string | number) => {
     const nextServerID = Number(value)
@@ -7899,9 +7926,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   // React Flow does not await onConnect, so a rejected request would otherwise
   // surface only as an unhandled rejection in the console.
   const onConnect = (conn: Connection) => {
-    void connect(conn).catch(async (error: any) => {
-      await dialogs.alert({ title: '连接失败', message: localizeErrorMessage(error?.message || error) })
-    })
+    if (connectionArrangeTimer.current !== null) window.clearTimeout(connectionArrangeTimer.current)
+    const previousFingerprint = graphTopologyFingerprintRef.current
+    void connect(conn)
+      .then(() => normalizeConnectedGraph(previousFingerprint))
+      .catch(async (error: any) => {
+        await dialogs.alert({ title: '连接失败', message: localizeErrorMessage(error?.message || error) })
+      })
   }
   const addServer = (position?: GraphPosition) => {
     serverDraftPosition.current = position || nextServerGraphPosition(data)
@@ -8340,29 +8371,66 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     setActiveGraphEntity(null)
     if (entity) await deleteGraphEntity(entity)
   }
-  // Map servers for CustomSelect
-  const selectOptions = servers.map(s => {
-    const isServerOnline = s.status.toLowerCase() === 'online';
-    const entryCount = entries.filter(x => x.server_id === s.id).length;
-    return {
-      value: String(s.id),
-      label: (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
-          <span style={{
-            width: '8px',
-            height: '8px',
-            borderRadius: '50%',
-            backgroundColor: isServerOnline ? 'var(--color-success)' : 'var(--color-danger)',
-            display: 'inline-block',
-            boxShadow: isServerOnline ? '0 0 6px var(--color-success)' : '0 0 6px var(--color-danger)',
-            flexShrink: 0
-          }} />
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name || `server-${s.id}`}</span>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: 'auto', flexShrink: 0 }}>({entryCount} 入口)</span>
-        </div>
-      )
-    };
-  });
+  const entryServerRegions = useMemo(() => {
+    const counts = new Map<string, number>()
+    servers.forEach(server => {
+      const code = serverRegionCode(server)
+      counts.set(code, (counts.get(code) || 0) + 1)
+    })
+    return Array.from(counts, ([code, count]) => ({ code, count }))
+      .sort((a, b) => {
+        if (!a.code) return 1
+        if (!b.code) return -1
+        return regionLabel(a.code).localeCompare(regionLabel(b.code), 'zh-CN')
+      })
+  }, [servers])
+  const normalizedEntryServerQuery = entryServerQuery.trim().toLocaleLowerCase('zh-CN')
+  const filteredEntryServers = servers.filter(server => {
+    const code = serverRegionCode(server)
+    if (entryServerRegion !== 'all' && code !== entryServerRegion) return false
+    if (!normalizedEntryServerQuery) return true
+    return [server.name, `server-${server.id}`, code, regionLabel(code)]
+      .some(value => String(value || '').toLocaleLowerCase('zh-CN').includes(normalizedEntryServerQuery))
+  })
+  const serverSelectLabel = (server: Server) => {
+    const isServerOnline = server.status.toLowerCase() === 'online'
+    const entryCount = entries.filter(x => x.server_id === server.id).length
+    return <div className="entry-server-option-label">
+      <span className={`entry-server-status ${isServerOnline ? 'online' : 'offline'}`} aria-label={isServerOnline ? '在线' : '离线'} />
+      <RegionFlag code={serverRegionCode(server)} size={20} />
+      <span className="entry-server-name">{server.name || `server-${server.id}`}</span>
+      <span className="entry-server-count">({entryCount} 入口)</span>
+    </div>
+  }
+  const selectOptions = filteredEntryServers.map(server => ({ value: String(server.id), label: serverSelectLabel(server) }))
+  const selectedServerLabel = selected ? serverSelectLabel(selected) : undefined
+  const entryServerMenuHeader = <div className="entry-server-menu-tools">
+    <label className="entry-server-search">
+      <Search size={15} aria-hidden="true" />
+      <input
+        autoFocus
+        type="search"
+        value={entryServerQuery}
+        onChange={event => setEntryServerQuery(event.target.value)}
+        placeholder="搜索服务器或地区"
+        aria-label="搜索入口服务器"
+      />
+    </label>
+    <div className="entry-server-region-filters" role="group" aria-label="按地区筛选入口服务器">
+      <button type="button" className={entryServerRegion === 'all' ? 'selected' : ''} aria-pressed={entryServerRegion === 'all'} onClick={() => setEntryServerRegion('all')}>全部</button>
+      {entryServerRegions.map(({ code, count }) => <button
+        key={code || 'pending'}
+        type="button"
+        className={entryServerRegion === code ? 'selected' : ''}
+        aria-pressed={entryServerRegion === code}
+        onClick={() => setEntryServerRegion(code)}
+        title={`${regionLabel(code)}，${count} 台服务器`}
+      >
+        <RegionFlag code={code} size={16} />
+        <span>{code || '待检测'}</span>
+      </button>)}
+    </div>
+  </div>
 
   return <div className="proxy-overview">
     <div className="proxy-editor">
@@ -8390,7 +8458,20 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         {topbarTarget && createPortal(
           <div className="proxy-path-entry-picker">
             <span className="proxy-path-entry-label">入口服务器</span>
-            <CustomSelect className="graph-entry-select" value={String(selected?.id || 0)} onChange={selectEntryServer} options={selectOptions} ariaLabel="选择当前入口服务器" />
+            <CustomSelect
+              className="graph-entry-select"
+              value={String(selected?.id || 0)}
+              onChange={value => {
+                selectEntryServer(value)
+                setEntryServerQuery('')
+                setEntryServerRegion('all')
+              }}
+              options={selectOptions}
+              selectedLabel={selectedServerLabel}
+              menuHeader={entryServerMenuHeader}
+              emptyMessage="没有匹配的入口服务器"
+              ariaLabel="选择当前入口服务器"
+            />
           </div>,
           topbarTarget,
         )}
@@ -8494,12 +8575,14 @@ function GraphSourceSelectionDialog({ request, onCancel, onSubmit }: { request: 
 	const [selected, setSelected] = useState<string[]>([])
 	const toggle = (key: string) => setSelected(current => current.includes(key) ? current.filter(item => item !== key) : [...current, key])
 	return <MotionDialogPanel onCancel={onCancel} className="graph-source-dialog" aria-labelledby="graph-source-dialog-title">
-	  <header className="dialog-header"><div><h2 id="graph-source-dialog-title">选择来源</h2><p className="muted">{request.title}</p></div><button type="button" className="ghost icon-button" onClick={onCancel} aria-label="关闭"><X size={16} /></button></header>
-	  <div className="graph-source-options">
-	    {request.options.map(option => <label key={option.key} className={selected.includes(option.key) ? 'is-selected' : ''}>
-	      <input type="checkbox" checked={selected.includes(option.key)} onChange={() => toggle(option.key)} />
-	      <span><strong>{option.label}</strong><small>{option.detail}</small></span>
-	    </label>)}
+	  <header className="dialog-head"><div><h2 id="graph-source-dialog-title">选择来源</h2><p className="muted">{request.title}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><X size={16} /></button></header>
+	  <div className="dialog-body">
+	    <div className="graph-source-options">
+	      {request.options.map(option => <label key={option.key} className={selected.includes(option.key) ? 'is-selected' : ''}>
+	        <input type="checkbox" checked={selected.includes(option.key)} onChange={() => toggle(option.key)} />
+	        <span><strong>{option.label}</strong><small>{option.detail}</small></span>
+	      </label>)}
+	    </div>
 	  </div>
 	  <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" disabled={!selected.length} onClick={() => onSubmit(request.options.filter(option => selected.includes(option.key)).map(option => option.source))}>继续</button></footer>
 	</MotionDialogPanel>
@@ -9838,38 +9921,24 @@ function ProxyGraphEdge({
   id,
   sourceX,
   sourceY,
+  sourcePosition,
   targetX,
   targetY,
+  targetPosition,
   markerEnd,
   style,
-  data,
-  selected,
 }: EdgeProps<GraphTransportEdgeData>) {
-  const [path, labelX, labelY] = getStraightPath({
+  const [path] = getSmoothStepPath({
     sourceX,
     sourceY,
+    sourcePosition,
     targetX,
     targetY,
+    targetPosition,
+    borderRadius: 8,
+    offset: 24,
   })
-  const kind = data?.kind || 'singbox'
-  return <>
-    <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={22} />
-    <EdgeLabelRenderer>
-      <div
-        className={`graph-edge-label graph-edge-label-${kind}${data?.unhealthy ? ' is-unhealthy' : ''}${selected ? ' is-selected' : ''}`}
-        style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
-      >
-        <span className="graph-edge-label-icon">
-          {kind === 'direct' ? <LogOut size={12} /> : kind === 'port_forward' ? <ArrowLeftRight size={12} /> : kind === 'wireguard' ? <Shield size={12} /> : kind === 'ssh' ? <Lock size={12} /> : <Workflow size={12} />}
-        </span>
-        <span className="graph-edge-label-copy">
-          <strong>{data?.title || '链式代理'}</strong>
-          {data?.detail && <small>{data.detail}</small>}
-        </span>
-        <ChevronDown className="graph-edge-direction" size={12} />
-      </div>
-    </EdgeLabelRenderer>
-  </>
+  return <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={22} />
 }
 
 const proxyGraphEdgeTypes = { proxyTransport: ProxyGraphEdge }
@@ -10176,7 +10245,8 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       target: `server-${x.server_id}`,
 	      targetHandle: 'target-top',
       label: '所属主机',
-      type: 'straight',
+      type: 'smoothstep',
+      pathOptions: { borderRadius: 8, offset: 18 },
       animated: false,
       className: 'belongs-edge auxiliary-edge',
       style: { stroke: 'rgba(71, 85, 105, 0.42)', strokeWidth: 1.8, strokeDasharray: '5 5', pointerEvents: 'none' },
@@ -10735,18 +10805,25 @@ function autoLayoutProxyGraphPositions(
     return (data.external_outbounds || []).find((outbound: ExternalOutbound) => outbound.id === importedID)?.name || nodeID
   }
 
-  let layerY = ORIGIN_Y
-  Array.from(layers.entries()).sort((a, b) => a[0] - b[0]).forEach(([, nodeIDs]) => {
-    const ordered = nodeIDs.slice().sort((a, b) => nodeLabel(a).localeCompare(nodeLabel(b), 'zh') || a.localeCompare(b))
-    const widths = new Map(ordered.map(nodeID => [nodeID, nodeWidth(nodeID)]))
-    const layerLayout = layoutGraphLayer(
-      ordered.map(nodeID => ({ id: nodeID, width: widths.get(nodeID) || GRAPH_ENTRY_NODE_WIDTH, terminal: !(layoutEdges.get(nodeID)?.size) })),
-      CENTER_X,
-      layerY,
-    )
-    ordered.forEach(nodeID => {
-      const width = widths.get(nodeID) || GRAPH_ENTRY_NODE_WIDTH
-      const nodePosition = layerLayout.positions[nodeID]
+  const layerEntries = Array.from(layers.entries()).sort((a, b) => a[0] - b[0])
+  const compareNodes = (a: string, b: string) => nodeLabel(a).localeCompare(nodeLabel(b), 'zh') || a.localeCompare(b)
+  const orderedLayers = minimizeGraphLayerCrossings(
+    layerEntries.map(([, nodeIDs]) => nodeIDs),
+    Array.from(layoutEdges.entries()).flatMap(([source, targets]) => Array.from(targets, target => ({ source, target }))),
+    compareNodes,
+  )
+
+  const graphLayoutEdges = Array.from(layoutEdges.entries())
+    .flatMap(([source, targets]) => Array.from(targets, target => ({ source, target })))
+  const orderedLayerNodes = orderedLayers.map(ordered => ordered.map(nodeID => ({
+    id: nodeID,
+    width: nodeWidth(nodeID),
+    terminal: !(layoutEdges.get(nodeID)?.size),
+  })))
+  const lanePositions = layoutGraphLanes(orderedLayerNodes, graphLayoutEdges, CENTER_X, ORIGIN_Y, LAYER_GAP)
+  orderedLayerNodes.forEach(layer => {
+    layer.forEach(({ id: nodeID, width }) => {
+      const nodePosition = lanePositions[nodeID]
       positions[nodeID] = nodePosition
       const serverID = graphNodeServerId(nodeID, data, canvasServerInstances)
       if (!serverID) return
@@ -10760,7 +10837,6 @@ function autoLayoutProxyGraphPositions(
         positions[`entry-${entry.id}`] = defaultEntryGraphPosition(nodePosition, entryIndex, Math.max(1, serverEntries.length), width)
       })
     })
-    layerY += LAYER_GAP + layerLayout.extraHeight
   })
 
   return positions
@@ -12226,10 +12302,23 @@ function subscriptionURLForUser(user: User, format: SubscriptionFormat, encrypte
   return subscriptionURLForToken(user.subscription_token, format, encrypted)
 }
 
-function MySubscriptions({ data, notify }: { data: any; notify?: (message: string, tone?: ToastKind) => void }) {
+function subscriptionURLForCustomPath(alias: string, format: SubscriptionFormat, encrypted = false) {
+  if (!alias) return ''
+  const base = `${appControllerURL()}/s/${alias}`
+  const params = new URLSearchParams()
+  if (format !== 'sing-box') params.set('format', format)
+  if (encrypted) params.set('age', '1')
+  const query = params.toString()
+  return query ? `${base}?${query}` : base
+}
+
+function MySubscriptions({ data, client, load, notify }: { data: any; client: ReturnType<typeof api>; load: PageLoad; notify?: (message: string, tone?: ToastKind) => void }) {
+  const dialogs = useDialogs()
   const user: User | undefined = data.account_user || data.current_user
   const [iconsReady, setIconsReady] = useState(false)
   const [format, setFormat] = useState<SubscriptionFormat>(defaultSubscriptionFormat)
+  const [customPathDraft, setCustomPathDraft] = useState(user?.subscription_custom_path || '')
+  const [customPathBusy, setCustomPathBusy] = useState(false)
   const ageRequired = user?.subscription_age_policy === 'required'
   const ageCapable = isAgeSubscriptionFormat(format)
   const ageReady = Boolean(user?.subscription_age_public_key) && (ageRequired || Boolean(user?.subscription_age_enabled))
@@ -12240,6 +12329,8 @@ function MySubscriptions({ data, notify }: { data: any; notify?: (message: strin
     preloadSubscriptionClientIcons().then(() => { if (active) setIconsReady(true) })
     return () => { active = false }
   }, [])
+
+  useEffect(() => { setCustomPathDraft(user?.subscription_custom_path || '') }, [user?.subscription_custom_path])
 
   const copySubscription = async (encrypted: boolean) => {
     if (user?.subscription_suspended) {
@@ -12257,6 +12348,50 @@ function MySubscriptions({ data, notify }: { data: any; notify?: (message: strin
     }
     const ok = await copyText(subscriptionURLForUser(user, format, useAge))
     notify?.(ok ? `${useAge ? 'Age 加密' : '普通'}订阅链接已复制` : '复制失败，请重试', ok ? 'success' : 'error')
+  }
+
+  const copyCustomSubscription = async (encrypted: boolean) => {
+    if (!user?.subscription_custom_path_enabled || !user.subscription_custom_path || user.subscription_suspended) return
+    const useAge = ageCapable && (encrypted || ageRequired)
+    if (useAge && !ageReady) {
+      notify?.('请先在我的账户中配置 Age 公钥', 'warning')
+      return
+    }
+    const ok = await copyText(subscriptionURLForCustomPath(user.subscription_custom_path, format, useAge))
+    notify?.(ok ? '自定义订阅链接已复制' : '复制失败，请重试', ok ? 'success' : 'error')
+  }
+
+  const saveCustomPath = async () => {
+    const alias = customPathDraft.trim()
+    if (!alias || !user?.subscription_custom_path_enabled) return
+    const confirmed = await dialogs.confirm({ title: '保存自定义订阅路径', message: `将创建公开入口 /s/${alias}。该名称可被猜测，请不要使用账号、邮箱或其他隐私信息。`, confirmText: '保存路径', tone: 'danger' })
+    if (!confirmed) return
+    setCustomPathBusy(true)
+    try {
+      await client.request('/me/subscription-custom-path', { method: 'PUT', body: JSON.stringify({ alias }) })
+      await load()
+      notify?.('自定义订阅路径已保存', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setCustomPathBusy(false)
+    }
+  }
+
+  const deleteCustomPath = async () => {
+    if (!user?.subscription_custom_path) return
+    const confirmed = await dialogs.confirm({ title: '删除自定义订阅路径', message: `删除后 /s/${user.subscription_custom_path} 将立即失效。`, confirmText: '删除路径', tone: 'danger' })
+    if (!confirmed) return
+    setCustomPathBusy(true)
+    try {
+      await client.request('/me/subscription-custom-path', { method: 'DELETE' })
+      await load()
+      notify?.('自定义订阅路径已删除', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setCustomPathBusy(false)
+    }
   }
 
   return <Panel title="订阅" className="subscriptions-panel">
@@ -12286,6 +12421,21 @@ function MySubscriptions({ data, notify }: { data: any; notify?: (message: strin
           {ageCapable && !ageReady && <button type="button" className="ghost" onClick={() => goTab('account')}><SettingsIcon size={15} />配置 Age 公钥</button>}
         </div>
       </section>
+
+      {(user?.subscription_custom_path_enabled || user?.subscription_custom_path) && <section className="sub-section custom-path-section">
+        <div className="sub-section-head">
+          <div><h3><LinkIcon size={16} />自定义路径</h3><p className="muted">{user?.subscription_custom_path ? `/s/${user.subscription_custom_path}` : '尚未设置'}</p></div>
+          <span className={`sub-pill ${user?.subscription_custom_path_enabled ? 'ok' : 'warn'}`}>{user?.subscription_custom_path_enabled ? '已开放' : '已停用'}</span>
+        </div>
+        <div className="custom-path-editor">
+          <span className="custom-path-prefix">/s/</span>
+          <input value={customPathDraft} onChange={event => setCustomPathDraft(event.target.value.toLowerCase())} minLength={3} maxLength={64} placeholder="my-subscription" disabled={!user?.subscription_custom_path_enabled || customPathBusy} />
+          <button type="button" onClick={() => void saveCustomPath()} disabled={!user?.subscription_custom_path_enabled || customPathBusy || !customPathDraft.trim()}><Check size={15} />保存</button>
+          {user?.subscription_custom_path && <button type="button" className="ghost" onClick={() => void copyCustomSubscription(false)} disabled={!user.subscription_custom_path_enabled || customPathBusy || user.subscription_suspended}><Copy size={15} />复制</button>}
+          {user?.subscription_custom_path && ageCapable && <button type="button" className="ghost" onClick={() => void copyCustomSubscription(true)} disabled={!user.subscription_custom_path_enabled || customPathBusy || user.subscription_suspended || !ageReady}><Shield size={15} />Age</button>}
+          {user?.subscription_custom_path && <button type="button" className="ghost icon-button danger-text" onClick={() => void deleteCustomPath()} disabled={customPathBusy} aria-label="删除自定义路径" title="删除自定义路径"><Trash2 size={15} /></button>}
+        </div>
+      </section>}
     </div>}
   </Panel>
 }
@@ -12334,6 +12484,8 @@ function Subscriptions({ data, client, load, notify }: any) {
   const [creatingGroup, setCreatingGroup] = useState(false)
   const [assigning, setAssigning] = useState(false)
   const [namingPath, setNamingPath] = useState<ProxyPath | null>(null)
+  const [customPathMode, setCustomPathMode] = useState<SubscriptionCustomPathMode>((data.settings?.subscription_custom_path_mode || 'disabled') as SubscriptionCustomPathMode)
+  const [customPathBusy, setCustomPathBusy] = useState('')
 
   const users: User[] = data.users || []
   const servers: Server[] = data.servers || []
@@ -12361,6 +12513,8 @@ function Subscriptions({ data, client, load, notify }: any) {
       setActiveProfileID(profiles[0]?.id || 0)
     }
   }, [profiles.length, activeProfileID])
+
+  useEffect(() => { setCustomPathMode((data.settings?.subscription_custom_path_mode || 'disabled') as SubscriptionCustomPathMode) }, [data.settings?.subscription_custom_path_mode])
 
   const entryServers = useMemo(() => {
     const byServer = new Map<number, Inbound[]>()
@@ -12529,6 +12683,80 @@ function Subscriptions({ data, client, load, notify }: any) {
     notify?.(ok ? copiedMessage : '复制失败，请手动复制', ok ? 'success' : 'error')
   }
 
+  const saveCustomPathMode = async (mode: SubscriptionCustomPathMode) => {
+    setCustomPathBusy('global')
+    try {
+      await client.request('/settings', { method: 'PATCH', body: JSON.stringify({ subscription_custom_path_mode: mode }) })
+      setCustomPathMode(mode)
+      await load()
+      notify?.('自定义路径全局策略已更新', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setCustomPathBusy('')
+    }
+  }
+
+  const setCustomPathPolicy = async (subject: 'users' | 'user-groups', id: number, mode: SubscriptionCustomPathPolicy) => {
+    setCustomPathBusy(`${subject}:${id}`)
+    try {
+      await client.request(`/${subject}/${id}/subscription-custom-path-policy`, { method: 'PATCH', body: JSON.stringify({ mode }) })
+      await load()
+      notify?.('自定义路径权限已更新', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setCustomPathBusy('')
+    }
+  }
+
+  const configureUserCustomPath = async (user: User) => {
+    if (!user.subscription_custom_path_enabled) return
+    const value = await dialogs.prompt({ title: `设置 ${user.username} 的自定义路径`, message: '填写 3-64 位小写字母、数字、- 或 _。该路径是可猜测的公开访问凭证。', defaultValue: user.subscription_custom_path || '', placeholder: 'my-subscription' })
+    if (value === null) return
+    const alias = value.trim().toLowerCase()
+    if (!alias) return
+    const confirmed = await dialogs.confirm({ title: '确认保存公开路径', message: `将启用 /s/${alias}，请确认其中不包含账号或其他隐私信息。`, confirmText: '保存路径', tone: 'danger' })
+    if (!confirmed) return
+    setCustomPathBusy(`alias:${user.id}`)
+    try {
+      await client.request(`/users/${user.id}/subscription-custom-path`, { method: 'PUT', body: JSON.stringify({ alias }) })
+      await load()
+      notify?.(`${user.username} 的自定义路径已保存`, 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setCustomPathBusy('')
+    }
+  }
+
+  const deleteUserCustomPath = async (user: User) => {
+    if (!user.subscription_custom_path) return
+    const confirmed = await dialogs.confirm({ title: '删除自定义路径', message: `/s/${user.subscription_custom_path} 将立即失效。`, confirmText: '删除路径', tone: 'danger' })
+    if (!confirmed) return
+    setCustomPathBusy(`alias:${user.id}`)
+    try {
+      await client.request(`/users/${user.id}/subscription-custom-path`, { method: 'DELETE' })
+      await load()
+      notify?.(`${user.username} 的自定义路径已删除`, 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setCustomPathBusy('')
+    }
+  }
+
+  const copyUserCustomPath = async (user: User) => {
+    if (!user.subscription_custom_path || !user.subscription_custom_path_enabled || user.subscription_suspended) return
+    const encrypted = isAgeSubscriptionFormat(subscriptionFormat) && ageRequired
+    if (encrypted && !user.subscription_age_public_key) {
+      notify?.(`${user.username} 尚未配置 Age 公钥`, 'warning')
+      return
+    }
+    const ok = await copyText(subscriptionURLForCustomPath(user.subscription_custom_path, subscriptionFormat, encrypted))
+    notify?.(ok ? `${user.username} 的自定义订阅链接已复制` : '复制失败，请重试', ok ? 'success' : 'error')
+  }
+
   const assignmentSummaryForInbound = (inboundID: number) => {
     const related = assignments.filter(a => a.enabled !== false && a.inbound_id === inboundID)
     if (!related.length) return '未分配'
@@ -12569,6 +12797,27 @@ function Subscriptions({ data, client, load, notify }: any) {
             </div>
           </section>
 
+          <section className="sub-section custom-path-admin-section">
+            <div className="sub-section-head">
+              <div><h3><LinkIcon size={16} />自定义订阅路径</h3><p className="muted">当前入口前缀：/s/</p></div>
+              <Select variant="segmented" value={customPathMode} onChange={event => void saveCustomPathMode(event.target.value as SubscriptionCustomPathMode)} disabled={customPathBusy === 'global'} aria-label="自定义路径全局策略">
+                <option value="disabled">强制关闭</option>
+                <option value="selective">按权限开放</option>
+                <option value="enabled">强制开放</option>
+              </Select>
+            </div>
+            <div className="custom-path-group-policies">
+              {userGroups.map(group => <div className="custom-path-group-policy" key={group.id}>
+                <div><strong>{group.name}</strong><small>{group.enabled === false ? '已停用' : '用户组策略'}</small></div>
+                <Select value={group.subscription_custom_path_policy || 'inherit'} onChange={event => void setCustomPathPolicy('user-groups', group.id, event.target.value as SubscriptionCustomPathPolicy)} disabled={customPathBusy === `user-groups:${group.id}`} aria-label={`${group.name} 自定义路径策略`}>
+                  <option value="inherit">未设置</option>
+                  <option value="allow">允许</option>
+                  <option value="deny">禁止</option>
+                </Select>
+              </div>)}
+            </div>
+          </section>
+
           <section className="sub-section">
             <div className="sub-section-head">
               <div>
@@ -12604,6 +12853,9 @@ function Subscriptions({ data, client, load, notify }: any) {
                       : user.subscription_burned_at
                         ? <span className="sub-pill danger">已焚毁</span>
                         : <span className="sub-pill warn">已吊销</span>}
+                    {user.subscription_custom_path
+                      ? <span className={`sub-pill ${user.subscription_custom_path_enabled ? 'ok' : 'warn'}`}>/s/{user.subscription_custom_path}</span>
+                      : <span className="sub-pill warn">无自定义路径</span>}
                   </div>
                   <div className="sub-security-stack">
                     <label className="subscription-burn-toggle" title="开启后，链接首次成功获取订阅内容便立即失效">
@@ -12618,13 +12870,21 @@ function Subscriptions({ data, client, load, notify }: any) {
                     <button type="button" className="age-key-status" onClick={() => void configureUserAge(user)}>
                       <Shield size={13} />{user.subscription_age_public_key ? ageRequired ? 'Age · 强制' : user.subscription_age_enabled ? 'Age · 已开启' : 'Age · 已保存' : '配置 Age 公钥'}
                     </button>
+                    <Select value={user.subscription_custom_path_policy || 'inherit'} onChange={event => void setCustomPathPolicy('users', user.id, event.target.value as SubscriptionCustomPathPolicy)} disabled={customPathBusy === `users:${user.id}`} aria-label={`${user.username} 自定义路径策略`}>
+                      <option value="inherit">路径 · 跟随用户组</option>
+                      <option value="allow">路径 · 允许</option>
+                      <option value="deny">路径 · 禁止</option>
+                    </Select>
                   </div>
                   <div className="sub-user-actions">
                     {(!isAgeSubscriptionFormat(subscriptionFormat) || !ageRequired) && <button type="button" className="ghost" onClick={() => void copyUserSub(user, false)} disabled={!user.subscription_token || user.subscription_suspended}>普通链接</button>}
                     {isAgeSubscriptionFormat(subscriptionFormat) && <button type="button" className="ghost" onClick={() => void copyUserSub(user, true)} disabled={!user.subscription_token || user.subscription_suspended || !user.subscription_age_public_key || (!ageRequired && !user.subscription_age_enabled)}>Age 链接</button>}
                     <QuickOneTimeSubscriptionButton user={user} client={client} format={subscriptionFormat} encrypted={isAgeSubscriptionFormat(subscriptionFormat) && ageRequired} notify={notify} />
+                    <button type="button" className="ghost" onClick={() => void configureUserCustomPath(user)} disabled={!user.subscription_custom_path_enabled || customPathBusy === `alias:${user.id}`}><Edit3 size={14} />{user.subscription_custom_path ? '修改路径' : '设置路径'}</button>
+                    {user.subscription_custom_path && <button type="button" className="ghost icon-button" onClick={() => void copyUserCustomPath(user)} disabled={!user.subscription_custom_path_enabled || user.subscription_suspended} aria-label={`复制 ${user.username} 自定义订阅`} title="复制自定义订阅"><Copy size={14} /></button>}
+                    {user.subscription_custom_path && <button type="button" className="ghost icon-button danger-text" onClick={() => void deleteUserCustomPath(user)} disabled={customPathBusy === `alias:${user.id}`} aria-label={`删除 ${user.username} 自定义路径`} title="删除自定义路径"><Trash2 size={14} /></button>}
                     <button type="button" className="ghost" onClick={() => void rotateSub(client, user, load, dialogs, notify)}>{user.subscription_token ? '轮换' : '重新签发'}</button>
-                    <button type="button" className="ghost danger-text" onClick={() => void revokeSub(client, user, load, dialogs, notify)} disabled={!user.subscription_token}>吊销</button>
+                    <button type="button" className="ghost danger-text" onClick={() => void revokeSub(client, user, load, dialogs, notify)} disabled={!user.subscription_token && !user.subscription_custom_path}>吊销</button>
                   </div>
                 </div>
               )) : <div className="sub-empty">暂无用户</div>}
@@ -14574,7 +14834,7 @@ function auditTargetTypeLabel(target: string) {
     mtu: 'MTU', 'enroll-token': 'Agent 命令', inbound: '入口节点', 'inbound-user': '入口用户',
     'user-group': '用户组', 'user-group-member': '用户组成员', 'inbound-access': '入口权限',
     routing_rule: '分流规则', notification_channel: '通知渠道', port_forward: '端口转发',
-    tunnel: '隧道', deployment: '配置下发', 'subscription-token': '订阅令牌', 'subscription-age': 'Age 订阅',
+    tunnel: '隧道', deployment: '配置下发', 'subscription-token': '订阅令牌', 'subscription-age': 'Age 订阅', 'subscription-custom-path': '自定义订阅路径', 'subscription-custom-path-policy': '自定义路径权限',
     totp: '双重认证', 'totp-recovery-codes': '恢复码', passkey: '通行密钥',
     'subscription-profile': '订阅配置', 'subscription-assignment': '订阅分配',
   }
@@ -14736,7 +14996,7 @@ async function rotateSub(client: ReturnType<typeof api>, u: Pick<User, 'id'> & P
     confirmText: '轮换令牌',
     message: <div>
       <p>用户 <strong>{label}</strong> 的旧订阅链接会立即失效。</p>
-      <p className="muted">确认后会生成新令牌，可在用户列表中复制新链接。</p>
+      <p className="muted">确认后会生成新令牌；已设置的自定义路径保持不变。</p>
     </div>,
   })
   if (!confirmed) return
@@ -14748,18 +15008,18 @@ async function rotateSub(client: ReturnType<typeof api>, u: Pick<User, 'id'> & P
 async function revokeSub(client: ReturnType<typeof api>, u: Pick<User, 'id'> & Partial<Pick<User, 'username'>>, load: () => Promise<void>, dialogs: DialogApi, notify?: (message: string, tone?: ToastKind) => void) {
   const label = resourceLabel(u, '用户 #' + u.id)
   const confirmed = await dialogs.confirm({
-    title: '确认吊销订阅令牌',
+    title: '确认吊销全部订阅入口',
     tone: 'danger',
-    confirmText: '吊销令牌',
+    confirmText: '全部吊销',
     message: <div>
-      <p>即将吊销用户 <strong>{label}</strong> 的订阅令牌。</p>
-      <p className="muted">吊销后现有订阅链接不可继续使用，通常需要重新下发配置清理关联节点。</p>
+      <p>即将吊销用户 <strong>{label}</strong> 的普通、一次性和自定义订阅入口。</p>
+      <p className="muted">所有现有订阅链接会立即失效，不会改变代理凭据或触发节点部署。</p>
     </div>,
   })
   if (!confirmed) return
   await client.request('/users/' + u.id + '/subscription-token/revoke', { method: 'POST', body: '{}' })
   await load()
-  notify?.(`${label} 的订阅令牌已吊销`, 'success')
+  notify?.(`${label} 的全部订阅入口已吊销`, 'success')
 }
 
 createRoot(document.getElementById('root')!).render(
