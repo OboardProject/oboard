@@ -891,9 +891,12 @@ function showToast(setToast: React.Dispatch<React.SetStateAction<ToastState>>, m
   setToast({ id: Date.now(), kind, message: kind === 'error' ? localizeErrorMessage(message) : String(message) })
 }
 
-function TopToast({ toast, onClose }: { toast: ToastState; onClose: () => void }) {
-  if (!toast) return null
-  return <Toast message={toast.message} kind={toast.kind} onClose={onClose} />
+function TopToast({ toast, onClose }: { toast: ToastState; onClose: (id: number) => void }) {
+  return <div className="top-toast-viewport">
+    <AnimatePresence initial={false} mode="wait">
+      {toast && <Toast key={toast.id} message={toast.message} kind={toast.kind} onClose={() => onClose(toast.id)} />}
+    </AnimatePresence>
+  </div>
 }
 
 function IconButton({ label, onClick, children, className = '', busy = false }: { label: string; onClick: () => void; children: React.ReactNode; className?: string; busy?: boolean }) {
@@ -1879,7 +1882,7 @@ function App() {
         </AnimatePresence>
 
         <div className={`app${!isMobile && isSidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
-          <TopToast toast={toast} onClose={() => setToast(null)} />
+          <TopToast toast={toast} onClose={id => setToast(current => current?.id === id ? null : current)} />
           <DialogHost dialog={dialog} onClose={() => setDialog(null)} />
           {isMobile && (
             <div

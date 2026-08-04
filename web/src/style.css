@@ -3909,13 +3909,13 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 
 .toast {
-  width: min(560px, 100%);
+  width: fit-content;
+  max-width: min(680px, 100%);
   min-width: 0;
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 32px;
-  align-items: start;
+  display: inline-flex;
+  align-items: center;
   gap: 10px;
-  padding: 13px 12px 13px 14px;
+  padding: 11px 12px 11px 14px;
   color: var(--text-strong);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
@@ -3923,7 +3923,8 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
   backdrop-filter: blur(16px);
   pointer-events: auto;
-  animation: top-toast-in 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: top center;
+  will-change: transform, opacity;
 }
 
 .toast-error {
@@ -3967,13 +3968,14 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .dark .toast-warning { color: #fcd34d; }
 
 .toast-icon {
+  flex: 0 0 auto;
   width: 20px;
   height: 20px;
-  margin-top: 1px;
   stroke-width: 2.2;
 }
 
 .toast-message {
+  flex: 0 1 auto;
   min-width: 0;
   color: currentColor;
   overflow-wrap: anywhere;
@@ -3986,11 +3988,12 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 
 .toast .toast-close {
+  flex: 0 0 auto;
   min-width: 32px;
   min-height: 32px;
   width: 32px;
   height: 32px;
-  margin-top: -5px;
+  margin: 0;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -4019,11 +4022,6 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   stroke-width: 2.4;
 }
 
-@keyframes top-toast-in {
-  from { opacity: 0; transform: translateY(-8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
 @media (max-width: 720px) {
   .top-toast-viewport {
     top: max(10px, env(safe-area-inset-top, 0px));
@@ -4031,9 +4029,9 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   }
 
   .toast {
-    grid-template-columns: 20px minmax(0, 1fr) 44px;
+    max-width: 100%;
     gap: 9px;
-    padding: 12px 8px 12px 13px;
+    padding: 8px 8px 8px 13px;
   }
 
   .toast .toast-close {
@@ -4041,7 +4039,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
     min-height: 44px;
     width: 44px;
     height: 44px;
-    margin-top: -11px;
+    margin: 0;
   }
 }
 
