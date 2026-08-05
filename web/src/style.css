@@ -6057,6 +6057,10 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   overflow: hidden;
 }
 .controller-update-heading { flex: 0 0 auto; }
+.controller-update-head > .status-pill {
+  grid-column: 3;
+  justify-self: end;
+}
 .controller-update-warning,
 .controller-update-error,
 .controller-update-pinned {
