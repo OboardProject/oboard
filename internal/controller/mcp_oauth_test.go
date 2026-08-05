@@ -8,15 +8,19 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
@@ -32,6 +36,388 @@ func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error
 	clone.Header = request.Header.Clone()
 	clone.Header.Set("Authorization", "Bearer "+t.token)
 	return t.base.RoundTrip(clone)
+}
+
+func newMCPTestEnvironment(t *testing.T, id string, scopes []string) (*store.Store, *Server, *mcp.ClientSession, *model.APIPrincipal, func()) {
+	t.Helper()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := &model.APIPrincipal{ID: id, Name: "MCP test principal", Type: model.APIPrincipalServiceAccount, Enabled: true, Scopes: scopes, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2}
+	if err := db.CreateAPIPrincipal(context.Background(), principal); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	plain := "obk_mcp-test-token-value"
+	if err := db.CreateAPIToken(context.Background(), &model.APIToken{ID: "tok_" + id, PrincipalID: principal.ID, TokenHash: security.HashAPISecret("test-secret", plain), Prefix: "obk_mcptest", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	httpServer := httptest.NewServer(server.Handler())
+	httpClient := &http.Client{Transport: bearerTransport{token: plain, base: http.DefaultTransport}}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
+	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: httpServer.URL + "/mcp", HTTPClient: httpClient}, nil)
+	if err != nil {
+		httpServer.Close()
+		db.Close()
+		t.Fatal(err)
+	}
+	closeServer := func() {
+		session.Close()
+		httpServer.Close()
+		db.Close()
+	}
+	return db, server, session, principal, closeServer
+}
+
+func TestMCPExposesCompleteToolAndResourceSurface(t *testing.T) {
+	_, _, session, _, closeServer := newMCPTestEnvironment(t, "prn_mcp_surface", []string{
+		"inventory:read", "topology:read", "servers:read", "servers:plan", "proxy_paths:plan",
+		"deployments:validate", "audit:read", "audit:analyze", "servers:onboard",
+	})
+	defer closeServer()
+
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTools := []string{
+		"oboard_list_capabilities", "oboard_query",
+		"oboard_plan_server_onboarding", "oboard_plan_proxy_path", "oboard_plan_deployment", "oboard_plan_incident_response",
+		"oboard_create_changeset", "oboard_validate_changeset", "oboard_apply_changeset", "oboard_get_operation", "oboard_list_changesets",
+	}
+	byName := map[string]*mcp.Tool{}
+	for _, tool := range tools.Tools {
+		byName[tool.Name] = tool
+	}
+	if len(byName) != len(wantTools) {
+		t.Fatalf("tools/list returned %d tools, want %d: %#v", len(byName), len(wantTools), tools.Tools)
+	}
+	for _, name := range wantTools {
+		tool, ok := byName[name]
+		if !ok {
+			t.Fatalf("tools/list is missing %q", name)
+		}
+		if tool.Title == "" || tool.Description == "" {
+			t.Errorf("tool %q needs a title and description", name)
+		}
+		if tool.OutputSchema == nil {
+			t.Errorf("tool %q needs an output schema", name)
+		}
+		schemaJSON, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(schemaJSON, &schema); err != nil {
+			t.Fatal(err)
+		}
+		if schema.Type != "object" {
+			t.Errorf("tool %q input schema is not an object: %s", name, schemaJSON)
+		}
+	}
+	wantPlanProperties := map[string][]string{
+		"oboard_plan_server_onboarding": {"name", "region_code", "ip_stack"},
+		"oboard_plan_proxy_path":        {"entry_server_id", "exit_region", "preferred_relay_regions", "max_hops"},
+		"oboard_plan_deployment":        {"server_ids", "reason"},
+		"oboard_plan_incident_response": {"incident_id", "user_id", "rule_score", "anomaly_score"},
+	}
+	for name, want := range wantPlanProperties {
+		schemaJSON, err := json.Marshal(byName[name].InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema struct {
+			Properties map[string]any `json:"properties"`
+		}
+		if err := json.Unmarshal(schemaJSON, &schema); err != nil {
+			t.Fatal(err)
+		}
+		for _, property := range want {
+			if _, ok := schema.Properties[property]; !ok {
+				t.Errorf("tool %q schema is missing property %q: %s", name, property, schemaJSON)
+			}
+		}
+	}
+
+	resources, err := session.ListResources(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantResources := map[string]string{
+		"oboard://inventory/summary": "Inventory summary",
+		"oboard://topology/current":  "Current topology",
+		"oboard://docs/capabilities": "Capability catalog",
+		"oboard://docs/guide":        "MCP guide",
+	}
+	byURI := map[string]*mcp.Resource{}
+	for _, resource := range resources.Resources {
+		byURI[resource.URI] = resource
+	}
+	if len(byURI) != len(wantResources) {
+		t.Fatalf("resources/list returned %d resources, want %d", len(byURI), len(wantResources))
+	}
+	for uri, name := range wantResources {
+		resource, ok := byURI[uri]
+		if !ok {
+			t.Fatalf("resources/list is missing %q", uri)
+		}
+		if resource.Name != name || resource.Description == "" {
+			t.Errorf("resource %q needs name and description: %#v", uri, resource)
+		}
+	}
+
+	templates, err := session.ListResourceTemplates(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTemplates := map[string]string{
+		"oboard://servers/{id}":         "Server by ID",
+		"oboard://changesets/{id}":      "Changeset by ID",
+		"oboard://audit/incidents/{id}": "Audit incident by ID",
+	}
+	if len(templates.ResourceTemplates) != len(wantTemplates) {
+		t.Fatalf("resources/templates/list returned %d templates, want %d", len(templates.ResourceTemplates), len(wantTemplates))
+	}
+	for _, template := range templates.ResourceTemplates {
+		if want, ok := wantTemplates[template.URITemplate]; !ok || template.Name != want {
+			t.Errorf("unexpected resource template: %#v", template)
+		}
+	}
+
+	guide, err := session.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: "oboard://docs/guide"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(guide.Contents) != 1 || !strings.Contains(guide.Contents[0].Text, `"oboard_create_changeset"`) {
+		t.Fatalf("docs/guide resource is unusable: %#v", guide)
+	}
+
+	query, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_query", Arguments: map[string]any{"capability": "servers.list", "arguments": map[string]any{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query.IsError || query.StructuredContent == nil {
+		t.Fatalf("oboard_query failed: %#v", query.Content)
+	}
+	queryJSON, err := json.Marshal(query.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var queryList []any
+	if err := json.Unmarshal(queryJSON, &queryList); err != nil {
+		t.Fatalf("oboard_query servers.list should return an array, got: %s", queryJSON)
+	}
+}
+
+func TestMCPPlanToChangesetWorkflow(t *testing.T) {
+	db, _, session, principal, closeServer := newMCPTestEnvironment(t, "prn_mcp_workflow", []string{"servers:plan", "servers:onboard"})
+	defer closeServer()
+
+	plan, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_plan_server_onboarding", Arguments: map[string]any{"name": "PH", "region_code": "PH", "ip_stack": "auto"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.IsError || plan.StructuredContent == nil {
+		t.Fatalf("plan tool failed: %#v", plan.Content)
+	}
+	var planOut struct {
+		Valid              bool `json:"valid"`
+		SuggestedChangeset struct {
+			BaseRevisions map[string]any `json:"base_revisions"`
+			Operation     struct {
+				Capability string         `json:"capability"`
+				Input      map[string]any `json:"input"`
+			} `json:"operation"`
+		} `json:"suggested_changeset"`
+	}
+	planJSON, err := json.Marshal(plan.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(planJSON, &planOut); err != nil {
+		t.Fatal(err)
+	}
+	if !planOut.Valid || planOut.SuggestedChangeset.Operation.Capability != "servers.onboard" || planOut.SuggestedChangeset.Operation.Input == nil {
+		t.Fatalf("unexpected plan output: %s", plan.StructuredContent)
+	}
+
+	createArguments := map[string]any{
+		"reason":          "onboard PH from plan",
+		"idempotency_key": "plan-workflow-ph",
+		"base_revisions":  planOut.SuggestedChangeset.BaseRevisions,
+		"operations": []any{map[string]any{
+			"capability":    planOut.SuggestedChangeset.Operation.Capability,
+			"input":         planOut.SuggestedChangeset.Operation.Input,
+			"resource_refs": map[string]any{},
+		}},
+	}
+	created, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_create_changeset", Arguments: createArguments})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.IsError || created.StructuredContent == nil {
+		t.Fatalf("create changeset failed: %#v", created.Content)
+	}
+	var changesetOut struct {
+		ID         string `json:"id"`
+		Status     string `json:"status"`
+		Operations []struct {
+			ID string `json:"id"`
+		} `json:"operations"`
+	}
+	createdJSON, err := json.Marshal(created.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(createdJSON, &changesetOut); err != nil {
+		t.Fatal(err)
+	}
+	if changesetOut.ID == "" || changesetOut.Status != "draft" || len(changesetOut.Operations) != 1 {
+		t.Fatalf("unexpected changeset output: %s", created.StructuredContent)
+	}
+
+	retry, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_create_changeset", Arguments: createArguments})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.IsError {
+		t.Fatalf("idempotent retry failed: %#v", retry.Content)
+	}
+	var retryOut struct {
+		ID string `json:"id"`
+	}
+	retryJSON, err := json.Marshal(retry.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(retryJSON, &retryOut); err != nil {
+		t.Fatal(err)
+	}
+	if retryOut.ID != changesetOut.ID {
+		t.Fatalf("idempotent retry returned a different Changeset: %s vs %s", retryOut.ID, changesetOut.ID)
+	}
+
+	validated, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_validate_changeset", Arguments: map[string]any{"changeset_id": changesetOut.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated.IsError {
+		t.Fatalf("validate changeset failed: %#v", validated.Content)
+	}
+	var validatedOut struct {
+		ID       string `json:"id"`
+		Status   string `json:"status"`
+		PlanHash string `json:"plan_hash"`
+	}
+	validatedJSON, err := json.Marshal(validated.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(validatedJSON, &validatedOut); err != nil {
+		t.Fatal(err)
+	}
+	if validatedOut.ID != changesetOut.ID || validatedOut.Status != "awaiting_approval" || validatedOut.PlanHash == "" {
+		t.Fatalf("unexpected validation output: %s", validated.StructuredContent)
+	}
+
+	operation, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_get_operation", Arguments: map[string]any{"changeset_id": changesetOut.ID, "operation_id": changesetOut.Operations[0].ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.IsError {
+		t.Fatalf("get operation failed: %#v", operation.Content)
+	}
+	var operationOut struct {
+		Capability string `json:"capability"`
+	}
+	operationJSON, err := json.Marshal(operation.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(operationJSON, &operationOut); err != nil {
+		t.Fatal(err)
+	}
+	if operationOut.Capability != "servers.onboard" {
+		t.Fatalf("unexpected operation output: %s", operation.StructuredContent)
+	}
+
+	listed, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_list_changesets", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed.IsError {
+		t.Fatalf("list changesets failed: %#v", listed.Content)
+	}
+	var listedOut []struct {
+		ID string `json:"id"`
+	}
+	listedJSON, err := json.Marshal(listed.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(listedJSON, &listedOut); err != nil {
+		t.Fatal(err)
+	}
+	if len(listedOut) != 1 || listedOut[0].ID != changesetOut.ID {
+		t.Fatalf("unexpected changeset list: %s", listed.StructuredContent)
+	}
+	audits, err := db.ListToolCallAudits(context.Background(), principal.ID, 20)
+	if err != nil || len(audits) < 4 {
+		t.Fatalf("expected tool audits, got %#v err=%v", audits, err)
+	}
+}
+
+func TestMCPResourceTemplates(t *testing.T) {
+	db, server, session, principal, closeServer := newMCPTestEnvironment(t, "prn_mcp_resources", []string{"inventory:read", "servers:read", "servers:onboard"})
+	defer closeServer()
+
+	node := &model.Server{Name: "PH", Status: model.ServerOnline}
+	if err := db.CreateServer(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	serverURI := "oboard://servers/" + strconv.FormatInt(node.ID, 10)
+	got, err := session.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: serverURI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Contents) != 1 || !strings.Contains(got.Contents[0].Text, `"name":"PH"`) {
+		t.Fatalf("server resource read failed: %#v", got)
+	}
+
+	summary, err := session.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: "oboard://inventory/summary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summary.Contents) != 1 || !strings.Contains(summary.Contents[0].Text, `"PH"`) {
+		t.Fatalf("inventory resource read failed: %#v", summary)
+	}
+
+	appPrincipal := application.Principal{ID: principal.ID, Type: principal.Type, Scopes: principal.Scopes, ResourceFilter: principal.ResourceFilter, SourceIP: netip.MustParseAddr("127.0.0.1"), ClientName: "test"}
+	changeset, err := server.automation.Create(context.Background(), appPrincipal, automation.CreateRequest{
+		IdempotencyKey: "resource-changeset",
+		Operations:     []automation.OperationRequest{{Capability: "servers.onboard", Input: json.RawMessage(`{"server":{"name":"PH"},"issue_enrollment_token":false}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changesetResource, err := session.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: "oboard://changesets/" + changeset.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changesetResource.Contents) != 1 || !strings.Contains(changesetResource.Contents[0].Text, `"id":"`+changeset.ID+`"`) {
+		t.Fatalf("changeset resource read failed: %#v", changesetResource)
+	}
+
+	_, _, deniedSession, _, closeDenied := newMCPTestEnvironment(t, "prn_mcp_denied", []string{"inventory:read"})
+	defer closeDenied()
+	if _, err := deniedSession.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: serverURI}); err == nil {
+		t.Fatal("expected server resource read to be denied without servers:read")
+	}
 }
 
 func TestMCPUsesServicePrincipalAndRecordsAudit(t *testing.T) {
@@ -67,6 +453,105 @@ func TestMCPUsesServicePrincipalAndRecordsAudit(t *testing.T) {
 	audits, err := db.ListToolCallAudits(context.Background(), principal.ID, 10)
 	if err != nil || len(audits) != 1 || audits[0].Capability != "inventory.read" {
 		t.Fatalf("tool audits = %#v, err=%v", audits, err)
+	}
+}
+
+func TestMCPCreateChangesetAcceptsObjectInput(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	principal := &model.APIPrincipal{ID: "prn_changeset", Name: "changeset MCP", Type: model.APIPrincipalServiceAccount, Enabled: true, Scopes: []string{"servers:onboard"}, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2}
+	if err := db.CreateAPIPrincipal(context.Background(), principal); err != nil {
+		t.Fatal(err)
+	}
+	plain := "obk_changeset-token-value"
+	if err := db.CreateAPIToken(context.Background(), &model.APIToken{ID: "tok_changeset", PrincipalID: principal.ID, TokenHash: security.HashAPISecret("test-secret", plain), Prefix: "obk_changeset", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(newTestServer(db, "test-secret", "").Handler())
+	defer httpServer.Close()
+	httpClient := &http.Client{Transport: bearerTransport{token: plain, base: http.DefaultTransport}}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
+	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: httpServer.URL + "/mcp", HTTPClient: httpClient}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var createTool *mcp.Tool
+	for _, tool := range tools.Tools {
+		if tool.Name == "oboard_create_changeset" {
+			createTool = tool
+			break
+		}
+	}
+	if createTool == nil {
+		t.Fatal("oboard_create_changeset is missing from tools/list")
+	}
+	schemaJSON, err := json.Marshal(createTool.InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties struct {
+			Operations struct {
+				Items struct {
+					Properties struct {
+						Input struct {
+							Type string `json:"type"`
+						} `json:"input"`
+						ResourceRefs struct {
+							Type string `json:"type"`
+						} `json:"resource_refs"`
+					} `json:"properties"`
+				} `json:"items"`
+			} `json:"operations"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(schemaJSON, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if schema.Properties.Operations.Items.Properties.Input.Type != "object" || schema.Properties.Operations.Items.Properties.ResourceRefs.Type != "object" {
+		t.Fatalf("changeset operation schema does not require objects: %s", schemaJSON)
+	}
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_create_changeset", Arguments: map[string]any{
+		"reason":          "onboard PH node",
+		"idempotency_key": "mcp-onboard-ph",
+		"operations": []any{map[string]any{
+			"capability": "servers.onboard",
+			"input": map[string]any{
+				"server":                 map[string]any{"name": "PH", "region_code": "PH", "ip_stack": "auto", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 60000},
+				"issue_enrollment_token": true,
+			},
+			"resource_refs": map[string]any{},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("object changeset input was rejected: %#v", result.Content)
+	}
+	changeset, err := db.FindAutomationChangesetByIdempotency(context.Background(), principal.ID, "mcp-onboard-ph")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changeset.Operations) != 1 {
+		t.Fatalf("operations = %#v", changeset.Operations)
+	}
+	var operationInput map[string]any
+	if err := json.Unmarshal(changeset.Operations[0].Input, &operationInput); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := operationInput["server"].(map[string]any); !ok {
+		t.Fatalf("persisted input is not an object: %s", changeset.Operations[0].Input)
 	}
 }
 

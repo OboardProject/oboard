@@ -2366,6 +2366,9 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   font-weight: 700;
 }
 .sub-section-head p { margin: 0; }
+.custom-path-admin-section .sub-section-head > .ui-segmented-select {
+  width: min(480px, 100%);
+}
 .sub-selection-meta {
   display: inline-flex;
   align-items: center;

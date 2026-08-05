@@ -104,6 +104,15 @@ import {
 } from './automation-connect'
 import { formatTokenLimit, tokenDisplayToLimit, tokenLimitToDisplay, type TokenDisplayUnit } from './ai-provider'
 import { auditHealthScoreTone, normalizeAuditHealthScore } from './ai-audit-score'
+import { getDashboardAttention, type DashboardAttention } from './dashboard-attention'
+import {
+  deploymentStatusFromSummary,
+  groupTasksForTimeline,
+  maxTaskTime,
+  serverTaskStatusSummary,
+  taskStatusSummary,
+  type TaskGroup,
+} from './task-groups'
 
 type AIProviderFormat = 'chat_completions' | 'responses'
 import {
@@ -1165,45 +1174,6 @@ function DeploymentSummary({ data }: { data: any }) {
     <div>{items.map(([label, count]) => <span key={label}>{label}<strong>{count}</strong></span>)}</div>
     <small>进度可以在“任务”里查看。</small>
   </div>
-}
-
-type DashboardAttention = {
-  parts: string[]
-  fingerprint: string
-}
-
-function getDashboardAttention(data: any): DashboardAttention {
-  const summary = data.summary || {}
-  const servers = data.servers || []
-  const totalServers = Number(summary.servers_total ?? summary.servers ?? summary.server_count ?? servers.length ?? 0)
-  const onlineServers = Number(summary.servers_online ?? summary.online_agents ?? summary.online_servers ?? servers.filter((server: any) => server.status === 'online').length ?? 0)
-  const offlineServers = Math.max(0, totalServers - onlineServers)
-  const failedTasks = Math.max(0, Number(summary.failed_tasks || 0))
-  const offlineSnapshot = servers
-    .filter((server: any) => server.status !== 'online')
-    .map((server: any) => `${server.id}:${server.status || 'offline'}:${server.last_seen_at || server.updated_at || ''}`)
-    .sort()
-  const latestFailedTask = (data.agent_tasks || [])
-    .filter((task: any) => task.status === 'failed' || task.status === 'rollback_failed')
-    .reduce((latest: any, task: any) => Number(task.id || 0) > Number(latest?.id || 0) ? task : latest, null)
-
-  const parts: string[] = []
-  if (offlineServers > 0) parts.push(`${offlineServers} 台服务器离线`)
-  if (failedTasks > 0) parts.push(`${failedTasks} 个任务失败`)
-
-  return {
-    parts,
-    fingerprint: parts.length > 0
-      ? JSON.stringify({
-          offlineServers,
-          offlineSnapshot,
-          failedTasks,
-          latestFailedTask: latestFailedTask
-            ? `${latestFailedTask.id}:${latestFailedTask.updated_at || latestFailedTask.finished_at || latestFailedTask.created_at || ''}`
-            : '',
-        })
-      : '',
-  }
 }
 
 function DashboardAttentionNotice({ parts, className = '', onDismiss }: { parts: string[]; className?: string; onDismiss: () => void }) {
@@ -3588,7 +3558,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             </div>
           </div>
           {!reverseProxyStatus.direct_tls && reverseProxyStatus.peer_trusted && !reverseProxyStatus.https && <p className="trusted-proxy-warning">请让反向代理覆盖发送 <code>X-Forwarded-Proto</code>。</p>}
-          <p className="muted">1Panel 直接接收访客连接时无需开启“真实 IP”；容器地址可能变化时填写实际 Docker 网段。仅在前面还有 CDN 或 FRP 时，才按服务商网段和指定 Header 开启。</p>
         </div>
       </section>}
       {activeSection === 'servers' && <section className="settings-card">
@@ -5541,7 +5510,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
   const activeUsers = summary.users_active ?? summary.users_total ?? (data.users || []).length ?? 0
   const totalTraffic = formatBytes(Number(summary.traffic_upload_bytes || 0) + Number(summary.traffic_download_bytes || 0))
 
-  const groupedTasks = groupTasksForTimeline(data.agent_tasks || [])
+  const groupedTasks = groupTasksForTimeline(data.agent_tasks || [], labelValue)
   const recentTasks = groupedTasks.slice(0, 6).map((g: TaskGroup) => {
     const summaryStatus = serverTaskStatusSummary(g.tasks)
     const status = deploymentStatusFromSummary(summaryStatus)
@@ -14369,128 +14338,12 @@ function Tasks({ data, client, loading: pageLoading, realtimeStatus }: any) {
   </Panel>
 }
 
-type TaskGroupKind = 'deployment' | 'batch' | 'single'
-type TaskGroup = {
-  kind: TaskGroupKind
-  id: string | number
-  title: string
-  subtitle?: string
-  version?: number
-  batchType?: string
-  tasks: any[]
-  updated_at: string
-}
-
-const BATCHABLE_TASK_TYPES = new Set([
-  'update_agent', 'update_agent_config', 'diagnose_network', 'list_network_interfaces', 'detect_mtu',
-  'probe_inbounds', 'probe_inbounds_external', 'probe_port_forwards', 'probe_external_egress', 'collect_logs', 'manage_logs', 'check_time',
-])
-
 function TaskTimeline({ rows, data }: { rows: any[]; data: any }) {
-  const groups = groupTasksForTimeline(rows)
+  const groups = groupTasksForTimeline(rows, labelValue)
   if (!groups.length) return <p className="muted">暂无任务</p>
   return <MotionList className="task-card-list">{groups.map(group => (
     <TaskGroupCard key={`${group.kind}-${group.id}`} group={group} data={data} />
   ))}</MotionList>
-}
-
-function isDeploymentBundle(tasks: any[]) {
-  const types = new Set(tasks.map(t => String(t.type || '')))
-  return types.has('apply_deployment')
-}
-
-function groupTasksForTimeline(rows: any[]): TaskGroup[] {
-  const byVersion = new Map<number, any[]>()
-  const leftover: any[] = []
-
-  ;(rows || []).forEach(task => {
-    const version = Number(task.config_version || 0)
-    if (version > 0) byVersion.set(version, [...(byVersion.get(version) || []), task])
-    else leftover.push(task)
-  })
-
-  const groups: TaskGroup[] = []
-
-  byVersion.forEach((tasks, version) => {
-    if (isDeploymentBundle(tasks)) {
-      groups.push({
-        kind: 'deployment',
-        id: `deploy-${version}`,
-        title: '下发配置',
-        subtitle: `版本 ${version}`,
-        version,
-        tasks,
-        updated_at: maxTaskTime(tasks),
-      })
-      return
-    }
-    // Isolated versioned tasks (MTU / probe / WARP / etc.) fall through to type batching.
-    leftover.push(...tasks)
-  })
-
-  const batches = new Map<string, any[]>()
-  leftover.forEach(task => {
-    const type = String(task.type || 'task')
-    const key = BATCHABLE_TASK_TYPES.has(type)
-      ? `${type}:${taskBatchBucket(task)}`
-      : `single:${task.id}`
-    batches.set(key, [...(batches.get(key) || []), task])
-  })
-
-  batches.forEach((tasks, key) => {
-    const type = String(tasks[0]?.type || 'task')
-    if (key.startsWith('single:')) {
-      groups.push({
-        kind: 'single',
-        id: key,
-        title: labelValue(type),
-        tasks,
-        updated_at: maxTaskTime(tasks),
-      })
-      return
-    }
-    const serverCount = new Set(tasks.map(t => t.server_id)).size
-    groups.push({
-      kind: tasks.length > 1 || serverCount > 1 ? 'batch' : 'single',
-      id: `batch-${key}`,
-      title: batchTitleForType(type),
-      batchType: type,
-      tasks,
-      updated_at: maxTaskTime(tasks),
-    })
-  })
-
-  return groups.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')) || String(b.id).localeCompare(String(a.id)))
-}
-
-function taskBatchBucket(task: any) {
-  const raw = String(task.created_at || task.updated_at || '')
-  const ms = Date.parse(raw)
-  if (!Number.isFinite(ms)) return raw || 'unknown'
-  // 2-minute window groups multi-server actions kicked off together.
-  return String(Math.floor(ms / (2 * 60 * 1000)))
-}
-
-function batchTitleForType(type: string) {
-  switch (type) {
-    case 'update_agent': return '更新 Agent'
-    case 'update_agent_config': return '同步 Agent 配置'
-    case 'detect_mtu': return 'MTU 检测'
-    case 'check_time': return '时间检测'
-    case 'diagnose_network': return '网络诊断'
-    case 'list_network_interfaces': return '读取网卡'
-    case 'probe_inbounds': return '入口监听探测'
-    case 'probe_inbounds_external': return '公网端口探测'
-    case 'probe_port_forwards': return '端口转发探测'
-    case 'probe_external_egress': return '第三方出口探测'
-    case 'collect_logs': return '拉取日志'
-    case 'manage_logs': return '管理日志'
-    default: return labelValue(type || 'task')
-  }
-}
-
-function maxTaskTime(tasks: any[]) {
-  return tasks.map(t => String(t.updated_at || t.created_at || '')).sort().pop() || ''
 }
 
 function taskServerLabel(data: any, serverID: number) {
@@ -14639,54 +14492,6 @@ function TaskDetailCard({ task, data }: { task: any; data?: any }) {
       </div>
     )}
   </article>
-}
-
-function deploymentStatusFromSummary(summary: { total: number; pending: number; running: number; succeeded: number; failed: number }) {
-  if (summary.total === 0) return 'pending'
-  if (summary.failed > 0) return summary.failed >= summary.total ? 'failed' : 'partial_failed'
-  if (summary.running) return 'running'
-  if (summary.pending) return 'pending'
-  return 'succeeded'
-}
-
-function taskStatusSummary(tasks: any[]) {
-  const out = { total: tasks.length, pending: 0, running: 0, succeeded: 0, failed: 0 }
-  tasks.forEach(task => {
-    const result = parseJSONLoose(task.result_json)
-    const status = result?.timeout ? 'timeout' : String(task.status || '')
-    if (status === 'pending') out.pending++
-    else if (status === 'running') out.running++
-    else if (status === 'succeeded') out.succeeded++
-    else if (status.includes('fail') || status === 'timeout') out.failed++
-  })
-  return out
-}
-
-function serverTaskBuckets(tasks: any[]) {
-  const buckets = new Map<string, any[]>()
-  tasks.forEach((task, index) => {
-    const serverID = Number(task.server_id || 0)
-    const key = serverID > 0 ? `server-${serverID}` : `task-${task.id || index}`
-    buckets.set(key, [...(buckets.get(key) || []), task])
-  })
-  return Array.from(buckets.values())
-}
-
-function serverTaskStatusSummary(tasks: any[]) {
-  const out = { total: 0, pending: 0, running: 0, succeeded: 0, failed: 0, skipped: 0 }
-  serverTaskBuckets(tasks).forEach(serverTasks => {
-    out.total++
-    if (serverTasks.every(task => parseJSONLoose(task.result_json)?.skipped || parseJSONLoose(task.payload_json)?.skipped)) {
-      out.skipped++
-      return
-    }
-    const status = deploymentStatusFromSummary(taskStatusSummary(serverTasks))
-    if (status === 'failed' || status === 'partial_failed') out.failed++
-    else if (status === 'running') out.running++
-    else if (status === 'pending') out.pending++
-    else out.succeeded++
-  })
-  return out
 }
 
 function parseJSONLoose(raw: any) {

@@ -1676,7 +1676,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			var tasks []model.AgentTask
-			tasks, err = s.store.ListTasks(ctx, 20)
+			tasks, err = s.store.ListTasks(ctx, 300)
 			out["agent_tasks"] = sanitizeTasksForRole(tasks, role)
 		}
 		if err == nil {
