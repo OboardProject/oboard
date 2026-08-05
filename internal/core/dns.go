@@ -61,7 +61,7 @@ func BuildDNSConfig(server model.Server, state *DNSConfigState) (map[string]any,
 	}
 
 	encrypted := selectedOrDraft(state.Policy.EncryptedSelected, state.Policy.EncryptedSelectionRevision, *state.EncryptedList)
-	bootstrap := selectedOrDraft(state.Policy.BootstrapSelected, state.Policy.BootstrapSelectionRevision, *state.BootstrapList)
+	bootstrap := bootstrapSelectionForStack(state.Policy.BootstrapSelected, state.Policy.BootstrapSelectionRevision, *state.BootstrapList, EffectiveIPStack(server))
 	if len(encrypted) == 0 || len(bootstrap) == 0 {
 		return nil, errors.New("dns policy has no usable draft candidates")
 	}
@@ -103,7 +103,70 @@ func selectedOrDraft(selected []model.DNSCandidate, selectedRevision int64, list
 	return out
 }
 
-func DNSBenchmarkPlanForPolicy(version int64, policy model.ServerDNSPolicy, encrypted, bootstrap model.DNSList, mode model.DNSAutoTestMode, requestID string) (*model.DNSBenchmarkPlan, error) {
+// bootstrapSelectionForStack applies the benchmark selection (or the list
+// draft) and then narrows the bootstrap resolvers to the address families the
+// server's effective IP stack can actually reach. IPv4-only servers get only
+// IPv4 resolvers, IPv6-only servers get only IPv6 resolvers, and servers with
+// both families keep both with IPv4 first by default. A list that has no
+// candidates for the required family falls back to its full draft so legacy
+// single-family lists keep deploying instead of failing configuration.
+func bootstrapSelectionForStack(selected []model.DNSCandidate, selectedRevision int64, list model.DNSList, stack model.IPStack) []model.DNSCandidate {
+	items := list.Candidates
+	if selectedRevision == list.Revision && len(selected) > 0 {
+		items = selected
+	}
+	items = bootstrapCandidatesForStack(items, stack)
+	if len(items) > 2 {
+		items = items[:2]
+	}
+	out := append([]model.DNSCandidate(nil), items...)
+	for i := range out {
+		normalizeCandidate(&out[i])
+	}
+	return out
+}
+
+// bootstrapCandidatesForStack filters a bootstrap candidate list to the
+// address families usable on the server's effective IP stack, keeping the
+// stored order within each family. IPv4 candidates come first unless the stack
+// prefers IPv6.
+func bootstrapCandidatesForStack(items []model.DNSCandidate, stack model.IPStack) []model.DNSCandidate {
+	ipv4 := make([]model.DNSCandidate, 0, len(items))
+	ipv6 := make([]model.DNSCandidate, 0, len(items))
+	for _, candidate := range items {
+		ip := net.ParseIP(strings.Trim(candidate.Server, "[]"))
+		switch {
+		case ip == nil || ip.To4() != nil:
+			ipv4 = append(ipv4, candidate)
+		default:
+			ipv6 = append(ipv6, candidate)
+		}
+	}
+	switch stack {
+	case model.IPStackIPv6Only:
+		if len(ipv6) == 0 {
+			return items
+		}
+		return ipv6
+	case model.IPStackIPv4Only:
+		if len(ipv4) == 0 {
+			return items
+		}
+		return ipv4
+	case model.IPStackPreferIPv6:
+		if len(ipv6) == 0 {
+			return items
+		}
+		return append(ipv6, ipv4...)
+	default:
+		if len(ipv4) == 0 {
+			return items
+		}
+		return append(ipv4, ipv6...)
+	}
+}
+
+func DNSBenchmarkPlanForPolicy(version int64, policy model.ServerDNSPolicy, encrypted, bootstrap model.DNSList, stack model.IPStack, mode model.DNSAutoTestMode, requestID string) (*model.DNSBenchmarkPlan, error) {
 	if policy.EncryptedListID != encrypted.ID || policy.BootstrapListID != bootstrap.ID {
 		return nil, errors.New("dns benchmark lists do not match policy")
 	}
@@ -132,7 +195,7 @@ func DNSBenchmarkPlanForPolicy(version int64, policy model.ServerDNSPolicy, encr
 		IntervalSeconds:       interval,
 		RequestID:             requestID,
 		EncryptedCandidates:   append([]model.DNSCandidate(nil), encrypted.Candidates...),
-		BootstrapCandidates:   append([]model.DNSCandidate(nil), bootstrap.Candidates...),
+		BootstrapCandidates:   append([]model.DNSCandidate(nil), bootstrapCandidatesForStack(bootstrap.Candidates, stack)...),
 	}, nil
 }
 
@@ -291,12 +354,12 @@ func normalizeDNSStrategy(strategy string, stack model.IPStack) string {
 	if strategy != "" && strategy != "auto" {
 		return strategy
 	}
+	// Prefer the server's primary family while still resolving both address
+	// families: on single-stack servers the WARP tunnel (allowed_ips
+	// 0.0.0.0/0 and ::/0) provides the other family, so the main DNS must
+	// return A and AAAA records for WARP egress to stay dual-stack.
 	switch stack {
-	case model.IPStackIPv4Only:
-		return "ipv4_only"
-	case model.IPStackIPv6Only:
-		return "ipv6_only"
-	case model.IPStackPreferIPv6:
+	case model.IPStackIPv6Only, model.IPStackPreferIPv6:
 		return "prefer_ipv6"
 	default:
 		return "prefer_ipv4"
@@ -390,6 +453,8 @@ func defaultDNSConfigState(serverID int64) *DNSConfigState {
 		BootstrapList: &model.DNSList{Name: "default bootstrap", Kind: model.DNSListBootstrap, Revision: 1, Candidates: []model.DNSCandidate{
 			{Tag: "cloudflare-udp", Transport: model.DNSTransportUDP, Server: "1.1.1.1", Port: 53},
 			{Tag: "google-tcp", Transport: model.DNSTransportTCP, Server: "8.8.8.8", Port: 53},
+			{Tag: "cloudflare-udp-v6", Transport: model.DNSTransportUDP, Server: "2606:4700:4700::1111", Port: 53},
+			{Tag: "google-tcp-v6", Transport: model.DNSTransportTCP, Server: "2001:4860:4860::8888", Port: 53},
 		}},
 	}
 }

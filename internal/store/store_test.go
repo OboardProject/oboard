@@ -2149,3 +2149,36 @@ func TestSetDefaultDNSListPerKind(t *testing.T) {
 		t.Fatalf("missing dns list error = %v", err)
 	}
 }
+
+func TestDefaultDNSBootstrapSeedIncludesIPv6Candidates(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	lists, err := s.ListDNSLists(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bootstrap model.DNSList
+	for _, list := range lists {
+		if list.Kind == model.DNSListBootstrap {
+			bootstrap = list
+		}
+	}
+	if bootstrap.ID == 0 {
+		t.Fatal("default bootstrap list missing")
+	}
+	var ipv4, ipv6 int
+	for _, candidate := range bootstrap.Candidates {
+		if candidate.Server == "2606:4700:4700::1111" || candidate.Server == "2001:4860:4860::8888" || candidate.Server == "2620:fe::fe" {
+			ipv6++
+		} else {
+			ipv4++
+		}
+	}
+	if ipv4 == 0 || ipv6 == 0 {
+		t.Fatalf("default bootstrap seed must contain IPv4 and IPv6 resolvers: %#v", bootstrap.Candidates)
+	}
+}

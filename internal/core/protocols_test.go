@@ -1300,7 +1300,7 @@ func TestReadyWARPInfersIPv6ResolverAndMTUForAutoServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolver, ok := endpoint["domain_resolver"].(map[string]any)
-	if !ok || resolver["server"] != primaryBootstrapDNSTag || resolver["strategy"] != "ipv6_only" {
+	if !ok || resolver["server"] != primaryBootstrapDNSTag || resolver["strategy"] != "prefer_ipv6" {
 		t.Fatalf("WARP domain_resolver = %#v", endpoint["domain_resolver"])
 	}
 	if endpoint["mtu"] != 1280 {

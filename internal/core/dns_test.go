@@ -56,8 +56,8 @@ func TestBuildDNSConfigInfersIPv6OnlyFromDetectedAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dns["strategy"] != "ipv6_only" {
-		t.Fatalf("strategy = %v, want ipv6_only", dns["strategy"])
+	if dns["strategy"] != "prefer_ipv6" {
+		t.Fatalf("strategy = %v, want prefer_ipv6", dns["strategy"])
 	}
 }
 
@@ -234,11 +234,11 @@ func TestBuildDNSConfigDefaultState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dns["strategy"] != "ipv6_only" {
-		t.Fatalf("strategy = %v, want ipv6_only", dns["strategy"])
+	if dns["strategy"] != "prefer_ipv6" {
+		t.Fatalf("strategy = %v, want prefer_ipv6", dns["strategy"])
 	}
 	servers := dns["servers"].([]map[string]any)
-	if len(servers) != 5 || servers[2]["tag"] != "bootstrap-primary" {
+	if len(servers) != 5 || servers[2]["tag"] != "bootstrap-primary" || servers[2]["server"] != "2606:4700:4700::1111" || servers[3]["server"] != "2001:4860:4860::8888" {
 		t.Fatalf("default dns servers = %#v", servers)
 	}
 }
@@ -264,4 +264,73 @@ func mustJSON(t *testing.T, v any) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func TestBuildDNSConfigFiltersBootstrapByEffectiveStack(t *testing.T) {
+	state := testDNSState(1)
+	state.BootstrapList.Candidates = []model.DNSCandidate{
+		{Tag: "cloudflare-udp", Transport: model.DNSTransportUDP, Server: "1.1.1.1", Port: 53},
+		{Tag: "google-tcp", Transport: model.DNSTransportTCP, Server: "8.8.8.8", Port: 53},
+		{Tag: "cloudflare-udp-v6", Transport: model.DNSTransportUDP, Server: "2606:4700:4700::1111", Port: 53},
+		{Tag: "google-tcp-v6", Transport: model.DNSTransportTCP, Server: "2001:4860:4860::8888", Port: 53},
+	}
+	tests := []struct {
+		name          string
+		stack         model.IPStack
+		wantPrimary   string
+		wantSecondary string
+		wantStrategy  string
+	}{
+		{name: "ipv6 only", stack: model.IPStackIPv6Only, wantPrimary: "2606:4700:4700::1111", wantSecondary: "2001:4860:4860::8888", wantStrategy: "prefer_ipv6"},
+		{name: "ipv4 only", stack: model.IPStackIPv4Only, wantPrimary: "1.1.1.1", wantSecondary: "8.8.8.8", wantStrategy: "prefer_ipv4"},
+		{name: "dual stack", stack: model.IPStackDualStack, wantPrimary: "1.1.1.1", wantSecondary: "8.8.8.8", wantStrategy: "prefer_ipv4"},
+		{name: "prefer ipv6", stack: model.IPStackPreferIPv6, wantPrimary: "2606:4700:4700::1111", wantSecondary: "2001:4860:4860::8888", wantStrategy: "prefer_ipv6"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dns, err := BuildDNSConfig(model.Server{ID: 1, IPStack: tt.stack}, state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dns["strategy"] != tt.wantStrategy {
+				t.Fatalf("strategy = %v, want %v", dns["strategy"], tt.wantStrategy)
+			}
+			servers := dns["servers"].([]map[string]any)
+			byTag := map[string]map[string]any{}
+			for _, item := range servers {
+				byTag[item["tag"].(string)] = item
+			}
+			if byTag["bootstrap-primary"]["server"] != tt.wantPrimary || byTag["bootstrap-secondary"]["server"] != tt.wantSecondary {
+				t.Fatalf("bootstrap servers = primary %v secondary %v, want %v / %v", byTag["bootstrap-primary"]["server"], byTag["bootstrap-secondary"]["server"], tt.wantPrimary, tt.wantSecondary)
+			}
+			if _, ok := byTag["remote-primary"]; !ok {
+				t.Fatalf("remote resolver missing: %#v", byTag)
+			}
+		})
+	}
+}
+
+func TestDNSBenchmarkPlanForPolicyFiltersBootstrapByStack(t *testing.T) {
+	state := testDNSState(1)
+	state.BootstrapList.Candidates = []model.DNSCandidate{
+		{Tag: "cloudflare-udp", Transport: model.DNSTransportUDP, Server: "1.1.1.1", Port: 53},
+		{Tag: "google-tcp", Transport: model.DNSTransportTCP, Server: "8.8.8.8", Port: 53},
+		{Tag: "cloudflare-udp-v6", Transport: model.DNSTransportUDP, Server: "2606:4700:4700::1111", Port: 53},
+		{Tag: "google-tcp-v6", Transport: model.DNSTransportTCP, Server: "2001:4860:4860::8888", Port: 53},
+	}
+	plan, err := DNSBenchmarkPlanForPolicy(42, *state.Policy, *state.EncryptedList, *state.BootstrapList, model.IPStackIPv6Only, model.DNSAutoTestFirstApply, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.BootstrapCandidates) != 2 {
+		t.Fatalf("bootstrap candidates = %#v, want only the IPv6 entries", plan.BootstrapCandidates)
+	}
+	for _, candidate := range plan.BootstrapCandidates {
+		if candidate.Server == "1.1.1.1" || candidate.Server == "8.8.8.8" {
+			t.Fatalf("IPv6-only benchmark plan kept IPv4 bootstrap %#v", candidate)
+		}
+	}
+	if len(plan.EncryptedCandidates) != 2 {
+		t.Fatalf("encrypted candidates = %#v, want unfiltered", plan.EncryptedCandidates)
+	}
 }

@@ -4083,7 +4083,7 @@ func (s *Server) serverDNSTest(w http.ResponseWriter, r *http.Request, id int64)
 		return
 	}
 	version := time.Now().UnixNano()
-	plan, err := core.DNSBenchmarkPlanForPolicy(version, *policy, *encrypted, *bootstrap, model.DNSAutoTestAlways, requestID)
+	plan, err := core.DNSBenchmarkPlanForPolicy(version, *policy, *encrypted, *bootstrap, core.EffectiveIPStack(*server), model.DNSAutoTestAlways, requestID)
 	if err != nil {
 		fail(w, err, 400)
 		return
@@ -9094,6 +9094,10 @@ func (s *Server) queuePeriodicDNSBenchmarksForList(ctx context.Context, list mod
 		if policy.AutoTest != model.DNSAutoTestPeriodic || list.Kind == model.DNSListEncrypted && policy.EncryptedListID != list.ID || list.Kind == model.DNSListBootstrap && policy.BootstrapListID != list.ID {
 			continue
 		}
+		server, err := s.store.GetServer(ctx, policy.ServerID)
+		if err != nil {
+			continue
+		}
 		encrypted, err := s.store.GetDNSList(ctx, policy.EncryptedListID)
 		if err != nil {
 			continue
@@ -9102,7 +9106,7 @@ func (s *Server) queuePeriodicDNSBenchmarksForList(ctx context.Context, list mod
 		if err != nil {
 			continue
 		}
-		plan, err := core.DNSBenchmarkPlanForPolicy(time.Now().UnixNano(), policy, *encrypted, *bootstrap, model.DNSAutoTestPeriodic, "")
+		plan, err := core.DNSBenchmarkPlanForPolicy(time.Now().UnixNano(), policy, *encrypted, *bootstrap, core.EffectiveIPStack(*server), model.DNSAutoTestPeriodic, "")
 		if err != nil {
 			continue
 		}
@@ -9777,7 +9781,7 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		dnsPlan, err := core.DNSBenchmarkPlanForPolicy(version, *dnsState.Policy, *dnsState.EncryptedList, *dnsState.BootstrapList, dnsState.Policy.AutoTest, "")
+		dnsPlan, err := core.DNSBenchmarkPlanForPolicy(version, *dnsState.Policy, *dnsState.EncryptedList, *dnsState.BootstrapList, core.EffectiveIPStack(server), dnsState.Policy.AutoTest, "")
 		if err != nil {
 			fail(w, err, 400)
 			return

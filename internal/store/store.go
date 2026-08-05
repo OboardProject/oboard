@@ -570,6 +570,9 @@ func (s *Store) ensureDefaultDNSLists(ctx context.Context) error {
 				{Tag: "cloudflare-udp", Transport: model.DNSTransportUDP, Server: "1.1.1.1", Port: 53},
 				{Tag: "google-tcp", Transport: model.DNSTransportTCP, Server: "8.8.8.8", Port: 53},
 				{Tag: "quad9-udp", Transport: model.DNSTransportUDP, Server: "9.9.9.9", Port: 53},
+				{Tag: "cloudflare-udp-v6", Transport: model.DNSTransportUDP, Server: "2606:4700:4700::1111", Port: 53},
+				{Tag: "google-tcp-v6", Transport: model.DNSTransportTCP, Server: "2001:4860:4860::8888", Port: 53},
+				{Tag: "quad9-udp-v6", Transport: model.DNSTransportUDP, Server: "2620:fe::fe", Port: 53},
 			},
 		},
 	}
