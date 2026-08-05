@@ -9712,12 +9712,9 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 				}
 				data.WARPProfiles = replaceWARPProfile(data.WARPProfiles, profile)
 				effectiveStack := core.EffectiveIPStack(server)
-				plan := model.WARPRequestPlan{Version: version, ServerID: server.ID, ProfileID: profile.ID, OutboundTag: core.WARPOutboundTag(profile.ID), IPStack: effectiveStack, MTU: server.MTUValue, DNSStrategy: string(effectiveStack)}
+				plan := model.WARPRequestPlan{Version: version, ServerID: server.ID, ProfileID: profile.ID, OutboundTag: core.WARPOutboundTag(profile.ID), IPStack: effectiveStack, MTU: warpRequestMTU(profile), DNSStrategy: string(effectiveStack)}
 				if plan.DNSStrategy == string(model.IPStackAuto) || plan.DNSStrategy == string(model.IPStackDualStack) {
 					plan.DNSStrategy = "auto"
-				}
-				if plan.MTU == 0 && effectiveStack == model.IPStackIPv6Only {
-					plan.MTU = 1280
 				}
 				warpRequests = append(warpRequests, plan)
 			}
@@ -10476,6 +10473,15 @@ func findWARPProfileForServer(items []model.WARPProfile, serverID int64) (model.
 		}
 	}
 	return model.WARPProfile{}, false
+}
+
+// warpRequestMTU is the WireGuard tunnel MTU sent to the Agent for a WARP
+// profile request. WARP always uses the fixed 1280 value; it never inherits
+// server.MTUValue, which is the main-network MTU and would push encrypted
+// outer packets past the path MTU (fragmented datagrams are dropped on many
+// paths, stalling page loads while small control packets still pass).
+func warpRequestMTU(profile model.WARPProfile) int {
+	return core.WarpTunnelMTU
 }
 
 func replaceWARPProfile(items []model.WARPProfile, next model.WARPProfile) []model.WARPProfile {

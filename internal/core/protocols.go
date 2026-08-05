@@ -1578,6 +1578,14 @@ func ensureClientUTLSFingerprint(tls map[string]any) {
 	tls["utls"] = utls
 }
 
+// WarpTunnelMTU is the fixed WireGuard tunnel MTU for WARP egress. WARP must
+// never inherit the server's main-network MTU: its encrypted outer packets add
+// WireGuard/IP/UDP headers, and oversized datagrams get fragmented and dropped
+// on typical paths (including Cloudflare anycast), which stalls page loads
+// while small control packets still pass. 1280 is Cloudflare's standard WARP
+// value and is safe on any path that supports IPv6 minimum MTU.
+const WarpTunnelMTU = 1280
+
 func warpProfileToSingBox(v model.WARPProfile, server model.Server) (map[string]any, error) {
 	var raw map[string]any
 	if err := json.Unmarshal([]byte(v.ConfigJSON), &raw); err != nil {
@@ -1590,16 +1598,7 @@ func warpProfileToSingBox(v model.WARPProfile, server model.Server) (map[string]
 	if fmt.Sprint(raw["type"]) == "wireguard" {
 		normalizeWireGuardEndpoint(raw)
 	}
-	mtu := v.MTU
-	if mtu <= 0 {
-		mtu = server.MTUValue
-	}
-	if mtu <= 0 && EffectiveIPStack(server) == model.IPStackIPv6Only {
-		mtu = 1280
-	}
-	if mtu > 0 {
-		raw["mtu"] = mtu
-	}
+	raw["mtu"] = WarpTunnelMTU
 	applyManagedWARPDomainResolver(raw, normalizeDNSStrategy(v.DNSStrategy, EffectiveIPStack(server)))
 	return raw, nil
 }

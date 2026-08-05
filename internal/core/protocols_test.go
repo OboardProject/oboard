@@ -1308,6 +1308,39 @@ func TestReadyWARPInfersIPv6ResolverAndMTUForAutoServer(t *testing.T) {
 	}
 }
 
+func TestWARPEndpointMTUIsFixedAt1280(t *testing.T) {
+	profile := model.WARPProfile{
+		ID:          30,
+		DNSStrategy: "auto",
+		ConfigJSON:  `{"type":"wireguard","address":["172.16.0.2/32"],"private_key":"private","mtu":1500,"peers":[{"address":"engage.cloudflareclient.com","port":2408,"public_key":"public","allowed_ips":["0.0.0.0/0","::/0"]}],"domain_resolver":{"server":"bootstrap","strategy":"prefer_ipv4"}}`,
+	}
+	// The server's main-network MTU must never leak into the WARP tunnel; a
+	// legacy ready profile may also carry a poisoned mtu in its stored config.
+	for _, server := range []model.Server{
+		{IPStack: model.IPStackPreferIPv4, MTUValue: 1500},
+		{IPStack: model.IPStackPreferIPv4, MTUValue: 9000},
+	} {
+		endpoint, err := warpProfileToSingBox(profile, server)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if endpoint["mtu"] != WarpTunnelMTU {
+			t.Fatalf("WARP MTU = %#v, want %d", endpoint["mtu"], WarpTunnelMTU)
+		}
+	}
+	// A profile whose MTU column was poisoned by an older auto flow is also
+	// normalized back to the fixed tunnel MTU.
+	poisoned := profile
+	poisoned.MTU = 1500
+	endpoint, err := warpProfileToSingBox(poisoned, model.Server{IPStack: model.IPStackPreferIPv4, MTUValue: 1500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint["mtu"] != WarpTunnelMTU {
+		t.Fatalf("poisoned profile WARP MTU = %#v, want %d", endpoint["mtu"], WarpTunnelMTU)
+	}
+}
+
 func TestProxyPathWARPUsesLastControlledServer(t *testing.T) {
 	warpID := int64(30)
 	server := model.Server{ID: 1, Name: "edge", ListenIP: "0.0.0.0", IPStack: model.IPStackDualStack}
