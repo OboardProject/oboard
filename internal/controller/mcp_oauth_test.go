@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -65,6 +67,57 @@ func TestMCPUsesServicePrincipalAndRecordsAudit(t *testing.T) {
 	audits, err := db.ListToolCallAudits(context.Background(), principal.ID, 10)
 	if err != nil || len(audits) != 1 || audits[0].Capability != "inventory.read" {
 		t.Fatalf("tool audits = %#v, err=%v", audits, err)
+	}
+}
+
+func TestMCPAcceptsConfiguredPublicHostBehindLoopbackProxy(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://ob.example.com/qzq"); err != nil {
+		t.Fatal(err)
+	}
+	principal := &model.APIPrincipal{ID: "prn_proxy_mcp", Name: "proxy MCP", Type: model.APIPrincipalServiceAccount, Enabled: true, Scopes: []string{"inventory:read"}, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2}
+	if err := db.CreateAPIPrincipal(context.Background(), principal); err != nil {
+		t.Fatal(err)
+	}
+	plain := "obk_proxy-mcp-token"
+	if err := db.CreateAPIToken(context.Background(), &model.APIToken{ID: "tok_proxy_mcp", PrincipalID: principal.ID, TokenHash: security.HashAPISecret("test-secret", plain), Prefix: "obk_proxy", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+
+	httpServer := httptest.NewServer(New(db, "test-secret", "", "/qzq", nil).Handler())
+	defer httpServer.Close()
+	initialize := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test-client","version":"1"}}}`
+	for _, test := range []struct {
+		host       string
+		wantStatus int
+	}{
+		{host: "ob.example.com", wantStatus: http.StatusOK},
+		{host: "OB.EXAMPLE.COM:443", wantStatus: http.StatusOK},
+		{host: "ob.example.com.", wantStatus: http.StatusOK},
+		{host: "other.example.com", wantStatus: http.StatusForbidden},
+	} {
+		t.Run(test.host, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, httpServer.URL+"/qzq/mcp", strings.NewReader(initialize))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Host = test.host
+			req.Header.Set("Authorization", "Bearer "+plain)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			response, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != test.wantStatus {
+				t.Fatalf("Host %q status=%d, want %d", test.host, response.StatusCode, test.wantStatus)
+			}
+		})
 	}
 }
 
@@ -215,12 +268,12 @@ func TestOAuthAuthorizationCodePKCEAndSingleUse(t *testing.T) {
 	authorize.Header.Set("Authorization", "Bearer "+sessionToken)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, authorize)
-	if recorder.Code != http.StatusFound {
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "授权成功") {
 		t.Fatalf("authorize status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	location, err := url.Parse(recorder.Header().Get("Location"))
+	location, err := oauthSuccessRedirectURL(recorder.Body.String())
 	if err != nil || location.Query().Get("state") != "state-test" || location.Query().Get("code") == "" {
-		t.Fatalf("authorization redirect=%q err=%v", recorder.Header().Get("Location"), err)
+		t.Fatalf("authorization redirect in success page=%q err=%v", recorder.Body.String(), err)
 	}
 	code := location.Query().Get("code")
 	exchange := func() *httptest.ResponseRecorder {
@@ -420,9 +473,20 @@ func TestOAuthConsentSupportsCookieSessionFormCSRF(t *testing.T) {
 	post.AddCookie(cookie)
 	postResponse := httptest.NewRecorder()
 	handler.ServeHTTP(postResponse, post)
-	if postResponse.Code != http.StatusFound {
+	if postResponse.Code != http.StatusOK || !strings.Contains(postResponse.Body.String(), "授权成功") {
 		t.Fatalf("consent submit status=%d body=%s", postResponse.Code, postResponse.Body.String())
 	}
+}
+
+var oauthSuccessRedirectPattern = regexp.MustCompile(`content="1\.2; url=([^"]+)"`)
+
+func oauthSuccessRedirectURL(body string) (*url.URL, error) {
+	match := oauthSuccessRedirectPattern.FindStringSubmatch(body)
+	if len(match) != 2 {
+		return nil, errors.New("success page does not contain the auto-redirect URL")
+	}
+	raw := strings.ReplaceAll(match[1], "&amp;", "&")
+	return url.Parse(raw)
 }
 
 func oauthTestAuthorizationForm(client *model.OAuthClient, scope, challenge string) url.Values {

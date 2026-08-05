@@ -340,7 +340,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
-	oauthRedirect(w, r, request.RedirectURI, request.State, rawCode, "")
+	s.renderOAuthSuccess(w, r, request.RedirectURI, request.State, rawCode, client.Name)
 }
 
 func (s *Server) validateOAuthAuthorizationRequest(r *http.Request) (oauthAuthorizationRequest, *model.OAuthClient, error) {
@@ -550,6 +550,10 @@ func pkceMatches(challenge, verifier string) bool {
 }
 
 func oauthRedirect(w http.ResponseWriter, r *http.Request, redirectURI, state, code, oauthErr string) {
+	http.Redirect(w, r, oauthRedirectLocation(redirectURI, state, code, oauthErr), http.StatusFound)
+}
+
+func oauthRedirectLocation(redirectURI, state, code, oauthErr string) string {
 	u, _ := url.Parse(redirectURI)
 	query := u.Query()
 	if state != "" {
@@ -561,19 +565,178 @@ func oauthRedirect(w http.ResponseWriter, r *http.Request, redirectURI, state, c
 		query.Set("code", code)
 	}
 	u.RawQuery = query.Encode()
-	http.Redirect(w, r, u.String(), http.StatusFound)
+	return u.String()
+}
+
+type oauthConsentScope struct {
+	Label string
+	Code  string
+}
+
+func (s *Server) oauthScopeViews(scopes []string) []oauthConsentScope {
+	byScope := make(map[string][]string, len(scopes))
+	for _, descriptor := range s.capabilities.List(application.Principal{Scopes: []string{"*"}}) {
+		for _, scope := range descriptor.RequiredScopes {
+			if !slices.Contains(scopes, scope) || descriptor.Description == "" || slices.Contains(byScope[scope], descriptor.Description) {
+				continue
+			}
+			byScope[scope] = append(byScope[scope], descriptor.Description)
+		}
+	}
+	views := make([]oauthConsentScope, 0, len(scopes))
+	for _, scope := range scopes {
+		label := strings.Join(byScope[scope], "；")
+		code := ""
+		if label == "" {
+			label = scope
+		} else {
+			code = scope
+		}
+		views = append(views, oauthConsentScope{Label: label, Code: code})
+	}
+	return views
 }
 
 func (s *Server) renderOAuthConsent(w http.ResponseWriter, r *http.Request, request oauthAuthorizationRequest, clientName string) {
-	const page = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OBoard 授权</title><style>body{font-family:system-ui,sans-serif;max-width:640px;margin:10vh auto;padding:24px;color:#17202a}fieldset{border:1px solid #ccd1d1;border-radius:6px;padding:20px}button{padding:9px 14px;margin-right:8px}code{overflow-wrap:anywhere}</style></head><body><form method="post"><fieldset><legend>授权 {{.ClientName}}</legend><p>请求访问 OBoard MCP 资源：</p><code>{{.Resource}}</code><p>权限：{{.Scopes}}</p>{{range .Hidden}}<input type="hidden" name="{{.Key}}" value="{{.Value}}">{{end}}<button name="decision" value="approve" type="submit">允许</button><button name="decision" value="deny" type="submit">拒绝</button></fieldset></form></body></html>`
+	const page = `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>OAuth 授权 · OBoard</title>
+<style>
+:root{color-scheme:light;--bg-page:#f7f8fa;--bg-card:#ffffff;--bg-inset:#f3f4f6;--text-primary:#111827;--text-secondary:#4b5563;--text-muted:#6b7280;--border:#eaecef;--border-strong:#e2e5ea;--primary:#111827;--primary-hover:#0b1220;--primary-contrast:#ffffff;--primary-soft:rgba(17,24,39,.08);--success:#10b981;--success-bg:rgba(16,185,129,.1);--danger:#ef4444;--danger-bg:rgba(239,68,68,.1);--shadow:0 1px 3px rgba(0,0,0,.05),0 12px 32px rgba(15,23,42,.03)}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg-page:#0b0d12;--bg-card:#12151c;--bg-inset:#1a1f2b;--text-primary:#f3f4f6;--text-secondary:#c4cad4;--text-muted:#9aa3b2;--border:#2a3140;--border-strong:#3a4254;--primary:#f3f4f6;--primary-hover:#ffffff;--primary-contrast:#0b0d12;--primary-soft:rgba(243,244,246,.12);--success:#34d399;--success-bg:rgba(52,211,153,.14);--danger:#f87171;--danger-bg:rgba(248,113,113,.14);--shadow:0 0 0 1px rgba(255,255,255,.04) inset,0 20px 48px rgba(0,0,0,.3)}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg-page);color:var(--text-primary);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;font-size:14px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+.card{width:min(472px,100%);background:var(--bg-card);border:1px solid var(--border-strong);border-radius:18px;box-shadow:var(--shadow);padding:32px}
+.brand{display:flex;align-items:center;gap:10px;padding-bottom:18px;margin-bottom:20px;border-bottom:1px dashed var(--border)}
+.brand-mark{flex-shrink:0;width:34px;height:34px;border-radius:9px}
+.brand-name{font-weight:800;letter-spacing:.16em;font-size:15px}
+.kicker{margin:0 0 8px;font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
+h1{margin:0 0 10px;font-size:21px;font-weight:700;letter-spacing:-.01em;line-height:1.35}
+.sub{margin:0 0 22px;color:var(--text-secondary);font-size:13px;line-height:1.7}
+.panel{border:1px solid var(--border);border-radius:14px;padding:2px 18px}
+.row{padding:13px 0}
+.row+.row{border-top:1px solid var(--border)}
+.row-label{margin-bottom:8px;font-size:11.5px;font-weight:700;letter-spacing:.04em;color:var(--text-muted)}
+.resource{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:12.5px;line-height:1.6;word-break:break-all;color:var(--text-secondary);background:var(--bg-inset);border:1px solid var(--border);border-radius:8px;padding:8px 10px}
+.scope{display:flex;flex-direction:column;gap:4px;padding:5px 0}
+.scope strong{font-size:13px;font-weight:600;line-height:1.5}
+.scope code{width:fit-content;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:11px;color:var(--text-muted);background:var(--bg-inset);border:1px solid var(--border);border-radius:6px;padding:1px 7px}
+.actions{display:flex;gap:10px;justify-content:flex-end;margin-top:26px}
+button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:8px 22px;border-radius:9999px;border:1px solid transparent;font:inherit;font-size:13.5px;font-weight:600;letter-spacing:-.01em;cursor:pointer;transition:background .18s ease,border-color .18s ease,transform .14s cubic-bezier(.22,1,.36,1)}
+button:active{transform:scale(.98)}
+button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+button.primary{background:var(--primary);color:var(--primary-contrast)}
+button.primary:hover{background:var(--primary-hover)}
+button.ghost{background:transparent;color:var(--text-primary);border-color:var(--border-strong)}
+button.ghost:hover{background:var(--primary-soft)}
+.foot{margin-top:20px;text-align:center;color:var(--text-muted);font-size:11.5px;line-height:1.7}
+</style>
+</head>
+<body>
+<form class="card" method="post">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="116" fill="var(--primary)"/><circle cx="256" cy="256" r="128" fill="none" stroke="var(--primary-contrast)" stroke-width="30"/><circle cx="256" cy="256" r="38" fill="var(--primary-contrast)"/></svg>
+    <span class="brand-name">OBOARD</span>
+  </div>
+  <p class="kicker">OAuth 授权</p>
+  <h1>「{{.ClientName}}」请求访问</h1>
+  <p class="sub">该客户端申请以你的账号访问 OBoard MCP 资源，后续操作仍受你的角色与审批策略约束。</p>
+  <div class="panel">
+    <div class="row">
+      <div class="row-label">目标资源</div>
+      <div class="resource">{{.Resource}}</div>
+    </div>
+    <div class="row">
+      <div class="row-label">申请的权限</div>
+      {{range .Scopes}}<div class="scope"><strong>{{.Label}}</strong>{{if .Code}}<code>{{.Code}}</code>{{end}}</div>{{end}}
+    </div>
+  </div>
+  {{range .Hidden}}<input type="hidden" name="{{.Key}}" value="{{.Value}}">{{end}}
+  <div class="actions">
+    <button class="ghost" type="submit" name="decision" value="deny">拒绝</button>
+    <button class="primary" type="submit" name="decision" value="approve">允许授权</button>
+  </div>
+  <div class="foot">当前账号：{{.Username}} · 授权后可随时在 OBoard 面板吊销</div>
+</form>
+</body>
+</html>`
 	tmpl := template.Must(template.New("consent").Parse(page))
 	hidden := []map[string]string{{"Key": "client_id", "Value": request.ClientID}, {"Key": "redirect_uri", "Value": request.RedirectURI}, {"Key": "response_type", "Value": "code"}, {"Key": "scope", "Value": strings.Join(request.Scope, " ")}, {"Key": "state", "Value": request.State}, {"Key": "resource", "Value": request.Resource}, {"Key": "code_challenge", "Value": request.CodeChallenge}, {"Key": "code_challenge_method", "Value": "S256"}}
 	if sessionToken := currentSessionToken(r); sessionToken != "" {
 		hidden = append(hidden, map[string]string{"Key": "_oboard_csrf", "Value": s.csrfTokenForSession(sessionToken)})
 	}
+	username := ""
+	if user := currentUser(r); user != nil {
+		username = user.Username
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_ = tmpl.Execute(w, map[string]any{"ClientName": clientName, "Resource": request.Resource, "Scopes": strings.Join(request.Scope, " "), "Hidden": hidden})
+	_ = tmpl.Execute(w, map[string]any{"ClientName": clientName, "Resource": request.Resource, "Scopes": s.oauthScopeViews(request.Scope), "Hidden": hidden, "Username": username})
+}
+
+func (s *Server) renderOAuthSuccess(w http.ResponseWriter, r *http.Request, redirectURI, state, code, clientName string) {
+	location := oauthRedirectLocation(redirectURI, state, code, "")
+	const page = `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>授权成功 · OBoard</title>
+{{.RefreshMeta}}
+<style>
+:root{color-scheme:light;--bg-page:#f7f8fa;--bg-card:#ffffff;--text-primary:#111827;--text-secondary:#4b5563;--text-muted:#6b7280;--border:#eaecef;--border-strong:#e2e5ea;--primary:#111827;--primary-hover:#0b1220;--primary-contrast:#ffffff;--primary-soft:rgba(17,24,39,.08);--success:#10b981;--success-bg:rgba(16,185,129,.1);--shadow:0 1px 3px rgba(0,0,0,.05),0 12px 32px rgba(15,23,42,.03)}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg-page:#0b0d12;--bg-card:#12151c;--text-primary:#f3f4f6;--text-secondary:#c4cad4;--text-muted:#9aa3b2;--border:#2a3140;--border-strong:#3a4254;--primary:#f3f4f6;--primary-hover:#ffffff;--primary-contrast:#0b0d12;--primary-soft:rgba(243,244,246,.12);--success:#34d399;--success-bg:rgba(52,211,153,.14);--shadow:0 0 0 1px rgba(255,255,255,.04) inset,0 20px 48px rgba(0,0,0,.3)}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg-page);color:var(--text-primary);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;font-size:14px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+.card{width:min(472px,100%);background:var(--bg-card);border:1px solid var(--border-strong);border-radius:18px;box-shadow:var(--shadow);padding:32px;text-align:center}
+.brand{display:flex;align-items:center;justify-content:center;gap:10px;padding-bottom:18px;margin-bottom:22px;border-bottom:1px dashed var(--border)}
+.brand-mark{flex-shrink:0;width:34px;height:34px;border-radius:9px}
+.brand-name{font-weight:800;letter-spacing:.16em;font-size:15px}
+.check{width:64px;height:64px;margin:0 auto 20px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:var(--success-bg);color:var(--success)}
+.kicker{margin:0 0 8px;font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
+h1{margin:0 0 10px;font-size:21px;font-weight:700;letter-spacing:-.01em;line-height:1.35}
+.sub{margin:0 0 24px;color:var(--text-secondary);font-size:13px;line-height:1.7}
+.fallback{color:var(--text-secondary);font-size:12.5px;text-decoration:none;border-bottom:1px dashed var(--border-strong);padding-bottom:2px}
+.fallback:hover{color:var(--text-primary)}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="116" fill="var(--primary)"/><circle cx="256" cy="256" r="128" fill="none" stroke="var(--primary-contrast)" stroke-width="30"/><circle cx="256" cy="256" r="38" fill="var(--primary-contrast)"/></svg>
+    <span class="brand-name">OBOARD</span>
+  </div>
+  <div class="check"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></div>
+  <p class="kicker">OAuth 授权</p>
+  <h1>授权成功</h1>
+  <p class="sub">已授权「{{.ClientName}}」访问 OBoard MCP 资源，正在返回客户端……</p>
+  <a class="fallback" href="{{.RedirectURL}}">未自动跳转？点击这里返回客户端</a>
+</div>
+<script>window.setTimeout(function(){window.location.replace({{.RedirectJS}})},1200)</script>
+</body>
+</html>`
+	tmpl := template.Must(template.New("success").Parse(page))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = tmpl.Execute(w, map[string]any{
+		"ClientName":  clientName,
+		"RedirectURL": template.URL(location),
+		"RedirectJS":  oauthJSString(location),
+		"RefreshMeta": template.HTML(`<meta http-equiv="refresh" content="1.2; url=` + template.HTMLEscapeString(location) + `">`),
+	})
+}
+
+func oauthJSString(value string) template.JS {
+	quoted := strconv.Quote(value)
+	quoted = strings.ReplaceAll(quoted, "<", `\u003c`)
+	quoted = strings.ReplaceAll(quoted, ">", `\u003e`)
+	quoted = strings.ReplaceAll(quoted, "&", `\u0026`)
+	return template.JS(quoted)
 }
 
 func oauthError(w http.ResponseWriter, status int, code, description string) {

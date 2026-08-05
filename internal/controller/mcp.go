@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -149,7 +152,71 @@ func (s *Server) newMCPHandler() http.Handler {
 	})
 
 	s.addMCPResources(server)
-	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 1 << 20, PropagateRequestCancellation: true})
+	transport := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, DisableLocalhostProtection: true, MaxRequestBodyBytes: 1 << 20, PropagateRequestCancellation: true})
+	return s.mcpLocalhostProtection(transport)
+}
+
+func (s *Server) mcpLocalhostProtection(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		localAddr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+		if !ok || localAddr == nil || !mcpIsLoopbackAddress(localAddr.String()) || mcpIsLoopbackAddress(r.Host) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		base, err := s.publicBaseURL(r.Context())
+		if err == nil {
+			if parsed, parseErr := url.Parse(base); parseErr == nil && mcpAuthoritiesEqual(parsed.Scheme, parsed.Host, r.Host) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		http.Error(w, fmt.Sprintf("Forbidden: invalid Host header %q", r.Host), http.StatusForbidden)
+	})
+}
+
+func mcpIsLoopbackAddress(authority string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(authority))
+	if err != nil {
+		host = strings.Trim(strings.TrimSpace(authority), "[]")
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func mcpAuthoritiesEqual(scheme, configured, requested string) bool {
+	configuredAuthority, ok := canonicalMCPAuthority(scheme, configured)
+	if !ok {
+		return false
+	}
+	requestedAuthority, ok := canonicalMCPAuthority(scheme, requested)
+	return ok && configuredAuthority == requestedAuthority
+}
+
+func canonicalMCPAuthority(scheme, authority string) (string, bool) {
+	parsed, err := url.Parse(strings.ToLower(scheme) + "://" + strings.TrimSpace(authority))
+	if err != nil || parsed.User != nil || parsed.Host == "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if host == "" {
+		return "", false
+	}
+	port := parsed.Port()
+	if port == "" {
+		switch strings.ToLower(scheme) {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		default:
+			return "", false
+		}
+	}
+	return net.JoinHostPort(host, port), true
 }
 
 func (s *Server) mcpRunQuery(ctx context.Context, name string, arguments map[string]any) (*mcp.CallToolResult, any, error) {
