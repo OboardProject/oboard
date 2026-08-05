@@ -91,6 +91,7 @@ import { useRealtimeEvents, type RealtimeEvent, type RealtimeStatus } from './re
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { getServerTimeIssue } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
+import { collectRegionStats, orderRegions } from './region-order'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
@@ -375,10 +376,6 @@ const regionOptions = (() => {
   }
   return values.sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
 })()
-const popularRegionCodes = ['CN', 'TW', 'HK', 'MO', 'US', 'SG', 'JP', 'KR', 'CA', 'DE', 'GB']
-const popularRegions = popularRegionCodes.map(code => ({ code, label: regionLabel(code) }))
-const otherRegions = regionOptions.filter(region => !popularRegionCodes.includes(region.code))
-
 function serverRegionCode(server?: Pick<Server, 'region_mode' | 'region_code' | 'detected_region_code'>) {
   if (!server) return ''
   return normalizeRegionCode(server.region_mode === 'manual' ? server.region_code : server.detected_region_code)
@@ -393,7 +390,7 @@ function RegionFlag({ code, size = 22 }: { code?: string; size?: number }) {
   return <span className="region-flag region-flag-emoji" style={{ width: size, height: size, fontSize: Math.max(15, size * 0.72) }} role="img" aria-label={label} title={label}>{regionFlagEmoji(value)}</span>
 }
 
-function RegionPicker({ value, onChange }: { value: string; onChange: (code: string) => void }) {
+function RegionPicker({ value, onChange, servers = [] }: { value: string; onChange: (code: string) => void; servers?: Server[] }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [position, setPosition] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null)
@@ -405,8 +402,8 @@ function RegionPicker({ value, onChange }: { value: string; onChange: (code: str
   const matchesQuery = (region: { code: string; label: string }) => !normalizedQuery
     || region.code.toLowerCase().includes(normalizedQuery)
     || region.label.toLocaleLowerCase('zh-CN').includes(normalizedQuery)
-  const filteredPopular = popularRegions.filter(matchesQuery)
-  const filteredOthers = otherRegions.filter(matchesQuery)
+  const orderedRegions = useMemo(() => orderRegions(regionOptions, collectRegionStats(servers), regionLabel), [servers])
+  const filteredRegions = orderedRegions.filter(matchesQuery)
 
   const updatePosition = () => {
     const trigger = triggerRef.current
@@ -507,15 +504,10 @@ function RegionPicker({ value, onChange }: { value: string; onChange: (code: str
           {query ? <button type="button" className="icon-button ghost" onClick={() => setQuery('')} aria-label="清空搜索" title="清空搜索"><X size={16} /></button> : null}
         </div>
         <div className="region-picker-results" role="listbox" aria-label="服务器地区">
-          {filteredPopular.length > 0 ? <section>
-            <h4>常用地区</h4>
-            <div className="region-picker-grid popular">{filteredPopular.map(renderRegion)}</div>
-          </section> : null}
-          {filteredOthers.length > 0 ? <section>
+          {filteredRegions.length > 0 ? <section>
             <h4>{normalizedQuery ? '搜索结果' : '全部地区'}</h4>
-            <div className="region-picker-grid">{filteredOthers.map(renderRegion)}</div>
-          </section> : null}
-          {filteredPopular.length === 0 && filteredOthers.length === 0 ? <div className="region-picker-empty">没有匹配的地区</div> : null}
+            <div className="region-picker-grid">{filteredRegions.map(renderRegion)}</div>
+          </section> : <div className="region-picker-empty">没有匹配的地区</div>}
         </div>
       </div>,
       document.body,
@@ -523,7 +515,7 @@ function RegionPicker({ value, onChange }: { value: string; onChange: (code: str
   </div>
 }
 
-function ServerRegionField({ draft, update }: { draft: any; update: (patch: any) => void }) {
+function ServerRegionField({ draft, update, servers }: { draft: any; update: (patch: any) => void; servers?: Server[] }) {
   const mode: RegionMode = draft.region_mode === 'manual' ? 'manual' : 'auto'
   const detectedCode = normalizeRegionCode(draft.detected_region_code)
 
@@ -548,6 +540,7 @@ function ServerRegionField({ draft, update }: { draft: any; update: (patch: any)
           <RegionPicker
             value={normalizeRegionCode(draft.region_code) || 'CN'}
             onChange={region_code => update({ region_code })}
+            servers={servers}
           />
         ) : (
           <div className="server-region-auto-box">
@@ -600,6 +593,7 @@ function ExitRegionEditor({
   status,
   error,
   probedAt,
+  servers,
   onModeChange,
   onCodeChange,
   action,
@@ -610,6 +604,7 @@ function ExitRegionEditor({
   status?: string
   error?: string
   probedAt?: string
+  servers?: Server[]
   onModeChange: (mode: RegionMode) => void
   onCodeChange: (code: string) => void
   action?: React.ReactNode
@@ -620,7 +615,7 @@ function ExitRegionEditor({
       <option value="manual">手动指定</option>
     </Select>
     {mode === 'manual'
-      ? <RegionPicker value={normalizeRegionCode(manualCode) || normalizeRegionCode(effectiveCode) || 'CN'} onChange={onCodeChange} />
+      ? <RegionPicker value={normalizeRegionCode(manualCode) || normalizeRegionCode(effectiveCode) || 'CN'} onChange={onCodeChange} servers={servers} />
       : <div className="exit-region-auto">
           <ExitRegionBadge code={effectiveCode} status={status} />
           <div className="exit-region-auto-meta">
@@ -6109,8 +6104,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       : view === 'grid'
 		  ? <MotionList className="server-grid">{visibleServers.map(renderServerCard)}</MotionList>
       : <MotionList className="server-list">{visibleServers.map(renderServerCard)}</MotionList>}
-    <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
-    <AnimatePresence>{editServer && <ServerEditDialog server={editServer} onCancel={() => setEditServer(null)} onSubmit={updateServer} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
+    <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
+    <AnimatePresence>{editServer && <ServerEditDialog server={editServer} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} onClose={() => setDetailServer(null)} />}</AnimatePresence>
     <AnimatePresence>{timeDetailServer && <ServerTimeDetailDialog
       server={timeDetailServer}
@@ -6378,7 +6373,7 @@ function CommandCopyBlock({ value, buttonText = '复制命令' }: { value: strin
   </div>
 }
 
-function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, connectionAuditGated }: { draft: ReturnType<typeof defaultServerDraft>; setDraft: React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>; onCancel: () => void; onSubmit: () => Promise<void>; connectionAuditGated?: boolean }) {
+function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, connectionAuditGated }: { draft: ReturnType<typeof defaultServerDraft>; setDraft: React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>; onCancel: () => void; onSubmit: () => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean }) {
   const update = (patch: Partial<ReturnType<typeof defaultServerDraft>>) => setDraft(old => ({ ...old, ...patch }))
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
@@ -6404,7 +6399,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, connectionAud
           <FormField label="服务器名称" required hint="用于面板识别。">
             <input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="例如：server-1" />
           </FormField>
-          <ServerRegionField draft={draft} update={update} />
+          <ServerRegionField draft={draft} update={update} servers={servers} />
           <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。">
             <Select value={draft.entry_ip_mode} onChange={e => update({ entry_ip_mode: e.target.value as EntryIPMode })}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
           </FormField>
@@ -6482,7 +6477,7 @@ function serverToDraft(server: Server) {
   }
 }
 
-function ServerEditDialog({ server, onCancel, onSubmit, connectionAuditGated }: { server: Server; onCancel: () => void; onSubmit: (server: any) => Promise<void>; connectionAuditGated?: boolean }) {
+function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAuditGated }: { server: Server; onCancel: () => void; onSubmit: (server: any) => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean }) {
   const [draft, setDraft] = useState<any>(() => serverToDraft(server))
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
@@ -6507,7 +6502,7 @@ function ServerEditDialog({ server, onCancel, onSubmit, connectionAuditGated }: 
         <div className="form server-dialog-form labeled-form">
           <div className="form-section-title">基础信息</div>
           <FormField label="服务器名称" required><input value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
-          <ServerRegionField draft={draft} update={update} />
+          <ServerRegionField draft={draft} update={update} servers={servers} />
           <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。"><Select value={draft.entry_ip_mode} onChange={e => update({ entry_ip_mode: e.target.value as EntryIPMode })}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="自定义入口地址" hint="选择自定义时使用。">
             <input value={draft.entry_address || ''} onChange={e => update({ entry_address: e.target.value })} placeholder="域名 / IPv4 / IPv6" />
@@ -6972,7 +6967,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
       {/* Header */}
       <div className="server-card-head">
         <div className="server-card-title">
-          <RegionFlag code={serverRegionCode(server)} size={24} />
+          <RegionFlag code={serverRegionCode(server)} size={20} />
           <div>
             <h3>{server.name || `server-${server.id}`}</h3>
             <p>#{server.id} · {regionLabel(serverRegionCode(server))}</p>
@@ -8717,7 +8712,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         </aside>}
       </div>
     </div>
-    <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
+    <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{entryDraft && <EntryDraftDialog mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} />}</AnimatePresence>
     <AnimatePresence>{editEntry && <EntryDraftDialog mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} />}</AnimatePresence>
     <AnimatePresence>{accessEntry && <EntryUsersDialog entry={accessEntry} data={data} client={client} load={load} onCancel={() => setAccessEntry(null)} />}</AnimatePresence>
@@ -8875,6 +8870,7 @@ function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: Prox
 		  status={probeQueued ? 'pending' : path.exit_region_status}
 		  error={path.exit_region_error}
 		  probedAt={path.exit_region_probed_at}
+		  servers={data.servers || []}
 		  onModeChange={next => { setExitRegionMode(next); if (next === 'manual' && !normalizeRegionCode(exitRegionCode)) setExitRegionCode(path.effective_exit_region_code || 'CN') }}
 		  onCodeChange={setExitRegionCode}
 		  action={terminalImported ? <button type="button" className="ghost icon-button exit-region-probe" onClick={() => void probe()} disabled={probing} aria-label="重新探测出口地区" title="重新探测出口地区"><RefreshCw size={15} className={probing ? 'spin' : ''} /></button> : undefined}
@@ -9310,6 +9306,7 @@ function ImportedNodeConfigDialog({ node, data, client, load, onClose }: { node:
 			status={node.region_status}
 			error={node.region_error}
 			probedAt={node.region_probed_at}
+			servers={data.servers || []}
 			onModeChange={next => { setRegionMode(next); if (next === 'manual' && !normalizeRegionCode(regionCode)) setRegionCode(node.effective_region_code || 'CN') }}
 			onCodeChange={setRegionCode}
 		  />

@@ -1501,21 +1501,21 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .server-card-head {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  min-height: 46px;
-  padding-bottom: 7px;
+  gap: 6px;
+  min-height: 38px;
+  padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
 }
 
 .server-card-title {
-  flex: 1 1 120px;
+  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   overflow: hidden;
   text-align: left;
 }
@@ -1794,11 +1794,18 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   margin: 0 0 2px;
   overflow: hidden;
   color: var(--text-strong);
-  font-size: 14px;
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.server-card-head p { margin: 0; color: var(--muted); font-size: 10px; }
+.server-card-head p {
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .server-card-head-actions {
   flex: 0 0 auto;
@@ -1806,14 +1813,14 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 3px;
   margin-left: auto;
 }
 
 .server-status-dot {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 8px;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
   display: inline-block;
   border-radius: 50%;
 }
@@ -1829,15 +1836,17 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .server-time-issue {
+  position: relative;
   flex: 0 0 auto;
   min-height: 24px;
-  padding: 4px 7px;
-  gap: 4px;
+  height: 24px;
+  padding: 3px 4px;
+  gap: 3px;
   border: 1px solid color-mix(in srgb, var(--warning) 32%, var(--border));
   border-radius: var(--radius-full);
   color: var(--warning);
   background: var(--warning-soft);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   line-height: 1.2;
   white-space: nowrap;
@@ -1868,17 +1877,18 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-time-issue:active { transform: none; }
 
 .server-version-warning {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 24px;
   height: 24px;
-  padding: 4px 8px;
+  padding: 3px 4px;
   border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border));
   border-radius: var(--radius-full);
   color: var(--warning);
   background: var(--warning-soft);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   line-height: 1.25;
   white-space: nowrap;
@@ -1902,6 +1912,28 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-version-update {
   position: relative;
   flex: 0 0 auto;
+}
+
+.server-card-head-actions .server-actions-dropdown > .icon-button {
+  position: relative;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+}
+
+.server-time-issue::before,
+.server-version-warning::before {
+  content: '';
+  position: absolute;
+  inset: -10px 0;
+}
+
+.server-card-head-actions .server-actions-dropdown > .icon-button::before {
+  content: '';
+  position: absolute;
+  inset: -8px -16px -8px 0;
 }
 
 .server-version-popover {
