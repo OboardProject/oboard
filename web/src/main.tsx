@@ -103,6 +103,7 @@ import {
   type AutomationConnectClient,
 } from './automation-connect'
 import { formatTokenLimit, tokenDisplayToLimit, tokenLimitToDisplay, type TokenDisplayUnit } from './ai-provider'
+import { auditHealthScoreTone, normalizeAuditHealthScore } from './ai-audit-score'
 
 type AIProviderFormat = 'chat_completions' | 'responses'
 import {
@@ -237,6 +238,7 @@ type AuditReviewScope = { users: AuditReviewSelector; servers: AuditReviewSelect
 type AuditReviewReport = {
   verdict: 'normal' | 'attention' | 'high_risk' | 'insufficient_evidence'
   risk_level: AuditRiskLevel | 'unknown'
+  health_score: number
   confidence: number
   summary: string
   dimensions: Array<{ kind: 'subscription' | 'connection' | 'destination'; risk_level: AuditRiskLevel | 'unknown'; summary: string; evidence_refs: string[]; counter_evidence: string[] }>
@@ -5331,6 +5333,8 @@ function AIAuditReviews({ data, client, notify }: any) {
 function AuditReviewDetailDialog({ detail, evidence, evidenceTotal, client, working, onLoadMore, onClose }: { detail: { review: AuditReview; jobs: AuditReviewJob[] }; evidence: AuditReviewEvidence[]; evidenceTotal: number; client: any; working: string; onLoadMore: () => void; onClose: () => void }) {
   const dialogs = useDialogs()
   const report = detail.review.final_output
+  const healthScore = report && Number.isFinite(report.health_score) ? normalizeAuditHealthScore(report.health_score) : null
+  const healthScoreTone = healthScore === null ? null : auditHealthScoreTone(healthScore)
   const showJob = async (job: AuditReviewJob) => {
     try {
       const response = await client.request(`/audit/ai-reviews/${detail.review.id}/jobs/${job.id}`)
@@ -5347,7 +5351,14 @@ function AuditReviewDetailDialog({ detail, evidence, evidenceTotal, client, work
     <div className="dialog-body ai-review-detail-body">
       <div className="ai-review-detail-meta"><span>{auditReviewEvidenceLabel(detail.review.evidence_types)}</span><span>{detail.review.resolved_user_ids.length} 个用户</span><span>{detail.review.resolved_server_ids.length} 台服务器</span><span>{detail.review.privacy_mode === 'raw' ? '原始字段' : '脱敏字段'}</span><span>{detail.review.completed_job_count}/{detail.review.job_count} 个任务完成</span></div>
       {report ? <div className="ai-review-report">
-        <section className="ai-review-report-summary"><span className={`audit-risk-pill ${report.risk_level}`}>{auditReviewVerdictLabel(report.verdict)} · {Math.round(report.confidence * 100)}%</span><h3>{report.summary}</h3><p>{report.coverage_summary}</p></section>
+        <section className="ai-review-report-summary">
+          {healthScore !== null && <div className={`ai-review-health-score ${healthScoreTone}`}>
+            <strong>{healthScore}</strong>
+            <div className="ai-review-health-meter" role="meter" aria-label="AI 审查健康评分" aria-valuemin={0} aria-valuemax={100} aria-valuenow={healthScore}><span style={{ width: `${healthScore}%` }} /></div>
+            <span>{healthScore}/100</span>
+          </div>}
+          <div className="ai-review-report-summary-copy"><span className={`audit-risk-pill ${report.risk_level}`}>{auditReviewVerdictLabel(report.verdict)} · 置信度 {Math.round(report.confidence * 100)}%</span><h3>{report.summary}</h3><p>{report.coverage_summary}</p></div>
+        </section>
         {report.dimensions?.length > 0 && <section><h3>分项判断</h3><div className="ai-review-report-list">{report.dimensions.map((item, index) => <article key={`${item.kind}-${index}`}><div><strong>{auditReviewEvidenceLabel([item.kind])}</strong><span className={`audit-risk-pill ${item.risk_level}`}>{auditReviewRiskLabel(item.risk_level)}</span></div><p>{item.summary}</p><small>证据：{item.evidence_refs.join('、') || '无'}{item.counter_evidence.length ? ` · 反证：${item.counter_evidence.join('、')}` : ''}</small></article>)}</div></section>}
         {report.notable_subjects?.length > 0 && <section><h3>关注对象</h3><div className="ai-review-report-list">{report.notable_subjects.map((item, index) => <article key={`${item.subject_ref}-${index}`}><div><strong>{item.subject_ref}</strong><span className={`audit-risk-pill ${item.risk_level}`}>{auditReviewRiskLabel(item.risk_level)}</span></div><p>{item.summary}</p><small>{item.evidence_refs.join('、')}</small></article>)}</div></section>}
         <div className="ai-review-report-columns"><section><h3>建议</h3>{report.recommended_actions?.length ? <ul>{report.recommended_actions.map(item => <li key={item}>{auditReviewActionLabel(item)}</li>)}</ul> : <p className="muted">无</p>}</section><section><h3>数据缺口</h3>{report.data_gaps?.length ? <ul>{report.data_gaps.map(item => <li key={item}>{item}</li>)}</ul> : <p className="muted">无</p>}</section></div>

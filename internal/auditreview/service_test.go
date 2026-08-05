@@ -199,7 +199,8 @@ func TestValidateReportRequiresUserSubjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := New(db, "mask-key")
-	base := model.AuditReviewReport{Verdict: "normal", RiskLevel: "low", Confidence: 0.9, Summary: "正常", CoverageSummary: "覆盖 1 个用户", RecommendedActions: []string{"continue_observation"}}
+	healthScore := 92
+	base := model.AuditReviewReport{Verdict: "normal", RiskLevel: "low", HealthScore: &healthScore, Confidence: 0.9, Summary: "正常", CoverageSummary: "覆盖 1 个用户", RecommendedActions: []string{"continue_observation"}}
 	userOnly := base
 	userOnly.NotableSubjects = []model.AuditReviewSubjectFinding{{SubjectRef: "user:2", RiskLevel: "low", Summary: "用户行为正常", EvidenceRefs: []string{"user:2"}}}
 	if err := service.ValidateReport(ctx, "review-1", &userOnly); err != nil {
@@ -209,6 +210,21 @@ func TestValidateReportRequiresUserSubjects(t *testing.T) {
 	withServer.NotableSubjects = []model.AuditReviewSubjectFinding{{SubjectRef: "server:1", RiskLevel: "low", Summary: "服务器在线", EvidenceRefs: []string{"server:1"}}}
 	if err := service.ValidateReport(ctx, "review-1", &withServer); err == nil {
 		t.Fatal("server subject was accepted")
+	}
+	invalidScore := base
+	outOfRangeScore := 101
+	invalidScore.HealthScore = &outOfRangeScore
+	if err := service.ValidateReport(ctx, "review-1", &invalidScore); err == nil {
+		t.Fatal("out-of-range health score was accepted")
+	}
+	inconsistentScore := 59
+	invalidScore.HealthScore = &inconsistentScore
+	if err := service.ValidateReport(ctx, "review-1", &invalidScore); err == nil {
+		t.Fatal("health score inconsistent with risk level was accepted")
+	}
+	invalidScore.HealthScore = nil
+	if err := service.ValidateReport(ctx, "review-1", &invalidScore); err == nil {
+		t.Fatal("missing health score was accepted")
 	}
 }
 

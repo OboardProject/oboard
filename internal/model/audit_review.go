@@ -96,6 +96,7 @@ type AuditReviewSubjectFinding struct {
 type AuditReviewReport struct {
 	Verdict            string                        `json:"verdict"`
 	RiskLevel          string                        `json:"risk_level"`
+	HealthScore        *int                          `json:"health_score"`
 	Confidence         float64                       `json:"confidence"`
 	Summary            string                        `json:"summary"`
 	Dimensions         []AuditReviewDimensionFinding `json:"dimensions"`

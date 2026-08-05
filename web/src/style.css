@@ -10351,7 +10351,16 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .ai-review-detail-meta span { padding: 4px 7px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--muted); background: var(--surface-2); font-size: 10.5px; }
 .ai-review-report { display: grid; gap: 20px; }
 .ai-review-report h3 { margin: 0 0 9px; color: var(--text-strong); font-size: 13px; }
-.ai-review-report-summary { padding: 14px 16px; border-left: 3px solid var(--primary); background: var(--surface-2); }
+.ai-review-report-summary { display: grid; gap: 16px; padding: 16px; border-left: 3px solid var(--primary); background: var(--surface-2); }
+.ai-review-health-score { --health-score-color: var(--danger); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; color: var(--health-score-color); }
+.ai-review-health-score.good { --health-score-color: var(--success); }
+.ai-review-health-score.warning { --health-score-color: var(--warning); }
+.ai-review-health-score.danger { --health-score-color: var(--danger); }
+.ai-review-health-score > strong { grid-column: 1 / -1; font-family: var(--font-display); font-size: 46px; font-variant-numeric: tabular-nums; font-weight: 500; line-height: 1; }
+.ai-review-health-score > span { align-self: center; color: var(--text-secondary); font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+.ai-review-health-meter { align-self: center; height: 12px; overflow: hidden; border-radius: var(--radius-full); background: var(--border-strong); }
+.ai-review-health-meter > span { display: block; height: 100%; border-radius: inherit; background: var(--health-score-color); }
+.ai-review-report-summary-copy { padding-top: 14px; border-top: 1px solid var(--border); }
 .ai-review-report-summary h3 { margin: 10px 0 5px; font-size: 15px; line-height: 1.55; }
 .ai-review-report-summary p, .ai-review-report-list p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
 .ai-review-report-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }

@@ -30,8 +30,8 @@ func TestRunOnceCompletesFindingWithoutReturningProviderCredential(t *testing.T)
 			t.Fatal("provider credential leaked into model request body")
 		}
 		content, _ := json.Marshal(map[string]any{
-			"verdict": "attention", "risk_level": "medium", "confidence": 0.82, "summary": "multiple concurrent regions",
-			"dimensions":          []any{map[string]any{"kind": "connection", "risk_level": "medium", "summary": "multiple regions", "evidence_refs": []string{"user:1"}, "counter_evidence": []string{"mobile_network"}}},
+			"verdict": "attention", "risk_level": "medium", "health_score": 68, "confidence": 0.82, "summary": "multiple concurrent regions",
+			"dimensions": []any{map[string]any{"kind": "connection", "risk_level": "medium", "summary": "multiple regions", "evidence_refs": []string{"user:1"}, "counter_evidence": []string{"mobile_network"}}},
 			"notable_subjects": []any{
 				map[string]any{"subject_ref": "user:1", "risk_level": "medium", "summary": "multiple regions", "evidence_refs": []string{"user:1"}},
 				map[string]any{"subject_ref": "server:1", "risk_level": "low", "summary": "server online", "evidence_refs": []string{"server:1"}},
@@ -71,7 +71,7 @@ func TestRunOnceCompletesFindingWithoutReturningProviderCredential(t *testing.T)
 	if strings.Contains(string(encoded), apiKey) {
 		t.Fatal("provider credential leaked into completion RPC")
 	}
-	if completed.WorkerID != "worker-1" || completed.Report.Verdict != "attention" || completed.Report.RiskLevel != "medium" || completed.InputTokens != 120 || completed.OutputTokens != 40 {
+	if completed.WorkerID != "worker-1" || completed.Report.Verdict != "attention" || completed.Report.RiskLevel != "medium" || completed.Report.HealthScore == nil || *completed.Report.HealthScore != 68 || completed.InputTokens != 120 || completed.OutputTokens != 40 {
 		t.Fatalf("unexpected completion: %#v", completed)
 	}
 	if len(completed.Report.NotableSubjects) != 1 || completed.Report.NotableSubjects[0].SubjectRef != "user:1" {
@@ -101,7 +101,7 @@ func TestRunOnceSupportsResponsesAPIFormat(t *testing.T) {
 			t.Fatalf("responses payload = %#v", request)
 		}
 		content, _ := json.Marshal(map[string]any{
-			"verdict": "normal", "risk_level": "low", "confidence": 0.9, "summary": "responses ok",
+			"verdict": "normal", "risk_level": "low", "health_score": 94, "confidence": 0.9, "summary": "responses ok",
 			"dimensions": []any{}, "notable_subjects": []any{}, "recommended_actions": []string{}, "data_gaps": []string{}, "coverage_summary": "ok",
 		})
 		_ = json.NewEncoder(w).Encode(map[string]any{"output_text": string(content), "usage": map[string]int{"input_tokens": 200, "output_tokens": 60}})
@@ -443,7 +443,7 @@ func TestProviderResponseContentSupportsOfficialResponsesShape(t *testing.T) {
 func validReportJSON(t *testing.T) string {
 	t.Helper()
 	content, err := json.Marshal(map[string]any{
-		"verdict": "normal", "risk_level": "low", "confidence": 0.9, "summary": "ok",
+		"verdict": "normal", "risk_level": "low", "health_score": 95, "confidence": 0.9, "summary": "ok",
 		"dimensions": []any{}, "notable_subjects": []any{}, "recommended_actions": []string{}, "data_gaps": []string{}, "coverage_summary": "ok",
 	})
 	if err != nil {

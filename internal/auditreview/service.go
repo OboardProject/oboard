@@ -326,7 +326,7 @@ func packSynthesisInputs(review *model.AuditReview, jobs []model.AuditReviewJob)
 
 func (s *Service) ValidateReport(ctx context.Context, reviewID string, report *model.AuditReviewReport) error {
 	encoded, _ := json.Marshal(report)
-	if report == nil || len(encoded) > maxReviewJobInputBytes-4096 || !oneOf(report.Verdict, "normal", "attention", "high_risk", "insufficient_evidence") || !validRisk(report.RiskLevel) || report.Confidence < 0 || report.Confidence > 1 || strings.TrimSpace(report.Summary) == "" || len(report.Summary) > 2000 || len(report.CoverageSummary) > 1000 || len(report.Dimensions) > 3 || len(report.NotableSubjects) > 100 || len(report.RecommendedActions) > 12 || len(report.DataGaps) > 32 {
+	if report == nil || len(encoded) > maxReviewJobInputBytes-4096 || !oneOf(report.Verdict, "normal", "attention", "high_risk", "insufficient_evidence") || !validRisk(report.RiskLevel) || !validHealthScore(report.RiskLevel, report.HealthScore) || report.Confidence < 0 || report.Confidence > 1 || strings.TrimSpace(report.Summary) == "" || len(report.Summary) > 2000 || len(report.CoverageSummary) > 1000 || len(report.Dimensions) > 3 || len(report.NotableSubjects) > 100 || len(report.RecommendedActions) > 12 || len(report.DataGaps) > 32 {
 		return errors.New("AI 审查输出结构无效")
 	}
 	refs, err := s.store.AuditReviewEvidenceRefs(ctx, reviewID)
@@ -536,6 +536,22 @@ func validateRefs(allowed map[string]bool, values []string) error {
 
 func validRisk(value string) bool {
 	return oneOf(value, "low", "medium", "high", "critical", "unknown")
+}
+
+func validHealthScore(riskLevel string, score *int) bool {
+	if score == nil || *score < 0 || *score > 100 {
+		return false
+	}
+	switch riskLevel {
+	case "low":
+		return *score >= 80
+	case "medium", "unknown":
+		return *score >= 60 && *score < 80
+	case "high", "critical":
+		return *score < 60
+	default:
+		return false
+	}
 }
 
 func oneOf(value string, allowed ...string) bool {
