@@ -9542,27 +9542,57 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	tasks, version, err := s.deployConfiguration(r.Context(), request.ServerID, false)
+	if err != nil {
+		var herr *deploymentHTTPError
+		if errors.As(err, &herr) {
+			fail(w, herr.err, herr.status)
+			return
+		}
+		fail(w, err, 500)
+		return
+	}
+	auditReq(s, r, "apply", "deployment", fmt.Sprint(version))
+	write(w, 202, map[string]any{"config_version": version, "tasks": sanitizeTasksForRole(tasks, currentRole(r)), "summary": taskSummary(tasks)})
+}
+
+// deploymentHTTPError carries the HTTP status a failed deployment preparation
+// should report so the REST handler preserves operator-facing semantics while
+// recovery and enrollment callers just log the failure.
+type deploymentHTTPError struct {
+	status int
+	err    error
+}
+
+func (e *deploymentHTTPError) Error() string { return e.err.Error() }
+
+func deploymentFail(status int, err error) error {
+	return &deploymentHTTPError{status: status, err: err}
+}
+
+// deployConfiguration prepares and queues apply_deployment tasks under the
+// deployment lock. selectedServerID==0 targets every server; otherwise only that
+// server. expandTrustedScope lets automatic pushes fall back to a full
+// deployment when the selected server belongs to a trusted transparent
+// forwarding prefix, because those members must change together.
+func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64, expandTrustedScope bool) ([]model.AgentTask, int64, error) {
 	// Preparation repairs stored topology, refreshes derived roles and allocates
 	// one monotonic config version. Serialize it so two concurrent applies cannot
 	// interleave those writes or queue overlapping desired state.
 	s.deploymentMu.Lock()
 	defer s.deploymentMu.Unlock()
-	if err := s.store.PruneOrphanedProxyPathSteps(r.Context()); err != nil {
-		fail(w, err, 500)
-		return
+	if err := s.store.PruneOrphanedProxyPathSteps(ctx); err != nil {
+		return nil, 0, deploymentFail(500, err)
 	}
-	if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
-		fail(w, err, 500)
-		return
+	if err := s.reconcileProxyPathNameTemplates(ctx); err != nil {
+		return nil, 0, deploymentFail(500, err)
 	}
-	if err := s.normalizeEnabledProxyPathProcessingRoles(r.Context()); err != nil {
-		fail(w, err, 400)
-		return
+	if err := s.normalizeEnabledProxyPathProcessingRoles(ctx); err != nil {
+		return nil, 0, deploymentFail(400, err)
 	}
-	data, err := s.store.FullRoutingConfigData(r.Context())
+	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
-		fail(w, err, 500)
-		return
+		return nil, 0, deploymentFail(500, err)
 	}
 	resolveRoutingProxyPathNames(&data)
 	servers, in := data.Servers, data.Inbounds
@@ -9581,16 +9611,19 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 			if ok {
 				name = server.Name
 			}
-			fail(w, fmt.Errorf("服务器 %s 的 Agent 不支持 SSH 链式代理；请先更新 Agent", name), http.StatusConflict)
-			return
+			return nil, 0, deploymentFail(http.StatusConflict, fmt.Errorf("服务器 %s 的 Agent 不支持 SSH 链式代理；请先更新 Agent", name))
 		}
 	}
+	trustedServers := core.TrustedForwardServerIDs(data.ProxyPaths, data.ProxyPathSteps, in)
+	effectiveScope := selectedServerID
+	if expandTrustedScope && effectiveScope != 0 && trustedServers[effectiveScope] {
+		effectiveScope = 0
+	}
 	externalEgressTargetsByServer := map[int64][]model.ExternalEgressProbeTarget{}
-	if request.ServerID == 0 {
+	if effectiveScope == 0 {
 		targets := core.ExternalEgressProbeTargets(data.ProxyPaths, data.ProxyPathSteps, servers, in, data.ExternalOutbounds)
 		if len(targets) > maxExternalEgressTargets {
-			fail(w, fmt.Errorf("第三方出口探测分支过多，单次最多支持 %d 个", maxExternalEgressTargets), http.StatusBadRequest)
-			return
+			return nil, 0, deploymentFail(http.StatusBadRequest, fmt.Errorf("第三方出口探测分支过多，单次最多支持 %d 个", maxExternalEgressTargets))
 		}
 		for _, target := range targets {
 			externalEgressTargetsByServer[target.OwnerServerID] = append(externalEgressTargetsByServer[target.OwnerServerID], target)
@@ -9605,87 +9638,70 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 				if ok {
 					name = server.Name
 				}
-				fail(w, fmt.Errorf("服务器 %s 的 Agent 不支持第三方节点出口探测；请先更新 Agent", name), http.StatusConflict)
-				return
+				return nil, 0, deploymentFail(http.StatusConflict, fmt.Errorf("服务器 %s 的 Agent 不支持第三方节点出口探测；请先更新 Agent", name))
 			}
 		}
 	}
 	warpServerIDs, err := core.ProxyPathWARPServerIDs(data.ProxyPaths, data.ProxyPathSteps, in)
 	if err != nil {
-		fail(w, err, 400)
-		return
+		return nil, 0, deploymentFail(400, err)
 	}
 	for serverID := range warpServerIDs {
-		if _, err := s.store.EnsureWARPProfileForServer(r.Context(), serverID); err != nil {
-			fail(w, err, 500)
-			return
+		if _, err := s.store.EnsureWARPProfileForServer(ctx, serverID); err != nil {
+			return nil, 0, deploymentFail(500, err)
 		}
 	}
-	data.WARPProfiles, err = s.store.ListWARPProfiles(r.Context())
+	data.WARPProfiles, err = s.store.ListWARPProfiles(ctx)
 	if err != nil {
-		fail(w, err, 500)
-		return
+		return nil, 0, deploymentFail(500, err)
 	}
-	trustedServers := core.TrustedForwardServerIDs(data.ProxyPaths, data.ProxyPathSteps, in)
 	if err := validateTrustedForwardAgentBuilds(servers, trustedServers); err != nil {
-		fail(w, err, http.StatusConflict)
-		return
+		return nil, 0, deploymentFail(http.StatusConflict, err)
 	}
-	if err := validateTrustedForwardDeploymentScope(request.ServerID, trustedServers); err != nil {
-		fail(w, err, http.StatusConflict)
-		return
+	if err := validateTrustedForwardDeploymentScope(effectiveScope, trustedServers); err != nil {
+		return nil, 0, deploymentFail(http.StatusConflict, err)
 	}
-	forwards, err := s.store.ListPortForwards(r.Context())
+	forwards, err := s.store.ListPortForwards(ctx)
 	if err != nil {
-		fail(w, err, 500)
-		return
+		return nil, 0, deploymentFail(500, err)
 	}
-	tunnels, err := s.store.ListTunnels(r.Context())
+	tunnels, err := s.store.ListTunnels(ctx)
 	if err != nil {
-		fail(w, err, 500)
-		return
+		return nil, 0, deploymentFail(500, err)
 	}
 	// Reuse the ports already recorded for generated listeners and let the
 	// projection allocate only what is genuinely new. One ledger is shared by the
 	// derivation below and by every per-server config, so all of them agree.
-	allocations, err := s.store.ListProxyPathPortAllocations(r.Context())
+	allocations, err := s.store.ListProxyPathPortAllocations(ctx)
 	if err != nil {
-		fail(w, err, 500)
-		return
+		return nil, 0, deploymentFail(500, err)
 	}
 	ledger := core.NewProxyPathPortLedger(allocations)
 	derivedForwards, err := core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, servers, in, ledger)
 	if err != nil {
-		fail(w, err, 400)
-		return
+		return nil, 0, deploymentFail(400, err)
 	}
 	derivedTunnels, err := core.DerivedTunnelsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, servers, in, ledger)
 	if err != nil {
-		fail(w, err, 400)
-		return
+		return nil, 0, deploymentFail(400, err)
 	}
 	forwards = append(forwards, derivedForwards...)
 	tunnels = append(tunnels, derivedTunnels...)
 	if err := core.ValidatePortForwards(servers, forwards); err != nil {
-		fail(w, err, 400)
-		return
+		return nil, 0, deploymentFail(400, err)
 	}
 	if err := core.ValidateTunnels(servers, tunnels); err != nil {
-		fail(w, err, 400)
-		return
+		return nil, 0, deploymentFail(400, err)
 	}
 	if err := core.ValidateTopologyDAG(servers, forwards, tunnels); err != nil {
-		fail(w, err, 400)
-		return
+		return nil, 0, deploymentFail(400, err)
 	}
-	if _, err := s.syncDNSInbounds(r.Context(), servers, in); err != nil {
-		fail(w, err, 400)
-		return
+	if _, err := s.syncDNSInbounds(ctx, servers, in); err != nil {
+		return nil, 0, deploymentFail(400, err)
 	}
-	version, err := s.store.NextConfigVersion(r.Context())
+	version, err := s.store.NextConfigVersion(ctx)
 	if err != nil {
-		fail(w, err, 500)
-		return
+		return nil, 0, deploymentFail(500, err)
 	}
 	type preparedDeployment struct {
 		serverID int64
@@ -9693,15 +9709,14 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	prepared := make([]preparedDeployment, 0, len(servers))
 	for _, server := range servers {
-		if request.ServerID != 0 && server.ID != request.ServerID {
+		if effectiveScope != 0 && server.ID != effectiveScope {
 			continue
 		}
 		warpRequests := make([]model.WARPRequestPlan, 0)
 		if warpServerIDs[server.ID] {
 			profile, ok := findWARPProfileForServer(data.WARPProfiles, server.ID)
 			if !ok || !profile.Enabled {
-				fail(w, fmt.Errorf("server %s requires an unavailable WARP profile", server.Name), 400)
-				return
+				return nil, 0, deploymentFail(400, fmt.Errorf("server %s requires an unavailable WARP profile", server.Name))
 			}
 			if profile.Status == model.WARPStatusReady && strings.TrimSpace(profile.ConfigJSON) != "" {
 				// The complete endpoint is already generated into the Controller config.
@@ -9710,9 +9725,8 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 				profile.Status = model.WARPStatusRequested
 				profile.LastRequestedAt = &now
 				profile.Error = ""
-				if err := s.store.UpdateWARPProfile(r.Context(), &profile); err != nil {
-					fail(w, err, 500)
-					return
+				if err := s.store.UpdateWARPProfile(ctx, &profile); err != nil {
+					return nil, 0, deploymentFail(500, err)
 				}
 				data.WARPProfiles = replaceWARPProfile(data.WARPProfiles, profile)
 				effectiveStack := core.EffectiveIPStack(server)
@@ -9724,27 +9738,24 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		generated, err := s.generateServerCoreConfigWithLedger(r.Context(), server, data, ledger)
+		generated, err := s.generateServerCoreConfigWithLedger(ctx, server, data, ledger)
 		if err != nil {
 			// Generation rejects operator-fixable desired state too — a listener
 			// conflict, an unreachable address, an unsupported protocol field. Those
 			// are 400s like the dedicated validators below, not server faults.
-			fail(w, err, deploymentConfigErrorStatus(err))
-			return
+			return nil, 0, deploymentFail(deploymentConfigErrorStatus(err), err)
 		}
 		managedAssets, cfg := generated.Assets, generated.Config
 		configChanged := true
-		if same, err := s.serverConfigUnchanged(r.Context(), server.ID, cfg); err != nil {
-			fail(w, err, 500)
-			return
+		if same, err := s.serverConfigUnchanged(ctx, server.ID, cfg); err != nil {
+			return nil, 0, deploymentFail(500, err)
 		} else if same {
 			configChanged = false
 		}
 
 		forwardPlan, err := core.BuildPortForwardPlan(version, server, servers, forwards)
 		if err != nil {
-			fail(w, err, 400)
-			return
+			return nil, 0, deploymentFail(400, err)
 		}
 
 		// Transparent processing paths remove the user protocol from the
@@ -9764,45 +9775,38 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 
 		tunnelPlan, err := core.BuildTunnelPlan(version, server, servers, tunnels)
 		if err != nil {
-			fail(w, err, 400)
-			return
+			return nil, 0, deploymentFail(400, err)
 		}
 		sshInboundPlan, err := buildSSHInboundPlan(version, server, data, effectiveInboundUsersForRouting(data), generated.TrafficPolicies)
 		if err != nil {
-			fail(w, err, 400)
-			return
+			return nil, 0, deploymentFail(400, err)
 		}
 		if err := core.ValidateDeploymentListenResources(server.ID, cfg, forwardPlan, tunnelPlan, sshInboundPlan); err != nil {
-			fail(w, err, 400)
-			return
+			return nil, 0, deploymentFail(400, err)
 		}
 		dnsState, err := core.DNSConfigStateForServer(server.ID, data.DNSLists, data.ServerDNSPolicies)
 		if err != nil {
-			fail(w, err, 400)
-			return
+			return nil, 0, deploymentFail(400, err)
 		}
 		dnsPlan, err := core.DNSBenchmarkPlanForPolicy(version, *dnsState.Policy, *dnsState.EncryptedList, *dnsState.BootstrapList, core.EffectiveIPStack(server), dnsState.Policy.AutoTest, "")
 		if err != nil {
-			fail(w, err, 400)
-			return
+			return nil, 0, deploymentFail(400, err)
 		}
 		var mtuPlan *model.MTUDetectionPlan
 		if server.MTUMode != "" && server.MTUMode != model.MTUModeDisabled {
 			candidate := mtuPlanFromServer(version, server, server.MTUMode)
-			run, err := s.shouldRunDeploymentMTU(r.Context(), candidate)
+			run, err := s.shouldRunDeploymentMTU(ctx, candidate)
 			if err != nil {
-				fail(w, err, 500)
-				return
+				return nil, 0, deploymentFail(500, err)
 			}
 			if run {
 				mtuPlan = &candidate
 			}
 		}
 
-		settings, err := s.store.ListSettings(r.Context())
+		settings, err := s.store.ListSettings(ctx)
 		if err != nil {
-			fail(w, err, 500)
-			return
+			return nil, 0, deploymentFail(500, err)
 		}
 		timePlan := model.TimeCheckPlan{Version: version, CorrectionMode: server.TimeCorrectionMode, ThresholdSeconds: timeCheckThresholdSeconds, NTPServers: timeCheckNTPServers(settings), Force: true}
 		var externalEgressProbe *model.ExternalEgressProbePlan
@@ -9830,29 +9834,25 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 	// Every server validated, so the ports this projection chose are the ones the
 	// Agents will receive. Persist them before queueing any task: from now on a
 	// later topology change must reuse these values instead of re-deriving them.
-	if err := s.store.SaveProxyPathPortAllocations(r.Context(), ledger.Pending(), core.StaleProxyPathPortAllocationIDs(allocations, ledger)); err != nil {
-		fail(w, err, 500)
-		return
+	if err := s.store.SaveProxyPathPortAllocations(ctx, ledger.Pending(), core.StaleProxyPathPortAllocationIDs(allocations, ledger)); err != nil {
+		return nil, 0, deploymentFail(500, err)
 	}
 	tasks := make([]model.AgentTask, 0, len(prepared))
 	for _, item := range prepared {
-		task, err := s.queueAgentTask(r.Context(), item.serverID, model.AgentTaskTypeApplyDeployment, item.payload, version)
+		task, err := s.queueAgentTask(ctx, item.serverID, model.AgentTaskTypeApplyDeployment, item.payload, version)
 		if err != nil {
-			fail(w, err, 500)
-			return
+			return nil, 0, deploymentFail(500, err)
 		}
 		tasks = append(tasks, task)
 		if item.payload.ExternalEgressProbe != nil {
 			for _, target := range item.payload.ExternalEgressProbe.Targets {
-				if err := s.store.MarkProxyPathEgressPending(r.Context(), target, version, task.ID); err != nil {
-					fail(w, err, 500)
-					return
+				if err := s.store.MarkProxyPathEgressPending(ctx, target, version, task.ID); err != nil {
+					return nil, 0, deploymentFail(500, err)
 				}
 			}
 		}
 	}
-	auditReq(s, r, "apply", "deployment", fmt.Sprint(version))
-	write(w, 202, map[string]any{"config_version": version, "tasks": sanitizeTasksForRole(tasks, currentRole(r)), "summary": taskSummary(tasks)})
+	return tasks, version, nil
 }
 
 func validateTrustedForwardAgentBuilds(servers []model.Server, required map[int64]bool) error {
@@ -10783,6 +10783,11 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A reinstalled server starts from empty local state. Push the current
+	// desired state immediately so its first connection applies the topology
+	// instead of waiting for a manual deployment. Brand-new servers without any
+	// topology are skipped by the relevance gate inside the helper.
+	s.queueDeploymentAfterReconnect(r.Context(), server.ID)
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{Action: "agent_enroll", Target: "server", Detail: server.Name, IP: clientIP(r)})
 	log.Printf("agent enrolled server=%d(%s) agent_id=%s remote=%s", server.ID, safeLogField(server.Name), safeLogField(agentID), safeLogField(clientIP(r)))
 	write(w, 200, model.AgentEnrollResponse{ServerID: server.ID, AgentID: agentID, AgentToken: agentToken, ConnectionAuditEnabled: s.effectiveConnectionAuditEnabled(r.Context(), server)})

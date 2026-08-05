@@ -4249,6 +4249,46 @@ func (s *Store) FailStaleActiveTasksByServerType(ctx context.Context, serverID i
 	return err
 }
 
+// SupersedePendingTasksByServerType fails queued tasks that a newer identical
+// operation is about to replace. Automatic recovery and enrollment pushes use
+// this so a stale pre-outage apply_deployment is never delivered after the
+// fresh desired state was queued for the same server.
+func (s *Store) SupersedePendingTasksByServerType(ctx context.Context, serverID int64, taskType string, reason string) error {
+	if reason == "" {
+		reason = "已被新的下发取代"
+	}
+	result, _ := json.Marshal(map[string]any{
+		"message": reason,
+		"error":   reason,
+	})
+	ts := now()
+	_, err := s.db.ExecContext(ctx, `update agent_tasks set status='failed', result_json=?, updated_at=?, completed_at=? where server_id=? and type=? and status='pending'`, string(result), ts, ts, serverID, taskType)
+	return err
+}
+
+// ServerEverDeployedOrHasState reports whether the server either has a past
+// successful deployment/core-config baseline or currently participates in any
+// deployment-relevant desired state. Automatic pushes after recovery or
+// re-enrollment are gated on this so brand-new servers without any topology do
+// not receive empty-config deployments, while servers whose topology was fully
+// removed still get the latest (possibly empty) desired state.
+func (s *Store) ServerEverDeployedOrHasState(ctx context.Context, serverID int64) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `select
+		(select count(*) from agent_tasks where server_id=? and type in ('apply_deployment','apply_core_config') and status='succeeded') +
+		(select count(*) from inbounds where server_id=? and enabled=1) +
+		(select count(*) from port_forwards where enabled=1 and (source_server_id=? or target_server_id=?)) +
+		(select count(*) from tunnels where enabled=1 and (source_server_id=? or target_server_id=?)) +
+		(select count(*) from proxy_path_steps ps join proxy_paths p on p.id=ps.path_id where p.enabled=1 and ps.server_id=?) +
+		(select count(*) from proxy_paths p join inbounds i on i.id=p.inbound_id where p.enabled=1 and i.enabled=1 and i.server_id=?) +
+		(select count(*) from warp_profiles where server_id=? and enabled=1)`,
+		serverID, serverID, serverID, serverID, serverID, serverID, serverID, serverID, serverID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // SetTaskStateForTest rewrites task status and updated_at for cross-package timeout tests.
 func (s *Store) SetTaskStateForTest(ctx context.Context, id int64, status string, updatedAt time.Time) error {
 	if status == "" {

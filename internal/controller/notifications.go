@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/version"
 )
@@ -324,6 +325,7 @@ func (s *Server) handleServerRecovered(ctx context.Context, serverID int64) {
 	if err := s.store.CancelServerOfflineNotice(ctx, serverID); err != nil {
 		log.Printf("cancel offline notice for server %d: %v", serverID, err)
 	}
+	s.queueDeploymentAfterReconnect(ctx, serverID)
 	server, err := s.store.GetServer(ctx, serverID)
 	if err != nil || !server.OfflineNotifyEnabled {
 		return
@@ -334,6 +336,52 @@ func (s *Server) handleServerRecovered(ctx context.Context, serverID int64) {
 	if err := s.store.UpsertServerOfflineNotice(ctx, serverID, store.ServerOfflineNoticeStatusOnline, now, now.Add(onlineAfter), ""); err != nil {
 		log.Printf("queue online notice for server %d: %v", serverID, err)
 	}
+}
+
+// queueDeploymentAfterReconnect pushes the current desired state to a server
+// that just came back online (offline recovery or re-enrollment). It supersedes
+// stale pre-outage apply_deployment tasks so the fresh payload is the one the
+// Agent applies, and expands to a full deployment when the server belongs to a
+// trusted transparent forwarding prefix whose members must change together.
+func (s *Server) queueDeploymentAfterReconnect(ctx context.Context, serverID int64) {
+	relevant, err := s.store.ServerEverDeployedOrHasState(ctx, serverID)
+	if err != nil {
+		log.Printf("check deployment relevance for server %d: %v", serverID, err)
+		return
+	}
+	if !relevant {
+		return
+	}
+	if err := s.store.SupersedePendingTasksByServerType(ctx, serverID, model.AgentTaskTypeApplyDeployment, "服务器恢复在线，新的配置已自动下发"); err != nil {
+		log.Printf("supersede stale deployment tasks for server %d: %v", serverID, err)
+	}
+	tasks, version, err := s.deployConfiguration(ctx, serverID, true)
+	if err != nil {
+		log.Printf("auto deployment after server %d reconnect failed: %v", serverID, err)
+		s.recordFailedRecoveryDeployment(ctx, serverID, err)
+		return
+	}
+	log.Printf("auto deployment queued for recovered server %d: version=%d tasks=%d", serverID, version, len(tasks))
+}
+
+// recordFailedRecoveryDeployment leaves a visible failed task so operators can
+// see that the automatic reconnect push could not be prepared, mirroring the
+// immediate-failure task the REST apply creates for offline servers.
+func (s *Server) recordFailedRecoveryDeployment(ctx context.Context, serverID int64, cause error) {
+	nonce, err := security.RandomToken(12)
+	if err != nil {
+		return
+	}
+	result, _ := json.Marshal(map[string]any{
+		"message": "服务器恢复在线，自动下发配置失败，请检查后重新执行完整下发",
+		"error":   cause.Error(),
+	})
+	task := model.AgentTask{ServerID: serverID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: "{}", Status: "failed", ResultJSON: string(result), ConfigVersion: time.Now().Unix(), Nonce: nonce}
+	if err := s.store.CreateTask(ctx, &task); err != nil {
+		log.Printf("record failed recovery deployment for server %d: %v", serverID, err)
+		return
+	}
+	s.publishRealtime(realtimeResourcesForTask(task.Type)...)
 }
 
 func lastSeen(t *time.Time) string {
