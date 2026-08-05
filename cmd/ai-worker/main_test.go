@@ -32,7 +32,10 @@ func TestRunOnceCompletesFindingWithoutReturningProviderCredential(t *testing.T)
 		content, _ := json.Marshal(map[string]any{
 			"verdict": "attention", "risk_level": "medium", "confidence": 0.82, "summary": "multiple concurrent regions",
 			"dimensions":          []any{map[string]any{"kind": "connection", "risk_level": "medium", "summary": "multiple regions", "evidence_refs": []string{"user:1"}, "counter_evidence": []string{"mobile_network"}}},
-			"notable_subjects":    []any{map[string]any{"subject_ref": "user:1", "risk_level": "medium", "summary": "multiple regions", "evidence_refs": []string{"user:1"}}},
+			"notable_subjects": []any{
+				map[string]any{"subject_ref": "user:1", "risk_level": "medium", "summary": "multiple regions", "evidence_refs": []string{"user:1"}},
+				map[string]any{"subject_ref": "server:1", "risk_level": "low", "summary": "server online", "evidence_refs": []string{"server:1"}},
+			},
 			"recommended_actions": []string{"request_manual_review"}, "data_gaps": []string{}, "coverage_summary": "reviewed one user",
 		})
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": string(content)}}}, "usage": map[string]int{"prompt_tokens": 120, "completion_tokens": 40}})
@@ -70,6 +73,9 @@ func TestRunOnceCompletesFindingWithoutReturningProviderCredential(t *testing.T)
 	}
 	if completed.WorkerID != "worker-1" || completed.Report.Verdict != "attention" || completed.Report.RiskLevel != "medium" || completed.InputTokens != 120 || completed.OutputTokens != 40 {
 		t.Fatalf("unexpected completion: %#v", completed)
+	}
+	if len(completed.Report.NotableSubjects) != 1 || completed.Report.NotableSubjects[0].SubjectRef != "user:1" {
+		t.Fatalf("server subject was not filtered from notable subjects: %#v", completed.Report.NotableSubjects)
 	}
 }
 

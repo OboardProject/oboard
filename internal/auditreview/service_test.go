@@ -75,8 +75,7 @@ func TestAuditReviewMaskingAndPacking(t *testing.T) {
 		RecentConnections:   []model.ConnectionAuditReport{{ServerID: 7, SourceIP: "203.0.113.44", Destination: "api.service.example.com", DestinationPort: 443}},
 		Destinations:        []model.AuditReviewDestination{{Destination: "api.service.example.com", Port: 443}},
 	}
-	servers := map[int64]model.Server{7: {ID: 7, Name: "secret-server", Status: model.ServerOnline}}
-	maskedJSON, _ := json.Marshal(service.userEvidencePayload(service.subjectRef("user", user.ID, false), user, data, map[int64]bool{7: true}, servers, false))
+	maskedJSON, _ := json.Marshal(service.userEvidencePayload(service.subjectRef("user", user.ID, false), user, data, false))
 	for _, secret := range []string{"secret-user", "secret-agent", "203.0.113.44", "api.service.example.com", "secret-server"} {
 		if strings.Contains(string(maskedJSON), secret) {
 			t.Fatalf("masked evidence leaked %q: %s", secret, maskedJSON)
@@ -87,8 +86,8 @@ func TestAuditReviewMaskingAndPacking(t *testing.T) {
 			t.Fatalf("masked evidence omitted %q: %s", expected, maskedJSON)
 		}
 	}
-	rawJSON, _ := json.Marshal(service.userEvidencePayload(service.subjectRef("user", user.ID, true), user, data, map[int64]bool{7: true}, servers, true))
-	for _, expected := range []string{"secret-user", "secret-agent", "203.0.113.44", "api.service.example.com", "secret-server"} {
+	rawJSON, _ := json.Marshal(service.userEvidencePayload(service.subjectRef("user", user.ID, true), user, data, true))
+	for _, expected := range []string{"secret-user", "secret-agent", "203.0.113.44", "api.service.example.com"} {
 		if !strings.Contains(string(rawJSON), expected) {
 			t.Fatalf("raw evidence omitted %q: %s", expected, rawJSON)
 		}
@@ -167,6 +166,49 @@ func TestCreateIsIdempotentAndValidatesTime(t *testing.T) {
 	}
 	if _, err := db.GetAuditReviewByRequestID(ctx, "missing"); err != sql.ErrNoRows {
 		t.Fatalf("missing request error = %v", err)
+	}
+}
+
+func TestValidateReportRequiresUserSubjects(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/reviews.sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	nowTime := time.Date(2026, 8, 3, 8, 0, 0, 0, time.UTC)
+	actor := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, actor); err != nil {
+		t.Fatal(err)
+	}
+	provider := &model.AIProvider{ID: "provider", Name: "provider", BaseURL: "http://127.0.0.1", Model: "model", CredentialEncrypted: "encrypted", Enabled: true}
+	if err := db.CreateAIProvider(ctx, provider); err != nil {
+		t.Fatal(err)
+	}
+	review := &model.AuditReview{
+		ID: "review-1", RequestID: "request-1", ProviderID: provider.ID, RequestedBy: actor.ID, Status: "running",
+		PrivacyMode: "raw", EvidenceTypes: []string{"subscription"},
+		WindowStartedAt: nowTime.Add(-time.Hour), WindowEndedAt: nowTime, SnapshotAt: nowTime,
+	}
+	evidence := []model.AuditReviewEvidence{
+		{Ref: "user:2", ReviewID: "review-1", Kind: "user", Payload: json.RawMessage(`{}`)},
+		{Ref: "server:1", ReviewID: "review-1", Kind: "server", Payload: json.RawMessage(`{}`)},
+	}
+	jobs := []model.AuditReviewJob{{ID: "aij_job", ReviewID: "review-1", ProviderID: "provider", Stage: 0, Position: 0, Kind: "evidence", Input: json.RawMessage(`{}`)}}
+	if err := db.CreateAuditReview(ctx, review, evidence, jobs); err != nil {
+		t.Fatal(err)
+	}
+	service := New(db, "mask-key")
+	base := model.AuditReviewReport{Verdict: "normal", RiskLevel: "low", Confidence: 0.9, Summary: "正常", CoverageSummary: "覆盖 1 个用户", RecommendedActions: []string{"continue_observation"}}
+	userOnly := base
+	userOnly.NotableSubjects = []model.AuditReviewSubjectFinding{{SubjectRef: "user:2", RiskLevel: "low", Summary: "用户行为正常", EvidenceRefs: []string{"user:2"}}}
+	if err := service.ValidateReport(ctx, "review-1", &userOnly); err != nil {
+		t.Fatalf("user subject was rejected: %v", err)
+	}
+	withServer := base
+	withServer.NotableSubjects = []model.AuditReviewSubjectFinding{{SubjectRef: "server:1", RiskLevel: "low", Summary: "服务器在线", EvidenceRefs: []string{"server:1"}}}
+	if err := service.ValidateReport(ctx, "review-1", &withServer); err == nil {
+		t.Fatal("server subject was accepted")
 	}
 }
 

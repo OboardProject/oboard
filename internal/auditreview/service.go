@@ -93,7 +93,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (*model.Aud
 	if err != nil {
 		return nil, err
 	}
-	userIDs, serverIDs, accessPairs, err := resolveScope(request.Scope, routing, historical)
+	userIDs, serverIDs, _, err := resolveScope(request.Scope, routing, historical)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (*model.Aud
 		EvidenceTypes: types, WindowStartedAt: request.WindowStart, WindowEndedAt: request.WindowEnd, SnapshotAt: nowTime,
 		PrivacyMode: privacyMode, ResolvedUserIDs: userIDs, ResolvedServerIDs: serverIDs,
 	}
-	evidence, err := s.buildEvidence(ctx, review, routing, data, accessPairs, privacyMode == "raw")
+	evidence, err := s.buildEvidence(review, routing, data, privacyMode == "raw")
 	if err != nil {
 		return nil, err
 	}
@@ -137,20 +137,12 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (*model.Aud
 	return s.store.GetAuditReview(ctx, review.ID)
 }
 
-func (s *Service) buildEvidence(ctx context.Context, review *model.AuditReview, routing store.FullRoutingConfig, data model.AuditReviewData, accessPairs map[int64]map[int64]bool, raw bool) ([]model.AuditReviewEvidence, error) {
+func (s *Service) buildEvidence(review *model.AuditReview, routing store.FullRoutingConfig, data model.AuditReviewData, raw bool) ([]model.AuditReviewEvidence, error) {
 	users := map[int64]model.User{}
 	for _, item := range routing.Users {
 		users[item.ID] = item
 	}
-	servers := map[int64]model.Server{}
-	for _, item := range routing.Servers {
-		servers[item.ID] = item
-	}
-	inboundsByServer := map[int64][]model.Inbound{}
-	for _, inbound := range routing.Inbounds {
-		inboundsByServer[inbound.ServerID] = append(inboundsByServer[inbound.ServerID], inbound)
-	}
-	evidence := make([]model.AuditReviewEvidence, 0, len(data.Users)+len(review.ResolvedServerIDs)+1)
+	evidence := make([]model.AuditReviewEvidence, 0, len(data.Users)+1)
 	coverage := map[string]any{
 		"window_started_at": review.WindowStartedAt, "window_ended_at": review.WindowEndedAt, "snapshot_at": review.SnapshotAt,
 		"resolved_user_count": len(review.ResolvedUserIDs), "resolved_server_count": len(review.ResolvedServerIDs), "evidence_types": review.EvidenceTypes,
@@ -163,52 +155,16 @@ func (s *Service) buildEvidence(ctx context.Context, review *model.AuditReview, 
 			continue
 		}
 		ref := s.subjectRef("user", user.ID, raw)
-		payload := s.userEvidencePayload(ref, user, userData, accessPairs[user.ID], servers, raw)
+		payload := s.userEvidencePayload(ref, user, userData, raw)
 		rawPayload, _ := json.Marshal(payload)
 		userID := user.ID
 		evidence = append(evidence, model.AuditReviewEvidence{Ref: ref, ReviewID: review.ID, Kind: "user", UserID: &userID, Payload: rawPayload})
-	}
-	for _, serverID := range review.ResolvedServerIDs {
-		server, exists := servers[serverID]
-		if !exists {
-			continue
-		}
-		ref := s.subjectRef("server", server.ID, raw)
-		probeResults, _ := s.store.ListInboundProbeResults(ctx, server.ID, 0, 100)
-		latestProbe := map[int64]model.InboundProbeResult{}
-		for _, probe := range probeResults {
-			if current, ok := latestProbe[probe.InboundID]; !ok || probe.CreatedAt.After(current.CreatedAt) {
-				latestProbe[probe.InboundID] = probe
-			}
-		}
-		nodes := []map[string]any{}
-		const maxServerNodeEvidence = 100
-		for _, inbound := range inboundsByServer[server.ID] {
-			if len(nodes) >= maxServerNodeEvidence {
-				break
-			}
-			item := map[string]any{"protocol": inbound.Protocol, "enabled": inbound.Enabled, "port": inbound.Port}
-			if raw {
-				item["inbound_id"], item["name"] = inbound.ID, inbound.Name
-			}
-			if probe, ok := latestProbe[inbound.ID]; ok {
-				item["probe"] = map[string]any{"available": probe.Available, "confirmed": probe.Confirmed, "latency_ms": probe.LatencyMS, "mode": probe.Mode, "checked_at": probe.CreatedAt, "error": probe.Error}
-			}
-			nodes = append(nodes, item)
-		}
-		payload := map[string]any{"subject_ref": ref, "status": server.Status, "last_seen_at": server.LastSeenAt, "connection_audit_enabled": server.ConnectionAuditEnabled, "region_code": server.RegionCode, "node_count": len(inboundsByServer[server.ID]), "nodes_truncated": len(inboundsByServer[server.ID]) > len(nodes), "nodes": nodes}
-		if raw {
-			payload["server_id"], payload["name"] = server.ID, server.Name
-		}
-		rawPayload, _ := json.Marshal(payload)
-		id := server.ID
-		evidence = append(evidence, model.AuditReviewEvidence{Ref: ref, ReviewID: review.ID, Kind: "server", ServerID: &id, Payload: rawPayload})
 	}
 	sort.SliceStable(evidence, func(i, j int) bool { return evidence[i].Ref < evidence[j].Ref })
 	return evidence, nil
 }
 
-func (s *Service) userEvidencePayload(ref string, user model.User, data model.AuditReviewUserData, allowedServers map[int64]bool, servers map[int64]model.Server, raw bool) map[string]any {
+func (s *Service) userEvidencePayload(ref string, user model.User, data model.AuditReviewUserData, raw bool) map[string]any {
 	payload := map[string]any{
 		"subject_ref": ref, "status": user.Status, "role": user.Role, "subscription_suspended": user.SubscriptionSuspended,
 		"subscription": map[string]any{"pulls": data.SubscriptionPulls, "successful": data.SubscriptionSuccessful, "denied": data.SubscriptionDenied, "source_ip_count": data.SubscriptionSourceIPs, "region_count": data.SubscriptionRegions, "client_count": data.SubscriptionClients, "format_count": data.SubscriptionFormats, "last_seen_at": data.SubscriptionLastSeenAt},
@@ -217,22 +173,6 @@ func (s *Service) userEvidencePayload(ref string, user model.User, data model.Au
 	if raw {
 		payload["user_id"], payload["username"], payload["nickname"] = user.ID, user.Username, user.Nickname
 	}
-	currentServers := []map[string]any{}
-	for serverID := range allowedServers {
-		server, exists := servers[serverID]
-		if !exists {
-			continue
-		}
-		item := map[string]any{"subject_ref": s.subjectRef("server", serverID, raw), "status": server.Status}
-		if raw {
-			item["server_id"], item["name"] = serverID, server.Name
-		}
-		currentServers = append(currentServers, item)
-	}
-	sort.SliceStable(currentServers, func(i, j int) bool {
-		return fmt.Sprint(currentServers[i]["subject_ref"]) < fmt.Sprint(currentServers[j]["subject_ref"])
-	})
-	payload["current_servers"] = currentServers
 	serverBreakdown := []map[string]any{}
 	for _, item := range data.ServerBreakdown {
 		serverBreakdown = append(serverBreakdown, map[string]any{"server_ref": s.subjectRef("server", item.ServerID, raw), "connection_count": item.ConnectionCount, "active_peak": item.ActivePeak, "last_seen_at": item.LastSeenAt})
@@ -403,7 +343,7 @@ func (s *Service) ValidateReport(ctx context.Context, reviewID string, report *m
 		}
 	}
 	for _, subject := range report.NotableSubjects {
-		if len(subject.SubjectRef) > 256 || !refs[subject.SubjectRef] || !validRisk(subject.RiskLevel) || strings.TrimSpace(subject.Summary) == "" || len(subject.Summary) > 1000 || len(subject.EvidenceRefs) > 32 {
+		if !strings.HasPrefix(subject.SubjectRef, "user:") || len(subject.SubjectRef) > 256 || !refs[subject.SubjectRef] || !validRisk(subject.RiskLevel) || strings.TrimSpace(subject.Summary) == "" || len(subject.Summary) > 1000 || len(subject.EvidenceRefs) > 32 {
 			return errors.New("AI 审查对象引用无效")
 		}
 		if err := validateRefs(refs, subject.EvidenceRefs); err != nil {

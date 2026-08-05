@@ -49,6 +49,7 @@ import {
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
 import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
 import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
+import { buildProxyPathMatrix, type ProxyPathMatrixCell } from './components/proxy-path/matrix'
 import './style.css'
 import logo from './assets/logo.svg'
 import { 
@@ -60,7 +61,7 @@ import {
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
-  ArrowUpDown, GripVertical, ListFilter
+  ArrowUpDown, GripVertical, ListFilter, Table2
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -7311,6 +7312,173 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
   }
 }
 
+type ProxyPathViewMode = 'graph' | 'matrix'
+
+const PROXY_PATH_VIEW_KEY = 'oboard.proxyPaths.view.v1'
+
+function loadProxyPathViewMode(): ProxyPathViewMode {
+  try {
+    return localStorage.getItem(PROXY_PATH_VIEW_KEY) === 'matrix' ? 'matrix' : 'graph'
+  } catch {
+    return 'graph'
+  }
+}
+
+function saveProxyPathViewMode(mode: ProxyPathViewMode) {
+  try {
+    localStorage.setItem(PROXY_PATH_VIEW_KEY, mode)
+  } catch {
+  }
+}
+
+function ProxyPathMatrixCellView({ cell, data }: { cell: ProxyPathMatrixCell; data: any }) {
+  if (cell.kind === 'entry') {
+    const entry = cell.entry
+    const probe = latestInboundProbeSummary(data, entry.id)
+    const address = formatHostPort(inboundEntryAddress(data, entry), entry.port)
+    return <div className="proxy-matrix-node matrix-node-entry" title={`${entry.name || `入口 ${entry.id}`} · ${labelProtocol(entry.protocol)} · ${address}`}>
+      <div className="proxy-matrix-node-head">
+        <span className="proxy-matrix-node-icon"><Globe size={15} /></span>
+        <span className="proxy-matrix-node-title"><small>代理入口</small><strong>{entry.name || `入口 ${entry.id}`}</strong></span>
+        <span className="proxy-matrix-node-badge">{labelProtocol(entry.protocol)}</span>
+      </div>
+      <code>{address}</code>
+      <div className="proxy-matrix-node-meta">
+        <span className={`matrix-probe-${probe.tone}`}>{probe.label}</span>
+        <span>{inboundAccessSummary(data, entry)}</span>
+      </div>
+    </div>
+  }
+
+  if (cell.kind === 'direct') {
+    return <div className="proxy-matrix-node matrix-node-direct" title={`${cell.path.name || `路径 ${cell.path.id}`} · 直接出口`}>
+      <div className="proxy-matrix-node-head">
+        <span className="proxy-matrix-node-icon"><LogOut size={15} /></span>
+        <span className="proxy-matrix-node-title"><small>出口分支</small><strong>直接出口</strong></span>
+      </div>
+      <div className="proxy-matrix-node-meta"><span>{cell.path.name || `路径 ${cell.path.id}`}</span></div>
+      <ExitRegionBadge code={cell.path.effective_exit_region_code} status={cell.path.exit_region_status} compact />
+    </div>
+  }
+
+  const { path, step, terminal } = cell
+  const transport = proxyPathTransportPresentation(step)
+  if (step.node_type === 'imported') {
+    const imported = ((data.external_outbounds || []) as ExternalOutbound[]).find(item => item.id === step.external_outbound_id)
+    return <div className="proxy-matrix-node matrix-node-imported" title={`${imported?.name || `导入节点 ${step.external_outbound_id || ''}`} · ${transport.title}`}>
+      <div className="proxy-matrix-node-head">
+        <span className="proxy-matrix-node-icon"><LinkIcon size={15} /></span>
+        <span className="proxy-matrix-node-title"><small>第三方代理</small><strong>{imported?.name || `导入节点 ${step.external_outbound_id || ''}`}</strong></span>
+        <span className="proxy-matrix-node-badge">{labelProtocol(imported?.protocol || '')}</span>
+      </div>
+      <code>{imported ? formatHostPort(imported.target_address, imported.target_port) : '节点已删除'}</code>
+      <div className="proxy-matrix-node-meta"><span>{transport.title}</span></div>
+      {terminal && <ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact />}
+    </div>
+  }
+
+  if (step.node_type === 'warp') {
+    const inboundByID = new Map(((data.inbounds || []) as Inbound[]).map(entry => [entry.id, entry]))
+    const steps = ((data.proxy_path_steps || []) as ProxyPathStep[])
+      .filter(item => item.path_id === path.id)
+      .sort((left, right) => (left.position - right.position) || (left.id - right.id))
+    const serverID = graphWARPServerID(path, steps, step, inboundByID)
+    const server = ((data.servers || []) as Server[]).find(item => item.id === serverID)
+    const profile = ((data.warp_profiles || []) as WARPProfile[]).find(item => item.server_id === serverID)
+    return <div className="proxy-matrix-node matrix-node-warp" title={`WARP · ${server?.name || `服务器 ${serverID}`} · ${labelValue(profile?.status || 'needed')}`}>
+      <div className="proxy-matrix-node-head">
+        <span className="proxy-matrix-node-icon"><Zap size={15} /></span>
+        <span className="proxy-matrix-node-title"><small>WARP 出口</small><strong>{server?.name || `服务器 ${serverID}`}</strong></span>
+        <span className="proxy-matrix-node-badge">{labelValue(profile?.status || 'needed')}</span>
+      </div>
+      <div className="proxy-matrix-node-meta"><span>{transport.title}</span></div>
+      {terminal && <ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact />}
+    </div>
+  }
+
+  const inbound = ((data.inbounds || []) as Inbound[]).find(item => item.id === step.inbound_id)
+  const serverID = step.server_id || inbound?.server_id || 0
+  const server = ((data.servers || []) as Server[]).find(item => item.id === serverID)
+  const online = server?.status?.toLowerCase() === 'online'
+  return <div className="proxy-matrix-node matrix-node-server" title={`${server?.name || `服务器 ${serverID}`} · ${transport.title}`}>
+    <div className="proxy-matrix-node-head">
+      <span className="proxy-matrix-node-icon"><ServerIcon size={15} /></span>
+      <span className="proxy-matrix-node-title"><small>链路服务器</small><strong>{server?.name || `服务器 ${serverID}`}</strong></span>
+      <span className={`proxy-matrix-server-state ${online ? 'online' : 'offline'}`}><i />{online ? '在线' : '离线'}</span>
+    </div>
+    <code>{serverDefaultEntryAddress(server) || '无公网 IP'}</code>
+    <div className="proxy-matrix-node-meta"><span>{transport.title}</span></div>
+    {terminal && <ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact />}
+  </div>
+}
+
+function ProxyPathMatrixView({ data, server }: { data: any; server?: Server }) {
+  const matrix = useMemo(() => buildProxyPathMatrix(data, server?.id || 0), [data.inbounds, data.proxy_paths, data.proxy_path_steps, server?.id])
+  const [hoveredColumn, setHoveredColumn] = useState('')
+  if (!server) return <div className="proxy-matrix-empty" role="status"><ServerIcon size={22} /><strong>还没有服务器</strong><span>暂无可显示的代理链路数据。</span></div>
+  if (!matrix.groups.length) return <div className="proxy-matrix-empty" role="status"><Globe size={22} /><strong>这台服务器还没有入口</strong><span>暂无可显示的代理链路数据。</span></div>
+
+  const columns = matrix.groups.flatMap(group => group.columns)
+  return <section className="proxy-matrix" aria-label={`${server.name} 的代理链路矩阵`}>
+    <div className="proxy-matrix-summary">
+      <span className={`proxy-matrix-summary-status ${server.status?.toLowerCase() === 'online' ? 'online' : 'offline'}`}><i />{labelValue(server.status || 'unknown')}</span>
+      <strong>{server.name || `服务器 ${server.id}`}</strong>
+      <span>{matrix.groups.length} 个入口</span>
+      <span>{matrix.pathCount} 条路径</span>
+    </div>
+    <div className="proxy-matrix-scroll">
+      <table onMouseLeave={() => setHoveredColumn('')}>
+        <caption className="sr-only">{server.name} 的入口和代理路径矩阵</caption>
+        <thead>
+          <tr>
+            <th className="proxy-matrix-corner" rowSpan={2} scope="col">链路层级</th>
+            {matrix.groups.map(group => <th
+              key={group.entry.id}
+              className={`proxy-matrix-entry-group${group.columns.some(column => column.id === hoveredColumn) ? ' column-hovered' : ''}`}
+              colSpan={group.columns.length}
+              scope="colgroup"
+            >
+              <span><Globe size={13} />{group.entry.name || `入口 ${group.entry.id}`}</span>
+              <small>{labelProtocol(group.entry.protocol)} · {group.entry.port}</small>
+            </th>)}
+          </tr>
+          <tr>
+            {columns.map(column => <th
+              key={column.id}
+              className={column.id === hoveredColumn ? 'column-hovered' : ''}
+              scope="col"
+              onMouseEnter={() => setHoveredColumn(column.id)}
+            >
+              <span className="proxy-matrix-path-title">{column.path?.name || '未配置路径'}</span>
+              <span className="proxy-matrix-path-meta">
+                {column.branch && <em>第 {column.branchDepth} 跳分支</em>}
+                {column.path?.kind === 'direct' && <em>直出</em>}
+                {!column.path && <em>空</em>}
+              </span>
+            </th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {matrix.rows.map(depth => <tr key={depth}>
+            <th scope="row">{depth === 0 ? '入口' : `第 ${depth} 层`}</th>
+            {columns.map(column => {
+              const cell = column.cells.get(depth)
+              return <td
+                key={column.id}
+                className={`${cell ? `matrix-cell-${cell.kind}` : 'matrix-cell-empty'}${column.id === hoveredColumn ? ' column-hovered' : ''}`}
+                onMouseEnter={() => setHoveredColumn(column.id)}
+                aria-label={cell ? undefined : '空'}
+              >
+                {cell ? <ProxyPathMatrixCellView cell={cell} data={data} /> : null}
+              </td>
+            })}
+          </tr>)}
+        </tbody>
+      </table>
+    </div>
+  </section>
+}
+
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
 type RoutingDraft = { server_id: number; name: string; priority: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; interface_name: string; enabled: boolean }
 type TransportMode = 'port-forward' | 'tunnel'
@@ -7341,6 +7509,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const entries: Inbound[] = data.inbounds || []
   const selected = servers.find(s => s.id === selectedServer) || servers[0]
   const selectedEntries = selected ? entries.filter(x => x.server_id === selected.id) : []
+  const [viewMode, setViewMode] = useState<ProxyPathViewMode>(() => loadProxyPathViewMode())
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(() => window.innerWidth <= 820)
   const [entryServerQuery, setEntryServerQuery] = useState('')
@@ -7581,14 +7750,21 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const selectEntryServer = (value: string | number) => {
     const nextServerID = Number(value)
     if (!nextServerID || nextServerID === selected?.id) return
-    const laidOut = autoLayoutProxyGraphPositions(data, nextServerID, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances)
-    if (Object.keys(laidOut).length) {
-      const next = { ...positions, ...laidOut }
-      setPositions(next)
-      saveGraphPositions(next)
+    if (viewMode === 'graph') {
+      const laidOut = autoLayoutProxyGraphPositions(data, nextServerID, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances)
+      if (Object.keys(laidOut).length) {
+        const next = { ...positions, ...laidOut }
+        setPositions(next)
+        saveGraphPositions(next)
+      }
+      pendingServerSafeFit.current = nextServerID
     }
-    pendingServerSafeFit.current = nextServerID
     setSelectedServer(nextServerID)
+  }
+  const changeViewMode = (mode: ProxyPathViewMode) => {
+    setViewMode(mode)
+    saveProxyPathViewMode(mode)
+    if (mode === 'graph') window.setTimeout(() => fitGraphToSafeArea(0), 0)
   }
   const placeGraphNode = (id: string, position: GraphPosition) => {
     const next = { ...positions, [id]: snapGraphPosition(position) }
@@ -8601,7 +8777,33 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 
   return <div className="proxy-overview">
     <div className="proxy-editor">
-      <div ref={workspaceRef} className={`proxy-editor-workspace${isToolbarCollapsed ? ' toolbox-collapsed' : ''}${inspectorOpen ? ' inspector-open' : ''}`}>
+      {topbarTarget && createPortal(
+        <div className="proxy-path-topbar-controls">
+          <div className="proxy-path-view-switch" role="group" aria-label="代理链路显示方式">
+            <button type="button" className={viewMode === 'graph' ? 'selected' : ''} aria-pressed={viewMode === 'graph'} onClick={() => changeViewMode('graph')}><Workflow size={14} />链路图</button>
+            <button type="button" className={viewMode === 'matrix' ? 'selected' : ''} aria-pressed={viewMode === 'matrix'} onClick={() => changeViewMode('matrix')}><Table2 size={14} />矩阵表</button>
+          </div>
+          <div className="proxy-path-entry-picker">
+            <span className="proxy-path-entry-label">入口服务器</span>
+            <CustomSelect
+              className="graph-entry-select"
+              value={String(selected?.id || 0)}
+              onChange={value => {
+                selectEntryServer(value)
+                setEntryServerQuery('')
+                setEntryServerRegion('all')
+              }}
+              options={selectOptions}
+              selectedLabel={selectedServerLabel}
+              menuHeader={entryServerMenuHeader}
+              emptyMessage="没有匹配的入口服务器"
+              ariaLabel="选择当前入口服务器"
+            />
+          </div>
+        </div>,
+        topbarTarget,
+      )}
+      {viewMode === 'matrix' ? <ProxyPathMatrixView data={data} server={selected} /> : <div ref={workspaceRef} className={`proxy-editor-workspace${isToolbarCollapsed ? ' toolbox-collapsed' : ''}${inspectorOpen ? ' inspector-open' : ''}`}>
         <div ref={toolboxRef} className={`proxy-editor-sidebar${toolboxDragging ? ' is-dragging' : ''}`} style={{ left: toolboxPosition.x, top: toolboxPosition.y }}>
           <ProxyGraphToolbox
             collapsed={isToolbarCollapsed}
@@ -8622,26 +8824,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
             onToggleInspector={toggleInspector}
           />
         </div>
-        {topbarTarget && createPortal(
-          <div className="proxy-path-entry-picker">
-            <span className="proxy-path-entry-label">入口服务器</span>
-            <CustomSelect
-              className="graph-entry-select"
-              value={String(selected?.id || 0)}
-              onChange={value => {
-                selectEntryServer(value)
-                setEntryServerQuery('')
-                setEntryServerRegion('all')
-              }}
-              options={selectOptions}
-              selectedLabel={selectedServerLabel}
-              menuHeader={entryServerMenuHeader}
-              emptyMessage="没有匹配的入口服务器"
-              ariaLabel="选择当前入口服务器"
-            />
-          </div>,
-          topbarTarget,
-        )}
         <div className={`flow proxy-flow ${initialViewportReady ? 'initial-viewport-ready' : 'initial-viewport-pending'}`} onDragOver={onToolDragOver} onDrop={onToolDrop}>
         <ReactFlow 
           nodes={nodes} 
@@ -8710,7 +8892,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
             </div>
           </div>
         </aside>}
-      </div>
+      </div>}
     </div>
     <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{entryDraft && <EntryDraftDialog mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} />}</AnimatePresence>
