@@ -81,11 +81,16 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 	for _, inbound := range access.Inbounds {
 		inboundByID[inbound.ID] = inbound
 	}
-	type accessPair struct{ inboundID, userID int64 }
+	type accessPair struct{ inboundID, userID, pathID int64 }
 	allowed := map[accessPair]struct{}{}
 	for _, binding := range core.EffectiveInboundUsers(access.Inbounds, access.Users, access.InboundUsers, access.Groups, access.Members, access.Grants) {
 		if binding.Enabled {
 			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID}] = struct{}{}
+		}
+	}
+	for _, binding := range core.EffectiveProxyPathUsers(access.Paths, access.Inbounds, access.Users, access.InboundUsers, access.Groups, access.Members, access.Grants) {
+		if binding.Enabled {
+			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID, pathID: binding.ProxyPathID}] = struct{}{}
 		}
 	}
 	paths, err := s.store.ListProxyPaths(r.Context())
@@ -172,7 +177,11 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 			accepted = append(accepted, report.ReportID)
 			continue
 		}
-		if _, exists := allowed[accessPair{inboundID: inbound.ID, userID: item.UserID}]; !exists {
+		pathID := int64(0)
+		if item.PathID != nil {
+			pathID = *item.PathID
+		}
+		if _, exists := allowed[accessPair{inboundID: inbound.ID, userID: item.UserID, pathID: pathID}]; !exists {
 			accepted = append(accepted, report.ReportID)
 			continue
 		}

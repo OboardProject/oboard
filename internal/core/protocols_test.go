@@ -823,6 +823,34 @@ func TestGenerateServerConfig(t *testing.T) {
 	}
 }
 
+func TestGenerateServerConfigUsesExactProxyPathUsers(t *testing.T) {
+	server := model.Server{ID: 1, Name: "s1", PublicIPv4: "203.0.113.1"}
+	inbound := model.Inbound{ID: 1, ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	users := []model.User{
+		{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111"},
+		{ID: 8, Username: "bob", Status: "active", ProxyUUID: "22222222-2222-4222-8222-222222222222"},
+	}
+	paths := []model.ProxyPath{{ID: 40, InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Enabled: true}}
+	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, nil, users, ConfigOptions{
+		Inbounds:       []model.Inbound{inbound},
+		ProxyPaths:     paths,
+		ProxyPathUsers: []model.ProxyPathUser{{ProxyPathID: 40, InboundID: inbound.ID, UserID: 7, Enabled: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"alice__oboard_path_40"} {
+		if !strings.Contains(config, expected) {
+			t.Fatalf("config missing %s: %s", expected, config)
+		}
+	}
+	for _, unexpected := range []string{"bob__oboard_path_40"} {
+		if strings.Contains(config, unexpected) {
+			t.Fatalf("config leaked %s: %s", unexpected, config)
+		}
+	}
+}
+
 func TestVLESSInboundDoesNotEmitPacketEncoding(t *testing.T) {
 	config, err := GenerateServerConfig(
 		model.Server{ID: 1, Name: "edge"},

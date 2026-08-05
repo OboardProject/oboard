@@ -20,6 +20,7 @@ type SubscriptionOptions struct {
 	RequireAssignments           bool
 	Assignments                  []model.SubscriptionAssignment
 	InboundUsers                 []model.InboundUser
+	ProxyPathUsers               []model.ProxyPathUser
 	ProxyPaths                   []model.ProxyPath
 	ProxyPathSteps               []model.ProxyPathStep
 	ProxyPathEgressResults       []model.ProxyPathEgressResult
@@ -97,7 +98,13 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		if !inbound.Enabled {
 			continue
 		}
-		if opts.InboundUsers != nil && !subscriptionInboundAllowed(user.ID, inbound.ID, opts.InboundUsers) {
+		configuredBranches := subscriptionBranchesForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps, 0, nil)
+		authorizedBranches := subscriptionBranchesForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps, user.ID, opts.ProxyPathUsers)
+		inboundAllowed := opts.InboundUsers == nil || subscriptionInboundAllowed(user.ID, inbound.ID, opts.InboundUsers)
+		if opts.ProxyPathUsers == nil && !inboundAllowed {
+			authorizedBranches = nil
+		}
+		if !inboundAllowed && len(authorizedBranches) == 0 {
 			continue
 		}
 		assignment, ok := assignmentByInbound[inbound.ID]
@@ -125,7 +132,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 			if strings.TrimSpace(user.ProxyPassword) == "" || strings.TrimSpace(user.SSHRandomID) == "" || hostKey == "" {
 				continue
 			}
-			for _, path := range subscriptionBranchesForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps) {
+			for _, path := range authorizedBranches {
 				branchName := strings.TrimSpace(path.Name)
 				if branchName == "" {
 					branchName = fmt.Sprintf("%s 分支 %d", standaloneName, path.ID)
@@ -148,8 +155,11 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		if err != nil {
 			return nil, err
 		}
-		branches := subscriptionBranchesForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps)
+		branches := authorizedBranches
 		if len(branches) == 0 {
+			if len(configuredBranches) > 0 {
+				continue
+			}
 			raw, err := adapter.SubscriptionNode(user, inbound, server)
 			if err != nil {
 				return nil, err
@@ -327,7 +337,7 @@ func disambiguateSubscriptionNodeNames(nodes []SubscriptionNode, refs []subscrip
 	}
 }
 
-func subscriptionBranchesForInbound(inbound model.Inbound, paths []model.ProxyPath, steps []model.ProxyPathStep) []model.ProxyPath {
+func subscriptionBranchesForInbound(inbound model.Inbound, paths []model.ProxyPath, steps []model.ProxyPathStep, userID int64, pathUsers []model.ProxyPathUser) []model.ProxyPath {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -337,7 +347,8 @@ func subscriptionBranchesForInbound(inbound model.Inbound, paths []model.ProxyPa
 	}
 	out := []model.ProxyPath{}
 	for _, path := range paths {
-		if path.Enabled && path.InboundID == inbound.ID && (path.Kind == model.ProxyPathKindDirect || hasStep[path.ID]) {
+		allowed := userID == 0 || pathUsers == nil || ProxyPathUserAllowed(path.ID, userID, pathUsers)
+		if allowed && path.Enabled && path.InboundID == inbound.ID && (path.Kind == model.ProxyPathKindDirect || hasStep[path.ID]) {
 			out = append(out, path)
 		}
 	}

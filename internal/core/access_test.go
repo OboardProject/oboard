@@ -49,6 +49,24 @@ func TestValidateInboundAccessCapacityRejectsSingleUserOverflowFromGroup(t *test
 	}
 }
 
+func TestEffectiveProxyPathUsersCombinesBroadAndExactAccess(t *testing.T) {
+	serverID, inboundID := int64(1), int64(10)
+	pathA, pathB := int64(100), int64(101)
+	users := []model.User{{ID: 1, Status: "active"}, {ID: 2, Status: "active"}}
+	paths := []model.ProxyPath{{ID: pathA, InboundID: inboundID, Enabled: true}, {ID: pathB, InboundID: inboundID, Enabled: true}}
+	grants := []model.InboundAccessGrant{
+		{SubjectType: model.AccessSubjectUser, SubjectID: 1, ScopeType: model.AccessScopeServer, ServerID: &serverID, Enabled: true},
+		{SubjectType: model.AccessSubjectUser, SubjectID: 2, ScopeType: model.AccessScopeProxyPath, ProxyPathID: &pathB, Enabled: true},
+	}
+	effective := EffectiveProxyPathUsers(paths, []model.Inbound{{ID: inboundID, ServerID: serverID, Enabled: true}}, users, nil, nil, nil, grants)
+	if !ProxyPathUserAllowed(pathA, 1, effective) || !ProxyPathUserAllowed(pathB, 1, effective) {
+		t.Fatalf("broad user missing path access: %#v", effective)
+	}
+	if ProxyPathUserAllowed(pathA, 2, effective) || !ProxyPathUserAllowed(pathB, 2, effective) {
+		t.Fatalf("exact path access leaked or missing: %#v", effective)
+	}
+}
+
 func TestEffectiveUserLimitsInheritStrictestEnabledGroup(t *testing.T) {
 	user := model.User{ID: 10, Username: "alice", SpeedLimitMbps: 0, TrafficLimitBytes: 0}
 	groups := []model.UserGroup{

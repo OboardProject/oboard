@@ -98,6 +98,7 @@ type ConfigOptions struct {
 	Inbounds          []model.Inbound
 	WARPProfiles      []model.WARPProfile
 	InboundUsers      []model.InboundUser
+	ProxyPathUsers    []model.ProxyPathUser
 	UserGroups        []model.UserGroup
 	UserGroupMembers  []model.UserGroupMember
 	TrafficPolicies   map[int64]model.TrafficRuntimePolicy
@@ -538,7 +539,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		}
 		baseInboundUsers := usersForInbound(inbound, users, opts.InboundUsers)
 		inboundUsers := baseInboundUsers
-		if branchUsers := proxyPathBranchUsersForInbound(inbound, baseInboundUsers, opts.ProxyPaths, opts.ProxyPathSteps); len(branchUsers) > 0 {
+		if branchUsers := proxyPathBranchUsersForInbound(inbound, users, opts.InboundUsers, opts.ProxyPathUsers, opts.ProxyPaths, opts.ProxyPathSteps); len(branchUsers) > 0 {
 			inboundUsers = branchUsers
 		}
 		addRuntimeLimitsForInbound(&config, inbound, inboundUsers, opts)
@@ -961,12 +962,11 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 				processingInbound = proxyPathTrustedInnerInbound(path, step, server, processingInbound, inboundByID, opts.PortLedger)
 			}
 			inboundByID[processingInbound.ID] = processingInbound
-			baseUsers := usersForInbound(root, users, opts.InboundUsers)
-			processingUsers := proxyPathBranchUsersForPath(path, root, baseUsers)
+			processingUsers := proxyPathBranchUsersForPath(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
 			if group != nil {
 				processingUsers = nil
 				for _, branch := range group.Paths {
-					processingUsers = append(processingUsers, proxyPathBranchUsersForPath(branch, root, baseUsers)...)
+					processingUsers = append(processingUsers, proxyPathBranchUsersForPath(branch, root, usersForProxyPath(branch, root, users, opts.InboundUsers, opts.ProxyPathUsers))...)
 				}
 			}
 			if len(processingUsers) == 0 {
@@ -1107,7 +1107,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 		}
 		activeServerID := root.ServerID
 		activeInboundTag := tag("in", root.ID)
-		activeAuthUsers := proxyPathBranchUsernames(path, root, usersForInbound(root, users, opts.InboundUsers))
+		activeAuthUsers := proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
 		previousTag := ""
 		for _, step := range steps {
 			if step.TransportMode == "" {
@@ -1263,7 +1263,7 @@ func validateProxyPathForConfig(path model.ProxyPath, root model.Inbound, steps 
 
 func proxyPathStepInboundIdentity(path model.ProxyPath, step model.ProxyPathStep, root model.Inbound, targetServerID int64, inboundByID map[int64]model.Inbound, users []model.User, opts ConfigOptions, services map[proxyPathChainServiceKey]*proxyPathChainService, transparentGroup *transparentProxyPathGroup) (string, []string) {
 	if transparentGroup != nil && step.Position == transparentGroup.PrefixLength {
-		return proxyPathSharedTransparentInboundTag(transparentGroup.InboundID, transparentGroup.PrefixLength), proxyPathBranchUsernames(path, root, usersForInbound(root, users, opts.InboundUsers))
+		return proxyPathSharedTransparentInboundTag(transparentGroup.InboundID, transparentGroup.PrefixLength), proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
 	}
 	if step.InboundID != nil && *step.InboundID != 0 {
 		inbound := inboundByID[*step.InboundID]
@@ -1274,7 +1274,7 @@ func proxyPathStepInboundIdentity(path model.ProxyPath, step model.ProxyPathStep
 		user := proxyPathInternalUser(path, step)
 		return service.Tag, []string{protocolAuthUsername(service.Inbound.Protocol, user)}
 	}
-	return proxyPathInternalInboundTag(path.ID, step.Position), proxyPathBranchUsernames(path, root, usersForInbound(root, users, opts.InboundUsers))
+	return proxyPathInternalInboundTag(path.ID, step.Position), proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
 }
 
 func proxyPathBranchUsernames(path model.ProxyPath, root model.Inbound, users []model.User) []string {
@@ -2070,7 +2070,7 @@ func pathLinkUsersForInbound(inbound model.Inbound, paths []model.ProxyPath, ste
 	return out
 }
 
-func proxyPathBranchUsersForInbound(inbound model.Inbound, users []model.User, paths []model.ProxyPath, steps []model.ProxyPathStep) []model.User {
+func proxyPathBranchUsersForInbound(inbound model.Inbound, users []model.User, inboundUsers []model.InboundUser, pathUsers []model.ProxyPathUser, paths []model.ProxyPath, steps []model.ProxyPathStep) []model.User {
 	if len(users) == 0 {
 		return nil
 	}
@@ -2087,7 +2087,26 @@ func proxyPathBranchUsersForInbound(inbound model.Inbound, users []model.User, p
 		if path.Kind != model.ProxyPathKindDirect && len(stepsByPath[path.ID]) == 0 {
 			continue
 		}
-		out = append(out, proxyPathBranchUsersForPath(path, inbound, users)...)
+		out = append(out, proxyPathBranchUsersForPath(path, inbound, usersForProxyPath(path, inbound, users, inboundUsers, pathUsers))...)
+	}
+	return out
+}
+
+func usersForProxyPath(path model.ProxyPath, inbound model.Inbound, users []model.User, inboundUsers []model.InboundUser, pathUsers []model.ProxyPathUser) []model.User {
+	if pathUsers == nil {
+		return usersForInbound(inbound, users, inboundUsers)
+	}
+	allowed := map[int64]bool{}
+	for _, binding := range pathUsers {
+		if binding.Enabled && binding.ProxyPathID == path.ID {
+			allowed[binding.UserID] = true
+		}
+	}
+	out := make([]model.User, 0, len(allowed))
+	for _, user := range users {
+		if allowed[user.ID] {
+			out = append(out, user)
+		}
 	}
 	return out
 }

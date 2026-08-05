@@ -239,6 +239,36 @@ func TestOAuthAuthorizationCodePKCEAndSingleUse(t *testing.T) {
 	if second.Code != http.StatusBadRequest || !strings.Contains(second.Body.String(), `"error":"invalid_grant"`) {
 		t.Fatalf("second exchange status=%d body=%s", second.Code, second.Body.String())
 	}
+	var firstTokens struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &firstTokens); err != nil {
+		t.Fatal(err)
+	}
+	rotate := httptest.NewRecorder()
+	rotateReq := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {firstTokens.RefreshToken}, "client_id": {client.ID}, "resource": {"https://panel.example.com/mcp"}}.Encode()))
+	rotateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handler.ServeHTTP(rotate, rotateReq)
+	if rotate.Code != http.StatusOK || !strings.Contains(rotate.Body.String(), `"access_token":"oba_`) {
+		t.Fatalf("refresh rotation status=%d body=%s", rotate.Code, rotate.Body.String())
+	}
+	var rotated struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(rotate.Body.Bytes(), &rotated); err != nil {
+		t.Fatal(err)
+	}
+	request(t, handler, http.MethodDelete, "/api/v2/oauth-clients/"+client.ID, sessionToken, nil, http.StatusOK)
+	if _, err := db.GetOAuthClient(context.Background(), client.ID); err == nil {
+		t.Fatal("oauth client delete did not remove the client")
+	}
+	revoked := httptest.NewRecorder()
+	revokedReq := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {rotated.RefreshToken}, "client_id": {client.ID}, "resource": {"https://panel.example.com/mcp"}}.Encode()))
+	revokedReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handler.ServeHTTP(revoked, revokedReq)
+	if revoked.Code != http.StatusBadRequest || !strings.Contains(revoked.Body.String(), `"error":"invalid_grant"`) {
+		t.Fatalf("refresh after client delete status=%d body=%s", revoked.Code, revoked.Body.String())
+	}
 }
 
 func TestOAuthScopesCannotExceedCurrentUserRole(t *testing.T) {

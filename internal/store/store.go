@@ -190,7 +190,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists inbound_users (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, user_id integer not null references users(id) on delete cascade, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(inbound_id,user_id))`,
 		`create table if not exists user_groups (id integer primary key autoincrement, name text not null unique, description text not null default '', role text not null default 'viewer', system_key text not null default '', enabled integer not null default 1, speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists user_group_members (id integer primary key autoincrement, group_id integer not null references user_groups(id) on delete cascade, user_id integer not null references users(id) on delete cascade, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(group_id,user_id))`,
-		`create table if not exists inbound_access_grants (id integer primary key autoincrement, subject_type text not null, subject_id integer not null, scope_type text not null, server_id integer references servers(id) on delete cascade, inbound_id integer references inbounds(id) on delete cascade, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(subject_type,subject_id,scope_type,server_id,inbound_id))`,
+		`create table if not exists inbound_access_grants (id integer primary key autoincrement, subject_type text not null, subject_id integer not null, scope_type text not null, server_id integer references servers(id) on delete cascade, inbound_id integer references inbounds(id) on delete cascade, proxy_path_id integer references proxy_paths(id) on delete cascade, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists outbounds (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, next_server_id integer references servers(id) on delete set null, name text not null, protocol text not null, target_address text not null, target_port integer not null, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists routing_rules (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, priority integer not null default 100, match_json text not null default '{}', action text not null, outbound_id integer references outbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, target_server_id integer references servers(id) on delete set null, outbound_tag text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists external_outbounds (id integer primary key autoincrement, server_id integer references servers(id) on delete set null, name text not null, protocol text not null, scope text not null default 'global', target_address text not null default '', target_port integer not null default 0, config_json text not null default '{}', region_mode text not null default 'auto', region_code text not null default '', expose_to_users integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
@@ -290,6 +290,12 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "servers", "interface_ipv6", `alter table servers add column interface_ipv6 text not null default ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "inbound_access_grants", "proxy_path_id", `alter table inbound_access_grants add column proxy_path_id integer references proxy_paths(id) on delete cascade`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_inbound_access_grants_scope on inbound_access_grants(subject_type,subject_id,scope_type,coalesce(server_id,0),coalesce(inbound_id,0),coalesce(proxy_path_id,0))`); err != nil {
 		return err
 	}
 	serverTelemetryColumns := []struct {
@@ -2514,7 +2520,7 @@ func (s *Store) CreateInboundAccessGrant(ctx context.Context, v *model.InboundAc
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into inbound_access_grants(subject_type,subject_id,scope_type,server_id,inbound_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?)`, v.SubjectType, v.SubjectID, v.ScopeType, v.ServerID, v.InboundID, boolInt(v.Enabled), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into inbound_access_grants(subject_type,subject_id,scope_type,server_id,inbound_id,proxy_path_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)`, v.SubjectType, v.SubjectID, v.ScopeType, v.ServerID, v.InboundID, v.ProxyPathID, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -2523,12 +2529,12 @@ func (s *Store) CreateInboundAccessGrant(ctx context.Context, v *model.InboundAc
 }
 
 func (s *Store) UpdateInboundAccessGrant(ctx context.Context, v *model.InboundAccessGrant) error {
-	_, err := s.db.ExecContext(ctx, `update inbound_access_grants set subject_type=?,subject_id=?,scope_type=?,server_id=?,inbound_id=?,enabled=?,updated_at=? where id=?`, v.SubjectType, v.SubjectID, v.ScopeType, v.ServerID, v.InboundID, boolInt(v.Enabled), now(), v.ID)
+	_, err := s.db.ExecContext(ctx, `update inbound_access_grants set subject_type=?,subject_id=?,scope_type=?,server_id=?,inbound_id=?,proxy_path_id=?,enabled=?,updated_at=? where id=?`, v.SubjectType, v.SubjectID, v.ScopeType, v.ServerID, v.InboundID, v.ProxyPathID, boolInt(v.Enabled), now(), v.ID)
 	return err
 }
 
 func (s *Store) ListInboundAccessGrants(ctx context.Context) ([]model.InboundAccessGrant, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,subject_type,subject_id,scope_type,server_id,inbound_id,enabled,created_at,updated_at from inbound_access_grants order by id desc`)
+	rows, err := s.db.QueryContext(ctx, `select id,subject_type,subject_id,scope_type,server_id,inbound_id,proxy_path_id,enabled,created_at,updated_at from inbound_access_grants order by id desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -2537,7 +2543,7 @@ func (s *Store) ListInboundAccessGrants(ctx context.Context) ([]model.InboundAcc
 }
 
 func (s *Store) GetInboundAccessGrant(ctx context.Context, id int64) (*model.InboundAccessGrant, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,subject_type,subject_id,scope_type,server_id,inbound_id,enabled,created_at,updated_at from inbound_access_grants where id=?`, id)
+	rows, err := s.db.QueryContext(ctx, `select id,subject_type,subject_id,scope_type,server_id,inbound_id,proxy_path_id,enabled,created_at,updated_at from inbound_access_grants where id=?`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -2556,10 +2562,10 @@ func scanInboundAccessGrants(rows *sql.Rows) ([]model.InboundAccessGrant, error)
 	var out []model.InboundAccessGrant
 	for rows.Next() {
 		var v model.InboundAccessGrant
-		var serverID, inboundID sql.NullInt64
+		var serverID, inboundID, proxyPathID sql.NullInt64
 		var enabled int
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.SubjectType, &v.SubjectID, &v.ScopeType, &serverID, &inboundID, &enabled, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.SubjectType, &v.SubjectID, &v.ScopeType, &serverID, &inboundID, &proxyPathID, &enabled, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if serverID.Valid {
@@ -2568,12 +2574,81 @@ func scanInboundAccessGrants(rows *sql.Rows) ([]model.InboundAccessGrant, error)
 		if inboundID.Valid {
 			v.InboundID = &inboundID.Int64
 		}
+		if proxyPathID.Valid {
+			v.ProxyPathID = &proxyPathID.Int64
+		}
 		v.Enabled = enabled == 1
 		v.CreatedAt = parseTime(ca)
 		v.UpdatedAt = parseTime(ua)
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) SyncInboundAccessScope(ctx context.Context, scopeType model.AccessScopeType, serverID, inboundID *int64, proxyPathIDs, userIDs, groupIDs []int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	timestamp := now()
+	insertGrant := func(subjectType model.AccessSubjectType, subjectID int64, pathID *int64) error {
+		_, err := tx.ExecContext(ctx, `insert into inbound_access_grants(subject_type,subject_id,scope_type,server_id,inbound_id,proxy_path_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)`, subjectType, subjectID, scopeType, serverID, inboundID, pathID, 1, timestamp, timestamp)
+		return err
+	}
+	switch scopeType {
+	case model.AccessScopeServer:
+		if _, err := tx.ExecContext(ctx, `delete from inbound_access_grants where scope_type=? and server_id=?`, scopeType, serverID); err != nil {
+			return err
+		}
+		for _, userID := range userIDs {
+			if err := insertGrant(model.AccessSubjectUser, userID, nil); err != nil {
+				return err
+			}
+		}
+		for _, groupID := range groupIDs {
+			if err := insertGrant(model.AccessSubjectGroup, groupID, nil); err != nil {
+				return err
+			}
+		}
+	case model.AccessScopeInbound:
+		if _, err := tx.ExecContext(ctx, `delete from inbound_users where inbound_id=?`, inboundID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `delete from inbound_access_grants where scope_type=? and inbound_id=?`, scopeType, inboundID); err != nil {
+			return err
+		}
+		for _, userID := range userIDs {
+			if _, err := tx.ExecContext(ctx, `insert into inbound_users(inbound_id,user_id,enabled,created_at,updated_at) values(?,?,?,?,?)`, inboundID, userID, 1, timestamp, timestamp); err != nil {
+				return err
+			}
+		}
+		for _, groupID := range groupIDs {
+			if err := insertGrant(model.AccessSubjectGroup, groupID, nil); err != nil {
+				return err
+			}
+		}
+	case model.AccessScopeProxyPath:
+		for _, pathID := range proxyPathIDs {
+			if _, err := tx.ExecContext(ctx, `delete from inbound_access_grants where scope_type=? and proxy_path_id=?`, scopeType, pathID); err != nil {
+				return err
+			}
+			pathID := pathID
+			for _, userID := range userIDs {
+				if err := insertGrant(model.AccessSubjectUser, userID, &pathID); err != nil {
+					return err
+				}
+			}
+			for _, groupID := range groupIDs {
+				if err := insertGrant(model.AccessSubjectGroup, groupID, &pathID); err != nil {
+					return err
+				}
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported access scope %q", scopeType)
+	}
+	return tx.Commit()
 }
 
 func (s *Store) DeleteUserGroupMembersForGroup(ctx context.Context, groupID int64) error {

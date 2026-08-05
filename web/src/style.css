@@ -3200,8 +3200,8 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .proxy-matrix {
   min-width: 0;
-  height: clamp(600px, calc(100vh - 160px), 860px);
-  min-height: 600px;
+  height: auto;
+  max-height: calc(100dvh - 170px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -3233,6 +3233,22 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   white-space: nowrap;
 }
 
+.proxy-matrix-summary-target {
+  min-width: 0;
+  margin-right: auto;
+  padding: 2px 6px;
+  display: grid;
+  gap: 1px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  letter-spacing: 0;
+}
+
+.proxy-matrix-summary-target strong { margin: 0; }
+.proxy-matrix-summary-target small { color: var(--muted); font-size: 9px; }
+
 .proxy-matrix-summary-status,
 .proxy-matrix-server-state {
   display: inline-flex;
@@ -3256,7 +3272,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .proxy-matrix-scroll {
   min-width: 0;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   overflow: auto;
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
@@ -3312,6 +3328,26 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   font-size: 12px;
   font-weight: 750;
 }
+
+.proxy-matrix-header-target {
+  width: 100%;
+  min-height: 34px;
+  padding: 0;
+  display: block;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  letter-spacing: 0;
+}
+
+.proxy-matrix-header-target > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.proxy-matrix-header-target:disabled { cursor: default; opacity: 1; }
 
 .proxy-matrix-entry-group > span svg { color: var(--graph-entry); }
 .proxy-matrix-entry-group small {
@@ -3371,7 +3407,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   width: 236px;
   min-width: 236px;
   max-width: 236px;
-  height: 142px;
+  height: 126px;
   padding: 0;
   background: var(--surface-solid);
   vertical-align: top;
@@ -3396,12 +3432,28 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .proxy-matrix-node {
   --matrix-node-accent: var(--graph-relay);
-  min-height: 141px;
+  width: 100%;
+  min-height: 125px;
   display: flex;
   flex-direction: column;
   gap: 9px;
-  padding: 12px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
   border-left: 3px solid var(--matrix-node-accent);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  letter-spacing: 0;
+}
+
+.proxy-matrix-node:hover { background: color-mix(in srgb, var(--primary-soft) 36%, transparent); transform: none; }
+.proxy-matrix-node:focus-visible,
+.proxy-matrix-header-target:focus-visible,
+.proxy-matrix-summary-target:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
 }
 
 .matrix-node-entry { --matrix-node-accent: var(--graph-entry); }
@@ -3495,7 +3547,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .matrix-probe-pending { color: var(--muted); }
 
 .proxy-matrix-empty {
-  min-height: 520px;
+  min-height: 240px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3507,6 +3559,68 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   color: var(--muted);
   text-align: center;
 }
+
+.dialog.matrix-access-dialog {
+  width: min(920px, calc(100vw - 28px));
+  max-height: min(86dvh, 780px);
+}
+
+.matrix-access-body { display: grid; gap: 12px; }
+.matrix-access-scope,
+.matrix-access-columns > section {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.matrix-access-section-head {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.matrix-access-section-head strong { color: var(--text-strong); font-size: 13px; }
+.matrix-access-paths {
+  max-height: min(180px, 25dvh);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.matrix-access-paths label,
+.matrix-access-subject {
+  min-width: 0;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+  cursor: pointer;
+}
+
+.matrix-access-paths label:hover,
+.matrix-access-subject:hover { border-color: var(--border); }
+.matrix-access-paths input,
+.matrix-access-subject input { width: 16px; height: 16px; flex: 0 0 16px; margin: 0; accent-color: var(--primary); }
+.matrix-access-paths span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.matrix-access-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.matrix-access-subject-list { max-height: 260px; display: grid; gap: 5px; overflow: auto; scrollbar-gutter: stable; }
+.matrix-access-subject > span { min-width: 0; }
+.matrix-access-subject strong,
+.matrix-access-subject small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.matrix-access-subject strong { color: var(--text-strong); font-size: 12px; }
+.matrix-access-subject small { margin-top: 2px; color: var(--muted); font-size: 10px; }
 
 .proxy-matrix-empty svg { color: var(--primary); }
 .proxy-matrix-empty strong { color: var(--text-strong); font-size: 14px; }
@@ -3574,6 +3688,23 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   .proxy-page-main .proxy-matrix {
     height: 100%;
     min-height: 0;
+  }
+
+  .proxy-page-main .proxy-path-panel:has(.proxy-matrix),
+  .proxy-page-main .proxy-overview:has(.proxy-matrix),
+  .proxy-page-main .proxy-editor:has(.proxy-matrix) {
+    height: auto;
+  }
+
+  .proxy-page-main .proxy-path-panel:has(.proxy-matrix) > .panel-body,
+  .proxy-page-main .proxy-shell:has(.proxy-matrix) {
+    flex: 0 1 auto;
+    overflow: visible;
+  }
+
+  .proxy-page-main .proxy-matrix {
+    height: auto;
+    max-height: calc(100dvh - 170px);
   }
 }
 
@@ -3989,7 +4120,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
     flex-direction: column;
   }
   .proxy-path-view-switch { align-self: flex-start; }
-  .proxy-path-entry-picker { width: 100%; }
+  .proxy-path-entry-picker { width: 100%; flex: 0 0 auto; }
   .proxy-editor-workspace,
   .proxy-editor-workspace.toolbox-collapsed,
   .proxy-editor-workspace.inspector-open {
@@ -4005,9 +4136,11 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   }
   .proxy-flow,
   .proxy-matrix {
-    height: 68vh;
-    min-height: 520px;
+    max-height: 68vh;
   }
+
+  .matrix-access-columns,
+  .matrix-access-paths { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 520px) {

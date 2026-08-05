@@ -2353,6 +2353,38 @@ func TestUserGroupsAndInboundAccessGrantsAPI(t *testing.T) {
 	}
 }
 
+func TestSyncProxyPathAccessGrantsOnlyChangesSelectedPaths(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "listen_ip": "0.0.0.0"}, http.StatusCreated)["server"].(map[string]any)
+	serverID := int64(server["id"].(float64))
+	user := request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "path-user", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
+	userID := int64(user["id"].(float64))
+	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
+	inboundID := int64(inbound["id"].(float64))
+	pathA := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
+	pathB := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
+	pathAID, pathBID := int64(pathA["id"].(float64)), int64(pathB["id"].(float64))
+
+	request(t, h, http.MethodPost, "/api/v2/ui/inbound-access-grants/sync", token, map[string]any{"scope_type": "proxy_path", "proxy_path_ids": []int64{pathAID}, "user_ids": []int64{userID}, "group_ids": []int64{}}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/inbound-access-grants/sync", token, map[string]any{"scope_type": "proxy_path", "proxy_path_ids": []int64{pathBID}, "user_ids": []int64{userID}, "group_ids": []int64{}}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/inbound-access-grants/sync", token, map[string]any{"scope_type": "proxy_path", "proxy_path_ids": []int64{pathAID}, "user_ids": []int64{}, "group_ids": []int64{}}, http.StatusOK)
+
+	grants, err := db.ListInboundAccessGrants(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(grants) != 1 || grants[0].ProxyPathID == nil || *grants[0].ProxyPathID != pathBID || grants[0].SubjectID != userID {
+		t.Fatalf("path grants = %#v, want only path B", grants)
+	}
+}
+
 func TestRealityKeyPairAPIAndInboundDefaults(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

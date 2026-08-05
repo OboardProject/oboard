@@ -902,7 +902,7 @@ func ProxyPathAccountingServerID(path model.ProxyPath, steps []model.ProxyPathSt
 	return rootServerID, true
 }
 
-func TrafficAccountingUsersForServer(serverID int64, paths []model.ProxyPath, steps []model.ProxyPathStep, inbounds []model.Inbound, bindings []model.InboundUser) map[int64]bool {
+func TrafficAccountingUsersForServer(serverID int64, paths []model.ProxyPath, steps []model.ProxyPathStep, inbounds []model.Inbound, bindings []model.InboundUser, pathBindingSets ...[]model.ProxyPathUser) map[int64]bool {
 	stepsByPath := map[int64][]model.ProxyPathStep{}
 	for _, step := range steps {
 		stepsByPath[step.PathID] = append(stepsByPath[step.PathID], step)
@@ -932,6 +932,24 @@ func TrafficAccountingUsersForServer(serverID int64, paths []model.ProxyPath, st
 		}
 	}
 	users := map[int64]bool{}
+	if len(pathBindingSets) > 0 {
+		accountingByPath := map[int64]bool{}
+		for _, path := range paths {
+			accountingServerID, ok := ProxyPathAccountingServerID(path, stepsByPath[path.ID], inbounds)
+			accountingByPath[path.ID] = ok && accountingServerID == serverID
+		}
+		for _, binding := range pathBindingSets[0] {
+			if binding.Enabled && accountingByPath[binding.ProxyPathID] {
+				users[binding.UserID] = true
+			}
+		}
+		for _, binding := range bindings {
+			if binding.Enabled && accountingByInbound[binding.InboundID] && len(pathsByInbound[binding.InboundID]) == 0 {
+				users[binding.UserID] = true
+			}
+		}
+		return users
+	}
 	for _, binding := range bindings {
 		if binding.Enabled && accountingByInbound[binding.InboundID] {
 			users[binding.UserID] = true

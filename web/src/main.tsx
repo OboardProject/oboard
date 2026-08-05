@@ -49,7 +49,7 @@ import {
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
 import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
 import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
-import { buildProxyPathMatrix, type ProxyPathMatrixCell } from './components/proxy-path/matrix'
+import { buildProxyPathMatrix, proxyPathMatrixStepScope, type ProxyPathMatrixCell } from './components/proxy-path/matrix'
 import './style.css'
 import logo from './assets/logo.svg'
 import { 
@@ -172,12 +172,12 @@ type Certificate = { id: number; name: string; primary_domain: string; domains: 
 type InboundUser = { id: number; inbound_id: number; user_id: number; enabled: boolean }
 type SSHAccess = { inbound_id: number; name: string; address: string; port: number; username: string }
 type AccessSubjectType = 'user' | 'group'
-type AccessScopeType = 'global' | 'server' | 'inbound'
+type AccessScopeType = 'global' | 'server' | 'inbound' | 'proxy_path'
 type SubscriptionCustomPathPolicy = 'inherit' | 'allow' | 'deny'
 type SubscriptionCustomPathMode = 'disabled' | 'selective' | 'enabled'
 type UserGroup = { id: number; name: string; description: string; role: Role; system_key?: string; enabled: boolean; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; subscription_custom_path_policy?: SubscriptionCustomPathPolicy }
 type UserGroupMember = { id: number; group_id: number; user_id: number; enabled: boolean }
-type InboundAccessGrant = { id: number; subject_type: AccessSubjectType; subject_id: number; scope_type: AccessScopeType; server_id?: number; inbound_id?: number; enabled: boolean }
+type InboundAccessGrant = { id: number; subject_type: AccessSubjectType; subject_id: number; scope_type: AccessScopeType; server_id?: number; inbound_id?: number; proxy_path_id?: number; enabled: boolean }
 type Outbound = { id: number; server_id: number; next_server_id?: number; name: string; protocol: Protocol; target_address: string; target_port: number; config_json: string; enabled: boolean }
 type User = { id: number; username: string; nickname: string; role: Role; status: string; protected?: boolean; proxy_uuid: string; proxy_password: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_used_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; traffic_period_key?: string; traffic_period_end?: string; traffic_quota_state?: string; subscription_token: string; subscription_burn_after_read: boolean; subscription_burned_at?: string; subscription_age_enabled: boolean; subscription_age_public_key?: string; subscription_age_policy?: 'optional' | 'required'; subscription_suspended?: boolean; subscription_suspended_at?: string; subscription_suspend_reason?: string; subscription_custom_path?: string; subscription_custom_path_policy?: SubscriptionCustomPathPolicy; subscription_custom_path_enabled?: boolean; subscription_custom_path_source?: string; totp_enabled?: boolean; passkey_count?: number }
 type PasskeyCredential = { id: number; name: string; created_at: string; last_used_at?: string }
@@ -2849,6 +2849,17 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
       await refresh()
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
+  const deletePrincipal = async (principal: any) => {
+    const confirmed = await dialogs.confirm({ title: `删除 ${principal.name}？`, message: '已签发的 Token 和审批策略会一并撤销，此操作不能撤销。', confirmText: '删除', tone: 'danger' })
+    if (!confirmed) return
+    setWorking(`principal-delete-${principal.id}`)
+    try {
+      await client.requestV2(`/api-principals/${principal.id}`, { method: 'DELETE' })
+      if (editingServiceID === principal.id) setServiceDialogOpen(false)
+      await refresh()
+      notify?.('Service Account 已删除', 'success')
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
   const openOAuthDialog = (clientItem?: any) => {
     setEditingOAuthID(clientItem?.id || '')
     setOAuthDraft(clientItem ? { name: clientItem.name, redirects: (clientItem.redirect_uris || []).join('\n'), scopes: [...(clientItem.allowed_scopes || [])] } : { name: '', redirects: 'http://127.0.0.1/callback', scopes: [] })
@@ -2871,6 +2882,17 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
     try {
       await client.requestV2(`/oauth-clients/${clientItem.id}`, { method: 'PATCH', body: JSON.stringify({ client_name: clientItem.name, redirect_uris: clientItem.redirect_uris, scopes: clientItem.allowed_scopes, enabled: !clientItem.enabled }) })
       await refresh()
+    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
+  }
+  const deleteOAuth = async (clientItem: any) => {
+    const confirmed = await dialogs.confirm({ title: `删除 ${clientItem.name}？`, message: '已签发的授权码和访问令牌会立即失效，此操作不能撤销。', confirmText: '删除', tone: 'danger' })
+    if (!confirmed) return
+    setWorking(`oauth-delete-${clientItem.id}`)
+    try {
+      await client.requestV2(`/oauth-clients/${clientItem.id}`, { method: 'DELETE' })
+      if (editingOAuthID === clientItem.id) setOAuthDialogOpen(false)
+      await refresh()
+      notify?.('OAuth Client 已删除', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const savePolicy = async (event: React.FormEvent) => {
@@ -3070,11 +3092,11 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
       <div className="automation-grid">
       <section className="settings-card">
         <div className="settings-card-head automation-section-head"><div><h3>Service Account</h3><p className="muted">供 API、MCP 和外部 AI Agent 使用。</p></div><button type="button" onClick={() => openServiceDialog()}><Plus size={14} />新建</button></div>
-        <div className="automation-list">{serviceAccounts.length ? serviceAccounts.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span></div><span>{automationScopeSummary(item.scopes)}</span><small>{item.allowed_cidrs?.length ? item.allowed_cidrs.join(', ') : '任意来源'} · {item.rate_limit_per_minute}/分钟 · 并发 {item.max_concurrency}</small></div><div><button className="ghost icon-button" onClick={() => openServiceDialog(item)} title="编辑" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void issueToken(item)} disabled={!item.enabled} title={item.enabled ? '签发并配置 Token' : '启用后才能签发 Token'} aria-label={item.enabled ? '签发并配置 Token' : '启用后才能签发 Token'}><KeyRound size={15} /></button><button className="ghost icon-button" onClick={() => void togglePrincipal(item)} title={item.enabled ? '禁用' : '启用'} aria-label={item.enabled ? '禁用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button></div></div>) : <div className="automation-empty"><KeyRound size={20} /><span>还没有 Service Account</span><button type="button" className="ghost" onClick={() => openServiceDialog()}>新建凭据</button></div>}</div>
+        <div className="automation-list">{serviceAccounts.length ? serviceAccounts.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span></div><span>{automationScopeSummary(item.scopes)}</span><small>{item.allowed_cidrs?.length ? item.allowed_cidrs.join(', ') : '任意来源'} · {item.rate_limit_per_minute}/分钟 · 并发 {item.max_concurrency}</small></div><div><button className="ghost icon-button" onClick={() => openServiceDialog(item)} title="编辑" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void issueToken(item)} disabled={!item.enabled} title={item.enabled ? '签发并配置 Token' : '启用后才能签发 Token'} aria-label={item.enabled ? '签发并配置 Token' : '启用后才能签发 Token'}><KeyRound size={15} /></button><button className="ghost icon-button" onClick={() => void togglePrincipal(item)} title={item.enabled ? '禁用' : '启用'} aria-label={item.enabled ? '禁用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deletePrincipal(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><KeyRound size={20} /><span>还没有 Service Account</span><button type="button" className="ghost" onClick={() => openServiceDialog()}>新建凭据</button></div>}</div>
       </section>
       <section className="settings-card">
         <div className="settings-card-head automation-section-head"><div><h3>OAuth 2.1 Client</h3><p className="muted">供远程 MCP 使用 PKCE S256 授权。</p></div><button type="button" onClick={() => openOAuthDialog()}><Plus size={14} />注册</button></div>
-        <div className="automation-list">{snapshot.oauth.length ? snapshot.oauth.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span>{item.client_metadata?.registration === 'dynamic' && <span className="automation-state">自动注册</span>}</div><span>{automationScopeSummary(item.allowed_scopes)}</span><small>{item.redirect_uris.join(', ')}</small></div><div><button className="ghost icon-button" onClick={() => openOAuthDialog(item)} title="编辑" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void toggleOAuth(item)} title={item.enabled ? '禁用' : '启用'} aria-label={item.enabled ? '禁用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button></div></div>) : <div className="automation-empty"><Globe size={20} /><span>还没有 OAuth Client</span><button type="button" className="ghost" onClick={() => openOAuthDialog()}>注册客户端</button></div>}</div>
+        <div className="automation-list">{snapshot.oauth.length ? snapshot.oauth.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span>{item.client_metadata?.registration === 'dynamic' && <span className="automation-state">自动注册</span>}</div><span>{automationScopeSummary(item.allowed_scopes)}</span><small>{item.redirect_uris.join(', ')}</small></div><div><button className="ghost icon-button" onClick={() => openOAuthDialog(item)} title="编辑" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void toggleOAuth(item)} title={item.enabled ? '禁用' : '启用'} aria-label={item.enabled ? '禁用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deleteOAuth(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><Globe size={20} /><span>还没有 OAuth Client</span><button type="button" className="ghost" onClick={() => openOAuthDialog()}>注册客户端</button></div>}</div>
       </section>
       </div>
     </>}
@@ -7342,12 +7364,189 @@ function saveProxyPathViewMode(mode: ProxyPathViewMode) {
   }
 }
 
-function ProxyPathMatrixCellView({ cell, data }: { cell: ProxyPathMatrixCell; data: any }) {
+type ProxyMatrixAccessTarget = {
+  scopeType: 'server' | 'inbound' | 'proxy_path'
+  title: string
+  detail: string
+  serverID?: number
+  inboundID?: number
+  proxyPathIDs: number[]
+}
+
+function IndeterminateCheckbox({ checked, indeterminate, onChange, label }: { checked: boolean; indeterminate?: boolean; onChange: (checked: boolean) => void; label: string }) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (inputRef.current) inputRef.current.indeterminate = Boolean(indeterminate) }, [indeterminate])
+  return <input ref={inputRef} type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} aria-label={label} />
+}
+
+function ProxyMatrixAccessDialog({ target, data, client, load, onClose }: { target: ProxyMatrixAccessTarget; data: any; client: any; load: () => Promise<void>; onClose: () => void }) {
+  const returnFocusRef = useRef<HTMLElement | null>(null)
+  const users: User[] = (data.users || []).filter((user: User) => !String(user.username || '').startsWith('__oboard_'))
+  const groups: UserGroup[] = data.user_groups || []
+  const paths: ProxyPath[] = data.proxy_paths || []
+  const inbounds: Inbound[] = data.inbounds || []
+  const grants: InboundAccessGrant[] = (data.inbound_access_grants || []).filter((grant: InboundAccessGrant) => grant.enabled !== false)
+  const bindings: InboundUser[] = (data.inbound_users || []).filter((binding: InboundUser) => binding.enabled !== false)
+  const members: UserGroupMember[] = (data.user_group_members || []).filter((member: UserGroupMember) => member.enabled !== false)
+  const enabledGroupIDs = new Set(groups.filter(group => group.enabled !== false).map(group => group.id))
+  const [selectedPathIDs, setSelectedPathIDs] = useState<number[]>(target.proxyPathIDs)
+  const [selectedUserIDs, setSelectedUserIDs] = useState<number[]>([])
+  const [selectedGroupIDs, setSelectedGroupIDs] = useState<number[]>([])
+  const [partialUserIDs, setPartialUserIDs] = useState<number[]>([])
+  const [partialGroupIDs, setPartialGroupIDs] = useState<number[]>([])
+  const [saving, setSaving] = useState(false)
+  const [feedback, setFeedback] = useState('')
+
+  useEffect(() => {
+    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      onClose()
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape)
+      returnFocusRef.current?.focus()
+    }
+  }, [onClose])
+
+  const exactCounts = (subjectType: AccessSubjectType) => {
+    const counts = new Map<number, number>()
+    if (target.scopeType === 'inbound' && target.inboundID) {
+      if (subjectType === 'user') bindings.filter(binding => binding.inbound_id === target.inboundID).forEach(binding => counts.set(binding.user_id, 1))
+      grants.filter(grant => grant.scope_type === 'inbound' && grant.inbound_id === target.inboundID && grant.subject_type === subjectType).forEach(grant => counts.set(grant.subject_id, 1))
+      return { counts, total: 1 }
+    }
+    if (target.scopeType === 'server' && target.serverID) {
+      grants.filter(grant => grant.scope_type === 'server' && grant.server_id === target.serverID && grant.subject_type === subjectType).forEach(grant => counts.set(grant.subject_id, 1))
+      return { counts, total: 1 }
+    }
+    selectedPathIDs.forEach(pathID => {
+      grants.filter(grant => grant.scope_type === 'proxy_path' && grant.proxy_path_id === pathID && grant.subject_type === subjectType).forEach(grant => counts.set(grant.subject_id, (counts.get(grant.subject_id) || 0) + 1))
+    })
+    return { counts, total: selectedPathIDs.length }
+  }
+
+  useEffect(() => {
+    const usersState = exactCounts('user')
+    const groupsState = exactCounts('group')
+    setSelectedUserIDs(Array.from(usersState.counts).filter(([, count]) => count === usersState.total).map(([id]) => id))
+    setPartialUserIDs(Array.from(usersState.counts).filter(([, count]) => count > 0 && count < usersState.total).map(([id]) => id))
+    setSelectedGroupIDs(Array.from(groupsState.counts).filter(([, count]) => count === groupsState.total).map(([id]) => id))
+    setPartialGroupIDs(Array.from(groupsState.counts).filter(([, count]) => count > 0 && count < groupsState.total).map(([id]) => id))
+    setFeedback('')
+  }, [selectedPathIDs.join(','), target.scopeType, target.serverID, target.inboundID])
+
+  const pathLabel = (pathID: number) => {
+    const path = paths.find(item => item.id === pathID)
+    const inbound = inbounds.find(item => item.id === path?.inbound_id)
+    return `${inbound?.name || `入口 ${path?.inbound_id || '-'}`} · ${path?.name || `路径 ${pathID}`}`
+  }
+  const inheritedCoverage = (subjectType: AccessSubjectType, subjectID: number) => {
+    const subjectIDs = new Set<number>([subjectType === 'group' ? -subjectID : subjectID])
+    if (subjectType === 'user') members.filter(member => member.user_id === subjectID && enabledGroupIDs.has(member.group_id)).forEach(member => subjectIDs.add(-member.group_id))
+    const targetPaths = target.scopeType === 'proxy_path' ? selectedPathIDs.map(pathID => paths.find(path => path.id === pathID)).filter(Boolean) as ProxyPath[] : []
+    const applies = (grant: InboundAccessGrant, path?: ProxyPath) => {
+      const grantSubject = grant.subject_type === 'group' ? -grant.subject_id : grant.subject_id
+      if (!subjectIDs.has(grantSubject)) return false
+      if (grant.scope_type === 'global') return true
+      if (target.scopeType === 'server') return false
+      const inboundID = path?.inbound_id || target.inboundID
+      const inbound = inbounds.find(item => item.id === inboundID)
+      if (grant.scope_type === 'server') return grant.server_id === inbound?.server_id
+      if (grant.scope_type === 'inbound') return grant.inbound_id === inboundID
+      if (grant.scope_type === 'proxy_path') return subjectType === 'user' && grant.subject_type === 'group' && grant.proxy_path_id === path?.id
+      return false
+    }
+    if (target.scopeType === 'proxy_path') return targetPaths.filter(path =>
+      (subjectType === 'user' && bindings.some(binding => binding.user_id === subjectID && binding.inbound_id === path.inbound_id)) ||
+      grants.some(grant => applies(grant, path)),
+    ).length
+    return grants.some(grant => applies(grant)) ? 1 : 0
+  }
+  const toggleID = (id: number, checked: boolean, selected: number[], setSelected: React.Dispatch<React.SetStateAction<number[]>>, setPartial: React.Dispatch<React.SetStateAction<number[]>>) => {
+    setPartial(current => current.filter(item => item !== id))
+    setSelected(checked ? Array.from(new Set([...selected, id])) : selected.filter(item => item !== id))
+  }
+  const save = async () => {
+    if (target.scopeType === 'proxy_path' && !selectedPathIDs.length) return
+    setSaving(true)
+    setFeedback('')
+    try {
+      await client.request('/inbound-access-grants/sync', {
+        method: 'POST',
+        body: JSON.stringify({
+          scope_type: target.scopeType,
+          server_id: target.serverID,
+          inbound_id: target.inboundID,
+          proxy_path_ids: target.scopeType === 'proxy_path' ? selectedPathIDs : [],
+          user_ids: selectedUserIDs,
+          group_ids: selectedGroupIDs,
+        }),
+      })
+      await load()
+      setFeedback('权限已保存，请执行完整下发后生效。')
+    } catch (error: any) {
+      setFeedback(localizeErrorMessage(error?.message || error))
+    } finally {
+      setSaving(false)
+    }
+  }
+  const subjectList = (subjectType: AccessSubjectType) => {
+    const items = subjectType === 'user' ? users : groups
+    const selected = subjectType === 'user' ? selectedUserIDs : selectedGroupIDs
+    const partial = subjectType === 'user' ? partialUserIDs : partialGroupIDs
+    const setSelected = subjectType === 'user' ? setSelectedUserIDs : setSelectedGroupIDs
+    const setPartial = subjectType === 'user' ? setPartialUserIDs : setPartialGroupIDs
+    return <div className="matrix-access-subject-list">
+      {items.length ? items.map(item => {
+        const id = item.id
+        const coverage = inheritedCoverage(subjectType, id)
+        const total = target.scopeType === 'proxy_path' ? selectedPathIDs.length : 1
+        const name = subjectType === 'user' ? (item as User).username : (item as UserGroup).name
+        const state = subjectType === 'user' ? (item as User).status : (item as UserGroup).enabled === false ? 'disabled' : 'enabled'
+        return <label className="matrix-access-subject" key={`${subjectType}-${id}`}>
+          <IndeterminateCheckbox checked={selected.includes(id)} indeterminate={partial.includes(id)} onChange={checked => toggleID(id, checked, selected, setSelected, setPartial)} label={`${checkedLabel(subjectType)} ${name}`} />
+          <span><strong>{name}</strong><small>{labelValue(state)}{coverage ? ` · 继承覆盖 ${coverage}/${total}` : ''}</small></span>
+        </label>
+      }) : <div className="empty small">暂无可分配的{subjectType === 'user' ? '用户' : '用户组'}。</div>}
+    </div>
+  }
+  return <MotionDialogPanel onCancel={onClose} className="matrix-access-dialog">
+    <header className="dialog-head">
+      <div><h2>分配节点访问权限</h2><p className="muted">{target.title} · {target.detail}</p></div>
+      <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭" autoFocus><X /></button>
+    </header>
+    <div className="dialog-body matrix-access-body">
+      {target.scopeType === 'proxy_path' && <section className="matrix-access-scope">
+        <div className="matrix-access-section-head"><strong>受影响路径</strong><span>{selectedPathIDs.length}/{target.proxyPathIDs.length} 条</span></div>
+        <div className="matrix-access-paths">{target.proxyPathIDs.map(pathID => <label key={pathID}>
+          <input type="checkbox" checked={selectedPathIDs.includes(pathID)} onChange={event => setSelectedPathIDs(current => event.target.checked ? Array.from(new Set([...current, pathID])) : current.filter(id => id !== pathID))} />
+          <span>{pathLabel(pathID)}</span>
+        </label>)}</div>
+      </section>}
+      <div className="access-note"><strong>权限规则</strong><span>宽范围和用户组继承权限优先；这里只同步当前范围的直接分配。</span></div>
+      <div className="matrix-access-columns">
+        <section><div className="matrix-access-section-head"><strong>用户</strong><span>{selectedUserIDs.length} 个直接分配</span></div>{subjectList('user')}</section>
+        <section><div className="matrix-access-section-head"><strong>用户组</strong><span>{selectedGroupIDs.length} 个直接分配</span></div>{subjectList('group')}</section>
+      </div>
+      {feedback && <div className={`access-note ${feedback.includes('已保存') ? '' : 'warning'}`} role="status"><strong>{feedback.includes('已保存') ? '保存完成' : '保存失败'}</strong><span>{feedback}</span></div>}
+    </div>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onClose}>关闭</button><button type="button" onClick={() => void save()} disabled={saving || (target.scopeType === 'proxy_path' && !selectedPathIDs.length)}>{saving ? '保存中...' : '保存分配'}</button></footer>
+  </MotionDialogPanel>
+}
+
+function checkedLabel(subjectType: AccessSubjectType) {
+  return subjectType === 'user' ? '用户' : '用户组'
+}
+
+function ProxyPathMatrixCellView({ cell, data, onAssign }: { cell: ProxyPathMatrixCell; data: any; onAssign: (cell: ProxyPathMatrixCell) => void }) {
   if (cell.kind === 'entry') {
     const entry = cell.entry
     const probe = latestInboundProbeSummary(data, entry.id)
     const address = formatHostPort(inboundEntryAddress(data, entry), entry.port)
-    return <div className="proxy-matrix-node matrix-node-entry" title={`${entry.name || `入口 ${entry.id}`} · ${labelProtocol(entry.protocol)} · ${address}`}>
+    return <button type="button" className="proxy-matrix-node matrix-node-entry" title={`${entry.name || `入口 ${entry.id}`} · ${labelProtocol(entry.protocol)} · ${address}`} onClick={() => onAssign(cell)} aria-haspopup="dialog">
       <div className="proxy-matrix-node-head">
         <span className="proxy-matrix-node-icon"><Globe size={15} /></span>
         <span className="proxy-matrix-node-title"><small>代理入口</small><strong>{entry.name || `入口 ${entry.id}`}</strong></span>
@@ -7358,25 +7557,25 @@ function ProxyPathMatrixCellView({ cell, data }: { cell: ProxyPathMatrixCell; da
         <span className={`matrix-probe-${probe.tone}`}>{probe.label}</span>
         <span>{inboundAccessSummary(data, entry)}</span>
       </div>
-    </div>
+    </button>
   }
 
   if (cell.kind === 'direct') {
-    return <div className="proxy-matrix-node matrix-node-direct" title={`${cell.path.name || `路径 ${cell.path.id}`} · 直接出口`}>
+    return <button type="button" className="proxy-matrix-node matrix-node-direct" title={`${cell.path.name || `路径 ${cell.path.id}`} · 直接出口`} onClick={() => onAssign(cell)} aria-haspopup="dialog">
       <div className="proxy-matrix-node-head">
         <span className="proxy-matrix-node-icon"><LogOut size={15} /></span>
         <span className="proxy-matrix-node-title"><small>出口分支</small><strong>直接出口</strong></span>
       </div>
       <div className="proxy-matrix-node-meta"><span>{cell.path.name || `路径 ${cell.path.id}`}</span></div>
       <ExitRegionBadge code={cell.path.effective_exit_region_code} status={cell.path.exit_region_status} compact />
-    </div>
+    </button>
   }
 
   const { path, step, terminal } = cell
   const transport = proxyPathTransportPresentation(step)
   if (step.node_type === 'imported') {
     const imported = ((data.external_outbounds || []) as ExternalOutbound[]).find(item => item.id === step.external_outbound_id)
-    return <div className="proxy-matrix-node matrix-node-imported" title={`${imported?.name || `导入节点 ${step.external_outbound_id || ''}`} · ${transport.title}`}>
+    return <button type="button" className="proxy-matrix-node matrix-node-imported" title={`${imported?.name || `导入节点 ${step.external_outbound_id || ''}`} · ${transport.title}`} onClick={() => onAssign(cell)} aria-haspopup="dialog">
       <div className="proxy-matrix-node-head">
         <span className="proxy-matrix-node-icon"><LinkIcon size={15} /></span>
         <span className="proxy-matrix-node-title"><small>第三方代理</small><strong>{imported?.name || `导入节点 ${step.external_outbound_id || ''}`}</strong></span>
@@ -7385,7 +7584,7 @@ function ProxyPathMatrixCellView({ cell, data }: { cell: ProxyPathMatrixCell; da
       <code>{imported ? formatHostPort(imported.target_address, imported.target_port) : '节点已删除'}</code>
       <div className="proxy-matrix-node-meta"><span>{transport.title}</span></div>
       {terminal && <ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact />}
-    </div>
+    </button>
   }
 
   if (step.node_type === 'warp') {
@@ -7396,7 +7595,7 @@ function ProxyPathMatrixCellView({ cell, data }: { cell: ProxyPathMatrixCell; da
     const serverID = graphWARPServerID(path, steps, step, inboundByID)
     const server = ((data.servers || []) as Server[]).find(item => item.id === serverID)
     const profile = ((data.warp_profiles || []) as WARPProfile[]).find(item => item.server_id === serverID)
-    return <div className="proxy-matrix-node matrix-node-warp" title={`WARP · ${server?.name || `服务器 ${serverID}`} · ${labelValue(profile?.status || 'needed')}`}>
+    return <button type="button" className="proxy-matrix-node matrix-node-warp" title={`WARP · ${server?.name || `服务器 ${serverID}`} · ${labelValue(profile?.status || 'needed')}`} onClick={() => onAssign(cell)} aria-haspopup="dialog">
       <div className="proxy-matrix-node-head">
         <span className="proxy-matrix-node-icon"><Zap size={15} /></span>
         <span className="proxy-matrix-node-title"><small>WARP 出口</small><strong>{server?.name || `服务器 ${serverID}`}</strong></span>
@@ -7404,14 +7603,14 @@ function ProxyPathMatrixCellView({ cell, data }: { cell: ProxyPathMatrixCell; da
       </div>
       <div className="proxy-matrix-node-meta"><span>{transport.title}</span></div>
       {terminal && <ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact />}
-    </div>
+    </button>
   }
 
   const inbound = ((data.inbounds || []) as Inbound[]).find(item => item.id === step.inbound_id)
   const serverID = step.server_id || inbound?.server_id || 0
   const server = ((data.servers || []) as Server[]).find(item => item.id === serverID)
   const online = server?.status?.toLowerCase() === 'online'
-  return <div className="proxy-matrix-node matrix-node-server" title={`${server?.name || `服务器 ${serverID}`} · ${transport.title}`}>
+  return <button type="button" className="proxy-matrix-node matrix-node-server" title={`${server?.name || `服务器 ${serverID}`} · ${transport.title}`} onClick={() => onAssign(cell)} aria-haspopup="dialog">
     <div className="proxy-matrix-node-head">
       <span className="proxy-matrix-node-icon"><ServerIcon size={15} /></span>
       <span className="proxy-matrix-node-title"><small>链路服务器</small><strong>{server?.name || `服务器 ${serverID}`}</strong></span>
@@ -7420,20 +7619,31 @@ function ProxyPathMatrixCellView({ cell, data }: { cell: ProxyPathMatrixCell; da
     <code>{serverDefaultEntryAddress(server) || '无公网 IP'}</code>
     <div className="proxy-matrix-node-meta"><span>{transport.title}</span></div>
     {terminal && <ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact />}
-  </div>
+  </button>
 }
 
-function ProxyPathMatrixView({ data, server }: { data: any; server?: Server }) {
+function ProxyPathMatrixView({ data, server, client, load }: { data: any; server?: Server; client: any; load: () => Promise<void> }) {
   const matrix = useMemo(() => buildProxyPathMatrix(data, server?.id || 0), [data.inbounds, data.proxy_paths, data.proxy_path_steps, server?.id])
   const [hoveredColumn, setHoveredColumn] = useState('')
+  const [accessTarget, setAccessTarget] = useState<ProxyMatrixAccessTarget | null>(null)
   if (!server) return <div className="proxy-matrix-empty" role="status"><ServerIcon size={22} /><strong>还没有服务器</strong><span>暂无可显示的代理链路数据。</span></div>
   if (!matrix.groups.length) return <div className="proxy-matrix-empty" role="status"><Globe size={22} /><strong>这台服务器还没有入口</strong><span>暂无可显示的代理链路数据。</span></div>
 
   const columns = matrix.groups.flatMap(group => group.columns)
-  return <section className="proxy-matrix" aria-label={`${server.name} 的代理链路矩阵`}>
+  const openServerAccess = () => setAccessTarget({ scopeType: 'server', title: server.name || `服务器 ${server.id}`, detail: '全部入口和分支', serverID: server.id, proxyPathIDs: [] })
+  const openInboundAccess = (entry: Inbound) => setAccessTarget({ scopeType: 'inbound', title: entry.name || `入口 ${entry.id}`, detail: '该入口全部分支', inboundID: entry.id, proxyPathIDs: [] })
+  const openPathAccess = (path: ProxyPath) => setAccessTarget({ scopeType: 'proxy_path', title: path.name || `路径 ${path.id}`, detail: '仅此路径', proxyPathIDs: [path.id] })
+  const openCellAccess = (cell: ProxyPathMatrixCell) => {
+    if (cell.kind === 'entry') return openInboundAccess(cell.entry)
+    if (cell.kind === 'direct') return openPathAccess(cell.path)
+    const scope = proxyPathMatrixStepScope(data, server.id, cell.path.id, cell.step.position)
+    setAccessTarget({ scopeType: 'proxy_path', title: cell.step.position === 1 ? '一级链路节点' : `第 ${cell.step.position} 层链路节点`, detail: `${scope.proxyPathIDs.length} 条共享前缀路径`, proxyPathIDs: scope.proxyPathIDs })
+  }
+  return <>
+  <section className="proxy-matrix" aria-label={`${server.name} 的代理链路矩阵`}>
     <div className="proxy-matrix-summary">
       <span className={`proxy-matrix-summary-status ${server.status?.toLowerCase() === 'online' ? 'online' : 'offline'}`}><i />{labelValue(server.status || 'unknown')}</span>
-      <strong>{server.name || `服务器 ${server.id}`}</strong>
+      <button type="button" className="proxy-matrix-summary-target" onClick={openServerAccess} aria-haspopup="dialog"><strong>{server.name || `服务器 ${server.id}`}</strong><small>分配全部入口与分支</small></button>
       <span>{matrix.groups.length} 个入口</span>
       <span>{matrix.pathCount} 条路径</span>
     </div>
@@ -7449,8 +7659,10 @@ function ProxyPathMatrixView({ data, server }: { data: any; server?: Server }) {
               colSpan={group.columns.length}
               scope="colgroup"
             >
-              <span><Globe size={13} />{group.entry.name || `入口 ${group.entry.id}`}</span>
-              <small>{labelProtocol(group.entry.protocol)} · {group.entry.port}</small>
+              <button type="button" className="proxy-matrix-header-target" onClick={() => openInboundAccess(group.entry)} aria-haspopup="dialog">
+                <span><Globe size={13} />{group.entry.name || `入口 ${group.entry.id}`}</span>
+                <small>{labelProtocol(group.entry.protocol)} · {group.entry.port}</small>
+              </button>
             </th>)}
           </tr>
           <tr>
@@ -7460,12 +7672,14 @@ function ProxyPathMatrixView({ data, server }: { data: any; server?: Server }) {
               scope="col"
               onMouseEnter={() => setHoveredColumn(column.id)}
             >
+              <button type="button" className="proxy-matrix-header-target" onClick={() => column.path && openPathAccess(column.path)} disabled={!column.path} aria-haspopup={column.path ? 'dialog' : undefined}>
               <span className="proxy-matrix-path-title">{column.path?.name || '未配置路径'}</span>
               <span className="proxy-matrix-path-meta">
-                {column.branch && <em>第 {column.branchDepth} 跳分支</em>}
+                {column.branch && <em>{column.branchDepth > 0 ? `第 ${column.branchDepth} 跳分支` : '入口分支'}</em>}
                 {column.path?.kind === 'direct' && <em>直出</em>}
                 {!column.path && <em>空</em>}
               </span>
+              </button>
             </th>)}
           </tr>
         </thead>
@@ -7480,7 +7694,7 @@ function ProxyPathMatrixView({ data, server }: { data: any; server?: Server }) {
                 onMouseEnter={() => setHoveredColumn(column.id)}
                 aria-label={cell ? undefined : '空'}
               >
-                {cell ? <ProxyPathMatrixCellView cell={cell} data={data} /> : null}
+                {cell ? <ProxyPathMatrixCellView cell={cell} data={data} onAssign={openCellAccess} /> : null}
               </td>
             })}
           </tr>)}
@@ -7488,6 +7702,8 @@ function ProxyPathMatrixView({ data, server }: { data: any; server?: Server }) {
       </table>
     </div>
   </section>
+  <AnimatePresence>{accessTarget && <ProxyMatrixAccessDialog key={`${accessTarget.scopeType}:${accessTarget.serverID || accessTarget.inboundID || accessTarget.proxyPathIDs.join(',')}`} target={accessTarget} data={data} client={client} load={load} onClose={() => setAccessTarget(null)} />}</AnimatePresence>
+  </>
 }
 
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
@@ -8814,7 +9030,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         </div>,
         topbarTarget,
       )}
-      {viewMode === 'matrix' ? <ProxyPathMatrixView data={data} server={selected} /> : <div ref={workspaceRef} className={`proxy-editor-workspace${isToolbarCollapsed ? ' toolbox-collapsed' : ''}${inspectorOpen ? ' inspector-open' : ''}`}>
+      {viewMode === 'matrix' ? <ProxyPathMatrixView data={data} server={selected} client={client} load={load} /> : <div ref={workspaceRef} className={`proxy-editor-workspace${isToolbarCollapsed ? ' toolbox-collapsed' : ''}${inspectorOpen ? ' inspector-open' : ''}`}>
         <div ref={toolboxRef} className={`proxy-editor-sidebar${toolboxDragging ? ' is-dragging' : ''}`} style={{ left: toolboxPosition.x, top: toolboxPosition.y }}>
           <ProxyGraphToolbox
             collapsed={isToolbarCollapsed}
@@ -9980,7 +10196,8 @@ function accessGrantAppliesToEntry(grant: InboundAccessGrant, entry: Inbound) {
 }
 
 function entryAccessGrants(data: any, entry: Inbound) {
-  return ((data.inbound_access_grants || []) as InboundAccessGrant[]).filter(x => accessGrantAppliesToEntry(x, entry))
+  const pathIDs = new Set(((data.proxy_paths || []) as ProxyPath[]).filter(path => path.inbound_id === entry.id).map(path => path.id))
+  return ((data.inbound_access_grants || []) as InboundAccessGrant[]).filter(grant => accessGrantAppliesToEntry(grant, entry) || (grant.scope_type === 'proxy_path' && pathIDs.has(Number(grant.proxy_path_id || 0))))
 }
 
 function effectiveInboundUserIDs(data: any, entry: Inbound) {
@@ -10091,6 +10308,10 @@ function accessScopeLabel(data: any, grant: InboundAccessGrant) {
   if (grant.scope_type === 'server') {
     const server = ((data.servers || []) as Server[]).find(s => s.id === Number(grant.server_id || 0))
     return `${server?.name || '该服务器'}全部入口`
+  }
+  if (grant.scope_type === 'proxy_path') {
+    const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === Number(grant.proxy_path_id || 0))
+    return path?.name || `路径 ${grant.proxy_path_id || ''}`
   }
   const inbound = ((data.inbounds || []) as Inbound[]).find(x => x.id === Number(grant.inbound_id || 0))
   return inbound?.name || '仅此入口'

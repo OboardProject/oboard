@@ -31,6 +31,13 @@ type MatrixData = {
   proxy_path_steps?: ProxyPathStep[]
 }
 
+export type ProxyPathMatrixAssignmentScope = {
+  scopeType: 'server' | 'inbound' | 'proxy_path'
+  serverID?: number
+  inboundID?: number
+  proxyPathIDs: number[]
+}
+
 function orderedSteps(steps: ProxyPathStep[]) {
   return steps.slice().sort((left, right) => (left.position - right.position) || (left.id - right.id))
 }
@@ -48,6 +55,19 @@ function stepSignature(step: ProxyPathStep) {
   ].join('\u0000')
 }
 
+export function proxyPathMatrixStepScope(data: MatrixData, rootServerID: number, sourcePathID: number, depth: number): ProxyPathMatrixAssignmentScope {
+  const entryIDs = new Set((data.inbounds || []).filter(entry => entry.enabled !== false && entry.server_id === rootServerID).map(entry => entry.id))
+  const stepsByPath = new Map<number, ProxyPathStep[]>()
+  ;(data.proxy_path_steps || []).forEach(step => stepsByPath.set(step.path_id, [...(stepsByPath.get(step.path_id) || []), step]))
+  stepsByPath.forEach((steps, pathID) => stepsByPath.set(pathID, orderedSteps(steps)))
+  const sourceSteps = stepsByPath.get(sourcePathID) || []
+  const proxyPathIDs = (data.proxy_paths || [])
+    .filter(path => path.enabled !== false && entryIDs.has(path.inbound_id) && sharesPrefix(sourceSteps, stepsByPath.get(path.id) || [], depth))
+    .map(path => path.id)
+    .sort((left, right) => left - right)
+  return { scopeType: 'proxy_path', proxyPathIDs: proxyPathIDs.length ? proxyPathIDs : [sourcePathID] }
+}
+
 function sharesPrefix(parent: ProxyPathStep[], branch: ProxyPathStep[], depth: number) {
   if (depth <= 0) return false
   const parentByPosition = new Map(parent.map(step => [step.position, stepSignature(step)]))
@@ -56,6 +76,16 @@ function sharesPrefix(parent: ProxyPathStep[], branch: ProxyPathStep[], depth: n
     if (!parentByPosition.has(position) || parentByPosition.get(position) !== branchByPosition.get(position)) return false
   }
   return true
+}
+
+function sharedPrefixDepth(left: ProxyPathStep[], right: ProxyPathStep[]) {
+  const leftByPosition = new Map(left.map(step => [step.position, stepSignature(step)]))
+  const rightByPosition = new Map(right.map(step => [step.position, stepSignature(step)]))
+  let depth = 0
+  for (let position = 1; ; position++) {
+    if (!leftByPosition.has(position) || leftByPosition.get(position) !== rightByPosition.get(position)) return depth
+    depth = position
+  }
 }
 
 function orderPaths(paths: ProxyPath[], stepsByPath: Map<number, ProxyPathStep[]>, stepByID: Map<number, ProxyPathStep>) {
@@ -104,13 +134,17 @@ export function buildProxyPathMatrix(data: MatrixData, rootServerID: number): Pr
   const groups = entries.map(entry => {
     const entryPaths = orderPaths(paths.filter(path => path.inbound_id === entry.id), stepsByPath, stepByID)
     pathCount += entryPaths.length
-    const columns: ProxyPathMatrixColumn[] = entryPaths.length ? entryPaths.map(path => {
+    const columns: ProxyPathMatrixColumn[] = entryPaths.length ? entryPaths.map((path, pathIndex) => {
       const steps = stepsByPath.get(path.id) || []
       const branchSource = stepByID.get(path.branch_source_step_id || 0)
-      const branchDepth = branchSource?.path_id === path.id ? branchSource.position : 0
+      const explicitBranchDepth = branchSource?.path_id === path.id ? branchSource.position : 0
+      const previousSteps = pathIndex > 0 ? stepsByPath.get(entryPaths[pathIndex - 1].id) || [] : []
+      const inferredBranchDepth = pathIndex > 0 ? sharedPrefixDepth(previousSteps, steps) : 0
+      const branch = pathIndex > 0 || explicitBranchDepth > 0
+      const branchDepth = Math.max(explicitBranchDepth, inferredBranchDepth)
       const cells = new Map<number, ProxyPathMatrixCell>()
 
-      if (!branchDepth) cells.set(0, { kind: 'entry', entry })
+      if (!branch) cells.set(0, { kind: 'entry', entry })
       steps.forEach((step, index) => {
         if (step.position <= branchDepth) return
         cells.set(step.position, { kind: 'step', path, step, terminal: path.kind !== 'direct' && index === steps.length - 1 })
@@ -124,7 +158,7 @@ export function buildProxyPathMatrix(data: MatrixData, rootServerID: number): Pr
         id: `path-${path.id}`,
         entry,
         path,
-        branch: branchDepth > 0,
+        branch,
         branchDepth,
         cells,
       }

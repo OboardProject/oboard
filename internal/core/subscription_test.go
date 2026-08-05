@@ -241,6 +241,24 @@ func TestVLESSRealitySubscriptionUsesTCPRealityVision(t *testing.T) {
 	}
 }
 
+func TestSubscriptionFiltersUnauthorizedProxyPaths(t *testing.T) {
+	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass"}
+	inbound := model.Inbound{ID: 1, ServerID: 1, Name: "entry", Protocol: model.ProtocolVLESS, Port: 443, Enabled: true}
+	paths := []model.ProxyPath{{ID: 10, InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Name: "allowed", Enabled: true}, {ID: 11, InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Name: "blocked", Enabled: true}}
+	nodes, err := BuildSubscriptionNodes(user, []model.Server{{ID: 1, Name: "edge", PublicIPv4: "203.0.113.1"}}, []model.Inbound{inbound}, SubscriptionOptions{
+		InboundUsers:   []model.InboundUser{},
+		ProxyPathUsers: []model.ProxyPathUser{{ProxyPathID: 10, InboundID: inbound.ID, UserID: user.ID, Enabled: true}},
+		ProxyPaths:     paths,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantUUID := proxyPathBranchUser(paths[0], inbound, user).ProxyUUID
+	if len(nodes) != 1 || nodes[0].Raw["uuid"] != wantUUID {
+		t.Fatalf("nodes = %#v, want only allowed path", nodes)
+	}
+}
+
 func TestSubscriptionEntryAddressOverride(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
 	nodes, err := BuildSubscriptionNodes(user,

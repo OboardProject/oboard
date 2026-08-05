@@ -246,6 +246,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/user-group-members/", s.auth(s.userGroupMembers, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/inbound-access-grants", s.auth(s.inboundAccessGrants, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/inbound-access-grants/", s.auth(s.inboundAccessGrants, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/inbound-access-grants/sync", s.auth(s.syncInboundAccessGrants, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/outbounds", s.auth(s.outbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/outbounds/", s.auth(s.outbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/routing-rules", s.auth(s.routingRules, model.RoleOperator))
@@ -4864,6 +4865,176 @@ func (s *Server) inboundAccessGrants(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type inboundAccessSyncRequest struct {
+	ScopeType    model.AccessScopeType `json:"scope_type"`
+	ServerID     *int64                `json:"server_id,omitempty"`
+	InboundID    *int64                `json:"inbound_id,omitempty"`
+	ProxyPathIDs []int64               `json:"proxy_path_ids,omitempty"`
+	UserIDs      []int64               `json:"user_ids"`
+	GroupIDs     []int64               `json:"group_ids"`
+}
+
+func (s *Server) syncInboundAccessGrants(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	var req inboundAccessSyncRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	req.ProxyPathIDs = uniquePositiveIDs(req.ProxyPathIDs)
+	req.UserIDs = uniquePositiveIDs(req.UserIDs)
+	req.GroupIDs = uniquePositiveIDs(req.GroupIDs)
+	switch req.ScopeType {
+	case model.AccessScopeServer:
+		req.InboundID = nil
+		req.ProxyPathIDs = nil
+	case model.AccessScopeInbound:
+		req.ServerID = nil
+		req.ProxyPathIDs = nil
+	case model.AccessScopeProxyPath:
+		req.ServerID = nil
+		req.InboundID = nil
+	}
+	if err := s.validateInboundAccessSyncRequest(r.Context(), req); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	data, err := s.loadAccessData(r.Context())
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	applyInboundAccessSync(data, req)
+	if err := core.ValidateProxyPathAccessCapacity(data.Paths, data.Inbounds, data.Users, data.InboundUsers, data.Groups, data.Members, data.Grants); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SyncInboundAccessScope(r.Context(), req.ScopeType, req.ServerID, req.InboundID, req.ProxyPathIDs, req.UserIDs, req.GroupIDs); err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	auditReq(s, r, "sync", "inbound-access", string(req.ScopeType))
+	grants, err := s.store.ListInboundAccessGrants(r.Context())
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	bindings, err := s.store.ListInboundUsers(r.Context())
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	write(w, http.StatusOK, map[string]any{"inbound_access_grants": grants, "inbound_users": bindings})
+}
+
+func (s *Server) validateInboundAccessSyncRequest(ctx context.Context, req inboundAccessSyncRequest) error {
+	for _, userID := range req.UserIDs {
+		if _, err := s.store.GetUser(ctx, userID); err != nil {
+			return fmt.Errorf("user_id %d: %w", userID, err)
+		}
+	}
+	for _, groupID := range req.GroupIDs {
+		if _, err := s.store.GetUserGroup(ctx, groupID); err != nil {
+			return fmt.Errorf("group_id %d: %w", groupID, err)
+		}
+	}
+	switch req.ScopeType {
+	case model.AccessScopeServer:
+		if req.ServerID == nil || *req.ServerID <= 0 {
+			return errors.New("server_id required for server scope")
+		}
+		_, err := s.store.GetServer(ctx, *req.ServerID)
+		return err
+	case model.AccessScopeInbound:
+		if req.InboundID == nil || *req.InboundID <= 0 {
+			return errors.New("inbound_id required for inbound scope")
+		}
+		_, err := s.store.GetInbound(ctx, *req.InboundID)
+		return err
+	case model.AccessScopeProxyPath:
+		if len(req.ProxyPathIDs) == 0 {
+			return errors.New("proxy_path_ids required for proxy_path scope")
+		}
+		for _, pathID := range req.ProxyPathIDs {
+			if _, err := s.store.GetProxyPath(ctx, pathID); err != nil {
+				return fmt.Errorf("proxy_path_id %d: %w", pathID, err)
+			}
+		}
+		return nil
+	default:
+		return errors.New("scope_type must be server, inbound or proxy_path")
+	}
+}
+
+func uniquePositiveIDs(ids []int64) []int64 {
+	seen := map[int64]bool{}
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id > 0 && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func applyInboundAccessSync(data *accessData, req inboundAccessSyncRequest) {
+	pathIDs := map[int64]bool{}
+	for _, pathID := range req.ProxyPathIDs {
+		pathIDs[pathID] = true
+	}
+	filteredGrants := data.Grants[:0]
+	for _, grant := range data.Grants {
+		remove := grant.ScopeType == req.ScopeType && ((req.ScopeType == model.AccessScopeServer && grant.ServerID != nil && req.ServerID != nil && *grant.ServerID == *req.ServerID) || (req.ScopeType == model.AccessScopeInbound && grant.InboundID != nil && req.InboundID != nil && *grant.InboundID == *req.InboundID) || (req.ScopeType == model.AccessScopeProxyPath && grant.ProxyPathID != nil && pathIDs[*grant.ProxyPathID]))
+		if !remove {
+			filteredGrants = append(filteredGrants, grant)
+		}
+	}
+	data.Grants = filteredGrants
+	if req.ScopeType == model.AccessScopeInbound && req.InboundID != nil {
+		filteredBindings := data.InboundUsers[:0]
+		for _, binding := range data.InboundUsers {
+			if binding.InboundID != *req.InboundID {
+				filteredBindings = append(filteredBindings, binding)
+			}
+		}
+		data.InboundUsers = filteredBindings
+		for _, userID := range req.UserIDs {
+			data.InboundUsers = append(data.InboundUsers, model.InboundUser{InboundID: *req.InboundID, UserID: userID, Enabled: true})
+		}
+	}
+	appendGrant := func(subjectType model.AccessSubjectType, subjectID int64, pathID *int64) {
+		data.Grants = append(data.Grants, model.InboundAccessGrant{SubjectType: subjectType, SubjectID: subjectID, ScopeType: req.ScopeType, ServerID: req.ServerID, InboundID: req.InboundID, ProxyPathID: pathID, Enabled: true})
+	}
+	if req.ScopeType == model.AccessScopeInbound {
+		for _, groupID := range req.GroupIDs {
+			appendGrant(model.AccessSubjectGroup, groupID, nil)
+		}
+		return
+	}
+	if req.ScopeType == model.AccessScopeProxyPath {
+		for _, pathID := range req.ProxyPathIDs {
+			pathID := pathID
+			for _, userID := range req.UserIDs {
+				appendGrant(model.AccessSubjectUser, userID, &pathID)
+			}
+			for _, groupID := range req.GroupIDs {
+				appendGrant(model.AccessSubjectGroup, groupID, &pathID)
+			}
+		}
+		return
+	}
+	for _, userID := range req.UserIDs {
+		appendGrant(model.AccessSubjectUser, userID, nil)
+	}
+	for _, groupID := range req.GroupIDs {
+		appendGrant(model.AccessSubjectGroup, groupID, nil)
+	}
+}
+
 func (s *Server) ensureInboundUserCapacity(ctx context.Context, inbound model.Inbound) error {
 	if core.InboundSupportsMultipleUsers(inbound) {
 		return nil
@@ -4886,6 +5057,7 @@ func (s *Server) ensureInboundUserCapacity(ctx context.Context, inbound model.In
 
 type accessData struct {
 	Inbounds     []model.Inbound
+	Paths        []model.ProxyPath
 	Users        []model.User
 	InboundUsers []model.InboundUser
 	Groups       []model.UserGroup
@@ -4918,7 +5090,11 @@ func (s *Server) loadAccessData(ctx context.Context) (*accessData, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &accessData{Inbounds: inbounds, Users: users, InboundUsers: inboundUsers, Groups: groups, Members: members, Grants: grants}, nil
+	paths, err := s.store.ListProxyPaths(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &accessData{Inbounds: inbounds, Paths: paths, Users: users, InboundUsers: inboundUsers, Groups: groups, Members: members, Grants: grants}, nil
 }
 
 func (s *Server) validateAccessCapacityWith(ctx context.Context, mutate func(*accessData)) error {
@@ -4929,11 +5105,15 @@ func (s *Server) validateAccessCapacityWith(ctx context.Context, mutate func(*ac
 	if mutate != nil {
 		mutate(data)
 	}
-	return core.ValidateInboundAccessCapacity(data.Inbounds, data.Users, data.InboundUsers, data.Groups, data.Members, data.Grants)
+	return core.ValidateProxyPathAccessCapacity(data.Paths, data.Inbounds, data.Users, data.InboundUsers, data.Groups, data.Members, data.Grants)
 }
 
 func effectiveInboundUsersForRouting(data store.FullRoutingConfig) []model.InboundUser {
 	return core.EffectiveInboundUsers(data.Inbounds, data.Users, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
+}
+
+func effectiveProxyPathUsersForRouting(data store.FullRoutingConfig) []model.ProxyPathUser {
+	return core.EffectiveProxyPathUsers(data.ProxyPaths, data.Inbounds, data.Users, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
 }
 
 func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, users []model.User, groups []model.UserGroup, members []model.UserGroupMember, accountingUsers map[int64]bool) (map[int64]model.TrafficRuntimePolicy, error) {
@@ -5130,6 +5310,7 @@ func (s *Server) validateInboundAccessGrant(ctx context.Context, v *model.Inboun
 	case model.AccessScopeGlobal:
 		v.ServerID = nil
 		v.InboundID = nil
+		v.ProxyPathID = nil
 	case model.AccessScopeServer:
 		if v.ServerID == nil || *v.ServerID == 0 {
 			return errors.New("server_id required for server scope")
@@ -5138,6 +5319,7 @@ func (s *Server) validateInboundAccessGrant(ctx context.Context, v *model.Inboun
 			return fmt.Errorf("server_id: %w", err)
 		}
 		v.InboundID = nil
+		v.ProxyPathID = nil
 	case model.AccessScopeInbound:
 		if v.InboundID == nil || *v.InboundID == 0 {
 			return errors.New("inbound_id required for inbound scope")
@@ -5146,8 +5328,18 @@ func (s *Server) validateInboundAccessGrant(ctx context.Context, v *model.Inboun
 			return fmt.Errorf("inbound_id: %w", err)
 		}
 		v.ServerID = nil
+		v.ProxyPathID = nil
+	case model.AccessScopeProxyPath:
+		if v.ProxyPathID == nil || *v.ProxyPathID == 0 {
+			return errors.New("proxy_path_id required for proxy_path scope")
+		}
+		if _, err := s.store.GetProxyPath(ctx, *v.ProxyPathID); err != nil {
+			return fmt.Errorf("proxy_path_id: %w", err)
+		}
+		v.ServerID = nil
+		v.InboundID = nil
 	default:
-		return errors.New("scope_type must be global, server or inbound")
+		return errors.New("scope_type must be global, server, inbound or proxy_path")
 	}
 	items, err := s.store.ListInboundAccessGrants(ctx)
 	if err != nil {
@@ -5165,7 +5357,7 @@ func (s *Server) validateInboundAccessGrant(ctx context.Context, v *model.Inboun
 }
 
 func sameInboundAccessGrant(a, b model.InboundAccessGrant) bool {
-	return a.SubjectType == b.SubjectType && a.SubjectID == b.SubjectID && a.ScopeType == b.ScopeType && ptrInt64Equal(a.ServerID, b.ServerID) && ptrInt64Equal(a.InboundID, b.InboundID)
+	return a.SubjectType == b.SubjectType && a.SubjectID == b.SubjectID && a.ScopeType == b.ScopeType && ptrInt64Equal(a.ServerID, b.ServerID) && ptrInt64Equal(a.InboundID, b.InboundID) && ptrInt64Equal(a.ProxyPathID, b.ProxyPathID)
 }
 
 func ptrInt64Equal(a, b *int64) bool {
@@ -9687,10 +9879,10 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 	for _, user := range data.Users {
 		users[user.ID] = user
 	}
-	bound := map[int64][]int64{}
-	for _, binding := range bindings {
+	pathBound := map[int64][]int64{}
+	for _, binding := range effectiveProxyPathUsersForRouting(data) {
 		if binding.Enabled {
-			bound[binding.InboundID] = append(bound[binding.InboundID], binding.UserID)
+			pathBound[binding.ProxyPathID] = append(pathBound[binding.ProxyPathID], binding.UserID)
 		}
 	}
 	pathsByInbound := map[int64][]model.ProxyPath{}
@@ -9715,32 +9907,28 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 			return model.SSHInboundPlan{}, fmt.Errorf("SSH 入口 %s 缺少可用的连接地址", inbound.Name)
 		}
 		entry := model.SSHInbound{InboundID: inbound.ID, ServerID: server.ID, Name: inbound.Name, ListenIP: core.EffectiveListenIP(server, inbound.ListenIP), Address: address, Port: inbound.Port, Enabled: true, Users: []model.SSHInboundUser{}, Policies: map[string]model.TrafficRuntimePolicy{}}
-		seen := map[int64]bool{}
-		for _, userID := range bound[inbound.ID] {
-			if seen[userID] {
-				continue
-			}
-			seen[userID] = true
-			user, ok := users[userID]
-			if !ok || user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") {
-				continue
-			}
-			if strings.TrimSpace(user.ProxyPassword) == "" {
-				continue
-			}
-			if strings.TrimSpace(user.SSHRandomID) == "" {
-				return model.SSHInboundPlan{}, fmt.Errorf("SSH 用户 %d 缺少随机登录标识", user.ID)
-			}
-			for _, path := range pathsByInbound[inbound.ID] {
+		seenPolicy := map[int64]bool{}
+		for _, path := range pathsByInbound[inbound.ID] {
+			for _, userID := range pathBound[path.ID] {
+				user, ok := users[userID]
+				if !ok || user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") || strings.TrimSpace(user.ProxyPassword) == "" {
+					continue
+				}
+				if strings.TrimSpace(user.SSHRandomID) == "" {
+					return model.SSHInboundPlan{}, fmt.Errorf("SSH 用户 %d 缺少随机登录标识", user.ID)
+				}
 				routeKind, outboundTag, err := core.ProxyPathEntryRoute(path, stepsByPath[path.ID], inbound, data.WARPProfiles)
 				if err != nil {
 					return model.SSHInboundPlan{}, fmt.Errorf("SSH 路径 %s: %w", path.Name, err)
 				}
 				entry.Users = append(entry.Users, model.SSHInboundUser{UserID: user.ID, Username: sshLoginName(user, path.ID), Password: user.ProxyPassword, PathID: path.ID, RouteKind: routeKind, OutboundTag: outboundTag, Enabled: true})
-			}
-			if policy, ok := policies[user.ID]; ok {
-				policy.InboundID = inbound.ID
-				entry.Policies[fmt.Sprintf("user:%d", user.ID)] = policy
+				if !seenPolicy[user.ID] {
+					seenPolicy[user.ID] = true
+					if policy, ok := policies[user.ID]; ok {
+						policy.InboundID = inbound.ID
+						entry.Policies[fmt.Sprintf("user:%d", user.ID)] = policy
+					}
+				}
 			}
 		}
 		plan.Inbounds = append(plan.Inbounds, entry)
@@ -10086,14 +10274,15 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 		return generatedServerCoreConfig{}, err
 	}
 	bindings := effectiveInboundUsersForRouting(data)
-	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, bindings)
+	pathBindings := effectiveProxyPathUsersForRouting(data)
+	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, bindings, pathBindings)
 	trafficPolicies, err := s.trafficRuntimePolicies(ctx, server.ID, data.Users, data.UserGroups, data.UserGroupMembers, accountingUsers)
 	if err != nil {
 		return generatedServerCoreConfig{}, err
 	}
 	config, err := core.GenerateServerConfigWithOptions(server, inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
 		RoutingRules: data.RoutingRules, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
-		Servers: data.Servers, Inbounds: inbounds, WARPProfiles: data.WARPProfiles, InboundUsers: bindings,
+		Servers: data.Servers, Inbounds: inbounds, WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
 		UserGroups: data.UserGroups, UserGroupMembers: data.UserGroupMembers, TrafficPolicies: trafficPolicies,
 		PortLedger: ledger,
 	})
@@ -10406,6 +10595,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inboundUsers := core.EffectiveInboundUsers(in, []model.User{*user}, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
+	proxyPathUsers := core.EffectiveProxyPathUsers(data.ProxyPaths, in, []model.User{*user}, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
 	for _, server := range servers {
 		if deployedPasswordDigests[server.ID] != s.sshPasswordDeploymentDigest(server.ID, user.ID, user.ProxyPassword) {
 			continue
@@ -10438,6 +10628,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		RequireAssignments:           profileID != 0,
 		Assignments:                  assignments,
 		InboundUsers:                 inboundUsers,
+		ProxyPathUsers:               proxyPathUsers,
 		ProxyPaths:                   data.ProxyPaths,
 		ProxyPathSteps:               data.ProxyPathSteps,
 		ProxyPathEgressResults:       data.ProxyPathEgressResults,
@@ -11111,11 +11302,17 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 	for _, inbound := range access.Inbounds {
 		inboundByID[inbound.ID] = inbound
 	}
-	type accessPair struct{ inboundID, userID int64 }
+	type accessPair struct{ inboundID, userID, pathID int64 }
 	allowed := map[accessPair]struct{}{}
 	for _, binding := range core.EffectiveInboundUsers(access.Inbounds, access.Users, access.InboundUsers, access.Groups, access.Members, access.Grants) {
 		if binding.Enabled {
 			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID}] = struct{}{}
+		}
+	}
+	pathBindings := core.EffectiveProxyPathUsers(access.Paths, access.Inbounds, access.Users, access.InboundUsers, access.Groups, access.Members, access.Grants)
+	for _, binding := range pathBindings {
+		if binding.Enabled {
+			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID, pathID: binding.ProxyPathID}] = struct{}{}
 		}
 	}
 	paths, err := s.store.ListProxyPaths(r.Context())
@@ -11162,7 +11359,11 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 			fail(w, errors.New("user is invalid or inactive"), 400)
 			return
 		}
-		if _, ok := allowed[accessPair{inboundID: *item.InboundID, userID: item.UserID}]; !ok {
+		pathID := int64(0)
+		if item.PathID != nil {
+			pathID = *item.PathID
+		}
+		if _, ok := allowed[accessPair{inboundID: *item.InboundID, userID: item.UserID, pathID: pathID}]; !ok {
 			fail(w, errors.New("user is not authorized for this inbound"), 403)
 			return
 		}
@@ -11190,7 +11391,7 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	effectiveBindings := core.EffectiveInboundUsers(access.Inbounds, access.Users, access.InboundUsers, access.Groups, access.Members, access.Grants)
-	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, paths, steps, access.Inbounds, effectiveBindings)
+	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, paths, steps, access.Inbounds, effectiveBindings, pathBindings)
 	policies, err := s.trafficRuntimePolicies(r.Context(), server.ID, users, groups, members, accountingUsers)
 	if err != nil {
 		fail(w, err, 500)

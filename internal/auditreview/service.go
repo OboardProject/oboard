@@ -384,6 +384,13 @@ func resolveScope(scope model.AuditReviewScope, routing store.FullRoutingConfig,
 		}
 		access[binding.UserID][serverID] = true
 	}
+	for _, binding := range core.EffectiveProxyPathUsers(routing.ProxyPaths, routing.Inbounds, routing.Users, routing.InboundUsers, routing.UserGroups, routing.UserGroupMembers, routing.InboundAccessGrants) {
+		serverID := serverByInbound[binding.InboundID]
+		if access[binding.UserID] == nil {
+			access[binding.UserID] = map[int64]bool{}
+		}
+		access[binding.UserID][serverID] = true
+	}
 	for userID, servers := range historical {
 		if access[userID] == nil {
 			access[userID] = map[int64]bool{}

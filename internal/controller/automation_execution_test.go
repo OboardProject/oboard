@@ -225,6 +225,11 @@ func TestAutomationAdminCanDisableAndRotateCredentials(t *testing.T) {
 	if err != nil || storedPrincipal.Enabled {
 		t.Fatalf("service account disable failed: %#v err=%v", storedPrincipal, err)
 	}
+	request(t, handler, http.MethodDelete, "/api/v2/api-principals/"+principalID, token, nil, http.StatusOK)
+	if storedPrincipal, err := db.GetAPIPrincipal(context.Background(), principalID); err == nil {
+		t.Fatalf("service account delete failed: %#v", storedPrincipal)
+	}
+	request(t, handler, http.MethodGet, "/api/v2/capabilities", machineToken, nil, http.StatusUnauthorized)
 
 	provider := request(t, handler, http.MethodPost, "/api/v2/ai/providers", token, map[string]any{
 		"name": "local", "base_url": "http://127.0.0.1:11434/v1", "model": "test", "api_key": "first-key", "enabled": true,

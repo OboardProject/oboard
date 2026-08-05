@@ -539,9 +539,10 @@ const (
 type AccessScopeType string
 
 const (
-	AccessScopeGlobal  AccessScopeType = "global"
-	AccessScopeServer  AccessScopeType = "server"
-	AccessScopeInbound AccessScopeType = "inbound"
+	AccessScopeGlobal    AccessScopeType = "global"
+	AccessScopeServer    AccessScopeType = "server"
+	AccessScopeInbound   AccessScopeType = "inbound"
+	AccessScopeProxyPath AccessScopeType = "proxy_path"
 )
 
 type UserGroup struct {
@@ -599,9 +600,17 @@ type InboundAccessGrant struct {
 	ScopeType   AccessScopeType   `json:"scope_type"`
 	ServerID    *int64            `json:"server_id,omitempty"`
 	InboundID   *int64            `json:"inbound_id,omitempty"`
+	ProxyPathID *int64            `json:"proxy_path_id,omitempty"`
 	Enabled     bool              `json:"enabled"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
+}
+
+type ProxyPathUser struct {
+	ProxyPathID int64 `json:"proxy_path_id"`
+	InboundID   int64 `json:"inbound_id"`
+	UserID      int64 `json:"user_id"`
+	Enabled     bool  `json:"enabled"`
 }
 
 type Outbound struct {
