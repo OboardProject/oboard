@@ -1418,8 +1418,16 @@ func TestFailedDNSGroupPreservesLastSuccessfulSelections(t *testing.T) {
 		t.Fatalf("failure outcome = %#v, err=%v", outcome, err)
 	}
 	stored, _ := s.GetServerDNSPolicy(ctx, server.ID)
-	if len(stored.EncryptedSelected) != 2 || len(stored.BootstrapSelected) != 2 || !stored.NeedsBenchmark || stored.LastError == "" {
+	if len(stored.EncryptedSelected) != 2 || len(stored.BootstrapSelected) != 2 || !stored.NeedsBenchmark || stored.LastError != model.DNSBenchmarkNoUsableCandidatesError {
 		t.Fatalf("failed result replaced selections: %#v", stored)
+	}
+	encrypted.Candidates[0], encrypted.Candidates[1] = encrypted.Candidates[1], encrypted.Candidates[0]
+	if _, err := s.UpdateDNSList(ctx, encrypted); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ = s.GetServerDNSPolicy(ctx, server.ID)
+	if stored.LastError != "" {
+		t.Fatalf("dns list change kept stale fallback error: %#v", stored)
 	}
 }
 

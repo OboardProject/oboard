@@ -138,6 +138,51 @@ func TestServerDNSCanBeSavedTestedAndDeployedOnDemand(t *testing.T) {
 	if err != nil || len(tasks) < 2 || tasks[0].Type != model.AgentTaskTypeApplyCoreConfig || tasks[0].ServerID != first.ID {
 		t.Fatalf("targeted dns apply tasks = %#v, err=%v", tasks, err)
 	}
+
+	fallbackBenchmark := request(t, h, http.MethodPost, fmt.Sprintf("/api/v2/ui/servers/%d/dns-test", first.ID), token, map[string]any{"action": "test_and_apply"}, http.StatusAccepted)
+	fallbackRun := fallbackBenchmark["run"].(map[string]any)
+	fallbackResult := model.DNSBenchmarkResult{
+		ReportID: "report-fallback", RequestID: fallbackRun["request_id"].(string), PolicyRevision: policy.Revision,
+		EncryptedListID: encrypted.ID, EncryptedListRevision: encrypted.Revision,
+		BootstrapListID: bootstrap.ID, BootstrapListRevision: bootstrap.Revision,
+		Encrypted: model.DNSBenchmarkGroup{Items: []model.DNSBenchmarkItem{{Tag: encrypted.Candidates[0].Tag, LatencyMS: 2000, Error: "timeout"}}},
+		Bootstrap: model.DNSBenchmarkGroup{Items: []model.DNSBenchmarkItem{{Tag: bootstrap.Candidates[0].Tag, LatencyMS: 2000, Error: "timeout"}}},
+	}
+	fallbackBody, _ := json.Marshal(fallbackResult)
+	fallbackRequest := httptest.NewRequest(http.MethodPost, "/api/v1/agent/dns-benchmarks", bytes.NewReader(fallbackBody))
+	fallbackRequest.Header.Set("content-type", "application/json")
+	fallbackRequest.Header.Set("X-Agent-ID", first.AgentID)
+	fallbackRequest.Header.Set("Authorization", "Bearer dns-token")
+	fallbackResponse := httptest.NewRecorder()
+	h.ServeHTTP(fallbackResponse, fallbackRequest)
+	if fallbackResponse.Code != http.StatusOK {
+		t.Fatalf("fallback dns result status=%d body=%s", fallbackResponse.Code, fallbackResponse.Body.String())
+	}
+	stored, err = db.GetServerDNSPolicy(ctx, first.ID)
+	if err != nil || stored.LastError != model.DNSBenchmarkNoUsableCandidatesError {
+		t.Fatalf("fallback dns policy = %#v, err=%v", stored, err)
+	}
+	tasks, err = db.ListTasks(ctx, 20)
+	if err != nil || len(tasks) < 4 || tasks[0].Type != model.AgentTaskTypeApplyCoreConfig {
+		t.Fatalf("fallback dns apply tasks = %#v, err=%v", tasks, err)
+	}
+	var fallbackPayload model.ApplyCoreConfigTaskPayload
+	if err := json.Unmarshal([]byte(tasks[0].PayloadJSON), &fallbackPayload); err != nil {
+		t.Fatal(err)
+	}
+	var fallbackConfig map[string]any
+	if err := json.Unmarshal([]byte(fallbackPayload.Config), &fallbackConfig); err != nil {
+		t.Fatal(err)
+	}
+	fallbackDNS := fallbackConfig["dns"].(map[string]any)
+	fallbackServers := fallbackDNS["servers"].([]any)
+	if fallbackDNS["final"] != "local" || len(fallbackServers) != 1 || fallbackServers[0].(map[string]any)["type"] != "local" {
+		t.Fatalf("fallback core dns = %#v", fallbackDNS)
+	}
+	fallbackResolver := fallbackConfig["route"].(map[string]any)["default_domain_resolver"].(map[string]any)
+	if fallbackResolver["server"] != "local" {
+		t.Fatalf("fallback default resolver = %#v", fallbackResolver)
+	}
 }
 
 func TestDNSListCRUDValidationAndDefaultProtection(t *testing.T) {

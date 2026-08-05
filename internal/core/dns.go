@@ -59,6 +59,13 @@ func BuildDNSConfig(server model.Server, state *DNSConfigState) (map[string]any,
 	if state.EncryptedList.Kind != model.DNSListEncrypted || state.BootstrapList.Kind != model.DNSListBootstrap {
 		return nil, errors.New("dns policy list kinds do not match")
 	}
+	if strings.TrimSpace(state.Policy.LastError) == model.DNSBenchmarkNoUsableCandidatesError {
+		return map[string]any{
+			"servers":  []map[string]any{{"type": "local", "tag": "local"}},
+			"final":    "local",
+			"strategy": normalizeDNSStrategy(state.Policy.Strategy, EffectiveIPStack(server)),
+		}, nil
+	}
 
 	encrypted := selectedOrDraft(state.Policy.EncryptedSelected, state.Policy.EncryptedSelectionRevision, *state.EncryptedList)
 	bootstrap := bootstrapSelectionForStack(state.Policy.BootstrapSelected, state.Policy.BootstrapSelectionRevision, *state.BootstrapList, EffectiveIPStack(server))

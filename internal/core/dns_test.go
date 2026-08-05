@@ -83,6 +83,22 @@ func TestBuildDNSConfigIncludesSelectedPrimaryAndSecondary(t *testing.T) {
 	}
 }
 
+func TestBuildDNSConfigUsesOnlyLocalDNSAfterNoUsableCandidates(t *testing.T) {
+	state := testDNSState(1)
+	state.Policy.LastError = model.DNSBenchmarkNoUsableCandidatesError
+	dns, err := BuildDNSConfig(model.Server{ID: 1, IPStack: model.IPStackPreferIPv6}, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	servers := dns["servers"].([]map[string]any)
+	if len(servers) != 1 || servers[0]["type"] != "local" || servers[0]["tag"] != "local" {
+		t.Fatalf("fallback dns servers = %#v, want local only", servers)
+	}
+	if dns["final"] != "local" || dns["strategy"] != "prefer_ipv6" {
+		t.Fatalf("fallback dns = %#v", dns)
+	}
+}
+
 func TestBuildDNSConfigSupportsDoQ(t *testing.T) {
 	state := testDNSState(1)
 	state.EncryptedList.Candidates[0] = model.DNSCandidate{Tag: "adguard", Transport: model.DNSTransportDoQ, Server: "dns.adguard-dns.com", Port: 853, TLSName: "dns.adguard-dns.com"}

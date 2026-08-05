@@ -11477,7 +11477,7 @@ func (s *Server) agentDNSBenchmarks(w http.ResponseWriter, r *http.Request) {
 		write(w, 200, map[string]any{"ok": true, "duplicate": true})
 		return
 	}
-	if outcome.Success && outcome.ApplyOnSuccess {
+	if outcome.ApplyRequested && (outcome.Success || outcome.PlainFallback) {
 		if err := s.queueDNSBenchmarkCoreApply(r.Context(), *server, req.RequestID); err != nil {
 			_ = s.store.UpdateDNSBenchmarkRunApply(r.Context(), req.RequestID, nil, "apply_failed", err.Error())
 			fail(w, err, 500)

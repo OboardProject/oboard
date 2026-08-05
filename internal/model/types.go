@@ -853,6 +853,8 @@ type DNSCandidate struct {
 	TLSName   string       `json:"tls_name,omitempty"`
 }
 
+const DNSBenchmarkNoUsableCandidatesError = "both encrypted and bootstrap dns groups require at least one usable candidate"
+
 type DNSList struct {
 	ID         int64          `json:"id"`
 	Name       string         `json:"name"`

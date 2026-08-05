@@ -3466,9 +3466,9 @@ func (s *Store) UpdateDNSList(ctx context.Context, v *model.DNSList) (bool, erro
 	if candidatesChanged {
 		var query string
 		if v.Kind == model.DNSListEncrypted {
-			query = `update server_dns_policies set revision=revision+1,encrypted_selected_json='[]',encrypted_selection_revision=0,needs_benchmark=1,updated_at=? where encrypted_list_id=?`
+			query = `update server_dns_policies set revision=revision+1,encrypted_selected_json='[]',encrypted_selection_revision=0,last_error='',needs_benchmark=1,updated_at=? where encrypted_list_id=?`
 		} else {
-			query = `update server_dns_policies set revision=revision+1,bootstrap_selected_json='[]',bootstrap_selection_revision=0,needs_benchmark=1,updated_at=? where bootstrap_list_id=?`
+			query = `update server_dns_policies set revision=revision+1,bootstrap_selected_json='[]',bootstrap_selection_revision=0,last_error='',needs_benchmark=1,updated_at=? where bootstrap_list_id=?`
 		}
 		if _, err := tx.ExecContext(ctx, query, ts, v.ID); err != nil {
 			return false, err
@@ -3698,11 +3698,14 @@ func (s *Store) UpdateServerDNSPolicy(ctx context.Context, v *model.ServerDNSPol
 	v.LastAttemptAt = current.LastAttemptAt
 	v.LastSuccessAt = current.LastSuccessAt
 	v.LastError = current.LastError
+	if listChanged {
+		v.LastError = ""
+	}
 	v.NeedsBenchmark = current.NeedsBenchmark || listChanged
 	encJSON, _ := json.Marshal(v.EncryptedSelected)
 	bootstrapJSON, _ := json.Marshal(v.BootstrapSelected)
 	ts := now()
-	_, err = s.db.ExecContext(ctx, `update server_dns_policies set encrypted_list_id=?,bootstrap_list_id=?,revision=?,strategy=?,auto_test=?,test_interval_seconds=?,encrypted_selected_json=?,bootstrap_selected_json=?,encrypted_selection_revision=?,bootstrap_selection_revision=?,needs_benchmark=?,updated_at=? where server_id=?`, v.EncryptedListID, v.BootstrapListID, v.Revision, v.Strategy, v.AutoTest, v.TestIntervalSeconds, string(encJSON), string(bootstrapJSON), v.EncryptedSelectionRevision, v.BootstrapSelectionRevision, boolInt(v.NeedsBenchmark), ts, v.ServerID)
+	_, err = s.db.ExecContext(ctx, `update server_dns_policies set encrypted_list_id=?,bootstrap_list_id=?,revision=?,strategy=?,auto_test=?,test_interval_seconds=?,encrypted_selected_json=?,bootstrap_selected_json=?,encrypted_selection_revision=?,bootstrap_selection_revision=?,last_error=?,needs_benchmark=?,updated_at=? where server_id=?`, v.EncryptedListID, v.BootstrapListID, v.Revision, v.Strategy, v.AutoTest, v.TestIntervalSeconds, string(encJSON), string(bootstrapJSON), v.EncryptedSelectionRevision, v.BootstrapSelectionRevision, v.LastError, boolInt(v.NeedsBenchmark), ts, v.ServerID)
 	v.CreatedAt = current.CreatedAt
 	v.UpdatedAt = parseTime(ts)
 	return err
@@ -3759,7 +3762,8 @@ type DNSBenchmarkStoreOutcome struct {
 	Duplicate      bool
 	Stale          bool
 	Success        bool
-	ApplyOnSuccess bool
+	PlainFallback  bool
+	ApplyRequested bool
 }
 
 func (s *Store) RecordDNSBenchmarkResult(ctx context.Context, v *model.DNSBenchmarkResult) (DNSBenchmarkStoreOutcome, error) {
@@ -3796,13 +3800,11 @@ func (s *Store) RecordDNSBenchmarkResult(ctx context.Context, v *model.DNSBenchm
 	encryptedSelected, encryptedErr := canonicalDNSSelection(encryptedJSON, v.Encrypted)
 	bootstrapSelected, bootstrapErr := canonicalDNSSelection(bootstrapJSON, v.Bootstrap)
 	resultError := strings.TrimSpace(v.Error)
-	if encryptedErr != nil && resultError == "" {
-		resultError = "encrypted: " + encryptedErr.Error()
-	}
-	if bootstrapErr != nil && resultError == "" {
-		resultError = "bootstrap: " + bootstrapErr.Error()
+	if encryptedErr != nil || bootstrapErr != nil {
+		resultError = model.DNSBenchmarkNoUsableCandidatesError
 	}
 	outcome.Success = !outcome.Stale && resultError == "" && len(encryptedSelected) > 0 && len(bootstrapSelected) > 0
+	outcome.PlainFallback = !outcome.Stale && resultError == model.DNSBenchmarkNoUsableCandidatesError
 	status := "failed"
 	if outcome.Stale {
 		status = "stale"
@@ -3839,7 +3841,7 @@ func (s *Store) RecordDNSBenchmarkResult(ctx context.Context, v *model.DNSBenchm
 			}
 		} else {
 			runMatches := runPolicyRevision == v.PolicyRevision && runEncryptedID == v.EncryptedListID && runEncryptedRevision == v.EncryptedListRevision && runBootstrapID == v.BootstrapListID && runBootstrapRevision == v.BootstrapListRevision
-			outcome.ApplyOnSuccess = apply == 1 && outcome.Success && runMatches
+			outcome.ApplyRequested = apply == 1 && runMatches
 			if !runMatches {
 				status = "stale"
 			}
