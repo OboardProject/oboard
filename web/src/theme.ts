@@ -322,7 +322,7 @@ export async function transitionThemeTo(
     oldLayer.style.left = `${rect.left}px`
     oldLayer.style.width = `${rect.width}px`
     oldLayer.style.height = `${rect.height}px`
-    oldLayer.style.zIndex = '999999'
+    oldLayer.style.zIndex = 'var(--z-theme-transition)'
     oldLayer.style.pointerEvents = 'none'
     oldLayer.style.userSelect = 'none'
     oldLayer.style.overflow = 'hidden'
@@ -341,7 +341,7 @@ export async function transitionThemeTo(
     ring.style.borderRadius = '50%'
     ring.style.transform = 'translate(-50%, -50%)'
     ring.style.pointerEvents = 'none'
-    ring.style.zIndex = '1000000'
+    ring.style.zIndex = 'var(--z-theme-transition)'
     ring.style.boxShadow = targetTheme === 'dark'
       ? '0 0 24px 6px rgba(147, 197, 253, 0.45), inset 0 0 16px 4px rgba(255, 255, 255, 0.35)'
       : '0 0 24px 6px rgba(59, 130, 246, 0.4), inset 0 0 16px 4px rgba(17, 24, 39, 0.25)'

@@ -51,6 +51,16 @@
   --sidebar-width: 248px;
   --sidebar-collapsed-width: 72px;
 
+  /* Global overlay order. Keep transient feedback above every blocking layer. */
+  --z-navigation: 100;
+  --z-dialog: 2000;
+  --z-dialog-nested: 2100;
+  --z-dialog-system: 2200;
+  --z-popover: 3000;
+  --z-loading: 100000;
+  --z-theme-transition: 1000000;
+  --z-toast: 2147483647;
+
   /* Map old variable tokens to the new design system */
   font-family: var(--font-sans);
   color-scheme: light;
@@ -208,7 +218,7 @@ body {
 /* Custom DOM Circular Ripple Overlay */
 #oboard-theme-old-layer {
   position: fixed !important;
-  z-index: 999999 !important;
+  z-index: var(--z-theme-transition) !important;
   pointer-events: none !important;
   user-select: none !important;
   overflow: hidden !important;
@@ -294,7 +304,7 @@ body {
   border-radius: 50%;
   transform: translate(-50%, -50%);
   pointer-events: none;
-  z-index: 1000000;
+  z-index: var(--z-theme-transition);
   will-change: width, height, opacity;
 }
 
@@ -1646,7 +1656,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .region-picker-panel {
   position: fixed;
-  z-index: 3000;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -4837,7 +4847,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   top: max(16px, env(safe-area-inset-top, 0px));
   left: 0;
   right: 0;
-  z-index: 1000;
+  z-index: var(--z-toast);
   display: flex;
   justify-content: center;
   width: 100%;
@@ -4983,7 +4993,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .dialog-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1100;
+  z-index: var(--z-dialog);
   display: grid;
   place-items: center;
   padding: 20px;
@@ -4992,12 +5002,16 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 
 .dialog-backdrop-nested {
-  z-index: 1200;
+  z-index: var(--z-dialog-nested);
   background: rgba(15, 23, 42, 0.34);
 }
 
 .dialog-backdrop-system {
-  z-index: 1400;
+  z-index: var(--z-dialog-system);
+}
+
+.dialog-root {
+  z-index: var(--z-dialog);
 }
 
 .dialog {
@@ -9204,7 +9218,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .user-actions-menu {
-  z-index: 10000;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -13569,7 +13583,7 @@ button.ui-btn-ghost:hover {
   border-radius: var(--radius-md);
   background: var(--bg-card);
   box-shadow: var(--shadow-md);
-  z-index: 1700;
+  z-index: var(--z-popover);
   animation: popover-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
   transform-origin: top center;
 }
@@ -13691,7 +13705,7 @@ button.ui-btn-ghost:hover {
   border-radius: var(--radius-md);
   background: var(--bg-card);
   box-shadow: var(--shadow-md);
-  z-index: 1700;
+  z-index: var(--z-popover);
   animation: popover-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
@@ -14048,7 +14062,7 @@ button.ui-btn-ghost:hover {
 .portal-loader {
   position: fixed;
   inset: 0;
-  z-index: 99999;
+  z-index: var(--z-loading);
   display: grid;
   place-content: center;
   justify-items: center;

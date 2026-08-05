@@ -905,11 +905,12 @@ function showToast(setToast: React.Dispatch<React.SetStateAction<ToastState>>, m
 }
 
 function TopToast({ toast, onClose }: { toast: ToastState; onClose: (id: number) => void }) {
-  return <div className="top-toast-viewport">
+  const viewport = <div className="top-toast-viewport">
     <AnimatePresence initial={false} mode="wait">
       {toast && <Toast key={toast.id} message={toast.message} kind={toast.kind} onClose={() => onClose(toast.id)} />}
     </AnimatePresence>
   </div>
+  return typeof document === 'undefined' ? viewport : createPortal(viewport, document.body)
 }
 
 function IconButton({ label, onClick, children, className = '', busy = false }: { label: string; onClick: () => void; children: React.ReactNode; className?: string; busy?: boolean }) {
@@ -6842,7 +6843,7 @@ function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: 
           left: menuPosition.left,
           right: 'auto',
           bottom: 'auto',
-          zIndex: 10000,
+          zIndex: 'var(--z-popover)',
           width: '148px',
           minWidth: '148px',
           maxWidth: 'calc(100vw - 16px)',
@@ -14874,7 +14875,7 @@ function TableActions({ children }: { children: React.ReactNode }) {
     const left = Math.max(12, Math.min(window.innerWidth - menuWidth - 12, rect.right - menuWidth))
     setMenuStyle({
       position: 'fixed',
-      zIndex: 3000,
+      zIndex: 'var(--z-popover)',
       width: menuWidth,
       left,
       right: 'auto',

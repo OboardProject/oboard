@@ -43,7 +43,7 @@ export function Dialog({
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="dialog-root fixed inset-0 z-[1400] flex items-center justify-center p-4">
+        <div className="dialog-root fixed inset-0 flex items-center justify-center p-4">
           <m.div
             className="fixed inset-0 bg-black/40 backdrop-blur-sm"
             onClick={onClose}
