@@ -76,6 +76,8 @@ export type Server = {
   connectivity_checked_at?: string
   connectivity_error?: string
   telemetry_updated_at?: string
+  created_at?: string
+  updated_at?: string
 }
 
 export type Inbound = {

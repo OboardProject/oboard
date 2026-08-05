@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions } from './graph-sources'
+import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID } from './graph-sources'
 
 describe('server graph sources', () => {
-  it('uses one generic source handle for every server card', () => {
+  it('keeps the batch source handle stable', () => {
     expect(SERVER_GRAPH_SOURCE_HANDLE).toBe('server-source')
+  })
+
+  it('keeps each inbound on its own server handle', () => {
+    expect(serverEntryHandleID(12)).toBe('server-entry-12')
+    expect(serverEntryTargetHandleID(12)).toBe('server-entry-target-12')
+    expect(inboundIDFromServerHandle('server-entry-12')).toBe(12)
+    expect(inboundIDFromServerHandle(SERVER_GRAPH_SOURCE_HANDLE)).toBe(0)
   })
 
   it('offers both local inbounds and paths that can continue from the server', () => {

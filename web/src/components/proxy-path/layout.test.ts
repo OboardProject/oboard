@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { GRAPH_ENTRY_NODE_WIDTH, defaultEntryGraphPosition, graphServerNodeWidth, layoutGraphLanes, minimizeGraphLayerCrossings } from './layout'
+import { GRAPH_ENTRY_NODE_WIDTH, defaultEntryGraphPosition, graphEntryHandleLeft, graphServerNodeWidth, layoutGraphLanes, minimizeGraphLayerCrossings } from './layout'
 
 describe('proxy graph server layout', () => {
   it('keeps server cards fixed width regardless of inbound count', () => {
@@ -19,6 +19,11 @@ describe('proxy graph server layout', () => {
     expect(right.x).toBeGreaterThan(middle.x)
     expect(left.y).toBe(130)
     expect(right.y).toBe(130)
+  })
+
+  it('keeps independent entry handles apart from the batch handle', () => {
+    expect(graphEntryHandleLeft(0, 2, true)).toBe('21%')
+    expect(graphEntryHandleLeft(1, 2, true)).toBe('79%')
   })
 
   it('orders child branches to match their parent order', () => {

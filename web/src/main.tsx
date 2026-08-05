@@ -34,7 +34,7 @@ import {
   defaultEntryGraphPosition,
   defaultImportedGraphPosition,
   defaultServerGraphPosition,
-  graphPathHandleLeft,
+  graphEntryHandleLeft,
   graphServerNodeWidth,
   layoutGraphLanes,
   minimizeGraphLayerCrossings,
@@ -48,7 +48,7 @@ import {
 } from './components/proxy-path/layout'
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
 import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
-import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
+import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
 import './style.css'
 import logo from './assets/logo.svg'
 import { 
@@ -59,7 +59,8 @@ import {
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
-  PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal
+  PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
+  ArrowUpDown, GripVertical, ListFilter
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -89,6 +90,7 @@ import { PageDataRequestCoordinator } from './page-data'
 import { useRealtimeEvents, type RealtimeEvent, type RealtimeStatus } from './realtime'
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { getServerTimeIssue } from './server-time'
+import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
@@ -649,8 +651,8 @@ const subscriptionFormats: { value: SubscriptionFormat; label: string }[] = [
 const tabMeta: Record<string, { label: string; desc: string; group: string }> = {
   dashboard: { label: '总览', desc: '全局健康、版本、部署状态和关键指标。', group: '总览' },
   account: { label: '我的账户', desc: '维护个人信息、登录安全和订阅加密。', group: '账户' },
-  servers: { label: '服务器管理', desc: '管理服务器、Agent、IP 栈、UDP 入站和端口范围。', group: '基础设施' },
-  'proxy-paths': { label: '代理链路', desc: '管理入口、服务器跳点、第三方出口和传递路径。', group: '代理编排' },
+  servers: { label: '服务器管理', desc: '', group: '' },
+  'proxy-paths': { label: '代理链路', desc: '管理入口、服务器跳点、第三方出口和传递路径。', group: '代理链路' },
   inbounds: { label: '入口', desc: '统一编排 sing-box 入站监听、协议和端口。', group: '代理' },
   outbounds: { label: '出口', desc: '配置服务器出口、下一跳和协议认证参数。', group: '代理' },
   routing: { label: '分流规则', desc: '为任意服务器配置分流规则、直连、链路或导入节点。', group: '流量' },
@@ -671,7 +673,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
 const navGroups = [
   { label: '', tabs: ['dashboard'] },
   { label: '基础设施', tabs: ['servers'] },
-  { label: '代理编排', tabs: ['proxy-paths'] },
+  { label: '代理链路', tabs: ['proxy-paths'] },
   { label: '网络', tabs: ['dns', 'dns-records'] },
   { label: '访问控制', tabs: ['users', 'subscriptions'] },
   { label: '通知', tabs: ['notifications'] },
@@ -1815,7 +1817,7 @@ function App() {
   const tabTitles: { [key: string]: string } = {
     dashboard: '系统总览',
     servers: '服务器管理',
-    'proxy-paths': '代理编排链路',
+    'proxy-paths': '代理链路',
     users: '用户与分组管理',
     dns: 'DNS 设置',
     'dns-records': '域名解析',
@@ -1980,9 +1982,9 @@ function App() {
                       animate={{ opacity: 1, transition: { duration: 0.2, ease: [0.22, 1, 0.36, 1] } }}
                       exit={{ opacity: 0, transition: { duration: 0.16, ease: 'easeIn' } }}
                     >
-                      <p className="eyebrow">{current.group}</p>
+                      {current.group && <p className="eyebrow">{current.group}</p>}
                       <h1>{tabTitles[tab] || current.label}</h1>
-                      {tab !== 'audit' && <p>{current.desc}</p>}
+                      {tab !== 'audit' && current.desc && <p>{current.desc}</p>}
                     </m.div>
                   </AnimatePresence>
                 </div>
@@ -5655,6 +5657,38 @@ function ListViewIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12" /><path d="M8 12h12" /><path d="M8 18h12" /><circle cx="4" cy="6" r="1.2" /><circle cx="4" cy="12" r="1.2" /><circle cx="4" cy="18" r="1.2" /></svg>
 }
 
+type ServerListPreferences = { sortMode: ServerSortMode; customOrder: number[] }
+
+const serverListPreferencesKey = 'oboard.server-list.preferences.v1'
+
+function loadServerListPreferences(): ServerListPreferences {
+  try {
+    const value = JSON.parse(localStorage.getItem(serverListPreferencesKey) || '{}')
+    const sortMode: ServerSortMode = value?.sortMode === 'country' || value?.sortMode === 'custom' ? value.sortMode : 'created'
+    const customOrder = Array.isArray(value?.customOrder) ? value.customOrder.map(Number).filter((id: number) => Number.isSafeInteger(id) && id > 0) : []
+    return { sortMode, customOrder }
+  } catch {
+    return { sortMode: 'created', customOrder: [] }
+  }
+}
+
+function saveServerListPreferences(value: ServerListPreferences) {
+  try {
+    localStorage.setItem(serverListPreferencesKey, JSON.stringify(value))
+  } catch {
+    // Browser storage may be unavailable in hardened or private contexts.
+  }
+}
+
+function serverListRegion(server: Server) {
+  const code = serverRegionCode(server)
+  return { code, label: regionLabel(code) }
+}
+
+function sameNumberOrder(a: number[], b: number[]) {
+  return a.length === b.length && a.every((value, index) => value === b[index])
+}
+
 function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const dialogs = useDialogs()
   const creationDefaults = data.server_creation_defaults || {}
@@ -5669,6 +5703,12 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [detailServer, setDetailServer] = useState<Server | null>(null)
   const [timeDetailServer, setTimeDetailServer] = useState<Server | null>(null)
   const [view, setView] = useState<'grid' | 'list'>('grid')
+  const [serverQuery, setServerQuery] = useState('')
+  const [serverStatusFilter, setServerStatusFilter] = useState<ServerStatusFilter>('all')
+  const [serverRegionFilter, setServerRegionFilter] = useState('all')
+  const [listPreferences, setListPreferences] = useState<ServerListPreferences>(loadServerListPreferences)
+  const [draggedServerID, setDraggedServerID] = useState<number | null>(null)
+  const [dragOverServerID, setDragOverServerID] = useState<number | null>(null)
   const [servers, setServers] = useState<Server[]>(data.servers || [])
   const [serverMetrics, setServerMetrics] = useState<ServerMetricSample[]>(data.server_metrics || [])
   const [serverRefreshing, setServerRefreshing] = useState(false)
@@ -5683,6 +5723,13 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   }, [data.servers])
   useEffect(() => { setServerMetrics(data.server_metrics || []) }, [data.server_metrics])
   useEffect(() => { if (realtimeStatus === 'open') setServerRefreshFailed(false) }, [realtimeStatus])
+  useEffect(() => { saveServerListPreferences(listPreferences) }, [listPreferences])
+  useEffect(() => {
+    setListPreferences(current => {
+      const customOrder = reconcileCustomServerOrder(servers, current.customOrder, serverListRegion)
+      return sameNumberOrder(current.customOrder, customOrder) ? current : { ...current, customOrder }
+    })
+  }, [servers])
 
   useEffect(() => {
     serversMountedRef.current = true
@@ -5749,6 +5796,38 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     serverMetrics.forEach(sample => grouped.set(Number(sample.server_id), [...(grouped.get(Number(sample.server_id)) || []), sample]))
     return grouped
   }, [serverMetrics])
+  const serverRegions = useMemo(() => {
+    const counts = new Map<string, number>()
+    servers.forEach(server => {
+      const code = serverRegionCode(server)
+      counts.set(code, (counts.get(code) || 0) + 1)
+    })
+    return Array.from(counts, ([code, count]) => ({ code, count, label: regionLabel(code) })).sort((a, b) => {
+      if (!a.code) return 1
+      if (!b.code) return -1
+      return a.label.localeCompare(b.label, 'zh-CN')
+    })
+  }, [servers])
+  const orderedServers = useMemo(
+    () => sortServerList(servers, listPreferences.sortMode, listPreferences.customOrder, serverListRegion),
+    [listPreferences.customOrder, listPreferences.sortMode, servers],
+  )
+  const visibleServers = useMemo(
+    () => filterServerList(orderedServers, serverQuery, serverStatusFilter, serverRegionFilter, serverListRegion),
+    [orderedServers, serverQuery, serverStatusFilter, serverRegionFilter],
+  )
+  const hasServerFilters = Boolean(serverQuery.trim() || serverStatusFilter !== 'all' || serverRegionFilter !== 'all')
+  const clearServerFilters = () => {
+    setServerQuery('')
+    setServerStatusFilter('all')
+    setServerRegionFilter('all')
+  }
+  const moveCustomServer = (sourceID: number, targetID: number, placement: 'before' | 'after') => {
+    setListPreferences(current => ({
+      ...current,
+      customOrder: moveServerOrder(reconcileCustomServerOrder(servers, current.customOrder, serverListRegion), sourceID, targetID, placement),
+    }))
+  }
   const enroll = async (s: Server) => {
     const res = await client.request(`/servers/${s.id}/enroll-token`, { method: 'POST', body: '{}' })
     setInstallTarget({ server: s, token: res.enrollment_token })
@@ -5921,6 +6000,52 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   }
   const role: Role = data.session?.role || 'viewer'
   const enrolledCount = servers.filter(s => String(s.agent_id || '').trim()).length
+  const renderServerCard = (server: Server, index: number) => {
+    const custom = listPreferences.sortMode === 'custom'
+    const previous = visibleServers[index - 1]
+    const next = visibleServers[index + 1]
+    return <div
+      key={server.id}
+      className={`server-sort-item${custom ? ' is-custom' : ''}${draggedServerID === server.id ? ' is-dragging' : ''}${dragOverServerID === server.id ? ' is-drag-over' : ''}`}
+      onDragOver={event => {
+        if (!custom || draggedServerID === null || draggedServerID === server.id) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'move'
+        setDragOverServerID(server.id)
+      }}
+      onDrop={event => {
+        event.preventDefault()
+        if (draggedServerID !== null && draggedServerID !== server.id) {
+          const sourceIndex = visibleServers.findIndex(item => item.id === draggedServerID)
+          moveCustomServer(draggedServerID, server.id, sourceIndex >= 0 && sourceIndex < index ? 'after' : 'before')
+        }
+        setDraggedServerID(null)
+        setDragOverServerID(null)
+      }}
+    >
+      {custom && <div className="server-custom-order-controls" role="group" aria-label={`${server.name || `服务器 #${server.id}`} 自定义排序`}>
+        <button type="button" className="ghost icon-button" disabled={!previous} onClick={() => previous && moveCustomServer(server.id, previous.id, 'before')} aria-label="向前移动" title="向前移动"><ArrowUp size={14} /></button>
+        <button
+          type="button"
+          className="ghost icon-button server-order-drag-handle"
+          draggable
+          onDragStart={event => {
+            event.dataTransfer.effectAllowed = 'move'
+            event.dataTransfer.setData('text/plain', String(server.id))
+            setDraggedServerID(server.id)
+          }}
+          onDragEnd={() => {
+            setDraggedServerID(null)
+            setDragOverServerID(null)
+          }}
+          aria-label="拖动调整顺序"
+          title="拖动调整顺序"
+        ><GripVertical size={14} /></button>
+        <button type="button" className="ghost icon-button" disabled={!next} onClick={() => next && moveCustomServer(server.id, next.id, 'after')} aria-label="向后移动" title="向后移动"><ArrowDown size={14} /></button>
+      </div>}
+      <ServerCard server={server} samples={metricsByServer.get(Number(server.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} onAction={handleServerAction} layout={view === 'list' ? 'list' : 'grid'} />
+    </div>
+  }
   return <section className="panel server-management-panel">
     <div className="panel-body">
     <div className="section-toolbar">
@@ -5945,13 +6070,45 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
         </div>
       </div>
     </div>
+    {servers.length > 0 && <div className="server-list-toolbar">
+      <div className="server-list-search">
+        <Search size={15} aria-hidden="true" />
+        <input type="search" value={serverQuery} onChange={event => setServerQuery(event.target.value)} placeholder="搜索名称、IP、编号或国家" aria-label="搜索服务器" />
+        {serverQuery && <button type="button" className="ghost icon-button" onClick={() => setServerQuery('')} aria-label="清除搜索" title="清除搜索"><X size={14} /></button>}
+      </div>
+      <div className="server-list-filters" role="group" aria-label="服务器筛选">
+        <ListFilter size={15} aria-hidden="true" />
+        <Select value={serverStatusFilter} onChange={event => setServerStatusFilter(event.target.value as ServerStatusFilter)} aria-label="按状态筛选">
+          <option value="all">全部状态</option>
+          <option value="online">在线</option>
+          <option value="offline">离线</option>
+          <option value="unenrolled">未接入</option>
+        </Select>
+        <Select value={serverRegionFilter} onChange={event => setServerRegionFilter(event.target.value)} aria-label="按国家筛选">
+          <option value="all">全部国家</option>
+          {serverRegions.map(region => <option key={region.code || 'pending'} value={region.code}>{region.label} ({region.count})</option>)}
+        </Select>
+      </div>
+      <div className="server-list-sort">
+        <ArrowUpDown size={15} aria-hidden="true" />
+        <Select value={listPreferences.sortMode} onChange={event => setListPreferences(current => ({ ...current, sortMode: event.target.value as ServerSortMode }))} aria-label="服务器排序方式">
+          <option value="created">创建顺序</option>
+          <option value="country">按国家</option>
+          <option value="custom">自定义排序</option>
+        </Select>
+      </div>
+      {hasServerFilters && <button type="button" className="ghost icon-button server-list-filter-clear" onClick={clearServerFilters} aria-label="清除筛选" title="清除筛选"><Eraser size={15} /></button>}
+      <span className="server-list-result-count">{visibleServers.length} / {servers.length}</span>
+    </div>}
     {loading && !servers.length
       ? <CardSkeleton />
       : !servers.length
       ? <p className="muted server-empty">暂无服务器</p>
+      : !visibleServers.length
+      ? <div className="server-filter-empty"><Search size={20} aria-hidden="true" /><strong>没有符合条件的服务器</strong><button type="button" className="ghost" onClick={clearServerFilters}>清除筛选</button></div>
       : view === 'grid'
-		  ? <MotionList className="server-grid">{servers.map(s => <ServerCard key={s.id} server={s} samples={metricsByServer.get(Number(s.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} onAction={handleServerAction} />)}</MotionList>
-      : <MotionList className="server-list">{servers.map(s => <ServerCard key={s.id} server={s} samples={metricsByServer.get(Number(s.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} onAction={handleServerAction} layout="list" />)}</MotionList>}
+		  ? <MotionList className="server-grid">{visibleServers.map(renderServerCard)}</MotionList>
+      : <MotionList className="server-list">{visibleServers.map(renderServerCard)}</MotionList>}
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} onCancel={() => setEditServer(null)} onSubmit={updateServer} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} onClose={() => setDetailServer(null)} />}</AnimatePresence>
@@ -7791,6 +7948,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		  if (!conn.source || !conn.target) return
 		  const sourceEntity = graphEntity(conn.source)
 		  const targetEntity = graphEntity(conn.target)
+		  const sourceHandleInboundID = inboundIDFromServerHandle(conn.sourceHandle)
+		  const sourceHandleEntry = sourceEntity?.type === 'server' && sourceHandleInboundID
+		    ? entries.find(entry => entry.id === sourceHandleInboundID && entry.server_id === sourceEntity.id)
+		    : undefined
 			  if (conn.sourceHandle === SERVER_GRAPH_SOURCE_HANDLE) {
 			    const sources = await chooseServerSources(conn.source, sourceEntity?.label || '服务器')
 			    if (!sources?.length) return
@@ -7851,7 +8012,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      if (created) consumeCanvasWARPTarget(conn.target, [created])
 	      return
 	    }
-	    const sourceEntry = sourceEntity?.type === 'entry' ? entries.find(entry => entry.id === sourceEntity.id) : undefined
+	    const sourceEntry = sourceEntity?.type === 'entry' ? entries.find(entry => entry.id === sourceEntity.id) : sourceHandleEntry
 	    if (sourceEntry) {
 	      const created = await createPathFromEntry(sourceEntry, target)
 	      if (created) consumeCanvasWARPTarget(conn.target, [created])
@@ -7872,7 +8033,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      }
 	      return
 	    }
-	    const sourceEntry = sourceEntity?.type === 'entry' ? entries.find(entry => entry.id === sourceEntity.id) : undefined
+	    const sourceEntry = sourceEntity?.type === 'entry' ? entries.find(entry => entry.id === sourceEntity.id) : sourceHandleEntry
 	    if (sourceEntry) {
 	      const created = await createDirectBranch({ inbound_id: sourceEntry.id })
 	      if (created) {
@@ -7892,6 +8053,17 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    } else if (target) {
 	      const transport = await chooseTransportForTarget(target)
 	      if (transport) await appendPathAfterStep(sourcePathStepID, { ...target, ...transport })
+	    }
+	    return
+	  }
+	  if (sourceHandleEntry) {
+	    const target = await targetStepForGraphTarget(conn.target)
+	    if (target?.node_type === 'imported') {
+	      const transport = await chooseTransportForTarget(target, undefined, sourceHandleEntry.name || sourceEntity?.label)
+	      if (transport) await createPathFromEntry(sourceHandleEntry, { ...target, ...transport })
+	    } else if (target?.node_type === 'server_inbound') {
+	      const created = await reuseControlledTarget([{ inbound_id: sourceHandleEntry.id }], target, sourceHandleEntry.name || sourceEntity?.label)
+	      consumeCanvasServerTarget(conn.target, created)
 	    }
 	    return
 	  }
@@ -10243,7 +10415,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       source: id,
       sourceHandle: 'source-bottom',
       target: `server-${x.server_id}`,
-	      targetHandle: 'target-top',
+      targetHandle: serverEntryTargetHandleID(x.id),
       label: '所属主机',
       type: 'smoothstep',
       pathOptions: { borderRadius: 8, offset: 18 },
@@ -10346,7 +10518,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const pathSteps = (stepsByPath.get(path.id) || []).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
     const collapsedSource = collapsedDirectSourceByPath.get(path.id)
     let source = collapsedSource ? proxyPathStepNodeID(collapsedSource) : `server-${root.server_id}`
-	    let sourceHandle: string | undefined = collapsedSource ? pathStepHandleID(collapsedSource.id) : 'server-source'
+	    let sourceHandle: string | undefined = collapsedSource ? pathStepHandleID(collapsedSource.id) : serverEntryHandleID(root.id)
     if (!collapsedSource) pathSteps.forEach((step, index) => {
       const target = proxyPathStepNodeID(step)
       if (!target) return
@@ -10610,26 +10782,35 @@ function GraphNode({
   const entryProbe = entryDetails?.probe || subtitle3
   const entryAccess = entryDetails?.access || subtitle4
   const entryProbeTone = /正常|可用|成功|在线/.test(entryProbe) ? 'ok' : /异常|失败|不可用/.test(entryProbe) ? 'danger' : 'neutral'
+  const independentSourceCount = entryHandles.length + pathHandles.length
+  const hasBatchSource = isServer && independentSourceCount > 1
   return (
     <div className={`rf-node-custom graph-card-${variant}`}>
       {/* Handles */}
       <Handle id="target-top" className="connect-handle connect-target connect-target-top" type="target" position={Position.Top} />
-      
-	  {isServer ? <Handle
-	    id={SERVER_GRAPH_SOURCE_HANDLE}
-	    className="connect-handle connect-source connect-source-bottom server-generic-source-handle"
-	    type="source"
-	    position={Position.Bottom}
-	    title="连接后选择来源"
-	  /> : pathHandles.length ? pathHandles.map((path, index) => {
-	    const left = graphPathHandleLeft(index, pathHandles.length)
+
+      {entryHandles.map((entry, index) => {
+        const left = graphEntryHandleLeft(index, independentSourceCount, hasBatchSource)
+        return <React.Fragment key={entry.id}>
+          <Handle id={serverEntryTargetHandleID(entry.id)} className="connect-handle connect-target server-entry-target-handle" type="target" position={Position.Top} style={{ left }} />
+          <Handle id={serverEntryHandleID(entry.id)} className="connect-handle connect-source server-entry-source-handle" type="source" position={Position.Bottom} style={{ left }} title={`${entry.title} / ${entry.label}`} />
+          <span className="server-entry-source-label" style={{ left }} title={`${entry.title} / ${entry.label}`}>{entry.label}</span>
+        </React.Fragment>
+      })}
+      {pathHandles.map((path, index) => {
+        const left = graphEntryHandleLeft(entryHandles.length + index, independentSourceCount, hasBatchSource)
         return (
           <React.Fragment key={path.step_id}>
             <Handle id={pathStepHandleID(path.step_id)} className="connect-handle connect-source path-step-source-handle" type="source" position={Position.Bottom} style={{ left }} />
             <span className="path-step-source-label" style={{ left }} title={path.title}>{path.label}</span>
           </React.Fragment>
         )
-	  }) : <Handle id="source-bottom" className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} />}
+	  })}
+      {hasBatchSource && <>
+        <Handle id={SERVER_GRAPH_SOURCE_HANDLE} className="connect-handle connect-source server-shared-source-handle" type="source" position={Position.Bottom} title="连接后选择一个或多个来源" />
+        <span className="server-shared-source-label">批量</span>
+      </>}
+      {!independentSourceCount && <Handle id="source-bottom" className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} />}
 
       {/* Header */}
       <div className="rf-node-header">
