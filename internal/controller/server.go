@@ -275,6 +275,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/subscription-profiles/", s.auth(s.subscriptionProfiles, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/subscription-assignments", s.auth(s.subscriptionAssignments, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/subscription-assignments/", s.auth(s.subscriptionAssignments, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/assignable-nodes", s.auth(s.assignableNodes, model.RoleOperator))
+	mux.HandleFunc("/api/v1/assignable-nodes/", s.auth(s.assignableNodeDetail, model.RoleOperator))
+	mux.HandleFunc("/api/v1/subscription-plans", s.auth(s.subscriptionPlans, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/subscription-plans/", s.auth(s.subscriptionPlans, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/users/plan-assignment", s.auth(s.userPlanAssignment, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/users/plan-assignment/", s.auth(s.userPlanAssignment, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/user-node-exceptions", s.auth(s.userNodeExceptions, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/user-node-exceptions/", s.auth(s.userNodeExceptions, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists", s.auth(s.dnsLists, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists/", s.auth(s.dnsLists, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-benchmarks", s.auth(s.dnsBenchmarks, model.RoleOperator))
@@ -1865,6 +1873,34 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			assignments, err = s.store.ListSubscriptionAssignments(ctx)
 			if err == nil {
 				out["subscription_assignments"] = assignments
+			}
+		}
+		if err == nil {
+			var plans []model.SubscriptionPlan
+			plans, err = s.store.ListSubscriptionPlans(ctx)
+			if err == nil {
+				out["subscription_plans"] = plans
+			}
+		}
+		if err == nil {
+			var planNodes []model.SubscriptionPlanNode
+			planNodes, err = s.store.ListAllPlanNodes(ctx)
+			if err == nil {
+				out["subscription_plan_nodes"] = planNodes
+			}
+		}
+		if err == nil {
+			var bindings []model.UserPlanBinding
+			bindings, err = s.store.ListActiveUserPlanBindings(ctx)
+			if err == nil {
+				out["user_plan_bindings"] = bindings
+			}
+		}
+		if err == nil {
+			var exceptions []model.UserNodeException
+			exceptions, err = s.store.ListUserNodeExceptions(ctx)
+			if err == nil {
+				out["user_node_exceptions"] = exceptions
 			}
 		}
 	case "notifications":
@@ -8468,6 +8504,10 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "subscription-custom-path-policy" {
 		s.userSubscriptionCustomPathPolicy(w, r, id)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "nodes" {
+		s.userEffectiveNodes(w, r, id)
 		return
 	}
 	if len(parts) == 3 && parts[1] == "subscription-access" && parts[2] == "resume" {

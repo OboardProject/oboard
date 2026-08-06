@@ -285,6 +285,99 @@ type SubscriptionAssignment struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// AssignableNodeType identifies a client-visible node in the assignable node
+// catalog. proxy_path and external_outbound are the final assignable units;
+// inbound is transitional and only covers standalone inbounds that have no
+// proxy-path branches yet (they become zero-step direct proxy_paths during the
+// legacy data migration).
+type AssignableNodeType string
+
+const (
+	AssignableNodeProxyPath        AssignableNodeType = "proxy_path"
+	AssignableNodeExternalOutbound AssignableNodeType = "external_outbound"
+	AssignableNodeInbound          AssignableNodeType = "inbound"
+)
+
+// PlanNodeSourceType describes how a plan node was added. Only explicit is
+// supported today; rule-backed nodes are a later milestone and stay rejected by
+// validation until then.
+type PlanNodeSourceType string
+
+const (
+	PlanNodeSourceExplicit PlanNodeSourceType = "explicit"
+	PlanNodeSourceRule     PlanNodeSourceType = "rule"
+)
+
+// SubscriptionPlan is the single axis of node authorization: a plan owns a node
+// set plus the service limits of that subscription product. User groups no
+// longer grant nodes; a user's effective nodes come from the one active plan
+// binding combined with temporary per-user exceptions.
+type SubscriptionPlan struct {
+	ID                int64     `json:"id"`
+	Name              string    `json:"name"`
+	Description       string    `json:"description"`
+	Enabled           bool      `json:"enabled"`
+	SpeedLimitMbps    int       `json:"speed_limit_mbps"`
+	TrafficLimitBytes int64     `json:"traffic_limit_bytes"`
+	TrafficResetMode  string    `json:"traffic_reset_mode"`
+	TrafficResetDay   int       `json:"traffic_reset_day"`
+	Revision          int64     `json:"revision"`
+	ActiveRevision    int64     `json:"active_revision"`
+	DraftRevision     int64     `json:"draft_revision"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type SubscriptionPlanNode struct {
+	ID           int64              `json:"id"`
+	PlanID       int64              `json:"plan_id"`
+	NodeType     AssignableNodeType `json:"node_type"`
+	NodeID       int64              `json:"node_id"`
+	DisplayGroup string             `json:"display_group"`
+	SourceType   PlanNodeSourceType `json:"source_type"`
+	SourceRuleID int64              `json:"source_rule_id,omitempty"`
+	Enabled      bool               `json:"enabled"`
+	CreatedAt    time.Time          `json:"created_at"`
+	UpdatedAt    time.Time          `json:"updated_at"`
+}
+
+// UserPlanBinding attaches one plan to a user. At most one enabled binding may
+// exist per user (enforced by a partial unique index), so switching plans is an
+// atomic replace rather than a union of plans.
+type UserPlanBinding struct {
+	ID         int64      `json:"id"`
+	UserID     int64      `json:"user_id"`
+	PlanID     int64      `json:"plan_id"`
+	Enabled    bool       `json:"enabled"`
+	StartsAt   *time.Time `json:"starts_at,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	AssignedBy *int64     `json:"assigned_by,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+type UserNodeExceptionEffect string
+
+const (
+	UserNodeExceptionAllow UserNodeExceptionEffect = "allow"
+	UserNodeExceptionDeny  UserNodeExceptionEffect = "deny"
+)
+
+// UserNodeException is a temporary, audited per-user node override. It always
+// requires a reason and an expiry and never carries speed, traffic, or display
+// grouping settings.
+type UserNodeException struct {
+	ID        int64                   `json:"id"`
+	UserID    int64                   `json:"user_id"`
+	NodeType  AssignableNodeType      `json:"node_type"`
+	NodeID    int64                   `json:"node_id"`
+	Effect    UserNodeExceptionEffect `json:"effect"`
+	Reason    string                  `json:"reason"`
+	ExpiresAt time.Time               `json:"expires_at"`
+	CreatedBy *int64                  `json:"created_by,omitempty"`
+	CreatedAt time.Time               `json:"created_at"`
+}
+
 type ControllerBackup struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name"`
