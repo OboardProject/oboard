@@ -2006,7 +2006,7 @@ func nullableString(value sql.NullString) any {
 }
 
 func (s *Store) ListServerMetricSamples(ctx context.Context, serverID int64, limit int) ([]model.ServerMetricSample, error) {
-	if limit <= 0 || limit > 720 {
+	if limit <= 0 || limit > 2880 {
 		limit = 120
 	}
 	columns := `id,server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at`
