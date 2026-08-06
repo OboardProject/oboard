@@ -187,6 +187,10 @@ func (s *Server) apiAuth(next http.HandlerFunc, minimumRole model.Role) http.Han
 		authorization := strings.TrimSpace(r.Header.Get("Authorization"))
 		token := strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
 		if strings.HasPrefix(token, "obk_") {
+			if r.URL.Path == "/mcp" {
+				s.writeMCPAuthenticationRequired(w, r, true)
+				return
+			}
 			s.machineAPIAuth(next, w, r, token)
 			return
 		}
@@ -201,7 +205,7 @@ func (s *Server) apiAuth(next http.HandlerFunc, minimumRole model.Role) http.Han
 				return
 			}
 			source, _ := netip.ParseAddr(clientIP(r))
-			principal := application.Principal{ID: stored.ID, UserID: stored.OwnerUserID, Name: stored.Name, Type: stored.Type, Scopes: stored.Scopes, ResourceFilter: stored.ResourceFilter, SourceIP: source, ClientName: r.Header.Get("User-Agent")}
+			principal := application.Principal{ID: stored.ID, GrantID: stored.OAuthGrantID, UserID: stored.OwnerUserID, Name: stored.Name, Type: stored.Type, Scopes: stored.Scopes, ResourceFilter: stored.ResourceFilter, SourceIP: source, ClientName: r.Header.Get("User-Agent")}
 			s.machinePrincipalAuth(next, w, r, principal)
 			return
 		}
@@ -928,7 +932,10 @@ func (s *Server) registerAutomationHandlers() {
 		}
 		return s.store.ResumeSubscriptionAccess(ctx, request.UserID, *principal.UserID)
 	})
-	s.automation.RegisterValidator("servers.onboard", func(_ context.Context, _ application.Principal, input json.RawMessage) (any, error) {
+	s.automation.RegisterValidator("servers.onboard", func(_ context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		if !principal.AllowsCreate("server") {
+			return nil, errors.New("resource filter does not allow creating servers")
+		}
 		request, err := decodeServerOnboardingOperation(input)
 		if err != nil {
 			return nil, err
@@ -939,6 +946,9 @@ func (s *Server) registerAutomationHandlers() {
 		return map[string]any{"server_name": request.Server.Name, "issue_enrollment_token": request.IssueEnrollmentToken}, nil
 	})
 	s.automation.Register("servers.onboard", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		if !principal.AllowsCreate("server") {
+			return nil, errors.New("resource filter does not allow creating servers")
+		}
 		request, err := decodeServerOnboardingOperation(input)
 		if err != nil {
 			return nil, err

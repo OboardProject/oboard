@@ -15,6 +15,7 @@ const (
 
 type APIPrincipal struct {
 	ID                 string           `json:"id"`
+	OAuthGrantID       string           `json:"-"`
 	OwnerUserID        *int64           `json:"owner_user_id,omitempty"`
 	Name               string           `json:"name"`
 	Type               APIPrincipalType `json:"type"`
@@ -128,6 +129,62 @@ type AutomationApproval struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+type WorkflowStatus string
+
+const (
+	WorkflowPlanning               WorkflowStatus = "planning"
+	WorkflowExternalActionRequired WorkflowStatus = "external_action_required"
+	WorkflowWaitingForAgent        WorkflowStatus = "waiting_for_agent"
+	WorkflowApprovalRequired       WorkflowStatus = "approval_required"
+	WorkflowQueued                 WorkflowStatus = "queued"
+	WorkflowRunning                WorkflowStatus = "running"
+	WorkflowSucceeded              WorkflowStatus = "succeeded"
+	WorkflowPartiallySucceeded     WorkflowStatus = "partially_succeeded"
+	WorkflowFailed                 WorkflowStatus = "failed"
+	WorkflowCancelled              WorkflowStatus = "cancelled"
+)
+
+type AutomationWorkflow struct {
+	ID                string                   `json:"id"`
+	PrincipalID       string                   `json:"principal_id"`
+	GrantID           string                   `json:"grant_id,omitempty"`
+	Kind              string                   `json:"kind"`
+	Status            WorkflowStatus           `json:"status"`
+	Reason            string                   `json:"reason"`
+	IdempotencyKey    string                   `json:"idempotency_key"`
+	ChangesetID       string                   `json:"changeset_id,omitempty"`
+	CurrentStep       string                   `json:"current_step,omitempty"`
+	CorrelationID     string                   `json:"correlation_id"`
+	AffectedResources json.RawMessage          `json:"affected_resources"`
+	NextAction        json.RawMessage          `json:"next_action,omitempty"`
+	ErrorCode         string                   `json:"error_code,omitempty"`
+	ErrorMessage      string                   `json:"error_message,omitempty"`
+	CreatedAt         time.Time                `json:"created_at"`
+	UpdatedAt         time.Time                `json:"updated_at"`
+	CompletedAt       *time.Time               `json:"completed_at,omitempty"`
+	Steps             []AutomationWorkflowStep `json:"steps"`
+}
+
+type AutomationWorkflowStep struct {
+	ID             string          `json:"id"`
+	WorkflowID     string          `json:"workflow_id"`
+	Position       int             `json:"position"`
+	Name           string          `json:"name"`
+	Status         string          `json:"status"`
+	Attempt        int             `json:"attempt"`
+	IdempotencyKey string          `json:"idempotency_key"`
+	InputDigest    string          `json:"input_digest"`
+	OutputDigest   string          `json:"output_digest,omitempty"`
+	Retryable      bool            `json:"retryable"`
+	NextAction     json.RawMessage `json:"next_action,omitempty"`
+	ErrorCode      string          `json:"error_code,omitempty"`
+	CorrelationID  string          `json:"correlation_id"`
+	StartedAt      *time.Time      `json:"started_at,omitempty"`
+	FinishedAt     *time.Time      `json:"finished_at,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
 type ToolCallAudit struct {
 	ID                 string          `json:"id"`
 	PrincipalID        string          `json:"principal_id"`
@@ -156,8 +213,36 @@ type OAuthClient struct {
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
+type OAuthApprovalProfile struct {
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	AutoApproveRisk int       `json:"auto_approve_risk"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type OAuthGrant struct {
+	ID                string                `json:"id"`
+	ClientID          string                `json:"client_id"`
+	ClientName        string                `json:"client_name,omitempty"`
+	UserID            int64                 `json:"user_id"`
+	Username          string                `json:"username,omitempty"`
+	PrincipalID       string                `json:"principal_id"`
+	Scopes            []string              `json:"scopes"`
+	ResourceFilter    json.RawMessage       `json:"resource_filter"`
+	ApprovalProfileID string                `json:"approval_profile_id"`
+	ApprovalProfile   *OAuthApprovalProfile `json:"approval_profile,omitempty"`
+	OfflineAccess     bool                  `json:"offline_access"`
+	ConsentVersion    int                   `json:"consent_version"`
+	CreatedAt         time.Time             `json:"created_at"`
+	ExpiresAt         *time.Time            `json:"expires_at,omitempty"`
+	LastUsedAt        *time.Time            `json:"last_used_at,omitempty"`
+	RevokedAt         *time.Time            `json:"revoked_at,omitempty"`
+}
+
 type OAuthAuthorizationCode struct {
 	CodeHash      string
+	GrantID       string
 	ClientID      string
 	UserID        int64
 	PrincipalID   string
@@ -170,17 +255,20 @@ type OAuthAuthorizationCode struct {
 }
 
 type OAuthToken struct {
-	TokenHash   string
-	FamilyID    string
-	PrincipalID string
-	ClientID    string
-	UserID      int64
-	Scopes      []string
-	Resource    string
-	ExpiresAt   time.Time
-	ConsumedAt  *time.Time
-	RevokedAt   *time.Time
-	CreatedAt   time.Time
+	TokenHash       string
+	FamilyID        string
+	GrantID         string
+	ParentTokenHash string
+	PrincipalID     string
+	ClientID        string
+	UserID          int64
+	Scopes          []string
+	Resource        string
+	ExpiresAt       time.Time
+	ConsumedAt      *time.Time
+	RevokedAt       *time.Time
+	ReuseDetectedAt *time.Time
+	CreatedAt       time.Time
 }
 
 type AIProvider struct {

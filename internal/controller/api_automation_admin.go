@@ -251,6 +251,7 @@ func (s *Server) oauthClient(w http.ResponseWriter, r *http.Request) {
 			v2HandleError(w, r, err)
 			return
 		}
+		s.auditOAuthEvent(r, oauthAuditActor(currentUser(r)), "oauth_client_deleted", "oauth_client", id, map[string]any{"client_name": boundedOAuthAuditValue(item.Name)})
 		v2Write(w, r, http.StatusOK, map[string]bool{"deleted": true}, nil)
 		return
 	}
@@ -277,5 +278,6 @@ func (s *Server) oauthClient(w http.ResponseWriter, r *http.Request) {
 		v2HandleError(w, r, err)
 		return
 	}
+	s.auditOAuthEvent(r, oauthAuditActor(currentUser(r)), "oauth_client_updated", "oauth_client", id, map[string]any{"client_name": boundedOAuthAuditValue(item.Name), "redirect_uris": item.RedirectURIs, "scopes": item.AllowedScopes, "enabled": item.Enabled})
 	v2Write(w, r, http.StatusOK, item, nil)
 }

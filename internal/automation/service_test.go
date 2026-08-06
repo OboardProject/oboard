@@ -236,6 +236,63 @@ func TestChangesetApplyCannotExecuteTwiceConcurrently(t *testing.T) {
 	}
 }
 
+func TestWorkflowSynchronizesChangesetAndCancellationState(t *testing.T) {
+	db := openAutomationTestStore(t)
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	if err := db.CreateUser(context.Background(), admin); err != nil {
+		t.Fatal(err)
+	}
+	principalModel := &model.APIPrincipal{ID: "prn_workflow", Name: "workflow automation", Type: model.APIPrincipalServiceAccount, Enabled: true, Scopes: []string{"servers:onboard"}, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2}
+	if err := db.CreateAPIPrincipal(context.Background(), principalModel); err != nil {
+		t.Fatal(err)
+	}
+	machine := application.Principal{ID: principalModel.ID, Name: principalModel.Name, Type: principalModel.Type, Scopes: principalModel.Scopes, ResourceFilter: principalModel.ResourceFilter}
+	operator := application.HumanPrincipal(*admin, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
+	service := NewService(db, capability.NewCatalog())
+	registerAutomationTestCapability(service)
+
+	changeset := createAutomationTestChangeset(t, service, machine, "workflow-sync", json.RawMessage(`{}`))
+	workflow, err := service.StartWorkflow(context.Background(), machine, StartWorkflowRequest{IdempotencyKey: "workflow-sync", ChangesetID: changeset.ID})
+	if err != nil || workflow.Status != model.WorkflowPlanning {
+		t.Fatalf("initial workflow status=%v err=%v", workflow.Status, err)
+	}
+	idempotent, err := service.StartWorkflow(context.Background(), machine, StartWorkflowRequest{IdempotencyKey: "workflow-sync", ChangesetID: changeset.ID})
+	if err != nil || idempotent.ID != workflow.ID {
+		t.Fatalf("workflow idempotency returned %#v err=%v", idempotent, err)
+	}
+	if _, err := service.Validate(context.Background(), machine, changeset.ID); err != nil {
+		t.Fatal(err)
+	}
+	workflow, err = service.GetWorkflow(context.Background(), machine, workflow.ID)
+	if err != nil || workflow.Status != model.WorkflowApprovalRequired || workflow.Steps[0].Status != "approval_required" {
+		t.Fatalf("approval workflow status=%v step=%v err=%v", workflow.Status, workflow.Steps[0].Status, err)
+	}
+	if _, err := service.Approve(context.Background(), operator, changeset.ID, "approved for workflow test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Apply(context.Background(), operator, changeset.ID); err != nil {
+		t.Fatal(err)
+	}
+	workflow, err = service.GetWorkflow(context.Background(), machine, workflow.ID)
+	if err != nil || workflow.Status != model.WorkflowSucceeded || workflow.Steps[0].Status != "succeeded" || workflow.CompletedAt == nil {
+		t.Fatalf("completed workflow=%#v err=%v", workflow, err)
+	}
+
+	cancelChangeset := createAutomationTestChangeset(t, service, machine, "workflow-cancel", json.RawMessage(`{}`))
+	cancelled, err := service.StartWorkflow(context.Background(), machine, StartWorkflowRequest{IdempotencyKey: "workflow-cancel", ChangesetID: cancelChangeset.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err = service.CancelWorkflow(context.Background(), machine, cancelled.ID)
+	if err != nil || cancelled.Status != model.WorkflowCancelled || cancelled.Steps[0].Status != "cancelled" || cancelled.Steps[0].FinishedAt == nil {
+		t.Fatalf("cancelled workflow=%#v err=%v", cancelled, err)
+	}
+	persisted, err := db.GetAutomationWorkflow(context.Background(), cancelled.ID)
+	if err != nil || persisted.Steps[0].Status != "cancelled" {
+		t.Fatalf("persisted cancelled workflow=%#v err=%v", persisted, err)
+	}
+}
+
 func createAutomationTestChangeset(t *testing.T, service *Service, principal application.Principal, key string, refs json.RawMessage) *model.AutomationChangeset {
 	t.Helper()
 	item, err := service.Create(context.Background(), principal, CreateRequest{IdempotencyKey: key, Operations: []OperationRequest{{Capability: "servers.onboard", Input: json.RawMessage(`{}`), ResourceRefs: refs}}})

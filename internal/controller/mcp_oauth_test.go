@@ -6,12 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -44,18 +46,43 @@ func newMCPTestEnvironment(t *testing.T, id string, scopes []string) (*store.Sto
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal := &model.APIPrincipal{ID: id, Name: "MCP test principal", Type: model.APIPrincipalServiceAccount, Enabled: true, Scopes: scopes, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2}
-	if err := db.CreateAPIPrincipal(context.Background(), principal); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	plain := "obk_mcp-test-token-value"
-	if err := db.CreateAPIToken(context.Background(), &model.APIToken{ID: "tok_" + id, PrincipalID: principal.ID, TokenHash: security.HashAPISecret("test-secret", plain), Prefix: "obk_mcptest", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
 	server := newTestServer(db, "test-secret", "")
 	httpServer := httptest.NewServer(server.Handler())
+	if err := db.SetSetting(context.Background(), "controller_url", httpServer.URL); err != nil {
+		httpServer.Close()
+		db.Close()
+		t.Fatal(err)
+	}
+	request(t, server.Handler(), http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	user, err := db.GetUserByUsername(context.Background(), "admin")
+	if err != nil {
+		httpServer.Close()
+		db.Close()
+		t.Fatal(err)
+	}
+	oauthClient := &model.OAuthClient{ID: "oc_" + id, Name: "MCP test client", RedirectURIs: []string{"http://127.0.0.1/callback"}, AllowedScopes: slices.Clone(scopes), ClientMetadata: json.RawMessage(`{}`), Enabled: true}
+	if err := db.CreateOAuthClient(context.Background(), oauthClient); err != nil {
+		httpServer.Close()
+		db.Close()
+		t.Fatal(err)
+	}
+	grantRequest := httptest.NewRequest(http.MethodPost, "/oauth/authorize", nil)
+	grantRequest.Form = url.Values{"server_mode": {"all"}, "auto_approve_risk": {"0"}}
+	if slices.Contains(scopes, "servers:onboard") {
+		grantRequest.Form.Set("allow_create_servers", "1")
+	}
+	grant, principal, err := server.createOAuthGrant(grantRequest, *user, *oauthClient, scopes)
+	if err != nil {
+		httpServer.Close()
+		db.Close()
+		t.Fatal(err)
+	}
+	plain := "oba_mcp-test-token-value"
+	if err := db.CreateOAuthTokens(context.Background(), &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", plain), GrantID: grant.ID, PrincipalID: principal.ID, ClientID: oauthClient.ID, UserID: user.ID, Scopes: scopes, Resource: httpServer.URL + "/mcp", ExpiresAt: time.Now().Add(time.Hour)}, nil); err != nil {
+		httpServer.Close()
+		db.Close()
+		t.Fatal(err)
+	}
 	httpClient := &http.Client{Transport: bearerTransport{token: plain, base: http.DefaultTransport}}
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
 	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: httpServer.URL + "/mcp", HTTPClient: httpClient}, nil)
@@ -72,6 +99,33 @@ func newMCPTestEnvironment(t *testing.T, id string, scopes []string) (*store.Sto
 	return db, server, session, principal, closeServer
 }
 
+func createMCPTestOAuthToken(t *testing.T, db *store.Store, server *Server, baseURL, basePath, id string, scopes []string) (*model.APIPrincipal, string) {
+	t.Helper()
+	request(t, server.Handler(), http.MethodPost, basePath+"/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	user, err := db.GetUserByUsername(context.Background(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &model.OAuthClient{ID: "oc_" + id, Name: "MCP test client", RedirectURIs: []string{"http://127.0.0.1/callback"}, AllowedScopes: slices.Clone(scopes), ClientMetadata: json.RawMessage(`{}`), Enabled: true}
+	if err := db.CreateOAuthClient(context.Background(), client); err != nil {
+		t.Fatal(err)
+	}
+	grantRequest := httptest.NewRequest(http.MethodPost, basePath+"/oauth/authorize", nil)
+	grantRequest.Form = url.Values{"server_mode": {"all"}, "auto_approve_risk": {"0"}}
+	if slices.Contains(scopes, "servers:onboard") {
+		grantRequest.Form.Set("allow_create_servers", "1")
+	}
+	grant, principal, err := server.createOAuthGrant(grantRequest, *user, *client, scopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := "oba_" + id + "-token"
+	if err := db.CreateOAuthTokens(context.Background(), &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", plain), GrantID: grant.ID, PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Scopes: scopes, Resource: strings.TrimRight(baseURL, "/") + "/mcp", ExpiresAt: time.Now().Add(time.Hour)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	return principal, plain
+}
+
 func TestMCPExposesCompleteToolAndResourceSurface(t *testing.T) {
 	_, _, session, _, closeServer := newMCPTestEnvironment(t, "prn_mcp_surface", []string{
 		"inventory:read", "topology:read", "servers:read", "servers:plan", "proxy_paths:plan",
@@ -84,6 +138,9 @@ func TestMCPExposesCompleteToolAndResourceSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantTools := []string{
+		"oboard_discover", "oboard_get_capability_schema", "oboard_submit_changeset", "oboard_prepare_server_onboarding",
+		"oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_start_deployment",
+		"oboard_start_workflow", "oboard_get_workflow", "oboard_cancel_workflow", "oboard_retry_workflow_step",
 		"oboard_list_capabilities", "oboard_query",
 		"oboard_plan_server_onboarding", "oboard_plan_proxy_path", "oboard_plan_deployment", "oboard_plan_incident_response",
 		"oboard_create_changeset", "oboard_validate_changeset", "oboard_apply_changeset", "oboard_get_operation", "oboard_list_changesets",
@@ -119,6 +176,8 @@ func TestMCPExposesCompleteToolAndResourceSurface(t *testing.T) {
 		if schema.Type != "object" {
 			t.Errorf("tool %q input schema is not an object: %s", name, schemaJSON)
 		}
+		assertStrictMCPObjectSchemas(t, name+" input", tool.InputSchema)
+		assertStrictMCPObjectSchemas(t, name+" output", tool.OutputSchema)
 	}
 	if validate := byName["oboard_validate_changeset"]; validate.Annotations == nil || validate.Annotations.ReadOnlyHint || validate.Annotations.DestructiveHint == nil || !*validate.Annotations.DestructiveHint {
 		t.Errorf("oboard_validate_changeset must not be read-only and must be destructive: %#v", validate.Annotations)
@@ -158,10 +217,14 @@ func TestMCPExposesCompleteToolAndResourceSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantResources := map[string]string{
-		"oboard://inventory/summary": "Inventory summary",
-		"oboard://topology/current":  "Current topology",
-		"oboard://docs/capabilities": "Capability catalog",
-		"oboard://docs/guide":        "MCP guide",
+		"oboard://system/version":      "System version",
+		"oboard://system/capabilities": "Authorized capabilities",
+		"oboard://context/bootstrap":   "Bootstrap context",
+		"oboard://inventory/summary":   "Inventory summary",
+		"oboard://servers":             "Servers",
+		"oboard://topology/current":    "Current topology",
+		"oboard://docs/capabilities":   "Capability catalog",
+		"oboard://docs/guide":          "MCP guide",
 	}
 	byURI := map[string]*mcp.Resource{}
 	for _, resource := range resources.Resources {
@@ -186,7 +249,11 @@ func TestMCPExposesCompleteToolAndResourceSurface(t *testing.T) {
 	}
 	wantTemplates := map[string]string{
 		"oboard://servers/{id}":         "Server by ID",
+		"oboard://servers/{id}/health":  "Server health",
 		"oboard://changesets/{id}":      "Changeset by ID",
+		"oboard://workflows/{id}":       "Workflow by ID",
+		"oboard://operations/{id}":      "Operation by ID",
+		"oboard://schemas/{id}":         "Capability schema",
 		"oboard://audit/incidents/{id}": "Audit incident by ID",
 	}
 	if len(templates.ResourceTemplates) != len(wantTemplates) {
@@ -202,7 +269,7 @@ func TestMCPExposesCompleteToolAndResourceSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(guide.Contents) != 1 || !strings.Contains(guide.Contents[0].Text, `"oboard_create_changeset"`) {
+	if len(guide.Contents) != 1 || !strings.Contains(guide.Contents[0].Text, `"oboard_submit_changeset"`) || !strings.Contains(guide.Contents[0].Text, `"schema_version":"1"`) {
 		t.Fatalf("docs/guide resource is unusable: %#v", guide)
 	}
 
@@ -220,6 +287,95 @@ func TestMCPExposesCompleteToolAndResourceSurface(t *testing.T) {
 	var queryList []any
 	if err := json.Unmarshal(queryJSON, &queryList); err != nil {
 		t.Fatalf("oboard_query servers.list should return an array, got: %s", queryJSON)
+	}
+}
+
+func assertStrictMCPObjectSchemas(t *testing.T, label string, schema any) {
+	t.Helper()
+	encoded, err := json.Marshal(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value any
+	if err := json.Unmarshal(encoded, &value); err != nil {
+		t.Fatal(err)
+	}
+	var visit func(any, string)
+	visit = func(current any, path string) {
+		switch typed := current.(type) {
+		case []any:
+			for index, child := range typed {
+				visit(child, fmt.Sprintf("%s[%d]", path, index))
+			}
+		case map[string]any:
+			if typed["type"] == "object" {
+				additional, explicit := typed["additionalProperties"]
+				_, branchedAny := typed["anyOf"]
+				_, branchedOne := typed["oneOf"]
+				if !explicit && !branchedAny && !branchedOne {
+					t.Errorf("%s has an open object schema at %s: %s", label, path, encoded)
+				}
+				if allowed, ok := additional.(bool); ok && allowed {
+					t.Errorf("%s allows arbitrary object properties at %s: %s", label, path, encoded)
+				}
+			}
+			for key, child := range typed {
+				visit(child, path+"."+key)
+			}
+		}
+	}
+	visit(value, "$")
+}
+
+func TestMCPDesiredStateValidationDoesNotPersist(t *testing.T) {
+	db, _, session, principal, closeServer := newMCPTestEnvironment(t, "desired_state", []string{"servers:onboard"})
+	defer closeServer()
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_validate_desired_state", Arguments: map[string]any{
+		"operations": []map[string]any{{"capability": "servers.onboard", "input": map[string]any{"server": map[string]any{"name": "Draft-only", "ip_stack": "auto", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 60000}, "issue_enrollment_token": true}}},
+	}})
+	if err != nil || result.IsError {
+		t.Fatalf("desired state validation error=%v result=%#v", err, result)
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	if !strings.Contains(string(encoded), `"valid":true`) || !strings.Contains(string(encoded), `"plan_hash":"`) || !strings.Contains(string(encoded), `"validated_operations":1`) {
+		t.Fatalf("unexpected desired state result: %s", encoded)
+	}
+	changesets, err := db.ListAutomationChangesets(context.Background(), principal.ID, 10)
+	if err != nil || len(changesets) != 0 {
+		t.Fatalf("desired state validation persisted Changesets=%#v err=%v", changesets, err)
+	}
+	servers, err := db.ListServers(context.Background())
+	if err != nil || len(servers) != 0 {
+		t.Fatalf("desired state validation persisted servers=%#v err=%v", servers, err)
+	}
+}
+
+func TestMCPStartDeploymentUsesChangesetAndResolvedRevisions(t *testing.T) {
+	db, _, session, principal, closeServer := newMCPTestEnvironment(t, "start_deployment", []string{"deployments:apply", "deployments:validate", "servers:read"})
+	defer closeServer()
+	serverItem := &model.Server{Name: "Deploy target", AgentID: "agent-deploy-target", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 60000, Status: model.ServerOnline}
+	if err := db.CreateServer(context.Background(), serverItem); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_start_deployment", Arguments: map[string]any{
+		"server_ids": []int64{serverItem.ID}, "reason": "验证部署入口", "idempotency_key": "start-deployment-test", "apply_mode": "request_approval",
+	}})
+	if err != nil || result.IsError {
+		t.Fatalf("start deployment error=%v result=%#v", err, result)
+	}
+	encoded, _ := json.Marshal(result.StructuredContent)
+	if !strings.Contains(string(encoded), `"status":"approval_required"`) || !strings.Contains(string(encoded), `"changeset_id":"chg_`) {
+		t.Fatalf("unexpected deployment workflow result: %s", encoded)
+	}
+	changesets, err := db.ListAutomationChangesets(context.Background(), principal.ID, 10)
+	if err != nil || len(changesets) != 1 {
+		t.Fatalf("deployment Changesets=%#v err=%v", changesets, err)
+	}
+	var revisions map[string]string
+	if err := json.Unmarshal(changesets[0].BaseRevisions, &revisions); err != nil || revisions["server:"+strconv.FormatInt(serverItem.ID, 10)] == "" {
+		t.Fatalf("deployment did not persist resolved revisions: %s err=%v", changesets[0].BaseRevisions, err)
 	}
 }
 
@@ -429,29 +585,9 @@ func TestMCPResourceTemplates(t *testing.T) {
 	}
 }
 
-func TestMCPUsesServicePrincipalAndRecordsAudit(t *testing.T) {
-	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	principal := &model.APIPrincipal{ID: "prn_test", Name: "test MCP", Type: model.APIPrincipalServiceAccount, Enabled: true, Scopes: []string{"inventory:read"}, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2}
-	if err := db.CreateAPIPrincipal(context.Background(), principal); err != nil {
-		t.Fatal(err)
-	}
-	plain := "obk_test-token-value"
-	if err := db.CreateAPIToken(context.Background(), &model.APIToken{ID: "tok_test", PrincipalID: principal.ID, TokenHash: security.HashAPISecret("test-secret", plain), Prefix: "obk_test", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatal(err)
-	}
-	httpServer := httptest.NewServer(newTestServer(db, "test-secret", "").Handler())
-	defer httpServer.Close()
-	httpClient := &http.Client{Transport: bearerTransport{token: plain, base: http.DefaultTransport}}
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
-	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: httpServer.URL + "/mcp", HTTPClient: httpClient}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer session.Close()
+func TestMCPUsesOAuthGrantPrincipalAndRecordsAudit(t *testing.T) {
+	db, _, session, principal, closeServer := newMCPTestEnvironment(t, "prn_test", []string{"inventory:read"})
+	defer closeServer()
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_query", Arguments: map[string]any{"capability": "inventory.read", "arguments": map[string]any{}}})
 	if err != nil {
 		t.Fatal(err)
@@ -466,28 +602,8 @@ func TestMCPUsesServicePrincipalAndRecordsAudit(t *testing.T) {
 }
 
 func TestMCPCreateChangesetAcceptsObjectInput(t *testing.T) {
-	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	principal := &model.APIPrincipal{ID: "prn_changeset", Name: "changeset MCP", Type: model.APIPrincipalServiceAccount, Enabled: true, Scopes: []string{"servers:onboard"}, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2}
-	if err := db.CreateAPIPrincipal(context.Background(), principal); err != nil {
-		t.Fatal(err)
-	}
-	plain := "obk_changeset-token-value"
-	if err := db.CreateAPIToken(context.Background(), &model.APIToken{ID: "tok_changeset", PrincipalID: principal.ID, TokenHash: security.HashAPISecret("test-secret", plain), Prefix: "obk_changeset", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatal(err)
-	}
-	httpServer := httptest.NewServer(newTestServer(db, "test-secret", "").Handler())
-	defer httpServer.Close()
-	httpClient := &http.Client{Transport: bearerTransport{token: plain, base: http.DefaultTransport}}
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
-	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: httpServer.URL + "/mcp", HTTPClient: httpClient}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer session.Close()
+	db, _, session, principal, closeServer := newMCPTestEnvironment(t, "prn_changeset", []string{"servers:onboard"})
+	defer closeServer()
 
 	tools, err := session.ListTools(context.Background(), nil)
 	if err != nil {
@@ -573,17 +689,10 @@ func TestMCPAcceptsConfiguredPublicHostBehindLoopbackProxy(t *testing.T) {
 	if err := db.SetSetting(context.Background(), "controller_url", "https://ob.example.com/qzq"); err != nil {
 		t.Fatal(err)
 	}
-	principal := &model.APIPrincipal{ID: "prn_proxy_mcp", Name: "proxy MCP", Type: model.APIPrincipalServiceAccount, Enabled: true, Scopes: []string{"inventory:read"}, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2}
-	if err := db.CreateAPIPrincipal(context.Background(), principal); err != nil {
-		t.Fatal(err)
-	}
-	plain := "obk_proxy-mcp-token"
-	if err := db.CreateAPIToken(context.Background(), &model.APIToken{ID: "tok_proxy_mcp", PrincipalID: principal.ID, TokenHash: security.HashAPISecret("test-secret", plain), Prefix: "obk_proxy", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatal(err)
-	}
-
-	httpServer := httptest.NewServer(New(db, "test-secret", "", "/qzq", nil).Handler())
+	server := New(db, "test-secret", "", "/qzq", nil)
+	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
+	_, plain := createMCPTestOAuthToken(t, db, server, "https://ob.example.com/qzq", "/qzq", "proxy_mcp", []string{"inventory:read"})
 	initialize := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test-client","version":"1"}}}`
 	for _, test := range []struct {
 		host       string
@@ -625,17 +734,10 @@ func TestMCPRejectsInvalidOriginHeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("OBOARD_CORS_ORIGINS", "https://ui.example.com")
-	principal := &model.APIPrincipal{ID: "prn_origin_mcp", Name: "origin MCP", Type: model.APIPrincipalServiceAccount, Enabled: true, Scopes: []string{"inventory:read"}, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2}
-	if err := db.CreateAPIPrincipal(context.Background(), principal); err != nil {
-		t.Fatal(err)
-	}
-	plain := "obk_origin-mcp-token"
-	if err := db.CreateAPIToken(context.Background(), &model.APIToken{ID: "tok_origin_mcp", PrincipalID: principal.ID, TokenHash: security.HashAPISecret("test-secret", plain), Prefix: "obk_origin", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatal(err)
-	}
-
-	httpServer := httptest.NewServer(New(db, "test-secret", "", "/hidden", nil).Handler())
+	server := New(db, "test-secret", "", "/hidden", nil)
+	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
+	_, plain := createMCPTestOAuthToken(t, db, server, "https://panel.example.com/hidden", "/hidden", "origin_mcp", []string{"inventory:read"})
 	initialize := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test-client","version":"1"}}}`
 	for _, test := range []struct {
 		name       string
@@ -747,7 +849,7 @@ func TestMCPAuthenticationChallengeUsesConfiguredBasePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := New(db, "test-secret", "", "/hidden", nil).Handler()
-	for _, authorization := range []string{"", "Bearer oba_invalid"} {
+	for _, authorization := range []string{"", "Bearer oba_invalid", "Bearer obk_static-token"} {
 		req := httptest.NewRequest(http.MethodPost, "/hidden/mcp", nil)
 		if authorization != "" {
 			req.Header.Set("Authorization", authorization)
@@ -761,6 +863,99 @@ func TestMCPAuthenticationChallengeUsesConfiguredBasePath(t *testing.T) {
 		if challenge := response.Header().Get("WWW-Authenticate"); !strings.Contains(challenge, want) {
 			t.Fatalf("authorization=%q challenge=%q, want %q", authorization, challenge, want)
 		}
+	}
+}
+
+func TestMCPPreapprovedOnboardingReturnsOneTimeExternalActionWithoutPersistence(t *testing.T) {
+	db, _, session, principal, closeServer := newMCPTestEnvironment(t, "prn_mcp_preapproved", []string{"servers:onboard", "servers:read"})
+	defer closeServer()
+	policy, err := db.GetApprovalPolicy(context.Background(), principal.ID, "servers.onboard", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy.Mode = model.ApprovalAutomatic
+	if err := db.UpsertApprovalPolicy(context.Background(), policy); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_prepare_server_onboarding", Arguments: map[string]any{
+		"name": "MCP-HK", "region_code": "HK", "ip_stack": "auto", "bbr_enabled": true,
+		"idempotency_key": "mcp-preapproved-hk", "reason": "接入香港节点", "apply_mode": "when_preapproved",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("preapproved onboarding failed: %#v", result.Content)
+	}
+	encoded, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output struct {
+		Status      string `json:"status"`
+		WorkflowID  string `json:"workflow_id"`
+		ChangesetID string `json:"changeset_id"`
+		NextAction  struct {
+			Command     string            `json:"command"`
+			Environment map[string]string `json:"environment"`
+			MustNotLog  bool              `json:"must_not_log"`
+		} `json:"next_action"`
+	}
+	if err := json.Unmarshal(encoded, &output); err != nil {
+		t.Fatal(err)
+	}
+	token := output.NextAction.Environment["OBOARD_ENROLL_TOKEN"]
+	if output.Status != "external_action_required" || output.WorkflowID == "" || output.ChangesetID == "" || token == "" || !output.NextAction.MustNotLog {
+		t.Fatalf("unexpected onboarding envelope: %s", encoded)
+	}
+	if strings.Contains(output.NextAction.Command, token) || !strings.Contains(output.NextAction.Command, `$OBOARD_ENROLL_TOKEN`) {
+		t.Fatalf("install command embeds or does not reference the protected environment value: %q", output.NextAction.Command)
+	}
+	changeset, err := db.GetAutomationChangeset(context.Background(), output.ChangesetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow, err := db.GetAutomationWorkflow(context.Background(), output.WorkflowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, _ := json.Marshal(map[string]any{"changeset": changeset, "workflow": workflow})
+	if strings.Contains(string(persisted), token) || strings.Contains(string(persisted), "OBOARD_ENROLL_TOKEN") || strings.Contains(string(persisted), "/install/agent.sh") {
+		t.Fatalf("one-time external action leaked into persistence: %s", persisted)
+	}
+	resource, err := session.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: "oboard://workflows/" + output.WorkflowID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resource.Contents) != 1 || strings.Contains(resource.Contents[0].Text, token) || !strings.Contains(resource.Contents[0].Text, `"schema_version":"1"`) {
+		t.Fatalf("workflow resource leaked one-time data or lacks envelope: %#v", resource)
+	}
+	var persistedResult struct {
+		Operations []struct {
+			Server struct {
+				ID int64 `json:"id"`
+			} `json:"server"`
+		} `json:"operations"`
+	}
+	if err := json.Unmarshal(changeset.Result, &persistedResult); err != nil || len(persistedResult.Operations) != 1 || persistedResult.Operations[0].Server.ID == 0 {
+		t.Fatalf("onboarding result has no server reference: %s err=%v", changeset.Result, err)
+	}
+	serverItem, err := db.GetServer(context.Background(), persistedResult.Operations[0].Server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverItem.Status = model.ServerOnline
+	if err := db.UpdateServer(context.Background(), serverItem); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_get_workflow", Arguments: map[string]any{"workflow_id": output.WorkflowID}})
+	if err != nil || completed.IsError {
+		t.Fatalf("completed onboarding workflow error=%v result=%#v", err, completed)
+	}
+	completedJSON, _ := json.Marshal(completed.StructuredContent)
+	if !strings.Contains(string(completedJSON), `"status":"succeeded"`) || strings.Contains(string(completedJSON), token) {
+		t.Fatalf("agent online did not safely complete workflow: %s", completedJSON)
 	}
 }
 
@@ -844,6 +1039,19 @@ func TestOAuthDynamicRegistrationIsPublicAndBounded(t *testing.T) {
 	if len(client.AllowedScopes) != 1 || client.AllowedScopes[0] != "inventory:read" {
 		t.Fatalf("dynamic client scopes = %#v, want only inventory:read", client.AllowedScopes)
 	}
+	audits, err := db.ListAuditPage(context.Background(), 100, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registrationAudited := false
+	for _, audit := range audits {
+		if audit.Action == "oauth_client_registered" && audit.Target == "oauth_client" {
+			registrationAudited = true
+		}
+	}
+	if !registrationAudited {
+		t.Fatalf("dynamic registration was not audited: %#v", audits)
+	}
 	noScope := register(`{"client_name":"No Scope","redirect_uris":["http://localhost:8765/callback"]}`)
 	if noScope.Code != http.StatusBadRequest || !strings.Contains(noScope.Body.String(), "invalid_client_metadata") || !strings.Contains(noScope.Body.String(), "scope is required") {
 		t.Fatalf("registration without scope status=%d body=%s", noScope.Code, noScope.Body.String())
@@ -852,7 +1060,11 @@ func TestOAuthDynamicRegistrationIsPublicAndBounded(t *testing.T) {
 	if invalid.Code != http.StatusBadRequest || !strings.Contains(invalid.Body.String(), "invalid_client_metadata") {
 		t.Fatalf("invalid registration status=%d body=%s", invalid.Code, invalid.Body.String())
 	}
-	for index := 0; index < 7; index++ {
+	writeScope := register(`{"client_name":"Write client","redirect_uris":["http://localhost:8765/callback"],"scope":"topology:write"}`)
+	if writeScope.Code != http.StatusBadRequest || !strings.Contains(writeScope.Body.String(), "limited to read and planning scopes") {
+		t.Fatalf("dynamic write registration status=%d body=%s", writeScope.Code, writeScope.Body.String())
+	}
+	for index := 0; index < 6; index++ {
 		response := register(`{"client_name":"Claude Code","redirect_uris":["http://localhost:8765/callback"],"scope":"topology:read"}`)
 		if response.Code != http.StatusCreated {
 			t.Fatalf("registration %d status=%d body=%s", index, response.Code, response.Body.String())
@@ -878,14 +1090,14 @@ func TestOAuthAuthorizationCodePKCEAndSingleUse(t *testing.T) {
 	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	sessionToken := login["token"].(string)
-	client := &model.OAuthClient{ID: "oc_test", Name: "Codex", RedirectURIs: []string{"https://client.example/callback"}, AllowedScopes: []string{"inventory:read"}, ClientMetadata: json.RawMessage(`{}`), Enabled: true}
+	client := &model.OAuthClient{ID: "oc_test", Name: "Codex", RedirectURIs: []string{"https://client.example/callback"}, AllowedScopes: []string{"inventory:read", "offline_access"}, ClientMetadata: json.RawMessage(`{}`), Enabled: true}
 	if err := db.CreateOAuthClient(context.Background(), client); err != nil {
 		t.Fatal(err)
 	}
 	verifier := strings.Repeat("a", 43)
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-	form := url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {"inventory:read"}, "state": {"state-test"}, "resource": {"https://panel.example.com/mcp"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}, "decision": {"approve"}}
+	form := url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {"inventory:read offline_access"}, "state": {"state-test"}, "resource": {"https://panel.example.com/mcp"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}, "decision": {"approve"}}
 	authorize := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
 	authorize.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	authorize.Header.Set("Authorization", "Bearer "+sessionToken)
@@ -934,9 +1146,52 @@ func TestOAuthAuthorizationCodePKCEAndSingleUse(t *testing.T) {
 	if err := json.Unmarshal(rotate.Body.Bytes(), &rotated); err != nil {
 		t.Fatal(err)
 	}
+	grants, err := db.ListOAuthGrants(context.Background())
+	if err != nil || len(grants) != 1 {
+		t.Fatalf("OAuth grants before client deletion = %#v, err=%v", grants, err)
+	}
+	audits, err := db.ListAuditPage(context.Background(), 100, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditJSON, _ := json.Marshal(audits)
+	for _, secret := range []string{code, firstTokens.RefreshToken, rotated.RefreshToken} {
+		if secret != "" && strings.Contains(string(auditJSON), secret) {
+			t.Fatalf("OAuth audit contains a code or token: %s", auditJSON)
+		}
+	}
+	actions := map[string]bool{}
+	for _, audit := range audits {
+		actions[audit.Action] = true
+	}
+	for _, action := range []string{"oauth_authorization_granted", "oauth_token_issued", "oauth_token_refreshed"} {
+		if !actions[action] {
+			t.Errorf("OAuth audit is missing %q: %#v", action, audits)
+		}
+	}
 	request(t, handler, http.MethodDelete, "/api/v2/oauth-clients/"+client.ID, sessionToken, nil, http.StatusOK)
+	audits, err = db.ListAuditPage(context.Background(), 100, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deletionAudited := false
+	for _, audit := range audits {
+		if audit.Action == "oauth_client_deleted" && audit.Target == "oauth_client" {
+			deletionAudited = true
+		}
+	}
+	if !deletionAudited {
+		t.Fatalf("oauth client deletion was not audited: %#v", audits)
+	}
 	if _, err := db.GetOAuthClient(context.Background(), client.ID); err == nil {
 		t.Fatal("oauth client delete did not remove the client")
+	}
+	if _, err := db.GetAPIPrincipal(context.Background(), grants[0].PrincipalID); err == nil {
+		t.Fatal("oauth client delete left its grant principal behind")
+	}
+	policies, err := db.ListApprovalPolicies(context.Background(), grants[0].PrincipalID)
+	if err != nil || len(policies) != 0 {
+		t.Fatalf("oauth client delete left approval policies = %#v, err=%v", policies, err)
 	}
 	revoked := httptest.NewRecorder()
 	revokedReq := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {rotated.RefreshToken}, "client_id": {client.ID}, "resource": {"https://panel.example.com/mcp"}}.Encode()))
@@ -944,6 +1199,207 @@ func TestOAuthAuthorizationCodePKCEAndSingleUse(t *testing.T) {
 	handler.ServeHTTP(revoked, revokedReq)
 	if revoked.Code != http.StatusBadRequest || !strings.Contains(revoked.Body.String(), `"error":"invalid_grant"`) {
 		t.Fatalf("refresh after client delete status=%d body=%s", revoked.Code, revoked.Body.String())
+	}
+}
+
+func TestOAuthRefreshTokenReuseRevokesEntireTokenFamily(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	sessionToken := login["token"].(string)
+	client := &model.OAuthClient{ID: "oc_reuse", Name: "Codex", RedirectURIs: []string{"https://client.example/callback"}, AllowedScopes: []string{"inventory:read", "offline_access"}, ClientMetadata: json.RawMessage(`{}`), Enabled: true}
+	if err := db.CreateOAuthClient(context.Background(), client); err != nil {
+		t.Fatal(err)
+	}
+	verifier := strings.Repeat("r", 43)
+	sum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	form := oauthTestAuthorizationForm(client, "inventory:read offline_access", challenge)
+	form.Set("decision", "approve")
+	authorize := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	authorize.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	authorize.Header.Set("Authorization", "Bearer "+sessionToken)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, authorize)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "授权成功") {
+		t.Fatalf("authorize status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	location, err := oauthSuccessRedirectURL(recorder.Body.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := location.Query().Get("code")
+	exchange := httptest.NewRecorder()
+	exchangeReq := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "code_verifier": {verifier}, "resource": {"https://panel.example.com/mcp"}}.Encode()))
+	exchangeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handler.ServeHTTP(exchange, exchangeReq)
+	if exchange.Code != http.StatusOK {
+		t.Fatalf("exchange status=%d body=%s", exchange.Code, exchange.Body.String())
+	}
+	var issued struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(exchange.Body.Bytes(), &issued); err != nil {
+		t.Fatal(err)
+	}
+	refreshRequest := func(refreshToken string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken}, "client_id": {client.ID}, "resource": {"https://panel.example.com/mcp"}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, req)
+		return out
+	}
+	rotated := refreshRequest(issued.RefreshToken)
+	if rotated.Code != http.StatusOK || !strings.Contains(rotated.Body.String(), `"access_token":"oba_`) {
+		t.Fatalf("refresh rotation status=%d body=%s", rotated.Code, rotated.Body.String())
+	}
+	var rotatedTokens struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(rotated.Body.Bytes(), &rotatedTokens); err != nil {
+		t.Fatal(err)
+	}
+	reuse := refreshRequest(issued.RefreshToken)
+	if reuse.Code != http.StatusBadRequest || !strings.Contains(reuse.Body.String(), `"error":"invalid_grant"`) || !strings.Contains(reuse.Body.String(), "reuse") {
+		t.Fatalf("old refresh token reuse status=%d body=%s", reuse.Code, reuse.Body.String())
+	}
+	afterFamilyRevocation := refreshRequest(rotatedTokens.RefreshToken)
+	if afterFamilyRevocation.Code != http.StatusBadRequest || !strings.Contains(afterFamilyRevocation.Body.String(), `"error":"invalid_grant"`) {
+		t.Fatalf("rotated refresh token after family revocation status=%d body=%s", afterFamilyRevocation.Code, afterFamilyRevocation.Body.String())
+	}
+	if _, _, _, err := db.AuthenticateOAuthAccessToken(context.Background(), security.HashAPISecret("test-secret", issued.AccessToken), time.Now().UTC()); err == nil {
+		t.Fatal("access token remained valid after refresh token reuse")
+	}
+	if _, _, _, err := db.AuthenticateOAuthAccessToken(context.Background(), security.HashAPISecret("test-secret", rotatedTokens.AccessToken), time.Now().UTC()); err == nil {
+		t.Fatal("rotated access token remained valid after refresh token reuse")
+	}
+	audits, err := db.ListAuditPage(context.Background(), 100, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := map[string]bool{}
+	for _, audit := range audits {
+		actions[audit.Action] = true
+	}
+	if !actions["oauth_refresh_reuse"] {
+		t.Fatalf("OAuth audit is missing oauth_refresh_reuse: %#v", audits)
+	}
+	auditJSON, _ := json.Marshal(audits)
+	for _, secret := range []string{code, issued.AccessToken, issued.RefreshToken, rotatedTokens.AccessToken, rotatedTokens.RefreshToken} {
+		if secret != "" && strings.Contains(string(auditJSON), secret) {
+			t.Fatalf("OAuth audit contains a code or token: %s", auditJSON)
+		}
+	}
+}
+
+func TestOAuthWithoutOfflineAccessDoesNotIssueRefreshToken(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	user, err := db.GetUserByUsername(context.Background(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &model.OAuthClient{ID: "oc_online_only", Name: "Online only", RedirectURIs: []string{"https://client.example/callback"}, AllowedScopes: []string{"inventory:read"}, ClientMetadata: json.RawMessage(`{}`), Enabled: true}
+	if err := db.CreateOAuthClient(context.Background(), client); err != nil {
+		t.Fatal(err)
+	}
+	grantRequest := httptest.NewRequest(http.MethodPost, "/oauth/authorize", nil)
+	grantRequest.Form = url.Values{"server_mode": {"all"}, "auto_approve_risk": {"0"}}
+	grant, principal, err := server.createOAuthGrant(grantRequest, *user, *client, client.AllowedScopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier := strings.Repeat("d", 43)
+	sum := sha256.Sum256([]byte(verifier))
+	rawCode := "single-use-online-code"
+	code := &model.OAuthAuthorizationCode{CodeHash: security.HashAPISecret("test-secret", rawCode), GrantID: grant.ID, ClientID: client.ID, UserID: user.ID, PrincipalID: principal.ID, RedirectURI: client.RedirectURIs[0], Scopes: client.AllowedScopes, Resource: "https://panel.example.com/mcp", CodeChallenge: base64.RawURLEncoding.EncodeToString(sum[:]), ExpiresAt: time.Now().Add(time.Minute)}
+	if err := db.CreateOAuthAuthorizationCode(context.Background(), code); err != nil {
+		t.Fatal(err)
+	}
+	values := url.Values{"grant_type": {"authorization_code"}, "code": {rawCode}, "client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "code_verifier": {verifier}, "resource": {"https://panel.example.com/mcp"}}
+	exchange := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(values.Encode()))
+	exchange.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, exchange)
+	if response.Code != http.StatusOK {
+		t.Fatalf("online-only exchange status=%d body=%s", response.Code, response.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["refresh_token"]; ok {
+		t.Fatalf("online-only grant received refresh token: %s", response.Body.String())
+	}
+	if value, _ := payload["access_token"].(string); !strings.HasPrefix(value, "oba_") {
+		t.Fatalf("online-only grant did not receive an access token: %s", response.Body.String())
+	}
+}
+
+func TestOAuthGrantRevocationImmediatelyInvalidatesTokenFamily(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	sessionToken := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	user, err := db.GetUserByUsername(context.Background(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &model.OAuthClient{ID: "oc_revoked_grant", Name: "Revoked grant", RedirectURIs: []string{"https://client.example/callback"}, AllowedScopes: []string{"inventory:read", "offline_access"}, ClientMetadata: json.RawMessage(`{}`), Enabled: true}
+	if err := db.CreateOAuthClient(context.Background(), client); err != nil {
+		t.Fatal(err)
+	}
+	grantRequest := httptest.NewRequest(http.MethodPost, "/oauth/authorize", nil)
+	grantRequest.Form = url.Values{"server_mode": {"all"}, "auto_approve_risk": {"0"}}
+	grant, principal, err := server.createOAuthGrant(grantRequest, *user, *client, client.AllowedScopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	accessRaw, refreshRaw := "oba_revoked-grant", "obr_revoked-grant"
+	access := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", accessRaw), GrantID: grant.ID, PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Scopes: client.AllowedScopes, Resource: "https://panel.example.com/mcp", ExpiresAt: now.Add(time.Hour)}
+	refresh := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", refreshRaw), FamilyID: "family-revoked", GrantID: grant.ID, PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Scopes: client.AllowedScopes, Resource: "https://panel.example.com/mcp", ExpiresAt: now.Add(time.Hour)}
+	if err := db.CreateOAuthTokens(context.Background(), access, refresh); err != nil {
+		t.Fatal(err)
+	}
+	request(t, handler, http.MethodDelete, "/api/v2/oauth-grants/"+grant.ID, sessionToken, nil, http.StatusOK)
+	if _, err := server.authenticateOAuthToken(httptest.NewRequest(http.MethodPost, "/mcp", nil), accessRaw); err == nil {
+		t.Fatal("revoked grant access token remained valid")
+	}
+	if _, err := db.ConsumeOAuthRefreshToken(context.Background(), security.HashAPISecret("test-secret", refreshRaw), time.Now().UTC()); err == nil {
+		t.Fatal("revoked grant refresh token remained valid")
+	}
+	persisted, err := db.GetOAuthGrant(context.Background(), grant.ID)
+	if err != nil || persisted.RevokedAt == nil {
+		t.Fatalf("grant revocation was not persisted: %#v err=%v", persisted, err)
 	}
 }
 
@@ -998,15 +1454,16 @@ func TestOAuthClientScopeReductionInvalidatesAccessToken(t *testing.T) {
 	if err := db.CreateOAuthClient(context.Background(), client); err != nil {
 		t.Fatal(err)
 	}
-	principal, err := server.oauthPrincipal(httptest.NewRequest(http.MethodPost, "/oauth/authorize", nil), *user, *client, client.AllowedScopes)
+	grantRequest := httptest.NewRequest(http.MethodPost, "/oauth/authorize", nil)
+	grantRequest.Form = url.Values{"server_mode": {"all"}, "auto_approve_risk": {"0"}}
+	grant, principal, err := server.createOAuthGrant(grantRequest, *user, *client, client.AllowedScopes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	raw := "oba_scope-reduction-token"
 	now := time.Now().UTC()
-	access := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", raw), PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Scopes: []string{"inventory:read"}, Resource: "https://panel.example.com/mcp", ExpiresAt: now.Add(time.Hour)}
-	refresh := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", "obr_scope-reduction-token"), FamilyID: "family", PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Scopes: access.Scopes, Resource: access.Resource, ExpiresAt: now.Add(time.Hour)}
-	if err := db.CreateOAuthTokens(context.Background(), access, refresh); err != nil {
+	access := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", raw), GrantID: grant.ID, PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Scopes: []string{"inventory:read"}, Resource: "https://panel.example.com/mcp", ExpiresAt: now.Add(time.Hour)}
+	if err := db.CreateOAuthTokens(context.Background(), access, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := server.authenticateOAuthToken(httptest.NewRequest(http.MethodPost, "/mcp", nil), raw); err != nil {
@@ -1021,7 +1478,7 @@ func TestOAuthClientScopeReductionInvalidatesAccessToken(t *testing.T) {
 	}
 }
 
-func TestOAuthAuthorizationDoesNotReenableDisabledPrincipal(t *testing.T) {
+func TestOAuthAuthorizationCreatesIndependentGrantPrincipal(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -1033,9 +1490,16 @@ func TestOAuthAuthorizationDoesNotReenableDisabledPrincipal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := model.OAuthClient{ID: "oc_disabled_principal", Name: "Disabled Principal"}
-	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", nil)
-	principal, err := server.oauthPrincipal(req, *user, client, []string{"inventory:read"})
+	client := model.OAuthClient{ID: "oc_disabled_principal", Name: "Disabled Principal", RedirectURIs: []string{"https://client.example/callback"}, AllowedScopes: []string{"inventory:read"}, ClientMetadata: json.RawMessage(`{}`), Enabled: true}
+	if err := db.CreateOAuthClient(context.Background(), &client); err != nil {
+		t.Fatal(err)
+	}
+	requestForGrant := func() *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", nil)
+		req.Form = url.Values{"server_mode": {"all"}, "auto_approve_risk": {"0"}}
+		return req
+	}
+	firstGrant, principal, err := server.createOAuthGrant(requestForGrant(), *user, client, []string{"inventory:read"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1043,12 +1507,16 @@ func TestOAuthAuthorizationDoesNotReenableDisabledPrincipal(t *testing.T) {
 	if err := db.UpdateAPIPrincipal(context.Background(), principal); err != nil {
 		t.Fatal(err)
 	}
-	principal, err = server.oauthPrincipal(req, *user, client, []string{"inventory:read"})
+	secondGrant, secondPrincipal, err := server.createOAuthGrant(requestForGrant(), *user, client, []string{"inventory:read"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if principal.Enabled {
-		t.Fatal("new authorization re-enabled a disabled OAuth principal")
+	if !secondPrincipal.Enabled || secondPrincipal.ID == principal.ID || secondGrant.ID == firstGrant.ID {
+		t.Fatal("new authorization did not create an independent enabled OAuth grant principal")
+	}
+	persisted, err := db.GetAPIPrincipal(context.Background(), principal.ID)
+	if err != nil || persisted.Enabled {
+		t.Fatal("new authorization changed the disabled state of an earlier grant principal")
 	}
 }
 

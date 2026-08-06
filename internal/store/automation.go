@@ -391,6 +391,19 @@ func (s *Store) UpdateAutomationOperation(ctx context.Context, operation *model.
 	return err
 }
 
+func (s *Store) GetAutomationOperation(ctx context.Context, id string) (*model.AutomationOperation, error) {
+	var item model.AutomationOperation
+	var input, secrets, resources, result, created string
+	var completed sql.NullString
+	if err := s.db.QueryRowContext(ctx, `select id,changeset_id,position,capability,input_json,secret_refs_json,resource_refs_json,risk_class,status,result_json,error_code,error_message,created_at,completed_at from automation_operations where id=?`, id).Scan(&item.ID, &item.ChangesetID, &item.Position, &item.Capability, &input, &secrets, &resources, &item.RiskClass, &item.Status, &result, &item.ErrorCode, &item.ErrorMessage, &created, &completed); err != nil {
+		return nil, err
+	}
+	item.Input, item.ResourceRefs, item.Result = json.RawMessage(input), json.RawMessage(resources), json.RawMessage(result)
+	_ = json.Unmarshal([]byte(secrets), &item.SecretRefs)
+	item.CreatedAt, item.CompletedAt = parseTime(created), nullableTime(completed)
+	return &item, nil
+}
+
 func (s *Store) ListAutomationChangesets(ctx context.Context, principalID string, limit int) ([]model.AutomationChangeset, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50

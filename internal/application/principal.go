@@ -11,6 +11,7 @@ import (
 
 type Principal struct {
 	ID             string
+	GrantID        string
 	UserID         *int64
 	Name           string
 	Type           model.APIPrincipalType
@@ -20,6 +21,22 @@ type Principal struct {
 	SourceIP       netip.Addr
 	ClientName     string
 	Interactive    bool
+}
+
+type ResourceSelection struct {
+	Mode        string  `json:"mode"`
+	IDs         []int64 `json:"ids,omitempty"`
+	AllowCreate bool    `json:"allow_create,omitempty"`
+}
+
+type ResourceFilter struct {
+	Servers    *ResourceSelection `json:"servers,omitempty"`
+	Users      *ResourceSelection `json:"users,omitempty"`
+	ProxyPaths *ResourceSelection `json:"proxy_paths,omitempty"`
+	Settings   *struct {
+		AllowedSections []string `json:"allowed_sections"`
+	} `json:"settings,omitempty"`
+	DestructiveOperations bool `json:"destructive_operations"`
 }
 
 func (p Principal) HasScope(required string) bool {
@@ -38,6 +55,33 @@ func (p Principal) AllowsInt64(resource string, id int64) bool {
 	if len(p.ResourceFilter) == 0 || string(p.ResourceFilter) == "{}" || string(p.ResourceFilter) == "null" {
 		return true
 	}
+	var canonical ResourceFilter
+	if json.Unmarshal(p.ResourceFilter, &canonical) != nil {
+		return false
+	}
+	var selection *ResourceSelection
+	switch resource {
+	case "server_ids":
+		selection = canonical.Servers
+	case "user_ids":
+		selection = canonical.Users
+	case "proxy_path_ids":
+		selection = canonical.ProxyPaths
+	}
+	if selection != nil {
+		switch strings.ToLower(strings.TrimSpace(selection.Mode)) {
+		case "all":
+			return true
+		case "selected":
+			return slices.Contains(selection.IDs, id)
+		case "none":
+			return false
+		default:
+			return false
+		}
+	}
+	// Existing Service Accounts used flat *_ids arrays. They remain readable
+	// while MCP grants are always persisted in the canonical nested format.
 	var filters map[string]json.RawMessage
 	if json.Unmarshal(p.ResourceFilter, &filters) != nil {
 		return false
@@ -51,6 +95,41 @@ func (p Principal) AllowsInt64(resource string, id int64) bool {
 		return false
 	}
 	return slices.Contains(ids, id)
+}
+
+func (p Principal) AllowsCreate(resource string) bool {
+	if len(p.ResourceFilter) == 0 || string(p.ResourceFilter) == "{}" || string(p.ResourceFilter) == "null" {
+		return true
+	}
+	var filter ResourceFilter
+	if json.Unmarshal(p.ResourceFilter, &filter) != nil {
+		return false
+	}
+	switch resource {
+	case "server":
+		return filter.Servers != nil && filter.Servers.AllowCreate
+	default:
+		return false
+	}
+}
+
+func (p Principal) AllowsSettingSection(section string) bool {
+	if len(p.ResourceFilter) == 0 || string(p.ResourceFilter) == "{}" || string(p.ResourceFilter) == "null" {
+		return true
+	}
+	var filter ResourceFilter
+	if json.Unmarshal(p.ResourceFilter, &filter) != nil || filter.Settings == nil {
+		return false
+	}
+	return slices.Contains(filter.Settings.AllowedSections, strings.TrimSpace(section))
+}
+
+func (p Principal) AllowsDestructiveOperations() bool {
+	if len(p.ResourceFilter) == 0 || string(p.ResourceFilter) == "{}" || string(p.ResourceFilter) == "null" {
+		return true
+	}
+	var filter ResourceFilter
+	return json.Unmarshal(p.ResourceFilter, &filter) == nil && filter.DestructiveOperations
 }
 
 func (p Principal) AllowsGlobal() bool {

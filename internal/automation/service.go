@@ -46,6 +46,20 @@ type CreateRequest struct {
 	Operations     []OperationRequest `json:"operations"`
 }
 
+type DraftValidationRequest struct {
+	BaseRevisions json.RawMessage
+	Operations    []OperationRequest
+}
+
+type DraftValidationResult struct {
+	Valid             bool              `json:"valid"`
+	PlanHash          string            `json:"plan_hash"`
+	RiskClass         int               `json:"risk_class"`
+	ExpectedRevisions map[string]string `json:"expected_revisions"`
+	Evidence          []any             `json:"evidence"`
+	Warnings          []string          `json:"warnings"`
+}
+
 type OperationRequest struct {
 	Capability   string          `json:"capability"`
 	Input        json.RawMessage `json:"input"`
@@ -147,6 +161,49 @@ func (s *Service) Create(ctx context.Context, principal application.Principal, r
 	return item, nil
 }
 
+func (s *Service) ValidateDraft(ctx context.Context, principal application.Principal, request DraftValidationRequest) (DraftValidationResult, error) {
+	if len(request.Operations) == 0 || len(request.Operations) > 64 {
+		return DraftValidationResult{}, errors.New("desired state must contain between 1 and 64 operations")
+	}
+	item := &model.AutomationChangeset{BaseRevisions: json.RawMessage(`{}`), Operations: make([]model.AutomationOperation, 0, len(request.Operations))}
+	for position, requested := range request.Operations {
+		descriptor, authorized := s.catalog.Authorize(principal, requested.Capability)
+		if !authorized || descriptor.ReadOnly || !descriptor.Executable {
+			return DraftValidationResult{}, fmt.Errorf("capability %q is not authorized for desired state validation", requested.Capability)
+		}
+		if s.validator(requested.Capability) == nil || s.handler(requested.Capability) == nil {
+			return DraftValidationResult{}, fmt.Errorf("capability %q is not executable in this Controller build", requested.Capability)
+		}
+		input, err := canonicalObject(requested.Input)
+		if err != nil {
+			return DraftValidationResult{}, fmt.Errorf("operation %d input: %w", position, err)
+		}
+		item.Operations = append(item.Operations, model.AutomationOperation{ID: fmt.Sprintf("draft-%d", position+1), Position: position, Capability: descriptor.Name, Input: input, SecretRefs: requested.SecretRefs, ResourceRefs: normalizedObject(requested.ResourceRefs), RiskClass: descriptor.RiskClass, Status: "planned", Result: json.RawMessage(`{}`)})
+		if descriptor.RiskClass > item.RiskClass {
+			item.RiskClass = descriptor.RiskClass
+		}
+	}
+	evidence, revisions, err := s.inspectOperations(ctx, principal, item)
+	if err != nil {
+		return DraftValidationResult{}, err
+	}
+	if len(request.BaseRevisions) > 0 && string(request.BaseRevisions) != "null" && string(request.BaseRevisions) != "{}" {
+		expected, decodeErr := decodeRevisions(request.BaseRevisions)
+		if decodeErr != nil {
+			return DraftValidationResult{}, decodeErr
+		}
+		if err := compareRevisions(expected, revisions); err != nil {
+			return DraftValidationResult{}, err
+		}
+	}
+	item.BaseRevisions = mustJSON(revisions)
+	planHash, err := changesetHash(item)
+	if err != nil {
+		return DraftValidationResult{}, err
+	}
+	return DraftValidationResult{Valid: true, PlanHash: planHash, RiskClass: item.RiskClass, ExpectedRevisions: revisions, Evidence: evidence, Warnings: []string{}}, nil
+}
+
 func (s *Service) Validate(ctx context.Context, principal application.Principal, id string) (*model.AutomationChangeset, error) {
 	item, err := s.authorizedChangeset(ctx, principal, id)
 	if err != nil {
@@ -173,7 +230,7 @@ func (s *Service) Validate(ctx context.Context, principal application.Principal,
 	item.BlastRadius = mustJSON(blastRadius(item.Operations))
 	item.ValidatedAt = &now
 	item.Status = model.ChangesetAwaitingApproval
-	if automatic, policyErr := s.automaticAllowed(ctx, item); policyErr != nil {
+	if automatic, policyErr := s.automaticAllowed(ctx, principal, item); policyErr != nil {
 		return nil, policyErr
 	} else if automatic {
 		item.Status = model.ChangesetApproved
@@ -242,7 +299,7 @@ func (s *Service) Apply(ctx context.Context, principal application.Principal, id
 		_ = s.store.UpdateAutomationChangeset(ctx, item)
 		return item, fmt.Errorf("changeset state no longer matches the approved plan: %w", err)
 	}
-	if _, err := s.automaticAllowed(ctx, item); err != nil {
+	if _, err := s.automaticAllowed(ctx, principal, item); err != nil {
 		return nil, err
 	}
 	now := s.now().UTC()
@@ -302,6 +359,17 @@ func (s *Service) Get(ctx context.Context, id string) (*model.AutomationChangese
 	return s.store.GetAutomationChangeset(ctx, id)
 }
 
+func (s *Service) GetOperation(ctx context.Context, principal application.Principal, id string) (*model.AutomationOperation, error) {
+	operation, err := s.store.GetAutomationOperation(ctx, strings.TrimSpace(id))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.authorizedChangeset(ctx, principal, operation.ChangesetID); err != nil {
+		return nil, sql.ErrNoRows
+	}
+	return operation, nil
+}
+
 func (s *Service) List(ctx context.Context, principal application.Principal, limit int) ([]model.AutomationChangeset, error) {
 	if principal.Interactive && principal.Role == model.RoleAdmin {
 		return s.store.ListAutomationChangesets(ctx, "", limit)
@@ -309,7 +377,247 @@ func (s *Service) List(ctx context.Context, principal application.Principal, lim
 	return s.store.ListAutomationChangesets(ctx, principal.ID, limit)
 }
 
-func (s *Service) automaticAllowed(ctx context.Context, item *model.AutomationChangeset) (bool, error) {
+type StartWorkflowRequest struct {
+	Kind           string
+	Reason         string
+	IdempotencyKey string
+	ChangesetID    string
+	ExternalAction bool
+}
+
+func (s *Service) StartWorkflow(ctx context.Context, principal application.Principal, request StartWorkflowRequest) (*model.AutomationWorkflow, error) {
+	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
+	if request.IdempotencyKey == "" || len(request.IdempotencyKey) > 128 {
+		return nil, errors.New("workflow idempotency_key is required and must not exceed 128 characters")
+	}
+	if existing, err := s.store.FindAutomationWorkflowByIdempotency(ctx, principal.ID, request.IdempotencyKey); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	changeset, err := s.authorizedChangeset(ctx, principal, strings.TrimSpace(request.ChangesetID))
+	if err != nil {
+		return nil, err
+	}
+	id, err := prefixedID("wf")
+	if err != nil {
+		return nil, err
+	}
+	stepID, err := prefixedID("wfs")
+	if err != nil {
+		return nil, err
+	}
+	correlationID, err := prefixedID("corr")
+	if err != nil {
+		return nil, err
+	}
+	status, stepStatus, currentStep, completedAt := workflowState(changeset, request.ExternalAction, s.now().UTC())
+	inputDigest := sha256.Sum256([]byte(changeset.ID + "\x00" + changeset.PlanHash))
+	outputDigest := sha256.Sum256(changeset.Result)
+	nextAction := workflowNextAction(changeset, request.ExternalAction)
+	affectedResources := []map[string]any{{"type": "changeset", "id": changeset.ID}}
+	if serverID := workflowExternalServerID(nextAction); serverID > 0 {
+		affectedResources = append(affectedResources, map[string]any{"type": "server", "id": serverID})
+	}
+	item := &model.AutomationWorkflow{
+		ID: id, PrincipalID: principal.ID, GrantID: principal.GrantID, Kind: strings.TrimSpace(request.Kind), Status: status,
+		Reason: strings.TrimSpace(request.Reason), IdempotencyKey: request.IdempotencyKey, ChangesetID: changeset.ID,
+		CurrentStep: currentStep, CorrelationID: correlationID, AffectedResources: mustJSON(affectedResources),
+		NextAction: nextAction, CompletedAt: completedAt,
+		Steps: []model.AutomationWorkflowStep{{ID: stepID, Position: 1, Name: "changeset", Status: stepStatus, Attempt: 1, IdempotencyKey: request.IdempotencyKey + ":changeset", InputDigest: hex.EncodeToString(inputDigest[:]), OutputDigest: hex.EncodeToString(outputDigest[:]), Retryable: false, NextAction: nextAction, CorrelationID: correlationID}},
+	}
+	if item.Kind == "" {
+		item.Kind = "changeset"
+	}
+	now := s.now().UTC()
+	item.Steps[0].StartedAt = &now
+	if stepStatus == "succeeded" || stepStatus == "failed" {
+		item.Steps[0].FinishedAt = &now
+	}
+	if err := s.store.CreateAutomationWorkflow(ctx, item); err != nil {
+		if existing, findErr := s.store.FindAutomationWorkflowByIdempotency(ctx, principal.ID, request.IdempotencyKey); findErr == nil {
+			return existing, nil
+		}
+		return nil, err
+	}
+	return item, nil
+}
+
+func (s *Service) GetWorkflow(ctx context.Context, principal application.Principal, id string) (*model.AutomationWorkflow, error) {
+	item, err := s.store.GetAutomationWorkflow(ctx, strings.TrimSpace(id))
+	if err != nil || item.PrincipalID != principal.ID && !(principal.Interactive && principal.Role == model.RoleAdmin) {
+		return nil, sql.ErrNoRows
+	}
+	return s.synchronizeWorkflow(ctx, item)
+}
+
+func (s *Service) synchronizeWorkflow(ctx context.Context, item *model.AutomationWorkflow) (*model.AutomationWorkflow, error) {
+	if item.Status == model.WorkflowCancelled || item.Status == model.WorkflowSucceeded || item.Status == model.WorkflowFailed || item.Status == model.WorkflowPartiallySucceeded || len(item.Steps) == 0 {
+		return item, nil
+	}
+	now := s.now().UTC()
+	if item.Status == model.WorkflowExternalActionRequired || item.Status == model.WorkflowWaitingForAgent {
+		serverID := workflowExternalServerID(item.NextAction)
+		server, err := s.store.GetServer(ctx, serverID)
+		if err != nil || server.Status != model.ServerOnline {
+			return item, nil
+		}
+		step := &item.Steps[0]
+		step.Status, step.Retryable, step.NextAction, step.FinishedAt = "succeeded", false, json.RawMessage(`{}`), &now
+		item.Status, item.CurrentStep, item.NextAction, item.CompletedAt = model.WorkflowSucceeded, "", json.RawMessage(`{}`), &now
+		if err := s.store.UpdateAutomationWorkflowAndStep(ctx, item, step); err != nil {
+			return nil, err
+		}
+		return item, nil
+	}
+	changeset, err := s.store.GetAutomationChangeset(ctx, item.ChangesetID)
+	if err != nil {
+		return nil, err
+	}
+	status, stepStatus, currentStep, completedAt := workflowState(changeset, false, now)
+	nextAction := workflowNextAction(changeset, false)
+	step := &item.Steps[0]
+	if item.Status == status && step.Status == stepStatus && item.CurrentStep == currentStep && string(item.NextAction) == string(nextAction) {
+		return item, nil
+	}
+	outputDigest := sha256.Sum256(changeset.Result)
+	step.Status, step.OutputDigest, step.NextAction = stepStatus, hex.EncodeToString(outputDigest[:]), nextAction
+	step.Retryable, step.ErrorCode = false, ""
+	if stepStatus == "succeeded" || stepStatus == "failed" {
+		step.FinishedAt = &now
+	} else {
+		step.FinishedAt = nil
+	}
+	item.Status, item.CurrentStep, item.NextAction, item.CompletedAt = status, currentStep, nextAction, completedAt
+	if status == model.WorkflowFailed {
+		item.ErrorCode = "changeset_" + string(changeset.Status)
+	} else {
+		item.ErrorCode, item.ErrorMessage = "", ""
+	}
+	if err := s.store.UpdateAutomationWorkflowAndStep(ctx, item, step); err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+func (s *Service) CancelWorkflow(ctx context.Context, principal application.Principal, id string) (*model.AutomationWorkflow, error) {
+	item, err := s.GetWorkflow(ctx, principal, id)
+	if err != nil {
+		return nil, err
+	}
+	switch item.Status {
+	case model.WorkflowSucceeded, model.WorkflowPartiallySucceeded, model.WorkflowFailed, model.WorkflowCancelled:
+		return nil, errors.New("workflow cannot be cancelled in its current state")
+	}
+	now := s.now().UTC()
+	item.Status, item.CurrentStep, item.CompletedAt = model.WorkflowCancelled, "", &now
+	item.NextAction = json.RawMessage(`{}`)
+	step := &item.Steps[0]
+	step.Status, step.Retryable, step.NextAction, step.FinishedAt = "cancelled", false, json.RawMessage(`{}`), &now
+	if err := s.store.UpdateAutomationWorkflowAndStep(ctx, item, step); err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+func (s *Service) RetryWorkflowStep(ctx context.Context, principal application.Principal, workflowID, stepID string) (*model.AutomationWorkflow, error) {
+	item, err := s.GetWorkflow(ctx, principal, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	for index := range item.Steps {
+		step := &item.Steps[index]
+		if step.ID != strings.TrimSpace(stepID) {
+			continue
+		}
+		if !step.Retryable || step.Status != "failed" {
+			return nil, errors.New("workflow step is not retryable")
+		}
+		step.Attempt++
+		step.Status, step.ErrorCode, step.Retryable = "queued", "", false
+		now := s.now().UTC()
+		step.StartedAt, step.FinishedAt = &now, nil
+		if err := s.store.UpdateAutomationWorkflowStep(ctx, step); err != nil {
+			return nil, err
+		}
+		item.Status, item.CurrentStep, item.CompletedAt = model.WorkflowQueued, step.Name, nil
+		if err := s.store.UpdateAutomationWorkflow(ctx, item); err != nil {
+			return nil, err
+		}
+		return item, nil
+	}
+	return nil, sql.ErrNoRows
+}
+
+func workflowState(changeset *model.AutomationChangeset, externalAction bool, now time.Time) (model.WorkflowStatus, string, string, *time.Time) {
+	if externalAction {
+		return model.WorkflowExternalActionRequired, "external_action_required", "external_install", nil
+	}
+	switch changeset.Status {
+	case model.ChangesetDraft, model.ChangesetValidated:
+		return model.WorkflowPlanning, "running", "changeset", nil
+	case model.ChangesetAwaitingApproval:
+		return model.WorkflowApprovalRequired, "approval_required", "approval", nil
+	case model.ChangesetApproved:
+		return model.WorkflowQueued, "queued", "changeset", nil
+	case model.ChangesetApplying:
+		return model.WorkflowRunning, "running", "changeset", nil
+	case model.ChangesetSucceeded:
+		return model.WorkflowSucceeded, "succeeded", "", &now
+	case model.ChangesetFailed, model.ChangesetExpired, model.ChangesetSuperseded, model.ChangesetRollbackFailed:
+		return model.WorkflowFailed, "failed", "", &now
+	default:
+		return model.WorkflowPlanning, "running", "changeset", nil
+	}
+}
+
+func workflowNextAction(changeset *model.AutomationChangeset, externalAction bool) json.RawMessage {
+	if externalAction {
+		var result struct {
+			Operations []struct {
+				Server struct {
+					ID int64 `json:"id"`
+				} `json:"server"`
+				EnrollmentExpiresAt string `json:"enrollment_expires_at"`
+			} `json:"operations"`
+		}
+		if json.Unmarshal(changeset.Result, &result) == nil {
+			for _, operation := range result.Operations {
+				if operation.Server.ID > 0 {
+					return mustJSON(map[string]any{"type": "execute_on_target", "server_id": operation.Server.ID, "expires_at": operation.EnrollmentExpiresAt, "sensitive": true, "completion_condition": map[string]any{"resource_uri": fmt.Sprintf("oboard://servers/%d/health", operation.Server.ID), "field": "agent_connected", "equals": true}})
+				}
+			}
+		}
+		return mustJSON(map[string]any{"type": "execute_on_target", "sensitive": true})
+	}
+	if changeset.Status == model.ChangesetAwaitingApproval {
+		return mustJSON(map[string]any{"type": "open_approval", "changeset_id": changeset.ID})
+	}
+	return json.RawMessage(`{}`)
+}
+
+func workflowExternalServerID(nextAction json.RawMessage) int64 {
+	var action struct {
+		ServerID int64 `json:"server_id"`
+	}
+	if json.Unmarshal(nextAction, &action) != nil {
+		return 0
+	}
+	return action.ServerID
+}
+
+func (s *Service) automaticAllowed(ctx context.Context, principal application.Principal, item *model.AutomationChangeset) (bool, error) {
+	if principal.Interactive {
+		return s.policiesAllowAutomatic(ctx, item, false)
+	}
+	storedPrincipal, err := s.store.GetAPIPrincipal(ctx, item.PrincipalID)
+	if err != nil {
+		return false, err
+	}
+	return s.policiesAllowAutomatic(ctx, item, storedPrincipal.Type == model.APIPrincipalOAuth)
+}
+
+func (s *Service) policiesAllowAutomatic(ctx context.Context, item *model.AutomationChangeset, oauthPrincipal bool) (bool, error) {
 	automatic := true
 	for _, operation := range item.Operations {
 		policy, err := s.store.GetApprovalPolicy(ctx, item.PrincipalID, operation.Capability, s.now().UTC())
@@ -323,7 +631,7 @@ func (s *Service) automaticAllowed(ctx context.Context, item *model.AutomationCh
 		if policy.Mode == model.ApprovalDenied {
 			return false, fmt.Errorf("approval policy denies capability %q", operation.Capability)
 		}
-		if policy.Mode != model.ApprovalAutomatic || operation.RiskClass >= 4 && !policy.AllowRisk4 {
+		if policy.Mode != model.ApprovalAutomatic || operation.RiskClass >= 4 && (oauthPrincipal || !policy.AllowRisk4) {
 			automatic = false
 			continue
 		}
@@ -401,39 +709,47 @@ func (s *Service) validateOperations(ctx context.Context, principal application.
 	if err != nil {
 		return nil, err
 	}
+	evidence, current, err := s.inspectOperations(ctx, principal, item)
+	if err != nil {
+		return nil, err
+	}
+	if err := compareRevisions(expected, current); err != nil {
+		return nil, err
+	}
+	return evidence, nil
+}
+
+func (s *Service) inspectOperations(ctx context.Context, principal application.Principal, item *model.AutomationChangeset) ([]any, map[string]string, error) {
 	current := map[string]string{}
 	evidence := make([]any, 0, len(item.Operations))
 	for _, operation := range item.Operations {
 		descriptor, ok := s.catalog.Authorize(principal, operation.Capability)
 		if !ok || descriptor.ReadOnly || !descriptor.Executable || descriptor.RiskClass != operation.RiskClass {
-			return nil, fmt.Errorf("operation capability %q is no longer authorized", operation.Capability)
+			return nil, nil, fmt.Errorf("operation capability %q is no longer authorized", operation.Capability)
 		}
 		validator := s.validator(operation.Capability)
 		if validator == nil || s.handler(operation.Capability) == nil {
-			return nil, fmt.Errorf("operation capability %q is not executable in this Controller build", operation.Capability)
+			return nil, nil, fmt.Errorf("operation capability %q is not executable in this Controller build", operation.Capability)
 		}
 		validated, validateErr := validator(ctx, principal, operation.Input)
 		if validateErr != nil {
-			return nil, fmt.Errorf("validate %s: %w", operation.Capability, validateErr)
+			return nil, nil, fmt.Errorf("validate %s: %w", operation.Capability, validateErr)
 		}
 		if resolver := s.revisionResolver(operation.Capability); resolver != nil {
 			resolved, resolveErr := resolver(ctx, principal, operation.Input)
 			if resolveErr != nil {
-				return nil, fmt.Errorf("resolve %s base revisions: %w", operation.Capability, resolveErr)
+				return nil, nil, fmt.Errorf("resolve %s base revisions: %w", operation.Capability, resolveErr)
 			}
 			for key, revision := range resolved {
 				if existing, duplicate := current[key]; duplicate && existing != revision {
-					return nil, fmt.Errorf("resource %q resolved to conflicting revisions", key)
+					return nil, nil, fmt.Errorf("resource %q resolved to conflicting revisions", key)
 				}
 				current[key] = revision
 			}
 		}
 		evidence = append(evidence, map[string]any{"operation_id": operation.ID, "capability": operation.Capability, "evidence": validated})
 	}
-	if err := compareRevisions(expected, current); err != nil {
-		return nil, err
-	}
-	return evidence, nil
+	return evidence, current, nil
 }
 
 func (s *Service) failOperation(ctx context.Context, item *model.AutomationChangeset, operation *model.AutomationOperation, code, message string) (*model.AutomationChangeset, error) {

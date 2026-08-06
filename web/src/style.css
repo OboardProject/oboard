@@ -10216,6 +10216,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 .automation-grid > .settings-card { min-width: 0; margin: 0; }
 .automation-wide { grid-column: 1 / -1; }
+.automation-grants { margin-top: 14px; }
 .automation-section-head { align-items: center; }
 .automation-section-head > button {
   display: inline-flex;
@@ -10291,6 +10292,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .automation-connect-results,
 .automation-token-setup { display: grid; gap: 16px; }
 .automation-connect-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.automation-connect-choices.is-single { grid-template-columns: minmax(0, 1fr); }
 .automation-connect-choices > div { display: grid; min-width: 0; gap: 7px; }
 .automation-connect-choices > div > span,
 .automation-connect-endpoint > span { color: var(--muted); font-size: 11px; }
