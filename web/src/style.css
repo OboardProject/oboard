@@ -3371,6 +3371,12 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .proxy-matrix-header-target:disabled { cursor: default; opacity: 1; }
+.proxy-matrix-header-target:hover {
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+  transform: none;
+}
 
 .proxy-matrix-entry-group > span svg { color: var(--graph-entry); }
 .proxy-matrix-entry-group small {
