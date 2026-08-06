@@ -967,8 +967,8 @@ func TestAgentConfigPathAllowlistAndPasswordPolicy(t *testing.T) {
 	// short password rejected on create
 	request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "shorty", "password": "short", "role": "viewer", "status": "active"}, http.StatusBadRequest)
 
-	// change password requires >= 10
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/password", adminToken, map[string]any{"current_password": "very-secure-password", "new_password": "shortpwd"}, http.StatusBadRequest)
+	// change password requires >= 8
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/password", adminToken, map[string]any{"current_password": "very-secure-password", "new_password": "shortpw"}, http.StatusBadRequest)
 
 	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", adminToken, map[string]any{"name": "node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(server["server"].(map[string]any)["id"].(float64))

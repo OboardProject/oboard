@@ -1,13 +1,38 @@
 package controller
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
+
+func registerFrom(t *testing.T, h http.Handler, username, password, ip string, want int) map[string]any {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"username": username, "password": password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v2/ui/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = ip + ":12345"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != want {
+		t.Fatalf("register %s: want %d got %d body=%s", username, want, rr.Code, rr.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
 
 func TestRegistrationAuthorizationFlow(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
@@ -40,10 +65,12 @@ func TestRegistrationAuthorizationFlow(t *testing.T) {
 	request(t, h, "POST", "/api/v2/ui/auth/register", "", map[string]any{"username": "ab", "password": "newbie-password-123"}, 400)
 	request(t, h, "POST", "/api/v2/ui/auth/register", "", map[string]any{"username": "bad name!", "password": "newbie-password-123"}, 400)
 	request(t, h, "POST", "/api/v2/ui/auth/register", "", map[string]any{"username": "newbie", "password": "short"}, 400)
+	request(t, h, "POST", "/api/v2/ui/auth/register", "", map[string]any{"username": "seven", "password": "1234567"}, 400)
+	request(t, h, "POST", "/api/v2/ui/auth/register", "", map[string]any{"username": "eight", "password": "12345678"}, 201)
 	request(t, h, "POST", "/api/v2/ui/auth/register", "", map[string]any{"username": "__oboard_reserved", "password": "newbie-password-123"}, 400)
 
 	// Successful registration gets role none and no user group.
-	created := request(t, h, "POST", "/api/v2/ui/auth/register", "", map[string]any{"username": "newbie", "password": "newbie-password-123", "nickname": "新手"}, 201)
+	created := registerFrom(t, h, "newbie", "newbie-password-123", "198.51.100.10", 201)
 	user := created["user"].(map[string]any)
 	if user["role"] != "none" {
 		t.Fatalf("registered user role = %#v, want none", user["role"])
@@ -67,7 +94,6 @@ func TestRegistrationAuthorizationFlow(t *testing.T) {
 	}
 
 	// Duplicate usernames conflict case-insensitively.
-	request(t, h, "POST", "/api/v2/ui/auth/register", "", map[string]any{"username": "newbie", "password": "newbie-password-123"}, 409)
 	request(t, h, "POST", "/api/v2/ui/auth/register", "", map[string]any{"username": "NEWBIE", "password": "newbie-password-123"}, 409)
 
 	// The registered user can log in but has no panel permissions.
@@ -106,7 +132,7 @@ func TestRegistrationAuthorizationFlow(t *testing.T) {
 	request(t, h, "POST", "/api/v2/ui/settings", adminToken, map[string]any{"registration_default_group_id": userGroupID}, 200)
 
 	// A new registration joins the default group and inherits its role.
-	request(t, h, "POST", "/api/v2/ui/auth/register", "", map[string]any{"username": "member", "password": "member-password-123"}, 201)
+	registerFrom(t, h, "member", "member-password-123", "198.51.100.11", 201)
 	memberLogin := request(t, h, "POST", "/api/v2/ui/auth/login", "", map[string]any{"username": "member", "password": "member-password-123"}, 200)
 	memberToken := memberLogin["token"].(string)
 	if role := memberLogin["user"].(map[string]any)["role"]; role != "viewer" {
@@ -117,7 +143,7 @@ func TestRegistrationAuthorizationFlow(t *testing.T) {
 
 	// Clearing the default group works.
 	request(t, h, "POST", "/api/v2/ui/settings", adminToken, map[string]any{"registration_default_group_id": 0}, 200)
-	request(t, h, "POST", "/api/v2/ui/auth/register", "", map[string]any{"username": "solo", "password": "solo-password-123"}, 201)
+	registerFrom(t, h, "solo", "solo-password-123", "198.51.100.12", 201)
 	soloLogin := request(t, h, "POST", "/api/v2/ui/auth/login", "", map[string]any{"username": "solo", "password": "solo-password-123"}, 200)
 	if role := soloLogin["user"].(map[string]any)["role"]; role != "none" {
 		t.Fatalf("solo effective role = %#v, want none", role)

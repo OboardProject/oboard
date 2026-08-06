@@ -869,7 +869,6 @@ const errorMessages: Record<string, string> = {
   'missing or malformed jwt': '登录状态已失效，请重新登录',
   'current password is incorrect': '当前密码不正确',
   'new password must be at least 8 characters': '新密码至少需要 8 位',
-  'new password must be at least 10 characters': '新密码至少需要 10 位',
   'rate limit exceeded': '操作过于频繁，请稍后再试',
   forbidden: '权限不足，无法执行该操作',
   'method not allowed': '请求方法不允许',
@@ -2438,8 +2437,8 @@ function AccountPage({ data, client, load, notify }: any) {
   }
 
   const savePassword = async () => {
-    if (newPassword.length < 10) {
-      notify?.('新密码至少需要 10 个字符', 'warning')
+    if (newPassword.length < 8) {
+      notify?.('新密码至少需要 8 个字符', 'warning')
       return
     }
     await client.request('/auth/password', { method: 'POST', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) })
@@ -2606,7 +2605,7 @@ function AccountPage({ data, client, load, notify }: any) {
           <div className="sub-section-head"><div><h3><Lock size={16} />修改密码</h3><p className="muted">修改后下次登录使用新密码。</p></div></div>
           <div className="form account-form">
             <FormField label="当前密码"><input type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} /></FormField>
-            <FormField label="新密码" hint="至少 10 个字符"><input type="password" autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} /></FormField>
+            <FormField label="新密码" hint="至少 8 个字符"><input type="password" autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} /></FormField>
             <button onClick={savePassword} disabled={!currentPassword || !newPassword}>修改密码</button>
           </div>
         </section>

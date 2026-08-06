@@ -474,7 +474,7 @@ configure_bootstrap_admin() {
 
   if [ -r /dev/tty ] && [ -z "$ADMIN_PASSWORD_INPUT" ] && [ -z "$configured_password" ]; then
     while :; do
-      printf '超级管理员密码（至少 10 位；留空则自动生成一次性随机密码）：' > /dev/tty
+      printf '超级管理员密码（至少 8 位；留空则自动生成一次性随机密码）：' > /dev/tty
       stty -echo < /dev/tty
       IFS= read -r password < /dev/tty || true
       stty echo < /dev/tty
@@ -491,8 +491,8 @@ configure_bootstrap_admin() {
       printf '两次输入的密码不一致，请重新输入。\n' > /dev/tty
     done
   fi
-  if [ -n "$password" ] && [ "${#password}" -lt 10 ]; then
-    echo "超级管理员密码至少需要 10 位。" >&2
+  if [ -n "$password" ] && [ "${#password}" -lt 8 ]; then
+    echo "超级管理员密码至少需要 8 位。" >&2
     exit 1
   fi
 
@@ -501,7 +501,7 @@ configure_bootstrap_admin() {
   # to journalctl for a value that only appears once.
   if [ -z "$password" ]; then
     password=$(generate_admin_password)
-    if [ "${#password}" -lt 10 ]; then
+    if [ "${#password}" -lt 8 ]; then
       echo "无法生成超级管理员密码，请确认系统提供 openssl 或 /dev/urandom。" >&2
       exit 1
     fi

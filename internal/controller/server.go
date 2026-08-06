@@ -2050,8 +2050,8 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if req.Username == "" || len(req.Password) < 10 {
-		fail(w, errors.New("username and password >= 10 chars required"), 400)
+	if req.Username == "" || len(req.Password) < 8 {
+		fail(w, errors.New("username and password >= 8 chars required"), 400)
 		return
 	}
 	pass, err := security.HashPassword(req.Password)
@@ -2197,8 +2197,8 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
-	if len(req.Password) < 10 {
-		fail(w, errors.New("密码至少需要 10 个字符"), http.StatusBadRequest)
+	if len(req.Password) < 8 {
+		fail(w, errors.New("密码至少需要 8 个字符"), http.StatusBadRequest)
 		return
 	}
 	nickname := strings.TrimSpace(req.Nickname)
@@ -2331,8 +2331,8 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("current password is incorrect"), 403)
 		return
 	}
-	if len(req.NewPassword) < 10 {
-		fail(w, errors.New("new password must be at least 10 characters"), 400)
+	if len(req.NewPassword) < 8 {
+		fail(w, errors.New("new password must be at least 8 characters"), 400)
 		return
 	}
 	hash, err := security.HashPassword(req.NewPassword)
@@ -8506,8 +8506,8 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			req.Password = password
-		} else if len(req.Password) < 10 {
-			fail(w, errors.New("password must be at least 10 characters"), 400)
+		} else if len(req.Password) < 8 {
+			fail(w, errors.New("password must be at least 8 characters"), 400)
 			return
 		}
 		pass, err := security.HashPassword(req.Password)
@@ -8587,8 +8587,8 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 			u.Status = "active"
 		}
 		if req.Password != "" {
-			if len(req.Password) < 10 {
-				fail(w, errors.New("password must be at least 10 characters"), 400)
+			if len(req.Password) < 8 {
+				fail(w, errors.New("password must be at least 8 characters"), 400)
 				return
 			}
 			h, err := security.HashPassword(req.Password)
