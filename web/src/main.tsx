@@ -49,6 +49,7 @@ import {
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
 import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
 import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
+import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphBranchRouteOffsets } from './components/proxy-path/graph-topology'
 import { buildProxyPathMatrix, proxyPathMatrixStepScope, type ProxyPathMatrixCell } from './components/proxy-path/matrix'
 import './style.css'
 import logo from './assets/logo.svg'
@@ -10560,6 +10561,7 @@ type GraphTransportEdgeData = {
   title: string
   detail?: string
   unhealthy?: boolean
+  routeOffset?: number
 }
 type GraphServerRole = {
   isRoot: boolean
@@ -10605,6 +10607,7 @@ function ProxyGraphEdge({
     targetPosition,
     borderRadius: 8,
     offset: 24,
+    centerY: data?.routeOffset ? (sourceY + targetY) / 2 + data.routeOffset : undefined,
   })
   let phaseHash = 0
   for (let index = 0; index < id.length; index++) phaseHash = (phaseHash * 31 + id.charCodeAt(index)) >>> 0
@@ -10818,6 +10821,8 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const sourcePath = source ? pathByID.get(source.path_id) : undefined
     if (source && sourcePath?.enabled !== false && sourcePath?.inbound_id === path.inbound_id) collapsedDirectSourceByPath.set(path.id, source)
   })
+  const sharedTopology = buildSharedProxyPathTopology(visiblePaths, data.proxy_path_steps || [])
+  const stepNodeID = (step: ProxyPathStep) => proxyPathStepNodeID(canonicalProxyPathStep(sharedTopology, step))
   const serverRoles = new Map<number, GraphServerRole>()
   const entryPathInfo = new Map<number, GraphEntryPathInfo>()
   const foreignPaths = foreignProxyPathsByServer(data, rootID)
@@ -10874,7 +10879,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     if (collapsedDirectSourceByPath.has(path.id)) return
     ;(stepsByPath.get(path.id) || []).forEach(step => {
       if (step.node_type === 'warp') return
-      const nodeID = proxyPathStepNodeID(step)
+      const nodeID = stepNodeID(step)
       if (nodeID) addContinuation(nodeID, step, path)
     })
   })
@@ -10945,34 +10950,45 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     nodes.push({ id, className: 'graph-node imported-graph-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity: { type: 'imported', id: x.id, label: x.name || `导入节点 ${x.id}` } as GraphEntity, label: <GraphNode kind="导入节点" title={x.name} meta={`${labelProtocol(x.protocol)} · ${formatHostPort(x.target_address, x.target_port)} · ${x.expose_to_users ? '可订阅' : '订阅隐藏'}`} pathHandles={continuationByNode.get(id) || []} /> } })
   })
   let pathStepNodeIndex = 0
+  const renderedStepNodeIDs = new Set<string>()
   visiblePaths.forEach(path => {
     if (collapsedDirectSourceByPath.has(path.id)) return
     const pathSteps = (stepsByPath.get(path.id) || []).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
     pathSteps.forEach(step => {
-      const id = proxyPathStepNodeID(step)
-      if (!id) return
+      const canonicalStep = canonicalProxyPathStep(sharedTopology, step)
+      const id = proxyPathStepNodeID(canonicalStep)
+      if (!id || renderedStepNodeIDs.has(id)) return
+      renderedStepNodeIDs.add(id)
+      const canonicalPath = pathByID.get(canonicalStep.path_id) || path
+      const canonicalPathSteps = (stepsByPath.get(canonicalPath.id) || []).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
+      const sharedSteps = sharedTopology.stepsByCanonicalID.get(canonicalStep.id) || [canonicalStep]
+      const sharedCount = sharedSteps.length
+      const sharedTerminal = sharedSteps.every(member => {
+        const memberSteps = stepsByPath.get(member.path_id) || []
+        return member === memberSteps[memberSteps.length - 1]
+      })
       const stepIndex = pathStepNodeIndex++
       const position = positions[id] || defaultServerGraphPosition(visibleServers.length + canvasServerInstances.length + stepIndex)
-      const entity = { type: 'proxy-path-step', id: step.id, path_id: path.id, label: `${path.name || `代理路径 ${path.id}`} / 第 ${step.position} 跳` } as GraphEntity
-      if (step.node_type === 'warp') {
-        const serverID = graphWARPServerID(path, pathSteps, step, inboundByID)
+      const entity = { type: 'proxy-path-step', id: canonicalStep.id, path_id: canonicalPath.id, label: `${canonicalPath.name || `代理路径 ${canonicalPath.id}`} / 第 ${canonicalStep.position} 跳` } as GraphEntity
+      if (canonicalStep.node_type === 'warp') {
+        const serverID = graphWARPServerID(canonicalPath, canonicalPathSteps, canonicalStep, inboundByID)
         const server = (data.servers || []).find((item: Server) => item.id === serverID) as Server | undefined
         const profile = (data.warp_profiles || []).find((item: WARPProfile) => item.server_id === serverID) as WARPProfile | undefined
         const status = profile?.status || 'needed'
-		nodes.push({ id, className: `graph-node warp-graph-node proxy-path-instance-node status-${status}`, position, style: { width: 220 }, data: { entity, label: <WARPGraphNode connected title="WARP" meta={`${server?.name || `服务器 ${serverID}`} · ${labelValue(status)}`} exitRegion={step === pathSteps[pathSteps.length - 1] ? { code: path.effective_exit_region_code, status: path.exit_region_status } : undefined} /> } })
+        nodes.push({ id, className: `graph-node warp-graph-node proxy-path-instance-node status-${status}`, position, style: { width: 220 }, data: { entity, label: <WARPGraphNode connected title="WARP" meta={`${server?.name || `服务器 ${serverID}`} · ${labelValue(status)}`} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
         return
       }
-      if (step.node_type === 'imported' && step.external_outbound_id) {
-        const imported = (data.external_outbounds || []).find((item: ExternalOutbound) => item.id === step.external_outbound_id) as ExternalOutbound | undefined
+      if (canonicalStep.node_type === 'imported' && canonicalStep.external_outbound_id) {
+        const imported = (data.external_outbounds || []).find((item: ExternalOutbound) => item.id === canonicalStep.external_outbound_id) as ExternalOutbound | undefined
         if (!imported) return
-		nodes.push({ id, className: 'graph-node imported-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="导入节点" title={imported.name} meta={`${labelProtocol(imported.protocol)} · ${formatHostPort(imported.target_address, imported.target_port)} · 路径 ${path.id}`} pathHandles={continuationByNode.get(id) || []} exitRegion={step === pathSteps[pathSteps.length - 1] ? { code: path.effective_exit_region_code, status: path.exit_region_status } : undefined} /> } })
+        nodes.push({ id, className: 'graph-node imported-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="导入节点" title={imported.name} meta={`${labelProtocol(imported.protocol)} · ${formatHostPort(imported.target_address, imported.target_port)} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : `路径 ${canonicalPath.id}`}`} pathHandles={continuationByNode.get(id) || []} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
         return
       }
-      const serverID = graphStepServerID(step, inboundByID)
+      const serverID = graphStepServerID(canonicalStep, inboundByID)
       const server = (data.servers || []).find((item: Server) => item.id === serverID) as Server | undefined
       if (!server) return
-		  const pathSources = continuationByNode.get(id) || []
-		  nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, sourceOptions: graphServerSourceOptions([], pathSources), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · 路径 ${path.id}`} pathHandles={pathSources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} exitRegion={step === pathSteps[pathSteps.length - 1] ? { code: path.effective_exit_region_code, status: path.exit_region_status } : undefined} /> } })
+      const pathSources = continuationByNode.get(id) || []
+      nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, sourceOptions: graphServerSourceOptions([], pathSources), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : `路径 ${canonicalPath.id}`}`} pathHandles={pathSources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
     })
   })
   const directPaths = visiblePaths.filter(path => path.kind === 'direct')
@@ -10982,9 +10998,9 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const pathSteps = (stepsByPath.get(path.id) || []).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
     const collapsedSource = collapsedDirectSourceByPath.get(path.id)
     const sourceNodeID = collapsedSource
-      ? proxyPathStepNodeID(collapsedSource)
+      ? stepNodeID(collapsedSource)
       : pathSteps.length
-        ? proxyPathStepNodeID(pathSteps[pathSteps.length - 1])
+        ? stepNodeID(pathSteps[pathSteps.length - 1])
         : `server-${root.server_id}`
     const sourcePosition = positions[sourceNodeID] || nodes.find(node => node.id === sourceNodeID)?.position || defaultServerGraphPosition(index)
     const exitServerID = pathSteps.length ? graphStepServerID(pathSteps[pathSteps.length - 1], inboundByID) : root.server_id
@@ -11023,29 +11039,34 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const position = positions[id] || { x: rootPosition.x + index * 240, y: rootPosition.y + 300 }
     nodes.push({ id, className: 'graph-node warp-graph-node canvas-warp-node', position, style: { width: 220 }, data: { entity: { type: 'warp', id: 0, label: 'WARP 出口', node_id: id } as GraphEntity, label: <WARPGraphNode title="WARP" meta="未连接" /> } })
   })
+  const renderedPathEdges = new Set<string>()
   visiblePaths.forEach(path => {
     const root = inboundByID.get(path.inbound_id)
     if (!root) return
     const pathSteps = (stepsByPath.get(path.id) || []).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
     const collapsedSource = collapsedDirectSourceByPath.get(path.id)
-    let source = collapsedSource ? proxyPathStepNodeID(collapsedSource) : `server-${root.server_id}`
-	    let sourceHandle: string | undefined = collapsedSource ? pathStepHandleID(collapsedSource.id) : serverEntryHandleID(root.id)
+    let source = collapsedSource ? stepNodeID(collapsedSource) : `server-${root.server_id}`
+    let sourceHandle: string | undefined = collapsedSource ? pathStepHandleID(collapsedSource.id) : serverEntryHandleID(root.id)
     if (!collapsedSource) pathSteps.forEach((step, index) => {
-      const target = proxyPathStepNodeID(step)
+      const target = stepNodeID(step)
       if (!target) return
       const transport = proxyPathTransportPresentation(step)
-      edges.push(graphTransportEdge(
-        `proxy-path-${path.id}-${step.id}`,
-        source,
-        target,
-        {
-          entity: { type: 'proxy-path-step', id: step.id, path_id: path.id, label: `${path.name || `代理路径 ${path.id}`} / 第 ${step.position} 跳` },
-          kind: transport.kind,
-          title: transport.title,
-          detail: index === 0 ? (path.name || root.name || `路径 ${path.id}`) : `第 ${step.position} 跳`,
-        },
-        { sourceHandle, targetHandle: 'target-top', animated: path.enabled !== false },
-      ))
+      const sharedEdgeKey = `${source}\u001f${target}\u001f${transport.kind}`
+      if (!renderedPathEdges.has(sharedEdgeKey)) {
+        renderedPathEdges.add(sharedEdgeKey)
+        edges.push(graphTransportEdge(
+          `proxy-path-${path.id}-${step.id}`,
+          source,
+          target,
+          {
+            entity: { type: 'proxy-path-step', id: step.id, path_id: path.id, label: `${path.name || `代理路径 ${path.id}`} / 第 ${step.position} 跳` },
+            kind: transport.kind,
+            title: transport.title,
+            detail: index === 0 ? (path.name || root.name || `路径 ${path.id}`) : `第 ${step.position} 跳`,
+          },
+          { sourceHandle, targetHandle: 'target-top', animated: path.enabled !== false },
+        ))
+      }
       source = target
       sourceHandle = pathStepHandleID(step.id)
     })
@@ -11087,7 +11108,21 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       detail: x.listen_port ? `本地端口 ${x.listen_port}` : (x.target_endpoint || x.name),
     }, { animated: x.enabled !== false, targetHandle: 'target-top' }))
   })
-  return { nodes: nodes.map(node => ({ ...node, type: 'proxyGraphNode' })), edges }
+  const routeOffsets = graphBranchRouteOffsets(
+    edges.map(edge => ({ id: edge.id, source: edge.source, target: edge.target, auxiliary: Boolean(edge.data?.auxiliary) })),
+    targetID => {
+      const target = nodes.find(node => node.id === targetID)
+      const width = target?.width || Number.parseFloat(String(target?.style?.width || '')) || GRAPH_ENTRY_NODE_WIDTH
+      return (target?.position.x || 0) + width / 2
+    },
+  )
+  return {
+    nodes: nodes.map(node => ({ ...node, type: 'proxyGraphNode' })),
+    edges: edges.map(edge => {
+      const routeOffset = routeOffsets.get(edge.id)
+      return routeOffset === undefined ? edge : { ...edge, data: { ...edge.data, routeOffset } }
+    }),
+  }
 }
 
 // Label of the node that feeds this step, so the transport preview reads as an
@@ -11295,6 +11330,7 @@ function GraphNode({
   const entryProbeTone = /正常|可用|成功|在线/.test(entryProbe) ? 'ok' : /异常|失败|不可用/.test(entryProbe) ? 'danger' : 'neutral'
   const independentSourceCount = entryHandles.length + pathHandles.length
   const hasBatchSource = isServer && independentSourceCount > 1
+  const showSourceLabels = independentSourceCount <= 6
   return (
     <div className={`rf-node-custom graph-card-${variant}`}>
       {/* Handles */}
@@ -11305,7 +11341,7 @@ function GraphNode({
         return <React.Fragment key={entry.id}>
           <Handle id={serverEntryTargetHandleID(entry.id)} className="connect-handle connect-target server-entry-target-handle" type="target" position={Position.Top} style={{ left }} />
           <Handle id={serverEntryHandleID(entry.id)} className="connect-handle connect-source server-entry-source-handle" type="source" position={Position.Bottom} style={{ left }} title={`${entry.title} / ${entry.label}`} />
-          <span className="server-entry-source-label" style={{ left }} title={`${entry.title} / ${entry.label}`}>{entry.label}</span>
+          {showSourceLabels && <span className="server-entry-source-label" style={{ left }} title={`${entry.title} / ${entry.label}`}>{entry.label}</span>}
         </React.Fragment>
       })}
       {pathHandles.map((path, index) => {
@@ -11313,7 +11349,7 @@ function GraphNode({
         return (
           <React.Fragment key={path.step_id}>
             <Handle id={pathStepHandleID(path.step_id)} className="connect-handle connect-source path-step-source-handle" type="source" position={Position.Bottom} style={{ left }} />
-            <span className="path-step-source-label" style={{ left }} title={path.title}>{path.label}</span>
+            {showSourceLabels && <span className="path-step-source-label" style={{ left }} title={path.title}>{path.label}</span>}
           </React.Fragment>
         )
 	  })}
@@ -11413,29 +11449,34 @@ function autoLayoutProxyGraphPositions(
     list.push(step)
     stepsByPath.set(step.path_id, list)
   })
-	const stepByID = new Map<number, ProxyPathStep>(((data.proxy_path_steps || []) as ProxyPathStep[]).map(step => [step.id, step]))
-	const pathByID = new Map<number, ProxyPath>(((data.proxy_paths || []) as ProxyPath[]).map(path => [path.id, path]))
-
-  ;(data.proxy_paths || []).forEach((path: ProxyPath) => {
-    if (path.enabled === false) return
+  const stepByID = new Map<number, ProxyPathStep>(((data.proxy_path_steps || []) as ProxyPathStep[]).map(step => [step.id, step]))
+  const pathByID = new Map<number, ProxyPath>(((data.proxy_paths || []) as ProxyPath[]).map(path => [path.id, path]))
+  const visiblePaths = ((data.proxy_paths || []) as ProxyPath[]).filter(path => {
     const root = inboundByID.get(path.inbound_id)
-    if (!root || root.server_id !== rootID) return
-	  const branchSource = path.kind === 'direct' && path.branch_source_step_id
-	    ? stepByID.get(path.branch_source_step_id)
-	    : undefined
-	  const branchSourcePath = branchSource ? pathByID.get(branchSource.path_id) : undefined
-	  const collapsedSource = branchSource && branchSourcePath?.enabled !== false && branchSourcePath?.inbound_id === path.inbound_id
-	    ? branchSource
-	    : undefined
-	  let previousNodeID = collapsedSource ? proxyPathStepNodeID(collapsedSource) : `server-${root.server_id}`
+    return path.enabled !== false && root?.server_id === rootID
+  })
+  const sharedTopology = buildSharedProxyPathTopology(visiblePaths, data.proxy_path_steps || [])
+  const stepNodeID = (step: ProxyPathStep) => proxyPathStepNodeID(canonicalProxyPathStep(sharedTopology, step))
+
+  visiblePaths.forEach(path => {
+    const root = inboundByID.get(path.inbound_id)
+    if (!root) return
+    const branchSource = path.kind === 'direct' && path.branch_source_step_id
+      ? stepByID.get(path.branch_source_step_id)
+      : undefined
+    const branchSourcePath = branchSource ? pathByID.get(branchSource.path_id) : undefined
+    const collapsedSource = branchSource && branchSourcePath?.enabled !== false && branchSourcePath?.inbound_id === path.inbound_id
+      ? branchSource
+      : undefined
+    let previousNodeID = collapsedSource ? stepNodeID(collapsedSource) : `server-${root.server_id}`
     const pathSteps = (stepsByPath.get(path.id) || []).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
-	if (!collapsedSource) pathSteps.forEach(step => {
-      const nextNodeID = proxyPathStepNodeID(step)
+    if (!collapsedSource) pathSteps.forEach(step => {
+      const nextNodeID = stepNodeID(step)
       if (!nextNodeID) return
       addLayoutHop(previousNodeID, nextNodeID)
       previousNodeID = nextNodeID
     })
-	if (path.kind === 'direct') addLayoutHop(previousNodeID, directExitPathNodeID(path.id))
+    if (path.kind === 'direct') addLayoutHop(previousNodeID, directExitPathNodeID(path.id))
   })
 
   // Calculate hop depth across both controlled servers and imported proxies so

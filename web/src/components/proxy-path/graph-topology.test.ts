@@ -1,0 +1,83 @@
+import { describe, expect, it } from 'vitest'
+import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphBranchRouteOffsets } from './graph-topology'
+import type { ProxyPath, ProxyPathStep } from './types'
+
+const path = (id: number, inboundID = 10): ProxyPath => ({
+  id,
+  inbound_id: inboundID,
+  kind: 'chain',
+  name: `path-${id}`,
+  name_mode: 'auto',
+  name_template: [],
+  exit_region_mode: 'auto',
+  exit_region_code: '',
+  enabled: true,
+})
+
+const step = (id: number, pathID: number, position: number, serverID: number, configJSON = '{}'): ProxyPathStep => ({
+  id,
+  path_id: pathID,
+  position,
+  node_type: 'server_inbound',
+  transport_mode: 'singbox',
+  server_id: serverID,
+  config_json: configJSON,
+})
+
+describe('proxy graph shared topology', () => {
+  it('renders an identical server prefix once before different branches', () => {
+    const hytronA = step(101, 1, 1, 20)
+    const hytronB = step(201, 2, 1, 20)
+    const warp: ProxyPathStep = { id: 102, path_id: 1, position: 2, node_type: 'warp', transport_mode: 'singbox', config_json: '{}' }
+    const nextServer = step(202, 2, 2, 30)
+    const topology = buildSharedProxyPathTopology([path(1), path(2)], [hytronA, warp, hytronB, nextServer])
+
+    expect(canonicalProxyPathStep(topology, hytronA).id).toBe(101)
+    expect(canonicalProxyPathStep(topology, hytronB).id).toBe(101)
+    expect(topology.stepsByCanonicalID.get(101)?.map(item => item.id)).toEqual([101, 201])
+    expect(canonicalProxyPathStep(topology, warp).id).toBe(102)
+    expect(canonicalProxyPathStep(topology, nextServer).id).toBe(202)
+  })
+
+  it('does not merge matching steps from different entry nodes', () => {
+    const left = step(101, 1, 1, 20)
+    const right = step(201, 2, 1, 20)
+    const topology = buildSharedProxyPathTopology([path(1, 10), path(2, 11)], [left, right])
+
+    expect(canonicalProxyPathStep(topology, left).id).toBe(101)
+    expect(canonicalProxyPathStep(topology, right).id).toBe(201)
+  })
+
+  it('treats equivalent structured config as the same prefix', () => {
+    const left = step(101, 1, 1, 20, '{"method":"a","nested":{"b":2,"a":1}}')
+    const right = step(201, 2, 1, 20, '{"nested":{"a":1,"b":2},"method":"a"}')
+    const topology = buildSharedProxyPathTopology([path(1), path(2)], [left, right])
+
+    expect(canonicalProxyPathStep(topology, right).id).toBe(101)
+  })
+
+  it('keeps route offsets stable in visual target order', () => {
+    const offsets = graphBranchRouteOffsets([
+      { id: 'right', source: 'shared', target: 'warp' },
+      { id: 'left', source: 'shared', target: 'hytron' },
+      { id: 'other', source: 'other', target: 'leaf' },
+    ], nodeID => ({ hytron: 100, warp: 500, leaf: 0 }[nodeID] || 0))
+
+    expect(offsets.get('left')).toBe(-10)
+    expect(offsets.get('right')).toBe(10)
+    expect(offsets.has('other')).toBe(false)
+  })
+
+  it('bounds route tracks when one shared node has many branches', () => {
+    const edges = Array.from({ length: 47 }, (_, index) => ({
+      id: `edge-${index}`,
+      source: 'shared',
+      target: `target-${index}`,
+    }))
+    const offsets = graphBranchRouteOffsets(edges, nodeID => Number(nodeID.slice(7)))
+    const values = Array.from(offsets.values())
+
+    expect(Math.min(...values)).toBe(-90)
+    expect(Math.max(...values)).toBe(90)
+  })
+})
