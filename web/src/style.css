@@ -3261,6 +3261,12 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .proxy-matrix-summary-target strong { margin: 0; }
 .proxy-matrix-summary-target small { color: var(--muted); font-size: 9px; }
+.proxy-matrix-summary-target:hover {
+  background: var(--surface-2);
+  color: inherit;
+  transform: none;
+}
+.proxy-matrix-summary-target:active { transform: none; }
 
 .proxy-matrix-summary-status,
 .proxy-matrix-server-state {
