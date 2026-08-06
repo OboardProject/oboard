@@ -16,6 +16,10 @@ type Artifact struct {
 	Size   int64  `json:"size"`
 }
 
+type ChannelRequest struct {
+	Channel string `json:"channel"`
+}
+
 type Manifest struct {
 	Schema    int        `json:"schema"`
 	Channel   string     `json:"channel"`

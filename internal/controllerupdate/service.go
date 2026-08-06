@@ -224,6 +224,7 @@ func (s *Service) Serve(ctx context.Context) error {
 	mux.HandleFunc("/v1/check", s.handleCheck)
 	mux.HandleFunc("/v1/install", s.handleInstall)
 	mux.HandleFunc("/v1/cancel", s.handleCancel)
+	mux.HandleFunc("/v1/channel", s.handleChannel)
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { <-ctx.Done(); _ = server.Close() }()
 	err = server.Serve(listener)
@@ -338,6 +339,60 @@ func (s *Service) handleCancel(w http.ResponseWriter, r *http.Request) {
 	status.State = "cancelling"
 	status.CanCancel = false
 	status.LastError = ""
+	if err := s.saveStatus(status); err != nil {
+		status.LastError = err.Error()
+		writeStatus(w, http.StatusInternalServerError, status)
+		return
+	}
+	writeStatus(w, http.StatusOK, status)
+}
+
+func (s *Service) handleChannel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request ChannelRequest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 4<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	channel := strings.ToLower(strings.TrimSpace(request.Channel))
+	if channel != "dev" && channel != "stable" {
+		http.Error(w, "invalid channel", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status := s.decorateStatus(s.status)
+	if isTransientUpdateState(status.State) {
+		status.LastError = "正在检查或安装更新，不能切换更新通道。"
+		writeStatus(w, http.StatusConflict, status)
+		return
+	}
+	if status.Channel == channel {
+		writeStatus(w, http.StatusOK, status)
+		return
+	}
+	if err := s.setUpdateChannel(channel); err != nil {
+		status.LastError = err.Error()
+		_ = s.saveStatus(status)
+		writeStatus(w, http.StatusInternalServerError, status)
+		return
+	}
+	status.Channel = channel
+	status.Available = BuildInfo{}
+	status.UpdateAvailable = false
+	status.State = "idle"
+	status.LastError = ""
+	status.CanCancel = false
 	if err := s.saveStatus(status); err != nil {
 		status.LastError = err.Error()
 		writeStatus(w, http.StatusInternalServerError, status)
@@ -653,6 +708,79 @@ func readEnv(path string) (map[string]string, error) {
 		}
 	}
 	return result, nil
+}
+
+func (s *Service) setUpdateChannel(channel string) error {
+	const key = "OBOARD_UPDATE_CHANNEL="
+	dir := filepath.Dir(s.config.BinaryEnvPath)
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("open controller configuration directory: %w", err)
+		}
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return fmt.Errorf("create controller configuration directory: %w", err)
+		}
+		root, err = os.OpenRoot(dir)
+		if err != nil {
+			return fmt.Errorf("open controller configuration directory: %w", err)
+		}
+	}
+	defer root.Close()
+	name := filepath.Base(s.config.BinaryEnvPath)
+	var lines []string
+	if info, statErr := root.Lstat(name); statErr == nil {
+		if !info.Mode().IsRegular() {
+			return errors.New("controller environment file must be a regular file")
+		}
+		data, readErr := root.ReadFile(name)
+		if readErr != nil {
+			return fmt.Errorf("read controller environment file: %w", readErr)
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, key) {
+				continue
+			}
+			lines = append(lines, line)
+		}
+	} else if !os.IsNotExist(statErr) {
+		return fmt.Errorf("inspect controller environment file: %w", statErr)
+	}
+	content := strings.Join(lines, "\n")
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	content += key + strconv.Quote(channel) + "\n"
+	tempName := name + ".channel.tmp"
+	temp, err := root.OpenFile(tempName, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create controller environment file: %w", err)
+	}
+	removeTemp := func() {
+		_ = temp.Close()
+		_ = root.Remove(tempName)
+	}
+	if err := temp.Chmod(0o600); err != nil {
+		removeTemp()
+		return fmt.Errorf("secure controller environment file: %w", err)
+	}
+	if _, err := temp.WriteString(content); err != nil {
+		removeTemp()
+		return fmt.Errorf("write controller environment file: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		removeTemp()
+		return fmt.Errorf("sync controller environment file: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		_ = root.Remove(tempName)
+		return fmt.Errorf("close controller environment file: %w", err)
+	}
+	if err := root.Rename(tempName, name); err != nil {
+		_ = root.Remove(tempName)
+		return fmt.Errorf("publish controller environment file: %w", err)
+	}
+	return nil
 }
 
 func writeStatus(w http.ResponseWriter, code int, status Status) {

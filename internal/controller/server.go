@@ -222,6 +222,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/settings", s.auth(s.settings, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update", s.auth(s.controllerUpdate, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/check", s.auth(s.controllerUpdateCheck, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/controller-update/channel", s.auth(s.controllerUpdateChannel, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/install", s.auth(s.controllerUpdateInstall, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/cancel", s.auth(s.controllerUpdateCancel, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups", s.auth(s.controllerBackups, model.RoleAdmin))

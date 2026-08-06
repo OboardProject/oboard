@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,14 +150,14 @@ func TestMatchingBuildStopsStaleUpdateProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldVersion, oldBuild, oldCommit, oldDate := version.Version, version.Build, version.Commit, version.Date
-	version.Version, version.Build, version.Commit, version.Date = "dev", "build-42", "commit-42", "2026-07-28T00:00:00Z"
+	version.Version, version.Build, version.Commit, version.Date = "dev", "20260701000000", "commit-42", "2026-07-28T00:00:00Z"
 	t.Cleanup(func() {
 		version.Version, version.Build, version.Commit, version.Date = oldVersion, oldBuild, oldCommit, oldDate
 	})
 	service := NewService(ServiceConfig{BinaryEnvPath: binaryEnv, ControllerBinary: binary, StatePath: filepath.Join(root, "status.json")})
 	service.status = Status{
 		Channel: "dev", State: "downloading", UpdateAvailable: true, CanCancel: true,
-		Available: BuildInfo{Version: "dev", Build: "build-42", Commit: "commit-42", Date: "2026-07-28T00:00:00Z"},
+		Available: BuildInfo{Version: "dev", Build: "20260701000000", Commit: "commit-42", Date: "2026-07-28T00:00:00Z"},
 	}
 	status := service.decorateStatus(service.status)
 	if status.State != "current" || status.UpdateAvailable || status.CanCancel {
@@ -190,6 +191,155 @@ func TestMatchingStableVersionStopsStaleUpdateProgress(t *testing.T) {
 	}
 }
 
+func TestChannelSwitchRewritesEnvironmentFile(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "oboard-controller")
+	if err := os.WriteFile(binary, []byte("controller"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binaryEnv := filepath.Join(root, "controller.env")
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_ADDR=:1\nOBOARD_UPDATE_CHANNEL=stable\nOBOARD_DB=/data/oboard.sqlite\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(ServiceConfig{BinaryEnvPath: binaryEnv, ControllerBinary: binary, StatePath: filepath.Join(root, "status.json")})
+
+	recorder := httptest.NewRecorder()
+	service.handleChannel(recorder, httptest.NewRequest(http.MethodPost, "/v1/channel", strings.NewReader(`{"channel":"dev"}`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("channel switch response=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var status Status
+	if err := json.Unmarshal(recorder.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Channel != "dev" || status.State != "idle" || status.UpdateAvailable || status.Available.Version != "" || status.LastError != "" {
+		t.Fatalf("unexpected switched status: %#v", status)
+	}
+	data, err := os.ReadFile(binaryEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `OBOARD_UPDATE_CHANNEL="dev"`) {
+		t.Fatalf("channel not persisted in environment file: %s", text)
+	}
+	if strings.Count(text, "OBOARD_UPDATE_CHANNEL=") != 1 || !strings.Contains(text, "OBOARD_ADDR=:1") || !strings.Contains(text, "OBOARD_DB=/data/oboard.sqlite") {
+		t.Fatalf("environment file lines were not preserved: %s", text)
+	}
+	info, err := os.Stat(binaryEnv)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("environment file mode = %v, err=%v", info.Mode(), err)
+	}
+}
+
+func TestChannelSwitchValidationAndPinned(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "oboard-controller")
+	if err := os.WriteFile(binary, []byte("controller"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binaryEnv := filepath.Join(root, "controller.env")
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_UPDATE_CHANNEL=pinned\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(ServiceConfig{BinaryEnvPath: binaryEnv, ControllerBinary: binary, StatePath: filepath.Join(root, "status.json")})
+
+	for _, body := range []string{`{"channel":"pinned"}`, `{"channel":"latest"}`, `{"channel":123}`, `{"channel":"dev","extra":1}`, `not json`} {
+		recorder := httptest.NewRecorder()
+		service.handleChannel(recorder, httptest.NewRequest(http.MethodPost, "/v1/channel", strings.NewReader(body)))
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("invalid request %q response=%d body=%s", body, recorder.Code, recorder.Body.String())
+		}
+	}
+
+	recorder := httptest.NewRecorder()
+	service.handleChannel(recorder, httptest.NewRequest(http.MethodPost, "/v1/channel", strings.NewReader(`{"channel":"stable"}`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("pinned channel switch response=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	data, err := os.ReadFile(binaryEnv)
+	if err != nil || !strings.Contains(string(data), `OBOARD_UPDATE_CHANNEL="stable"`) {
+		t.Fatalf("pinned channel was not switched: %q, %v", data, err)
+	}
+	var status Status
+	if err := json.Unmarshal(recorder.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Channel != "stable" || status.State != "idle" {
+		t.Fatalf("unexpected switched status: %#v", status)
+	}
+
+	service.status = Status{State: "available", UpdateAvailable: true, Available: BuildInfo{Version: "9.9.9", Build: "20260801000000", Commit: "next"}}
+	recorder = httptest.NewRecorder()
+	service.handleChannel(recorder, httptest.NewRequest(http.MethodPost, "/v1/channel", strings.NewReader(`{"channel":"stable"}`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("same-channel switch response=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if !status.UpdateAvailable || status.Available.Version != "9.9.9" || status.State != "available" {
+		t.Fatalf("same-channel switch reset update state: %#v", status)
+	}
+}
+
+func TestChannelSwitchRejectsTransientState(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "oboard-controller")
+	if err := os.WriteFile(binary, []byte("controller"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binaryEnv := filepath.Join(root, "controller.env")
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_UPDATE_CHANNEL=stable\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(ServiceConfig{BinaryEnvPath: binaryEnv, ControllerBinary: binary, StatePath: filepath.Join(root, "status.json")})
+
+	for _, state := range []string{"checking", "downloading", "ready", "installing", "cancelling"} {
+		t.Run(state, func(t *testing.T) {
+			service.status = Status{State: state, UpdateAvailable: true, CanCancel: state == "downloading" || state == "ready"}
+			recorder := httptest.NewRecorder()
+			service.handleChannel(recorder, httptest.NewRequest(http.MethodPost, "/v1/channel", strings.NewReader(`{"channel":"dev"}`)))
+			if recorder.Code != http.StatusConflict {
+				t.Fatalf("%s channel switch response=%d body=%s", state, recorder.Code, recorder.Body.String())
+			}
+			var status Status
+			if err := json.Unmarshal(recorder.Body.Bytes(), &status); err != nil {
+				t.Fatal(err)
+			}
+			if status.LastError == "" {
+				t.Fatalf("%s switch did not report an error", state)
+			}
+			data, err := os.ReadFile(binaryEnv)
+			if err != nil || !strings.Contains(string(data), "OBOARD_UPDATE_CHANNEL=stable") {
+				t.Fatalf("%s switch changed the environment file: %q, %v", state, data, err)
+			}
+		})
+	}
+}
+
+func TestChannelSwitchCreatesMissingEnvironmentFile(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "oboard-controller")
+	if err := os.WriteFile(binary, []byte("controller"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(ServiceConfig{
+		BinaryEnvPath:    filepath.Join(root, "config", "controller.env"),
+		ControllerBinary: binary,
+		StatePath:        filepath.Join(root, "status.json"),
+	})
+	recorder := httptest.NewRecorder()
+	service.handleChannel(recorder, httptest.NewRequest(http.MethodPost, "/v1/channel", strings.NewReader(`{"channel":"stable"}`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("channel switch response=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	data, err := os.ReadFile(filepath.Join(root, "config", "controller.env"))
+	if err != nil || !strings.Contains(string(data), `OBOARD_UPDATE_CHANNEL="stable"`) {
+		t.Fatalf("environment file was not created: %q, %v", data, err)
+	}
+}
+
 func TestCancelBeforeInstallation(t *testing.T) {
 	root := t.TempDir()
 	binary := filepath.Join(root, "oboard-controller")
@@ -200,13 +350,18 @@ func TestCancelBeforeInstallation(t *testing.T) {
 	if err := os.WriteFile(binaryEnv, []byte("OBOARD_UPDATE_CHANNEL=dev\nOBOARD_ADDR=:1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	oldVersion, oldBuild, oldCommit, oldDate := version.Version, version.Build, version.Commit, version.Date
+	version.Version, version.Build, version.Commit, version.Date = "dev", "20260701000000", "commit-old", "2026-07-28T00:00:00Z"
+	t.Cleanup(func() {
+		version.Version, version.Build, version.Commit, version.Date = oldVersion, oldBuild, oldCommit, oldDate
+	})
 	service := NewService(ServiceConfig{BinaryEnvPath: binaryEnv, ControllerBinary: binary, StatePath: filepath.Join(root, "status.json")})
 
 	for _, state := range []string{"downloading", "ready"} {
 		t.Run(state, func(t *testing.T) {
 			installCtx, cancelInstall := context.WithCancel(context.Background())
 			service.installCancel = cancelInstall
-			service.status = Status{State: state, UpdateAvailable: true, CanCancel: true, Available: BuildInfo{Version: "dev", Build: "next", Commit: "next"}}
+			service.status = Status{State: state, UpdateAvailable: true, CanCancel: true, Available: BuildInfo{Version: "dev", Build: "20260802000000", Commit: "next"}}
 			recorder := httptest.NewRecorder()
 			service.handleCancel(recorder, httptest.NewRequest(http.MethodPost, "/v1/cancel", nil))
 			if recorder.Code != http.StatusOK || service.status.State != "cancelling" || service.status.CanCancel {
@@ -227,7 +382,7 @@ func TestCancelBeforeInstallation(t *testing.T) {
 	installCtx, cancelInstall := context.WithCancel(context.Background())
 	defer cancelInstall()
 	service.installCancel = cancelInstall
-	service.status = Status{State: "installing", UpdateAvailable: true, CanCancel: false, Available: BuildInfo{Version: "dev", Build: "next", Commit: "next"}}
+	service.status = Status{State: "installing", UpdateAvailable: true, CanCancel: false, Available: BuildInfo{Version: "dev", Build: "20260802000000", Commit: "next"}}
 	recorder := httptest.NewRecorder()
 	service.handleCancel(recorder, httptest.NewRequest(http.MethodPost, "/v1/cancel", nil))
 	if recorder.Code != http.StatusConflict || service.status.State != "installing" {
@@ -250,6 +405,11 @@ func TestPrepareInstallationPublishesCancellableReadyWindowAndInstallingGrace(t 
 	if err := os.WriteFile(binaryEnv, []byte("OBOARD_UPDATE_CHANNEL=dev\nOBOARD_ADDR=:1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	oldVersion, oldBuild, oldCommit, oldDate := version.Version, version.Build, version.Commit, version.Date
+	version.Version, version.Build, version.Commit, version.Date = "dev", "20260701000000", "commit-old", "2026-07-28T00:00:00Z"
+	t.Cleanup(func() {
+		version.Version, version.Build, version.Commit, version.Date = oldVersion, oldBuild, oldCommit, oldDate
+	})
 	service := NewService(ServiceConfig{
 		BinaryEnvPath:    binaryEnv,
 		ControllerBinary: binary,
@@ -270,7 +430,7 @@ func TestPrepareInstallationPublishesCancellableReadyWindowAndInstallingGrace(t 
 		delays = append(delays, delay)
 		return nil
 	}
-	available := BuildInfo{Version: "dev", Build: "next-build", Commit: "next-commit"}
+	available := BuildInfo{Version: "dev", Build: "20260802000000", Commit: "next-commit"}
 	status, err := service.prepareInstallation(ctx, available)
 	if err != nil {
 		t.Fatal(err)

@@ -3920,6 +3920,9 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   }, [snapshot.status, installExpected])
   const check = async () => {
     if (working) return
+    await performCheck()
+  }
+  const performCheck = async () => {
     setWorking('check')
     try {
       const result = await client.request('/controller-update/check', { method: 'POST' }) as ControllerUpdateStatus
@@ -3930,6 +3933,29 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     } finally {
       setWorking('')
     }
+  }
+  const switchChannel = async (channel: 'stable' | 'dev') => {
+    if (working || snapshot.channel === channel || updateInProgress || snapshot.status === 'checking' || snapshot.status === 'unavailable') return
+    const switchingToDev = channel === 'dev'
+    const confirmed = await dialogs.confirm({
+      title: switchingToDev ? '切换到开发版通道？' : '切换到正式版通道？',
+      message: switchingToDev ? '开发版更新频繁，可能包含尚未稳定的功能。切换后只会安装比当前版本更高的版本。' : '正式版更新更稳定。切换后只会安装比当前版本更高的版本。',
+      confirmText: '确认切换',
+    })
+    if (!confirmed) return
+    setWorking('channel')
+    try {
+      const result = await client.request('/controller-update/channel', { method: 'POST', body: JSON.stringify({ channel }) }) as ControllerUpdateStatus
+      setSnapshot(result)
+      notify?.(switchingToDev ? '已切换到开发版通道' : '已切换到正式版通道', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+      await refresh(true)
+      return
+    } finally {
+      setWorking('')
+    }
+    await performCheck()
   }
   const openInstall = () => {
     if (installExpected || isControllerUpdateInProgressStatus(snapshot.status)) {
@@ -4010,17 +4036,13 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       setWorking('')
     }
   }
-  const copyManualCommand = async () => {
-    if (!snapshot.manual_command) return
-    await navigator.clipboard.writeText(snapshot.manual_command)
-    notify?.('切换命令已复制', 'success')
-  }
   const labels: Record<string, string> = {
     loading: '读取中', idle: '等待检查', checking: '检查中', current: '已是最新', available: '可更新', downloading: '下载中', ready: '文件已准备好', installing: '安装中', cancelling: '正在中断', cancelled: '已中断', installed: '已安装', failed: '失败', unavailable: '更新器不可用', pinned: '固定版本',
   }
   const channelLabel = snapshot.channel === 'dev' ? '开发版' : snapshot.channel === 'stable' ? '正式版' : snapshot.channel === 'pinned' ? '固定版本' : '未知'
   const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || isControllerUpdateInProgressStatus(snapshot.status) ? 'warning' : 'ok'
   const updateInProgress = installExpected || isControllerUpdateInProgressStatus(snapshot.status)
+  const channelSelectDisabled = updateInProgress || snapshot.status === 'checking' || snapshot.status === 'unavailable'
   const expectedAgentVersion = String(data.version?.agent_expected_version || '').trim()
   const expectedAgentBuild = String(data.version?.agent_expected_build || '').trim()
   const expectedAgentLabel = expectedAgentVersion ? `${expectedAgentVersion}${expectedAgentBuild ? ` · 构建 ${expectedAgentBuild}` : ''}` : '暂无构建信息'
@@ -4047,6 +4069,15 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       <ArrowLeftRight size={18} />
       <div><span>最新版本</span><strong>{snapshot.available?.version || '尚未检查'}</strong><small>{snapshot.available?.build ? `构建 ${snapshot.available.build}` : '点击检查更新'}</small></div>
     </m.div>
+    <div className="controller-update-channel">
+      <span>更新通道</span>
+      <div className="controller-update-channel-toggle" role="radiogroup" aria-label="更新通道">
+        {(['stable', 'dev'] as const).map(option => {
+          const active = snapshot.channel === option
+          return <button key={option} type="button" role="radio" aria-checked={active} className={active ? 'active' : ''} disabled={Boolean(working) || channelSelectDisabled} onClick={() => void switchChannel(option)}>{option === 'dev' ? '开发版' : '正式版'}</button>
+        })}
+      </div>
+    </div>
     <div className="controller-update-meta">
       <span>主控配套 Agent<strong title={expectedAgentLabel}>{expectedAgentLabel}</strong></span>
       <span>上次检查<strong>{snapshot.last_checked_at ? formatDate(snapshot.last_checked_at) : '尚未检查'}</strong></span>
@@ -4054,8 +4085,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     </div>
     {snapshot.last_error && <div className="controller-update-error" role="alert">{snapshot.last_error}</div>}
     {snapshot.channel === 'pinned' ? <div className="controller-update-pinned">
-      <span>当前版本保持锁定。切换到正式版通道后，才能在面板内更新。</span>
-      <div><code>{snapshot.manual_command}</code><button type="button" className="ghost icon-button" onClick={() => void copyManualCommand()} title="复制切换命令" aria-label="复制切换命令"><Copy size={15} /></button></div>
+      <span>当前为固定版本安装。选择上方更新通道后，即可在面板内检查并安装更新。</span>
     </div> : <label className="check-row controller-update-toggle">
       <input type="checkbox" checked={snapshot.auto_update_enabled} disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress} onChange={event => void setAutoUpdate(event.target.checked)} />
       <span><strong>自动安装主控更新</strong><small>发现当前通道的新版本后，先备份数据库再安装。</small></span>

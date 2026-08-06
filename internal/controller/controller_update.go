@@ -2,8 +2,10 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -177,6 +179,42 @@ func (s *Server) controllerUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditReq(s, r, "check", "controller_update", status.Channel)
+	s.writeControllerUpdateStatus(w, r, status)
+}
+
+func (s *Server) controllerUpdateChannel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	var request controllerupdate.ChannelRequest
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	if err != nil {
+		fail(w, errors.New("读取请求失败"), http.StatusBadRequest)
+		return
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		fail(w, errors.New("请求格式不正确"), http.StatusBadRequest)
+		return
+	}
+	channel := strings.ToLower(strings.TrimSpace(request.Channel))
+	if channel != "dev" && channel != "stable" {
+		fail(w, errors.New("更新通道只能是 dev 或 stable"), http.StatusBadRequest)
+		return
+	}
+	s.controllerUpdateRunMu.Lock()
+	defer s.controllerUpdateRunMu.Unlock()
+	status, err := s.controllerUpdater.SetChannel(r.Context(), channel)
+	if err != nil {
+		var statusErr *controllerupdate.UpdaterStatusError
+		if errors.As(err, &statusErr) && statusErr.Code == http.StatusConflict {
+			fail(w, errors.New(statusErr.Status.LastError), http.StatusConflict)
+			return
+		}
+		fail(w, controllerUpdateOperationError("切换更新通道失败", status, err), http.StatusBadGateway)
+		return
+	}
+	auditReq(s, r, "channel", "controller_update", channel)
 	s.writeControllerUpdateStatus(w, r, status)
 }
 

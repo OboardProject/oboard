@@ -1,11 +1,14 @@
 package controllerupdate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -46,10 +49,29 @@ func (c *Client) Cancel(ctx context.Context) (Status, error) {
 	return c.call(ctx, http.MethodPost, "/v1/cancel")
 }
 
-func (c *Client) call(ctx context.Context, method, path string) (Status, error) {
-	req, err := http.NewRequestWithContext(ctx, method, "http://unix"+path, nil)
+func (c *Client) SetChannel(ctx context.Context, channel string) (Status, error) {
+	body, err := json.Marshal(ChannelRequest{Channel: channel})
 	if err != nil {
 		return Status{}, err
+	}
+	return c.callWithBody(ctx, http.MethodPost, "/v1/channel", body)
+}
+
+func (c *Client) call(ctx context.Context, method, path string) (Status, error) {
+	return c.callWithBody(ctx, method, path, nil)
+}
+
+func (c *Client) callWithBody(ctx context.Context, method, path string, body []byte) (Status, error) {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, "http://unix"+path, reader)
+	if err != nil {
+		return Status{}, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -61,10 +83,20 @@ func (c *Client) call(ctx context.Context, method, path string) (Status, error) 
 		return Status{}, fmt.Errorf("decode controller updater response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		if result.LastError != "" {
-			return result, fmt.Errorf("controller updater: %s", result.LastError)
-		}
-		return result, fmt.Errorf("controller updater returned HTTP %d", resp.StatusCode)
+		return result, &UpdaterStatusError{Code: resp.StatusCode, Status: result}
 	}
 	return result, nil
+}
+
+// UpdaterStatusError reports a non-200 response from the controller updater.
+type UpdaterStatusError struct {
+	Code   int
+	Status Status
+}
+
+func (e *UpdaterStatusError) Error() string {
+	if strings.TrimSpace(e.Status.LastError) != "" {
+		return "controller updater: " + e.Status.LastError
+	}
+	return fmt.Sprintf("controller updater returned HTTP %d", e.Code)
 }

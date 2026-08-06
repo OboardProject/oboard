@@ -18,8 +18,9 @@ import (
 const githubAPI = "https://api.github.com/repos/OboardProject/oboard/releases"
 
 var (
-	hashPattern    = regexp.MustCompile(`^[a-f0-9]{64}$`)
-	versionPattern = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:[-+].*)?$`)
+	hashPattern           = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	versionPattern        = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:[-+].*)?$`)
+	buildTimestampPattern = regexp.MustCompile(`^[0-9]{14}$`)
 )
 
 type releaseAsset struct {
@@ -181,17 +182,23 @@ func selectArtifact(manifest Manifest, osName, arch string) (Artifact, error) {
 }
 
 func updateAvailable(channel string, current BuildInfo, manifest Manifest) bool {
-	if channel == "dev" {
-		return current.Commit != manifest.Commit || current.Build != manifest.Build
+	if comparison, ok := compareVersions(current.Version, manifest.Version); ok {
+		if comparison != 0 {
+			return comparison < 0
+		}
+		return strings.Contains(current.Version, "-")
 	}
-	comparison, ok := compareVersions(current.Version, manifest.Version)
-	if !ok {
-		return strings.TrimSpace(current.Version) != strings.TrimSpace(manifest.Version)
+	currentBuild, currentOK := parseBuildTimestamp(current.Build)
+	manifestBuild, manifestOK := parseBuildTimestamp(manifest.Build)
+	return currentOK && manifestOK && manifestBuild > currentBuild
+}
+
+func parseBuildTimestamp(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if !buildTimestampPattern.MatchString(value) {
+		return "", false
 	}
-	if strings.Contains(current.Version, "-") && comparison == 0 {
-		return true
-	}
-	return comparison < 0
+	return value, true
 }
 
 func compareVersions(left, right string) (int, bool) {

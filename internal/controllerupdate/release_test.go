@@ -11,7 +11,7 @@ import (
 )
 
 func TestUpdateAvailableByChannel(t *testing.T) {
-	manifest := Manifest{Version: "1.2.0", Build: "22", Commit: "new"}
+	manifest := Manifest{Version: "1.2.0", Build: "20260801000000", Commit: "new"}
 	tests := []struct {
 		name, channel string
 		current       BuildInfo
@@ -21,9 +21,15 @@ func TestUpdateAvailableByChannel(t *testing.T) {
 		{"stable current", "stable", BuildInfo{Version: "1.2.0"}, false},
 		{"stable does not downgrade", "stable", BuildInfo{Version: "2.0.0"}, false},
 		{"stable replaces prerelease", "stable", BuildInfo{Version: "1.2.0-rc.1"}, true},
-		{"stable replaces development", "stable", BuildInfo{Version: "dev-old"}, true},
-		{"dev commit changed", "dev", BuildInfo{Version: "dev", Build: "22", Commit: "old"}, true},
-		{"dev current", "dev", BuildInfo{Version: "dev", Build: "22", Commit: "new"}, false},
+		{"stable replaces older development build", "stable", BuildInfo{Version: "dev-old", Build: "20260701000000"}, true},
+		{"stable does not replace newer development build", "stable", BuildInfo{Version: "dev-newer", Build: "20260901000000"}, false},
+		{"dev numeric newer", "dev", BuildInfo{Version: "1.1.9"}, true},
+		{"dev numeric does not downgrade", "dev", BuildInfo{Version: "2.0.0"}, false},
+		{"dev newer build", "dev", BuildInfo{Version: "dev", Build: "20260701000000", Commit: "old"}, true},
+		{"dev older build", "dev", BuildInfo{Version: "dev", Build: "20260901000000", Commit: "newer"}, false},
+		{"dev same build different commit", "dev", BuildInfo{Version: "dev", Build: "20260801000000", Commit: "other"}, false},
+		{"dev current", "dev", BuildInfo{Version: "dev", Build: "20260801000000", Commit: "new"}, false},
+		{"unknown versions never downgrade", "dev", BuildInfo{Version: "dev-old", Build: "22", Commit: "other"}, false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

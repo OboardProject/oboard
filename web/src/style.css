@@ -6165,12 +6165,53 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .controller-update-meta span { color: var(--muted); font-size: 12px; }
 .controller-update-versions strong { color: var(--text-strong); font-size: 17px; overflow-wrap: anywhere; }
 .controller-update-versions small { color: var(--muted); overflow-wrap: anywhere; }
+.controller-update-channel {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+.controller-update-channel > span { color: var(--muted); font-size: 12px; }
+.controller-update-channel-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: min(280px, 100%);
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  box-sizing: border-box;
+}
+.controller-update-channel-toggle button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  letter-spacing: 0;
+}
+.controller-update-channel-toggle button.active {
+  background: var(--primary);
+  color: var(--primary-contrast);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+.controller-update-channel-toggle button:disabled { opacity: 0.6; cursor: not-allowed; }
 .controller-update-meta { display: grid; gap: 8px; }
 .controller-update-meta span { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 10px; }
 .controller-update-meta strong { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .controller-update-pinned { display: grid; border-color: var(--border); background: var(--surface-2); }
-.controller-update-pinned > div { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.controller-update-pinned code { min-width: 0; flex: 1 1 auto; padding: 8px 10px; overflow: auto; border-radius: var(--radius-sm); background: var(--surface-solid); color: var(--text); }
 .controller-update-toggle { align-items: flex-start; }
 .controller-update-toggle > span { display: grid; gap: 2px; }
 .controller-update-toggle small { color: var(--muted); }
