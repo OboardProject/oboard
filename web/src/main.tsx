@@ -92,7 +92,7 @@ import { useRealtimeEvents, type RealtimeEvent, type RealtimeStatus } from './re
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { getServerTimeIssue } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
-import { collectRegionStats, orderRegions } from './region-order'
+import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
@@ -8912,17 +8912,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     if (entity) await deleteGraphEntity(entity)
   }
   const entryServerRegions = useMemo(() => {
-    const counts = new Map<string, number>()
-    servers.forEach(server => {
-      const code = serverRegionCode(server)
-      counts.set(code, (counts.get(code) || 0) + 1)
-    })
-    return Array.from(counts, ([code, count]) => ({ code, count }))
-      .sort((a, b) => {
-        if (!a.code) return 1
-        if (!b.code) return -1
-        return regionLabel(a.code).localeCompare(regionLabel(b.code), 'zh-CN')
-      })
+    return orderServerRegions(servers, regionLabel)
   }, [servers])
   const normalizedEntryServerQuery = entryServerQuery.trim().toLocaleLowerCase('zh-CN')
   const filteredEntryServers = servers.filter(server => {

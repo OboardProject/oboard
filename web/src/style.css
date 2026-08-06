@@ -3171,9 +3171,13 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .entry-server-region-filters {
   display: flex;
   gap: 6px;
-  padding-bottom: 2px;
   overflow-x: auto;
-  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.entry-server-region-filters::-webkit-scrollbar {
+  display: none;
 }
 
 .entry-server-region-filters button {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { POPULAR_REGION_CODES, collectRegionStats, orderRegions, regionPoints } from './region-order'
+import { POPULAR_REGION_CODES, collectRegionStats, orderRegions, orderServerRegions, regionPoints } from './region-order'
 
 describe('region points', () => {
   it('grants the fixed default points to the popular regions and zero to others', () => {
@@ -78,5 +78,25 @@ describe('orderRegions', () => {
   it('falls back to the region code order when no label resolver is given', () => {
     const stats = new Map([['CN', { total: 0, online: 0 }], ['HK', { total: 0, online: 0 }], ['FR', { total: 0, online: 0 }]])
     expect(orderRegions(regions, stats).map(item => item.code)).toEqual(['CA', 'CN', 'DE', 'HK', 'FR'])
+  })
+})
+
+describe('orderServerRegions', () => {
+  it('applies the points ranking to present server regions and keeps unknown regions last', () => {
+    const servers = [
+      { region_mode: 'auto', detected_region_code: 'IS', status: 'online' },
+      { region_mode: 'manual', region_code: 'DE', status: 'offline' },
+      { region_mode: 'auto', detected_region_code: 'US', status: 'online' },
+      { region_mode: 'auto', detected_region_code: 'US', status: 'offline' },
+      { region_mode: 'auto', detected_region_code: '', status: 'online' },
+    ]
+    const labels: Record<string, string> = { DE: '德国', IS: '冰岛', US: '美国' }
+
+    expect(orderServerRegions(servers, code => labels[code] || code)).toEqual([
+      { code: 'US', count: 2 },
+      { code: 'DE', count: 1 },
+      { code: 'IS', count: 1 },
+      { code: '', count: 1 },
+    ])
   })
 })

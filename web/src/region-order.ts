@@ -47,3 +47,16 @@ export function orderRegions<T extends { code: string }>(
     })
     .sort((a, b) => b.score - a.score || labelOf(a.code).localeCompare(labelOf(b.code), 'zh-CN') || a.code.localeCompare(b.code))
 }
+
+export function orderServerRegions<T extends RegionServer>(
+  servers: readonly T[],
+  labelOf: (code: string) => string = code => code,
+) {
+  const stats = collectRegionStats(servers)
+  const regions = Array.from(stats, ([code, stat]) => ({ code, count: stat.total }))
+  const ordered = orderRegions(regions, stats, labelOf).map(({ code, count }) => ({ code, count }))
+  const categorizedCount = regions.reduce((total, region) => total + region.count, 0)
+
+  if (categorizedCount < servers.length) ordered.push({ code: '', count: servers.length - categorizedCount })
+  return ordered
+}
