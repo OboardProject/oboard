@@ -111,6 +111,8 @@ describe('proxy graph server layout', () => {
     expect(positions['exit-1'].y).toBe(860)
     expect(positions['exit-2'].y).toBe(860)
     expect(positions['exit-3'].y).toBe(860)
+    expect(positions['leaf-a'].y).toBe(1230)
+    expect(positions['leaf-b'].y).toBe(1230)
     expect(positions['relay-b'].x).toBeGreaterThan(positions['relay-a'].x)
     expect(positions['exit-2'].x).toBeGreaterThan(positions['exit-1'].x)
     expect(positions['exit-3'].x).toBeGreaterThan(positions['exit-2'].x)

@@ -215,8 +215,8 @@ export function layoutGraphLanes(
   const columnStep = maxWidth + siblingGap
   const laneByNode = new Map<string, number>()
   const rawPositions: Record<string, GraphPosition> = {}
+  let layerY = originY
   layers.forEach((layer, layerIndex) => {
-    const layerY = originY + layerIndex * layerGap
 
     // Wide sibling groups split into two rows by role: nodes that continue
     // into deeper layers stay on the upper row so their chains keep short
@@ -240,6 +240,9 @@ export function layoutGraphLanes(
         rawPositions[node.id] = position
         laneByNode.set(node.id, (position.x + node.width / 2) / columnStep)
       })
+      // A compacted layer consumes its second row's height, so following
+      // layers start a full gap below it instead of crowding the exit row.
+      layerY += layerGap + GRAPH_LAYER_SECONDARY_OFFSET_Y
       return
     }
 
@@ -268,6 +271,7 @@ export function layoutGraphLanes(
         used.add(lane)
         rawPositions[node.id] = { x: lane * columnStep - node.width / 2, y: layerY }
       })
+      layerY += layerGap
       return
     }
 
@@ -292,6 +296,7 @@ export function layoutGraphLanes(
     }
     layer.filter(node => primaryChildren.has(node.id)).forEach(place)
     layer.filter(node => !primaryChildren.has(node.id)).forEach(place)
+    layerY += layerGap
   })
 
   const nodes = Array.from(nodeByID.values())
