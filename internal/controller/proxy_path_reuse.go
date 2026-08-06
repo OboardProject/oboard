@@ -74,6 +74,7 @@ type proxyPathReuseSourceState struct {
 	RootInbound model.Inbound
 	Path        *model.ProxyPath
 	Prefix      []model.ProxyPathStep
+	ExtendPath  bool
 }
 
 func (s *Server) proxyPathReusePreview(w http.ResponseWriter, r *http.Request) {
@@ -309,7 +310,7 @@ func (s *Server) planProxyPathReuse(ctx context.Context, request proxyPathReuseR
 	nextPathID, nextStepID := int64(-1000000000), int64(-2000000000)
 	for _, source := range sources {
 		for branchIndex, branch := range branches {
-			useExisting := source.Path != nil && branchIndex == 0
+			useExisting := source.Path != nil && source.ExtendPath && branchIndex == 0
 			path := model.ProxyPath{ID: nextPathID, Kind: model.ProxyPathKindChain, NameMode: model.ProxyPathNameAuto, NameTemplate: []model.ProxyPathNamePart{}, InboundID: source.RootInbound.ID, ExitRegionMode: "auto", Enabled: true}
 			if generateSecrets {
 				path.Secret, err = security.RandomToken(24)
@@ -561,8 +562,15 @@ func proxyPathReuseSources(data store.FullRoutingConfig, requests []proxyPathReu
 		}
 		ordered := stepsByPath[path.ID]
 		sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Position < ordered[j].Position })
-		if len(ordered) == 0 || ordered[len(ordered)-1].ID != step.ID {
-			return nil, errors.New("只能从路径的最后一个步骤继续连接")
+		selectedIndex := -1
+		for index := range ordered {
+			if ordered[index].ID == step.ID {
+				selectedIndex = index
+				break
+			}
+		}
+		if selectedIndex < 0 {
+			return nil, errors.New("来源路径步骤不存在或未启用")
 		}
 		key := fmt.Sprintf("path:%d", path.ID)
 		if seen[key] {
@@ -570,7 +578,12 @@ func proxyPathReuseSources(data store.FullRoutingConfig, requests []proxyPathReu
 		}
 		seen[key] = true
 		pathCopy := path
-		out = append(out, proxyPathReuseSourceState{RootInbound: root, Path: &pathCopy, Prefix: cloneProxyPathSteps(ordered)})
+		out = append(out, proxyPathReuseSourceState{
+			RootInbound: root,
+			Path:        &pathCopy,
+			Prefix:      cloneProxyPathSteps(ordered[:selectedIndex+1]),
+			ExtendPath:  selectedIndex == len(ordered)-1,
+		})
 	}
 	return out, nil
 }

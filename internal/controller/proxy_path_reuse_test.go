@@ -200,6 +200,49 @@ func TestProxyPathReuseAllExpandsSharedSourcesAndMapsDirectBranch(t *testing.T) 
 	}
 }
 
+func TestProxyPathReuseBranchesFromMiddleStepWithoutChangingSourcePath(t *testing.T) {
+	fixture := newProxyPathReuseFixture(t)
+	cID := fixture.servers["C"].ID
+	tail := model.ProxyPathStep{
+		PathID: fixture.sourcePath.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound,
+		TransportMode: model.ProxyPathTransportSingBox, ServerID: &cID,
+		ConfigJSON: `{"chain_protocol":"shadowsocks","chain_method":"2022-blake3-aes-128-gcm"}`,
+	}
+	if err := fixture.db.CreateProxyPathStep(context.Background(), &tail); err != nil {
+		t.Fatal(err)
+	}
+
+	request := proxyPathReuseRequest{
+		Sources: []proxyPathReuseSource{{StepID: fixture.sourceStep.ID}}, TargetServerID: fixture.servers["B"].ID,
+		TargetKind: "generated", ChainProtocol: model.ProtocolSS,
+	}
+	plan, err := fixture.server.applyProxyPathReuseOperation(context.Background(), request, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Writes) != 1 || plan.Writes[0].ExistingPathID != 0 || plan.Writes[0].Path.ID == fixture.sourcePath.ID {
+		t.Fatalf("middle-step branch must create an independent path: %#v", plan.Writes)
+	}
+
+	sourceSteps, err := fixture.db.ListProxyPathStepsForPath(context.Background(), fixture.sourcePath.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sourceSteps) != 2 || sourceSteps[0].ID != fixture.sourceStep.ID || sourceSteps[1].ID != tail.ID {
+		t.Fatalf("source path changed while branching: %#v", sourceSteps)
+	}
+	branchSteps, err := fixture.db.ListProxyPathStepsForPath(context.Background(), plan.Writes[0].Path.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(branchSteps) != 2 || branchSteps[0].ServerID == nil || *branchSteps[0].ServerID != fixture.servers["D"].ID || branchSteps[1].ServerID == nil || *branchSteps[1].ServerID != fixture.servers["B"].ID {
+		t.Fatalf("middle-step branch = %#v, want D -> B", branchSteps)
+	}
+	if branchSteps[0].ID == fixture.sourceStep.ID || branchSteps[0].PathID == fixture.sourcePath.ID {
+		t.Fatalf("source prefix was not cloned for the new branch: %#v", branchSteps[0])
+	}
+}
+
 func TestProxyPathReuseRejectsInvalidSuffixAndServerLoop(t *testing.T) {
 	t.Run("transparent suffix", func(t *testing.T) {
 		fixture := newProxyPathReuseFixture(t)
