@@ -659,7 +659,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   dashboard: { label: '总览', desc: '全局健康、版本、部署状态和关键指标。', group: '总览' },
   account: { label: '我的账户', desc: '维护个人信息、登录安全和订阅加密。', group: '账户' },
   servers: { label: '服务器管理', desc: '', group: '' },
-  'proxy-paths': { label: '代理链路', desc: '管理入口、服务器跳点、第三方出口和传递路径。', group: '代理链路' },
+  'proxy-paths': { label: '代理链路', desc: '', group: '' },
   inbounds: { label: '入口', desc: '统一编排 sing-box 入站监听、协议和端口。', group: '代理' },
   outbounds: { label: '出口', desc: '配置服务器出口、下一跳和协议认证参数。', group: '代理' },
   routing: { label: '分流规则', desc: '为任意服务器配置分流规则、直连、链路或导入节点。', group: '流量' },
