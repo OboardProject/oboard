@@ -61,6 +61,17 @@ func (c *Catalog) List(principal application.Principal) []Descriptor {
 	return out
 }
 
+func (c *Catalog) ListMCP(principal application.Principal) []Descriptor {
+	out := make([]Descriptor, 0, len(c.items))
+	for _, item := range c.items {
+		if item.MCPEnabled && scopesAllow(principal, item.RequiredScopes) {
+			out = append(out, item)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 func (c *Catalog) Authorize(principal application.Principal, name string) (Descriptor, bool) {
 	item, ok := c.Get(name)
 	return item, ok && scopesAllow(principal, item.RequiredScopes)

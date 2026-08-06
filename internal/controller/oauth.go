@@ -168,7 +168,8 @@ func (s *Server) oauthDynamicRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	scopes := strings.Fields(input.Scope)
 	if len(scopes) == 0 {
-		scopes = s.allCapabilityScopes()
+		oauthError(w, http.StatusBadRequest, "invalid_client_metadata", "scope is required for dynamic registration")
+		return
 	}
 	if strings.TrimSpace(input.ClientName) == "" {
 		input.ClientName = "Remote MCP Client"

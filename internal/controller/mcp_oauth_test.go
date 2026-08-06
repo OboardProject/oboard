@@ -120,6 +120,15 @@ func TestMCPExposesCompleteToolAndResourceSurface(t *testing.T) {
 			t.Errorf("tool %q input schema is not an object: %s", name, schemaJSON)
 		}
 	}
+	if validate := byName["oboard_validate_changeset"]; validate.Annotations == nil || validate.Annotations.ReadOnlyHint || validate.Annotations.DestructiveHint == nil || !*validate.Annotations.DestructiveHint {
+		t.Errorf("oboard_validate_changeset must not be read-only and must be destructive: %#v", validate.Annotations)
+	}
+	if create := byName["oboard_create_changeset"]; create.Annotations == nil || create.Annotations.ReadOnlyHint {
+		t.Errorf("oboard_create_changeset must not be read-only: %#v", create.Annotations)
+	}
+	if apply := byName["oboard_apply_changeset"]; apply.Annotations == nil || apply.Annotations.ReadOnlyHint || apply.Annotations.DestructiveHint == nil || !*apply.Annotations.DestructiveHint {
+		t.Errorf("oboard_apply_changeset must not be read-only and must be destructive: %#v", apply.Annotations)
+	}
 	wantPlanProperties := map[string][]string{
 		"oboard_plan_server_onboarding": {"name", "region_code", "ip_stack"},
 		"oboard_plan_proxy_path":        {"entry_server_id", "exit_region", "preferred_relay_regions", "max_hops"},
@@ -606,6 +615,128 @@ func TestMCPAcceptsConfiguredPublicHostBehindLoopbackProxy(t *testing.T) {
 	}
 }
 
+func TestMCPRejectsInvalidOriginHeader(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com/hidden"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OBOARD_CORS_ORIGINS", "https://ui.example.com")
+	principal := &model.APIPrincipal{ID: "prn_origin_mcp", Name: "origin MCP", Type: model.APIPrincipalServiceAccount, Enabled: true, Scopes: []string{"inventory:read"}, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2}
+	if err := db.CreateAPIPrincipal(context.Background(), principal); err != nil {
+		t.Fatal(err)
+	}
+	plain := "obk_origin-mcp-token"
+	if err := db.CreateAPIToken(context.Background(), &model.APIToken{ID: "tok_origin_mcp", PrincipalID: principal.ID, TokenHash: security.HashAPISecret("test-secret", plain), Prefix: "obk_origin", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+
+	httpServer := httptest.NewServer(New(db, "test-secret", "", "/hidden", nil).Handler())
+	defer httpServer.Close()
+	initialize := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test-client","version":"1"}}}`
+	for _, test := range []struct {
+		name       string
+		origin     string
+		wantStatus int
+	}{
+		{name: "no origin", origin: "", wantStatus: http.StatusOK},
+		{name: "configured public origin", origin: "https://panel.example.com", wantStatus: http.StatusOK},
+		{name: "configured public origin with default port", origin: "https://panel.example.com:443", wantStatus: http.StatusOK},
+		{name: "configured CORS origin", origin: "https://ui.example.com", wantStatus: http.StatusOK},
+		{name: "path in origin", origin: "https://panel.example.com/hidden", wantStatus: http.StatusForbidden},
+		{name: "scheme mismatch", origin: "http://panel.example.com", wantStatus: http.StatusForbidden},
+		{name: "unknown host", origin: "https://evil.example.com", wantStatus: http.StatusForbidden},
+		{name: "case and port mismatch", origin: "https://panel.example.com:8443", wantStatus: http.StatusForbidden},
+		{name: "opaque origin", origin: "null", wantStatus: http.StatusForbidden},
+		{name: "malformed origin", origin: "https://", wantStatus: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, httpServer.URL+"/hidden/mcp", strings.NewReader(initialize))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.origin != "" {
+				req.Header.Set("Origin", test.origin)
+			}
+			req.Header.Set("Authorization", "Bearer "+plain)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			response, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != test.wantStatus {
+				t.Fatalf("Origin %q status=%d, want %d", test.origin, response.StatusCode, test.wantStatus)
+			}
+		})
+	}
+}
+
+func TestMCPValidateRefusesAutoApplyChangesets(t *testing.T) {
+	db, _, session, _, closeServer := newMCPTestEnvironment(t, "prn_mcp_no_autoapply", []string{"servers:onboard"})
+	defer closeServer()
+
+	created, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_create_changeset", Arguments: map[string]any{
+		"reason":          "auto-apply probe",
+		"idempotency_key": "mcp-auto-apply-probe",
+		"operations": []any{map[string]any{
+			"capability": "servers.onboard",
+			"input": map[string]any{
+				"server":                 map[string]any{"name": "AU", "region_code": "AU", "ip_stack": "auto", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 60000},
+				"issue_enrollment_token": false,
+			},
+			"resource_refs": map[string]any{},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.IsError {
+		t.Fatalf("create changeset failed: %#v", created.Content)
+	}
+	var changesetOut struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	createdJSON, err := json.Marshal(created.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(createdJSON, &changesetOut); err != nil {
+		t.Fatal(err)
+	}
+	if changesetOut.ID == "" || changesetOut.Status != "draft" {
+		t.Fatalf("unexpected changeset output: %s", created.StructuredContent)
+	}
+	stored, err := db.GetAutomationChangeset(context.Background(), changesetOut.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.AutoApply = true
+	if err := db.UpdateAutomationChangeset(context.Background(), stored); err != nil {
+		t.Fatal(err)
+	}
+
+	validated, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_validate_changeset", Arguments: map[string]any{"changeset_id": changesetOut.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validated.IsError {
+		t.Fatalf("validate accepted an auto-apply changeset: %#v", validated.Content)
+	}
+	after, err := db.GetAutomationChangeset(context.Background(), changesetOut.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != "draft" {
+		t.Fatalf("auto-apply changeset was mutated by MCP validate: status=%s", after.Status)
+	}
+}
+
 func TestMCPAuthenticationChallengeUsesConfiguredBasePath(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
@@ -697,7 +828,7 @@ func TestOAuthDynamicRegistrationIsPublicAndBounded(t *testing.T) {
 		handler.ServeHTTP(response, req)
 		return response
 	}
-	first := register(`{"client_name":"Codex","redirect_uris":["http://127.0.0.1:8765/callback"],"token_endpoint_auth_method":"none","grant_types":["authorization_code","refresh_token"],"response_types":["code"],"software_id":"codex"}`)
+	first := register(`{"client_name":"Codex","redirect_uris":["http://127.0.0.1:8765/callback"],"token_endpoint_auth_method":"none","grant_types":["authorization_code","refresh_token"],"response_types":["code"],"scope":"inventory:read","software_id":"codex"}`)
 	if first.Code != http.StatusCreated {
 		t.Fatalf("registration status=%d body=%s", first.Code, first.Body.String())
 	}
@@ -710,17 +841,24 @@ func TestOAuthDynamicRegistrationIsPublicAndBounded(t *testing.T) {
 	if err != nil || len(client.AllowedScopes) == 0 || !strings.Contains(string(client.ClientMetadata), `"registration":"dynamic"`) {
 		t.Fatalf("dynamic client=%#v err=%v", client, err)
 	}
+	if len(client.AllowedScopes) != 1 || client.AllowedScopes[0] != "inventory:read" {
+		t.Fatalf("dynamic client scopes = %#v, want only inventory:read", client.AllowedScopes)
+	}
+	noScope := register(`{"client_name":"No Scope","redirect_uris":["http://localhost:8765/callback"]}`)
+	if noScope.Code != http.StatusBadRequest || !strings.Contains(noScope.Body.String(), "invalid_client_metadata") || !strings.Contains(noScope.Body.String(), "scope is required") {
+		t.Fatalf("registration without scope status=%d body=%s", noScope.Code, noScope.Body.String())
+	}
 	invalid := register(`{"client_name":"Secret client","redirect_uris":["http://localhost:8765/callback"],"token_endpoint_auth_method":"client_secret_post"}`)
 	if invalid.Code != http.StatusBadRequest || !strings.Contains(invalid.Body.String(), "invalid_client_metadata") {
 		t.Fatalf("invalid registration status=%d body=%s", invalid.Code, invalid.Body.String())
 	}
-	for index := 0; index < 8; index++ {
-		response := register(`{"client_name":"Claude Code","redirect_uris":["http://localhost:8765/callback"]}`)
+	for index := 0; index < 7; index++ {
+		response := register(`{"client_name":"Claude Code","redirect_uris":["http://localhost:8765/callback"],"scope":"topology:read"}`)
 		if response.Code != http.StatusCreated {
 			t.Fatalf("registration %d status=%d body=%s", index, response.Code, response.Body.String())
 		}
 	}
-	limited := register(`{"client_name":"Limited","redirect_uris":["http://localhost:8765/callback"]}`)
+	limited := register(`{"client_name":"Limited","redirect_uris":["http://localhost:8765/callback"],"scope":"servers:read"}`)
 	if limited.Code != http.StatusTooManyRequests {
 		t.Fatalf("limited registration status=%d body=%s", limited.Code, limited.Body.String())
 	}
