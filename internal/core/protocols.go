@@ -63,6 +63,9 @@ type OBoardUserRuntimeLimit struct {
 	UserID            int64  `json:"user_id,omitempty"`
 	InboundID         int64  `json:"inbound_id,omitempty"`
 	PathID            int64  `json:"path_id,omitempty"`
+	DeviceIDHash      string `json:"device_id_hash,omitempty"`
+	CredentialEpoch   int64  `json:"credential_epoch,omitempty"`
+	CredentialStatus  string `json:"credential_status,omitempty"`
 	Billable          bool   `json:"billable"`
 	SpeedLimitMbps    int    `json:"speed_limit_mbps,omitempty"`
 	TrafficLimitBytes int64  `json:"traffic_limit_bytes,omitempty"`
@@ -102,6 +105,10 @@ type ConfigOptions struct {
 	UserGroups        []model.UserGroup
 	UserGroupMembers  []model.UserGroupMember
 	TrafficPolicies   map[int64]model.TrafficRuntimePolicy
+	// UserDevices is the active device projection from the Controller routing
+	// snapshot. A nil slice preserves the pure-Core user-level behaviour used by
+	// isolated configuration tests and import tooling.
+	UserDevices []model.UserDevice
 	// PortLedger supplies persisted generated-listener ports. When nil every
 	// generated port is derived fresh, which keeps pure-Core callers and fixtures
 	// working without a database.
@@ -487,6 +494,7 @@ func ValidatePortRange(start, end int) error {
 }
 
 func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbound, outbounds []model.Outbound, dnsState *DNSConfigState, users []model.User, opts ConfigOptions) (string, error) {
+	users = ExpandDeviceUsers(users, opts.UserDevices)
 	pathInboundByID := map[int64]model.Inbound{}
 	for _, inbound := range opts.Inbounds {
 		pathInboundByID[inbound.ID] = inbound
@@ -542,6 +550,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		if branchUsers := proxyPathBranchUsersForInbound(inbound, users, opts.InboundUsers, opts.ProxyPathUsers, opts.ProxyPaths, opts.ProxyPathSteps); len(branchUsers) > 0 {
 			inboundUsers = branchUsers
 		}
+		inboundUsers = credentialUsersForInbound(inboundUsers, inbound)
 		addRuntimeLimitsForInbound(&config, inbound, inboundUsers, opts)
 		inboundUsers = append(inboundUsers, pathLinkUsersForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps)...)
 		if len(inboundUsers) == 0 {
@@ -699,7 +708,15 @@ func runtimeLimitsForUsers(users []model.User, opts ConfigOptions) map[string]OB
 		}
 		policy := EffectiveUserLimitPolicy(user, opts.UserGroups, opts.UserGroupMembers)
 		speed, traffic := policy.SpeedLimitMbps, policy.TrafficLimitBytes
-		limit := OBoardUserRuntimeLimit{UserID: user.ID, Billable: true, ResetMode: policy.TrafficResetMode, ResetDay: policy.TrafficResetDay}
+		limit := OBoardUserRuntimeLimit{
+			UserID:           user.ID,
+			DeviceIDHash:     user.DeviceIDHash,
+			CredentialEpoch:  user.CredentialEpoch,
+			CredentialStatus: user.CredentialStatus,
+			Billable:         true,
+			ResetMode:        policy.TrafficResetMode,
+			ResetDay:         policy.TrafficResetDay,
+		}
 		if speed > 0 {
 			limit.SpeedLimitMbps = speed
 		}
@@ -727,6 +744,11 @@ func runtimeLimitsForUsers(users []model.User, opts ConfigOptions) map[string]OB
 			if runtimePolicy.SpeedLimitMbps > 0 {
 				limit.SpeedLimitMbps = runtimePolicy.SpeedLimitMbps
 			}
+		}
+		if user.DeviceIDHash != "" {
+			limit.DeviceIDHash = user.DeviceIDHash
+			limit.CredentialEpoch = user.CredentialEpoch
+			limit.CredentialStatus = user.CredentialStatus
 		}
 		out[user.Username] = limit
 	}
@@ -976,6 +998,7 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 				}
 				processingUsers = placeholderUsers
 			}
+			processingUsers = credentialUsersForInbound(processingUsers, processingInbound)
 			if !InboundSupportsMultipleUsers(processingInbound) && len(processingUsers) > 1 {
 				return nil, fmt.Errorf("processing inbound %s supports only one user", processingInbound.Name)
 			}
@@ -2145,6 +2168,9 @@ func proxyPathBranchUser(path model.ProxyPath, inbound model.Inbound, user model
 	out.Username = fmt.Sprintf("%s__oboard_path_%d", user.Username, path.ID)
 	out.ProxyUUID = deterministicUUID(fmt.Sprintf("%s:branch:user:%d:uuid", seed, user.ID))
 	out.ProxyPassword = deterministicSecret(fmt.Sprintf("%s:branch:user:%d:password", seed, user.ID))
+	if out.DeviceIDHash != "" {
+		out = credentialUser(out, inbound.ID, path.ID, string(inbound.Protocol))
+	}
 	return out
 }
 
@@ -2261,10 +2287,17 @@ func passwordUsers(users []model.User) []map[string]any {
 
 func mieruUsername(user model.User) string {
 	if user.ID > 0 {
-		if pathID := runtimePathIDFromUsername(user.Username); pathID > 0 {
-			return fmt.Sprintf("oboard-u%d-p%d", user.ID, pathID)
+		deviceSuffix := ""
+		if value := strings.ToLower(strings.TrimSpace(user.DeviceIDHash)); value != "" {
+			if len(value) > 12 {
+				value = value[:12]
+			}
+			deviceSuffix = "-d" + value
 		}
-		return fmt.Sprintf("oboard-u%d", user.ID)
+		if pathID := runtimePathIDFromUsername(user.Username); pathID > 0 {
+			return fmt.Sprintf("oboard-u%d%s-p%d", user.ID, deviceSuffix, pathID)
+		}
+		return fmt.Sprintf("oboard-u%d%s", user.ID, deviceSuffix)
 	}
 	if user.ID < 0 {
 		return fmt.Sprintf("oboard-i%x", -user.ID)

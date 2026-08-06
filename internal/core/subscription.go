@@ -133,6 +133,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 				continue
 			}
 			for _, path := range authorizedBranches {
+				credentialUser := UserCredentialForRoute(user, inbound.ID, path.ID, model.ProtocolSSH)
 				branchName := strings.TrimSpace(path.Name)
 				if branchName == "" {
 					branchName = fmt.Sprintf("%s 分支 %d", standaloneName, path.ID)
@@ -142,7 +143,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 					"server":       server.EntryAddress,
 					"server_port":  inbound.Port,
 					"username":     fmt.Sprintf("u%s-p%d", user.SSHRandomID, path.ID),
-					"password":     user.ProxyPassword,
+					"password":     credentialUser.ProxyPassword,
 					"host_key":     []string{hostKey},
 					"oboard_group": group,
 				}

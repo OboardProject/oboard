@@ -26,7 +26,7 @@ func (subscriptionAuditGeoResolver) Status() model.GeoDatabaseStatus {
 
 func (subscriptionAuditGeoResolver) Close() {}
 
-func TestSubscriptionPullAuditSuspendsBeforeResponseAndAdminResumes(t *testing.T) {
+func TestSubscriptionPullAuditKeepsGeographyAdvisory(t *testing.T) {
 	t.Setenv("OBOARD_TRUSTED_PROXY_CIDRS", "127.0.0.0/8")
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
@@ -60,16 +60,16 @@ func TestSubscriptionPullAuditSuspendsBeforeResponseAndAdminResumes(t *testing.T
 			t.Fatalf("seed pull %d status=%d body=%s", index, got.Code, got.Body.String())
 		}
 	}
-	blocked := fetch(subscriptionToken, "9.9.9.9", "Shadowrocket/2.2.0\nignored")
-	if blocked.Code != http.StatusForbidden || blocked.Body.String() == "" {
-		t.Fatalf("third region status=%d body=%s", blocked.Code, blocked.Body.String())
+	third := fetch(subscriptionToken, "9.9.9.9", "Shadowrocket/2.2.0\nignored")
+	if third.Code != http.StatusOK || third.Body.String() == "" {
+		t.Fatalf("third region status=%d body=%s", third.Code, third.Body.String())
 	}
 	stored, err := db.GetUser(context.Background(), userID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !stored.SubscriptionSuspended || stored.Status != "active" {
-		t.Fatalf("subscription suspension changed the wrong state: %#v", stored)
+	if stored.SubscriptionSuspended || stored.Status != "active" {
+		t.Fatalf("geography changed subscription state: %#v", stored)
 	}
 
 	detail := request(t, h, http.MethodGet, "/api/v2/ui/audit/subscriptions/users/"+itoa(userID), adminToken, nil, http.StatusOK)["subscription_audit_user"].(map[string]any)
@@ -78,7 +78,7 @@ func TestSubscriptionPullAuditSuspendsBeforeResponseAndAdminResumes(t *testing.T
 		t.Fatalf("recent pulls=%d, want 3", len(recent))
 	}
 	latest := recent[0].(map[string]any)
-	if latest["outcome"] != "denied_risk" || latest["client_name"] != "Shadowrocket" || latest["user_agent"] != "Shadowrocket/2.2.0ignored" {
+	if latest["outcome"] != "served" || latest["client_name"] != "shadowrocket" || latest["user_agent"] != "Shadowrocket/2.2.0ignored" {
 		t.Fatalf("unexpected latest audit: %#v", latest)
 	}
 	overviews := request(t, h, http.MethodGet, "/api/v2/ui/audit/risk-overview?window_hours=24", adminToken, nil, http.StatusOK)
@@ -124,13 +124,14 @@ func TestSubscriptionAuditPolicySettingsValidation(t *testing.T) {
 	h := newTestServer(db, "test-secret", "").Handler()
 	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	adminToken := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	policy := store.DefaultSubscriptionAuditPolicy()
-	settings := request(t, h, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"subscription_audit_policy": policy}, http.StatusOK)["settings"].(map[string]any)
-	if settings[settingSubscriptionAuditPolicy] == nil {
-		t.Fatal("subscription audit policy missing from public settings")
+	policy := store.DefaultAuditPolicy()
+	settings := request(t, h, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"audit_policy": policy}, http.StatusOK)["settings"].(map[string]any)
+	if settings[settingAuditPolicy] == nil {
+		t.Fatal("audit policy missing from public settings")
 	}
-	policy.Long.RegionLimit = 2
-	request(t, h, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"subscription_audit_policy": policy}, http.StatusBadRequest)
+	policy.Mode = "custom"
+	policy.RoutesPer15Minutes.Hard = policy.RoutesPer15Minutes.Soft
+	request(t, h, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"audit_policy": policy}, http.StatusBadRequest)
 }
 
 func TestAuditSettingsRoundTripAndValidation(t *testing.T) {

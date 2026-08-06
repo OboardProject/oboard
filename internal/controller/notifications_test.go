@@ -604,13 +604,16 @@ func TestConnectionAuditRiskNotificationTargetsUserAndAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	reports := make([]model.ConnectionAuditReport, 0, 15)
-	for i := 1; i <= 15; i++ {
-		province := "广东"
-		if i%2 == 0 {
-			province = "北京"
-		}
-		reports = append(reports, model.ConnectionAuditReport{ReportID: fmt.Sprintf("risk-%d", i), ServerID: server.ID, UserID: viewerID, SourceIP: fmt.Sprintf("11.%d.0.1", i), SourceCountryCode: "CN", SourceCountry: "中国", SourceProvince: province, GeoDatabaseRevision: "test", Network: "tcp", ConnectionCount: 1, ActivePeak: 1, StartedAt: now.Add(-time.Minute), EndedAt: now})
+	reports := make([]model.ConnectionAuditReport, 0, 4)
+	for i, country := range []string{"CN", "US", "DE", "JP"} {
+		startedAt := now.Add(-90 * time.Second)
+		reports = append(reports, model.ConnectionAuditReport{
+			ReportID: fmt.Sprintf("risk-%d", i), ServerID: server.ID, UserID: viewerID, DeviceIDHash: "device-cloned", CredentialEpoch: 1,
+			SourceIP: fmt.Sprintf("11.%d.0.1", i+1), RouteID: fmt.Sprintf("route-%d", i), SourceCountryCode: country, SourceCountry: country, SourceISP: fmt.Sprintf("ISP-%d", i), GeoDatabaseRevision: "test",
+			Network: "tcp", ConnectionCount: 1, ClosedCount: 1, DurationTotalMS: 90000, DurationMaxMS: 90000, DurationGT20SCount: 1,
+			UploadBytes: 1024, DownloadBytes: 1024, PayloadFirstAt: startedAt, PayloadLastAt: now, PresenceSequence: uint64(i + 1), ActivePeak: 1, BucketCapacity: 4096,
+			CollectionStartedAt: startedAt, CollectionEndedAt: now, StartedAt: startedAt, EndedAt: now,
+		})
 	}
 	if _, err := db.AddConnectionAuditReports(context.Background(), reports); err != nil {
 		t.Fatal(err)
@@ -627,7 +630,7 @@ func TestConnectionAuditRiskNotificationTargetsUserAndAdmin(t *testing.T) {
 	waitNotificationCount(t, srv, &sentMu, &sent, 2)
 	sentMu.Lock()
 	for _, message := range sent {
-		if !strings.Contains(message, "异常使用提醒 · 小王") || !strings.Contains(message, "高风险") {
+		if !strings.Contains(message, "异常使用提醒 · 小王") || !strings.Contains(message, "告警") || !strings.Contains(message, "设备凭证") {
 			t.Fatalf("risk notification = %q", message)
 		}
 	}

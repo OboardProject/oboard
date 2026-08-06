@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/netip"
 	"sort"
@@ -57,18 +58,18 @@ func (s *Server) effectiveConnectionAuditEnabled(ctx context.Context, server *mo
 	return server != nil && server.ConnectionAuditEnabled && s.connectionAuditEnabled(ctx)
 }
 
-func (s *Server) subscriptionAuditPolicy(ctx context.Context) model.SubscriptionAuditPolicy {
-	policy := store.DefaultSubscriptionAuditPolicy()
+func (s *Server) auditPolicy(ctx context.Context) model.AuditPolicy {
+	policy := store.DefaultAuditPolicy()
 	settings, err := s.store.ListSettings(ctx)
 	if err != nil {
 		return policy
 	}
-	raw := strings.TrimSpace(settings[settingSubscriptionAuditPolicy])
+	raw := strings.TrimSpace(settings[settingAuditPolicy])
 	if raw == "" {
 		return policy
 	}
-	var saved model.SubscriptionAuditPolicy
-	if json.Unmarshal([]byte(raw), &saved) == nil && store.ValidateSubscriptionAuditPolicy(saved) == nil {
+	var saved model.AuditPolicy
+	if json.Unmarshal([]byte(raw), &saved) == nil && store.ValidateAuditPolicy(saved) == nil {
 		return saved
 	}
 	return policy
@@ -91,6 +92,50 @@ func (s *Server) newSubscriptionPullAudit(r *http.Request, userID int64, format 
 		}
 	}
 	return item
+}
+
+func (s *Server) subscriptionAuditRouteID(event model.SubscriptionPullAudit) string {
+	return s.auditRouteID(event.SourceIP, event.SourceCountryCode, event.SourceISP)
+}
+
+func (s *Server) auditRouteID(sourceIP, countryCode, networkName string) string {
+	address, err := netip.ParseAddr(normalizedIP(sourceIP))
+	if err != nil || !address.IsValid() {
+		return ""
+	}
+	address = address.Unmap()
+	prefixBits := 56
+	if address.Is4() {
+		prefixBits = 24
+	}
+	prefix := netip.PrefixFrom(address, prefixBits).Masked().String()
+	country := strings.ToUpper(strings.TrimSpace(countryCode))
+	if country == "" {
+		country = "ZZ"
+	}
+	network := strings.ToLower(strings.TrimSpace(networkName))
+	if network == "" {
+		network = "unknown"
+	}
+	hash := security.HashAPISecret(s.sessionSecret, "subscription-route-v1\x00"+network+"\x00"+country+"\x00"+prefix)
+	return "route_" + hash[:32]
+}
+
+func subscriptionETagMatches(raw, current string) bool {
+	current = strings.TrimPrefix(strings.TrimSpace(current), "W/")
+	if current == "" {
+		return false
+	}
+	for _, candidate := range strings.Split(raw, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" {
+			return true
+		}
+		if strings.TrimPrefix(candidate, "W/") == current {
+			return true
+		}
+	}
+	return false
 }
 
 func connectionAuditPublicIP(raw string) bool {
@@ -185,7 +230,7 @@ func (s *Server) subscriptionAuditOverview(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) subscriptionAuditOverviewData(ctx context.Context, windowHours int) (model.SubscriptionAuditOverview, error) {
-	overview, err := s.store.SubscriptionAuditOverview(ctx, windowHours, s.subscriptionAuditPolicy(ctx))
+	overview, err := s.store.SubscriptionAuditOverview(ctx, windowHours, s.auditPolicy(ctx))
 	if err == nil {
 		overview.GeoDatabase = s.geoIPStatus
 	}
@@ -203,7 +248,7 @@ func (s *Server) subscriptionAuditUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("invalid subscription audit user id"), http.StatusBadRequest)
 		return
 	}
-	detail, err := s.store.SubscriptionAuditUserDetail(r.Context(), userID, intQuery(r, "window_hours", 24), s.subscriptionAuditPolicy(r.Context()))
+	detail, err := s.store.SubscriptionAuditUserDetail(r.Context(), userID, intQuery(r, "window_hours", 24), s.auditPolicy(r.Context()))
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, sql.ErrNoRows) {
@@ -238,7 +283,7 @@ func (s *Server) combinedAuditOverviewData(ctx context.Context, windowHours int)
 }
 
 func (s *Server) auditOverviewData(ctx context.Context, windowHours int) (model.ConnectionAuditOverview, model.SubscriptionAuditOverview, model.CombinedAuditOverview, error) {
-	connectionOverview, err := s.store.ConnectionAuditOverview(ctx, windowHours, s.connectionAuditEnabled(ctx))
+	connectionOverview, err := s.store.ConnectionAuditOverview(ctx, windowHours, s.connectionAuditEnabled(ctx), s.auditPolicy(ctx))
 	if err != nil {
 		return model.ConnectionAuditOverview{}, model.SubscriptionAuditOverview{}, model.CombinedAuditOverview{}, err
 	}
@@ -257,7 +302,7 @@ func combineAuditOverviews(connectionOverview model.ConnectionAuditOverview, sub
 		users[item.UserID] = &model.CombinedAuditUserSummary{
 			UserID: item.UserID, Username: item.Username, Nickname: item.Nickname,
 			ConnectionRiskLevel: item.RiskLevel, ConnectionRiskScore: item.RiskScore,
-			SubscriptionRiskLevel: "low",
+			SubscriptionRiskLevel: "normal",
 			ConnectionObserved:    true,
 			LastSeenAt:            item.LastSeenAt,
 		}
@@ -265,7 +310,7 @@ func combineAuditOverviews(connectionOverview model.ConnectionAuditOverview, sub
 	for _, item := range subscriptionOverview.Users {
 		user := users[item.UserID]
 		if user == nil {
-			user = &model.CombinedAuditUserSummary{UserID: item.UserID, Username: item.Username, Nickname: item.Nickname, ConnectionRiskLevel: "low"}
+			user = &model.CombinedAuditUserSummary{UserID: item.UserID, Username: item.Username, Nickname: item.Nickname, ConnectionRiskLevel: "normal"}
 			users[item.UserID] = user
 		}
 		user.SubscriptionRiskLevel = item.RiskLevel
@@ -287,18 +332,27 @@ func combineAuditOverviews(connectionOverview model.ConnectionAuditOverview, sub
 	for userID, user := range users {
 		connection := connectionByID[userID]
 		subscription := subscriptionByID[userID]
-		user.RiskScore = max(connection.RiskScore, subscription.RiskScore)
-		if connection.RiskScore >= 25 && subscription.RiskScore >= 25 {
-			user.RiskScore = min(100, user.RiskScore+15)
-		}
+		higher, lower := max(connection.RiskScore, subscription.RiskScore), min(connection.RiskScore, subscription.RiskScore)
+		user.RiskScore = min(100, higher+int(0.20*float64(lower)))
 		user.RiskLevel = combinedAuditRiskLevel(user.RiskScore)
+		user.Confidence = max(connection.Confidence, subscription.Confidence)
+		if connection.Confidence > 0 && subscription.Confidence > 0 {
+			user.Confidence = math.Round(((connection.Confidence+subscription.Confidence)/2)*100) / 100
+		}
+		user.EvidenceCategories = uniqueAuditStrings(append(append([]string{}, connection.EvidenceCategories...), subscription.EvidenceCategories...))
+		user.CounterEvidence = uniqueAuditStrings(append(append([]string{}, connection.CounterEvidence...), subscription.CounterEvidence...))
+		if connection.RiskScore >= subscription.RiskScore {
+			user.RecommendedAction = connection.RecommendedAction
+		} else {
+			user.RecommendedAction = subscription.RecommendedAction
+		}
 		for _, signal := range connection.RiskSignals {
 			user.RiskSignals = append(user.RiskSignals, "连接："+signal)
 		}
 		for _, signal := range subscription.RiskSignals {
 			user.RiskSignals = append(user.RiskSignals, "订阅："+signal)
 		}
-		if user.RiskLevel == "high" || user.RiskLevel == "critical" {
+		if user.RiskScore >= 55 {
 			overview.ElevatedRiskCount++
 		}
 		overview.Users = append(overview.Users, *user)
@@ -314,15 +368,35 @@ func combineAuditOverviews(connectionOverview model.ConnectionAuditOverview, sub
 
 func combinedAuditRiskLevel(score int) string {
 	switch {
-	case score >= 75:
+	case score >= 95:
+		return "confirmed"
+	case score >= 85:
 		return "critical"
-	case score >= 50:
+	case score >= 70:
 		return "high"
-	case score >= 25:
-		return "medium"
+	case score >= 55:
+		return "alert"
+	case score >= 35:
+		return "watch"
 	default:
-		return "low"
+		return "normal"
 	}
+}
+
+func uniqueAuditStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func (s *Server) resumeUserSubscriptionAccess(w http.ResponseWriter, r *http.Request, userID int64) {

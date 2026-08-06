@@ -20,6 +20,9 @@ type connectionAuditReportItem struct {
 	UserID               int64  `json:"user_id"`
 	InboundID            *int64 `json:"inbound_id"`
 	PathID               *int64 `json:"path_id"`
+	DeviceIDHash         string `json:"device_id_hash"`
+	CredentialEpoch      int64  `json:"credential_epoch"`
+	ClientInstanceIDHash string `json:"client_instance_id_hash"`
 	SourceIP             string `json:"source_ip"`
 	SourceGeoCode        string `json:"source_geo_code"`
 	Network              string `json:"network"`
@@ -31,6 +34,17 @@ type connectionAuditReportItem struct {
 	ClosedCount          int64  `json:"closed_count"`
 	DurationTotalMS      int64  `json:"duration_total_ms"`
 	DurationMaxMS        int64  `json:"duration_max_ms"`
+	UploadBytes          int64  `json:"upload_bytes"`
+	DownloadBytes        int64  `json:"download_bytes"`
+	PayloadFirstAt       string `json:"payload_first_at"`
+	PayloadLastAt        string `json:"payload_last_at"`
+	DurationLE1SCount    int64  `json:"duration_le_1s_count"`
+	DurationLE5SCount    int64  `json:"duration_le_5s_count"`
+	DurationLE20SCount   int64  `json:"duration_le_20s_count"`
+	DurationGT20SCount   int64  `json:"duration_gt_20s_count"`
+	ProbeState           string `json:"probe_state"`
+	InternalProbe        bool   `json:"internal_probe"`
+	PresenceSequence     uint64 `json:"presence_sequence"`
 	ActivePeak           int64  `json:"active_peak"`
 	ActiveAtEnd          int64  `json:"active_at_end"`
 	CollectionGeneration uint64 `json:"collection_generation"`
@@ -188,12 +202,20 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 		report.InboundID = item.InboundID
 		report.PathID = item.PathID
 		s.enrichConnectionAuditReport(&report)
+		report.RouteID = s.auditRouteID(report.SourceIP, report.SourceCountryCode, report.SourceISP)
 		reports = append(reports, report)
 	}
 	stored, err := s.store.AddConnectionAuditReports(r.Context(), reports)
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
+	}
+	for _, report := range reports {
+		if report.DeviceIDHash != "" && !report.PayloadLastAt.IsZero() {
+			if err := s.store.MarkUserDeviceProxyActivity(r.Context(), report.DeviceIDHash, report.PayloadLastAt); err != nil {
+				log.Printf("mark device proxy activity: %v", err)
+			}
+		}
 	}
 	riskUserIDs := make([]int64, 0, len(reports))
 	seenRiskUsers := map[int64]bool{}
@@ -203,6 +225,7 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 			riskUserIDs = append(riskUserIDs, report.UserID)
 		}
 	}
+	s.applyConnectionAuditDeviceActions(r.Context(), riskUserIDs)
 	s.notifyConnectionAuditRisks(r.Context(), riskUserIDs)
 	if err := s.auditIntel.EvaluateUsers(r.Context(), riskUserIDs); err != nil {
 		log.Printf("evaluate audit incidents: %v", err)
@@ -211,10 +234,92 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 	write(w, http.StatusOK, map[string]any{"ok": true, "accepted_report_ids": accepted})
 }
 
+func (s *Server) applyConnectionAuditDeviceActions(ctx context.Context, userIDs []int64) {
+	if len(userIDs) == 0 || s.auditSettingsState(ctx).Action != model.AuditActionRestrict {
+		return
+	}
+	s.connectionAuditActionMu.Lock()
+	defer s.connectionAuditActionMu.Unlock()
+	overview, err := s.store.ConnectionAuditOverview(ctx, 24, true, s.auditPolicy(ctx))
+	if err != nil {
+		log.Printf("evaluate connection audit device actions: %v", err)
+		return
+	}
+	targets := make(map[int64]bool, len(userIDs))
+	for _, userID := range userIDs {
+		targets[userID] = true
+	}
+	for _, connection := range overview.Users {
+		if !targets[connection.UserID] {
+			continue
+		}
+		subscription, _, err := s.store.SubscriptionAuditCurrentRisk(ctx, connection.UserID, time.Now().UTC(), s.auditPolicy(ctx))
+		if err != nil {
+			log.Printf("load subscription evidence for device action user=%d: %v", connection.UserID, err)
+			continue
+		}
+		s.applyConnectionAuditDeviceAction(ctx, connection, subscription)
+	}
+}
+
+func (s *Server) applyConnectionAuditDeviceAction(ctx context.Context, connection model.ConnectionAuditUserSummary, subscription model.SubscriptionAuditRisk) {
+	if s.auditSettingsState(ctx).Action != model.AuditActionRestrict || connection.IdentityMode != "device_bound" || !connection.CoverageComplete || connection.RiskDeviceIDHash == "" || connection.CloneConfidence < 0.80 {
+		return
+	}
+	evidence := uniqueAuditStrings(append(append([]string{}, connection.EvidenceCategories...), subscription.EvidenceCategories...))
+	if len(evidence) < 2 {
+		return
+	}
+	higher, lower := max(connection.RiskScore, subscription.Score), min(connection.RiskScore, subscription.Score)
+	totalScore := min(100, higher+int(math.Round(0.20*float64(lower))))
+	confidence := max(connection.Confidence, subscription.Confidence)
+	if connection.Confidence > 0 && subscription.Confidence > 0 {
+		confidence = math.Round(((connection.Confidence+subscription.Confidence)/2)*100) / 100
+	}
+	if totalScore < 85 || confidence < s.auditPolicy(ctx).AutoActionConfidence {
+		return
+	}
+	device, err := s.store.GetUserDeviceByHash(ctx, connection.UserID, connection.RiskDeviceIDHash)
+	if err != nil || device.Status != "active" || device.CredentialEpoch <= 0 {
+		return
+	}
+	changed := false
+	deviceID := device.ID
+	if !device.SubscriptionSuspended {
+		device, err = s.store.SetUserDeviceSubscriptionSuspended(ctx, connection.UserID, deviceID, true)
+		if err != nil {
+			log.Printf("suspend risky device subscription user=%d device=%s: %v", connection.UserID, deviceID, err)
+			return
+		}
+		changed = true
+	}
+	if totalScore >= 95 && confidence >= 0.90 && device.ProxyAccessState == "active" {
+		device, err = s.store.SetUserDeviceProxyAccessState(ctx, connection.UserID, deviceID, "reject_new")
+		if err != nil {
+			log.Printf("reject risky device authentication user=%d device=%s: %v", connection.UserID, deviceID, err)
+			return
+		}
+		if err := s.queueUserDeviceCredentialDeployment(ctx); err != nil {
+			_, _ = s.store.SetUserDeviceProxyAccessState(ctx, connection.UserID, deviceID, "active")
+			log.Printf("queue risky device credential deployment user=%d device=%s: %v", connection.UserID, deviceID, err)
+			return
+		}
+		changed = true
+	}
+	if changed {
+		s.publishRealtime("audit", "users", "deployment")
+	}
+}
+
 func validateConnectionAuditItem(item connectionAuditReportItem, serverID int64) (model.ConnectionAuditReport, error) {
 	reportID := strings.TrimSpace(item.ReportID)
 	if reportID == "" || len(reportID) > 200 || item.UserID <= 0 {
 		return model.ConnectionAuditReport{}, errors.New("connection audit identity is invalid")
+	}
+	deviceIDHash := strings.TrimSpace(item.DeviceIDHash)
+	clientInstanceIDHash := strings.TrimSpace(item.ClientInstanceIDHash)
+	if len(deviceIDHash) > 128 || len(clientInstanceIDHash) > 128 || (deviceIDHash == "") != (item.CredentialEpoch == 0) || item.CredentialEpoch < 0 {
+		return model.ConnectionAuditReport{}, errors.New("connection audit device identity is invalid")
 	}
 	sourceIP, err := netip.ParseAddr(strings.TrimSpace(item.SourceIP))
 	if err != nil || !sourceIP.IsValid() {
@@ -238,10 +343,17 @@ func validateConnectionAuditItem(item connectionAuditReportItem, serverID int64)
 		return model.ConnectionAuditReport{}, errors.New("connection audit destination_port is invalid")
 	}
 	maxDurationMS := int64((31 * 24 * time.Hour) / time.Millisecond)
-	if item.ConnectionCount < 0 || item.ClosedCount < 0 || item.DurationTotalMS < 0 || item.DurationMaxMS < 0 || item.DurationMaxMS > item.DurationTotalMS || item.DurationMaxMS > maxDurationMS || item.ActivePeak < 0 || item.ActiveAtEnd < 0 || item.ActiveAtEnd > item.ActivePeak || item.ConnectionCount > 1_000_000_000 || item.ClosedCount > 1_000_000_000 || item.DurationTotalMS > maxDurationMS*1_000_000 || item.ActivePeak > 1_000_000 || item.ClosedCount+item.ActiveAtEnd > item.ConnectionCount+item.ActivePeak {
+	durationBucketTotal := item.DurationLE1SCount + item.DurationLE5SCount + item.DurationLE20SCount + item.DurationGT20SCount
+	if item.ConnectionCount < 0 || item.ClosedCount < 0 || item.DurationTotalMS < 0 || item.DurationMaxMS < 0 || item.DurationMaxMS > item.DurationTotalMS || item.DurationMaxMS > maxDurationMS || item.UploadBytes < 0 || item.DownloadBytes < 0 || item.UploadBytes > 1<<60 || item.DownloadBytes > 1<<60 || item.DurationLE1SCount < 0 || item.DurationLE5SCount < 0 || item.DurationLE20SCount < 0 || item.DurationGT20SCount < 0 || durationBucketTotal != item.ClosedCount || item.ActivePeak < 0 || item.ActiveAtEnd < 0 || item.ActiveAtEnd > item.ActivePeak || item.ConnectionCount > 1_000_000_000 || item.ClosedCount > 1_000_000_000 || item.DurationTotalMS > maxDurationMS*1_000_000 || item.ActivePeak > 1_000_000 || item.ClosedCount+item.ActiveAtEnd > item.ConnectionCount+item.ActivePeak {
 		return model.ConnectionAuditReport{}, errors.New("connection audit counters are invalid")
 	}
-	if item.CollectionGeneration > math.MaxInt64 || item.BucketCapacity < 1 || item.BucketCapacity > 1_000_000 || item.DroppedBucketCount < 0 || item.DroppedBucketCount > 1_000_000_000 {
+	probeState := strings.ToLower(strings.TrimSpace(item.ProbeState))
+	switch probeState {
+	case "", "normal", "candidate", "confirmed", "normal_traffic":
+	default:
+		return model.ConnectionAuditReport{}, errors.New("connection audit probe_state is invalid")
+	}
+	if item.CollectionGeneration > math.MaxInt64 || item.BucketCapacity < 1 || item.BucketCapacity > 1_000_000 || item.DroppedBucketCount < 0 || item.DroppedBucketCount > 1_000_000_000 || item.PresenceSequence == 0 {
 		return model.ConnectionAuditReport{}, errors.New("connection audit collection coverage is invalid")
 	}
 	if item.ConnectionCount == 0 && item.ActiveAtEnd == 0 {
@@ -270,11 +382,29 @@ func validateConnectionAuditItem(item connectionAuditReportItem, serverID int64)
 	if startedAt.Before(collectionStartedAt) || endedAt.After(collectionEndedAt) {
 		return model.ConnectionAuditReport{}, errors.New("connection audit event is outside its collection window")
 	}
+	var payloadFirstAt, payloadLastAt time.Time
+	if strings.TrimSpace(item.PayloadFirstAt) != "" || strings.TrimSpace(item.PayloadLastAt) != "" {
+		payloadFirstAt, err = time.Parse(time.RFC3339Nano, strings.TrimSpace(item.PayloadFirstAt))
+		if err != nil {
+			return model.ConnectionAuditReport{}, errors.New("connection audit payload_first_at is invalid")
+		}
+		payloadLastAt, err = time.Parse(time.RFC3339Nano, strings.TrimSpace(item.PayloadLastAt))
+		if err != nil || payloadLastAt.Before(payloadFirstAt) || payloadFirstAt.Before(startedAt) || payloadLastAt.After(endedAt) {
+			return model.ConnectionAuditReport{}, errors.New("connection audit payload_last_at is invalid")
+		}
+	}
+	if (item.UploadBytes+item.DownloadBytes > 0) != !payloadFirstAt.IsZero() {
+		return model.ConnectionAuditReport{}, errors.New("connection audit payload coverage is inconsistent")
+	}
 	return model.ConnectionAuditReport{
 		ReportID: reportID, ServerID: serverID, UserID: item.UserID,
+		DeviceIDHash: deviceIDHash, CredentialEpoch: item.CredentialEpoch, ClientInstanceIDHash: clientInstanceIDHash,
 		SourceIP: sourceIP.Unmap().String(), SourceGeoCode: geo, Network: network,
 		Destination: destination, DestinationPort: item.DestinationPort, OutboundTag: outboundTag, OutboundType: outboundType,
-		ConnectionCount: item.ConnectionCount, ClosedCount: item.ClosedCount, DurationTotalMS: item.DurationTotalMS, DurationMaxMS: item.DurationMaxMS, ActivePeak: item.ActivePeak, ActiveAtEnd: item.ActiveAtEnd,
+		ConnectionCount: item.ConnectionCount, ClosedCount: item.ClosedCount, DurationTotalMS: item.DurationTotalMS, DurationMaxMS: item.DurationMaxMS,
+		UploadBytes: item.UploadBytes, DownloadBytes: item.DownloadBytes, PayloadFirstAt: payloadFirstAt.UTC(), PayloadLastAt: payloadLastAt.UTC(),
+		DurationLE1SCount: item.DurationLE1SCount, DurationLE5SCount: item.DurationLE5SCount, DurationLE20SCount: item.DurationLE20SCount, DurationGT20SCount: item.DurationGT20SCount,
+		ProbeState: probeState, InternalProbe: item.InternalProbe, PresenceSequence: item.PresenceSequence, ActivePeak: item.ActivePeak, ActiveAtEnd: item.ActiveAtEnd,
 		CollectionGeneration: item.CollectionGeneration, BucketCapacity: item.BucketCapacity, DroppedBucketCount: item.DroppedBucketCount, CollectionStartedAt: collectionStartedAt.UTC(), CollectionEndedAt: collectionEndedAt.UTC(),
 		StartedAt: startedAt.UTC(), EndedAt: endedAt.UTC(),
 	}, nil
@@ -285,7 +415,7 @@ func (s *Server) connectionAuditOverview(w http.ResponseWriter, r *http.Request)
 		method(w)
 		return
 	}
-	overview, err := s.store.ConnectionAuditOverview(r.Context(), intQuery(r, "window_hours", 24), s.connectionAuditEnabled(r.Context()))
+	overview, err := s.store.ConnectionAuditOverview(r.Context(), intQuery(r, "window_hours", 24), s.connectionAuditEnabled(r.Context()), s.auditPolicy(r.Context()))
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
@@ -304,7 +434,7 @@ func (s *Server) connectionAuditUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("invalid audit user id"), http.StatusBadRequest)
 		return
 	}
-	detail, err := s.store.ConnectionAuditUserDetail(r.Context(), userID, intQuery(r, "window_hours", 24))
+	detail, err := s.store.ConnectionAuditUserDetail(r.Context(), userID, intQuery(r, "window_hours", 24), s.auditPolicy(r.Context()))
 	if err != nil {
 		fail(w, err, http.StatusNotFound)
 		return

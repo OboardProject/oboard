@@ -65,7 +65,7 @@ func (s *Service) EvaluateUsers(ctx context.Context, userIDs []int64) error {
 }
 
 func (s *Service) EvaluateUser(ctx context.Context, userID int64) (*model.AuditIncident, error) {
-	detail, err := s.store.ConnectionAuditUserDetail(ctx, userID, 1)
+	detail, err := s.store.ConnectionAuditUserDetail(ctx, userID, 1, store.DefaultAuditPolicy())
 	if err != nil {
 		return nil, err
 	}

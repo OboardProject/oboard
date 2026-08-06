@@ -56,7 +56,7 @@ const (
 	settingSubscriptionAuditEnabled       = "subscription_audit_enabled"
 	settingConnectionAuditEnabled         = "connection_audit_enabled"
 	settingAuditAction                    = "audit_action"
-	settingSubscriptionAuditPolicy        = "subscription_audit_policy"
+	settingAuditPolicy                    = "audit_policy"
 	settingTrustedProxyCIDRs              = "trusted_proxy_cidrs"
 	settingNotificationServerOfflineAfter = "notification_server_offline_after_seconds"
 	settingNotificationServerOnlineAfter  = "notification_server_online_after_seconds"
@@ -109,6 +109,7 @@ type Server struct {
 	activeProbes                  map[int64]bool
 	notificationMu                sync.Mutex
 	connectionAuditNotificationMu sync.Mutex
+	connectionAuditActionMu       sync.Mutex
 	notificationWG                sync.WaitGroup
 	notificationSender            func(context.Context, model.NotificationChannel, string, string) error
 	certificateIssueMu            sync.Mutex
@@ -212,6 +213,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/me/passkeys/", s.auth(s.passkeys, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/subscription-age", s.auth(s.selfSubscriptionAge, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/subscription-custom-path", s.auth(s.selfSubscriptionCustomPath, model.RoleViewer))
+	mux.HandleFunc("/api/v1/me/devices", s.auth(s.selfUserDevices, model.RoleViewer))
+	mux.HandleFunc("/api/v1/me/devices/", s.auth(s.selfUserDevices, model.RoleViewer))
 	mux.HandleFunc("/api/v1/page-data", s.auth(s.pageData, model.RoleNone))
 	mux.HandleFunc("/api/v1/events", s.auth(s.uiEvents, model.RoleNone))
 	mux.HandleFunc("/api/v1/dashboard/summary", s.auth(s.dashboard, model.RoleViewer))
@@ -676,34 +679,34 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		write(w, 200, map[string]any{"settings": s.publicSettings(r.Context(), items), "reverse_proxy_status": s.reverseProxyStatus(r)})
 	case http.MethodPost, http.MethodPatch:
 		var req struct {
-			ControllerURL               *string                        `json:"controller_url"`
-			BasePath                    *string                        `json:"base_path"`
-			CertificateAutoMatch        *bool                          `json:"certificate_auto_match_enabled"`
-			CertificatePreference       *string                        `json:"certificate_default_preference"`
-			CertificateAutoIssueCA      *string                        `json:"certificate_auto_issue_acme_ca"`
-			CertificateAutoIssueEAB     *int64                         `json:"certificate_auto_issue_google_eab_credential_id"`
-			SubscriptionAgePolicy       *string                        `json:"subscription_age_policy"`
-			SubscriptionCustomPathMode  *string                        `json:"subscription_custom_path_mode"`
-			SubscriptionAuditPolicy     *model.SubscriptionAuditPolicy `json:"subscription_audit_policy"`
-			AuditEnabled                *bool                          `json:"audit_enabled"`
-			SubscriptionAuditEnabled    *bool                          `json:"subscription_audit_enabled"`
-			ConnectionAuditEnabled      *bool                          `json:"connection_audit_enabled"`
-			AuditAction                 *string                        `json:"audit_action"`
-			TrafficTimezone             *string                        `json:"traffic_timezone"`
-			TrafficEnforcementMode      *string                        `json:"traffic_enforcement_mode"`
-			ControllerLogMaxMB          *int                           `json:"controller_log_max_mb"`
-			ControllerLogBackups        *int                           `json:"controller_log_backups"`
-			ControllerAutoUpdate        *bool                          `json:"controller_auto_update_enabled"`
-			ServerDefaultMTUMode        *string                        `json:"server_default_mtu_mode"`
-			ServerDefaultBBREnabled     *bool                          `json:"server_default_bbr_enabled"`
-			ServerDefaultTimeCorrection *string                        `json:"server_default_time_correction_mode"`
-			TimeCheckNTPServers         []string                       `json:"time_check_ntp_servers"`
-			TrustedProxyCIDRs           *[]string                      `json:"trusted_proxy_cidrs"`
-			NotificationOfflineAfter    *int                           `json:"notification_server_offline_after_seconds"`
-			NotificationOnlineAfter     *int                           `json:"notification_server_online_after_seconds"`
-			NotificationMergeOffline    *bool                          `json:"notification_server_merge_offline"`
-			RegistrationEnabled         *bool                          `json:"registration_enabled"`
-			RegistrationDefaultGroupID  *int64                         `json:"registration_default_group_id"`
+			ControllerURL               *string            `json:"controller_url"`
+			BasePath                    *string            `json:"base_path"`
+			CertificateAutoMatch        *bool              `json:"certificate_auto_match_enabled"`
+			CertificatePreference       *string            `json:"certificate_default_preference"`
+			CertificateAutoIssueCA      *string            `json:"certificate_auto_issue_acme_ca"`
+			CertificateAutoIssueEAB     *int64             `json:"certificate_auto_issue_google_eab_credential_id"`
+			SubscriptionAgePolicy       *string            `json:"subscription_age_policy"`
+			SubscriptionCustomPathMode  *string            `json:"subscription_custom_path_mode"`
+			AuditPolicy                 *model.AuditPolicy `json:"audit_policy"`
+			AuditEnabled                *bool              `json:"audit_enabled"`
+			SubscriptionAuditEnabled    *bool              `json:"subscription_audit_enabled"`
+			ConnectionAuditEnabled      *bool              `json:"connection_audit_enabled"`
+			AuditAction                 *string            `json:"audit_action"`
+			TrafficTimezone             *string            `json:"traffic_timezone"`
+			TrafficEnforcementMode      *string            `json:"traffic_enforcement_mode"`
+			ControllerLogMaxMB          *int               `json:"controller_log_max_mb"`
+			ControllerLogBackups        *int               `json:"controller_log_backups"`
+			ControllerAutoUpdate        *bool              `json:"controller_auto_update_enabled"`
+			ServerDefaultMTUMode        *string            `json:"server_default_mtu_mode"`
+			ServerDefaultBBREnabled     *bool              `json:"server_default_bbr_enabled"`
+			ServerDefaultTimeCorrection *string            `json:"server_default_time_correction_mode"`
+			TimeCheckNTPServers         []string           `json:"time_check_ntp_servers"`
+			TrustedProxyCIDRs           *[]string          `json:"trusted_proxy_cidrs"`
+			NotificationOfflineAfter    *int               `json:"notification_server_offline_after_seconds"`
+			NotificationOnlineAfter     *int               `json:"notification_server_online_after_seconds"`
+			NotificationMergeOffline    *bool              `json:"notification_server_merge_offline"`
+			RegistrationEnabled         *bool              `json:"registration_enabled"`
+			RegistrationDefaultGroupID  *int64             `json:"registration_default_group_id"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -832,21 +835,21 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, settingSubscriptionCustomPathMode)
 		}
-		if req.SubscriptionAuditPolicy != nil {
-			if err := store.ValidateSubscriptionAuditPolicy(*req.SubscriptionAuditPolicy); err != nil {
+		if req.AuditPolicy != nil {
+			if err := store.ValidateAuditPolicy(*req.AuditPolicy); err != nil {
 				fail(w, err, http.StatusBadRequest)
 				return
 			}
-			raw, err := json.Marshal(req.SubscriptionAuditPolicy)
+			raw, err := json.Marshal(req.AuditPolicy)
 			if err != nil {
 				fail(w, err, http.StatusInternalServerError)
 				return
 			}
-			if err := s.store.SetSetting(r.Context(), settingSubscriptionAuditPolicy, string(raw)); err != nil {
+			if err := s.store.SetSetting(r.Context(), settingAuditPolicy, string(raw)); err != nil {
 				fail(w, err, http.StatusInternalServerError)
 				return
 			}
-			changed = append(changed, settingSubscriptionAuditPolicy)
+			changed = append(changed, settingAuditPolicy)
 		}
 		if req.AuditEnabled != nil {
 			if err := s.store.SetSetting(r.Context(), settingAuditEnabled, strconv.FormatBool(*req.AuditEnabled)); err != nil {
@@ -1094,9 +1097,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionAuditPolicy: store.DefaultSubscriptionAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	for key, value := range items {
-		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingSubscriptionAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID {
+		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID {
 			continue
 		}
 		out[key] = value
@@ -1112,10 +1115,10 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	if values, err := trustedProxyCIDRsFromSettings(items); err == nil {
 		out[settingTrustedProxyCIDRs] = values
 	}
-	if raw := strings.TrimSpace(items[settingSubscriptionAuditPolicy]); raw != "" {
-		var policy model.SubscriptionAuditPolicy
-		if json.Unmarshal([]byte(raw), &policy) == nil && store.ValidateSubscriptionAuditPolicy(policy) == nil {
-			out[settingSubscriptionAuditPolicy] = policy
+	if raw := strings.TrimSpace(items[settingAuditPolicy]); raw != "" {
+		var policy model.AuditPolicy
+		if json.Unmarshal([]byte(raw), &policy) == nil && store.ValidateAuditPolicy(policy) == nil {
+			out[settingAuditPolicy] = policy
 		}
 	}
 	if raw := strings.TrimSpace(items[settingTimeCheckNTPServers]); raw != "" {
@@ -1725,7 +1728,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			var overview model.ConnectionAuditOverview
-			overview, err = s.store.ConnectionAuditOverview(ctx, 24, s.connectionAuditEnabled(ctx))
+			overview, err = s.store.ConnectionAuditOverview(ctx, 24, s.connectionAuditEnabled(ctx), s.auditPolicy(ctx))
 			if err == nil {
 				out["connection_audit"] = map[string]any{
 					"window_hours":        overview.WindowHours,
@@ -1938,14 +1941,10 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 					err = configErr
 				} else {
 					bindings := effectiveInboundUsersForRouting(config)
-					deployed := map[int64]string{}
 					deployments, deploymentErr := s.store.ListSSHPasswordDeploymentsForUser(ctx, user.ID)
 					if deploymentErr != nil {
 						err = deploymentErr
 						break
-					}
-					for _, deployment := range deployments {
-						deployed[deployment.ServerID] = deployment.PasswordDigest
 					}
 					pathNames := make(map[int64]string, len(config.ProxyPaths))
 					for _, path := range core.ResolveProxyPathNames(config.ProxyPaths, config.ProxyPathSteps, config.Servers, config.Inbounds, config.ExternalOutbounds) {
@@ -1953,9 +1952,6 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 					}
 					accesses := make([]map[string]any, 0)
 					for _, server := range config.Servers {
-						if deployed[server.ID] != s.sshPasswordDeploymentDigest(server.ID, user.ID, user.ProxyPassword) {
-							continue
-						}
 						plan, planErr := buildSSHInboundPlan(0, server, config, bindings, nil)
 						if planErr != nil {
 							err = planErr
@@ -1969,10 +1965,21 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 							err = hostErr
 							break
 						}
+						expectedDeployments, deploymentErr := s.sshPasswordDeploymentsFromPlan(server.ID, plan)
+						if deploymentErr != nil {
+							err = deploymentErr
+							break
+						}
 						for _, inbound := range plan.Inbounds {
 							for _, access := range inbound.Users {
-								if access.Enabled && access.UserID == user.ID {
-									accesses = append(accesses, map[string]any{"inbound_id": inbound.InboundID, "path_id": access.PathID, "name": pathNames[access.PathID], "address": inbound.Address, "port": inbound.Port, "username": access.Username})
+								if !access.Enabled || access.UserID != user.ID {
+									continue
+								}
+								identity := sshPasswordDeploymentIdentityForPlanUser(access)
+								expected, expectedOK := sshPasswordDeploymentForIdentity(expectedDeployments, server.ID, identity)
+								persisted, persistedOK := sshPasswordDeploymentForIdentity(deployments, server.ID, identity)
+								if expectedOK && persistedOK && matchingSSHPasswordDeployment(persisted, expected) {
+									accesses = append(accesses, map[string]any{"inbound_id": inbound.InboundID, "path_id": access.PathID, "name": pathNames[access.PathID], "address": inbound.Address, "port": inbound.Port, "username": access.Username, "device_id_hash": access.DeviceIDHash, "credential_epoch": access.CredentialEpoch, "credential_status": access.CredentialStatus})
 								}
 							}
 						}
@@ -8438,6 +8445,10 @@ func (s *Server) validateWARPProfile(ctx context.Context, v *model.WARPProfile) 
 func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/users/")
 	parts := pathParts(r.URL.Path, "/api/v1/users/")
+	if len(parts) >= 2 && parts[1] == "devices" {
+		s.userDevices(w, r, id, parts[2:])
+		return
+	}
 	if len(parts) == 3 && parts[1] == "sessions" && parts[2] == "revoke" {
 		s.revokeUserSessions(w, r, id)
 		return
@@ -8483,12 +8494,18 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var req struct {
 			model.User
-			Password string `json:"password"`
+			Password           string `json:"password"`
+			LegacyProxyEnabled *bool  `json:"legacy_proxy_enabled"`
 		}
 		if !decode(w, r, &req) {
 			return
 		}
 		u := req.User
+		u.LegacyProxyEnabled = true
+		if req.LegacyProxyEnabled != nil {
+			u.LegacyProxyEnabled = *req.LegacyProxyEnabled
+		}
+		u.LegacyProxyEnabledSet = true
 		if u.Username == "" {
 			fail(w, errors.New("username required"), 400)
 			return
@@ -9109,8 +9126,8 @@ func validateUser(u *model.User) error {
 	if u.ProxyUUID != "" && !security.ValidUUID(u.ProxyUUID) {
 		return errors.New("proxy_uuid must be a valid UUID")
 	}
-	if u.SpeedLimitMbps < 0 || u.TrafficLimitBytes < 0 || u.TrafficUsedBytes < 0 {
-		return errors.New("limits and traffic counters must be >= 0")
+	if u.SpeedLimitMbps < 0 || u.TrafficLimitBytes < 0 || u.TrafficUsedBytes < 0 || u.DeviceLimit < 0 {
+		return errors.New("limits, device limit, and traffic counters must be >= 0")
 	}
 	u.TrafficResetMode = normalizeControllerTrafficResetMode(u.TrafficResetMode)
 	u.TrafficResetDay = normalizeControllerTrafficResetDay(u.TrafficResetDay)
@@ -10062,9 +10079,9 @@ func validateTrustedForwardDeploymentScope(selectedServerID int64, required map[
 // exposes the panel login password.
 func buildSSHInboundPlan(version int64, server model.Server, data store.FullRoutingConfig, bindings []model.InboundUser, policies map[int64]model.TrafficRuntimePolicy) (model.SSHInboundPlan, error) {
 	plan := model.SSHInboundPlan{Version: version, Inbounds: []model.SSHInbound{}}
-	users := make(map[int64]model.User, len(data.Users))
-	for _, user := range data.Users {
-		users[user.ID] = user
+	users := make(map[int64][]model.User, len(data.Users))
+	for _, user := range core.ExpandDeviceUsers(data.Users, data.UserDevices) {
+		users[user.ID] = append(users[user.ID], user)
 	}
 	pathBound := map[int64][]int64{}
 	for _, binding := range effectiveProxyPathUsersForRouting(data) {
@@ -10096,24 +10113,30 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 		entry := model.SSHInbound{InboundID: inbound.ID, ServerID: server.ID, Name: inbound.Name, ListenIP: core.EffectiveListenIP(server, inbound.ListenIP), Address: address, Port: inbound.Port, Enabled: true, Users: []model.SSHInboundUser{}, Policies: map[string]model.TrafficRuntimePolicy{}}
 		seenPolicy := map[int64]bool{}
 		for _, path := range pathsByInbound[inbound.ID] {
+			routeKind, outboundTag, err := core.ProxyPathEntryRoute(path, stepsByPath[path.ID], inbound, data.WARPProfiles)
+			if err != nil {
+				return model.SSHInboundPlan{}, fmt.Errorf("SSH 路径 %s: %w", path.Name, err)
+			}
 			for _, userID := range pathBound[path.ID] {
-				user, ok := users[userID]
-				if !ok || user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") || strings.TrimSpace(user.ProxyPassword) == "" {
-					continue
-				}
-				if strings.TrimSpace(user.SSHRandomID) == "" {
-					return model.SSHInboundPlan{}, fmt.Errorf("SSH 用户 %d 缺少随机登录标识", user.ID)
-				}
-				routeKind, outboundTag, err := core.ProxyPathEntryRoute(path, stepsByPath[path.ID], inbound, data.WARPProfiles)
-				if err != nil {
-					return model.SSHInboundPlan{}, fmt.Errorf("SSH 路径 %s: %w", path.Name, err)
-				}
-				entry.Users = append(entry.Users, model.SSHInboundUser{UserID: user.ID, Username: sshLoginName(user, path.ID), Password: user.ProxyPassword, PathID: path.ID, RouteKind: routeKind, OutboundTag: outboundTag, Enabled: true})
-				if !seenPolicy[user.ID] {
-					seenPolicy[user.ID] = true
-					if policy, ok := policies[user.ID]; ok {
-						policy.InboundID = inbound.ID
-						entry.Policies[fmt.Sprintf("user:%d", user.ID)] = policy
+				for _, user := range users[userID] {
+					if user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") || strings.TrimSpace(user.ProxyPassword) == "" {
+						continue
+					}
+					if strings.TrimSpace(user.SSHRandomID) == "" {
+						return model.SSHInboundPlan{}, fmt.Errorf("SSH 用户 %d 缺少随机登录标识", user.ID)
+					}
+					credential := core.UserCredentialForRoute(user, inbound.ID, path.ID, model.ProtocolSSH)
+					status := strings.TrimSpace(user.CredentialStatus)
+					if status == "" {
+						status = "active"
+					}
+					entry.Users = append(entry.Users, model.SSHInboundUser{UserID: user.ID, Username: sshLoginName(user, path.ID), Password: credential.ProxyPassword, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, CredentialStatus: status, PathID: path.ID, RouteKind: routeKind, OutboundTag: outboundTag, Enabled: true})
+					if !seenPolicy[user.ID] {
+						seenPolicy[user.ID] = true
+						if policy, ok := policies[user.ID]; ok {
+							policy.InboundID = inbound.ID
+							entry.Policies[fmt.Sprintf("user:%d", user.ID)] = policy
+						}
 					}
 				}
 			}
@@ -10129,11 +10152,14 @@ func sshLoginName(user model.User, pathID int64) string {
 
 func sshInboundPlanDigest(plan model.SSHInboundPlan) string {
 	type digestUser struct {
-		UserID      int64  `json:"user_id"`
-		Username    string `json:"username"`
-		PathID      int64  `json:"path_id"`
-		RouteKind   string `json:"route_kind"`
-		OutboundTag string `json:"outbound_tag,omitempty"`
+		UserID           int64  `json:"user_id"`
+		Username         string `json:"username"`
+		DeviceIDHash     string `json:"device_id_hash,omitempty"`
+		CredentialEpoch  int64  `json:"credential_epoch,omitempty"`
+		CredentialStatus string `json:"credential_status"`
+		PathID           int64  `json:"path_id"`
+		RouteKind        string `json:"route_kind"`
+		OutboundTag      string `json:"outbound_tag,omitempty"`
 	}
 	type digestInbound struct {
 		InboundID int64        `json:"inbound_id"`
@@ -10148,7 +10174,11 @@ func sshInboundPlanDigest(plan model.SSHInboundPlan) string {
 		item := digestInbound{InboundID: inbound.InboundID, ServerID: inbound.ServerID, ListenIP: inbound.ListenIP, Address: inbound.Address, Port: inbound.Port, Users: []digestUser{}}
 		for _, user := range inbound.Users {
 			if user.Enabled {
-				item.Users = append(item.Users, digestUser{UserID: user.UserID, Username: user.Username, PathID: user.PathID, RouteKind: user.RouteKind, OutboundTag: user.OutboundTag})
+				status := strings.TrimSpace(user.CredentialStatus)
+				if status == "" {
+					status = "active"
+				}
+				item.Users = append(item.Users, digestUser{UserID: user.UserID, Username: user.Username, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, CredentialStatus: status, PathID: user.PathID, RouteKind: user.RouteKind, OutboundTag: user.OutboundTag})
 			}
 		}
 		canonical = append(canonical, item)
@@ -10158,10 +10188,106 @@ func sshInboundPlanDigest(plan model.SSHInboundPlan) string {
 	return fmt.Sprintf("%x", sum[:])
 }
 
-func (s *Server) sshPasswordDeploymentDigest(serverID, userID int64, password string) string {
-	mac := hmac.New(sha256.New, []byte(s.sessionSecret))
-	_, _ = fmt.Fprintf(mac, "ssh-password-deployment-v1\x00%d\x00%d\x00%s", serverID, userID, password)
-	return fmt.Sprintf("%x", mac.Sum(nil))
+type sshPasswordDeploymentIdentity struct {
+	UserID          int64
+	DeviceIDHash    string
+	CredentialEpoch int64
+}
+
+type sshPasswordDeploymentCredential struct {
+	InboundID int64
+	PathID    int64
+	Username  string
+	Password  string
+}
+
+func sshPasswordDeploymentIdentityForUser(user model.User) sshPasswordDeploymentIdentity {
+	return sshPasswordDeploymentIdentity{UserID: user.ID, DeviceIDHash: strings.TrimSpace(user.DeviceIDHash), CredentialEpoch: user.CredentialEpoch}
+}
+
+func sshPasswordDeploymentIdentityForPlanUser(user model.SSHInboundUser) sshPasswordDeploymentIdentity {
+	return sshPasswordDeploymentIdentity{UserID: user.UserID, DeviceIDHash: strings.TrimSpace(user.DeviceIDHash), CredentialEpoch: user.CredentialEpoch}
+}
+
+func (s *Server) sshPasswordDeploymentsFromPlan(serverID int64, plan model.SSHInboundPlan) ([]model.SSHPasswordDeployment, error) {
+	type credentialGroup struct {
+		status      string
+		credentials []sshPasswordDeploymentCredential
+	}
+	groups := map[sshPasswordDeploymentIdentity]*credentialGroup{}
+	for _, inbound := range plan.Inbounds {
+		for _, user := range inbound.Users {
+			if !user.Enabled || user.UserID <= 0 || strings.TrimSpace(user.Password) == "" {
+				continue
+			}
+			identity := sshPasswordDeploymentIdentityForPlanUser(user)
+			status := strings.TrimSpace(user.CredentialStatus)
+			if status == "" {
+				status = "active"
+			}
+			group := groups[identity]
+			if group == nil {
+				group = &credentialGroup{status: status}
+				groups[identity] = group
+			} else if group.status != status {
+				return nil, fmt.Errorf("SSH deployment identity for user %d contains conflicting credential states", user.UserID)
+			}
+			group.credentials = append(group.credentials, sshPasswordDeploymentCredential{InboundID: inbound.InboundID, PathID: user.PathID, Username: user.Username, Password: user.Password})
+		}
+	}
+	identities := make([]sshPasswordDeploymentIdentity, 0, len(groups))
+	for identity := range groups {
+		identities = append(identities, identity)
+	}
+	sort.Slice(identities, func(i, j int) bool {
+		if identities[i].UserID != identities[j].UserID {
+			return identities[i].UserID < identities[j].UserID
+		}
+		if identities[i].DeviceIDHash != identities[j].DeviceIDHash {
+			return identities[i].DeviceIDHash < identities[j].DeviceIDHash
+		}
+		return identities[i].CredentialEpoch < identities[j].CredentialEpoch
+	})
+	deployments := make([]model.SSHPasswordDeployment, 0, len(identities))
+	for _, identity := range identities {
+		group := groups[identity]
+		sort.Slice(group.credentials, func(i, j int) bool {
+			left, right := group.credentials[i], group.credentials[j]
+			if left.InboundID != right.InboundID {
+				return left.InboundID < right.InboundID
+			}
+			if left.PathID != right.PathID {
+				return left.PathID < right.PathID
+			}
+			return left.Username < right.Username
+		})
+		mac := hmac.New(sha256.New, []byte(s.sessionSecret))
+		_, _ = fmt.Fprintf(mac, "ssh-password-deployment-v2\x00%d\x00%d\x00%s\x00%d\x00%s", serverID, identity.UserID, identity.DeviceIDHash, identity.CredentialEpoch, group.status)
+		for _, credential := range group.credentials {
+			_, _ = fmt.Fprintf(mac, "\x00%d\x00%d\x00%s\x00%s", credential.InboundID, credential.PathID, credential.Username, credential.Password)
+		}
+		deployments = append(deployments, model.SSHPasswordDeployment{ServerID: serverID, UserID: identity.UserID, DeviceIDHash: identity.DeviceIDHash, CredentialEpoch: identity.CredentialEpoch, CredentialStatus: group.status, PasswordDigest: fmt.Sprintf("%x", mac.Sum(nil))})
+	}
+	return deployments, nil
+}
+
+func sshPasswordDeploymentForIdentity(deployments []model.SSHPasswordDeployment, serverID int64, identity sshPasswordDeploymentIdentity) (model.SSHPasswordDeployment, bool) {
+	for _, deployment := range deployments {
+		if deployment.ServerID == serverID && deployment.UserID == identity.UserID && strings.TrimSpace(deployment.DeviceIDHash) == identity.DeviceIDHash && deployment.CredentialEpoch == identity.CredentialEpoch {
+			return deployment, true
+		}
+	}
+	return model.SSHPasswordDeployment{}, false
+}
+
+func matchingSSHPasswordDeployment(persisted, expected model.SSHPasswordDeployment) bool {
+	return persisted.ServerID == expected.ServerID &&
+		persisted.UserID == expected.UserID &&
+		strings.TrimSpace(persisted.DeviceIDHash) == strings.TrimSpace(expected.DeviceIDHash) &&
+		persisted.CredentialEpoch == expected.CredentialEpoch &&
+		strings.TrimSpace(persisted.CredentialStatus) == strings.TrimSpace(expected.CredentialStatus) &&
+		strings.TrimSpace(persisted.PasswordDigest) != "" &&
+		persisted.PasswordDigest == expected.PasswordDigest
 }
 
 func (s *Server) serverConfigUnchanged(ctx context.Context, serverID int64, cfg string) (bool, error) {
@@ -10470,7 +10596,7 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 	config, err := core.GenerateServerConfigWithOptions(server, inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
 		RoutingRules: data.RoutingRules, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
 		Servers: data.Servers, Inbounds: inbounds, WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
-		UserGroups: data.UserGroups, UserGroupMembers: data.UserGroupMembers, TrafficPolicies: trafficPolicies,
+		UserGroups: data.UserGroups, UserGroupMembers: data.UserGroupMembers, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
 		PortLedger: ledger,
 	})
 	if err != nil {
@@ -10712,20 +10838,38 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	rateKind := "subscription-token:"
 	if custom {
 		rateKind = "subscription-custom-path:"
+	} else if strings.HasPrefix(token, "obd_") {
+		rateKind = "subscription-device:"
 	}
 	if !s.allowRate(w, r, rateKind+token, 60, time.Minute) {
 		return
 	}
 	var user *model.User
+	var device *model.UserDevice
+	deviceTokenHash := ""
 	var err error
 	if custom {
 		user = &customCredential.User
+	} else if strings.HasPrefix(token, "obd_") {
+		deviceTokenHash = security.HashAPISecret(s.sessionSecret, token)
+		device, err = s.store.GetUserDeviceByTokenHash(r.Context(), deviceTokenHash)
+		if err == nil {
+			user, err = s.store.GetUser(r.Context(), device.UserID)
+		}
 	} else {
 		user, err = s.store.GetUserBySubscriptionToken(r.Context(), token)
-		if err != nil {
-			fail(w, errors.New("invalid subscription link"), 404)
-			return
-		}
+	}
+	if err != nil || user == nil || user.Status != "active" {
+		fail(w, errors.New("invalid subscription link"), 404)
+		return
+	}
+	if device == nil && !user.LegacyProxyEnabled {
+		fail(w, errors.New("this account requires a device-specific subscription link"), http.StatusForbidden)
+		return
+	}
+	subscriptionUser := *user
+	if device != nil {
+		subscriptionUser = core.UserForDevice(*user, *device)
 	}
 	format := core.NormalizeSubscriptionFormatForAPI(model.SubscriptionFormat(r.URL.Query().Get("format")))
 	if !core.IsSupportedSubscriptionFormat(format) {
@@ -10738,7 +10882,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	ageRecipient, ageEncrypted, err := resolveSubscriptionAgeRecipient(r, *user, settings[settingSubscriptionAgePolicy], format)
+	ageRecipient, ageEncrypted, err := resolveSubscriptionAgeRecipient(r, subscriptionUser, settings[settingSubscriptionAgePolicy], format)
 	if err != nil {
 		s.recordRejectedSubscriptionPull(r, user.ID, string(format), nil, false, err.Error())
 		status := http.StatusBadRequest
@@ -10776,30 +10920,34 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	servers, in := data.Servers, data.Inbounds
 	sshServerHostKeys := map[int64]string{}
-	deployedPasswordDigests := map[int64]string{}
 	deployments, deploymentErr := s.store.ListSSHPasswordDeploymentsForUser(r.Context(), user.ID)
 	if deploymentErr != nil {
 		fail(w, deploymentErr, 500)
 		return
-	}
-	for _, deployment := range deployments {
-		deployedPasswordDigests[deployment.ServerID] = deployment.PasswordDigest
 	}
 	assignments, err := s.store.ListSubscriptionAssignmentsForUser(r.Context(), user.ID)
 	if err != nil {
 		fail(w, err, 500)
 		return
 	}
-	inboundUsers := core.EffectiveInboundUsers(in, []model.User{*user}, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
-	proxyPathUsers := core.EffectiveProxyPathUsers(data.ProxyPaths, in, []model.User{*user}, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
+	inboundUsers := core.EffectiveInboundUsers(in, []model.User{subscriptionUser}, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
+	proxyPathUsers := core.EffectiveProxyPathUsers(data.ProxyPaths, in, []model.User{subscriptionUser}, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
+	subscriptionIdentity := sshPasswordDeploymentIdentityForUser(subscriptionUser)
 	for _, server := range servers {
-		if deployedPasswordDigests[server.ID] != s.sshPasswordDeploymentDigest(server.ID, user.ID, user.ProxyPassword) {
-			continue
-		}
 		plan, planErr := buildSSHInboundPlan(0, server, data, effectiveInboundUsersForRouting(data), nil)
 		if planErr != nil {
 			fail(w, planErr, 500)
 			return
+		}
+		expectedDeployments, expectedErr := s.sshPasswordDeploymentsFromPlan(server.ID, plan)
+		if expectedErr != nil {
+			fail(w, expectedErr, 500)
+			return
+		}
+		expected, expectedOK := sshPasswordDeploymentForIdentity(expectedDeployments, server.ID, subscriptionIdentity)
+		persisted, persistedOK := sshPasswordDeploymentForIdentity(deployments, server.ID, subscriptionIdentity)
+		if !expectedOK || !persistedOK || !matchingSSHPasswordDeployment(persisted, expected) {
+			continue
 		}
 		hostKey, hostErr := s.store.GetSSHServerHostKey(r.Context(), server.ID)
 		if hostErr == nil && hostKey.PlanDigest == sshInboundPlanDigest(plan) {
@@ -10818,7 +10966,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		}
 		assignments = filtered
 	}
-	sub, err := core.GenerateSubscriptionWithOptions(*user, servers, in, core.SubscriptionOptions{
+	sub, err := core.GenerateSubscriptionWithOptions(subscriptionUser, servers, in, core.SubscriptionOptions{
 		Format:                       format,
 		Profile:                      profile,
 		RequireAssignments:           profileID != 0,
@@ -10839,25 +10987,38 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	body := []byte(sub)
-	if ageEncrypted {
-		body, err = encryptSubscriptionAgeArmor(sub, ageRecipient)
-		if err != nil {
-			s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, true, "subscription encryption failed")
-			fail(w, fmt.Errorf("encrypt subscription with age: %w", err), 500)
-			return
-		}
-	}
+	revisionDigest := sha256.Sum256([]byte("oboard-subscription-v2\x00" + sub + "\x00" + fmt.Sprint(ageRecipient)))
+	subscriptionRevision := fmt.Sprintf("sub_%x", revisionDigest[:16])
+	etag := fmt.Sprintf("W/\"%s\"", subscriptionRevision)
 	event := s.newSubscriptionPullAudit(r, user.ID, string(format), requestedProfileID, ageEncrypted)
-	auditState := s.auditSettingsState(r.Context())
-	authorize := s.store.AuthorizeSubscriptionPull
-	if custom {
-		authorize = s.store.AuthorizeCustomSubscriptionPull
+	event.SubscriptionRevision = subscriptionRevision
+	event.RouteID = s.subscriptionAuditRouteID(event)
+	credentialGeneration := "legacy:" + security.HashAPISecret(s.sessionSecret, token)
+	if device != nil {
+		event.DeviceIDHash = device.DeviceIDHash
+		credentialGeneration = fmt.Sprintf("device:%s:%d", device.DeviceIDHash, device.CredentialEpoch)
 	}
-	decision, err := authorize(r.Context(), user.ID, token, event, s.subscriptionAuditPolicy(r.Context()), store.SubscriptionAuditOptions{
+	profileValue := int64(0)
+	if requestedProfileID != nil {
+		profileValue = *requestedProfileID
+	}
+	representationSeed := fmt.Sprintf("oboard-subscription-representation-v1\x00%d\x00%s\x00%s\x00%d\x00%s\x00%t\x00%s", user.ID, event.DeviceIDHash, credentialGeneration, profileValue, format, ageEncrypted, subscriptionRevision)
+	representationHash := security.HashAPISecret(s.sessionSecret, representationSeed)
+	event.RepresentationID = "rep_" + representationHash[:32]
+	event.ConditionalRequest = subscriptionETagMatches(r.Header.Get("If-None-Match"), etag)
+	auditState := s.auditSettingsState(r.Context())
+	auditOptions := store.SubscriptionAuditOptions{
 		AuditEnabled: auditState.Enabled && auditState.Subscription,
 		Action:       auditState.Action,
-	})
+	}
+	var decision store.SubscriptionPullDecision
+	if device != nil {
+		decision, err = s.store.AuthorizeDeviceSubscriptionPull(r.Context(), user.ID, device.ID, deviceTokenHash, event, s.auditPolicy(r.Context()), auditOptions)
+	} else if custom {
+		decision, err = s.store.AuthorizeCustomSubscriptionPull(r.Context(), user.ID, token, event, s.auditPolicy(r.Context()), auditOptions)
+	} else {
+		decision, err = s.store.AuthorizeSubscriptionPull(r.Context(), user.ID, token, event, s.auditPolicy(r.Context()), auditOptions)
+	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			fail(w, errors.New("invalid subscription link"), 404)
@@ -10870,17 +11031,47 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		s.notifySubscriptionAuditRisk(r.Context(), *user, decision)
 		s.publishRealtime("audit", "subscriptions", "users")
 	}
+	if decision.RateLimited {
+		if auditState.Enabled && auditState.Subscription {
+			s.maybeNotifySubscriptionAbnormal(r.Context(), user.ID)
+		}
+		retrySeconds := int(math.Ceil(decision.RetryAfter.Seconds()))
+		if retrySeconds < 1 {
+			retrySeconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
+		fail(w, errors.New("subscription request rate limit exceeded"), http.StatusTooManyRequests)
+		return
+	}
 	if !decision.Allowed {
 		if auditState.Enabled && auditState.Subscription {
 			s.maybeNotifySubscriptionAbnormal(r.Context(), user.ID)
 		}
-		fail(w, errors.New("subscription access suspended; contact an administrator"), http.StatusForbidden)
+		fail(w, errors.New("subscription access is suspended for this credential"), http.StatusForbidden)
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	cacheControl := "private, no-cache, max-age=0"
+	if decision.Burned {
+		cacheControl = "no-store, max-age=0"
+	}
+	w.Header().Set("Cache-Control", cacheControl)
 	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("ETag", etag)
 	if decision.Burned {
 		w.Header().Set("X-OBoard-Subscription", "burned-after-read")
+	}
+	if event.ConditionalRequest {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	body := []byte(sub)
+	if ageEncrypted {
+		body, err = encryptSubscriptionAgeArmor(sub, ageRecipient)
+		if err != nil {
+			s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, true, "subscription encryption failed")
+			fail(w, fmt.Errorf("encrypt subscription with age: %w", err), 500)
+			return
+		}
 	}
 	if ageEncrypted {
 		w.Header().Set("Content-Type", "application/age")
@@ -11034,16 +11225,38 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		log.Printf("agent disconnected server=%d(%s) connected_for=%s", server.ID, safeLogField(server.Name), time.Since(connectedAt).Round(time.Second))
 	}()
 	mode, _ := serverMonitoringPolicy(server)
-	var heartbeatInterval time.Duration
-	_ = conn.WriteJSON(map[string]any{"type": "hello", "ts": time.Now().UTC(), "server_id": server.ID, "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connection_audit_enabled": s.effectiveConnectionAuditEnabled(r.Context(), server)})
-	_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
-	var initial map[string]json.RawMessage
-	if err := conn.ReadJSON(&initial); err == nil {
-		s.processAgentSocketMessage(r.Context(), server, initial, clientIP(r))
+	auditEnabled := s.effectiveConnectionAuditEnabled(r.Context(), server)
+	if !auditEnabled {
+		_ = s.store.ClearConnectionPresenceForServer(r.Context(), server.ID)
 	}
+	_ = conn.WriteJSON(map[string]any{"type": "hello", "ts": time.Now().UTC(), "server_id": server.ID, "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connection_audit_enabled": auditEnabled})
+	type agentSocketRead struct {
+		message map[string]json.RawMessage
+		err     error
+	}
+	reads := make(chan agentSocketRead, 8)
+	go func() {
+		for {
+			var message map[string]json.RawMessage
+			err := conn.ReadJSON(&message)
+			select {
+			case reads <- agentSocketRead{message: message, err: err}:
+			case <-r.Context().Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
 	var inFlightTaskID int64
 	var inFlightTaskType string
+	var inFlightTimer *time.Timer
+	var inFlightTimeout <-chan time.Time
 	defer func() {
+		if inFlightTimer != nil {
+			inFlightTimer.Stop()
+		}
 		if inFlightTaskID == 0 {
 			return
 		}
@@ -11057,44 +11270,80 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			s.publishRealtime(realtimeResourcesForTask(inFlightTaskType)...)
 		}
 	}()
+	taskTicker := time.NewTicker(time.Second)
+	defer taskTicker.Stop()
+	_, heartbeatInterval := serverMonitoringPolicy(server)
+	heartbeatTimer := time.NewTimer(heartbeatInterval)
+	defer heartbeatTimer.Stop()
 	for {
-		readDeadline := 35 * time.Second
-		task, err := s.store.NextTask(r.Context(), server.ID)
-		if err == nil {
+		select {
+		case <-r.Context().Done():
+			return
+		case received := <-reads:
+			if received.err != nil {
+				if websocket.IsUnexpectedCloseError(received.err) {
+					log.Printf("agent ws closed: %v", received.err)
+				}
+				return
+			}
+			var envelope struct {
+				Type   string `json:"type"`
+				TaskID int64  `json:"task_id"`
+			}
+			if raw, ok := received.message["type"]; ok {
+				_ = json.Unmarshal(raw, &envelope.Type)
+			}
+			if raw, ok := received.message["task_id"]; ok {
+				_ = json.Unmarshal(raw, &envelope.TaskID)
+			}
+			if envelope.Type == "task_ack" && envelope.TaskID == inFlightTaskID {
+				inFlightTaskID = 0
+				inFlightTaskType = ""
+				if inFlightTimer != nil {
+					inFlightTimer.Stop()
+					inFlightTimer = nil
+					inFlightTimeout = nil
+				}
+			}
+			s.processAgentSocketMessage(r.Context(), server, received.message, clientIP(r))
+		case <-taskTicker.C:
+			if inFlightTaskID != 0 {
+				continue
+			}
+			task, err := s.store.NextTask(r.Context(), server.ID)
+			if err != nil {
+				continue
+			}
 			inFlightTaskID = task.ID
 			inFlightTaskType = task.Type
 			log.Printf("task dispatched server=%d(%s) id=%d type=%s version=%d", server.ID, safeLogField(server.Name), task.ID, task.Type, task.ConfigVersion)
 			s.publishRealtime(realtimeResourcesForTask(task.Type)...)
-			readDeadline = 10 * time.Minute
+			taskTimeout := 10 * time.Minute
 			if task.Type == model.AgentTaskTypeIssueCertificateHTTP {
-				readDeadline = 20 * time.Minute
+				taskTimeout = 20 * time.Minute
 			}
-			_ = conn.WriteJSON(map[string]any{"type": "task_request", "ts": time.Now().UTC(), "task": task, "signature_version": 2, "signature": signAgentTaskEnvelope(server.AgentTokenHash, *task)})
-		} else {
-			inFlightTaskID = 0
-			inFlightTaskType = ""
+			inFlightTimer = time.NewTimer(taskTimeout)
+			inFlightTimeout = inFlightTimer.C
+			if err := conn.WriteJSON(map[string]any{"type": "task_request", "ts": time.Now().UTC(), "task": task, "signature_version": 2, "signature": signAgentTaskEnvelope(server.AgentTokenHash, *task)}); err != nil {
+				return
+			}
+		case <-heartbeatTimer.C:
 			if latest, loadErr := s.store.GetServer(r.Context(), server.ID); loadErr == nil {
 				server = latest
 			}
 			mode, heartbeatInterval = serverMonitoringPolicy(server)
-			select {
-			case <-r.Context().Done():
+			auditEnabled = s.effectiveConnectionAuditEnabled(r.Context(), server)
+			if !auditEnabled {
+				_ = s.store.ClearConnectionPresenceForServer(r.Context(), server.ID)
+			}
+			if err := conn.WriteJSON(map[string]any{"type": "heartbeat", "ts": time.Now().UTC(), "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connection_audit_enabled": auditEnabled}); err != nil {
 				return
-			case <-time.After(heartbeatInterval):
 			}
-			_ = conn.WriteJSON(map[string]any{"type": "heartbeat", "ts": time.Now().UTC(), "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connection_audit_enabled": s.effectiveConnectionAuditEnabled(r.Context(), server)})
-		}
-		var msg map[string]json.RawMessage
-		_ = conn.SetReadDeadline(time.Now().Add(readDeadline))
-		if err := conn.ReadJSON(&msg); err != nil {
-			if websocket.IsUnexpectedCloseError(err) {
-				log.Printf("agent ws closed: %v", err)
-			}
+			heartbeatTimer.Reset(heartbeatInterval)
+		case <-inFlightTimeout:
+			log.Printf("agent task timed out server=%d id=%d type=%s", server.ID, inFlightTaskID, safeLogField(inFlightTaskType))
 			return
 		}
-		inFlightTaskID = 0
-		inFlightTaskType = ""
-		s.processAgentSocketMessage(r.Context(), server, msg, clientIP(r))
 	}
 }
 
@@ -11110,6 +11359,16 @@ func signAgentTaskEnvelope(secret string, task model.AgentTask) string {
 }
 
 func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Server, msg map[string]json.RawMessage, remoteIP string) {
+	if raw, ok := msg["presence_delta"]; ok {
+		var delta connectionPresenceDelta
+		if err := json.Unmarshal(raw, &delta); err == nil {
+			if accepted, err := s.acceptConnectionPresenceDelta(ctx, server, delta); err != nil {
+				log.Printf("reject connection presence server=%d: %v", server.ID, err)
+			} else if len(accepted) > 0 {
+				s.publishRealtime("audit", "connection_presence")
+			}
+		}
+	}
 	if raw, ok := msg["health_report"]; ok {
 		var h model.HealthReport
 		if json.Unmarshal(raw, &h) == nil {
@@ -11426,20 +11685,11 @@ func (s *Server) applyDeploymentSSHState(ctx context.Context, serverID int64, ta
 	if version == 0 {
 		version = task.ConfigVersion
 	}
-	passwordDigests := map[int64]string{}
-	for _, inbound := range payload.SSHInbounds.Inbounds {
-		for _, user := range inbound.Users {
-			if !user.Enabled || user.UserID <= 0 || strings.TrimSpace(user.Password) == "" {
-				continue
-			}
-			digest := s.sshPasswordDeploymentDigest(serverID, user.UserID, user.Password)
-			if previous := passwordDigests[user.UserID]; previous != "" && previous != digest {
-				return fmt.Errorf("SSH deployment user %d contains conflicting passwords", user.UserID)
-			}
-			passwordDigests[user.UserID] = digest
-		}
+	passwordDeployments, err := s.sshPasswordDeploymentsFromPlan(serverID, payload.SSHInbounds)
+	if err != nil {
+		return err
 	}
-	return s.store.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: serverID, PublicKey: canonicalHostKey, Fingerprint: hostFingerprint, PlanDigest: sshInboundPlanDigest(payload.SSHInbounds), ConfigVersion: version}, passwordDigests)
+	return s.store.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: serverID, PublicKey: canonicalHostKey, Fingerprint: hostFingerprint, PlanDigest: sshInboundPlanDigest(payload.SSHInbounds), ConfigVersion: version}, passwordDeployments)
 }
 
 func allowedTaskStatus(status string) bool {

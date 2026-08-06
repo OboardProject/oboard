@@ -1463,7 +1463,7 @@ func (s *Server) notifyConnectionAuditRisks(ctx context.Context, userIDs []int64
 			continue
 		}
 		seen[userID] = true
-		event, err := s.store.ConnectionAuditCurrentRisk(ctx, userID, nowTime)
+		event, err := s.store.ConnectionAuditCurrentRisk(ctx, userID, nowTime, s.auditPolicy(ctx))
 		if err != nil {
 			log.Printf("connection audit notification: %v", err)
 			continue
@@ -1498,14 +1498,19 @@ func (s *Server) notifyConnectionAuditRisks(ctx context.Context, userIDs []int64
 		if name == "" {
 			name = user.Username
 		}
-		riskLevel := "高风险"
-		if event.Level == "critical" {
+		riskLevel := "告警"
+		switch event.Level {
+		case "confirmed":
+			riskLevel = "已确认"
+		case "critical":
 			riskLevel = "严重风险"
+		case "high":
+			riskLevel = "高风险"
 		}
-		signals := fmt.Sprintf("15 分钟内 %d 个来源 IP 跨 %s", event.SourceIPCount, strings.Join(event.Regions, "、"))
+		signals := fmt.Sprintf("同一设备凭证在 %d 条独立网络上重叠有效业务 %d 秒", event.RouteCount, event.OverlapSecs)
 		queued := s.enqueueNotificationEvent(ctx, notificationEvent{
 			Name:         notificationUserRisk,
-			Key:          fmt.Sprintf("user:%d:geo-risk:%s:%s", userID, event.Level, nowTime.Format("2006010215")),
+			Key:          fmt.Sprintf("user:%d:device-clone:%s:%s", userID, event.Level, nowTime.Format("2006010215")),
 			TargetUserID: userID,
 			Data: map[string]string{
 				"UserName":      name,
@@ -1628,9 +1633,15 @@ type connectionAuditNotificationState struct {
 
 func auditRiskRank(level string) int {
 	switch level {
+	case "confirmed":
+		return 5
 	case "critical":
-		return 2
+		return 4
 	case "high":
+		return 3
+	case "alert":
+		return 2
+	case "watch":
 		return 1
 	default:
 		return 0

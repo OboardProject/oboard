@@ -423,6 +423,67 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	}
 }
 
+func TestSSHInboundPlanExpandsDeviceCredentialsPerRoute(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "ssh-device", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", PortRangeStart: 20000, PortRangeEnd: 20100, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "alice", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "alice-id", ProxyPassword: "alice-pass"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	device := &model.UserDevice{ID: "dev_test", DeviceIDHash: "0123456789abcdef0123456789abcdef", UserID: user.ID, Name: "phone", TokenHash: "device-token-hash", TokenPrefix: "obd_test", CredentialEpoch: 2}
+	if err := db.CreateUserDevice(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "managed-ssh", Protocol: model.ProtocolSSH, ListenIP: "0.0.0.0", Port: 2222, EntryIPMode: model.EntryIPModeIPv4, ConfigJSON: `{"exposure_confirmed":true,"exposure_confirmation_version":"ssh-inbound-v1","access_mode":"restricted_proxy"}`, Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: inbound.ID, UserID: user.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	path := &model.ProxyPath{Kind: model.ProxyPathKindDirect, Name: "direct", InboundID: inbound.ID, Secret: "direct-secret", Enabled: true}
+	if err := db.CreateProxyPath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := db.FullRoutingConfigData(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := buildSSHInboundPlan(7, *server, data, effectiveInboundUsersForRouting(data), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Inbounds) != 1 || len(plan.Inbounds[0].Users) != 2 {
+		t.Fatalf("SSH device plan = %#v", plan)
+	}
+	var legacy, bound *model.SSHInboundUser
+	for index := range plan.Inbounds[0].Users {
+		candidate := &plan.Inbounds[0].Users[index]
+		if candidate.DeviceIDHash == "" {
+			legacy = candidate
+		} else {
+			bound = candidate
+		}
+	}
+	deviceUser := core.UserForDevice(*user, *device)
+	expectedDeviceCredential := core.UserCredentialForRoute(deviceUser, inbound.ID, path.ID, model.ProtocolSSH)
+	if legacy == nil || legacy.Password != user.ProxyPassword || bound == nil || bound.DeviceIDHash != device.DeviceIDHash || bound.CredentialEpoch != device.CredentialEpoch || bound.CredentialStatus != "active" || bound.Password != expectedDeviceCredential.ProxyPassword || bound.Password == legacy.Password {
+		t.Fatalf("SSH expanded credentials legacy=%#v device=%#v", legacy, bound)
+	}
+	deployments, err := newTestServer(db, "test-secret", "").sshPasswordDeploymentsFromPlan(server.ID, plan)
+	if err != nil || len(deployments) != 2 {
+		t.Fatalf("SSH identity deployments = %#v, err=%v", deployments, err)
+	}
+}
+
 func TestSSHInboundPlanListenFollowsDetectedFamilies(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
@@ -524,7 +585,11 @@ func TestApplyDeploymentSSHStatePersistsOnlyValidatedTaskCredentials(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(deployments) != 1 || deployments[0].PasswordDigest != srv.sshPasswordDeploymentDigest(server.ID, user.ID, user.ProxyPassword) || deployments[0].ConfigVersion != 19 {
+	expectedDeployments, err := srv.sshPasswordDeploymentsFromPlan(server.ID, payload.SSHInbounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deployments) != 1 || len(expectedDeployments) != 1 || deployments[0].PasswordDigest != expectedDeployments[0].PasswordDigest || deployments[0].ConfigVersion != 19 {
 		t.Fatalf("persisted SSH password deployments = %#v", deployments)
 	}
 
@@ -607,6 +672,10 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	planDigest := sshInboundPlanDigest(plan)
+	expectedDeployments, err := srv.sshPasswordDeploymentsFromPlan(server.ID, plan)
+	if err != nil || len(expectedDeployments) != 1 {
+		t.Fatalf("SSH password deployments = %#v, err=%v", expectedDeployments, err)
+	}
 	handler := srv.Handler()
 	readSubscription := func() []map[string]any {
 		t.Helper()
@@ -632,13 +701,15 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	if nodes := readSubscription(); len(nodes) != 0 {
 		t.Fatalf("SSH subscription appeared before deployment: %#v", nodes)
 	}
-	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, ConfigVersion: 23}, map[int64]string{user.ID: srv.sshPasswordDeploymentDigest(server.ID, user.ID, "old-password")}); err != nil {
+	staleDeployments := append([]model.SSHPasswordDeployment(nil), expectedDeployments...)
+	staleDeployments[0].PasswordDigest = "stale-password-digest"
+	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, ConfigVersion: 23}, staleDeployments); err != nil {
 		t.Fatal(err)
 	}
 	if nodes := readSubscription(); len(nodes) != 0 {
 		t.Fatalf("SSH subscription appeared for stale deployed password: %#v", nodes)
 	}
-	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, PlanDigest: planDigest, ConfigVersion: 24}, map[int64]string{user.ID: srv.sshPasswordDeploymentDigest(server.ID, user.ID, user.ProxyPassword)}); err != nil {
+	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, PlanDigest: planDigest, ConfigVersion: 24}, expectedDeployments); err != nil {
 		t.Fatal(err)
 	}
 	nodes := readSubscription()

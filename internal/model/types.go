@@ -176,9 +176,40 @@ type User struct {
 	SubscriptionCustomPathPolicy  SubscriptionCustomPathPolicy `json:"subscription_custom_path_policy"`
 	SubscriptionCustomPathEnabled bool                         `json:"subscription_custom_path_enabled"`
 	SubscriptionCustomPathSource  string                       `json:"subscription_custom_path_source,omitempty"`
+	DeviceLimit                   int                          `json:"device_limit"`
+	LegacyProxyEnabled            bool                         `json:"legacy_proxy_enabled"`
+	LegacyProxyEnabledSet         bool                         `json:"-"`
+	DeviceIDHash                  string                       `json:"device_id_hash,omitempty"`
+	CredentialEpoch               int64                        `json:"credential_epoch,omitempty"`
+	CredentialSeed                string                       `json:"-"`
+	CredentialStatus              string                       `json:"credential_status,omitempty"`
 	Protected                     bool                         `json:"protected,omitempty"`
 	CreatedAt                     time.Time                    `json:"created_at"`
 	UpdatedAt                     time.Time                    `json:"updated_at"`
+}
+
+type UserDevice struct {
+	ID                      string     `json:"id"`
+	DeviceIDHash            string     `json:"device_id_hash"`
+	UserID                  int64      `json:"user_id"`
+	Name                    string     `json:"name"`
+	TokenHash               string     `json:"-"`
+	TokenPrefix             string     `json:"token_prefix"`
+	CredentialEpoch         int64      `json:"credential_epoch"`
+	Status                  string     `json:"status"`
+	SubscriptionSuspended   bool       `json:"subscription_suspended"`
+	ProxyAccessState        string     `json:"proxy_access_state"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+	LastSubscriptionAt      *time.Time `json:"last_subscription_at,omitempty"`
+	LastProxyActivityAt     *time.Time `json:"last_proxy_activity_at,omitempty"`
+	RevokedAt               *time.Time `json:"revoked_at,omitempty"`
+	SubscriptionSuspendedAt *time.Time `json:"subscription_suspended_at,omitempty"`
+}
+
+type UserDeviceCredential struct {
+	Device UserDevice `json:"device"`
+	Token  string     `json:"device_token,omitempty"`
 }
 
 type UserAuthentication struct {
@@ -526,11 +557,14 @@ type SSHServerHostKey struct {
 }
 
 type SSHPasswordDeployment struct {
-	ServerID       int64     `json:"server_id"`
-	UserID         int64     `json:"user_id"`
-	PasswordDigest string    `json:"-"`
-	ConfigVersion  int64     `json:"config_version"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ServerID         int64     `json:"server_id"`
+	UserID           int64     `json:"user_id"`
+	DeviceIDHash     string    `json:"device_id_hash,omitempty"`
+	CredentialEpoch  int64     `json:"credential_epoch,omitempty"`
+	CredentialStatus string    `json:"credential_status,omitempty"`
+	PasswordDigest   string    `json:"-"`
+	ConfigVersion    int64     `json:"config_version"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type AccessSubjectType string
@@ -1115,13 +1149,16 @@ type SSHInbound struct {
 }
 
 type SSHInboundUser struct {
-	UserID      int64  `json:"user_id"`
-	Username    string `json:"username"`
-	Password    string `json:"password"`
-	PathID      int64  `json:"path_id"`
-	RouteKind   string `json:"route_kind"`
-	OutboundTag string `json:"outbound_tag,omitempty"`
-	Enabled     bool   `json:"enabled"`
+	UserID           int64  `json:"user_id"`
+	Username         string `json:"username"`
+	Password         string `json:"password"`
+	DeviceIDHash     string `json:"device_id_hash,omitempty"`
+	CredentialEpoch  int64  `json:"credential_epoch,omitempty"`
+	CredentialStatus string `json:"credential_status,omitempty"`
+	PathID           int64  `json:"path_id"`
+	RouteKind        string `json:"route_kind"`
+	OutboundTag      string `json:"outbound_tag,omitempty"`
+	Enabled          bool   `json:"enabled"`
 }
 
 type PortForwardProbeResult struct {
@@ -1541,7 +1578,11 @@ type ConnectionAuditReport struct {
 	UserID               int64     `json:"user_id"`
 	InboundID            *int64    `json:"inbound_id,omitempty"`
 	PathID               *int64    `json:"path_id,omitempty"`
+	DeviceIDHash         string    `json:"device_id_hash,omitempty"`
+	CredentialEpoch      int64     `json:"credential_epoch,omitempty"`
+	ClientInstanceIDHash string    `json:"client_instance_id_hash,omitempty"`
 	SourceIP             string    `json:"source_ip"`
+	RouteID              string    `json:"route_id,omitempty"`
 	SourceGeoCode        string    `json:"source_geo_code,omitempty"`
 	SourceCountryCode    string    `json:"source_country_code,omitempty"`
 	SourceCountry        string    `json:"source_country,omitempty"`
@@ -1558,6 +1599,17 @@ type ConnectionAuditReport struct {
 	ClosedCount          int64     `json:"closed_count"`
 	DurationTotalMS      int64     `json:"duration_total_ms"`
 	DurationMaxMS        int64     `json:"duration_max_ms"`
+	UploadBytes          int64     `json:"upload_bytes"`
+	DownloadBytes        int64     `json:"download_bytes"`
+	PayloadFirstAt       time.Time `json:"payload_first_at,omitempty"`
+	PayloadLastAt        time.Time `json:"payload_last_at,omitempty"`
+	DurationLE1SCount    int64     `json:"duration_le_1s_count"`
+	DurationLE5SCount    int64     `json:"duration_le_5s_count"`
+	DurationLE20SCount   int64     `json:"duration_le_20s_count"`
+	DurationGT20SCount   int64     `json:"duration_gt_20s_count"`
+	ProbeState           string    `json:"probe_state,omitempty"`
+	InternalProbe        bool      `json:"internal_probe"`
+	PresenceSequence     uint64    `json:"presence_sequence,omitempty"`
 	ActivePeak           int64     `json:"active_peak"`
 	ActiveAtEnd          int64     `json:"active_at_end"`
 	CollectionGeneration uint64    `json:"collection_generation"`
@@ -1568,6 +1620,27 @@ type ConnectionAuditReport struct {
 	StartedAt            time.Time `json:"started_at"`
 	EndedAt              time.Time `json:"ended_at"`
 	CreatedAt            time.Time `json:"created_at"`
+}
+
+type ConnectionPresenceEvent struct {
+	Sequence          uint64    `json:"seq"`
+	AgentID           string    `json:"-"`
+	ServerID          int64     `json:"server_id"`
+	UserID            int64     `json:"user_id"`
+	InboundID         int64     `json:"inbound_id,omitempty"`
+	PathID            int64     `json:"path_id,omitempty"`
+	DeviceIDHash      string    `json:"device_id_hash,omitempty"`
+	CredentialEpoch   int64     `json:"credential_epoch,omitempty"`
+	SourceIP          string    `json:"source_ip"`
+	RouteID           string    `json:"route_id,omitempty"`
+	Network           string    `json:"network"`
+	Event             string    `json:"event"`
+	State             string    `json:"state"`
+	ActiveConnections int64     `json:"active_connections"`
+	Meaningful        bool      `json:"meaningful"`
+	PayloadLastAt     time.Time `json:"payload_last_at,omitempty"`
+	At                time.Time `json:"at"`
+	CreatedAt         time.Time `json:"created_at,omitempty"`
 }
 
 type IPGeography struct {
@@ -1588,36 +1661,78 @@ type GeoDatabaseStatus struct {
 }
 
 type ConnectionAuditRiskEvent struct {
-	Level         string    `json:"level"`
-	Score         int       `json:"score"`
-	SourceIPCount int       `json:"source_ip_count"`
-	RegionCount   int       `json:"region_count"`
-	Regions       []string  `json:"regions"`
-	StartedAt     time.Time `json:"started_at"`
-	EndedAt       time.Time `json:"ended_at"`
+	Kind            string    `json:"kind"`
+	Level           string    `json:"level"`
+	Score           int       `json:"score"`
+	SourceIPCount   int       `json:"source_ip_count"`
+	RegionCount     int       `json:"region_count"`
+	Regions         []string  `json:"regions"`
+	DeviceIDHash    string    `json:"device_id_hash,omitempty"`
+	RouteCount      int       `json:"route_count"`
+	OverlapSecs     int       `json:"overlap_seconds"`
+	CloneConfidence float64   `json:"clone_confidence"`
+	StartedAt       time.Time `json:"started_at"`
+	EndedAt         time.Time `json:"ended_at"`
+}
+
+type ConnectionProbeEpisode struct {
+	ID              string    `json:"id"`
+	UserID          int64     `json:"user_id"`
+	DeviceIDHash    string    `json:"device_id_hash,omitempty"`
+	State           string    `json:"state"`
+	Score           int       `json:"score"`
+	NodeCount       int       `json:"node_count"`
+	ConnectionCount int64     `json:"connection_count"`
+	UploadBytes     int64     `json:"upload_bytes"`
+	DownloadBytes   int64     `json:"download_bytes"`
+	StartedAt       time.Time `json:"started_at"`
+	EndedAt         time.Time `json:"ended_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type ConnectionAuditUserSummary struct {
-	UserID              int64      `json:"user_id"`
-	Username            string     `json:"username"`
-	Nickname            string     `json:"nickname"`
-	RiskLevel           string     `json:"risk_level"`
-	RiskScore           int        `json:"risk_score"`
-	RiskSignals         []string   `json:"risk_signals"`
-	SourceIPCount       int        `json:"source_ip_count"`
-	SourceSubnetCount   int        `json:"source_subnet_count"`
-	SharedSourceIPCount int        `json:"shared_source_ip_count"`
-	SourceRegionCount   int        `json:"source_region_count"`
-	RiskSourceIPCount   int        `json:"risk_source_ip_count"`
-	RiskRegionCount     int        `json:"risk_region_count"`
-	RiskRegions         []string   `json:"risk_regions"`
-	RiskWindowStartedAt *time.Time `json:"risk_window_started_at,omitempty"`
-	RiskWindowEndedAt   *time.Time `json:"risk_window_ended_at,omitempty"`
-	ServerCount         int        `json:"server_count"`
-	ConnectionCount     int64      `json:"connection_count"`
-	ActivePeak          int64      `json:"active_peak"`
-	ReportCount         int64      `json:"report_count"`
-	LastSeenAt          time.Time  `json:"last_seen_at"`
+	UserID                int64      `json:"user_id"`
+	Username              string     `json:"username"`
+	Nickname              string     `json:"nickname"`
+	RiskLevel             string     `json:"risk_level"`
+	RiskScore             int        `json:"risk_score"`
+	RiskSignals           []string   `json:"risk_signals"`
+	Confidence            float64    `json:"confidence"`
+	EvidenceCategories    []string   `json:"evidence_categories"`
+	CounterEvidence       []string   `json:"counter_evidence"`
+	RecommendedAction     string     `json:"recommended_action"`
+	IdentityMode          string     `json:"identity_mode"`
+	DeviceLimit           int        `json:"device_limit"`
+	RegisteredDeviceCount int        `json:"registered_device_count"`
+	OnlineDeviceCount     int        `json:"online_device_count"`
+	OnlineDeviceLower     int        `json:"online_device_lower"`
+	OnlineDeviceEstimate  float64    `json:"online_device_estimate"`
+	OnlineDeviceUpper     int        `json:"online_device_upper"`
+	CoverageQuality       float64    `json:"coverage_quality"`
+	CoverageComplete      bool       `json:"coverage_complete"`
+	CloneConfidence       float64    `json:"clone_confidence"`
+	RiskDeviceIDHash      string     `json:"risk_device_id_hash,omitempty"`
+	ConcurrentRouteCount  int        `json:"concurrent_route_count"`
+	NodeFanout            int        `json:"node_fanout"`
+	RobustZ               float64    `json:"robust_z"`
+	ResourcePressure      float64    `json:"resource_pressure"`
+	AutoActionEligible    bool       `json:"auto_action_eligible"`
+	ProbeEpisodeCount     int        `json:"probe_episode_count"`
+	SourceIPCount         int        `json:"source_ip_count"`
+	SourceSubnetCount     int        `json:"source_subnet_count"`
+	SharedSourceIPCount   int        `json:"shared_source_ip_count"`
+	SourceRegionCount     int        `json:"source_region_count"`
+	RiskSourceIPCount     int        `json:"risk_source_ip_count"`
+	RiskRegionCount       int        `json:"risk_region_count"`
+	RiskRegions           []string   `json:"risk_regions"`
+	RiskWindowStartedAt   *time.Time `json:"risk_window_started_at,omitempty"`
+	RiskWindowEndedAt     *time.Time `json:"risk_window_ended_at,omitempty"`
+	ServerCount           int        `json:"server_count"`
+	ConnectionCount       int64      `json:"connection_count"`
+	ActivePeak            int64      `json:"active_peak"`
+	ActiveConnectionCount int64      `json:"active_connection_count"`
+	ReportCount           int64      `json:"report_count"`
+	LastSeenAt            time.Time  `json:"last_seen_at"`
 }
 
 type ConnectionAuditDimension struct {
@@ -1634,6 +1749,7 @@ type ConnectionAuditOverview struct {
 	RiskWindowMinutes  int                          `json:"risk_window_minutes"`
 	GeneratedAt        time.Time                    `json:"generated_at"`
 	GeoDatabase        GeoDatabaseStatus            `json:"geo_database"`
+	Policy             AuditPolicy                  `json:"policy"`
 	EnabledServerCount int                          `json:"enabled_server_count"`
 	ReportingUserCount int                          `json:"reporting_user_count"`
 	ElevatedRiskCount  int                          `json:"elevated_risk_count"`
@@ -1643,20 +1759,36 @@ type ConnectionAuditOverview struct {
 }
 
 type ConnectionAuditUserDetail struct {
-	Summary      ConnectionAuditUserSummary `json:"summary"`
-	Sources      []ConnectionAuditDimension `json:"sources"`
-	Destinations []ConnectionAuditDimension `json:"destinations"`
-	Outbounds    []ConnectionAuditDimension `json:"outbounds"`
-	Servers      []ConnectionAuditDimension `json:"servers"`
-	Recent       []ConnectionAuditReport    `json:"recent"`
-	RiskEvents   []ConnectionAuditRiskEvent `json:"risk_events"`
+	Summary       ConnectionAuditUserSummary `json:"summary"`
+	Sources       []ConnectionAuditDimension `json:"sources"`
+	Destinations  []ConnectionAuditDimension `json:"destinations"`
+	Outbounds     []ConnectionAuditDimension `json:"outbounds"`
+	Servers       []ConnectionAuditDimension `json:"servers"`
+	Recent        []ConnectionAuditReport    `json:"recent"`
+	RiskEvents    []ConnectionAuditRiskEvent `json:"risk_events"`
+	ProbeEpisodes []ConnectionProbeEpisode   `json:"probe_episodes"`
+	Presence      []ConnectionPresenceEvent  `json:"presence"`
 }
 
-type SubscriptionAuditThresholds struct {
-	RegionLimit       int `json:"region_limit"`
-	SourceIPLimit     int `json:"source_ip_limit"`
-	PullLimit         int `json:"pull_limit"`
-	ClientFormatLimit int `json:"client_format_limit"`
+type AuditThreshold struct {
+	Soft int `json:"soft"`
+	Hard int `json:"hard"`
+}
+
+type AuditPolicy struct {
+	Mode                     string         `json:"mode"`
+	RawRequestsPer60Seconds  AuditThreshold `json:"raw_requests_per_60_seconds"`
+	LogicalPullsPer10Minutes AuditThreshold `json:"logical_pulls_per_10_minutes"`
+	LogicalPullsPer24Hours   AuditThreshold `json:"logical_pulls_per_24_hours"`
+	RoutesPer15Minutes       AuditThreshold `json:"routes_per_15_minutes"`
+	ClientFamiliesPer24Hours AuditThreshold `json:"client_families_per_24_hours"`
+	ConcurrentRoutes90Secs   AuditThreshold `json:"concurrent_routes_90_seconds"`
+	NodeFanout10Seconds      AuditThreshold `json:"node_fanout_10_seconds"`
+	ProbeEpisodes10Minutes   AuditThreshold `json:"probe_episodes_10_minutes"`
+	ActiveConnections        AuditThreshold `json:"active_connections"`
+	LegacyDeviceExcess       AuditThreshold `json:"legacy_device_excess"`
+	CloneOverlapSeconds      int            `json:"clone_overlap_seconds"`
+	AutoActionConfidence     float64        `json:"auto_action_confidence"`
 }
 
 type AuditAction string
@@ -1666,16 +1798,15 @@ const (
 	AuditActionWarn     AuditAction = "warn"
 )
 
-type SubscriptionAuditPolicy struct {
-	ShortWindowMinutes int                         `json:"short_window_minutes"`
-	LongWindowHours    int                         `json:"long_window_hours"`
-	Short              SubscriptionAuditThresholds `json:"short"`
-	Long               SubscriptionAuditThresholds `json:"long"`
-}
-
 type SubscriptionAuditWindowSnapshot struct {
 	WindowMinutes     int      `json:"window_minutes"`
 	PullCount         int      `json:"pull_count"`
+	RawRequestCount   int      `json:"raw_request_count"`
+	LogicalPullWeight float64  `json:"logical_pull_weight"`
+	RouteCount        int      `json:"route_count"`
+	RouteNovelty      float64  `json:"route_novelty_weight"`
+	ClientFamilyCount int      `json:"client_family_count"`
+	FormatFamilyCount int      `json:"format_family_count"`
 	SourceIPCount     int      `json:"source_ip_count"`
 	RegionCount       int      `json:"region_count"`
 	ClientFormatCount int      `json:"client_format_count"`
@@ -1683,36 +1814,51 @@ type SubscriptionAuditWindowSnapshot struct {
 }
 
 type SubscriptionAuditRisk struct {
-	Level     string                          `json:"level"`
-	Score     int                             `json:"score"`
-	Signals   []string                        `json:"signals"`
-	HardBlock bool                            `json:"hard_block"`
-	Reason    string                          `json:"reason,omitempty"`
-	Short     SubscriptionAuditWindowSnapshot `json:"short"`
-	Long      SubscriptionAuditWindowSnapshot `json:"long"`
+	Level              string                          `json:"level"`
+	Score              int                             `json:"score"`
+	Signals            []string                        `json:"signals"`
+	Confidence         float64                         `json:"confidence"`
+	EvidenceCategories []string                        `json:"evidence_categories"`
+	CounterEvidence    []string                        `json:"counter_evidence"`
+	RecommendedAction  string                          `json:"recommended_action"`
+	IdentityMode       string                          `json:"identity_mode"`
+	HardBlock          bool                            `json:"hard_block"`
+	Reason             string                          `json:"reason,omitempty"`
+	Short              SubscriptionAuditWindowSnapshot `json:"short"`
+	Long               SubscriptionAuditWindowSnapshot `json:"long"`
 }
 
 type SubscriptionPullAudit struct {
-	ID                  int64     `json:"id"`
-	UserID              int64     `json:"user_id"`
-	SourceIP            string    `json:"source_ip"`
-	SourceCountryCode   string    `json:"source_country_code,omitempty"`
-	SourceCountry       string    `json:"source_country,omitempty"`
-	SourceProvince      string    `json:"source_province,omitempty"`
-	SourceCity          string    `json:"source_city,omitempty"`
-	SourceISP           string    `json:"source_isp,omitempty"`
-	GeoDatabaseRevision string    `json:"geo_database_revision,omitempty"`
-	UserAgent           string    `json:"user_agent,omitempty"`
-	ClientName          string    `json:"client_name"`
-	Format              string    `json:"format"`
-	ProfileID           *int64    `json:"profile_id,omitempty"`
-	AgeEncrypted        bool      `json:"age_encrypted"`
-	TokenKind           string    `json:"token_kind"`
-	Outcome             string    `json:"outcome"`
-	Reason              string    `json:"reason,omitempty"`
-	RiskEligible        bool      `json:"-"`
-	RequestedAt         time.Time `json:"requested_at"`
-	CreatedAt           time.Time `json:"created_at"`
+	ID                   int64     `json:"id"`
+	UserID               int64     `json:"user_id"`
+	DeviceIDHash         string    `json:"device_id_hash,omitempty"`
+	RepresentationID     string    `json:"representation_id,omitempty"`
+	SubscriptionRevision string    `json:"subscription_revision,omitempty"`
+	RawRequestWeight     float64   `json:"raw_request_weight"`
+	LogicalPullWeight    float64   `json:"logical_pull_weight"`
+	LogicalFetchID       string    `json:"logical_fetch_id,omitempty"`
+	RouteID              string    `json:"route_id,omitempty"`
+	RouteNoveltyWeight   float64   `json:"route_novelty_weight"`
+	DedupeReason         string    `json:"dedupe_reason,omitempty"`
+	ConditionalRequest   bool      `json:"conditional_request"`
+	SourceIP             string    `json:"source_ip"`
+	SourceCountryCode    string    `json:"source_country_code,omitempty"`
+	SourceCountry        string    `json:"source_country,omitempty"`
+	SourceProvince       string    `json:"source_province,omitempty"`
+	SourceCity           string    `json:"source_city,omitempty"`
+	SourceISP            string    `json:"source_isp,omitempty"`
+	GeoDatabaseRevision  string    `json:"geo_database_revision,omitempty"`
+	UserAgent            string    `json:"user_agent,omitempty"`
+	ClientName           string    `json:"client_name"`
+	Format               string    `json:"format"`
+	ProfileID            *int64    `json:"profile_id,omitempty"`
+	AgeEncrypted         bool      `json:"age_encrypted"`
+	TokenKind            string    `json:"token_kind"`
+	Outcome              string    `json:"outcome"`
+	Reason               string    `json:"reason,omitempty"`
+	RiskEligible         bool      `json:"-"`
+	RequestedAt          time.Time `json:"requested_at"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 type SubscriptionAccessState struct {
@@ -1737,30 +1883,39 @@ type SubscriptionAuditDimension struct {
 }
 
 type SubscriptionAuditUserSummary struct {
-	UserID            int64                 `json:"user_id"`
-	Username          string                `json:"username"`
-	Nickname          string                `json:"nickname"`
-	RiskLevel         string                `json:"risk_level"`
-	RiskScore         int                   `json:"risk_score"`
-	RiskSignals       []string              `json:"risk_signals"`
-	Suspended         bool                  `json:"suspended"`
-	SuspendedAt       *time.Time            `json:"suspended_at,omitempty"`
-	SuspensionReason  string                `json:"suspension_reason,omitempty"`
-	PullCount         int64                 `json:"pull_count"`
-	SuccessfulCount   int64                 `json:"successful_count"`
-	DeniedCount       int64                 `json:"denied_count"`
-	SourceIPCount     int                   `json:"source_ip_count"`
-	RegionCount       int                   `json:"region_count"`
-	ClientFormatCount int                   `json:"client_format_count"`
-	LastSeenAt        time.Time             `json:"last_seen_at"`
-	CurrentRisk       SubscriptionAuditRisk `json:"current_risk"`
+	UserID             int64                 `json:"user_id"`
+	Username           string                `json:"username"`
+	Nickname           string                `json:"nickname"`
+	RiskLevel          string                `json:"risk_level"`
+	RiskScore          int                   `json:"risk_score"`
+	RiskSignals        []string              `json:"risk_signals"`
+	Confidence         float64               `json:"confidence"`
+	EvidenceCategories []string              `json:"evidence_categories"`
+	CounterEvidence    []string              `json:"counter_evidence"`
+	RecommendedAction  string                `json:"recommended_action"`
+	IdentityMode       string                `json:"identity_mode"`
+	DeviceCount        int                   `json:"device_count"`
+	RawRequestCount    int64                 `json:"raw_request_count"`
+	LogicalPullWeight  float64               `json:"logical_pull_weight"`
+	RouteCount         int                   `json:"route_count"`
+	Suspended          bool                  `json:"suspended"`
+	SuspendedAt        *time.Time            `json:"suspended_at,omitempty"`
+	SuspensionReason   string                `json:"suspension_reason,omitempty"`
+	PullCount          int64                 `json:"pull_count"`
+	SuccessfulCount    int64                 `json:"successful_count"`
+	DeniedCount        int64                 `json:"denied_count"`
+	SourceIPCount      int                   `json:"source_ip_count"`
+	RegionCount        int                   `json:"region_count"`
+	ClientFormatCount  int                   `json:"client_format_count"`
+	LastSeenAt         time.Time             `json:"last_seen_at"`
+	CurrentRisk        SubscriptionAuditRisk `json:"current_risk"`
 }
 
 type SubscriptionAuditOverview struct {
 	WindowHours       int                            `json:"window_hours"`
 	GeneratedAt       time.Time                      `json:"generated_at"`
 	GeoDatabase       GeoDatabaseStatus              `json:"geo_database"`
-	Policy            SubscriptionAuditPolicy        `json:"policy"`
+	Policy            AuditPolicy                    `json:"policy"`
 	ReportingUsers    int                            `json:"reporting_user_count"`
 	ElevatedRiskCount int                            `json:"elevated_risk_count"`
 	SuspendedCount    int                            `json:"suspended_count"`
@@ -1786,6 +1941,10 @@ type CombinedAuditUserSummary struct {
 	RiskLevel             string    `json:"risk_level"`
 	RiskScore             int       `json:"risk_score"`
 	RiskSignals           []string  `json:"risk_signals"`
+	Confidence            float64   `json:"confidence"`
+	EvidenceCategories    []string  `json:"evidence_categories"`
+	CounterEvidence       []string  `json:"counter_evidence"`
+	RecommendedAction     string    `json:"recommended_action"`
 	ConnectionRiskLevel   string    `json:"connection_risk_level"`
 	ConnectionRiskScore   int       `json:"connection_risk_score"`
 	ConnectionObserved    bool      `json:"connection_observed"`
@@ -1808,6 +1967,9 @@ type TrafficRuntimePolicy struct {
 	UserID            int64  `json:"user_id"`
 	InboundID         int64  `json:"inbound_id,omitempty"`
 	PathID            int64  `json:"path_id,omitempty"`
+	DeviceIDHash      string `json:"device_id_hash,omitempty"`
+	CredentialEpoch   int64  `json:"credential_epoch,omitempty"`
+	CredentialStatus  string `json:"credential_status,omitempty"`
 	Billable          bool   `json:"billable"`
 	SpeedLimitMbps    int    `json:"speed_limit_mbps,omitempty"`
 	TrafficLimitBytes int64  `json:"traffic_limit_bytes,omitempty"`

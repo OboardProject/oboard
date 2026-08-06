@@ -306,6 +306,34 @@ func TestProxyPathEgressAttemptsRetainOnlySameTopologySuccess(t *testing.T) {
 	}
 }
 
+func TestCreateUserPreservesExplicitLegacyProxySetting(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	defaultUser := &model.User{Username: "legacy-default", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "uuid-default", ProxyPassword: "password"}
+	disabledUser := &model.User{Username: "legacy-disabled", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "uuid-disabled", ProxyPassword: "password", LegacyProxyEnabledSet: true}
+	if err := s.CreateUser(ctx, defaultUser); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUser(ctx, disabledUser); err != nil {
+		t.Fatal(err)
+	}
+	storedDefault, err := s.GetUser(ctx, defaultUser.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedDisabled, err := s.GetUser(ctx, disabledUser.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !storedDefault.LegacyProxyEnabled || storedDisabled.LegacyProxyEnabled {
+		t.Fatalf("legacy proxy settings: default=%v explicit=%v", storedDefault.LegacyProxyEnabled, storedDisabled.LegacyProxyEnabled)
+	}
+}
+
 func TestPasskeyOwnerLookupRequiresCredentialAndUserHandle(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

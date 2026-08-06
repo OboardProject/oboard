@@ -34,7 +34,7 @@ const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_tok
 
 const serverTelemetrySelectSQL = `select server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error,offline_notify_enabled,offline_after_seconds from server_telemetry`
 
-const userSelectSQL = `select u.id,u.username,u.nickname,u.password_hash,coalesce(u.session_version,0),u.role,u.status,u.proxy_uuid,u.proxy_password,coalesce(sua.random_id,''),u.speed_limit_mbps,u.traffic_limit_bytes,u.traffic_used_bytes,u.traffic_reset_mode,u.traffic_reset_day,coalesce(u.subscription_token,''),coalesce(p.burn_after_read,0),p.burned_at,coalesce(a.enabled,0),coalesce(a.public_key,''),coalesce(sa.suspended,0),sa.suspended_at,coalesce(sa.suspension_reason,''),u.created_at,u.updated_at from users u left join ssh_user_aliases sua on sua.user_id=u.id left join subscription_token_policies p on p.user_id=u.id left join subscription_age_keys a on a.user_id=u.id left join subscription_access_states sa on sa.user_id=u.id`
+const userSelectSQL = `select u.id,u.username,u.nickname,u.password_hash,coalesce(u.session_version,0),u.role,u.status,u.proxy_uuid,u.proxy_password,coalesce(sua.random_id,''),u.speed_limit_mbps,u.traffic_limit_bytes,u.traffic_used_bytes,u.traffic_reset_mode,u.traffic_reset_day,coalesce(u.subscription_token,''),coalesce(p.burn_after_read,0),p.burned_at,coalesce(a.enabled,0),coalesce(a.public_key,''),coalesce(sa.suspended,0),sa.suspended_at,coalesce(sa.suspension_reason,''),coalesce(u.device_limit,0),coalesce(u.legacy_proxy_enabled,1),u.created_at,u.updated_at from users u left join ssh_user_aliases sua on sua.user_id=u.id left join subscription_token_policies p on p.user_id=u.id left join subscription_age_keys a on a.user_id=u.id left join subscription_access_states sa on sa.user_id=u.id`
 
 func Open(path string) (*Store, error) {
 	return open(path, false)
@@ -162,7 +162,10 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_ai_audit_reviews_created on ai_audit_reviews(created_at desc)`,
 		`create index if not exists idx_ai_audit_review_jobs_queue on ai_audit_review_jobs(status,created_at)`,
 		`create index if not exists idx_ai_audit_review_evidence_review on ai_audit_review_evidence(review_id,kind,ref)`,
-		`create table if not exists users (id integer primary key autoincrement, username text not null unique, nickname text not null default '', password_hash text not null, session_version integer not null default 0, role text not null, status text not null, proxy_uuid text not null, proxy_password text not null, speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_used_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, subscription_token text unique, created_at text not null, updated_at text not null)`,
+		`create table if not exists users (id integer primary key autoincrement, username text not null unique, nickname text not null default '', password_hash text not null, session_version integer not null default 0, role text not null, status text not null, proxy_uuid text not null, proxy_password text not null, speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_used_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, subscription_token text unique, device_limit integer not null default 0, legacy_proxy_enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists user_devices (id text primary key, device_id_hash text not null unique, user_id integer not null references users(id) on delete cascade, name text not null, token_hash text not null unique, token_prefix text not null, credential_epoch integer not null default 1, status text not null default 'active', subscription_suspended integer not null default 0, proxy_access_state text not null default 'active', last_subscription_at text, last_proxy_activity_at text, revoked_at text, subscription_suspended_at text, created_at text not null, updated_at text not null)`,
+		`create index if not exists idx_user_devices_user on user_devices(user_id,status,created_at)`,
+		`create table if not exists subscription_rate_buckets (bucket_key text primary key, level real not null, updated_at text not null)`,
 		`create table if not exists ssh_user_aliases (user_id integer primary key references users(id) on delete cascade, random_id text not null unique, created_at text not null)`,
 		`create table if not exists subscription_token_policies (user_id integer primary key references users(id) on delete cascade, burn_after_read integer not null default 0, burned_at text, updated_at text not null)`,
 		`create table if not exists subscription_one_time_tokens (token text primary key, user_id integer not null references users(id) on delete cascade, created_at text not null)`,
@@ -170,7 +173,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists subscription_custom_path_user_policies (user_id integer primary key references users(id) on delete cascade, mode text not null, updated_at text not null)`,
 		`create table if not exists subscription_custom_path_group_policies (group_id integer primary key references user_groups(id) on delete cascade, mode text not null, updated_at text not null)`,
 		`create table if not exists subscription_age_keys (user_id integer primary key references users(id) on delete cascade, enabled integer not null default 0, public_key text not null default '', updated_at text not null)`,
-		`create table if not exists subscription_pull_audits (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, source_ip text not null, source_country_code text not null default '', source_country text not null default '', source_province text not null default '', source_city text not null default '', source_isp text not null default '', geo_database_revision text not null default '', user_agent text not null default '', client_name text not null default '', format text not null default '', profile_id integer, age_encrypted integer not null default 0, token_kind text not null default '', outcome text not null, reason text not null default '', risk_eligible integer not null default 0, requested_at text not null, created_at text not null)`,
+		`create table if not exists subscription_pull_audits (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, device_id_hash text not null default '', representation_id text not null default '', subscription_revision text not null default '', raw_request_weight real not null default 1, logical_pull_weight real not null default 1, logical_fetch_id text not null default '', route_id text not null default '', route_novelty_weight real not null default 0, dedupe_reason text not null default '', conditional_request integer not null default 0, source_ip text not null, source_country_code text not null default '', source_country text not null default '', source_province text not null default '', source_city text not null default '', source_isp text not null default '', geo_database_revision text not null default '', user_agent text not null default '', client_name text not null default '', format text not null default '', profile_id integer, age_encrypted integer not null default 0, token_kind text not null default '', outcome text not null, reason text not null default '', risk_eligible integer not null default 0, requested_at text not null, created_at text not null)`,
 		`create table if not exists subscription_access_states (user_id integer primary key references users(id) on delete cascade, suspended integer not null default 0, suspended_at text, suspension_reason text not null default '', trigger_audit_id integer references subscription_pull_audits(id) on delete set null, trigger_snapshot_json text not null default '', evaluation_started_at text not null, resumed_at text, resumed_by integer references users(id) on delete set null, updated_at text not null)`,
 		`create table if not exists user_authentication (user_id integer primary key references users(id) on delete cascade, totp_enabled integer not null default 0, totp_secret_encrypted text not null default '', recovery_code_hashes_json text not null default '[]', totp_last_used_step integer not null default -1, webauthn_user_handle text unique, updated_at text not null)`,
 		`create table if not exists passkey_credentials (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, name text not null, credential_id text not null unique, credential_json text not null, created_at text not null, last_used_at text)`,
@@ -178,7 +181,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists revoked_user_sessions (token_hash text primary key, user_id integer not null references users(id) on delete cascade, expires_at text not null, created_at text not null)`,
 		`create table if not exists ssh_server_host_keys (server_id integer primary key references servers(id) on delete cascade, public_key text not null, fingerprint text not null, config_version integer not null, updated_at text not null)`,
 		`create table if not exists ssh_deployment_plans (server_id integer primary key references servers(id) on delete cascade, plan_digest text not null, config_version integer not null, updated_at text not null)`,
-		`create table if not exists ssh_password_deployments (server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, password_digest text not null, config_version integer not null, updated_at text not null, primary key(server_id,user_id))`,
+		`create table if not exists ssh_password_deployments (server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, device_id_hash text not null default '', credential_epoch integer not null default 0, credential_status text not null default 'active', password_digest text not null, config_version integer not null, updated_at text not null, primary key(server_id,user_id,device_id_hash,credential_epoch))`,
 		`create table if not exists servers (id integer primary key autoincrement, name text not null, agent_id text unique, agent_token_hash text, chain_secret text not null, enrollment_hash text, enrollment_expires_at text, entry_address text, public_ipv4 text not null default '', public_ipv6 text not null default '', region_code text not null default '', detected_region_code text not null default '', region_mode text not null default 'auto', entry_ip_mode text not null default 'auto', listen_ip text, ip_stack text not null default 'auto', udp_inbound_mode text not null default 'allow', mtu_mode text not null default 'detect', mtu_value integer not null default 0, mtu_probe_host text not null default '1.1.1.1', mtu_probe_port integer not null default 443, mtu_overhead_bytes integer not null default 0, bbr_enabled integer not null default 0, port_range_start integer not null default 10000, port_range_end integer not null default 20000, status text not null, os text, distro_id text not null default '', distro_version text not null default '', distro_name text not null default '', libc text not null default '', service_manager text not null default '', package_manager text not null default '', arch text, kernel text, cpu text, memory_bytes integer not null default 0, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, agent_memory_bytes integer not null default 0, disk_bytes integer not null default 0, agent_version text not null default '', agent_build text not null default '', sing_box_version text, connection_audit_enabled integer not null default 0, last_seen_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_credentials (id integer primary key autoincrement, name text not null unique, provider text not null, zone_name text not null, zone_id text not null default '', config_encrypted text not null, enabled integer not null default 1, verified_at text, last_error text not null default '', created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_credential_zones (id integer primary key autoincrement, credential_id integer not null references dns_credentials(id) on delete cascade, zone_name text not null, provider_zone_id text not null default '', server_id integer references servers(id) on delete set null, created_at text not null, updated_at text not null)`,
@@ -210,7 +213,12 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists traffic_stats (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, user_id integer references users(id) on delete cascade, inbound_id integer references inbounds(id) on delete set null, upload_bytes integer not null, download_bytes integer not null, created_at text not null)`,
 		`create table if not exists traffic_periods (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, period_key text not null, started_at text not null, ends_at text not null, upload_bytes integer not null default 0, download_bytes integer not null default 0, traffic_limit_bytes integer not null default 0, state text not null default 'active', updated_at text not null, unique(user_id,period_key))`,
 		`create table if not exists traffic_reports (report_id text primary key, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, inbound_id integer references inbounds(id) on delete set null, path_id integer references proxy_paths(id) on delete set null, period_key text not null, upload_bytes integer not null, download_bytes integer not null, started_at text not null, ended_at text not null, created_at text not null)`,
-		`create table if not exists connection_audit_reports (report_id text primary key, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, inbound_id integer references inbounds(id) on delete set null, path_id integer references proxy_paths(id) on delete set null, source_ip text not null, source_geo_code text not null default '', source_country_code text not null default '', source_country text not null default '', source_province text not null default '', source_city text not null default '', source_isp text not null default '', geo_database_revision text not null default '', network text not null, destination text not null default '', destination_port integer not null default 0, outbound_tag text not null default '', outbound_type text not null default '', connection_count integer not null, closed_count integer not null default 0, duration_total_ms integer not null default 0, duration_max_ms integer not null default 0, active_peak integer not null default 0, active_at_end integer not null default 0, collection_generation integer not null default 0, bucket_capacity integer not null default 1, dropped_bucket_count integer not null default 0, collection_started_at text not null, collection_ended_at text not null, started_at text not null, ended_at text not null, created_at text not null)`,
+		`create table if not exists connection_audit_reports (report_id text primary key, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, inbound_id integer references inbounds(id) on delete set null, path_id integer references proxy_paths(id) on delete set null, device_id_hash text not null default '', credential_epoch integer not null default 0, client_instance_id_hash text not null default '', source_ip text not null, route_id text not null default '', source_geo_code text not null default '', source_country_code text not null default '', source_country text not null default '', source_province text not null default '', source_city text not null default '', source_isp text not null default '', geo_database_revision text not null default '', network text not null, destination text not null default '', destination_port integer not null default 0, outbound_tag text not null default '', outbound_type text not null default '', connection_count integer not null, closed_count integer not null default 0, duration_total_ms integer not null default 0, duration_max_ms integer not null default 0, upload_bytes integer not null default 0, download_bytes integer not null default 0, payload_first_at text, payload_last_at text, duration_le_1s_count integer not null default 0, duration_le_5s_count integer not null default 0, duration_le_20s_count integer not null default 0, duration_gt_20s_count integer not null default 0, probe_state text not null default '', internal_probe integer not null default 0, presence_sequence integer not null default 0, active_peak integer not null default 0, active_at_end integer not null default 0, collection_generation integer not null default 0, bucket_capacity integer not null default 1, dropped_bucket_count integer not null default 0, collection_started_at text not null, collection_ended_at text not null, started_at text not null, ended_at text not null, created_at text not null)`,
+		`create table if not exists connection_presence_events (agent_id text not null, sequence integer not null, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, inbound_id integer not null default 0, path_id integer not null default 0, device_id_hash text not null default '', credential_epoch integer not null default 0, source_ip text not null, route_id text not null default '', network text not null, event text not null, state text not null, active_connections integer not null default 0, meaningful integer not null default 0, payload_last_at text, event_at text not null, created_at text not null, primary key(agent_id,sequence))`,
+		`create table if not exists connection_presence_states (server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, inbound_id integer not null default 0, path_id integer not null default 0, device_id_hash text not null default '', credential_epoch integer not null default 0, source_ip text not null, route_id text not null default '', network text not null, active_connections integer not null default 0, meaningful integer not null default 0, payload_last_at text, last_event_at text not null, last_sequence integer not null, updated_at text not null, primary key(server_id,user_id,inbound_id,path_id,device_id_hash,credential_epoch,source_ip,network))`,
+		`create table if not exists connection_presence_agents (agent_id text primary key, server_id integer not null references servers(id) on delete cascade, dropped_count integer not null default 0, updated_at text not null)`,
+		`create table if not exists connection_probe_episodes (id text primary key, user_id integer not null references users(id) on delete cascade, device_id_hash text not null default '', state text not null, score integer not null, node_count integer not null, connection_count integer not null, upload_bytes integer not null default 0, download_bytes integer not null default 0, started_at text not null, ended_at text not null, updated_at text not null)`,
+		`create index if not exists idx_connection_probe_user_time on connection_probe_episodes(user_id,ended_at desc)`,
 		`create table if not exists traffic_leases (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, period_key text not null, lease_bytes integer not null default 0, consumed_bytes integer not null default 0, updated_at text not null, unique(server_id,user_id,period_key))`,
 		`create table if not exists server_telemetry (server_id integer primary key references servers(id) on delete cascade, monitoring_mode text not null default 'lightweight', traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, connectivity_probe_enabled integer not null default 0, time_correction_mode text not null default 'off', time_check_status text not null default 'unknown', time_offset_ms integer not null default 0, time_effective_offset_ms integer not null default 0, time_check_source text not null default '', time_check_error text not null default '', time_logical_active integer not null default 0, time_unsupported_paths_json text not null default '[]', time_checked_at text, period_key text not null default '', period_start text not null default '', period_end text not null default '', traffic_upload_bytes integer not null default 0, traffic_download_bytes integer not null default 0, raw_upload_bytes integer not null default 0, raw_download_bytes integer not null default 0, network_upload_bps integer not null default 0, network_download_bps integer not null default 0, last_reported_at text, connectivity_available integer not null default -1, connectivity_latency_ms integer not null default 0, connectivity_checked_at text, connectivity_error text not null default '', updated_at text not null)`,
 		`create table if not exists server_metric_samples (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, network_upload_bps integer not null default 0, network_download_bps integer not null default 0, traffic_upload_bytes integer not null default 0, traffic_download_bytes integer not null default 0, connectivity_available integer not null default -1, connectivity_latency_ms integer not null default 0, sampled_at text not null)`,
@@ -268,6 +276,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_dns_credential_zones_server on dns_credential_zones(server_id)`,
 		`create index if not exists idx_proxy_path_port_allocations_server on proxy_path_port_allocations(server_id)`,
 		`create index if not exists idx_ssh_password_deployments_user on ssh_password_deployments(user_id, server_id)`,
+		`create index if not exists idx_connection_presence_events_time on connection_presence_events(event_at, user_id)`,
+		`create index if not exists idx_connection_presence_states_user on connection_presence_states(user_id, last_event_at)`,
 	}
 	for _, stmt := range schema {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -279,6 +289,36 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	}
 	if err := s.ensureNullableAuthChallengeUser(ctx); err != nil {
 		return err
+	}
+	for _, column := range []struct {
+		name string
+		sql  string
+	}{
+		{"device_limit", `alter table users add column device_limit integer not null default 0`},
+		{"legacy_proxy_enabled", `alter table users add column legacy_proxy_enabled integer not null default 1`},
+	} {
+		if err := s.ensureColumn(ctx, "users", column.name, column.sql); err != nil {
+			return err
+		}
+	}
+	for _, column := range []struct {
+		name string
+		sql  string
+	}{
+		{"device_id_hash", `alter table subscription_pull_audits add column device_id_hash text not null default ''`},
+		{"representation_id", `alter table subscription_pull_audits add column representation_id text not null default ''`},
+		{"subscription_revision", `alter table subscription_pull_audits add column subscription_revision text not null default ''`},
+		{"raw_request_weight", `alter table subscription_pull_audits add column raw_request_weight real not null default 1`},
+		{"logical_pull_weight", `alter table subscription_pull_audits add column logical_pull_weight real not null default 1`},
+		{"logical_fetch_id", `alter table subscription_pull_audits add column logical_fetch_id text not null default ''`},
+		{"route_id", `alter table subscription_pull_audits add column route_id text not null default ''`},
+		{"route_novelty_weight", `alter table subscription_pull_audits add column route_novelty_weight real not null default 0`},
+		{"dedupe_reason", `alter table subscription_pull_audits add column dedupe_reason text not null default ''`},
+		{"conditional_request", `alter table subscription_pull_audits add column conditional_request integer not null default 0`},
+	} {
+		if err := s.ensureColumn(ctx, "subscription_pull_audits", column.name, column.sql); err != nil {
+			return err
+		}
 	}
 	if err := s.ensureColumn(ctx, "servers", "connection_audit_enabled", `alter table servers add column connection_audit_enabled integer not null default 0`); err != nil {
 		return err
@@ -332,6 +372,21 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		{"closed_count", `alter table connection_audit_reports add column closed_count integer not null default 0`},
 		{"duration_total_ms", `alter table connection_audit_reports add column duration_total_ms integer not null default 0`},
 		{"duration_max_ms", `alter table connection_audit_reports add column duration_max_ms integer not null default 0`},
+		{"device_id_hash", `alter table connection_audit_reports add column device_id_hash text not null default ''`},
+		{"credential_epoch", `alter table connection_audit_reports add column credential_epoch integer not null default 0`},
+		{"client_instance_id_hash", `alter table connection_audit_reports add column client_instance_id_hash text not null default ''`},
+		{"route_id", `alter table connection_audit_reports add column route_id text not null default ''`},
+		{"upload_bytes", `alter table connection_audit_reports add column upload_bytes integer not null default 0`},
+		{"download_bytes", `alter table connection_audit_reports add column download_bytes integer not null default 0`},
+		{"payload_first_at", `alter table connection_audit_reports add column payload_first_at text`},
+		{"payload_last_at", `alter table connection_audit_reports add column payload_last_at text`},
+		{"duration_le_1s_count", `alter table connection_audit_reports add column duration_le_1s_count integer not null default 0`},
+		{"duration_le_5s_count", `alter table connection_audit_reports add column duration_le_5s_count integer not null default 0`},
+		{"duration_le_20s_count", `alter table connection_audit_reports add column duration_le_20s_count integer not null default 0`},
+		{"duration_gt_20s_count", `alter table connection_audit_reports add column duration_gt_20s_count integer not null default 0`},
+		{"probe_state", `alter table connection_audit_reports add column probe_state text not null default ''`},
+		{"internal_probe", `alter table connection_audit_reports add column internal_probe integer not null default 0`},
+		{"presence_sequence", `alter table connection_audit_reports add column presence_sequence integer not null default 0`},
 		{"collection_generation", `alter table connection_audit_reports add column collection_generation integer not null default 0`},
 		{"bucket_capacity", `alter table connection_audit_reports add column bucket_capacity integer not null default 1`},
 		{"dropped_bucket_count", `alter table connection_audit_reports add column dropped_bucket_count integer not null default 0`},
@@ -340,6 +395,16 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	}
 	for _, column := range connectionAuditGeoColumns {
 		if err := s.ensureColumn(ctx, "connection_audit_reports", column.name, column.sql); err != nil {
+			return err
+		}
+	}
+	for _, stmt := range []string{
+		`create index if not exists idx_connection_audit_device_time on connection_audit_reports(device_id_hash,ended_at desc)`,
+		`create index if not exists idx_connection_audit_route_time on connection_audit_reports(route_id,ended_at desc)`,
+		`create index if not exists idx_subscription_pull_audits_device_time on subscription_pull_audits(device_id_hash,requested_at desc)`,
+		`create index if not exists idx_subscription_pull_audits_route_time on subscription_pull_audits(route_id,requested_at desc)`,
+	} {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	}
@@ -884,6 +949,7 @@ func (s *Store) BootstrapAdmin(ctx context.Context, u *model.User) (created bool
 	}
 
 	ts := now()
+	u.LegacyProxyEnabled = true
 	res, err := conn.ExecContext(ctx, `insert into users(username,nickname,password_hash,session_version,role,status,proxy_uuid,proxy_password,speed_limit_mbps,traffic_limit_bytes,traffic_used_bytes,traffic_reset_mode,traffic_reset_day,subscription_token,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, u.Username, u.Nickname, u.PasswordHash, u.SessionVersion, model.RoleAdmin, u.Status, u.ProxyUUID, u.ProxyPassword, u.SpeedLimitMbps, u.TrafficLimitBytes, u.TrafficUsedBytes, normalizeTrafficResetMode(u.TrafficResetMode), normalizeTrafficResetDay(u.TrafficResetDay), nullEmpty(u.SubscriptionToken), ts, ts)
 	if err != nil {
 		return false, err
@@ -923,6 +989,9 @@ func (s *Store) BootstrapAdmin(ctx context.Context, u *model.User) (created bool
 
 func (s *Store) CreateUser(ctx context.Context, u *model.User) error {
 	ts := now()
+	if !u.LegacyProxyEnabledSet {
+		u.LegacyProxyEnabled = true
+	}
 	u.CreatedAt = parseTime(ts)
 	u.UpdatedAt = u.CreatedAt
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -930,7 +999,7 @@ func (s *Store) CreateUser(ctx context.Context, u *model.User) error {
 		return err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `insert into users(username,nickname,password_hash,session_version,role,status,proxy_uuid,proxy_password,speed_limit_mbps,traffic_limit_bytes,traffic_used_bytes,traffic_reset_mode,traffic_reset_day,subscription_token,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, u.Username, u.Nickname, u.PasswordHash, u.SessionVersion, u.Role, u.Status, u.ProxyUUID, u.ProxyPassword, u.SpeedLimitMbps, u.TrafficLimitBytes, u.TrafficUsedBytes, normalizeTrafficResetMode(u.TrafficResetMode), normalizeTrafficResetDay(u.TrafficResetDay), nullEmpty(u.SubscriptionToken), ts, ts)
+	res, err := tx.ExecContext(ctx, `insert into users(username,nickname,password_hash,session_version,role,status,proxy_uuid,proxy_password,speed_limit_mbps,traffic_limit_bytes,traffic_used_bytes,traffic_reset_mode,traffic_reset_day,subscription_token,device_limit,legacy_proxy_enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, u.Username, u.Nickname, u.PasswordHash, u.SessionVersion, u.Role, u.Status, u.ProxyUUID, u.ProxyPassword, u.SpeedLimitMbps, u.TrafficLimitBytes, u.TrafficUsedBytes, normalizeTrafficResetMode(u.TrafficResetMode), normalizeTrafficResetDay(u.TrafficResetDay), nullEmpty(u.SubscriptionToken), u.DeviceLimit, boolInt(u.LegacyProxyEnabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -1014,7 +1083,7 @@ func (s *Store) UpdateUser(ctx context.Context, u *model.User) error {
 		return err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `update users set username=?, nickname=?, password_hash=coalesce(nullif(?,''),password_hash), role=?, status=?, proxy_uuid=?, proxy_password=?, speed_limit_mbps=?, traffic_limit_bytes=?, traffic_used_bytes=?, traffic_reset_mode=?, traffic_reset_day=?, subscription_token=?, updated_at=? where id=?`, u.Username, u.Nickname, u.PasswordHash, u.Role, u.Status, u.ProxyUUID, u.ProxyPassword, u.SpeedLimitMbps, u.TrafficLimitBytes, u.TrafficUsedBytes, normalizeTrafficResetMode(u.TrafficResetMode), normalizeTrafficResetDay(u.TrafficResetDay), nullEmpty(u.SubscriptionToken), ts, u.ID)
+	res, err := tx.ExecContext(ctx, `update users set username=?, nickname=?, password_hash=coalesce(nullif(?,''),password_hash), role=?, status=?, proxy_uuid=?, proxy_password=?, speed_limit_mbps=?, traffic_limit_bytes=?, traffic_used_bytes=?, traffic_reset_mode=?, traffic_reset_day=?, subscription_token=?, device_limit=?, legacy_proxy_enabled=?, updated_at=? where id=?`, u.Username, u.Nickname, u.PasswordHash, u.Role, u.Status, u.ProxyUUID, u.ProxyPassword, u.SpeedLimitMbps, u.TrafficLimitBytes, u.TrafficUsedBytes, normalizeTrafficResetMode(u.TrafficResetMode), normalizeTrafficResetDay(u.TrafficResetDay), nullEmpty(u.SubscriptionToken), u.DeviceLimit, boolInt(u.LegacyProxyEnabled), ts, u.ID)
 	if err != nil {
 		return err
 	}
@@ -1316,14 +1385,16 @@ func scanUsers(rows *sql.Rows) ([]model.User, error) {
 		var burnedAt sql.NullString
 		var ageEnabled int
 		var suspended int
+		var legacyProxyEnabled int
 		var suspendedAt sql.NullString
-		if err := rows.Scan(&u.ID, &u.Username, &u.Nickname, &u.PasswordHash, &u.SessionVersion, &u.Role, &u.Status, &u.ProxyUUID, &u.ProxyPassword, &u.SSHRandomID, &u.SpeedLimitMbps, &u.TrafficLimitBytes, &u.TrafficUsedBytes, &u.TrafficResetMode, &u.TrafficResetDay, &u.SubscriptionToken, &burnAfterRead, &burnedAt, &ageEnabled, &u.SubscriptionAgePublicKey, &suspended, &suspendedAt, &u.SubscriptionSuspendReason, &ca, &ua); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Nickname, &u.PasswordHash, &u.SessionVersion, &u.Role, &u.Status, &u.ProxyUUID, &u.ProxyPassword, &u.SSHRandomID, &u.SpeedLimitMbps, &u.TrafficLimitBytes, &u.TrafficUsedBytes, &u.TrafficResetMode, &u.TrafficResetDay, &u.SubscriptionToken, &burnAfterRead, &burnedAt, &ageEnabled, &u.SubscriptionAgePublicKey, &suspended, &suspendedAt, &u.SubscriptionSuspendReason, &u.DeviceLimit, &legacyProxyEnabled, &ca, &ua); err != nil {
 			return nil, err
 		}
 		u.SubscriptionBurnAfterRead = burnAfterRead != 0
 		u.SubscriptionBurnedAt = parseNullTime(burnedAt)
 		u.SubscriptionAgeEnabled = ageEnabled != 0
 		u.SubscriptionSuspended = suspended != 0
+		u.LegacyProxyEnabled = legacyProxyEnabled != 0
 		u.SubscriptionSuspendedAt = parseNullTime(suspendedAt)
 		u.TrafficResetMode = normalizeTrafficResetMode(u.TrafficResetMode)
 		u.TrafficResetDay = normalizeTrafficResetDay(u.TrafficResetDay)
@@ -2293,7 +2364,7 @@ func (s *Store) DeleteInboundUsersForUser(ctx context.Context, userID int64) err
 	return err
 }
 
-func (s *Store) ApplySSHDeploymentState(ctx context.Context, hostKey model.SSHServerHostKey, passwordDigests map[int64]string) error {
+func (s *Store) ApplySSHDeploymentState(ctx context.Context, hostKey model.SSHServerHostKey, deployments []model.SSHPasswordDeployment) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -2309,8 +2380,15 @@ func (s *Store) ApplySSHDeploymentState(ctx context.Context, hostKey model.SSHSe
 	if _, err := tx.ExecContext(ctx, `delete from ssh_password_deployments where server_id=?`, hostKey.ServerID); err != nil {
 		return err
 	}
-	for userID, digest := range passwordDigests {
-		if _, err := tx.ExecContext(ctx, `insert into ssh_password_deployments(server_id,user_id,password_digest,config_version,updated_at) values(?,?,?,?,?)`, hostKey.ServerID, userID, digest, hostKey.ConfigVersion, ts); err != nil {
+	for _, deployment := range deployments {
+		if deployment.UserID <= 0 || deployment.ServerID != 0 && deployment.ServerID != hostKey.ServerID || strings.TrimSpace(deployment.PasswordDigest) == "" {
+			return errors.New("invalid SSH password deployment state")
+		}
+		status := strings.TrimSpace(deployment.CredentialStatus)
+		if status == "" {
+			status = "active"
+		}
+		if _, err := tx.ExecContext(ctx, `insert into ssh_password_deployments(server_id,user_id,device_id_hash,credential_epoch,credential_status,password_digest,config_version,updated_at) values(?,?,?,?,?,?,?,?)`, hostKey.ServerID, deployment.UserID, strings.TrimSpace(deployment.DeviceIDHash), deployment.CredentialEpoch, status, deployment.PasswordDigest, hostKey.ConfigVersion, ts); err != nil {
 			return err
 		}
 	}
@@ -2347,7 +2425,7 @@ func (s *Store) GetSSHServerHostKey(ctx context.Context, serverID int64) (*model
 }
 
 func (s *Store) ListSSHPasswordDeploymentsForUser(ctx context.Context, userID int64) ([]model.SSHPasswordDeployment, error) {
-	rows, err := s.db.QueryContext(ctx, `select server_id,user_id,password_digest,config_version,updated_at from ssh_password_deployments where user_id=? order by server_id`, userID)
+	rows, err := s.db.QueryContext(ctx, `select server_id,user_id,device_id_hash,credential_epoch,credential_status,password_digest,config_version,updated_at from ssh_password_deployments where user_id=? order by server_id,device_id_hash,credential_epoch`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -2356,7 +2434,7 @@ func (s *Store) ListSSHPasswordDeploymentsForUser(ctx context.Context, userID in
 	for rows.Next() {
 		var item model.SSHPasswordDeployment
 		var updatedAt string
-		if err := rows.Scan(&item.ServerID, &item.UserID, &item.PasswordDigest, &item.ConfigVersion, &updatedAt); err != nil {
+		if err := rows.Scan(&item.ServerID, &item.UserID, &item.DeviceIDHash, &item.CredentialEpoch, &item.CredentialStatus, &item.PasswordDigest, &item.ConfigVersion, &updatedAt); err != nil {
 			return nil, err
 		}
 		item.UpdatedAt = parseTime(updatedAt)
@@ -5105,6 +5183,7 @@ type FullRoutingConfig struct {
 	DNSLists                     []model.DNSList                     `json:"dns_lists"`
 	ServerDNSPolicies            []model.ServerDNSPolicy             `json:"server_dns_policies"`
 	Users                        []model.User                        `json:"users"`
+	UserDevices                  []model.UserDevice                  `json:"user_devices"`
 	ProxyPathPortAllocations     []model.ProxyPathPortAllocation     `json:"proxy_path_port_allocations"`
 }
 
@@ -5130,6 +5209,10 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 		return FullRoutingConfig{}, err
 	}
 	users, err := s.ListUsers(ctx)
+	if err != nil {
+		return FullRoutingConfig{}, err
+	}
+	userDevices, err := s.ListActiveUserDevices(ctx)
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
@@ -5181,7 +5264,7 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
-	return FullRoutingConfig{Servers: servers, Inbounds: in, InboundUsers: inboundUsers, UserGroups: groups, UserGroupMembers: members, InboundAccessGrants: grants, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ExternalOutboundAccessGrants: externalGrants, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, ProxyPathEgressResults: proxyPathEgressResults, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, ProxyPathPortAllocations: portAllocations}, nil
+	return FullRoutingConfig{Servers: servers, Inbounds: in, InboundUsers: inboundUsers, UserGroups: groups, UserGroupMembers: members, InboundAccessGrants: grants, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ExternalOutboundAccessGrants: externalGrants, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, ProxyPathEgressResults: proxyPathEgressResults, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, UserDevices: userDevices, ProxyPathPortAllocations: portAllocations}, nil
 }
 
 func nullEmpty(v string) any {
