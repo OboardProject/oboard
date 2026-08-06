@@ -13031,6 +13031,20 @@ select:-webkit-autofill {
   font-size: 13px;
 }
 
+.login-notice {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--success) 24%, var(--border));
+  border-radius: 12px;
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 13px;
+}
+
+.login-register-toggle {
+  margin-top: 10px;
+  color: var(--text-secondary);
+}
+
 .login-submit {
   width: 100%;
   min-height: 44px;

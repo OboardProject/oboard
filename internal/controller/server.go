@@ -61,6 +61,8 @@ const (
 	settingNotificationServerOfflineAfter = "notification_server_offline_after_seconds"
 	settingNotificationServerOnlineAfter  = "notification_server_online_after_seconds"
 	settingNotificationServerMergeOffline = "notification_server_merge_offline"
+	settingRegistrationEnabled            = "registration_enabled"
+	settingRegistrationDefaultGroupID     = "registration_default_group_id"
 	timeCheckThresholdSeconds             = 30
 )
 
@@ -190,15 +192,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/api/v1/version", s.version)
 	mux.HandleFunc("/api/v1/auth/bootstrap", s.bootstrap)
+	mux.HandleFunc("/api/v1/auth/registration", s.registrationStatus)
+	mux.HandleFunc("/api/v1/auth/register", s.register)
 	mux.HandleFunc("/api/v1/auth/login", s.login)
 	mux.HandleFunc("/api/v1/auth/totp/verify", s.verifyTOTPLogin)
 	mux.HandleFunc("/api/v1/auth/passkey/login/begin", s.passkeyLoginBegin)
 	mux.HandleFunc("/api/v1/auth/passkey/login/finish", s.passkeyLoginFinish)
-	mux.HandleFunc("/api/v1/auth/session", s.auth(s.restoreSession, model.RoleViewer))
-	mux.HandleFunc("/api/v1/auth/logout", s.auth(s.logout, model.RoleViewer))
-	mux.HandleFunc("/api/v1/auth/password", s.auth(s.changePassword, model.RoleViewer))
-	mux.HandleFunc("/api/v1/me", s.auth(s.me, model.RoleViewer))
-	mux.HandleFunc("/api/v1/me/authentication", s.auth(s.authenticationStatus, model.RoleViewer))
+	mux.HandleFunc("/api/v1/auth/session", s.auth(s.restoreSession, model.RoleNone))
+	mux.HandleFunc("/api/v1/auth/logout", s.auth(s.logout, model.RoleNone))
+	mux.HandleFunc("/api/v1/auth/password", s.auth(s.changePassword, model.RoleNone))
+	mux.HandleFunc("/api/v1/me", s.auth(s.me, model.RoleNone))
+	mux.HandleFunc("/api/v1/me/authentication", s.auth(s.authenticationStatus, model.RoleNone))
 	mux.HandleFunc("/api/v1/me/totp/setup/begin", s.auth(s.totpSetupBegin, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/totp/setup/confirm", s.auth(s.totpSetupConfirm, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/totp/disable", s.auth(s.totpDisable, model.RoleViewer))
@@ -208,8 +212,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/me/passkeys/", s.auth(s.passkeys, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/subscription-age", s.auth(s.selfSubscriptionAge, model.RoleViewer))
 	mux.HandleFunc("/api/v1/me/subscription-custom-path", s.auth(s.selfSubscriptionCustomPath, model.RoleViewer))
-	mux.HandleFunc("/api/v1/page-data", s.auth(s.pageData, model.RoleViewer))
-	mux.HandleFunc("/api/v1/events", s.auth(s.uiEvents, model.RoleViewer))
+	mux.HandleFunc("/api/v1/page-data", s.auth(s.pageData, model.RoleNone))
+	mux.HandleFunc("/api/v1/events", s.auth(s.uiEvents, model.RoleNone))
 	mux.HandleFunc("/api/v1/dashboard/summary", s.auth(s.dashboard, model.RoleViewer))
 	mux.HandleFunc("/api/v1/settings/base-path/retry", s.auth(s.settingsBasePathRetry, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/settings", s.auth(s.settings, model.RoleAdmin))
@@ -698,6 +702,8 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			NotificationOfflineAfter    *int                           `json:"notification_server_offline_after_seconds"`
 			NotificationOnlineAfter     *int                           `json:"notification_server_online_after_seconds"`
 			NotificationMergeOffline    *bool                          `json:"notification_server_merge_offline"`
+			RegistrationEnabled         *bool                          `json:"registration_enabled"`
+			RegistrationDefaultGroupID  *int64                         `json:"registration_default_group_id"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -1036,6 +1042,36 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, settingNotificationServerMergeOffline)
 		}
+		if req.RegistrationEnabled != nil {
+			if err := s.store.SetSetting(r.Context(), settingRegistrationEnabled, strconv.FormatBool(*req.RegistrationEnabled)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingRegistrationEnabled)
+		}
+		if req.RegistrationDefaultGroupID != nil {
+			groupID := *req.RegistrationDefaultGroupID
+			if groupID < 0 {
+				fail(w, errors.New("registration_default_group_id is invalid"), http.StatusBadRequest)
+				return
+			}
+			if groupID > 0 {
+				group, err := s.store.GetUserGroup(r.Context(), groupID)
+				if err != nil {
+					fail(w, errors.New("默认注册用户组不存在"), http.StatusBadRequest)
+					return
+				}
+				if group.SystemKey == store.UserGroupSystemAdmins {
+					fail(w, errors.New("默认注册用户组不能是系统管理员组"), http.StatusBadRequest)
+					return
+				}
+			}
+			if err := s.store.SetSetting(r.Context(), settingRegistrationDefaultGroupID, strconv.FormatInt(groupID, 10)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingRegistrationDefaultGroupID)
+		}
 		if len(changed) > 0 {
 			auditReq(s, r, "update", "settings", strings.Join(changed, ","))
 		}
@@ -1058,12 +1094,20 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionAuditPolicy: store.DefaultSubscriptionAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionAuditPolicy: store.DefaultSubscriptionAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	for key, value := range items {
-		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingSubscriptionAuditPolicy || key == settingTrustedProxyCIDRs {
+		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingSubscriptionAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID {
 			continue
 		}
 		out[key] = value
+	}
+	if raw := strings.TrimSpace(items[settingRegistrationEnabled]); raw != "" {
+		out[settingRegistrationEnabled] = settingBool(items, settingRegistrationEnabled, false)
+	}
+	if raw := strings.TrimSpace(items[settingRegistrationDefaultGroupID]); raw != "" {
+		if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id >= 0 {
+			out[settingRegistrationDefaultGroupID] = id
+		}
 	}
 	if values, err := trustedProxyCIDRsFromSettings(items); err == nil {
 		out[settingTrustedProxyCIDRs] = values
@@ -1783,6 +1827,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			err = addGroups()
 		}
 	case "subscriptions":
+		if err = require(model.RoleViewer); err != nil {
+			break
+		}
 		if !roleAllows(role, model.RoleAdmin) {
 			if user := currentUser(r); user != nil {
 				out["account_user"] = selfUserResponse(ctx, s.store, *user, role)
@@ -1817,6 +1864,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "notifications":
+		if err = require(model.RoleViewer); err != nil {
+			break
+		}
 		if user := currentUser(r); user != nil {
 			var channels []model.NotificationChannel
 			channels, err = s.store.ListNotificationChannelsByOwner(ctx, user.ID)
@@ -1952,6 +2002,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			out["google_eab_credentials"], err = s.store.ListGoogleEABCredentials(ctx)
 		}
 		if err == nil {
+			out["user_groups"], err = s.store.ListUserGroups(ctx)
+		}
+		if err == nil {
 			err = addServers()
 		}
 	default:
@@ -2079,6 +2132,137 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.finishUserLogin(w, r, u, "login")
+}
+
+func validateRegistrationUsername(username string) error {
+	if len(username) < 3 || len(username) > 32 {
+		return errors.New("用户名长度需为 3-32 个字符")
+	}
+	for _, ch := range username {
+		switch {
+		case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9', ch == '_', ch == '-', ch == '.':
+		default:
+			return errors.New("用户名只能包含字母、数字、下划线、连字符和点")
+		}
+	}
+	if strings.HasPrefix(username, "__oboard_") {
+		return errors.New("该用户名不可用")
+	}
+	return nil
+}
+
+func (s *Server) registrationStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		method(w)
+		return
+	}
+	settings, err := s.store.ListSettings(r.Context())
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	write(w, http.StatusOK, map[string]any{"registration_enabled": settingBool(settings, settingRegistrationEnabled, false)})
+}
+
+func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	if !s.allowRate(w, r, "register-ip:"+clientIP(r), 10, time.Minute) {
+		return
+	}
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Nickname string `json:"nickname"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	username := strings.TrimSpace(req.Username)
+	if !s.allowRate(w, r, "register-user:"+strings.ToLower(username), 5, time.Hour) {
+		return
+	}
+	settings, err := s.store.ListSettings(r.Context())
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	if !settingBool(settings, settingRegistrationEnabled, false) {
+		fail(w, errors.New("注册未开放，请联系管理员"), http.StatusForbidden)
+		return
+	}
+	if err := validateRegistrationUsername(username); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	if len(req.Password) < 10 {
+		fail(w, errors.New("密码至少需要 10 个字符"), http.StatusBadRequest)
+		return
+	}
+	nickname := strings.TrimSpace(req.Nickname)
+	if len([]rune(nickname)) > 40 {
+		fail(w, errors.New("昵称不能超过 40 个字符"), http.StatusBadRequest)
+		return
+	}
+	exists, err := s.store.UsernameExists(r.Context(), username)
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	if exists {
+		fail(w, errors.New("用户名已被占用"), http.StatusConflict)
+		return
+	}
+	pass, err := security.HashPassword(req.Password)
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	proxyUUID, err := security.RandomUUID()
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	proxyPassword, err := security.RandomToken(18)
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	subscriptionToken, err := security.RandomToken(24)
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	u := &model.User{Username: username, Nickname: nickname, PasswordHash: pass, Role: model.RoleNone, Status: "active", ProxyUUID: proxyUUID, ProxyPassword: proxyPassword, SubscriptionToken: subscriptionToken}
+	if err := s.store.CreateUser(r.Context(), u); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+			fail(w, errors.New("用户名已被占用"), http.StatusConflict)
+			return
+		}
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	if groupID := registrationDefaultGroupID(settings); groupID > 0 {
+		if group, err := s.store.GetUserGroup(r.Context(), groupID); err == nil && group.SystemKey != store.UserGroupSystemAdmins {
+			_ = s.store.CreateUserGroupMember(r.Context(), &model.UserGroupMember{GroupID: group.ID, UserID: u.ID, Enabled: true})
+		}
+	}
+	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &u.ID, Action: "register", Target: "user", Detail: u.Username, IP: clientIP(r)})
+	write(w, http.StatusCreated, map[string]any{"user": map[string]any{"id": u.ID, "username": u.Username, "nickname": u.Nickname, "role": u.Role}})
+}
+
+func registrationDefaultGroupID(settings map[string]string) int64 {
+	raw := strings.TrimSpace(settings[settingRegistrationDefaultGroupID])
+	if raw == "" {
+		return 0
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id < 0 {
+		return 0
+	}
+	return id
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -2617,7 +2801,7 @@ func currentSessionToken(r *http.Request) string {
 }
 
 func roleAllows(got, min model.Role) bool {
-	rank := map[model.Role]int{model.RoleViewer: 1, model.RoleOperator: 2, model.RoleAdmin: 3}
+	rank := map[model.Role]int{model.RoleNone: 0, model.RoleViewer: 1, model.RoleOperator: 2, model.RoleAdmin: 3}
 	return rank[got] >= rank[min]
 }
 
@@ -8361,13 +8545,15 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		groupKey := store.UserGroupSystemUsers
-		if u.Role == model.RoleAdmin {
-			groupKey = store.UserGroupSystemAdmins
-		}
-		if err := s.store.AssignUserToBuiltinGroup(r.Context(), u.ID, groupKey); err != nil {
-			fail(w, err, 500)
-			return
+		if u.Role != model.RoleNone {
+			groupKey := store.UserGroupSystemUsers
+			if u.Role == model.RoleAdmin {
+				groupKey = store.UserGroupSystemAdmins
+			}
+			if err := s.store.AssignUserToBuiltinGroup(r.Context(), u.ID, groupKey); err != nil {
+				fail(w, err, 500)
+				return
+			}
 		}
 		write(w, 201, map[string]any{"user": u})
 	case http.MethodPatch:
@@ -8911,7 +9097,7 @@ func validateUser(u *model.User) error {
 		return errors.New("nickname must be at most 40 characters")
 	}
 	switch u.Role {
-	case model.RoleAdmin, model.RoleOperator, model.RoleViewer:
+	case model.RoleAdmin, model.RoleOperator, model.RoleViewer, model.RoleNone:
 	default:
 		return fmt.Errorf("invalid role %q", u.Role)
 	}

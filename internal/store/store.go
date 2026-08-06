@@ -618,7 +618,7 @@ func (s *Store) ensureBuiltinUserGroups(ctx context.Context) error {
 	}
 	_, err := s.db.ExecContext(ctx, `insert into user_group_members(group_id,user_id,enabled,created_at,updated_at)
 		select g.id,u.id,1,?,? from users u join user_groups g on g.system_key=?
-		where u.role<>'admin' and not exists(select 1 from user_group_members m where m.user_id=u.id)`, ts, ts, UserGroupSystemUsers)
+		where u.role<>'admin' and u.role<>'none' and not exists(select 1 from user_group_members m where m.user_id=u.id)`, ts, ts, UserGroupSystemUsers)
 	return err
 }
 
@@ -652,7 +652,7 @@ func (s *Store) EffectiveUserRole(ctx context.Context, user model.User) (model.R
 		return role, err
 	}
 	defer rows.Close()
-	rank := map[model.Role]int{model.RoleViewer: 1, model.RoleOperator: 2, model.RoleAdmin: 3}
+	rank := map[model.Role]int{model.RoleNone: 0, model.RoleViewer: 1, model.RoleOperator: 2, model.RoleAdmin: 3}
 	for rows.Next() {
 		var candidate model.Role
 		if err := rows.Scan(&candidate); err != nil {
@@ -1207,6 +1207,12 @@ func (s *Store) Delete(ctx context.Context, table string, id int64) error {
 	}
 	_, err := s.db.ExecContext(ctx, query, id)
 	return err
+}
+
+func (s *Store) UsernameExists(ctx context.Context, username string) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx, `select exists(select 1 from users where lower(username)=lower(?))`, username).Scan(&exists)
+	return exists != 0, err
 }
 
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (*model.User, error) {

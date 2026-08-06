@@ -11,6 +11,10 @@ const (
 	RoleAdmin    Role = "admin"
 	RoleOperator Role = "operator"
 	RoleViewer   Role = "viewer"
+	// RoleNone marks an account with no panel permissions. It is the default
+	// role for self-registered users and grants access only to self-service
+	// account endpoints until an administrator assigns a user group.
+	RoleNone Role = "none"
 )
 
 type Protocol string

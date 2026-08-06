@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -2188,5 +2189,87 @@ func TestDefaultDNSBootstrapSeedIncludesIPv6Candidates(t *testing.T) {
 	}
 	if ipv4 == 0 || ipv6 == 0 {
 		t.Fatalf("default bootstrap seed must contain IPv4 and IPv6 resolvers: %#v", bootstrap.Candidates)
+	}
+}
+
+func TestEnsureBuiltinUserGroupsSkipsNoneRoleUsers(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := &model.User{Username: "root", Nickname: "root", PasswordHash: "x", Role: model.RoleAdmin, Status: "active", ProxyUUID: "00000000-0000-0000-0000-000000000001", ProxyPassword: "p1"}
+	if err := s.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	legacy := &model.User{Username: "legacy", Nickname: "", PasswordHash: "x", Role: model.RoleViewer, Status: "active", ProxyUUID: "00000000-0000-0000-0000-000000000002", ProxyPassword: "p2"}
+	if err := s.CreateUser(ctx, legacy); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a legacy registration created outside the builtin-group backfill.
+	if _, err := s.db.ExecContext(ctx, `insert into users(username,nickname,password_hash,role,status,proxy_uuid,proxy_password,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)`, "registered", "", "x", model.RoleNone, "active", "00000000-0000-0000-0000-000000000003", "p3", now(), now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	members, err := reopened.ListUserGroupMembers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byUser := map[int64][]int64{}
+	for _, member := range members {
+		byUser[member.UserID] = append(byUser[member.UserID], member.GroupID)
+	}
+	registered, err := reopened.GetUserByUsername(ctx, "registered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byUser[registered.ID]) != 0 {
+		t.Fatalf("none-role user has group memberships after reopen: %#v", byUser[registered.ID])
+	}
+	legacyStored, err := reopened.GetUserByUsername(ctx, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byUser[legacyStored.ID]) == 0 {
+		t.Fatalf("legacy viewer user was not backfilled into the builtin users group")
+	}
+	effective, err := reopened.EffectiveUserRole(ctx, *registered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective != model.RoleNone {
+		t.Fatalf("effective role = %q, want none", effective)
+	}
+}
+
+func TestUsernameExistsCaseInsensitive(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	u := &model.User{Username: "Alice_01", Nickname: "", PasswordHash: "x", Role: model.RoleViewer, Status: "active", ProxyUUID: "00000000-0000-0000-0000-000000000004", ProxyPassword: "p4"}
+	if err := s.CreateUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	for _, username := range []string{"alice_01", "ALICE_01", "Alice_01", "alice"} {
+		exists, err := s.UsernameExists(ctx, username)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := strings.EqualFold(username, "alice_01")
+		if exists != want {
+			t.Fatalf("UsernameExists(%q) = %v, want %v", username, exists, want)
+		}
 	}
 }

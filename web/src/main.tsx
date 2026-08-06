@@ -151,7 +151,7 @@ function stripAppBasePath(pathname: string) {
   return pathname.startsWith(`${appBasePath}/`) ? pathname.slice(appBasePath.length) : pathname
 }
 
-type Role = 'admin' | 'operator' | 'viewer'
+type Role = 'admin' | 'operator' | 'viewer' | 'none'
 type PageLoadOptions = { background?: boolean; forceFresh?: boolean }
 type PageLoad = (targetTab?: string, options?: PageLoadOptions) => Promise<void>
 type ControllerUpdateStatus = {
@@ -689,15 +689,16 @@ const navGroups = [
   { label: '账户', tabs: ['account'] },
 ]
 
-const roleRanks: Record<Role, number> = { viewer: 0, operator: 1, admin: 2 }
+const roleRanks: Record<Role, number> = { none: -1, viewer: 0, operator: 1, admin: 2 }
 const tabMinimumRole: Record<string, Role> = {
-  account: 'viewer', dashboard: 'operator', tasks: 'operator', audit: 'operator',
+  account: 'none', dashboard: 'operator', tasks: 'operator', audit: 'operator',
   servers: 'operator', 'proxy-paths': 'operator',
   users: 'admin', subscriptions: 'viewer', notifications: 'viewer', automation: 'admin', settings: 'admin',
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
 }
 
 const preloadTabsByRole: Record<Role, string[]> = {
+  none: ['account'],
   viewer: ['subscriptions', 'account', 'notifications'],
   operator: ['subscriptions', 'servers', 'proxy-paths', 'tasks', 'audit', 'mtu'],
   admin: ['servers', 'proxy-paths', 'users', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
@@ -734,6 +735,7 @@ function tabAllowedForRole(tab: string, role: Role) {
 function sessionRoleLabel(role?: Role) {
   if (role === 'admin') return '系统管理员'
   if (role === 'operator') return '操作员'
+  if (role === 'none') return '未分配权限'
   return '只读用户'
 }
 
@@ -1693,7 +1695,7 @@ function App() {
 
   useEffect(() => {
     if (token && sessionUser && !tabAllowedForRole(tab, sessionUser.role)) {
-      navigateTab(sessionUser.role === 'viewer' ? 'account' : 'dashboard')
+      navigateTab(sessionUser.role === 'viewer' || sessionUser.role === 'none' ? 'account' : 'dashboard')
     }
   }, [token, sessionUser?.role, tab])
 
@@ -2046,8 +2048,56 @@ function Login({ theme, toggleTheme, initialError, onToken }: { theme: string; t
   const [loginStep, setLoginStep] = useState<'password' | 'totp'>('password')
   const [secondFactorPasskey, setSecondFactorPasskey] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [registerMode, setRegisterMode] = useState(false)
+  const [nickname, setNickname] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [registerNotice, setRegisterNotice] = useState('')
+  const [registrationAvailable, setRegistrationAvailable] = useState<boolean | null>(null)
   const [error, setError] = useState(initialError || '')
   const [isLoading, setIsLoading] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    api('').request<{ registration_enabled: boolean }>('/auth/registration').then(result => {
+      if (active) setRegistrationAvailable(Boolean(result.registration_enabled))
+    }).catch(() => {
+      if (active) setRegistrationAvailable(false)
+    })
+    return () => { active = false }
+  }, [])
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (password !== confirmPassword) {
+      setError('两次输入的密码不一致')
+      return
+    }
+    setIsLoading(true)
+    setError('')
+    setRegisterNotice('')
+    try {
+      const res = await api('').request<{ user?: { id: number; username: string; role: string } }>('/auth/register', { method: 'POST', body: JSON.stringify({ username: username.trim(), password, nickname: nickname.trim() }) })
+      if (!res.user) throw new Error('注册响应无效')
+      setRegisterMode(false)
+      setConfirmPassword('')
+      setNickname('')
+      setPassword('')
+      setRegisterNotice(`注册成功，账号 ${res.user.username} 已创建，请登录`)
+    } catch (e: any) {
+      setError(localizeErrorMessage(e?.message || e))
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const toggleRegisterMode = () => {
+    setRegisterMode(mode => !mode)
+    setError('')
+    setRegisterNotice('')
+    setPassword('')
+    setConfirmPassword('')
+    setNickname('')
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -2185,11 +2235,11 @@ $ _`}</pre>
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
         >
-          <div className="login-panel-kicker">{loginStep === 'totp' ? '双重认证' : '登录'}</div>
-          <h2>{loginStep === 'totp' ? '确认是你本人' : '欢迎回来'}</h2>
-          <p className="login-panel-desc">{loginStep === 'totp' ? '输入认证器中的六位验证码，也可以使用一枚恢复码。' : '请输入账号信息以访问控制台。'}</p>
+          <div className="login-panel-kicker">{loginStep === 'totp' ? '双重认证' : registerMode ? '注册' : '登录'}</div>
+          <h2>{loginStep === 'totp' ? '确认是你本人' : registerMode ? '创建账号' : '欢迎回来'}</h2>
+          <p className="login-panel-desc">{loginStep === 'totp' ? '输入认证器中的六位验证码，也可以使用一枚恢复码。' : registerMode ? '注册后需管理员分配用户组才能访问控制台。' : '请输入账号信息以访问控制台。'}</p>
 
-          <form className="login-form-hyvps" onSubmit={handleSubmit}>
+          <form className="login-form-hyvps" onSubmit={registerMode ? handleRegister : handleSubmit}>
             {loginStep === 'password' ? <><label className="login-field">
               <span className="sr-only">用户名</span>
               <div className="login-input-wrap">
@@ -2227,7 +2277,39 @@ $ _`}</pre>
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
-            </label></> : <label className="login-field">
+            </label>
+
+            {registerMode && <>
+              <label className="login-field">
+                <span className="sr-only">昵称</span>
+                <div className="login-input-wrap">
+                  <User size={16} className="login-input-leading" aria-hidden="true" />
+                  <input
+                    value={nickname}
+                    onChange={e => setNickname(e.target.value)}
+                    placeholder="昵称（可选）"
+                    autoComplete="nickname"
+                    maxLength={40}
+                    aria-label="昵称"
+                  />
+                </div>
+              </label>
+              <label className="login-field">
+                <span className="sr-only">确认密码</span>
+                <div className="login-input-wrap">
+                  <Lock size={16} className="login-input-leading" aria-hidden="true" />
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={e => setConfirmPassword(e.target.value)}
+                    placeholder="确认密码"
+                    autoComplete="new-password"
+                    required
+                    aria-label="确认密码"
+                  />
+                </div>
+              </label>
+            </>}</> : <label className="login-field">
               <span className="sr-only">验证码或恢复码</span>
               <div className="login-input-wrap">
                 <Smartphone size={16} className="login-input-leading" aria-hidden="true" />
@@ -2243,17 +2325,19 @@ $ _`}</pre>
               </div>
             </label>}
 
+            {registerNotice && <div className="login-notice">{registerNotice}</div>}
             {error && <div className="login-error">{error}</div>}
 
             <button type="submit" className="login-submit" disabled={isLoading}>
-              {isLoading ? '验证中…' : loginStep === 'totp' ? '验证并登录' : '登录'}
+              {isLoading ? '处理中…' : loginStep === 'totp' ? '验证并登录' : registerMode ? '注册' : '登录'}
             </button>
 
-            {passkeyAvailable() && (loginStep === 'password' || secondFactorPasskey) && <>
+            {!registerMode && passkeyAvailable() && (loginStep === 'password' || secondFactorPasskey) && <>
               <div className="login-divider"><span>或者</span></div>
               <button type="button" className="login-passkey" onClick={() => void loginWithPasskey()} disabled={isLoading}><Fingerprint size={17} />使用通行密钥</button>
             </>}
             {loginStep === 'totp' && <button type="button" className="login-back" onClick={backToPassword} disabled={isLoading}>返回密码登录</button>}
+            {loginStep === 'password' && registrationAvailable !== false && <button type="button" className="login-back login-register-toggle" onClick={toggleRegisterMode} disabled={isLoading}>{registerMode ? '已有账号？返回登录' : '没有账号？立即注册'}</button>}
           </form>
 
           {/* Shown when the left hero (and its theme control) is hidden on narrow screens. */}
@@ -3282,7 +3366,7 @@ function AIProviderRawLogDialog({ client, onClose }: { client: ReturnType<typeof
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'servers' | 'certificates' | 'subscriptions' | 'audit' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'audit' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3309,6 +3393,8 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [notificationOfflineAfter, setNotificationOfflineAfter] = useState(Number(data.settings?.notification_server_offline_after_seconds || 120))
   const [notificationOnlineAfter, setNotificationOnlineAfter] = useState(Number(data.settings?.notification_server_online_after_seconds || 60))
   const [notificationMergeOffline, setNotificationMergeOffline] = useState(data.settings?.notification_server_merge_offline !== false)
+  const [registrationEnabled, setRegistrationEnabled] = useState(settingEnabled(data.settings?.registration_enabled))
+  const [registrationDefaultGroupID, setRegistrationDefaultGroupID] = useState(Number(data.settings?.registration_default_group_id || 0))
   const [saving, setSaving] = useState('')
   useEffect(() => { setControllerURL(savedURL || currentOrigin) }, [savedURL, currentOrigin])
   useEffect(() => { setBasePath(currentBasePath) }, [currentBasePath])
@@ -3330,6 +3416,10 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     setNotificationOnlineAfter(Number(data.settings?.notification_server_online_after_seconds || 60))
     setNotificationMergeOffline(data.settings?.notification_server_merge_offline !== false)
   }, [data.settings?.notification_server_offline_after_seconds, data.settings?.notification_server_online_after_seconds, data.settings?.notification_server_merge_offline])
+  useEffect(() => {
+    setRegistrationEnabled(settingEnabled(data.settings?.registration_enabled))
+    setRegistrationDefaultGroupID(Number(data.settings?.registration_default_group_id || 0))
+  }, [data.settings?.registration_enabled, data.settings?.registration_default_group_id])
   useEffect(() => { setTrafficTimezone(data.settings?.traffic_timezone || 'Asia/Shanghai'); setTrafficMode(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject') }, [data.settings?.traffic_timezone, data.settings?.traffic_enforcement_mode])
   useEffect(() => {
     setControllerLogMaxMB(Number(data.settings?.controller_log_max_mb || 32))
@@ -3407,6 +3497,11 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ trusted_proxy_cidrs: trustedProxyCIDRValues }) })
     }, '受信代理设置已保存')
   }
+  const saveRegistration = async () => {
+    await runSave('registration', async () => {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ registration_enabled: registrationEnabled, registration_default_group_id: registrationDefaultGroupID }) })
+    }, '注册设置已保存')
+  }
   const addCurrentProxy = () => {
     const suggested = String(reverseProxyStatus.suggested_cidr || '')
     if (!suggested || trustedProxyCIDRValues.includes(suggested)) return
@@ -3471,6 +3566,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   return <section className="settings-shell">
     <nav className="settings-tabs" role="tablist" aria-label="设置分类">
       <button className={activeSection === 'connection' ? 'active' : ''} role="tab" aria-selected={activeSection === 'connection'} onClick={() => setActiveSection('connection')}><LinkIcon size={15} />基础设置</button>
+      <button className={activeSection === 'registration' ? 'active' : ''} role="tab" aria-selected={activeSection === 'registration'} onClick={() => setActiveSection('registration')}><UserPlus size={15} />注册</button>
       <button className={activeSection === 'servers' ? 'active' : ''} role="tab" aria-selected={activeSection === 'servers'} onClick={() => setActiveSection('servers')}><ServerIcon size={15} />服务器默认值</button>
       <button className={activeSection === 'certificates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'certificates'} onClick={() => setActiveSection('certificates')}><Lock size={15} />证书</button>
       <button className={activeSection === 'subscriptions' ? 'active' : ''} role="tab" aria-selected={activeSection === 'subscriptions'} onClick={() => setActiveSection('subscriptions')}><Shield size={15} />订阅安全</button>
@@ -3559,6 +3655,23 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             </div>
           </div>
           {!reverseProxyStatus.direct_tls && reverseProxyStatus.peer_trusted && !reverseProxyStatus.https && <p className="trusted-proxy-warning">请让反向代理覆盖发送 <code>X-Forwarded-Proto</code>。</p>}
+        </div>
+      </section>}
+      {activeSection === 'registration' && <section className="settings-card">
+        <div className="settings-card-head"><div><h3>公开注册</h3><p className="muted">允许访客自助注册账号。注册用户默认不加入任何用户组、没有任何面板权限，需管理员分配用户组后才能使用。</p></div></div>
+        <div className="form settings-form single-field">
+          <FormField label="开放注册" hint="关闭后登录页不再显示注册入口，注册接口也会拒绝请求。">
+            <label className="notification-enable-row"><input type="checkbox" checked={registrationEnabled} onChange={event => setRegistrationEnabled(event.target.checked)} aria-label="开放注册" /></label>
+          </FormField>
+          <FormField label="默认注册用户组" hint="新注册用户自动加入该用户组并继承其权限；留空表示不自动分配（注册用户无任何权限）。系统管理员组不可选。">
+            <Select value={registrationDefaultGroupID} onChange={event => setRegistrationDefaultGroupID(Number(event.target.value))} aria-label="默认注册用户组">
+              <option value={0}>不分配用户组（无权限）</option>
+              {(data.user_groups || []).filter((group: UserGroup) => group.system_key !== 'administrators').map((group: UserGroup) => (
+                <option key={group.id} value={group.id}>{group.name}（{sessionRoleLabel(group.role)}）{group.enabled === false ? ' · 已停用' : ''}</option>
+              ))}
+            </Select>
+          </FormField>
+          <div className="settings-actions"><button onClick={() => void saveRegistration()} disabled={Boolean(saving)}>{saving === 'registration' ? '保存中...' : '保存注册设置'}</button></div>
         </div>
       </section>}
       {activeSection === 'servers' && <section className="settings-card">
@@ -12155,6 +12268,7 @@ function UserBaseFields({ draft, setDraft, includePassword }: { draft: UserDraft
     </FormField>}
     <FormField label="角色">
       <Select variant="segmented" value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Role })}>
+        <option value="none">无权限</option>
         <option value="viewer">只读</option>
         <option value="operator">操作员</option>
         <option value="admin">管理员</option>
