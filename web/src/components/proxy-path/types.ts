@@ -33,6 +33,8 @@ export type Server = {
   bbr_enabled: boolean
   port_range_start: number
   port_range_end: number
+  internal_port_range_start: number
+  internal_port_range_end: number
   status: string
   os: string
   distro_id: string

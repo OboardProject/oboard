@@ -425,6 +425,8 @@ type Server struct {
 	BBREnabled               bool               `json:"bbr_enabled"`
 	PortRangeStart           int                `json:"port_range_start"`
 	PortRangeEnd             int                `json:"port_range_end"`
+	InternalPortRangeStart   int                `json:"internal_port_range_start"`
+	InternalPortRangeEnd     int                `json:"internal_port_range_end"`
 	Status                   ServerStatus       `json:"status"`
 	OS                       string             `json:"os"`
 	DistroID                 string             `json:"distro_id"`
@@ -922,13 +924,20 @@ type ProxyPathPlan struct {
 // unrelated topology change cannot move a listener that is already deployed, and
 // so the port an operator inspects is the port that gets applied.
 type ProxyPathPortAllocation struct {
-	ID        int64     `json:"id"`
-	Kind      string    `json:"kind"`
-	ScopeKey  string    `json:"scope_key"`
-	ServerID  int64     `json:"server_id"`
-	Port      int       `json:"port"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             int64     `json:"id"`
+	Kind           string    `json:"kind"`
+	ScopeKey       string    `json:"scope_key"`
+	ServerID       int64     `json:"server_id"`
+	Pool           string    `json:"pool"`
+	ListenIP       string    `json:"listen_ip"`
+	Network        string    `json:"network"`
+	Generation     int       `json:"generation"`
+	Ordinal        int       `json:"ordinal"`
+	Port           int       `json:"port"`
+	State          string    `json:"state"`
+	PolicyRevision int64     `json:"policy_revision"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // Allocation kinds. The scope key identifies what owns the port within a kind.
@@ -943,6 +952,22 @@ const (
 	ProxyPathPortKindTunnelSSH = "tunnel_ssh_loopback"
 	// ScopeKey is the derived tunnel ID; the UDP listener lives on the target.
 	ProxyPathPortKindTunnelWG = "tunnel_wireguard"
+)
+
+// Port pools. Public listeners are reachable from other devices or servers and
+// must stay inside the server's auto public port range; internal listeners bind
+// loopback only and live in the separate internal loopback pool.
+const (
+	PortPoolPublic   = "public"
+	PortPoolInternal = "internal"
+)
+
+// Allocation lifecycle states. A single active generation is the steady state;
+// a migration adds a preparing generation before the previous one retires.
+const (
+	PortAllocationStateActive    = "active"
+	PortAllocationStatePreparing = "preparing"
+	PortAllocationStateRetiring  = "retiring"
 )
 
 type ProxyPathStep struct {

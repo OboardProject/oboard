@@ -6062,7 +6062,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode }) {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: 100, port_range_end: 65535, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: 100, port_range_end: 65535, internal_port_range_start: 30000, internal_port_range_end: 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
 }
 
 function GridViewIcon() {
@@ -6801,9 +6801,10 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
   const update = (patch: Partial<ReturnType<typeof defaultServerDraft>>) => setDraft(old => ({ ...old, ...patch }))
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
+  const [internalPortRangeValid, setInternalPortRangeValid] = useState(true)
   const [saving, setSaving] = useState(false)
   const submit = async () => {
-    if (saving || !portRangeValid) return
+    if (saving || !portRangeValid || !internalPortRangeValid) return
     setSaving(true)
     try {
       await onSubmit()
@@ -6851,8 +6852,11 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           <FormField label="时间校准" hint="开启后，Agent 接入时会立即检测。" full>
             <TimeCorrectionSelector value={draft.time_correction_mode} onChange={value => update({ time_correction_mode: value })} />
           </FormField>
-          <FormField label="端口范围" hint="100-65535" full>
+          <FormField label="公网端口范围" hint="自动托管的公网监听端口池；耗尽时部署会报错，不会越界回落。">
             <PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} />
+          </FormField>
+          <FormField label="内部回环端口范围" hint="仅监听 127.0.0.1 / ::1 的内部组件端口池，不受公网端口限制。">
+            <PortRangeInput start={draft.internal_port_range_start} end={draft.internal_port_range_end} onChange={(internal_port_range_start, internal_port_range_end) => update({ internal_port_range_start, internal_port_range_end })} onValidityChange={setInternalPortRangeValid} />
           </FormField>
 
           <div className="form-section-title">监控与流量</div>
@@ -6885,7 +6889,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
       </div>
       <footer className="dialog-actions">
         <button className="ghost" onClick={cancel} disabled={saving}>取消</button>
-        <button onClick={() => void submit()} disabled={saving || !portRangeValid}>{saving ? '创建中...' : '创建'}</button>
+        <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid}>{saving ? '创建中...' : '创建'}</button>
       </footer>
       {mtuDialogOpen && <MTUSettingsDialog draft={draft} onCancel={() => setMtuDialogOpen(false)} onSave={patch => { update(patch); setMtuDialogOpen(false) }} />}
   </MotionDialogPanel>
@@ -6897,6 +6901,8 @@ function serverToDraft(server: Server) {
     ...server,
     public_ipv4: server.public_ipv4 || '',
     public_ipv6: server.public_ipv6 || '',
+    internal_port_range_start: server.internal_port_range_start || 30000,
+    internal_port_range_end: server.internal_port_range_end || 59999,
     entry_ip_mode: (server.entry_ip_mode || 'auto') as EntryIPMode,
   }
 }
@@ -6905,10 +6911,11 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
   const [draft, setDraft] = useState<any>(() => serverToDraft(server))
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
+  const [internalPortRangeValid, setInternalPortRangeValid] = useState(true)
   const [saving, setSaving] = useState(false)
   const update = (patch: any) => setDraft((old: any) => ({ ...old, ...patch }))
   const submit = async () => {
-    if (saving || !portRangeValid) return
+    if (saving || !portRangeValid || !internalPortRangeValid) return
     setSaving(true)
     try {
       await onSubmit(draft)
@@ -6939,7 +6946,8 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
           <FormField label="BBR + FQ" hint="下次重新安装 Agent 时尝试启用，失败不影响安装。"><label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.bbr_enabled)} onChange={e => update({ bbr_enabled: e.target.checked })} aria-label="安装时尝试启用 BBR + FQ" /></label></FormField>
           <FormField label="时间校准" hint="切换模式后会立即检测时间偏差。" full><TimeCorrectionSelector value={draft.time_correction_mode || 'off'} onChange={value => update({ time_correction_mode: value })} /></FormField>
-          <FormField label="端口范围" hint="100-65535" full><PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} /></FormField>
+          <FormField label="公网端口范围" hint="自动托管的公网监听端口池；耗尽时部署会报错，不会越界回落。"><PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} /></FormField>
+          <FormField label="内部回环端口范围" hint="仅监听 127.0.0.1 / ::1 的内部组件端口池，不受公网端口限制。"><PortRangeInput start={draft.internal_port_range_start} end={draft.internal_port_range_end} onChange={(internal_port_range_start, internal_port_range_end) => update({ internal_port_range_start, internal_port_range_end })} onValidityChange={setInternalPortRangeValid} /></FormField>
           <div className="form-section-title">监控与流量</div>
           <FormField label="回报模式" hint="轻量 20 秒，标准 10 秒。">
             <Select variant="segmented" value={draft.monitoring_mode || 'lightweight'} onChange={e => update({ monitoring_mode: e.target.value })}><option value="lightweight">轻量</option><option value="standard">标准</option></Select>
@@ -6961,7 +6969,7 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           <div className="form-extra-row"><button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)}>MTU 检测设置</button><span>修改后会在下次部署重新检测。</span></div>
         </div>
       </div>
-      <footer className="dialog-actions"><button className="ghost" onClick={cancel} disabled={saving}>取消</button><button onClick={() => void submit()} disabled={saving || !portRangeValid}>{saving ? '保存中...' : '保存'}</button></footer>
+      <footer className="dialog-actions"><button className="ghost" onClick={cancel} disabled={saving}>取消</button><button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid}>{saving ? '保存中...' : '保存'}</button></footer>
       {mtuDialogOpen && <MTUSettingsDialog draft={draft} onCancel={() => setMtuDialogOpen(false)} onSave={patch => { update(patch); setMtuDialogOpen(false) }} />}
   </MotionDialogPanel>
 }
@@ -7862,7 +7870,8 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
             <ServerDetailItem label="入口模式" value={labelValue(server.entry_ip_mode || 'auto')} />
             <ServerDetailItem label="网络优先" value={labelValue(server.ip_stack || 'unknown')} />
             <ServerDetailItem label="UDP 模式" value={labelValue(server.udp_inbound_mode || 'unknown')} />
-            <ServerDetailItem label="端口范围" value={portRangeLabel(server)} />
+            <ServerDetailItem label="公网端口范围" value={portRangeLabel(server)} />
+            <ServerDetailItem label="内部回环端口范围" value={internalPortRangeLabel(server)} />
             <ServerDetailItem label="安装时尝试 BBR + FQ" value={server.bbr_enabled ? '是' : '否'} />
             <ServerDetailItem label="公网可访问性" value={connectivityLabel} />
           </dl>
@@ -7897,6 +7906,7 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
 }
 
 function portRangeLabel(s: Server) { return s.port_range_start || s.port_range_end ? `${s.port_range_start || 0}-${s.port_range_end || 0}` : '—' }
+function internalPortRangeLabel(s: Server) { return s.internal_port_range_start || s.internal_port_range_end ? `${s.internal_port_range_start || 0}-${s.internal_port_range_end || 0}` : '—' }
 function serverOSLabel(s: Server) { return [s.distro_name || s.os, s.distro_version].filter(Boolean).join(' ') || '未知系统' }
 function serverMemoryLabel(s: Server) { return s.memory_total_bytes ? `${formatBytes(s.memory_used_bytes || 0)} / ${formatBytes(s.memory_total_bytes)}` : '—' }
 function serverDefaultEntryAddress(server?: Server) {

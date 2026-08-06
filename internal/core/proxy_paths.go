@@ -27,17 +27,36 @@ var proxyPathChainMethods = map[string]int{
 	"2022-blake3-chacha20-poly1305": 3,
 }
 
+// PortRequirement describes one generated listener Controller needs a port
+// for. The pool, listen address and network classify the listener; the ledger
+// persists them with the port so allocation and final deployment share the same
+// address/port/protocol model and so a future policy change can decide which
+// owners must migrate without guessing from the port number.
+type PortRequirement struct {
+	Kind           string
+	ScopeKey       string
+	ServerID       int64
+	Pool           string
+	ListenIP       string
+	Network        model.ForwardProtocol
+	PolicyRevision int64
+	Allocate       func() int
+}
+
 // ProxyPathPortLedger holds the persisted generated-listener ports and records
 // the ones a projection had to allocate. A projection prefers a stored port so
 // that an unrelated change — a new inbound, a disabled branch, another path
 // claiming a nearby port — cannot move a listener that is already deployed.
+// The port is owned by the logical (kind, scope_key, server_id) owner, not the
+// other way around; a policy change may assign the owner a new port without
+// rotating any identity that depends on the owner.
 //
 // The ledger is read-only with respect to the database. Controller persists
 // Pending() after a projection succeeds, so a rejected deployment leaves no
 // half-claimed ports behind.
 type ProxyPathPortLedger struct {
-	stored   map[proxyPathPortKey]int
-	pending  map[proxyPathPortKey]int
+	stored   map[proxyPathPortKey]model.ProxyPathPortAllocation
+	pending  map[proxyPathPortKey]model.ProxyPathPortAllocation
 	used     map[proxyPathPortKey]bool
 	order    []proxyPathPortKey
 	complete bool
@@ -53,39 +72,79 @@ type proxyPathPortKey struct {
 // empty slice yields a ledger that allocates everything fresh, which is also the
 // behavior pure-Core callers and fixtures get.
 func NewProxyPathPortLedger(allocations []model.ProxyPathPortAllocation) *ProxyPathPortLedger {
-	ledger := &ProxyPathPortLedger{stored: make(map[proxyPathPortKey]int, len(allocations)), pending: map[proxyPathPortKey]int{}}
+	ledger := &ProxyPathPortLedger{stored: make(map[proxyPathPortKey]model.ProxyPathPortAllocation, len(allocations)), pending: map[proxyPathPortKey]model.ProxyPathPortAllocation{}}
 	for _, item := range allocations {
 		if item.Port > 0 {
-			ledger.stored[proxyPathPortKey{Kind: item.Kind, ScopeKey: item.ScopeKey, ServerID: item.ServerID}] = item.Port
+			ledger.stored[proxyPathPortKey{Kind: item.Kind, ScopeKey: item.ScopeKey, ServerID: item.ServerID}] = item
 		}
 	}
 	return ledger
 }
 
-// resolve returns the port for one listener, allocating through allocate only
-// when neither a stored nor an already-pending value exists.
-func (l *ProxyPathPortLedger) resolve(kind, scopeKey string, serverID int64, allocate func() int) int {
+// resolve returns the port for one listener, allocating through Allocate only
+// when neither a stored nor an already-pending value exists. A stored port is
+// returned unchanged even when it no longer matches the current policy; only
+// Controller's migration flow may move it. Metadata (pool, listen address,
+// network) follows the requirement so Pending() can converge legacy rows.
+func (l *ProxyPathPortLedger) resolve(requirement PortRequirement) int {
 	if l == nil {
-		return allocate()
+		return requirement.Allocate()
 	}
-	key := proxyPathPortKey{Kind: kind, ScopeKey: scopeKey, ServerID: serverID}
-	if port, ok := l.stored[key]; ok {
+	key := proxyPathPortKey{Kind: requirement.Kind, ScopeKey: requirement.ScopeKey, ServerID: requirement.ServerID}
+	if stored, ok := l.stored[key]; ok {
 		if l.used == nil {
 			l.used = map[proxyPathPortKey]bool{}
 		}
 		l.used[key] = true
-		return port
+		if metadataDiverges(stored, requirement) {
+			corrected := stored
+			corrected.Pool = requirement.Pool
+			corrected.ListenIP = requirement.ListenIP
+			corrected.Network = forwardNetworkName(requirement.Network)
+			l.pending[key] = corrected
+			l.order = append(l.order, key)
+		}
+		return stored.Port
 	}
-	if port, ok := l.pending[key]; ok {
-		return port
+	if pending, ok := l.pending[key]; ok {
+		return pending.Port
 	}
-	port := allocate()
+	port := requirement.Allocate()
 	if port <= 0 {
 		return 0
 	}
-	l.pending[key] = port
+	l.pending[key] = model.ProxyPathPortAllocation{
+		Kind:           requirement.Kind,
+		ScopeKey:       requirement.ScopeKey,
+		ServerID:       requirement.ServerID,
+		Pool:           requirement.Pool,
+		ListenIP:       requirement.ListenIP,
+		Network:        forwardNetworkName(requirement.Network),
+		Generation:     1,
+		Ordinal:        0,
+		Port:           port,
+		State:          model.PortAllocationStateActive,
+		PolicyRevision: requirement.PolicyRevision,
+	}
 	l.order = append(l.order, key)
 	return port
+}
+
+func metadataDiverges(stored model.ProxyPathPortAllocation, requirement PortRequirement) bool {
+	return stored.Pool != requirement.Pool ||
+		stored.ListenIP != requirement.ListenIP ||
+		stored.Network != forwardNetworkName(requirement.Network)
+}
+
+func forwardNetworkName(protocol model.ForwardProtocol) string {
+	switch protocol {
+	case model.ForwardProtocolTCP:
+		return "tcp"
+	case model.ForwardProtocolUDP:
+		return "udp"
+	default:
+		return "tcp_udp"
+	}
 }
 
 // markProjectionComplete records that a projection enumerated every enabled path
@@ -109,7 +168,10 @@ func StaleProxyPathPortAllocationIDs(stored []model.ProxyPathPortAllocation, led
 	out := []int64{}
 	for _, item := range stored {
 		key := proxyPathPortKey{Kind: item.Kind, ScopeKey: item.ScopeKey, ServerID: item.ServerID}
-		if ledger.used[key] || ledger.pending[key] > 0 {
+		if ledger.used[key] {
+			continue
+		}
+		if _, ok := ledger.pending[key]; ok {
 			continue
 		}
 		out = append(out, item.ID)
@@ -117,14 +179,16 @@ func StaleProxyPathPortAllocationIDs(stored []model.ProxyPathPortAllocation, led
 	return out
 }
 
-// Pending returns the allocations this projection created, in allocation order.
+// Pending returns the allocations this projection created or corrected, in
+// allocation order. Corrections carry the same port as the stored row and only
+// update metadata; the store upsert is idempotent for both.
 func (l *ProxyPathPortLedger) Pending() []model.ProxyPathPortAllocation {
 	if l == nil {
 		return nil
 	}
 	out := make([]model.ProxyPathPortAllocation, 0, len(l.order))
 	for _, key := range l.order {
-		out = append(out, model.ProxyPathPortAllocation{Kind: key.Kind, ScopeKey: key.ScopeKey, ServerID: key.ServerID, Port: l.pending[key]})
+		out = append(out, l.pending[key])
 	}
 	return out
 }
@@ -297,11 +361,19 @@ func buildProxyPathChainServices(paths []model.ProxyPath, steps []model.ProxyPat
 		if key.Protocol == model.ProtocolSS {
 			portProtocol = model.ForwardProtocolTCPUDP
 		}
-		port := ledger.resolve(model.ProxyPathPortKindChainService, proxyPathChainServiceScopeKey(key), server.ID, func() int {
-			return proxyPathAvailablePortForProtocol(server, server.ID*977, seed, start, end, portProtocol, true, occupied)
+		port := ledger.resolve(PortRequirement{
+			Kind:     model.ProxyPathPortKindChainService,
+			ScopeKey: proxyPathChainServiceScopeKey(key),
+			ServerID: server.ID,
+			Pool:     model.PortPoolPublic,
+			ListenIP: firstNonEmpty(server.ListenIP, "0.0.0.0"),
+			Network:  portProtocol,
+			Allocate: func() int {
+				return proxyPathAvailablePortForProtocol(server, server.ID*977, seed, start, end, portProtocol, occupied)
+			},
 		})
 		if port == 0 {
-			return nil, fmt.Errorf("server %s has no available port for shared %s chain service", server.Name, key.Protocol)
+			return nil, fmt.Errorf("server %s has no available port in the managed public range %d-%d for shared %s chain service", server.Name, start, end, key.Protocol)
 		}
 		service.Tag = proxyPathChainServiceTag(key)
 		configJSON, err := proxyPathChainServiceConfigJSON(server, key, service.ChainConfig)
@@ -1347,8 +1419,16 @@ func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sour
 		if err != nil {
 			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳生成共享 SSH 凭据: %w", path.Name, step.Position, err)
 		}
-		listenPort := ledger.resolve(model.ProxyPathPortKindTunnelSSH, fmt.Sprint(tunnel.ID), source.ID, func() int {
-			return proxyPathTunnelPort(source, tunnel.ID, 0, 31, inbounds)
+		listenPort := ledger.resolve(PortRequirement{
+			Kind:     model.ProxyPathPortKindTunnelSSH,
+			ScopeKey: fmt.Sprint(tunnel.ID),
+			ServerID: source.ID,
+			Pool:     model.PortPoolInternal,
+			ListenIP: "127.0.0.1",
+			Network:  model.ForwardProtocolTCP,
+			Allocate: func() int {
+				return proxyPathTunnelPort(source, tunnel.ID, 0, 31, inbounds)
+			},
 		})
 		sshPort := intValueFromMap(cfg, "ssh_port", 0)
 		if sshPort == 0 {
@@ -1384,11 +1464,19 @@ func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sour
 			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳生成共享 WireGuard 目标凭据: %w", path.Name, step.Position, err)
 		}
 		sourceAddress, targetAddress := proxyPathWireGuardAddresses(tunnel.ID, 0)
-		listenPort := ledger.resolve(model.ProxyPathPortKindTunnelWG, fmt.Sprint(tunnel.ID), target.ID, func() int {
-			return proxyPathTunnelPort(target, tunnel.ID, 0, 47, inbounds)
+		listenPort := ledger.resolve(PortRequirement{
+			Kind:     model.ProxyPathPortKindTunnelWG,
+			ScopeKey: fmt.Sprint(tunnel.ID),
+			ServerID: target.ID,
+			Pool:     model.PortPoolPublic,
+			ListenIP: "*",
+			Network:  model.ForwardProtocolUDP,
+			Allocate: func() int {
+				return proxyPathTunnelPort(target, tunnel.ID, 0, 47, inbounds)
+			},
 		})
 		if listenPort == 0 {
-			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳的目标服务器端口范围内没有可用 WireGuard UDP 端口", path.Name, step.Position)
+			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳的目标服务器管理公网端口范围内没有可用 WireGuard UDP 端口", path.Name, step.Position)
 		}
 		pair := map[string]any{
 			"managed_pair":         true,
@@ -1442,25 +1530,32 @@ func proxyPathTunnelDialTarget(tunnel model.Tunnel) (string, int, error) {
 }
 
 func proxyPathTunnelPort(server model.Server, pathID int64, position, salt int, inbounds map[int64]model.Inbound) int {
-	// SSH local forwarding listens only on loopback. Keeping it in a separate
-	// internal pool prevents a one-port server range from colliding with the
-	// public inbound that already owns that port.
+	// SSH local forwarding listens only on loopback. Keeping it in the internal
+	// pool prevents a one-port server range from colliding with the public
+	// inbound that already owns that port, and provider port-range changes never
+	// touch it.
 	if salt == 31 {
-		return proxyPathAvailablePort(server, pathID*193, position*71+salt, 20000, 29999, inbounds)
+		start, end := proxyPathInternalPortRange(server)
+		return proxyPathAvailablePort(server, pathID*193, position*71+salt, start, end, inbounds)
 	}
 	start, end := proxyPathServerPortRange(server)
 	protocol := model.ForwardProtocolTCP
 	if salt == 47 {
 		protocol = model.ForwardProtocolUDP
 	}
-	return proxyPathAvailablePortForProtocol(server, pathID*193, position*71+salt, start, end, protocol, false, inbounds)
+	return proxyPathAvailablePortForProtocol(server, pathID*193, position*71+salt, start, end, protocol, inbounds)
 }
 
 func proxyPathAvailablePort(server model.Server, pathSeed int64, positionSeed, start, end int, inbounds map[int64]model.Inbound) int {
-	return proxyPathAvailablePortForProtocol(server, pathSeed, positionSeed, start, end, "", true, inbounds)
+	return proxyPathAvailablePortForProtocol(server, pathSeed, positionSeed, start, end, "", inbounds)
 }
 
-func proxyPathAvailablePortForProtocol(server model.Server, pathSeed int64, positionSeed, start, end int, protocol model.ForwardProtocol, fallback bool, inbounds map[int64]model.Inbound) int {
+// proxyPathAvailablePortForProtocol finds a free port inside [start, end] using
+// the stable seed and the same occupied-set rules as deployment. Exhaustion
+// returns 0: managed public listeners must never silently fall back outside the
+// configured auto range — a port that cannot be reached through the provider's
+// NAT or firewall is useless even if the bind would succeed.
+func proxyPathAvailablePortForProtocol(server model.Server, pathSeed int64, positionSeed, start, end int, protocol model.ForwardProtocol, inbounds map[int64]model.Inbound) int {
 	occupied := map[int]bool{}
 	for _, inbound := range inbounds {
 		// Disabled inbounds are reserved too. Allocation is deterministic, so
@@ -1470,33 +1565,21 @@ func proxyPathAvailablePortForProtocol(server model.Server, pathSeed int64, posi
 			occupied[inbound.Port] = true
 		}
 	}
-	choose := func(rangeStart, rangeEnd int) int {
-		span := rangeEnd - rangeStart + 1
-		if span <= 0 {
-			return 0
-		}
-		seed := int((pathSeed + int64(positionSeed)) % int64(span))
-		if seed < 0 {
-			seed = -seed
-		}
-		for offset := 0; offset < span; offset++ {
-			candidate := rangeStart + (seed+offset)%span
-			if !occupied[candidate] {
-				return candidate
-			}
-		}
+	span := end - start + 1
+	if span <= 0 {
 		return 0
 	}
-	if port := choose(start, end); port != 0 {
-		return port
+	seed := int((pathSeed + int64(positionSeed)) % int64(span))
+	if seed < 0 {
+		seed = -seed
 	}
-	if !fallback {
-		return 0
+	for offset := 0; offset < span; offset++ {
+		candidate := start + (seed+offset)%span
+		if !occupied[candidate] {
+			return candidate
+		}
 	}
-	// Hidden proxy-path listeners are implementation details rather than user
-	// entry ports. When the configured range is exhausted, use the dedicated
-	// internal pool instead of reusing an occupied public port.
-	return choose(30000, 60000)
+	return 0
 }
 
 func proxyPathPortAvailable(serverID int64, port int, protocol model.ForwardProtocol, inbounds map[int64]model.Inbound) bool {
@@ -1521,6 +1604,29 @@ func proxyPathServerPortRange(server model.Server) (int, int) {
 		return server.PortRangeStart, server.PortRangeEnd
 	}
 	return 30000, 60000
+}
+
+// proxyPathInternalPortRange returns the loopback-only allocation pool. The
+// internal pool is not constrained by provider NAT or firewall port ranges, so
+// changing the public auto range never migrates these ports.
+func proxyPathInternalPortRange(server model.Server) (int, int) {
+	if server.InternalPortRangeStart > 0 && server.InternalPortRangeEnd >= server.InternalPortRangeStart {
+		return server.InternalPortRangeStart, server.InternalPortRangeEnd
+	}
+	return 30000, 59999
+}
+
+// PortAllocationPoolForKind classifies legacy allocation rows whose pool column
+// predates the pool metadata. Loopback-only listeners (trusted forward inner
+// receivers, SSH -L forwards) belong to the internal pool no matter where an old
+// allocator happened to pick their port.
+func PortAllocationPoolForKind(kind string) string {
+	switch kind {
+	case model.ProxyPathPortKindTrustedInner, model.ProxyPathPortKindTunnelSSH:
+		return model.PortPoolInternal
+	default:
+		return model.PortPoolPublic
+	}
 }
 
 func reserveProxyPathTunnelPorts(tunnel model.Tunnel, inbounds map[int64]model.Inbound) {

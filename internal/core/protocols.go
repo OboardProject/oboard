@@ -1078,7 +1078,12 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 	if err != nil {
 		return nil, nil, err
 	}
-	pathPlans, err := BuildProxyPathPlans(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds)
+	// Project the paths through the same ledger the caller already used. A
+	// second derivation without the ledger would re-roll the seeds and could
+	// pick different ports for the same hop now that allocations carry pool and
+	// network metadata; the caller's planned listeners and this outbound/rule
+	// table must agree on every port.
+	pathPlans, _, err := buildProxyPathPlansWithInbounds(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, opts.PortLedger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1325,16 +1330,27 @@ func proxyPathInternalInbound(path model.ProxyPath, step model.ProxyPathStep, se
 	// internal_port would bypass the availability checks and let the derived plan
 	// and the generated core config disagree about the processing listener.
 	managedSSH := step.TransportMode == model.ProxyPathTransportTunnel && strings.EqualFold(stringValue(parseStepConfig(step.ConfigJSON), "type", ""), string(model.TunnelTypeSSH))
-	port := ledger.resolve(model.ProxyPathPortKindInternal, fmt.Sprintf("%d:%d", path.ID, step.Position), server.ID, func() int {
-		if managedSSH {
-			return proxyPathAvailablePort(server, path.ID*149, step.Position*29, 23000, 29999, inboundByID)
-		}
-		return proxyPathInternalPort(server, path.ID, step.Position, inboundByID)
-	})
 	listenIP := EffectiveListenIP(server, server.ListenIP)
+	pool := model.PortPoolPublic
 	if managedSSH {
+		pool = model.PortPoolInternal
 		listenIP = "127.0.0.1"
 	}
+	port := ledger.resolve(PortRequirement{
+		Kind:     model.ProxyPathPortKindInternal,
+		ScopeKey: fmt.Sprintf("%d:%d", path.ID, step.Position),
+		ServerID: server.ID,
+		Pool:     pool,
+		ListenIP: listenIP,
+		Network:  model.ForwardProtocolTCP,
+		Allocate: func() int {
+			if managedSSH {
+				start, end := proxyPathInternalPortRange(server)
+				return proxyPathAvailablePort(server, path.ID*149, step.Position*29, start, end, inboundByID)
+			}
+			return proxyPathInternalPort(server, path.ID, step.Position, inboundByID)
+		},
+	})
 	return model.Inbound{ID: proxyPathInternalOutboundID(path.ID, step.Position), ServerID: server.ID, Name: fmt.Sprintf("%s / 第%d跳内部入口", firstNonEmpty(path.Name, "代理路径"), step.Position), Protocol: model.ProtocolVLESS, ListenIP: listenIP, Port: port, ConfigJSON: `{}`, Enabled: true}
 }
 
@@ -1348,8 +1364,16 @@ func proxyPathSharedTransparentInboundTag(inboundID int64, position int) string 
 
 func proxyPathSharedTransparentInbound(inboundID int64, step model.ProxyPathStep, server model.Server, inboundByID map[int64]model.Inbound, ledger *ProxyPathPortLedger) model.Inbound {
 	scopeKey := fmt.Sprintf("inbound:%d:%d", inboundID, step.Position)
-	port := ledger.resolve(model.ProxyPathPortKindInternal, scopeKey, server.ID, func() int {
-		return proxyPathInternalPort(server, inboundID, step.Position, inboundByID)
+	port := ledger.resolve(PortRequirement{
+		Kind:     model.ProxyPathPortKindInternal,
+		ScopeKey: scopeKey,
+		ServerID: server.ID,
+		Pool:     model.PortPoolPublic,
+		ListenIP: EffectiveListenIP(server, server.ListenIP),
+		Network:  model.ForwardProtocolTCP,
+		Allocate: func() int {
+			return proxyPathInternalPort(server, inboundID, step.Position, inboundByID)
+		},
 	})
 	return model.Inbound{ID: proxyPathSharedTransparentInboundID(inboundID, step.Position), ServerID: server.ID, Name: fmt.Sprintf("入口 %d / 透明第%d跳内部入口", inboundID, step.Position), Protocol: model.ProtocolVLESS, ListenIP: EffectiveListenIP(server, server.ListenIP), Port: port, ConfigJSON: `{}`, Enabled: true}
 }
@@ -1357,8 +1381,17 @@ func proxyPathSharedTransparentInbound(inboundID int64, step model.ProxyPathStep
 func proxyPathTrustedInnerInbound(path model.ProxyPath, step model.ProxyPathStep, server model.Server, outer model.Inbound, inboundByID map[int64]model.Inbound, ledger *ProxyPathPortLedger) model.Inbound {
 	inner := outer
 	inner.ListenIP = "127.0.0.1"
-	inner.Port = ledger.resolve(model.ProxyPathPortKindTrustedInner, fmt.Sprintf("%d:%d", path.ID, step.Position), server.ID, func() int {
-		return proxyPathAvailablePort(server, path.ID*193, step.Position*37, server.PortRangeStart, server.PortRangeEnd, inboundByID)
+	inner.Port = ledger.resolve(PortRequirement{
+		Kind:     model.ProxyPathPortKindTrustedInner,
+		ScopeKey: fmt.Sprintf("%d:%d", path.ID, step.Position),
+		ServerID: server.ID,
+		Pool:     model.PortPoolInternal,
+		ListenIP: "127.0.0.1",
+		Network:  model.ForwardProtocolTCP,
+		Allocate: func() int {
+			start, end := proxyPathInternalPortRange(server)
+			return proxyPathAvailablePort(server, path.ID*193, step.Position*37, start, end, inboundByID)
+		},
 	})
 	return inner
 }
@@ -1366,8 +1399,17 @@ func proxyPathTrustedInnerInbound(path model.ProxyPath, step model.ProxyPathStep
 func proxyPathSharedTrustedInnerInbound(inboundID int64, position int, server model.Server, outer model.Inbound, inboundByID map[int64]model.Inbound, ledger *ProxyPathPortLedger) model.Inbound {
 	inner := outer
 	inner.ListenIP = "127.0.0.1"
-	inner.Port = ledger.resolve(model.ProxyPathPortKindTrustedInner, fmt.Sprintf("inbound:%d:%d", inboundID, position), server.ID, func() int {
-		return proxyPathAvailablePort(server, inboundID*193, position*37, server.PortRangeStart, server.PortRangeEnd, inboundByID)
+	inner.Port = ledger.resolve(PortRequirement{
+		Kind:     model.ProxyPathPortKindTrustedInner,
+		ScopeKey: fmt.Sprintf("inbound:%d:%d", inboundID, position),
+		ServerID: server.ID,
+		Pool:     model.PortPoolInternal,
+		ListenIP: "127.0.0.1",
+		Network:  model.ForwardProtocolTCP,
+		Allocate: func() int {
+			start, end := proxyPathInternalPortRange(server)
+			return proxyPathAvailablePort(server, inboundID*193, position*37, start, end, inboundByID)
+		},
 	})
 	return inner
 }
@@ -1381,10 +1423,7 @@ func proxyPathInternalUser(path model.ProxyPath, step model.ProxyPathStep) model
 }
 
 func proxyPathInternalPort(server model.Server, pathID int64, position int, inboundByID map[int64]model.Inbound) int {
-	start, end := server.PortRangeStart, server.PortRangeEnd
-	if start <= 0 || end <= 0 || start > end {
-		start, end = 30000, 60000
-	}
+	start, end := proxyPathServerPortRange(server)
 	return proxyPathAvailablePort(server, pathID*97, position*17, start, end, inboundByID)
 }
 

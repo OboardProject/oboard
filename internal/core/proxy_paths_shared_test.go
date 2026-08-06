@@ -671,7 +671,7 @@ func TestGeneratedPortSkipsDisabledInboundPort(t *testing.T) {
 	disabled := model.Inbound{ID: 21, ServerID: server.ID, Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 30000, ConfigJSON: `{}`, Enabled: false}
 	inbounds := map[int64]model.Inbound{disabled.ID: disabled}
 	for attempt := 0; attempt < 4; attempt++ {
-		port := proxyPathAvailablePortForProtocol(server, int64(attempt), 0, 30000, 30001, model.ForwardProtocolTCP, false, inbounds)
+		port := proxyPathAvailablePortForProtocol(server, int64(attempt), 0, 30000, 30001, model.ForwardProtocolTCP, inbounds)
 		if port == disabled.Port {
 			t.Fatalf("generated listener took the disabled inbound's port %d", port)
 		}
@@ -729,8 +729,18 @@ func TestPortLedgerKeepsAllocatedPortsStableAcrossTopologyChanges(t *testing.T) 
 	if got := services[key].Inbound.Port; got != originalPort {
 		t.Fatalf("stored port moved from %d to %d", originalPort, got)
 	}
-	if extra := second.Pending(); len(extra) != 0 {
+	// The re-projection must not pick another port. It may emit one metadata-only
+	// correction: the fixture row predates the pool column, so the ledger fills
+	// in pool/network/listen metadata while keeping the port untouched.
+	extra := second.Pending()
+	if len(extra) > 1 {
 		t.Fatalf("re-projection allocated again: %#v", extra)
+	}
+	if len(extra) == 1 {
+		item := extra[0]
+		if item.Port != originalPort || item.Pool != model.PortPoolPublic || item.Network != "tcp_udp" || item.ListenIP != "0.0.0.0" {
+			t.Fatalf("metadata correction = %#v, want same port with public pool metadata", item)
+		}
 	}
 	// The record is still claimed, so it must not be released.
 	if stale := StaleProxyPathPortAllocationIDs(stored, second); len(stale) != 0 {
@@ -747,14 +757,14 @@ func TestStaleProxyPathPortAllocationsNeedACompleteProjection(t *testing.T) {
 	// A projection that aborted resolved only part of the topology. Treating that
 	// partial view as authoritative would release ports that are still deployed.
 	partial := NewProxyPathPortLedger(stored)
-	partial.resolve(model.ProxyPathPortKindChainService, DefaultProxyPathChainMethod, 9, func() int { return 31000 })
+	partial.resolve(PortRequirement{Kind: model.ProxyPathPortKindChainService, ScopeKey: DefaultProxyPathChainMethod, ServerID: 9, Pool: model.PortPoolPublic, Network: model.ForwardProtocolTCPUDP, Allocate: func() int { return 31000 }})
 	if stale := StaleProxyPathPortAllocationIDs(stored, partial); len(stale) != 0 {
 		t.Fatalf("incomplete projection released %#v", stale)
 	}
 
 	// Once the projection completed, whatever it did not claim is genuinely free.
 	complete := NewProxyPathPortLedger(stored)
-	complete.resolve(model.ProxyPathPortKindChainService, DefaultProxyPathChainMethod, 9, func() int { return 31000 })
+	complete.resolve(PortRequirement{Kind: model.ProxyPathPortKindChainService, ScopeKey: DefaultProxyPathChainMethod, ServerID: 9, Pool: model.PortPoolPublic, Network: model.ForwardProtocolTCPUDP, Allocate: func() int { return 31000 }})
 	complete.markProjectionComplete()
 	stale := StaleProxyPathPortAllocationIDs(stored, complete)
 	if len(stale) != 1 || stale[0] != 2 {
@@ -846,5 +856,95 @@ func TestTrustedForwardIsEmittedOnlyByPublicEntryHop(t *testing.T) {
 	required := TrustedForwardServerIDs([]model.ProxyPath{path}, steps, []model.Inbound{root})
 	if !required[entry.ID] || !required[relay.ID] || !required[processor.ID] || len(required) != 3 {
 		t.Fatalf("trusted forward build gate servers = %#v", required)
+	}
+}
+
+func TestLedgerRecordsPoolAndNetworkMetadata(t *testing.T) {
+	ledger := NewProxyPathPortLedger(nil)
+	port := ledger.resolve(PortRequirement{
+		Kind: model.ProxyPathPortKindTunnelSSH, ScopeKey: "42", ServerID: 3,
+		Pool: model.PortPoolInternal, ListenIP: "127.0.0.1", Network: model.ForwardProtocolTCP,
+		Allocate: func() int { return 41000 },
+	})
+	if port != 41000 {
+		t.Fatalf("port = %d", port)
+	}
+	pending := ledger.Pending()
+	if len(pending) != 1 {
+		t.Fatalf("pending = %#v", pending)
+	}
+	item := pending[0]
+	if item.Pool != model.PortPoolInternal || item.ListenIP != "127.0.0.1" || item.Network != "tcp" {
+		t.Fatalf("allocation metadata = %#v", item)
+	}
+	if item.Generation != 1 || item.Ordinal != 0 || item.State != model.PortAllocationStateActive {
+		t.Fatalf("allocation lifecycle = %#v", item)
+	}
+}
+
+func TestLedgerConvergesLegacyRowMetadataWithoutMovingPort(t *testing.T) {
+	stored := []model.ProxyPathPortAllocation{{ID: 9, Kind: model.ProxyPathPortKindTrustedInner, ScopeKey: "7:2", ServerID: 1, Port: 40010}}
+	ledger := NewProxyPathPortLedger(stored)
+	port := ledger.resolve(PortRequirement{
+		Kind: model.ProxyPathPortKindTrustedInner, ScopeKey: "7:2", ServerID: 1,
+		Pool: model.PortPoolInternal, ListenIP: "127.0.0.1", Network: model.ForwardProtocolTCP,
+		Allocate: func() int { t.Fatal("stored port must not reallocate"); return 0 },
+	})
+	if port != 40010 {
+		t.Fatalf("stored port moved to %d", port)
+	}
+	pending := ledger.Pending()
+	if len(pending) != 1 {
+		t.Fatalf("pending = %#v, want one metadata correction", pending)
+	}
+	item := pending[0]
+	if item.Port != 40010 || item.Pool != model.PortPoolInternal || item.ListenIP != "127.0.0.1" || item.Network != "tcp" {
+		t.Fatalf("metadata correction = %#v", item)
+	}
+	if stale := StaleProxyPathPortAllocationIDs(stored, ledger); len(stale) != 0 {
+		t.Fatalf("claimed allocation reported stale: %#v", stale)
+	}
+	ledger.markProjectionComplete()
+	if stale := StaleProxyPathPortAllocationIDs(stored, ledger); len(stale) != 0 {
+		t.Fatalf("metadata-corrected allocation reported stale: %#v", stale)
+	}
+}
+
+func TestLedgerKeepsStoredPortWhenMetadataMatches(t *testing.T) {
+	stored := []model.ProxyPathPortAllocation{{ID: 9, Kind: model.ProxyPathPortKindTunnelWG, ScopeKey: "42", ServerID: 2, Pool: model.PortPoolPublic, ListenIP: "*", Network: "udp", Port: 33000}}
+	ledger := NewProxyPathPortLedger(stored)
+	port := ledger.resolve(PortRequirement{
+		Kind: model.ProxyPathPortKindTunnelWG, ScopeKey: "42", ServerID: 2,
+		Pool: model.PortPoolPublic, ListenIP: "*", Network: model.ForwardProtocolUDP,
+		Allocate: func() int { t.Fatal("stored port must not reallocate"); return 0 },
+	})
+	if port != 33000 {
+		t.Fatalf("port = %d", port)
+	}
+	if pending := ledger.Pending(); len(pending) != 0 {
+		t.Fatalf("matching metadata produced an upsert: %#v", pending)
+	}
+}
+
+func TestChainServicePublicRangeExhaustionFailsWithoutOverflow(t *testing.T) {
+	// A one-port server whose only public port is taken by a user inbound must
+	// fail the chain-service projection instead of silently binding outside the
+	// configured auto range.
+	source := model.Server{ID: 1, Name: "src", ChainSecret: "chain-1", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30000}
+	target := model.Server{ID: 2, Name: "dst", ChainSecret: "chain-2", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31000}
+	root := model.Inbound{ID: 11, ServerID: source.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	occupied := model.Inbound{ID: 22, ServerID: target.ID, Name: "squatter", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 31000, ConfigJSON: `{"method":"2022-blake3-aes-128-gcm"}`, Enabled: true}
+	path := model.ProxyPath{ID: 101, Name: "src-dst", InboundID: root.ID, Secret: "seed", Enabled: true}
+	targetID := target.ID
+	steps := []model.ProxyPathStep{
+		{ID: 1001, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`},
+	}
+	ledger := NewProxyPathPortLedger(nil)
+	_, err := buildProxyPathChainServices([]model.ProxyPath{path}, steps, []model.Server{source, target}, []model.Inbound{root, occupied}, ledger)
+	if err == nil {
+		t.Fatal("chain service projection must fail when the managed public range is exhausted")
+	}
+	if pending := ledger.Pending(); len(pending) != 0 {
+		t.Fatalf("failed projection must not leave pending allocations: %#v", pending)
 	}
 }

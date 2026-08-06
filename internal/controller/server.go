@@ -3076,6 +3076,27 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if portPolicyChanged(*current, v) {
+			allocations, err := s.store.ListProxyPathPortAllocations(r.Context())
+			if err != nil {
+				fail(w, err, 500)
+				return
+			}
+			inbounds, err := s.store.ListInbounds(r.Context())
+			if err != nil {
+				fail(w, err, 500)
+				return
+			}
+			preview := core.PreviewServerPortPolicyChange(*current, v, allocations, inbounds)
+			if preview.RequiresMigration() {
+				write(w, http.StatusConflict, map[string]any{
+					"error":   "port_migration_required",
+					"message": serverPortPolicyConflictMessage(preview),
+					"preview": preview,
+				})
+				return
+			}
+		}
 		if err := s.store.UpdateServer(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
@@ -4063,6 +4084,12 @@ func validateServer(v *model.Server) error {
 	if v.PortRangeEnd == 0 {
 		v.PortRangeEnd = 20000
 	}
+	if v.InternalPortRangeStart == 0 {
+		v.InternalPortRangeStart = 30000
+	}
+	if v.InternalPortRangeEnd == 0 {
+		v.InternalPortRangeEnd = 59999
+	}
 	switch strings.ToLower(strings.TrimSpace(v.MonitoringMode)) {
 	case "", "lightweight":
 		v.MonitoringMode = "lightweight"
@@ -4099,7 +4126,56 @@ func validateServer(v *model.Server) error {
 	if err := validateMTUPolicy(v); err != nil {
 		return err
 	}
-	return core.ValidatePortRange(v.PortRangeStart, v.PortRangeEnd)
+	if err := core.ValidatePortRange(v.PortRangeStart, v.PortRangeEnd); err != nil {
+		return err
+	}
+	return core.ValidatePortRange(v.InternalPortRangeStart, v.InternalPortRangeEnd)
+}
+
+func portPolicyChanged(current, next model.Server) bool {
+	// validateServer fills default internal ranges for rows created before the
+	// field existed; an unset stored value is the default policy, not a change.
+	curInternalStart, curInternalEnd := current.InternalPortRangeStart, current.InternalPortRangeEnd
+	if curInternalStart == 0 || curInternalEnd == 0 {
+		curInternalStart, curInternalEnd = 30000, 59999
+	}
+	return current.PortRangeStart != next.PortRangeStart ||
+		current.PortRangeEnd != next.PortRangeEnd ||
+		curInternalStart != next.InternalPortRangeStart ||
+		curInternalEnd != next.InternalPortRangeEnd
+}
+
+// serverPortPolicyConflictMessage renders the 409 body for a server range PATCH
+// that would exclude managed listeners. Migration is not implemented yet, so the
+// message tells the operator exactly which listeners block the change instead of
+// silently moving or clearing ports.
+func serverPortPolicyConflictMessage(preview core.ServerPortPolicyChangePreview) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "新端口范围会排除 %d 个由系统托管的监听端口，禁止直接保存。", len(preview.AffectedManaged))
+	for _, item := range preview.AffectedManaged {
+		label := item.Kind
+		switch item.Kind {
+		case model.ProxyPathPortKindChainService:
+			label = "共享链路服务"
+		case model.ProxyPathPortKindInternal:
+			label = "链路内部入口"
+		case model.ProxyPathPortKindTrustedInner:
+			label = "可信转发内层入口"
+		case model.ProxyPathPortKindTunnelSSH:
+			label = "SSH 本地转发"
+		case model.ProxyPathPortKindTunnelWG:
+			label = "WireGuard 监听"
+		}
+		fmt.Fprintf(&b, "\n· %s %s: %d", label, item.ScopeKey, item.Port)
+	}
+	if len(preview.ManualOutsidePolicy) > 0 {
+		fmt.Fprintf(&b, "\n另有 %d 个手工入口位于新范围之外（保持不动，仅提示）：", len(preview.ManualOutsidePolicy))
+		for _, item := range preview.ManualOutsidePolicy {
+			fmt.Fprintf(&b, "\n· 入口端口 %d", item.Port)
+		}
+	}
+	fmt.Fprintf(&b, "\n请调整范围以包含以上端口，或先手动迁移这些服务。")
+	return b.String()
 }
 
 func validateServerRegion(v *model.Server) error {

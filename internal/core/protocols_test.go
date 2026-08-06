@@ -1830,16 +1830,16 @@ func TestProxyPathInternalPortsAvoidOccupiedSinglePortRanges(t *testing.T) {
 	inbounds := map[int64]model.Inbound{existing.ID: existing}
 
 	internalPort := proxyPathInternalPort(server, 4, 1, inbounds)
-	if internalPort == existing.Port || internalPort < 30000 || internalPort > 60000 {
-		t.Fatalf("internal port = %d, want a free port from the internal pool", internalPort)
+	if internalPort != 0 {
+		t.Fatalf("internal port = %d, want exhausted public range to fail without overflow", internalPort)
 	}
 	wgPort := proxyPathTunnelPort(server, 4, 1, 47, inbounds)
 	if wgPort != existing.Port {
 		t.Fatalf("WireGuard port = %d, want UDP to share TCP-only port %d", wgPort, existing.Port)
 	}
 	sshLoopbackPort := proxyPathTunnelPort(server, 4, 1, 31, inbounds)
-	if sshLoopbackPort < 20000 || sshLoopbackPort > 29999 || sshLoopbackPort == existing.Port {
-		t.Fatalf("SSH loopback port = %d, want a free port from the loopback pool", sshLoopbackPort)
+	if sshLoopbackPort < 30000 || sshLoopbackPort > 59999 || sshLoopbackPort == existing.Port {
+		t.Fatalf("SSH loopback port = %d, want a free port from the internal loopback pool", sshLoopbackPort)
 	}
 	if sshServerPort := proxyPathTunnelPort(server, 4, 1, 61, inbounds); sshServerPort != 0 {
 		t.Fatalf("SSH server port = %d, want exhausted TCP range to fail", sshServerPort)

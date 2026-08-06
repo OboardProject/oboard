@@ -3315,3 +3315,97 @@ func TestDNSListSetDefault(t *testing.T) {
 	request(t, h, http.MethodPut, fmt.Sprintf("/api/v2/ui/dns-lists/%d", int64(disabled["id"].(float64))), token, map[string]any{"name": "disabled candidate", "kind": "encrypted", "enabled": false, "candidates": candidates}, http.StatusOK)
 	request(t, h, http.MethodPost, fmt.Sprintf("/api/v2/ui/dns-lists/%d/set-default", int64(disabled["id"].(float64))), token, nil, http.StatusBadRequest)
 }
+
+func TestServerPortRangePatchRejectsManagedPortExclusion(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+	ctx := context.Background()
+	server := &model.Server{Name: "port-edge", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10100, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	allocation := []model.ProxyPathPortAllocation{{Kind: model.ProxyPathPortKindChainService, ScopeKey: "2022-blake3-aes-128-gcm", ServerID: server.ID, Pool: model.PortPoolPublic, ListenIP: "0.0.0.0", Network: "tcp_udp", Port: 10050}}
+	if err := db.SaveProxyPathPortAllocations(ctx, allocation, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Narrowing the public range below a managed chain-service port must be
+	// rejected with the preview instead of silently saving.
+	blocked := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v2/ui/servers/%d", server.ID), token, map[string]any{"name": "port-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100}, http.StatusConflict)
+	if blocked["error"] != "port_migration_required" {
+		t.Fatalf("conflict body = %#v", blocked)
+	}
+	preview, ok := blocked["preview"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing preview: %#v", blocked)
+	}
+	if !preview["public_range_changed"].(bool) {
+		t.Fatalf("preview = %#v", preview)
+	}
+	affected := preview["affected_managed"].([]any)
+	if len(affected) != 1 {
+		t.Fatalf("affected managed = %#v", affected)
+	}
+	if item := affected[0].(map[string]any); int(item["port"].(float64)) != 10050 {
+		t.Fatalf("affected item = %#v", item)
+	}
+	stored, err := db.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.PortRangeStart != 10000 {
+		t.Fatalf("server range was modified despite conflict: %#v", stored)
+	}
+
+	// Widening the range touches nothing and saves normally.
+	widened := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v2/ui/servers/%d", server.ID), token, map[string]any{"name": "port-edge", "listen_ip": "0.0.0.0", "port_range_start": 9000, "port_range_end": 20000}, http.StatusOK)
+	if updated := widened["server"].(map[string]any); int(updated["port_range_start"].(float64)) != 9000 {
+		t.Fatalf("widened server = %#v", updated)
+	}
+}
+
+func TestServerPortRangePatchSeparatesPublicAndInternalPools(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+	ctx := context.Background()
+	server := &model.Server{Name: "pool-edge", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10100, InternalPortRangeStart: 30000, InternalPortRangeEnd: 59999, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	allocation := []model.ProxyPathPortAllocation{
+		{Kind: model.ProxyPathPortKindTunnelSSH, ScopeKey: "555", ServerID: server.ID, Pool: model.PortPoolInternal, ListenIP: "127.0.0.1", Network: "tcp", Port: 40010},
+	}
+	if err := db.SaveProxyPathPortAllocations(ctx, allocation, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Moving the public range must not be blocked by loopback allocations.
+	request(t, h, http.MethodPatch, fmt.Sprintf("/api/v2/ui/servers/%d", server.ID), token, map[string]any{"name": "pool-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100, "internal_port_range_start": 30000, "internal_port_range_end": 59999}, http.StatusOK)
+
+	// Excluding the loopback allocation from the internal pool is a conflict.
+	blocked := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v2/ui/servers/%d", server.ID), token, map[string]any{"name": "pool-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100, "internal_port_range_start": 60000, "internal_port_range_end": 61000}, http.StatusConflict)
+	if blocked["error"] != "port_migration_required" {
+		t.Fatalf("conflict body = %#v", blocked)
+	}
+	preview := blocked["preview"].(map[string]any)
+	if !preview["internal_range_changed"].(bool) {
+		t.Fatalf("preview = %#v", preview)
+	}
+	if affected := preview["affected_managed"].([]any); len(affected) != 1 {
+		t.Fatalf("affected managed = %#v", affected)
+	}
+}
