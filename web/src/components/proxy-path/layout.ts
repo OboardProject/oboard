@@ -218,16 +218,19 @@ export function layoutGraphLanes(
   layers.forEach((layer, layerIndex) => {
     const layerY = originY + layerIndex * layerGap
 
-    // Wide sibling groups use two interleaved rows. The visual order still
-    // follows the crossing-minimized layer order, while the half-column
-    // stagger keeps a lower node's incoming edge clear of the node above it.
+    // Wide sibling groups split into two rows by role: nodes that continue
+    // into deeper layers stay on the upper row so their chains keep short
+    // vertical drops, while terminal exits pack onto a lower row offset by
+    // half a column. Parent fan-out then crosses neither the continuations
+    // nor the sibling cards. Without continuations, split contiguously so
+    // each row keeps the crossing-minimized order.
     if (graphLayerRowWidth(layer, siblingGap) > GRAPH_LAYER_COMPACT_WIDTH) {
-      const primary = layer.filter((_, index) => index % 2 === 0)
-      const secondary = layer.filter((_, index) => index % 2 === 1)
-      const secondaryCenterX = layer.length % 2 === 0 ? columnStep / 2 : 0
+      const through = layer.filter(node => !node.terminal)
+      const upper = through.length ? through : layer.slice(0, Math.ceil(layer.length / 2))
+      const lower = through.length ? layer.filter(node => node.terminal) : layer.slice(Math.ceil(layer.length / 2))
       const compactPositions = {
-        ...placeGraphLayerRow(primary, 0, layerY, siblingGap),
-        ...placeGraphLayerRow(secondary, secondaryCenterX, layerY + GRAPH_LAYER_SECONDARY_OFFSET_Y, siblingGap),
+        ...placeGraphLayerRow(upper, 0, layerY, siblingGap),
+        ...placeGraphLayerRow(lower, columnStep / 2, layerY + GRAPH_LAYER_SECONDARY_OFFSET_Y, siblingGap),
       }
       const compactMinX = Math.min(...layer.map(node => compactPositions[node.id].x))
       const compactMaxX = Math.max(...layer.map(node => compactPositions[node.id].x + node.width))

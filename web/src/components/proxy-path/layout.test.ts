@@ -76,33 +76,47 @@ describe('proxy graph server layout', () => {
     expect(positions.branch.x).toBeGreaterThan(positions.main.x)
   })
 
-  it('stagger-compacts wide layers without changing their visual order', () => {
-    const children = Array.from({ length: 5 }, (_, index) => ({
-      id: `child-${index + 1}`,
-      width: 260,
-      terminal: true,
-    }))
+  it('keeps chain nodes on the upper row and packs terminal exits below', () => {
     const positions = layoutGraphLanes(
       [
         [{ id: 'root', width: 260, terminal: false }],
-        children,
+        [
+          { id: 'exit-1', width: 260, terminal: true },
+          { id: 'relay-a', width: 260, terminal: false },
+          { id: 'exit-2', width: 260, terminal: true },
+          { id: 'relay-b', width: 260, terminal: false },
+          { id: 'exit-3', width: 260, terminal: true },
+        ],
+        [
+          { id: 'leaf-a', width: 260, terminal: true },
+          { id: 'leaf-b', width: 260, terminal: true },
+        ],
       ],
-      children.map(child => ({ source: 'root', target: child.id })),
+      [
+        { source: 'root', target: 'exit-1' },
+        { source: 'root', target: 'relay-a' },
+        { source: 'root', target: 'exit-2' },
+        { source: 'root', target: 'relay-b' },
+        { source: 'root', target: 'exit-3' },
+        { source: 'relay-a', target: 'leaf-a' },
+        { source: 'relay-b', target: 'leaf-b' },
+      ],
       760,
       300,
       370,
     )
 
-    const childPositions = children.map(child => positions[child.id])
-    expect(new Set(childPositions.map(position => position.y))).toEqual(new Set([670, 860]))
-    expect(childPositions.map(position => position.x)).toEqual(
-      childPositions.map(position => position.x).slice().sort((left, right) => left - right),
-    )
-    expect(Math.max(...childPositions.map(position => position.x + 260)) - Math.min(...childPositions.map(position => position.x))).toBe(980)
-    expect(positions['child-3'].x).toBe(positions.root.x)
+    expect(positions['relay-a'].y).toBe(670)
+    expect(positions['relay-b'].y).toBe(670)
+    expect(positions['exit-1'].y).toBe(860)
+    expect(positions['exit-2'].y).toBe(860)
+    expect(positions['exit-3'].y).toBe(860)
+    expect(positions['relay-b'].x).toBeGreaterThan(positions['relay-a'].x)
+    expect(positions['exit-2'].x).toBeGreaterThan(positions['exit-1'].x)
+    expect(positions['exit-3'].x).toBeGreaterThan(positions['exit-2'].x)
   })
 
-  it('offsets equal compact rows so incoming edges do not pass through sibling nodes', () => {
+  it('splits all-terminal wide layers contiguously with a half-column offset', () => {
     const children = Array.from({ length: 6 }, (_, index) => ({
       id: `child-${index + 1}`,
       width: 260,
@@ -119,9 +133,17 @@ describe('proxy graph server layout', () => {
       370,
     )
 
-    const upperCenters = children.filter((_, index) => index % 2 === 0).map(child => positions[child.id].x + child.width / 2)
-    const lowerCenters = children.filter((_, index) => index % 2 === 1).map(child => positions[child.id].x + child.width / 2)
+    const upper = children.slice(0, 3).map(child => positions[child.id])
+    const lower = children.slice(3).map(child => positions[child.id])
+    expect(upper.every(position => position.y === 670)).toBe(true)
+    expect(lower.every(position => position.y === 860)).toBe(true)
+    expect(upper.map(position => position.x)).toEqual(upper.map(position => position.x).slice().sort((left, right) => left - right))
+    expect(lower.map(position => position.x)).toEqual(lower.map(position => position.x).slice().sort((left, right) => left - right))
+    const upperCenters = upper.map(position => position.x + 130)
+    const lowerCenters = lower.map(position => position.x + 130)
     expect(lowerCenters.every(center => !upperCenters.includes(center))).toBe(true)
-    expect(positions.root.x + 130).toBe(760)
+    const singleRowWidth = 6 * 260 + 5 * 100
+    const compactWidth = Math.max(...children.map(child => positions[child.id].x + 260)) - Math.min(...children.map(child => positions[child.id].x))
+    expect(compactWidth).toBeLessThan(singleRowWidth)
   })
 })
