@@ -211,8 +211,35 @@ export function layoutGraphLanes(
     incoming.set(edge.target, [...(incoming.get(edge.target) || []), edge.source])
   })
 
+  const maxWidth = Math.max(GRAPH_ENTRY_NODE_WIDTH, ...Array.from(nodeByID.values(), node => node.width))
+  const columnStep = maxWidth + siblingGap
   const laneByNode = new Map<string, number>()
+  const rawPositions: Record<string, GraphPosition> = {}
   layers.forEach((layer, layerIndex) => {
+    const layerY = originY + layerIndex * layerGap
+
+    // Wide sibling groups use two interleaved rows. The visual order still
+    // follows the crossing-minimized layer order, while the half-column
+    // stagger keeps a lower node's incoming edge clear of the node above it.
+    if (graphLayerRowWidth(layer, siblingGap) > GRAPH_LAYER_COMPACT_WIDTH) {
+      const primary = layer.filter((_, index) => index % 2 === 0)
+      const secondary = layer.filter((_, index) => index % 2 === 1)
+      const secondaryCenterX = layer.length % 2 === 0 ? columnStep / 2 : 0
+      const compactPositions = {
+        ...placeGraphLayerRow(primary, 0, layerY, siblingGap),
+        ...placeGraphLayerRow(secondary, secondaryCenterX, layerY + GRAPH_LAYER_SECONDARY_OFFSET_Y, siblingGap),
+      }
+      const compactMinX = Math.min(...layer.map(node => compactPositions[node.id].x))
+      const compactMaxX = Math.max(...layer.map(node => compactPositions[node.id].x + node.width))
+      const compactShiftX = -(compactMinX + compactMaxX) / 2
+      layer.forEach(node => {
+        const position = { x: compactPositions[node.id].x + compactShiftX, y: compactPositions[node.id].y }
+        rawPositions[node.id] = position
+        laneByNode.set(node.id, (position.x + node.width / 2) / columnStep)
+      })
+      return
+    }
+
     const used = new Set<number>()
     const preferredLane = (nodeID: string) => {
       const parentLanes = (incoming.get(nodeID) || [])
@@ -236,6 +263,7 @@ export function layoutGraphLanes(
         const lane = index
         laneByNode.set(node.id, lane)
         used.add(lane)
+        rawPositions[node.id] = { x: lane * columnStep - node.width / 2, y: layerY }
       })
       return
     }
@@ -257,23 +285,12 @@ export function layoutGraphLanes(
       const lane = nearestFreeLane(preferred ?? fallback)
       laneByNode.set(node.id, lane)
       used.add(lane)
+      rawPositions[node.id] = { x: lane * columnStep - node.width / 2, y: layerY }
     }
     layer.filter(node => primaryChildren.has(node.id)).forEach(place)
     layer.filter(node => !primaryChildren.has(node.id)).forEach(place)
   })
 
-  const maxWidth = Math.max(GRAPH_ENTRY_NODE_WIDTH, ...Array.from(nodeByID.values(), node => node.width))
-  const columnStep = maxWidth + siblingGap
-  const rawPositions: Record<string, GraphPosition> = {}
-  layers.forEach((layer, layerIndex) => {
-    layer.forEach(node => {
-      const lane = laneByNode.get(node.id) || 0
-      rawPositions[node.id] = {
-        x: lane * columnStep - node.width / 2,
-        y: originY + layerIndex * layerGap,
-      }
-    })
-  })
   const nodes = Array.from(nodeByID.values())
   const minX = Math.min(...nodes.map(node => rawPositions[node.id].x))
   const maxX = Math.max(...nodes.map(node => rawPositions[node.id].x + node.width))

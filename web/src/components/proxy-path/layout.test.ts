@@ -75,4 +75,53 @@ describe('proxy graph server layout', () => {
     expect(positions.branch.x).toBe(positions['branch-child'].x)
     expect(positions.branch.x).toBeGreaterThan(positions.main.x)
   })
+
+  it('stagger-compacts wide layers without changing their visual order', () => {
+    const children = Array.from({ length: 5 }, (_, index) => ({
+      id: `child-${index + 1}`,
+      width: 260,
+      terminal: true,
+    }))
+    const positions = layoutGraphLanes(
+      [
+        [{ id: 'root', width: 260, terminal: false }],
+        children,
+      ],
+      children.map(child => ({ source: 'root', target: child.id })),
+      760,
+      300,
+      370,
+    )
+
+    const childPositions = children.map(child => positions[child.id])
+    expect(new Set(childPositions.map(position => position.y))).toEqual(new Set([670, 860]))
+    expect(childPositions.map(position => position.x)).toEqual(
+      childPositions.map(position => position.x).slice().sort((left, right) => left - right),
+    )
+    expect(Math.max(...childPositions.map(position => position.x + 260)) - Math.min(...childPositions.map(position => position.x))).toBe(980)
+    expect(positions['child-3'].x).toBe(positions.root.x)
+  })
+
+  it('offsets equal compact rows so incoming edges do not pass through sibling nodes', () => {
+    const children = Array.from({ length: 6 }, (_, index) => ({
+      id: `child-${index + 1}`,
+      width: 260,
+      terminal: true,
+    }))
+    const positions = layoutGraphLanes(
+      [
+        [{ id: 'root', width: 260, terminal: false }],
+        children,
+      ],
+      children.map(child => ({ source: 'root', target: child.id })),
+      760,
+      300,
+      370,
+    )
+
+    const upperCenters = children.filter((_, index) => index % 2 === 0).map(child => positions[child.id].x + child.width / 2)
+    const lowerCenters = children.filter((_, index) => index % 2 === 1).map(child => positions[child.id].x + child.width / 2)
+    expect(lowerCenters.every(center => !upperCenters.includes(center))).toBe(true)
+    expect(positions.root.x + 130).toBe(760)
+  })
 })
