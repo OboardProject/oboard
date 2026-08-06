@@ -94,6 +94,7 @@ import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { getServerTimeIssue } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
 import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
+import { controllerUpdatePendingToast, isControllerUpdateInProgressStatus, isExpectedControllerUpdateDisconnect } from './controller-update'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
@@ -844,6 +845,7 @@ const valueLabels: Record<string, string> = {
 
 type ToastKind = 'error' | 'success' | 'warning' | 'info'
 type ToastState = { id: number; kind: ToastKind; message: string } | null
+type ControllerUpdateInProgressChange = (value: boolean) => void
 type DialogTone = 'default' | 'danger'
 type DialogChoice = { value: string; label: string }
 type DialogBase = { title: string; message?: React.ReactNode; confirmText?: string; cancelText?: string; tone?: DialogTone }
@@ -1310,6 +1312,9 @@ function App() {
   activeTabRef.current = tab
   const [theme, setTheme] = useState<ThemeName>(() => normalizeTheme(localStorage.getItem('oboard.theme')))
   const [toast, setToast] = useState<ToastState>(null)
+  const [controllerUpdateInProgress, setControllerUpdateInProgress] = useState(false)
+  const controllerUpdateInProgressRef = useRef(false)
+  controllerUpdateInProgressRef.current = controllerUpdateInProgress
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<any>({})
   const [restoringSession, setRestoringSession] = useState(() => !sessionStorage.getItem('oboard.token'))
@@ -1448,6 +1453,7 @@ function App() {
     const seq = ++loadSeq.current
     const requestToken = token
     const background = Boolean(opts?.background)
+    const updateInProgressSnapshot = controllerUpdateInProgressRef.current
     // Only show the global loading flag when this tab has no cached payload yet.
     // Background revalidation must not flash skeletons during a crossfade.
     if (!background) setLoading(true)
@@ -1473,7 +1479,9 @@ function App() {
       if (seq !== loadSeq.current) return
       const message = localizeErrorMessage(e?.message || e)
       setData((old: any) => ({ ...old, load_errors: [`${tabMeta[page]?.label || page}: ${message}`] }))
-      showToast(setToast, message)
+      const pendingToast = controllerUpdatePendingToast(updateInProgressSnapshot, e)
+      if (pendingToast) showToast(setToast, pendingToast.message, pendingToast.kind)
+      else showToast(setToast, message)
     } finally {
       if (seq === loadSeq.current) {
         setLoading(false)
@@ -2029,7 +2037,7 @@ function App() {
             <div className="page-stage">
               <AnimatePresence initial={false} mode="popLayout">
                 <MotionPage key={tab}>
-                  {renderTab(tab, data, client, load, apply, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, realtimeRevision, realtimeResources)}
+                  {renderTab(tab, data, client, load, apply, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, realtimeRevision, realtimeResources, setControllerUpdateInProgress)}
                 </MotionPage>
               </AnimatePresence>
             </div>
@@ -2356,7 +2364,7 @@ $ _`}</pre>
   )
 }
 
-function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = []) {
+function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange) {
   if (tab === 'account') return <AccountPage data={data} client={client} load={load} notify={notify} />
   if (tab === 'dashboard') return <Dashboard data={data} loading={loading} displayName={sessionUser?.nickname || data.current_user?.nickname || sessionUser?.username || data.current_user?.username || 'Admin'} attention={dashboardAttention} dismissAttention={dismissDashboardAttention} />
   if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={realtimeStatus} />
@@ -2378,7 +2386,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'tasks') return <Tasks data={data} client={client} loading={loading} realtimeStatus={realtimeStatus} />
   if (tab === 'audit') return <AuditConsole data={data} client={client} loading={loading} notify={notify} />
   if (tab === 'automation') return <AutomationWorkspace data={data} client={client} notify={notify} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
-  if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
+  if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />
   return null
 }
 
@@ -3364,7 +3372,7 @@ function AIProviderRawLogDialog({ client, onClose }: { client: ReturnType<typeof
   </MotionDialogPanel>
 }
 
-function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources }: any) {
+function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const dialogs = useDialogs()
   const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
   const currentOrigin = appControllerURL()
@@ -3732,7 +3740,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         </div>
       </section>}
       {activeSection === 'backups' && <ControllerBackupPanel client={client} notify={notify} dialogs={dialogs} />}
-      {activeSection === 'updates' && <ControllerUpdatePanel data={data} client={client} load={load} notify={notify} dialogs={dialogs} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />}
+      {activeSection === 'updates' && <ControllerUpdatePanel data={data} client={client} load={load} notify={notify} dialogs={dialogs} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />}
       {activeSection === 'logs' && <ControllerLogsPanel
         client={client}
         dialogs={dialogs}
@@ -3748,7 +3756,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   </section>
 }
 
-function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeStatus, realtimeRevision, realtimeResources }: any) {
+function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const emptyStatus: ControllerUpdateStatus = {
     channel: '', current: { version: data.version?.version || '', build: data.version?.build || '', commit: data.version?.commit || '', date: data.version?.built_at || '' },
     available: { version: '', build: '', commit: '', date: '' }, update_available: false, auto_update_enabled: false, can_cancel: false, status: 'loading',
@@ -3768,6 +3776,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   const updateInstallExpected = (value: boolean) => {
     installExpectedRef.current = value
     setInstallExpected(value)
+    onControllerUpdateInProgressChange?.(value)
   }
   const applyInstallStatus = (result: ControllerUpdateStatus) => {
     if (!installExpectedRef.current) return
@@ -3818,7 +3827,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       setSnapshot(result)
       applyInstallStatus(result)
     } catch (error: any) {
-      if (quiet && (installExpectedRef.current || ['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status)) && isExpectedControllerUpdateDisconnect(error)) {
+      if (quiet && (installExpectedRef.current || isControllerUpdateInProgressStatus(snapshot.status)) && isExpectedControllerUpdateDisconnect(error)) {
         setInstallConnectionInterrupted(true)
       } else {
         notify?.(localizeErrorMessage(error?.message || error), 'error')
@@ -3837,7 +3846,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     return () => window.clearInterval(timer)
   }, [snapshot.status, installExpected, realtimeStatus])
   useEffect(() => {
-    if (!['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status) || installExpected) return
+    if (!isControllerUpdateInProgressStatus(snapshot.status) || installExpected) return
     installTargetBuildRef.current = snapshot.available?.build || ''
     updateInstallExpected(true)
     setInstallPhase(snapshot.status as ControllerUpdateInstallPhase)
@@ -3857,7 +3866,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     }
   }
   const openInstall = () => {
-    if (installExpected || ['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status)) {
+    if (installExpected || isControllerUpdateInProgressStatus(snapshot.status)) {
       setInstallPhase(snapshot.status === 'cancelling' ? 'cancelling' : snapshot.status === 'installing' ? 'installing' : snapshot.status === 'ready' ? 'ready' : 'downloading')
       setInstallDialogOpen(true)
       return
@@ -3944,8 +3953,8 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     loading: '读取中', idle: '等待检查', checking: '检查中', current: '已是最新', available: '可更新', downloading: '下载中', ready: '文件已准备好', installing: '安装中', cancelling: '正在中断', cancelled: '已中断', installed: '已安装', failed: '失败', unavailable: '更新器不可用', pinned: '固定版本',
   }
   const channelLabel = snapshot.channel === 'dev' ? '开发版' : snapshot.channel === 'stable' ? '正式版' : snapshot.channel === 'pinned' ? '固定版本' : '未知'
-  const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || ['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status) ? 'warning' : 'ok'
-  const updateInProgress = installExpected || ['downloading', 'ready', 'installing', 'cancelling'].includes(snapshot.status)
+  const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || isControllerUpdateInProgressStatus(snapshot.status) ? 'warning' : 'ok'
+  const updateInProgress = installExpected || isControllerUpdateInProgressStatus(snapshot.status)
   const expectedAgentVersion = String(data.version?.agent_expected_version || '').trim()
   const expectedAgentBuild = String(data.version?.agent_expected_build || '').trim()
   const expectedAgentLabel = expectedAgentVersion ? `${expectedAgentVersion}${expectedAgentBuild ? ` · 构建 ${expectedAgentBuild}` : ''}` : '暂无构建信息'
@@ -4006,12 +4015,6 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
 }
 
 type ControllerUpdateInstallPhase = 'confirm' | 'starting' | 'downloading' | 'ready' | 'installing' | 'cancelling' | 'cancelled' | 'stopped' | 'complete' | 'failed'
-
-function isExpectedControllerUpdateDisconnect(error: unknown) {
-  if (error instanceof TypeError) return true
-  const message = String((error as any)?.message || error || '').trim().toLowerCase()
-  return ['failed to fetch', 'networkerror', 'load failed', 'bad gateway', 'service unavailable', 'gateway timeout'].some(value => message.includes(value))
-}
 
 function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, onCancel, onInstall, onInterrupt, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; onCancel: () => void; onInstall: () => void; onInterrupt: () => void; onHide: () => void; onReload: () => void }) {
   const waiting = ['starting', 'downloading', 'ready', 'installing', 'cancelling'].includes(phase)
