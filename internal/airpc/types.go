@@ -11,13 +11,14 @@ type LeaseRequest struct {
 }
 
 type Provider struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	BaseURL       string `json:"base_url"`
-	Model         string `json:"model"`
-	APIFormat     string `json:"api_format"`
-	APIKey        string `json:"api_key"`
-	AllowRawAudit bool   `json:"allow_raw_audit"`
+	ID            string                      `json:"id"`
+	Name          string                      `json:"name"`
+	BaseURL       string                      `json:"base_url"`
+	Model         string                      `json:"model"`
+	APIFormat     string                      `json:"api_format"`
+	APIKey        string                      `json:"api_key"`
+	AllowRawAudit bool                        `json:"allow_raw_audit"`
+	Capability    *model.AIProviderCapability `json:"capability,omitempty"`
 }
 
 type LeaseResponse struct {
@@ -26,10 +27,10 @@ type LeaseResponse struct {
 }
 
 type CompleteRequest struct {
-	WorkerID     string                  `json:"worker_id"`
-	Report       model.AuditReviewReport `json:"report"`
-	InputTokens  int64                   `json:"input_tokens"`
-	OutputTokens int64                   `json:"output_tokens"`
+	WorkerID     string          `json:"worker_id"`
+	Output       json.RawMessage `json:"output"`
+	InputTokens  int64           `json:"input_tokens"`
+	OutputTokens int64           `json:"output_tokens"`
 }
 
 type FailRequest struct {
@@ -39,16 +40,16 @@ type FailRequest struct {
 }
 
 type ProviderLog struct {
-	Provider       string            `json:"provider,omitempty"`
-	Model          string            `json:"model,omitempty"`
-	APIFormat      string            `json:"api_format,omitempty"`
-	RequestMethod  string            `json:"request_method,omitempty"`
-	RequestURL     string            `json:"request_url,omitempty"`
-	RequestHeaders map[string]string `json:"request_headers,omitempty"`
-	RequestBody    string            `json:"request_body,omitempty"`
-	Status         int               `json:"status,omitempty"`
+	Provider        string            `json:"provider,omitempty"`
+	Model           string            `json:"model,omitempty"`
+	APIFormat       string            `json:"api_format,omitempty"`
+	RequestMethod   string            `json:"request_method,omitempty"`
+	RequestURL      string            `json:"request_url,omitempty"`
+	RequestHeaders  map[string]string `json:"request_headers,omitempty"`
+	RequestBody     string            `json:"request_body,omitempty"`
+	Status          int               `json:"status,omitempty"`
 	ResponseHeaders map[string]string `json:"response_headers,omitempty"`
-	ResponseBody   string            `json:"response_body,omitempty"`
+	ResponseBody    string            `json:"response_body,omitempty"`
 }
 
 type ModelDiscoveryLeaseRequest struct {
@@ -95,12 +96,13 @@ type AITestLeaseResponse struct {
 }
 
 type AITestCompleteRequest struct {
-	WorkerID     string `json:"worker_id"`
-	RequestJSON  string `json:"request_json"`
-	ResponseJSON string `json:"response_json"`
-	StatusCode   int    `json:"status_code"`
-	DurationMS   int64  `json:"duration_ms"`
-	Content      string `json:"content,omitempty"`
+	WorkerID     string                      `json:"worker_id"`
+	RequestJSON  string                      `json:"request_json"`
+	ResponseJSON string                      `json:"response_json"`
+	StatusCode   int                         `json:"status_code"`
+	DurationMS   int64                       `json:"duration_ms"`
+	Content      string                      `json:"content,omitempty"`
+	Capability   *model.AIProviderCapability `json:"capability,omitempty"`
 }
 
 type AITestFailRequest struct {

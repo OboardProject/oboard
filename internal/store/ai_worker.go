@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
@@ -16,7 +18,13 @@ func (s *Store) CreateAIProvider(ctx context.Context, item *model.AIProvider) er
 		item.APIFormat = "chat_completions"
 	}
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `insert into ai_providers(id,name,base_url,model,api_format,credential_encrypted,enabled,allow_raw_audit,daily_token_limit,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, item.ID, item.Name, item.BaseURL, item.Model, item.APIFormat, item.CredentialEncrypted, boolInt(item.Enabled), boolInt(item.AllowRawAudit), item.DailyTokenLimit, ts, ts)
+	capabilityJSON := ""
+	if item.Capability != nil {
+		if encoded, err := json.Marshal(item.Capability); err == nil {
+			capabilityJSON = string(encoded)
+		}
+	}
+	_, err := s.db.ExecContext(ctx, `insert into ai_providers(id,name,base_url,model,api_format,credential_encrypted,enabled,allow_raw_audit,daily_token_limit,capability_json,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`, item.ID, item.Name, item.BaseURL, item.Model, item.APIFormat, item.CredentialEncrypted, boolInt(item.Enabled), boolInt(item.AllowRawAudit), item.DailyTokenLimit, capabilityJSON, ts, ts)
 	if err == nil {
 		item.HasCredential = item.CredentialEncrypted != ""
 		item.CreatedAt, item.UpdatedAt = parseTime(ts), parseTime(ts)
@@ -25,7 +33,7 @@ func (s *Store) CreateAIProvider(ctx context.Context, item *model.AIProvider) er
 }
 
 func (s *Store) ListAIProviders(ctx context.Context) ([]model.AIProvider, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,name,base_url,model,api_format,credential_encrypted,enabled,allow_raw_audit,daily_token_limit,last_used_at,created_at,updated_at from ai_providers order by created_at`)
+	rows, err := s.db.QueryContext(ctx, `select id,name,base_url,model,api_format,credential_encrypted,enabled,allow_raw_audit,daily_token_limit,capability_json,last_used_at,created_at,updated_at from ai_providers order by created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -43,14 +51,48 @@ func (s *Store) ListAIProviders(ctx context.Context) ([]model.AIProvider, error)
 }
 
 func (s *Store) GetAIProvider(ctx context.Context, id string) (*model.AIProvider, error) {
-	return scanAIProvider(s.db.QueryRowContext(ctx, `select id,name,base_url,model,api_format,credential_encrypted,enabled,allow_raw_audit,daily_token_limit,last_used_at,created_at,updated_at from ai_providers where id=?`, id))
+	return scanAIProvider(s.db.QueryRowContext(ctx, `select id,name,base_url,model,api_format,credential_encrypted,enabled,allow_raw_audit,daily_token_limit,capability_json,last_used_at,created_at,updated_at from ai_providers where id=?`, id))
 }
 
 func (s *Store) UpdateAIProvider(ctx context.Context, item *model.AIProvider) error {
 	if item.APIFormat == "" {
 		item.APIFormat = "chat_completions"
 	}
-	result, err := s.db.ExecContext(ctx, `update ai_providers set name=?,base_url=?,model=?,api_format=?,credential_encrypted=?,enabled=?,allow_raw_audit=?,daily_token_limit=?,updated_at=? where id=?`, item.Name, item.BaseURL, item.Model, item.APIFormat, item.CredentialEncrypted, boolInt(item.Enabled), boolInt(item.AllowRawAudit), item.DailyTokenLimit, now(), item.ID)
+	// The capability profile is owned by the audit readiness test
+	// (UpdateAIProviderCapability) and must never be wiped by a regular edit.
+	if item.Capability == nil {
+		if existing, err := s.GetAIProvider(ctx, item.ID); err == nil {
+			item.Capability = existing.Capability
+		}
+	}
+	capabilityJSON := ""
+	if item.Capability != nil {
+		if encoded, err := json.Marshal(item.Capability); err == nil {
+			capabilityJSON = string(encoded)
+		}
+	}
+	result, err := s.db.ExecContext(ctx, `update ai_providers set name=?,base_url=?,model=?,api_format=?,credential_encrypted=?,enabled=?,allow_raw_audit=?,daily_token_limit=?,capability_json=?,updated_at=? where id=?`, item.Name, item.BaseURL, item.Model, item.APIFormat, item.CredentialEncrypted, boolInt(item.Enabled), boolInt(item.AllowRawAudit), item.DailyTokenLimit, capabilityJSON, now(), item.ID)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// UpdateAIProviderCapability stores the audit readiness test result for a
+// provider. It is the only path that mutates the capability so a stale or
+// forged result cannot be injected through provider edits.
+func (s *Store) UpdateAIProviderCapability(ctx context.Context, id string, capability *model.AIProviderCapability) error {
+	if capability == nil {
+		return errors.New("AI provider capability is required")
+	}
+	encoded, err := json.Marshal(capability)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `update ai_providers set capability_json=?,updated_at=? where id=?`, string(encoded), now(), id)
 	if err != nil {
 		return err
 	}
@@ -74,12 +116,19 @@ func (s *Store) DeleteAIProvider(ctx context.Context, id string) error {
 func scanAIProvider(scanner interface{ Scan(...any) error }) (*model.AIProvider, error) {
 	var item model.AIProvider
 	var enabled, raw int
+	var capabilityJSON string
 	var last sql.NullString
 	var created, updated string
-	if err := scanner.Scan(&item.ID, &item.Name, &item.BaseURL, &item.Model, &item.APIFormat, &item.CredentialEncrypted, &enabled, &raw, &item.DailyTokenLimit, &last, &created, &updated); err != nil {
+	if err := scanner.Scan(&item.ID, &item.Name, &item.BaseURL, &item.Model, &item.APIFormat, &item.CredentialEncrypted, &enabled, &raw, &item.DailyTokenLimit, &capabilityJSON, &last, &created, &updated); err != nil {
 		return nil, err
 	}
 	item.Enabled, item.AllowRawAudit, item.HasCredential = enabled != 0, raw != 0, item.CredentialEncrypted != ""
+	if strings.TrimSpace(capabilityJSON) != "" {
+		var capability model.AIProviderCapability
+		if json.Unmarshal([]byte(capabilityJSON), &capability) == nil {
+			item.Capability = &capability
+		}
+	}
 	item.LastUsedAt, item.CreatedAt, item.UpdatedAt = nullableTime(last), parseTime(created), parseTime(updated)
 	return &item, nil
 }

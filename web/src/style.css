@@ -5860,6 +5860,14 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .ai-test-section-title .copy-block { max-width: 60%; }
 .ai-test-result-dialog .notification-raw-log-output { min-height: 120px; }
 .ai-test-loading { min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-secondary); font-size: 13px; }
+.ai-test-capability { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; font-size: 12px; color: var(--text-secondary); }
+.ai-test-capability > span { padding: 3px 10px; border-radius: 999px; background: var(--bg-soft); }
+.ai-provider-grade { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); color: var(--text-secondary); background: var(--surface-2); }
+.ai-provider-grade.grade-a { color: var(--success); background: var(--success-soft); border-color: transparent; }
+.ai-provider-grade.grade-b { color: var(--warning); background: var(--warning-soft); border-color: transparent; }
+.ai-provider-grade.grade-c { color: var(--muted); background: var(--bg-soft); }
+.ai-provider-grade.grade-unusable { color: var(--danger); background: var(--danger-soft); border-color: transparent; }
+.ai-review-methodology { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--bg-soft); font-size: 12px; color: var(--text-secondary); }
 .notification-event-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .notification-target-summary { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .notification-event-chip {

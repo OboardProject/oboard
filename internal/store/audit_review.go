@@ -204,7 +204,7 @@ func (s *Store) LeaseAuditReviewJob(ctx context.Context, owner string, at time.T
 	if err != nil {
 		return nil, nil, err
 	}
-	provider, err := scanAIProvider(tx.QueryRowContext(ctx, `select id,name,base_url,model,api_format,credential_encrypted,enabled,allow_raw_audit,daily_token_limit,last_used_at,created_at,updated_at from ai_providers where id=?`, job.ProviderID))
+	provider, err := scanAIProvider(tx.QueryRowContext(ctx, `select id,name,base_url,model,api_format,credential_encrypted,enabled,allow_raw_audit,daily_token_limit,capability_json,last_used_at,created_at,updated_at from ai_providers where id=?`, job.ProviderID))
 	if err != nil {
 		return nil, nil, err
 	}

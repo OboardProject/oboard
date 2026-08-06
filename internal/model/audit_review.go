@@ -9,6 +9,25 @@ const (
 	AuditReviewEvidenceSubscription = "subscription"
 	AuditReviewEvidenceConnection   = "connection"
 	AuditReviewEvidenceDestination  = "destination"
+
+	AuditEvidenceSchemaVersion        = "audit-evidence-v2"
+	AuditUserFindingSchemaVersion     = "audit-user-finding-v1"
+	AuditReportSchemaVersion          = "audit-report-v2"
+	AuditProviderProfileVersion       = "provider-profile-v1"
+	AuditScoringVersion               = "deterministic-v2"
+	AuditBaselineVersion              = "feature-snapshot-v1"
+	AuditPromptFindingVersion         = "audit-finding-v1"
+	AuditPromptReportVersion          = "audit-report-v2"
+	AuditProviderGradeA               = "A"
+	AuditProviderGradeB               = "B"
+	AuditProviderGradeC               = "C"
+	AuditProviderGradeUnusable        = "unusable"
+	AuditProviderStructuredJSONSchema = "json_schema"
+	AuditProviderStructuredJSONObject = "json_object"
+	AuditProviderStructuredNone       = "none"
+	AuditOutputModeStrictSchema       = "strict_schema"
+	AuditOutputModeJSONObject         = "json_object"
+	AuditOutputModeText               = "text"
 )
 
 type AuditReviewSelector struct {
@@ -78,32 +97,239 @@ type AuditReviewJob struct {
 	CompletedAt  *time.Time      `json:"completed_at,omitempty"`
 }
 
-type AuditReviewDimensionFinding struct {
-	Kind            string   `json:"kind"`
-	RiskLevel       string   `json:"risk_level"`
-	Summary         string   `json:"summary"`
-	EvidenceRefs    []string `json:"evidence_refs"`
-	CounterEvidence []string `json:"counter_evidence"`
+// AIProviderCapability records the outcome of the audit readiness test for a
+// provider/model pair. It is the single source for deciding which output mode a
+// formal audit job may use; grades are A (strict schema), B (JSON object with
+// local validation and one repair), C (text only, excluded from formal audits)
+// and unusable (could not return a stable usable result).
+type AIProviderCapability struct {
+	ProviderProfileVersion  string    `json:"provider_profile_version"`
+	Model                   string    `json:"model"`
+	TestedAt                time.Time `json:"tested_at"`
+	AuditGrade              string    `json:"audit_grade"`
+	StructuredOutput        string    `json:"structured_output"`
+	OutputMode              string    `json:"output_mode"`
+	SchemaSuccessRate       float64   `json:"schema_success_rate"`
+	UsageSupported          bool      `json:"usage_supported"`
+	FinishReasonSupported   bool      `json:"finish_reason_supported"`
+	MaxVerifiedOutputTokens int       `json:"max_verified_output_tokens"`
+	Note                    string    `json:"note,omitempty"`
 }
 
-type AuditReviewSubjectFinding struct {
-	SubjectRef   string   `json:"subject_ref"`
-	RiskLevel    string   `json:"risk_level"`
-	Summary      string   `json:"summary"`
+// AuditEvidencePack is the immutable, versioned deterministic input handed to
+// the AI. Scores, confidence, signals, counter-evidence, data quality and every
+// feature carry field-level evidence IDs so the AI can cite the exact fact that
+// supports a conclusion and a validator can verify every reference.
+type AuditEvidencePack struct {
+	SchemaVersion   string                      `json:"schema_version"`
+	Mode            string                      `json:"mode"`
+	Subject         AuditEvidenceSubject        `json:"subject"`
+	Window          AuditEvidenceWindow         `json:"window"`
+	DataQuality     AuditEvidenceQuality        `json:"data_quality"`
+	Scores          AuditEvidenceScores         `json:"scores"`
+	Features        []AuditEvidenceFeature      `json:"features"`
+	Signals         []AuditEvidenceSignal       `json:"signals"`
+	CounterEvidence []AuditEvidenceCounter      `json:"counter_evidence"`
+	Timeline        []AuditEvidenceTimelineItem `json:"timeline"`
+	DataGaps        []string                    `json:"data_gaps"`
+	Methodology     AuditEvidenceMethodology    `json:"methodology"`
+}
+
+type AuditEvidenceSubject struct {
+	Ref           string `json:"ref"`
+	IdentityMode  string `json:"identity_mode"`
+	PolicyProfile string `json:"policy_profile"`
+	Status        string `json:"status"`
+	Role          string `json:"role"`
+}
+
+type AuditEvidenceWindow struct {
+	Current     string   `json:"current"`
+	Comparisons []string `json:"comparisons"`
+}
+
+type AuditEvidenceQuality struct {
+	Coverage         float64 `json:"coverage"`
+	BaselineDays     int     `json:"baseline_days"`
+	DroppedBuckets   int64   `json:"dropped_buckets"`
+	IdentityQuality  float64 `json:"identity_quality"`
+	DataCompleteness float64 `json:"data_completeness"`
+}
+
+type AuditEvidenceScores struct {
+	ConnectionRisk     int               `json:"connection_risk"`
+	SubscriptionRisk   int               `json:"subscription_risk"`
+	OverallRisk        int               `json:"overall_risk"`
+	Health             int               `json:"health"`
+	EvidenceConfidence float64           `json:"evidence_confidence"`
+	Caps               AuditEvidenceCaps `json:"caps"`
+}
+
+type AuditEvidenceCaps struct {
+	Anomaly     float64 `json:"anomaly"`
+	DeviceClone float64 `json:"device_clone"`
+	Normal      float64 `json:"normal"`
+	HighRisk    float64 `json:"high_risk"`
+}
+
+type AuditEvidenceFeature struct {
+	EvidenceID     string   `json:"evidence_id"`
+	Metric         string   `json:"metric"`
+	Value          float64  `json:"value"`
+	Unit           string   `json:"unit"`
+	Window         string   `json:"window"`
+	BaselineMedian *float64 `json:"baseline_median,omitempty"`
+	BaselineP95    *float64 `json:"baseline_p95,omitempty"`
+	BaselineMAD    *float64 `json:"baseline_mad,omitempty"`
+	DeltaPercent   *float64 `json:"delta_percent,omitempty"`
+	Threshold      *float64 `json:"threshold,omitempty"`
+	SampleCount    int      `json:"sample_count"`
+	Quality        float64  `json:"quality"`
+	Severity       string   `json:"severity"`
+	Source         string   `json:"source"`
+	Category       string   `json:"category"`
+}
+
+type AuditEvidenceSignal struct {
+	SignalID            string   `json:"signal_id"`
+	Kind                string   `json:"kind"`
+	Severity            string   `json:"severity"`
+	ObservedAt          string   `json:"observed_at,omitempty"`
+	DurationSeconds     int      `json:"duration_seconds,omitempty"`
+	EvidenceRefs        []string `json:"evidence_refs"`
+	CounterEvidenceRefs []string `json:"counter_evidence_refs"`
+	Confidence          float64  `json:"confidence"`
+	Text                string   `json:"text"`
+}
+
+type AuditEvidenceCounter struct {
+	Ref   string `json:"ref"`
+	Kind  string `json:"kind"`
+	Text  string `json:"text"`
+	Scope string `json:"scope"`
+}
+
+type AuditEvidenceTimelineItem struct {
+	EvidenceID string `json:"evidence_id"`
+	Kind       string `json:"kind"`
+	StartedAt  string `json:"started_at,omitempty"`
+	EndedAt    string `json:"ended_at,omitempty"`
+	Score      int    `json:"score"`
+	Detail     string `json:"detail,omitempty"`
+}
+
+type AuditEvidenceMethodology struct {
+	FeatureVersion         int    `json:"feature_version"`
+	ScoringVersion         string `json:"scoring_version"`
+	BaselineVersion        string `json:"baseline_version"`
+	EvidenceSchemaVersion  string `json:"evidence_schema_version"`
+	PromptVersion          string `json:"prompt_version"`
+	ReportSchemaVersion    string `json:"report_schema_version"`
+	ProviderProfileVersion string `json:"provider_profile_version"`
+}
+
+// AuditUserFinding is the stage-0 output: structured per-user findings with
+// field-level evidence references, produced from one evidence pack.
+type AuditUserFinding struct {
+	SchemaVersion   string               `json:"schema_version"`
+	SubjectRef      string               `json:"subject_ref"`
+	BehaviorProfile AuditBehaviorProfile `json:"behavior_profile"`
+	Findings        []AuditReportFinding `json:"findings"`
+	CounterEvidence []string             `json:"counter_evidence"`
+	DataGaps        []string             `json:"data_gaps"`
+}
+
+// AuditReviewReport is the final stage-1 report. Scores, confidence, data
+// quality and methodology are authoritative engine values; the validator
+// rejects reports that modify or recompute them.
+type AuditReviewReport struct {
+	SchemaVersion      string                    `json:"schema_version"`
+	Executive          AuditReportExecutive      `json:"executive"`
+	BehaviorProfile    AuditBehaviorProfile      `json:"behavior_profile"`
+	Findings           []AuditReportFinding      `json:"findings"`
+	Timeline           []AuditReportTimelineItem `json:"timeline"`
+	CounterEvidence    []AuditReportCounter      `json:"counter_evidence"`
+	RecommendedActions []AuditReportAction       `json:"recommended_actions"`
+	DataQuality        AuditReportDataQuality    `json:"data_quality"`
+	DataGaps           []string                  `json:"data_gaps"`
+	Methodology        AuditReportMethodology    `json:"methodology"`
+}
+
+type AuditReportExecutive struct {
+	Verdict            string  `json:"verdict"`
+	RiskScore          int     `json:"risk_score"`
+	HealthScore        int     `json:"health_score"`
+	EvidenceConfidence float64 `json:"evidence_confidence"`
+	OneLineConclusion  string  `json:"one_line_conclusion"`
+}
+
+type AuditBehaviorProfile struct {
+	UsualPattern   []string `json:"usual_pattern"`
+	CurrentPattern []string `json:"current_pattern"`
+	KeyChanges     []string `json:"key_changes"`
+}
+
+type AuditBaselineComparison struct {
+	Current         float64  `json:"current,omitempty"`
+	BaselineP95     *float64 `json:"baseline_p95,omitempty"`
+	Threshold       *float64 `json:"threshold,omitempty"`
+	DurationSeconds int      `json:"duration_seconds,omitempty"`
+}
+
+type AuditReportFinding struct {
+	FindingID                   string                  `json:"finding_id"`
+	Title                       string                  `json:"title"`
+	Severity                    string                  `json:"severity"`
+	Observation                 string                  `json:"observation"`
+	BaselineComparison          AuditBaselineComparison `json:"baseline_comparison"`
+	Interpretation              string                  `json:"interpretation"`
+	EvidenceRefs                []string                `json:"evidence_refs"`
+	CounterEvidenceRefs         []string                `json:"counter_evidence_refs"`
+	PlausibleBenignExplanations []string                `json:"plausible_benign_explanations"`
+	VerificationSteps           []string                `json:"verification_steps"`
+	NeedsVerification           bool                    `json:"needs_verification,omitempty"`
+}
+
+type AuditReportTimelineItem struct {
+	TimelineID   string   `json:"timeline_id"`
+	Kind         string   `json:"kind"`
+	Title        string   `json:"title"`
+	Detail       string   `json:"detail"`
+	StartedAt    string   `json:"started_at,omitempty"`
+	EndedAt      string   `json:"ended_at,omitempty"`
 	EvidenceRefs []string `json:"evidence_refs"`
 }
 
-type AuditReviewReport struct {
-	Verdict            string                        `json:"verdict"`
-	RiskLevel          string                        `json:"risk_level"`
-	HealthScore        *int                          `json:"health_score"`
-	Confidence         float64                       `json:"confidence"`
-	Summary            string                        `json:"summary"`
-	Dimensions         []AuditReviewDimensionFinding `json:"dimensions"`
-	NotableSubjects    []AuditReviewSubjectFinding   `json:"notable_subjects"`
-	RecommendedActions []string                      `json:"recommended_actions"`
-	DataGaps           []string                      `json:"data_gaps"`
-	CoverageSummary    string                        `json:"coverage_summary"`
+type AuditReportCounter struct {
+	CounterID    string   `json:"counter_id"`
+	Text         string   `json:"text"`
+	EvidenceRefs []string `json:"evidence_refs,omitempty"`
+}
+
+type AuditReportAction struct {
+	Action string `json:"action"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type AuditReportDataQuality struct {
+	Coverage        float64 `json:"coverage"`
+	BaselineDays    int     `json:"baseline_days"`
+	DroppedBuckets  int64   `json:"dropped_buckets"`
+	IdentityQuality float64 `json:"identity_quality"`
+}
+
+type AuditReportMethodology struct {
+	FeatureVersion         int    `json:"feature_version"`
+	ScoringVersion         string `json:"scoring_version"`
+	BaselineVersion        string `json:"baseline_version"`
+	EvidenceSchemaVersion  string `json:"evidence_schema_version"`
+	PromptVersion          string `json:"prompt_version"`
+	ReportSchemaVersion    string `json:"report_schema_version"`
+	ProviderProfileVersion string `json:"provider_profile_version"`
+	ProviderGrade          string `json:"provider_grade"`
+	StructuredOutput       string `json:"structured_output"`
+	OutputMode             string `json:"output_mode"`
+	Model                  string `json:"model"`
 }
 
 type AuditReviewData struct {

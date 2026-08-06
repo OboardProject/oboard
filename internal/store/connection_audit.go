@@ -339,6 +339,88 @@ func (s *Store) ConnectionAuditUserDetail(ctx context.Context, userID int64, win
 	return detail, err
 }
 
+// ConnectionAuditUserRisk evaluates the deterministic connection risk for a
+// single user with the same engine used by ConnectionAuditOverview, without
+// materializing the summaries of every other user. It returns sql.ErrNoRows
+// when the user has no connection audit reports and no presence state.
+func (s *Store) ConnectionAuditUserRisk(ctx context.Context, userID int64, windowHours int, policy model.AuditPolicy, at time.Time) (*model.ConnectionAuditUserSummary, error) {
+	if windowHours < 1 {
+		windowHours = 24
+	}
+	if windowHours > 30*24 {
+		windowHours = 30 * 24
+	}
+	if ValidateAuditPolicy(policy) != nil {
+		policy = DefaultAuditPolicy()
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	} else {
+		at = at.UTC()
+	}
+	since := at.Add(-time.Duration(windowHours) * time.Hour)
+	sinceText := since.UTC().Format(time.RFC3339Nano)
+	var item model.ConnectionAuditUserSummary
+	var lastSeen sql.NullString
+	err := s.db.QueryRowContext(ctx, `select u.id,u.username,u.nickname,
+		coalesce((select count(distinct r.source_ip) from connection_audit_reports r where r.user_id=u.id and r.ended_at>=? and r.source_ip<>''),0),
+		coalesce((select count(distinct r.server_id) from connection_audit_reports r where r.user_id=u.id and r.ended_at>=?),0),
+		coalesce((select sum(r.connection_count) from connection_audit_reports r where r.user_id=u.id and r.ended_at>=?),0),
+		coalesce((select max(r.active_peak) from connection_audit_reports r where r.user_id=u.id and r.ended_at>=?),0),
+		coalesce((select count(*) from connection_audit_reports r where r.user_id=u.id and r.ended_at>=?),0),
+		(select max(r.ended_at) from connection_audit_reports r where r.user_id=u.id and r.ended_at>=?),
+		coalesce(u.device_limit,0),
+		(select count(*) from user_devices d where d.user_id=u.id and d.status='active')
+		from users u where u.id=?`, sinceText, sinceText, sinceText, sinceText, sinceText, sinceText, userID).Scan(&item.UserID, &item.Username, &item.Nickname, &item.SourceIPCount, &item.ServerCount, &item.ConnectionCount, &item.ActivePeak, &item.ReportCount, &lastSeen, &item.DeviceLimit, &item.RegisteredDeviceCount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, sql.ErrNoRows
+	}
+	if err != nil {
+		return nil, err
+	}
+	if lastSeen.Valid {
+		item.LastSeenAt = parseTime(lastSeen.String)
+	}
+	presence, err := s.ListConnectionPresenceForUser(ctx, userID, at.Add(-connectionAuditPresenceTCP))
+	if err != nil {
+		return nil, err
+	}
+	reports, err := s.listConnectionAuditReportsForRisk(ctx, userID, at.Add(-connectionAuditRetention), 50000)
+	if err != nil {
+		return nil, err
+	}
+	selected := connectionAuditReportsSince(reports, since)
+	episodes, err := s.listConnectionProbeEpisodes(ctx, userID, since, 100)
+	if err != nil {
+		return nil, err
+	}
+	sharedRoutes, err := s.connectionAuditSharedRouteUsers(ctx, at.Add(-connectionAuditRiskWindow))
+	if err != nil {
+		return nil, err
+	}
+	events := buildConnectionAuditRiskEvents(selected, policy, sharedRoutes)
+	var strongest *model.ConnectionAuditRiskEvent
+	for index := range events {
+		event := &events[index]
+		if strongest == nil || strongerConnectionAuditRiskEvent(*event, *strongest) {
+			strongest = event
+		}
+	}
+	if strongest != nil {
+		item.RiskSourceIPCount = strongest.SourceIPCount
+		item.RiskRegionCount = strongest.RegionCount
+		item.RiskRegions = append([]string(nil), strongest.Regions...)
+		startedAt, endedAt := strongest.StartedAt, strongest.EndedAt
+		item.RiskWindowStartedAt = &startedAt
+		item.RiskWindowEndedAt = &endedAt
+	}
+	if item.ReportCount > 0 {
+		item.SourceRegionCount = connectionAuditDistinctCountries(selected)
+	}
+	evaluateConnectionAuditRisk(&item, selected, reports, presence, episodes, policy, strongest, sharedRoutes, at)
+	return &item, nil
+}
+
 func (s *Store) connectionAuditDimensions(ctx context.Context, query string, args ...any) ([]model.ConnectionAuditDimension, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

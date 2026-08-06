@@ -1,11 +1,13 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
 
@@ -32,6 +34,19 @@ func TestAuditAIReviewsAreAdminOnlyAndIdempotent(t *testing.T) {
 	provider := request(t, handler, http.MethodPost, "/api/v2/ai/providers", adminToken, map[string]any{
 		"name": "local", "base_url": "http://127.0.0.1:11434/v1", "model": "test", "api_key": "secret", "enabled": true,
 	}, http.StatusCreated)["data"].(map[string]any)
+	if err := db.UpdateAIProviderCapability(context.Background(), provider["id"].(string), &model.AIProviderCapability{
+		ProviderProfileVersion:  model.AuditProviderProfileVersion,
+		Model:                   "test",
+		AuditGrade:              model.AuditProviderGradeA,
+		StructuredOutput:        model.AuditProviderStructuredJSONSchema,
+		OutputMode:              model.AuditOutputModeStrictSchema,
+		SchemaSuccessRate:       1.0,
+		UsageSupported:          true,
+		FinishReasonSupported:   true,
+		MaxVerifiedOutputTokens: 4096,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	body := map[string]any{
 		"request_id": "request-idempotent", "provider_id": provider["id"],
 		"scope":          map[string]any{"users": map[string]any{"mode": "all", "ids": []int64{}}, "servers": map[string]any{"mode": "all", "ids": []int64{}}},

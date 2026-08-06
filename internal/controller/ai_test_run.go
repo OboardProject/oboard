@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/airpc"
+	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 )
 
@@ -26,6 +27,35 @@ type aiTestResult struct {
 	durationMS   int64
 	content      string
 	detail       string
+	capability   *model.AIProviderCapability
+}
+
+// validateAITestCapability rejects forged, stale or contradictory capability
+// profiles. Only the audit readiness test may produce one.
+func validateAITestCapability(capability *model.AIProviderCapability) error {
+	if capability == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	if capability.ProviderProfileVersion != model.AuditProviderProfileVersion || capability.TestedAt.Before(now.Add(-24*time.Hour)) || capability.TestedAt.After(now.Add(5*time.Minute)) {
+		return errors.New("AI provider capability 版本或时间无效")
+	}
+	if len(capability.Model) == 0 || len(capability.Model) > 512 || len(capability.Note) > 500 {
+		return errors.New("AI provider capability 字段无效")
+	}
+	gradeOK := capability.AuditGrade == model.AuditProviderGradeA || capability.AuditGrade == model.AuditProviderGradeB || capability.AuditGrade == model.AuditProviderGradeC || capability.AuditGrade == model.AuditProviderGradeUnusable
+	structuredOK := capability.StructuredOutput == model.AuditProviderStructuredJSONSchema || capability.StructuredOutput == model.AuditProviderStructuredJSONObject || capability.StructuredOutput == model.AuditProviderStructuredNone
+	outputOK := capability.OutputMode == model.AuditOutputModeStrictSchema || capability.OutputMode == model.AuditOutputModeJSONObject || capability.OutputMode == model.AuditOutputModeText
+	if !gradeOK || !structuredOK || !outputOK || capability.SchemaSuccessRate < 0 || capability.SchemaSuccessRate > 1 || capability.MaxVerifiedOutputTokens <= 0 || capability.MaxVerifiedOutputTokens > 1<<20 {
+		return errors.New("AI provider capability 枚举无效")
+	}
+	if (capability.AuditGrade == model.AuditProviderGradeA || capability.AuditGrade == model.AuditProviderGradeB) && capability.OutputMode == model.AuditOutputModeText {
+		return errors.New("AI provider A/B 级能力不允许纯文本输出")
+	}
+	if capability.AuditGrade == model.AuditProviderGradeC && capability.OutputMode != model.AuditOutputModeText {
+		return errors.New("AI provider C 级能力必须标记为纯文本输出")
+	}
+	return nil
 }
 
 func (s *Server) apiV2AIProviderTest(w http.ResponseWriter, r *http.Request) {
@@ -104,6 +134,9 @@ func (s *Server) apiV2AIProviderTest(w http.ResponseWriter, r *http.Request) {
 		requestJSON := redactAICredential(result.requestJSON, credential)
 		responseJSON := redactAICredential(result.responseJSON, credential)
 		payload := map[string]any{"ok": result.ok, "request_json": requestJSON, "response_json": responseJSON}
+		if result.capability != nil {
+			payload["capability"] = result.capability
+		}
 		if result.statusCode != 0 {
 			payload["status_code"] = result.statusCode
 		}
@@ -114,7 +147,7 @@ func (s *Server) apiV2AIProviderTest(w http.ResponseWriter, r *http.Request) {
 			payload["content"] = result.content
 		}
 		if result.ok {
-			payload["message"] = "短请求成功，模型返回了可见且未截断的内容"
+			payload["message"] = auditTestMessage(result.capability)
 			v2Write(w, r, http.StatusOK, payload, nil)
 			return
 		}
@@ -124,6 +157,22 @@ func (s *Server) apiV2AIProviderTest(w http.ResponseWriter, r *http.Request) {
 		}
 		payload["message"] = message
 		v2Write(w, r, http.StatusOK, payload, nil)
+	}
+}
+
+func auditTestMessage(capability *model.AIProviderCapability) string {
+	if capability == nil {
+		return "连接成功，但未完成审计就绪测试"
+	}
+	switch capability.AuditGrade {
+	case model.AuditProviderGradeA:
+		return "审计就绪测试通过（A 级）：严格 Schema 输出稳定，可用于正式审计"
+	case model.AuditProviderGradeB:
+		return "审计就绪测试通过（B 级）：支持 JSON Object 输出并在本地校验修复后可用"
+	case model.AuditProviderGradeC:
+		return "审计就绪测试完成（C 级）：仅支持文本输出，不能用于正式审计报告"
+	default:
+		return "审计就绪测试未通过：无法稳定返回结构化结果"
 	}
 }
 

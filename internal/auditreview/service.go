@@ -18,6 +18,8 @@ import (
 
 	"golang.org/x/net/publicsuffix"
 
+	"github.com/OboardProject/oboard/internal/auditcontract"
+	"github.com/OboardProject/oboard/internal/auditintel"
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
@@ -28,6 +30,7 @@ const maxReviewJobInputBytes = 64 << 10
 
 type Service struct {
 	store *store.Store
+	intel *auditintel.Service
 	key   []byte
 	mu    sync.Mutex
 	now   func() time.Time
@@ -43,8 +46,8 @@ type CreateRequest struct {
 	WindowEnd     time.Time
 }
 
-func New(store *store.Store, key string) *Service {
-	return &Service{store: store, key: []byte(key), now: time.Now}
+func New(store *store.Store, intel *auditintel.Service, key string) *Service {
+	return &Service{store: store, intel: intel, key: []byte(key), now: time.Now}
 }
 
 func (s *Service) Create(ctx context.Context, request CreateRequest) (*model.AuditReview, error) {
@@ -54,6 +57,9 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (*model.Aud
 	}
 	if !provider.Enabled || !provider.HasCredential {
 		return nil, errors.New("AI Provider 未启用或缺少凭据")
+	}
+	if !auditCapabilityAllowed(provider.Capability) {
+		return nil, errors.New("该 AI Provider 尚未通过审计就绪测试或能力等级不足（需要 A/B 级），请先在 AI Provider 页面运行“审计就绪测试”")
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
 	if request.RequestedBy <= 0 || request.RequestID == "" || len(request.RequestID) > 128 {
@@ -115,11 +121,11 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (*model.Aud
 		EvidenceTypes: types, WindowStartedAt: request.WindowStart, WindowEndedAt: request.WindowEnd, SnapshotAt: nowTime,
 		PrivacyMode: privacyMode, ResolvedUserIDs: userIDs, ResolvedServerIDs: serverIDs,
 	}
-	evidence, err := s.buildEvidence(review, routing, data, privacyMode == "raw")
+	evidence, err := s.buildEvidence(ctx, review, routing, data, privacyMode == "raw")
 	if err != nil {
 		return nil, err
 	}
-	inputs, err := reviewInputs(review, evidence)
+	inputs, err := findingInputs(review, evidence)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +135,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (*model.Aud
 		if err != nil {
 			return nil, err
 		}
-		jobs = append(jobs, model.AuditReviewJob{ID: "aij_" + jobRandom, ReviewID: review.ID, ProviderID: provider.ID, Stage: 0, Position: index, Kind: "evidence", Input: input})
+		jobs = append(jobs, model.AuditReviewJob{ID: "aij_" + jobRandom, ReviewID: review.ID, ProviderID: provider.ID, Stage: 0, Position: index, Kind: "finding", Input: input})
 	}
 	if err := s.store.CreateAuditReview(ctx, review, evidence, jobs); err != nil {
 		return nil, err
@@ -137,15 +143,23 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (*model.Aud
 	return s.store.GetAuditReview(ctx, review.ID)
 }
 
-func (s *Service) buildEvidence(review *model.AuditReview, routing store.FullRoutingConfig, data model.AuditReviewData, raw bool) ([]model.AuditReviewEvidence, error) {
+func auditCapabilityAllowed(capability *model.AIProviderCapability) bool {
+	if capability == nil {
+		return false
+	}
+	return capability.AuditGrade == model.AuditProviderGradeA || capability.AuditGrade == model.AuditProviderGradeB
+}
+
+func (s *Service) buildEvidence(ctx context.Context, review *model.AuditReview, routing store.FullRoutingConfig, data model.AuditReviewData, raw bool) ([]model.AuditReviewEvidence, error) {
 	users := map[int64]model.User{}
 	for _, item := range routing.Users {
 		users[item.ID] = item
 	}
-	evidence := make([]model.AuditReviewEvidence, 0, len(data.Users)+1)
+	evidence := make([]model.AuditReviewEvidence, 0, len(data.Users)*2+1)
 	coverage := map[string]any{
 		"window_started_at": review.WindowStartedAt, "window_ended_at": review.WindowEndedAt, "snapshot_at": review.SnapshotAt,
 		"resolved_user_count": len(review.ResolvedUserIDs), "resolved_server_count": len(review.ResolvedServerIDs), "evidence_types": review.EvidenceTypes,
+		"schema_version": model.AuditEvidenceSchemaVersion, "mode": "single_user",
 	}
 	coverageJSON, _ := json.Marshal(coverage)
 	evidence = append(evidence, model.AuditReviewEvidence{Ref: "scope:coverage", ReviewID: review.ID, Kind: "scope", Payload: coverageJSON})
@@ -155,13 +169,48 @@ func (s *Service) buildEvidence(review *model.AuditReview, routing store.FullRou
 			continue
 		}
 		ref := s.subjectRef("user", user.ID, raw)
-		payload := s.userEvidencePayload(ref, user, userData, raw)
-		rawPayload, _ := json.Marshal(payload)
+		pack, err := s.intel.BuildEvidencePack(ctx, ref, user, review.WindowStartedAt, review.WindowEndedAt, review.EvidenceTypes, userData.ConnectionDropped)
+		if err != nil {
+			return nil, err
+		}
+		qualifyPackRefs(pack, ref)
+		packJSON, err := json.Marshal(pack)
+		if err != nil {
+			return nil, err
+		}
 		userID := user.ID
-		evidence = append(evidence, model.AuditReviewEvidence{Ref: ref, ReviewID: review.ID, Kind: "user", UserID: &userID, Payload: rawPayload})
+		evidence = append(evidence, model.AuditReviewEvidence{Ref: ref, ReviewID: review.ID, Kind: "pack", UserID: &userID, Payload: packJSON})
+		contextPayload, _ := json.Marshal(s.userEvidencePayload(ref, user, userData, raw))
+		evidence = append(evidence, model.AuditReviewEvidence{Ref: ref + ":context", ReviewID: review.ID, Kind: "context", UserID: &userID, Payload: contextPayload})
 	}
 	sort.SliceStable(evidence, func(i, j int) bool { return evidence[i].Ref < evidence[j].Ref })
 	return evidence, nil
+}
+
+// qualifyPackRefs namespaces every field-level evidence ID with the subject
+// ref so references are unique across the whole review and can be validated by
+// prefix on the synthesis stage.
+func qualifyPackRefs(pack *model.AuditEvidencePack, subject string) {
+	prefix := subject + "/"
+	for index := range pack.Features {
+		pack.Features[index].EvidenceID = prefix + pack.Features[index].EvidenceID
+	}
+	for index := range pack.Signals {
+		signal := &pack.Signals[index]
+		signal.SignalID = prefix + signal.SignalID
+		for refIndex := range signal.EvidenceRefs {
+			signal.EvidenceRefs[refIndex] = prefix + signal.EvidenceRefs[refIndex]
+		}
+		for refIndex := range signal.CounterEvidenceRefs {
+			signal.CounterEvidenceRefs[refIndex] = prefix + signal.CounterEvidenceRefs[refIndex]
+		}
+	}
+	for index := range pack.CounterEvidence {
+		pack.CounterEvidence[index].Ref = prefix + pack.CounterEvidence[index].Ref
+	}
+	for index := range pack.Timeline {
+		pack.Timeline[index].EvidenceID = prefix + pack.Timeline[index].EvidenceID
+	}
 }
 
 func (s *Service) userEvidencePayload(ref string, user model.User, data model.AuditReviewUserData, raw bool) map[string]any {
@@ -210,47 +259,38 @@ func (s *Service) userEvidencePayload(ref string, user model.User, data model.Au
 	return payload
 }
 
-func reviewInputs(review *model.AuditReview, evidence []model.AuditReviewEvidence) ([]json.RawMessage, error) {
-	header := map[string]any{"review_id": review.ID, "kind": "evidence", "privacy_mode": review.PrivacyMode, "evidence_types": review.EvidenceTypes, "window_started_at": review.WindowStartedAt, "window_ended_at": review.WindowEndedAt}
+// findingInputs creates one stage-0 job per user: the deterministic evidence
+// pack plus the masked context snapshot. The pack is the primary input; the
+// context only helps the AI describe the user's current pattern.
+func findingInputs(review *model.AuditReview, evidence []model.AuditReviewEvidence) ([]json.RawMessage, error) {
+	contextByUser := map[int64]json.RawMessage{}
+	for _, item := range evidence {
+		if item.Kind == "context" && item.UserID != nil {
+			contextByUser[*item.UserID] = item.Payload
+		}
+	}
 	inputs := []json.RawMessage{}
-	items := []json.RawMessage{}
-	flush := func() error {
-		if len(items) == 0 {
-			return nil
+	for _, item := range evidence {
+		if item.Kind != "pack" || item.UserID == nil {
+			continue
 		}
-		payload := map[string]any{}
-		for key, value := range header {
-			payload[key] = value
+		header := map[string]any{
+			"review_id": review.ID, "kind": "finding", "privacy_mode": review.PrivacyMode, "evidence_types": review.EvidenceTypes,
+			"window_started_at": review.WindowStartedAt, "window_ended_at": review.WindowEndedAt,
+			"prompt_version": model.AuditPromptFindingVersion, "schema_version": model.AuditUserFindingSchemaVersion,
+			"subject_ref": item.Ref, "pack": json.RawMessage(item.Payload),
 		}
-		payload["evidence"] = items
-		raw, err := json.Marshal(payload)
+		if context, ok := contextByUser[*item.UserID]; ok {
+			header["context"] = json.RawMessage(context)
+		}
+		raw, err := json.Marshal(header)
 		if err != nil {
-			return err
+			return nil, err
+		}
+		if len(raw) > maxReviewJobInputBytes {
+			return nil, errors.New("单条审查证据超过大小限制")
 		}
 		inputs = append(inputs, raw)
-		items = nil
-		return nil
-	}
-	for _, item := range evidence {
-		entry, _ := json.Marshal(map[string]any{"ref": item.Ref, "kind": item.Kind, "payload": item.Payload})
-		candidate := append(append([]json.RawMessage(nil), items...), entry)
-		payload := map[string]any{"review_id": review.ID, "kind": "evidence", "privacy_mode": review.PrivacyMode, "evidence_types": review.EvidenceTypes, "window_started_at": review.WindowStartedAt, "window_ended_at": review.WindowEndedAt, "evidence": candidate}
-		raw, _ := json.Marshal(payload)
-		if len(raw) > maxReviewJobInputBytes && len(items) > 0 {
-			if err := flush(); err != nil {
-				return nil, err
-			}
-		}
-		if len(items) == 0 {
-			single, _ := json.Marshal(map[string]any{"review_id": review.ID, "kind": "evidence", "privacy_mode": review.PrivacyMode, "evidence_types": review.EvidenceTypes, "window_started_at": review.WindowStartedAt, "window_ended_at": review.WindowEndedAt, "evidence": []json.RawMessage{entry}})
-			if len(single) > maxReviewJobInputBytes {
-				return nil, errors.New("单条审查证据超过大小限制")
-			}
-		}
-		items = append(items, entry)
-	}
-	if err := flush(); err != nil {
-		return nil, err
 	}
 	if len(inputs) == 0 {
 		return nil, errors.New("审查没有可用证据")
@@ -286,10 +326,26 @@ func (s *Service) Advance(ctx context.Context, reviewID string) error {
 			return nil
 		}
 	}
+	provider, err := s.store.GetAIProvider(ctx, review.ProviderID)
+	if err != nil {
+		return err
+	}
+	engine, err := s.engineSummary(ctx, review.ID, provider)
+	if err != nil {
+		return err
+	}
+	if maxStage == 0 {
+		inputs := s.synthesisInputs(review, stageJobs, engine, "findings")
+		return s.createStage(ctx, review, maxStage+1, inputs)
+	}
 	if len(stageJobs) == 1 {
 		return s.store.FinalizeAuditReview(ctx, reviewID, stageJobs[0].Output)
 	}
-	inputs := packSynthesisInputs(review, stageJobs)
+	inputs := s.synthesisInputs(review, stageJobs, engine, "partial_reports")
+	return s.createStage(ctx, review, maxStage+1, inputs)
+}
+
+func (s *Service) createStage(ctx context.Context, review *model.AuditReview, stage int, inputs []json.RawMessage) error {
 	ids := make([]string, 0, len(inputs))
 	for range inputs {
 		random, err := security.RandomToken(12)
@@ -298,23 +354,34 @@ func (s *Service) Advance(ctx context.Context, reviewID string) error {
 		}
 		ids = append(ids, "aij_"+random)
 	}
-	return s.store.CreateAuditReviewStage(ctx, review.ID, review.ProviderID, maxStage+1, inputs, ids)
+	return s.store.CreateAuditReviewStage(ctx, review.ID, review.ProviderID, stage, inputs, ids)
 }
 
-func packSynthesisInputs(review *model.AuditReview, jobs []model.AuditReviewJob) []json.RawMessage {
+// synthesisInputs packs the completed stage findings into synthesis jobs. The
+// engine summary is embedded in every job so the worker can validate the
+// report against authoritative engine values without extra round trips.
+func (s *Service) synthesisInputs(review *model.AuditReview, jobs []model.AuditReviewJob, engine auditcontract.EngineSummary, partKey string) []json.RawMessage {
 	inputs := []json.RawMessage{}
 	partials := []json.RawMessage{}
 	flush := func() {
 		if len(partials) == 0 {
 			return
 		}
-		raw, _ := json.Marshal(map[string]any{"review_id": review.ID, "kind": "synthesis", "evidence_types": review.EvidenceTypes, "partial_reports": partials})
+		raw, _ := json.Marshal(map[string]any{
+			"review_id": review.ID, "kind": "synthesis", "privacy_mode": review.PrivacyMode, "evidence_types": review.EvidenceTypes,
+			"prompt_version": model.AuditPromptReportVersion, "schema_version": model.AuditReportSchemaVersion,
+			"engine": engine, partKey: partials,
+		})
 		inputs = append(inputs, raw)
 		partials = nil
 	}
 	for _, job := range jobs {
 		candidate := append(append([]json.RawMessage(nil), partials...), job.Output)
-		raw, _ := json.Marshal(map[string]any{"review_id": review.ID, "kind": "synthesis", "evidence_types": review.EvidenceTypes, "partial_reports": candidate})
+		raw, _ := json.Marshal(map[string]any{
+			"review_id": review.ID, "kind": "synthesis", "privacy_mode": review.PrivacyMode, "evidence_types": review.EvidenceTypes,
+			"prompt_version": model.AuditPromptReportVersion, "schema_version": model.AuditReportSchemaVersion,
+			"engine": engine, partKey: candidate,
+		})
 		if len(raw) > maxReviewJobInputBytes && len(partials) > 0 {
 			flush()
 		}
@@ -324,41 +391,99 @@ func packSynthesisInputs(review *model.AuditReview, jobs []model.AuditReviewJob)
 	return inputs
 }
 
-func (s *Service) ValidateReport(ctx context.Context, reviewID string, report *model.AuditReviewReport) error {
-	encoded, _ := json.Marshal(report)
-	if report == nil || len(encoded) > maxReviewJobInputBytes-4096 || !oneOf(report.Verdict, "normal", "attention", "high_risk", "insufficient_evidence") || !validRisk(report.RiskLevel) || !validHealthScore(report.RiskLevel, report.HealthScore) || report.Confidence < 0 || report.Confidence > 1 || strings.TrimSpace(report.Summary) == "" || len(report.Summary) > 2000 || len(report.CoverageSummary) > 1000 || len(report.Dimensions) > 3 || len(report.NotableSubjects) > 100 || len(report.RecommendedActions) > 12 || len(report.DataGaps) > 32 {
-		return errors.New("AI 审查输出结构无效")
-	}
-	refs, err := s.store.AuditReviewEvidenceRefs(ctx, reviewID)
+// engineSummary computes the deterministic engine header for a review from the
+// stored evidence packs: the highest overall risk among subjects wins and its
+// quality values and methodology versions become authoritative for the report.
+func (s *Service) engineSummary(ctx context.Context, reviewID string, provider *model.AIProvider) (auditcontract.EngineSummary, error) {
+	evidence, _, err := s.store.ListAuditReviewEvidence(ctx, reviewID, 0, 10000)
 	if err != nil {
-		return err
+		return auditcontract.EngineSummary{}, err
 	}
-	allowedKinds := map[string]bool{model.AuditReviewEvidenceSubscription: true, model.AuditReviewEvidenceConnection: true, model.AuditReviewEvidenceDestination: true}
-	for _, dimension := range report.Dimensions {
-		if !allowedKinds[dimension.Kind] || !validRisk(dimension.RiskLevel) || strings.TrimSpace(dimension.Summary) == "" || len(dimension.Summary) > 1000 || len(dimension.EvidenceRefs) > 32 || len(dimension.CounterEvidence) > 32 {
-			return errors.New("AI 审查分项无效")
+	summary := auditcontract.EngineSummary{}
+	found := false
+	for _, item := range evidence {
+		if item.Kind != "pack" {
+			continue
 		}
-		if err := validateRefs(refs, append(append([]string{}, dimension.EvidenceRefs...), dimension.CounterEvidence...)); err != nil {
+		var pack model.AuditEvidencePack
+		if json.Unmarshal(item.Payload, &pack) != nil {
+			continue
+		}
+		summary.Subjects = append(summary.Subjects, pack.Subject.Ref)
+		if summary.RefCategories == nil {
+			summary.RefCategories = map[string][]string{}
+		}
+		for _, feature := range pack.Features {
+			if feature.Category != "" {
+				summary.RefCategories[feature.EvidenceID] = []string{feature.Category}
+			}
+		}
+		for _, signal := range pack.Signals {
+			if signal.Kind != "" {
+				summary.RefCategories[signal.SignalID] = append(summary.RefCategories[signal.SignalID], signal.Kind)
+			}
+		}
+		if !found || pack.Scores.OverallRisk > summary.OverallRisk || (pack.Scores.OverallRisk == summary.OverallRisk && pack.Scores.EvidenceConfidence > summary.Confidence) {
+			found = true
+			summary.OverallRisk = pack.Scores.OverallRisk
+			summary.Health = pack.Scores.Health
+			summary.Confidence = pack.Scores.EvidenceConfidence
+			summary.Coverage = pack.DataQuality.Coverage
+			summary.BaselineDays = pack.DataQuality.BaselineDays
+			summary.DroppedBuckets = pack.DataQuality.DroppedBuckets
+			summary.IdentityQuality = pack.DataQuality.IdentityQuality
+			summary.FeatureVersion = pack.Methodology.FeatureVersion
+			summary.ScoringVersion = pack.Methodology.ScoringVersion
+			summary.BaselineVersion = pack.Methodology.BaselineVersion
+			summary.EvidenceSchemaVersion = pack.Methodology.EvidenceSchemaVersion
+			summary.PromptVersion = model.AuditPromptReportVersion
+			summary.ReportSchemaVersion = pack.Methodology.ReportSchemaVersion
+			summary.ProviderProfileVersion = pack.Methodology.ProviderProfileVersion
+		}
+	}
+	sort.Strings(summary.Subjects)
+	if !found {
+		return auditcontract.EngineSummary{}, errors.New("审查没有可用证据包")
+	}
+	if provider != nil && provider.Capability != nil {
+		summary.ProviderGrade = provider.Capability.AuditGrade
+		summary.StructuredOutput = provider.Capability.StructuredOutput
+		summary.OutputMode = provider.Capability.OutputMode
+		summary.Model = provider.Model
+	}
+	return summary, nil
+}
+
+// ValidateReport validates a job output against the deterministic engine and
+// the stored evidence. Finding jobs are checked against their own evidence
+// pack; synthesis jobs are checked against the recomputed engine summary.
+func (s *Service) ValidateReport(ctx context.Context, reviewID string, job *model.AuditReviewJob, output json.RawMessage) error {
+	if job == nil || len(output) == 0 {
+		return errors.New("AI 审查输出无效")
+	}
+	switch job.Kind {
+	case "finding":
+		if _, err := auditcontract.ValidateUserFinding(job.Input, output); err != nil {
 			return err
 		}
-	}
-	for _, subject := range report.NotableSubjects {
-		if !strings.HasPrefix(subject.SubjectRef, "user:") || len(subject.SubjectRef) > 256 || !refs[subject.SubjectRef] || !validRisk(subject.RiskLevel) || strings.TrimSpace(subject.Summary) == "" || len(subject.Summary) > 1000 || len(subject.EvidenceRefs) > 32 {
-			return errors.New("AI 审查对象引用无效")
-		}
-		if err := validateRefs(refs, subject.EvidenceRefs); err != nil {
+	case "synthesis":
+		provider, err := s.store.GetAIProvider(ctx, job.ProviderID)
+		if err != nil {
 			return err
 		}
-	}
-	for _, action := range report.RecommendedActions {
-		if !oneOf(action, "notify_admin", "request_manual_review", "continue_observation", "inspect_user", "inspect_server", "propose_temporary_subscription_suspension") {
-			return errors.New("AI 审查建议无效")
+		engine, err := s.engineSummary(ctx, reviewID, provider)
+		if err != nil {
+			return err
 		}
-	}
-	for _, gap := range report.DataGaps {
-		if len(gap) > 1000 {
-			return errors.New("AI 审查数据缺口无效")
+		header, err := json.Marshal(map[string]any{"engine": engine})
+		if err != nil {
+			return err
 		}
+		if _, err := auditcontract.ValidateReport(header, output); err != nil {
+			return err
+		}
+	default:
+		return errors.New("未知的 AI 审查任务类型")
 	}
 	return nil
 }
@@ -530,35 +655,6 @@ func reducedDestination(raw string) string {
 		return value
 	}
 	return "unknown-domain"
-}
-
-func validateRefs(allowed map[string]bool, values []string) error {
-	for _, value := range values {
-		if !allowed[value] {
-			return errors.New("AI 返回了不存在的证据引用")
-		}
-	}
-	return nil
-}
-
-func validRisk(value string) bool {
-	return oneOf(value, "low", "medium", "high", "critical", "unknown")
-}
-
-func validHealthScore(riskLevel string, score *int) bool {
-	if score == nil || *score < 0 || *score > 100 {
-		return false
-	}
-	switch riskLevel {
-	case "low":
-		return *score >= 80
-	case "medium", "unknown":
-		return *score >= 60 && *score < 80
-	case "high", "critical":
-		return *score < 60
-	default:
-		return false
-	}
 }
 
 func oneOf(value string, allowed ...string) bool {

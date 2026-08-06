@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/airpc"
+	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 )
 
@@ -146,6 +147,11 @@ func (s *Server) aiRPCLease(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if provider == nil || provider.Capability == nil || (provider.Capability.AuditGrade != model.AuditProviderGradeA && provider.Capability.AuditGrade != model.AuditProviderGradeB) {
+		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "provider 未通过审计就绪测试（需要 A/B 级能力）", nil)
+		http.Error(w, "provider capability is not audit-ready", http.StatusConflict)
+		return
+	}
 	review, err := s.store.GetAuditReview(r.Context(), job.ReviewID)
 	if err != nil {
 		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "review cannot be loaded", nil)
@@ -163,7 +169,7 @@ func (s *Server) aiRPCLease(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "provider credential cannot be decrypted", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, airpc.LeaseResponse{Job: job, Provider: &airpc.Provider{ID: provider.ID, Name: provider.Name, BaseURL: provider.BaseURL, Model: provider.Model, APIFormat: provider.APIFormat, APIKey: credential, AllowRawAudit: provider.AllowRawAudit}})
+	writeJSON(w, http.StatusOK, airpc.LeaseResponse{Job: job, Provider: &airpc.Provider{ID: provider.ID, Name: provider.Name, BaseURL: provider.BaseURL, Model: provider.Model, APIFormat: provider.APIFormat, APIKey: credential, AllowRawAudit: provider.AllowRawAudit, Capability: provider.Capability}})
 }
 
 func (s *Server) aiRPCJob(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +193,11 @@ func (s *Server) aiRPCJob(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unknown review job", http.StatusNotFound)
 			return
 		}
-		if err := s.auditReviews.ValidateReport(r.Context(), job.ReviewID, &request.Report); err != nil {
+		if len(request.Output) == 0 || len(request.Output) > 1<<20 {
+			http.Error(w, "invalid AI output", http.StatusBadRequest)
+			return
+		}
+		if err := s.auditReviews.ValidateReport(r.Context(), job.ReviewID, job, request.Output); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -195,12 +205,7 @@ func (s *Server) aiRPCJob(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid AI usage", http.StatusBadRequest)
 			return
 		}
-		output, err := json.Marshal(request.Report)
-		if err != nil {
-			http.Error(w, "invalid AI report", http.StatusBadRequest)
-			return
-		}
-		if _, err := s.store.CompleteAuditReviewJob(r.Context(), request.WorkerID, parts[0], output, request.InputTokens, request.OutputTokens); err != nil {
+		if _, err := s.store.CompleteAuditReviewJob(r.Context(), request.WorkerID, parts[0], request.Output, request.InputTokens, request.OutputTokens); err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
@@ -284,12 +289,23 @@ func (s *Server) aiRPCAITestResult(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid AI provider test result", http.StatusBadRequest)
 			return
 		}
-		requested, err := s.aiTests.finish(parts[0], request.WorkerID, aiTestResult{ok: true, requestJSON: request.RequestJSON, responseJSON: request.ResponseJSON, statusCode: request.StatusCode, durationMS: request.DurationMS, content: request.Content})
+		if err := validateAITestCapability(request.Capability); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		result := aiTestResult{ok: true, requestJSON: request.RequestJSON, responseJSON: request.ResponseJSON, statusCode: request.StatusCode, durationMS: request.DurationMS, content: request.Content, capability: request.Capability}
+		requested, err := s.aiTests.finish(parts[0], request.WorkerID, result)
 		if err != nil {
 			http.Error(w, "AI provider test request is no longer active", http.StatusConflict)
 			return
 		}
-		recordAITestLog(requested, aiTestResult{ok: true, requestJSON: request.RequestJSON, responseJSON: request.ResponseJSON, statusCode: request.StatusCode, durationMS: request.DurationMS, content: request.Content})
+		if request.Capability != nil && requested.ProviderID != "" {
+			if err := s.store.UpdateAIProviderCapability(r.Context(), requested.ProviderID, request.Capability); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "AI provider capability cannot be stored", http.StatusInternalServerError)
+				return
+			}
+		}
+		recordAITestLog(requested, result)
 		w.WriteHeader(http.StatusNoContent)
 	case "fail":
 		var request airpc.AITestFailRequest

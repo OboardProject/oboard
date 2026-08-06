@@ -272,19 +272,20 @@ type OAuthToken struct {
 }
 
 type AIProvider struct {
-	ID                  string     `json:"id"`
-	Name                string     `json:"name"`
-	BaseURL             string     `json:"base_url"`
-	Model               string     `json:"model"`
-	APIFormat           string     `json:"api_format"`
-	Enabled             bool       `json:"enabled"`
-	AllowRawAudit       bool       `json:"allow_raw_audit"`
-	DailyTokenLimit     int64      `json:"daily_token_limit"`
-	HasCredential       bool       `json:"has_credential"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
-	LastUsedAt          *time.Time `json:"last_used_at,omitempty"`
-	CredentialEncrypted string     `json:"-"`
+	ID                  string                `json:"id"`
+	Name                string                `json:"name"`
+	BaseURL             string                `json:"base_url"`
+	Model               string                `json:"model"`
+	APIFormat           string                `json:"api_format"`
+	Enabled             bool                  `json:"enabled"`
+	AllowRawAudit       bool                  `json:"allow_raw_audit"`
+	DailyTokenLimit     int64                 `json:"daily_token_limit"`
+	Capability          *AIProviderCapability `json:"capability,omitempty"`
+	HasCredential       bool                  `json:"has_credential"`
+	CreatedAt           time.Time             `json:"created_at"`
+	UpdatedAt           time.Time             `json:"updated_at"`
+	LastUsedAt          *time.Time            `json:"last_used_at,omitempty"`
+	CredentialEncrypted string                `json:"-"`
 }
 
 type AuditFeatureSnapshot struct {

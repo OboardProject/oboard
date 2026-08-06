@@ -272,17 +272,36 @@ type UserDeviceInventory = { devices: UserDevice[]; device_limit: number; legacy
 type AuditReviewSelector = { mode: 'all' | 'selected'; ids: number[] }
 type AuditReviewScope = { users: AuditReviewSelector; servers: AuditReviewSelector }
 type AuditReviewRiskLevel = 'low' | 'medium' | 'high' | 'critical' | 'unknown'
+type AuditReviewVerdict = 'normal' | 'attention' | 'high_risk' | 'insufficient_evidence'
+type AIProviderCapability = {
+  provider_profile_version: string
+  model: string
+  tested_at: string
+  audit_grade: 'A' | 'B' | 'C' | 'unusable'
+  structured_output: string
+  output_mode: string
+  schema_success_rate: number
+  usage_supported: boolean
+  finish_reason_supported: boolean
+  max_verified_output_tokens: number
+  note?: string
+}
 type AuditReviewReport = {
-  verdict: 'normal' | 'attention' | 'high_risk' | 'insufficient_evidence'
-  risk_level: AuditReviewRiskLevel
-  health_score: number
-  confidence: number
-  summary: string
-  dimensions: Array<{ kind: 'subscription' | 'connection' | 'destination'; risk_level: AuditReviewRiskLevel; summary: string; evidence_refs: string[]; counter_evidence: string[] }>
-  notable_subjects: Array<{ subject_ref: string; risk_level: AuditReviewRiskLevel; summary: string; evidence_refs: string[] }>
-  recommended_actions: string[]
+  schema_version: string
+  executive: { verdict: AuditReviewVerdict; risk_score: number; health_score: number; evidence_confidence: number; one_line_conclusion: string }
+  behavior_profile: { usual_pattern: string[]; current_pattern: string[]; key_changes: string[] }
+  findings: Array<{
+    finding_id: string; title: string; severity: AuditReviewRiskLevel; observation: string
+    baseline_comparison: { current?: number; baseline_p95?: number; threshold?: number; duration_seconds?: number }
+    interpretation: string; evidence_refs: string[]; counter_evidence_refs: string[]
+    plausible_benign_explanations: string[]; verification_steps: string[]; needs_verification?: boolean
+  }>
+  timeline: Array<{ timeline_id: string; kind: string; title: string; detail: string; started_at?: string; ended_at?: string; evidence_refs: string[] }>
+  counter_evidence: Array<{ counter_id: string; text: string; evidence_refs?: string[] }>
+  recommended_actions: Array<{ action: string; reason?: string }>
+  data_quality: { coverage: number; baseline_days: number; dropped_buckets: number; identity_quality: number }
   data_gaps: string[]
-  coverage_summary: string
+  methodology: { feature_version: number; scoring_version: string; baseline_version: string; evidence_schema_version: string; prompt_version: string; report_schema_version: string; provider_profile_version: string; provider_grade: string; structured_output: string; output_mode: string; model: string }
 }
 type AuditReview = {
   id: string; request_id: string; provider_id: string; requested_by: number; status: string
@@ -3246,7 +3265,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
     {view === 'ai' && <div className="automation-grid">
       <section className="settings-card automation-wide">
         <div className="settings-card-head"><div><h3>AI Provider</h3><p className="muted">供审计台的人工 AI 审查使用，默认发送脱敏的历史审计快照。</p></div><div className="section-actions"><button type="button" className="ghost" onClick={() => setAiRawLogOpen(true)}><ClipboardList size={15} /><span>原始日志</span></button><button type="button" className="ghost" onClick={openProviderDialog}><Plus size={15} /><span>添加 Provider</span></button></div></div>
-        <div className="automation-list">{snapshot.providers.length ? snapshot.providers.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span></div><span>{item.model} · {item.base_url}</span><small>{item.api_format === 'responses' ? 'Responses' : 'Chat Completions'} · {item.daily_token_limit ? `每日 ${formatTokenLimit(item.daily_token_limit)}` : '不设日限额'} · {item.allow_raw_audit ? '原始字段已授权' : '脱敏模式'} · {item.has_credential ? 'Key 已配置' : '缺少 Key'}</small></div><div><button className="ghost icon-button" disabled={!item.has_credential} onClick={() => testProviderStored(item)} title="测试配置" aria-label={`测试 ${item.name}`}><Send size={15} /></button><button className="ghost icon-button" onClick={() => editProvider(item)} title="编辑或轮换 Key" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void toggleProvider(item)} title={item.enabled ? '停用' : '启用'} aria-label={item.enabled ? '停用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deleteProvider(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><Bot size={20} /><span>还没有 AI Provider</span></div>}</div>
+        <div className="automation-list">{snapshot.providers.length ? snapshot.providers.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span><span className={`ai-provider-grade grade-${String(item.capability?.audit_grade || 'none').toLowerCase()}`}>{item.capability?.audit_grade ? providerGradeLabel(item.capability.audit_grade) : '未测试'}</span></div><span>{item.model} · {item.base_url}</span><small>{item.api_format === 'responses' ? 'Responses' : 'Chat Completions'} · {item.daily_token_limit ? `每日 ${formatTokenLimit(item.daily_token_limit)}` : '不设日限额'} · {item.allow_raw_audit ? '原始字段已授权' : '脱敏模式'} · {item.has_credential ? 'Key 已配置' : '缺少 Key'}</small></div><div><button className="ghost icon-button" disabled={!item.has_credential} onClick={() => testProviderStored(item)} title="运行审计就绪测试" aria-label={`测试 ${item.name}`}><Send size={15} /></button><button className="ghost icon-button" onClick={() => editProvider(item)} title="编辑或轮换 Key" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void toggleProvider(item)} title={item.enabled ? '停用' : '启用'} aria-label={item.enabled ? '停用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deleteProvider(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><Bot size={20} /><span>还没有 AI Provider</span></div>}</div>
       </section>
     </div>}
     <AnimatePresence>{connectDialogOpen && <MotionDialogPanel onCancel={closeConnectDialog} className="automation-dialog automation-connect-dialog">
@@ -3369,17 +3388,25 @@ function AIProviderTestResultDialog({ result, loading, onClose }: { result: any;
   const requestJSON = typeof result?.request_json === 'string' ? result.request_json : ''
   const responseJSON = typeof result?.response_json === 'string' ? result.response_json : ''
   const duration = typeof result?.duration_ms === 'number' ? result.duration_ms : null
+  const capability = result?.capability as AIProviderCapability | undefined
   return <MotionDialogPanel onCancel={onClose} className="notification-raw-log-dialog ai-test-result-dialog">
     <header className="dialog-head">
       <div>
-        <h2>AI Provider 测试结果</h2>
-        <p className="muted">由 AI Worker 发送短请求验证配置，并确认模型返回可见且未截断的内容；原始请求与响应已自动脱敏。</p>
+        <h2>AI Provider 审计就绪测试</h2>
+        <p className="muted">依次验证认证、结构化输出、中文报告长度、截断识别与 Usage 返回；原始请求与响应已自动脱敏。</p>
       </div>
       <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
     <div className="dialog-body">
       {loading ? <div className="ai-test-loading"><Loader2 size={18} className="spin" /><span>正在发送测试请求，请稍候…</span></div> : <>
       <div className={`ai-test-banner ${ok ? 'is-ok' : 'is-failed'}`}>{ok ? <Check size={16} /> : <AlertTriangle size={16} />}<strong>{ok ? '测试通过' : '测试失败'}</strong><span>{String(result?.message || '')}</span></div>
+      {capability ? <div className="ai-test-capability">
+        <span className={`ai-provider-grade grade-${String(capability.audit_grade).toLowerCase()}`}>{providerGradeLabel(capability.audit_grade)}</span>
+        <span>输出模式：{capability.output_mode === 'strict_schema' ? '严格 JSON Schema' : capability.output_mode === 'json_object' ? 'JSON Object + 本地校验修复' : '仅文本'}</span>
+        <span>Schema 成功率 {Math.round((Number(capability.schema_success_rate) || 0) * 100)}%</span>
+        <span>Usage {capability.usage_supported ? '支持' : '不支持'} · 停止原因 {capability.finish_reason_supported ? '支持' : '不支持'}</span>
+        {capability.note ? <span className="muted">{capability.note}</span> : null}
+      </div> : null}
       <div className="ai-test-meta">
         <span>HTTP {result?.status_code ?? '—'}</span>
         <span>{duration === null ? '—' : `${duration} ms`}</span>
@@ -3392,6 +3419,10 @@ function AIProviderTestResultDialog({ result, loading, onClose }: { result: any;
     </div>
     <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
   </MotionDialogPanel>
+}
+
+function providerGradeLabel(grade: string) {
+  return ({ A: 'A 级 · 严格 Schema 稳定', B: 'B 级 · JSON Object 可用', C: 'C 级 · 仅文本（不能用于正式审计）', unusable: '不可用' } as Record<string, string>)[grade] || grade
 }
 
 function AIProviderRawLogDialog({ client, onClose }: { client: ReturnType<typeof api>; onClose: () => void }) {
@@ -5557,10 +5588,13 @@ function AIAuditReviews({ data, client, notify }: any) {
     {!providers.some(item => item.enabled && item.has_credential) && <div className="audit-paused-notice"><Bot size={16} /><span>请先在自动化页面配置并启用 AI Provider。</span></div>}
     {loadingReviews && !reviews.length ? <TableSkeleton /> : !reviews.length ? <div className="automation-empty"><Bot size={22} /><span>暂无 AI 审查记录</span></div> : <div className="ai-review-list">{reviews.map(review => {
       const report = review.final_output
+      const reportVerdict = report?.executive?.verdict
+      const reportTone = report ? auditReviewVerdictTone(reportVerdict || '') : review.status === 'failed' ? 'critical' : 'low'
+      const reportTitle = report?.executive?.one_line_conclusion || report?.findings?.[0]?.title || auditReviewScopeLabel(review, users, servers)
       const active = review.status === 'queued' || review.status === 'running'
       const progress = review.job_count ? Math.round(review.completed_job_count / review.job_count * 100) : 0
       return <article key={review.id} className="ai-review-row">
-        <div className="ai-review-row-main"><div><span className={`audit-risk-pill ${report?.risk_level || (review.status === 'failed' ? 'critical' : 'low')}`}>{auditReviewStatusLabel(review.status, report?.verdict)}</span><strong>{report?.summary || auditReviewScopeLabel(review, users, servers)}</strong></div><p>{auditReviewEvidenceLabel(review.evidence_types)} · {formatTableTime(review.window_started_at)} 至 {formatTableTime(review.window_ended_at)}</p><small>{review.resolved_user_ids.length} 个用户 · {review.resolved_server_ids.length} 台服务器 · {review.privacy_mode === 'raw' ? '原始字段' : '脱敏字段'} · {(review.input_tokens || 0) + (review.output_tokens || 0)} Token</small>{active && <div className="ai-review-progress"><span style={{ width: `${progress}%` }} /></div>}{review.error && <small className="danger-text">{review.error}</small>}</div>
+        <div className="ai-review-row-main"><div><span className={`audit-risk-pill ${reportTone}`}>{auditReviewStatusLabel(review.status, reportVerdict)}</span><strong>{reportTitle}</strong></div><p>{auditReviewEvidenceLabel(review.evidence_types)} · {formatTableTime(review.window_started_at)} 至 {formatTableTime(review.window_ended_at)}</p><small>{review.resolved_user_ids.length} 个用户 · {review.resolved_server_ids.length} 台服务器 · {review.privacy_mode === 'raw' ? '原始字段' : '脱敏字段'} · {(review.input_tokens || 0) + (review.output_tokens || 0)} Token</small>{active && <div className="ai-review-progress"><span style={{ width: `${progress}%` }} /></div>}{review.error && <small className="danger-text">{review.error}</small>}</div>
         <div className="ai-review-row-actions"><button type="button" className="ghost" onClick={() => void openDetail(review.id)} disabled={working === `detail-${review.id}`}>查看</button>{review.status === 'failed' && review.error && <button type="button" className="ghost" onClick={() => void showReviewLog(review.id)} disabled={working === `log-${review.id}`}><Terminal size={14} />原始日志</button>}{active && <button type="button" className="ghost danger-text" onClick={() => void cancelReview(review)} disabled={Boolean(working)}>取消</button>}</div>
       </article>
     })}</div>}
@@ -5585,8 +5619,9 @@ function AIAuditReviews({ data, client, notify }: any) {
 function AuditReviewDetailDialog({ detail, evidence, evidenceTotal, client, working, onLoadMore, onClose }: { detail: { review: AuditReview; jobs: AuditReviewJob[] }; evidence: AuditReviewEvidence[]; evidenceTotal: number; client: any; working: string; onLoadMore: () => void; onClose: () => void }) {
   const dialogs = useDialogs()
   const report = detail.review.final_output
-  const healthScore = report && Number.isFinite(report.health_score) ? normalizeAuditHealthScore(report.health_score) : null
+  const healthScore = report && Number.isFinite(report.executive?.health_score) ? normalizeAuditHealthScore(report.executive.health_score) : null
   const healthScoreTone = healthScore === null ? null : auditHealthScoreTone(healthScore)
+  const verdict = report?.executive?.verdict
   const showJob = async (job: AuditReviewJob) => {
     try {
       const response = await client.request(`/audit/ai-reviews/${detail.review.id}/jobs/${job.id}`)
@@ -5599,7 +5634,7 @@ function AuditReviewDetailDialog({ detail, evidence, evidenceTotal, client, work
   }
   const showEvidence = (item: AuditReviewEvidence) => dialogs.alert({ title: item.ref, message: <div className="raw-log-copy"><CopyBlock value={JSON.stringify(item.payload || {}, null, 2)} /></div> })
   return <MotionDialogPanel onCancel={onClose} className="audit-detail-dialog ai-review-detail-dialog">
-    <header className="dialog-head"><div><h2>AI 审查详情</h2><p className="muted">{formatTableTime(detail.review.created_at)} · {auditReviewStatusLabel(detail.review.status, report?.verdict)}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>
+    <header className="dialog-head"><div><h2>AI 审查详情</h2><p className="muted">{formatTableTime(detail.review.created_at)} · {auditReviewStatusLabel(detail.review.status, verdict)}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body ai-review-detail-body">
       <div className="ai-review-detail-meta"><span>{auditReviewEvidenceLabel(detail.review.evidence_types)}</span><span>{detail.review.resolved_user_ids.length} 个用户</span><span>{detail.review.resolved_server_ids.length} 台服务器</span><span>{detail.review.privacy_mode === 'raw' ? '原始字段' : '脱敏字段'}</span><span>{detail.review.completed_job_count}/{detail.review.job_count} 个任务完成</span></div>
       {report ? <div className="ai-review-report">
@@ -5609,11 +5644,14 @@ function AuditReviewDetailDialog({ detail, evidence, evidenceTotal, client, work
             <div className="ai-review-health-meter" role="meter" aria-label="AI 审查健康评分" aria-valuemin={0} aria-valuemax={100} aria-valuenow={healthScore}><span style={{ width: `${healthScore}%` }} /></div>
             <span>{healthScore}/100</span>
           </div>}
-          <div className="ai-review-report-summary-copy"><span className={`audit-risk-pill ${report.risk_level}`}>{auditReviewVerdictLabel(report.verdict)} · 置信度 {Math.round(report.confidence * 100)}%</span><h3>{report.summary}</h3><p>{report.coverage_summary}</p></div>
+          <div className="ai-review-report-summary-copy"><span className={`audit-risk-pill ${auditReviewVerdictTone(report.executive.verdict)}`}>{auditReviewVerdictLabel(report.executive.verdict)} · 风险 {report.executive.risk_score}/100 · 置信度 {formatAuditPercent(report.executive.evidence_confidence)}</span><h3>{report.executive.one_line_conclusion}</h3><p>数据覆盖 {formatAuditPercent(report.data_quality?.coverage)} · 基线 {report.data_quality?.baseline_days ?? '—'} 天 · 身份质量 {formatAuditPercent(report.data_quality?.identity_quality)}</p></div>
         </section>
-        {report.dimensions?.length > 0 && <section><h3>分项判断</h3><div className="ai-review-report-list">{report.dimensions.map((item, index) => <article key={`${item.kind}-${index}`}><div><strong>{auditReviewEvidenceLabel([item.kind])}</strong><span className={`audit-risk-pill ${item.risk_level}`}>{auditReviewRiskLabel(item.risk_level)}</span></div><p>{item.summary}</p><small>证据：{item.evidence_refs.join('、') || '无'}{item.counter_evidence.length ? ` · 反证：${item.counter_evidence.join('、')}` : ''}</small></article>)}</div></section>}
-        {report.notable_subjects?.length > 0 && <section><h3>关注对象</h3><div className="ai-review-report-list">{report.notable_subjects.map((item, index) => <article key={`${item.subject_ref}-${index}`}><div><strong>{item.subject_ref}</strong><span className={`audit-risk-pill ${item.risk_level}`}>{auditReviewRiskLabel(item.risk_level)}</span></div><p>{item.summary}</p><small>{item.evidence_refs.join('、')}</small></article>)}</div></section>}
-        <div className="ai-review-report-columns"><section><h3>建议</h3>{report.recommended_actions?.length ? <ul>{report.recommended_actions.map(item => <li key={item}>{auditReviewActionLabel(item)}</li>)}</ul> : <p className="muted">无</p>}</section><section><h3>数据缺口</h3>{report.data_gaps?.length ? <ul>{report.data_gaps.map(item => <li key={item}>{item}</li>)}</ul> : <p className="muted">无</p>}</section></div>
+        {report.behavior_profile?.key_changes?.length > 0 && <section><h3>行为变化</h3><div className="ai-review-report-list">{report.behavior_profile.key_changes.map((item, index) => <article key={`change-${index}`}><p>{item}</p></article>)}</div></section>}
+        {report.findings?.length > 0 && <section><h3>重点 Findings</h3><div className="ai-review-report-list">{report.findings.map(item => <article key={item.finding_id}><div><strong>{item.title}</strong><span className={`audit-risk-pill ${item.severity}`}>{auditReviewRiskLabel(item.severity)}</span>{item.needs_verification ? <span className="status-pill warning">需进一步验证</span> : null}</div><p>{item.observation}</p>{item.baseline_comparison && (item.baseline_comparison.current !== undefined || item.baseline_comparison.baseline_p95 !== undefined) ? <small>当前 {item.baseline_comparison.current ?? '—'} · 基线 P95 {item.baseline_comparison.baseline_p95 ?? '—'} · 阈值 {item.baseline_comparison.threshold ?? '—'}{item.baseline_comparison.duration_seconds ? ` · 持续 ${item.baseline_comparison.duration_seconds} 秒` : ''}</small> : null}<p className="muted">{item.interpretation}</p><small>证据：{item.evidence_refs.join('、') || '无'}{item.counter_evidence_refs?.length ? ` · 反证：${item.counter_evidence_refs.join('、')}` : ''}{item.plausible_benign_explanations?.length ? ` · 可能解释：${item.plausible_benign_explanations.join('、')}` : ''}</small></article>)}</div></section>}
+        {report.timeline?.length > 0 && <section><h3>异常时间线</h3><div className="ai-review-report-list">{report.timeline.map(item => <article key={item.timeline_id}><div><strong>{item.title}</strong><span className="muted">{item.kind}</span></div><p>{item.detail || '—'}</p><small>{item.started_at ? formatTableTime(item.started_at) : ''}{item.ended_at ? ` - ${formatTableTime(item.ended_at)}` : ''}{item.evidence_refs?.length ? ` · ${item.evidence_refs.join('、')}` : ''}</small></article>)}</div></section>}
+        {report.counter_evidence?.length > 0 && <section><h3>反证与正常解释</h3><div className="ai-review-report-list">{report.counter_evidence.map(item => <article key={item.counter_id}><p>{item.text}</p>{item.evidence_refs?.length ? <small>{item.evidence_refs.join('、')}</small> : null}</article>)}</div></section>}
+        <div className="ai-review-report-columns"><section><h3>建议</h3>{report.recommended_actions?.length ? <ul>{report.recommended_actions.map(item => <li key={item.action}>{auditReviewActionLabel(item.action)}{item.reason ? `：${item.reason}` : ''}</li>)}</ul> : <p className="muted">无</p>}</section><section><h3>数据缺口</h3>{report.data_gaps?.length ? <ul>{report.data_gaps.map(item => <li key={item}>{item}</li>)}</ul> : <p className="muted">无</p>}</section></div>
+        {report.methodology ? <section className="ai-review-methodology"><div className="audit-recent-head"><h3>方法与版本</h3><span className={`ai-provider-grade grade-${String(report.methodology.provider_grade || 'none').toLowerCase()}`}>{report.methodology.provider_grade ? `${report.methodology.provider_grade} 级` : '—'}</span></div><small>评分 {report.methodology.scoring_version} · 特征 v{report.methodology.feature_version} · 证据 {report.methodology.evidence_schema_version} · 报告 {report.methodology.report_schema_version} · {report.methodology.output_mode === 'strict_schema' ? '严格 Schema' : 'JSON Object'} · {report.methodology.model}</small></section> : null}
       </div> : <div className="ai-review-pending"><Bot size={20} /><strong>{detail.review.status === 'failed' ? '审查失败' : detail.review.status === 'cancelled' ? '审查已取消' : '正在生成综合判断'}</strong>{detail.review.error && <span>{detail.review.error}</span>}</div>}
       <section className="ai-review-technical"><div className="audit-recent-head"><h3>证据快照</h3><span>{evidence.length}/{evidenceTotal}</span></div><div className="ai-review-technical-list">{evidence.map(item => <button type="button" className="ghost" key={item.ref} onClick={() => void showEvidence(item)}><span><strong>{item.ref}</strong><small>{item.kind}</small></span><Eye size={14} /></button>)}</div>{evidence.length < evidenceTotal && <button type="button" className="ghost" onClick={onLoadMore} disabled={working === 'evidence-more'}>加载更多证据</button>}</section>
       <section className="ai-review-technical"><div className="audit-recent-head"><h3>模型任务</h3><span>{detail.jobs.length} 个</span></div><div className="ai-review-technical-list">{detail.jobs.map(job => <button type="button" className="ghost" key={job.id} onClick={() => void showJob(job)}><span><strong>阶段 {job.stage + 1} · 任务 {job.position + 1}</strong><small>{job.kind === 'synthesis' ? '综合归并' : '证据分析'} · {auditReviewStatusLabel(job.status)} · 尝试 {job.attempts}</small></span><Eye size={14} /></button>)}</div></section>
@@ -5628,6 +5666,10 @@ function auditReviewStatusLabel(status: string, verdict?: string) {
 
 function auditReviewVerdictLabel(value: string) {
   return ({ normal: '正常', attention: '需要关注', high_risk: '高风险', insufficient_evidence: '证据不足' } as Record<string, string>)[value] || value
+}
+
+function auditReviewVerdictTone(value: string) {
+  return ({ normal: 'normal', attention: 'medium', high_risk: 'high', insufficient_evidence: 'unknown' } as Record<string, string>)[value] || 'unknown'
 }
 
 function auditReviewRiskLabel(value: string) {
