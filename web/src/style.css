@@ -10971,21 +10971,17 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 .flow .react-flow__edge.transport-direct .react-flow__edge-path { stroke: var(--graph-direct) !important; }
 .flow .react-flow__edge.transport-singbox .react-flow__edge-path { stroke: var(--graph-chain) !important; }
-.flow .react-flow__edge.transport-port_forward .react-flow__edge-path {
-  stroke: var(--graph-forward) !important;
-  stroke-dasharray: 9 6;
-}
-.flow .react-flow__edge.transport-wireguard .react-flow__edge-path {
-  stroke: var(--graph-wireguard) !important;
-  stroke-dasharray: 3 5;
-}
-.flow .react-flow__edge.transport-ssh .react-flow__edge-path {
-  stroke: var(--graph-ssh) !important;
-  stroke-dasharray: 12 5 3 5;
-}
+.flow .react-flow__edge.transport-port_forward .react-flow__edge-path { stroke: var(--graph-forward) !important; }
+.flow .react-flow__edge.transport-wireguard .react-flow__edge-path { stroke: var(--graph-wireguard) !important; }
+.flow .react-flow__edge.transport-ssh .react-flow__edge-path { stroke: var(--graph-ssh) !important; }
 .flow .react-flow__edge.unhealthy-edge .react-flow__edge-path {
   stroke: var(--graph-unhealthy) !important;
   stroke-dasharray: 5 5;
+}
+.flow .react-flow__edge .edge-flow { pointer-events: none; }
+.flow .react-flow__edge .edge-flow-core { filter: drop-shadow(0 0 3px currentColor); }
+@media (prefers-reduced-motion: reduce) {
+  .flow .react-flow__edge .edge-flow { display: none; }
 }
 .proxy-graph-legend {
   position: absolute;
@@ -11030,9 +11026,9 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .legend-warp { color: var(--graph-wireguard); }
 .legend-line { width: 17px; height: 0; display: block; border-top: 2px solid currentColor; }
 .legend-chain { color: var(--graph-chain); }
-.legend-forward { color: var(--graph-forward); border-top-style: dashed; }
-.legend-wg { color: var(--graph-wireguard); border-top-style: dotted; }
-.legend-ssh { color: var(--graph-ssh); border-top-style: dashed; }
+.legend-forward { color: var(--graph-forward); }
+.legend-wg { color: var(--graph-wireguard); }
+.legend-ssh { color: var(--graph-ssh); }
 
 .direct-exit-card {
   position: relative;

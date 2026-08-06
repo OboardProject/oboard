@@ -10594,6 +10594,7 @@ function ProxyGraphEdge({
   targetPosition,
   markerEnd,
   style,
+  data,
 }: EdgeProps<GraphTransportEdgeData>) {
   const [path] = getSmoothStepPath({
     sourceX,
@@ -10605,7 +10606,22 @@ function ProxyGraphEdge({
     borderRadius: 8,
     offset: 24,
   })
-  return <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={22} />
+  let phaseHash = 0
+  for (let index = 0; index < id.length; index++) phaseHash = (phaseHash * 31 + id.charCodeAt(index)) >>> 0
+  const phase = (phaseHash % 2400) / 1000
+  return <>
+    <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={22} />
+    {!data?.unhealthy && (
+      <g className="edge-flow" pointerEvents="none" style={{ color: style?.stroke as string }}>
+        <circle r="1.7" fill="currentColor" opacity="0.5">
+          <animateMotion dur="2.4s" begin={`${-(phase + 0.3)}s`} repeatCount="indefinite" path={path} />
+        </circle>
+        <circle r="3.2" fill="currentColor" className="edge-flow-core">
+          <animateMotion dur="2.4s" begin={`${-phase}s`} repeatCount="indefinite" path={path} />
+        </circle>
+      </g>
+    )}
+  </>
 }
 
 const proxyGraphEdgeTypes = { proxyTransport: ProxyGraphEdge }
@@ -10766,7 +10782,7 @@ function graphTransportEdge(
     source,
     target,
     type: 'proxyTransport',
-    animated: !data.unhealthy,
+    animated: false,
     className: `proxy-transport-edge transport-${data.kind}${data.unhealthy ? ' unhealthy-edge' : ''}`,
     style: { stroke: color, strokeWidth: 2.8 },
     markerEnd: { type: MarkerType.ArrowClosed, color, width: 18, height: 18 },
