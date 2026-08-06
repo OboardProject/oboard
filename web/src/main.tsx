@@ -3365,7 +3365,7 @@ function AIProviderRawLogDialog({ client, onClose }: { client: ReturnType<typeof
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'audit' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3377,10 +3377,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [basePath, setBasePath] = useState(currentBasePath)
   const [trustedProxyCIDRs, setTrustedProxyCIDRs] = useState<string>(configuredTrustedProxyCIDRs.join('\n'))
   const [subscriptionAgePolicy, setSubscriptionAgePolicy] = useState<'optional' | 'required'>(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional')
-  const [auditEnabled, setAuditEnabled] = useState(settingEnabled(data.settings?.audit_enabled))
-  const [subscriptionAuditEnabled, setSubscriptionAuditEnabled] = useState(settingEnabled(data.settings?.subscription_audit_enabled))
-  const [connectionAuditEnabled, setConnectionAuditEnabled] = useState(settingEnabled(data.settings?.connection_audit_enabled))
-  const [auditAction, setAuditAction] = useState<'restrict' | 'warn'>(String(data.settings?.audit_action || 'restrict') === 'warn' ? 'warn' : 'restrict')
   const [trafficTimezone, setTrafficTimezone] = useState(data.settings?.traffic_timezone || 'Asia/Shanghai')
   const [trafficMode, setTrafficMode] = useState(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
   const [controllerLogMaxMB, setControllerLogMaxMB] = useState(Number(data.settings?.controller_log_max_mb || 32))
@@ -3404,12 +3400,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     return () => window.clearInterval(timer)
   }, [migration.active, migration.config_version, realtimeStatus])
   useEffect(() => { setSubscriptionAgePolicy(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional') }, [data.settings?.subscription_age_policy])
-  useEffect(() => {
-    setAuditEnabled(settingEnabled(data.settings?.audit_enabled))
-    setSubscriptionAuditEnabled(settingEnabled(data.settings?.subscription_audit_enabled))
-    setConnectionAuditEnabled(settingEnabled(data.settings?.connection_audit_enabled))
-    setAuditAction(String(data.settings?.audit_action || 'restrict') === 'warn' ? 'warn' : 'restrict')
-  }, [data.settings?.audit_enabled, data.settings?.subscription_audit_enabled, data.settings?.connection_audit_enabled, data.settings?.audit_action])
   useEffect(() => {
     setNotificationOfflineAfter(Number(data.settings?.notification_server_offline_after_seconds || 120))
     setNotificationOnlineAfter(Number(data.settings?.notification_server_online_after_seconds || 60))
@@ -3528,16 +3518,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: subscriptionAgePolicy }) })
     }, '订阅加密策略已保存')
   }
-  const saveAuditSettings = async () => {
-    await runSave('audit', async () => {
-      await client.request('/settings', { method: 'POST', body: JSON.stringify({
-        audit_enabled: auditEnabled,
-        subscription_audit_enabled: subscriptionAuditEnabled,
-        connection_audit_enabled: connectionAuditEnabled,
-        audit_action: auditAction,
-      }) })
-    }, '审计设置已保存')
-  }
   const saveControllerLogs = async () => {
     await runSave('controller-logs', async () => {
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ controller_log_max_mb: controllerLogMaxMB, controller_log_backups: controllerLogBackups }) })
@@ -3569,7 +3549,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       <button className={activeSection === 'servers' ? 'active' : ''} role="tab" aria-selected={activeSection === 'servers'} onClick={() => setActiveSection('servers')}><ServerIcon size={15} />服务器默认值</button>
       <button className={activeSection === 'certificates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'certificates'} onClick={() => setActiveSection('certificates')}><Lock size={15} />证书</button>
       <button className={activeSection === 'subscriptions' ? 'active' : ''} role="tab" aria-selected={activeSection === 'subscriptions'} onClick={() => setActiveSection('subscriptions')}><Shield size={15} />订阅安全</button>
-      <button className={activeSection === 'audit' ? 'active' : ''} role="tab" aria-selected={activeSection === 'audit'} onClick={() => setActiveSection('audit')}><ShieldCheck size={15} />审计</button>
       <button className={activeSection === 'traffic' ? 'active' : ''} role="tab" aria-selected={activeSection === 'traffic'} onClick={() => setActiveSection('traffic')}><Gauge size={15} />流量控制</button>
       <button className={activeSection === 'notifications' ? 'active' : ''} role="tab" aria-selected={activeSection === 'notifications'} onClick={() => setActiveSection('notifications')}><Bell size={15} />通知提醒</button>
       <button className={activeSection === 'backups' ? 'active' : ''} role="tab" aria-selected={activeSection === 'backups'} onClick={() => setActiveSection('backups')}><Database size={15} />数据备份</button>
@@ -3715,27 +3694,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             </Select>
           </FormField>
           <div className="settings-actions"><button onClick={() => void saveSubscriptionAgePolicy()} disabled={Boolean(saving)}>{saving === 'subscription-age' ? '保存中...' : '保存加密策略'}</button></div>
-        </div>
-      </section>}
-      {activeSection === 'audit' && <section className="settings-card">
-        <div className="settings-card-head"><div><h3>审计台</h3><p className="muted">统一控制订阅审计与连接审计的采集、风险评估、通知和 Agent 行为。</p></div></div>
-        <div className="form settings-form single-field">
-          <FormField label="总审计开关" hint="关闭后订阅审计与连接审计全部停止：Agent 立即停止采集与上报并清除本地审计状态，风险通知不再发送，历史数据保留可查。">
-            <label className="notification-enable-row"><input type="checkbox" checked={auditEnabled} onChange={event => setAuditEnabled(event.target.checked)} aria-label="启用总审计" /></label>
-          </FormField>
-          <FormField label="订阅审计" hint="关闭后订阅拉取不再记录、评分或触发暂停；已有暂停状态仍保持，需管理员手动恢复。">
-            <label className="notification-enable-row"><input type="checkbox" checked={auditEnabled && subscriptionAuditEnabled} disabled={!auditEnabled} onChange={event => setSubscriptionAuditEnabled(event.target.checked)} aria-label="启用订阅审计" /></label>
-          </FormField>
-          <FormField label="连接审计（全局）" hint="关闭后所有服务器的 Agent 停止采集、上报和本地审计状态写入；仍可在单台服务器上单独控制。">
-            <label className="notification-enable-row"><input type="checkbox" checked={auditEnabled && connectionAuditEnabled} disabled={!auditEnabled} onChange={event => setConnectionAuditEnabled(event.target.checked)} aria-label="启用连接审计" /></label>
-          </FormField>
-          <FormField label="风险阈值处理" hint="主动限制：订阅拉取达到硬阈值时自动暂停并通知管理员；仅警告：不暂停、只发送风险通知，评估与记录继续。">
-            <Select variant="segmented" value={auditAction} onChange={e => setAuditAction(e.target.value as 'restrict' | 'warn')} aria-label="审计风险阈值处理方式">
-              <option value="restrict">主动限制</option>
-              <option value="warn">仅警告</option>
-            </Select>
-          </FormField>
-          <div className="settings-actions"><button onClick={() => void saveAuditSettings()} disabled={Boolean(saving)}>{saving === 'audit' ? '保存中...' : '保存审计设置'}</button></div>
         </div>
       </section>}
       {activeSection === 'traffic' && <section className="settings-card">
@@ -5024,9 +4982,62 @@ function ControllerLogsPanel({ client, dialogs, notify, maxMB, backups, setMaxMB
   </section>
 }
 
-function AuditConsole({ data, client, loading, notify }: any) {
+function AuditSettingsPanel({ data, client, load, notify }: any) {
+  const [auditEnabled, setAuditEnabled] = useState(settingEnabled(data.settings?.audit_enabled))
+  const [subscriptionAuditEnabled, setSubscriptionAuditEnabled] = useState(settingEnabled(data.settings?.subscription_audit_enabled))
+  const [connectionAuditEnabled, setConnectionAuditEnabled] = useState(settingEnabled(data.settings?.connection_audit_enabled))
+  const [auditAction, setAuditAction] = useState<'restrict' | 'warn'>(String(data.settings?.audit_action || 'restrict') === 'warn' ? 'warn' : 'restrict')
+  const [saving, setSaving] = useState(false)
+  useEffect(() => {
+    setAuditEnabled(settingEnabled(data.settings?.audit_enabled))
+    setSubscriptionAuditEnabled(settingEnabled(data.settings?.subscription_audit_enabled))
+    setConnectionAuditEnabled(settingEnabled(data.settings?.connection_audit_enabled))
+    setAuditAction(String(data.settings?.audit_action || 'restrict') === 'warn' ? 'warn' : 'restrict')
+  }, [data.settings?.audit_enabled, data.settings?.subscription_audit_enabled, data.settings?.connection_audit_enabled, data.settings?.audit_action])
+  const saveAuditSettings = async () => {
+    if (saving) return
+    setSaving(true)
+    try {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({
+        audit_enabled: auditEnabled,
+        subscription_audit_enabled: subscriptionAuditEnabled,
+        connection_audit_enabled: connectionAuditEnabled,
+        audit_action: auditAction,
+      }) })
+      notify?.('审计设置已保存', 'success')
+      await load?.('audit', { background: true })
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+  return <section className="settings-card">
+    <div className="settings-card-head"><div><h3>审计设置</h3><p className="muted">统一控制订阅审计与连接审计的采集、风险评估、通知和 Agent 行为。</p></div></div>
+    <div className="form settings-form single-field">
+      <FormField label="总审计开关" hint="关闭后订阅审计与连接审计全部停止：Agent 立即停止采集与上报并清除本地审计状态，风险通知不再发送，历史数据保留可查。">
+        <label className="notification-enable-row"><input type="checkbox" checked={auditEnabled} onChange={event => setAuditEnabled(event.target.checked)} aria-label="启用总审计" /></label>
+      </FormField>
+      <FormField label="订阅审计" hint="关闭后订阅拉取不再记录、评分或触发暂停；已有暂停状态仍保持，需管理员手动恢复。">
+        <label className="notification-enable-row"><input type="checkbox" checked={auditEnabled && subscriptionAuditEnabled} disabled={!auditEnabled} onChange={event => setSubscriptionAuditEnabled(event.target.checked)} aria-label="启用订阅审计" /></label>
+      </FormField>
+      <FormField label="连接审计（全局）" hint="关闭后所有服务器的 Agent 停止采集、上报和本地审计状态写入；仍可在单台服务器上单独控制。">
+        <label className="notification-enable-row"><input type="checkbox" checked={auditEnabled && connectionAuditEnabled} disabled={!auditEnabled} onChange={event => setConnectionAuditEnabled(event.target.checked)} aria-label="启用连接审计" /></label>
+      </FormField>
+      <FormField label="风险阈值处理" hint="主动限制：订阅拉取达到硬阈值时自动暂停并通知管理员；仅警告：不暂停、只发送风险通知，评估与记录继续。">
+        <Select variant="segmented" value={auditAction} onChange={e => setAuditAction(e.target.value as 'restrict' | 'warn')} aria-label="审计风险阈值处理方式">
+          <option value="restrict">主动限制</option>
+          <option value="warn">仅警告</option>
+        </Select>
+      </FormField>
+      <div className="settings-actions"><button onClick={() => void saveAuditSettings()} disabled={saving}>{saving ? '保存中...' : '保存审计设置'}</button></div>
+    </div>
+  </section>
+}
+
+function AuditConsole({ data, client, load, loading, notify }: any) {
   const dialogs = useDialogs()
-  const [view, setView] = useState<'combined' | 'subscriptions' | 'connections' | 'policy' | 'operations' | 'ai'>('combined')
+  const [view, setView] = useState<'combined' | 'subscriptions' | 'connections' | 'policy' | 'settings' | 'operations' | 'ai'>('combined')
   const [windowHours, setWindowHours] = useState(24)
   const [risk, setRisk] = useState<'all' | AuditRiskLevel>('all')
   const [query, setQuery] = useState('')
@@ -5116,7 +5127,7 @@ function AuditConsole({ data, client, loading, notify }: any) {
       <div>
         <strong>{auditMasterOff ? '审计台已关闭' : auditWarnOnly ? '风险阈值仅警告，未启用主动限制' : '部分审计已关闭'}</strong>
         <span>{auditMasterOff
-          ? '订阅审计与连接审计均已停止：Agent 不再采集或上报，风险通知已暂停，历史数据仍可查看。可在 设置 → 审计 中重新开启。'
+          ? '订阅审计与连接审计均已停止：Agent 不再采集或上报，风险通知已暂停，历史数据仍可查看。可在 审计设置 中重新开启。'
           : `${auditSubscriptionOff ? '订阅审计已关闭，拉取不再记录与评分；' : ''}${auditConnectionOff ? '连接审计已关闭，Agent 已停止采集与上报；' : ''}${auditWarnOnly ? '订阅拉取达到硬阈值只发送通知，不会自动暂停。' : ''}`}</span>
       </div>
     </div>}
@@ -5125,10 +5136,11 @@ function AuditConsole({ data, client, loading, notify }: any) {
       <button type="button" role="tab" aria-selected={view === 'subscriptions'} className={view === 'subscriptions' ? 'active' : ''} onClick={() => setView('subscriptions')}><Download size={15} />订阅风险</button>
       <button type="button" role="tab" aria-selected={view === 'connections'} className={view === 'connections' ? 'active' : ''} onClick={() => setView('connections')}><Shield size={15} />连接风险</button>
       {isAdmin && <button type="button" role="tab" aria-selected={view === 'policy'} className={view === 'policy' ? 'active' : ''} onClick={() => setView('policy')}><Settings2 size={15} />拉取风控</button>}
+      {isAdmin && <button type="button" role="tab" aria-selected={view === 'settings'} className={view === 'settings' ? 'active' : ''} onClick={() => setView('settings')}><Sliders size={15} />审计设置</button>}
       {isAdmin && <button type="button" role="tab" aria-selected={view === 'ai'} className={view === 'ai' ? 'active' : ''} onClick={() => setView('ai')}><Bot size={15} />AI 审查</button>}
       <button type="button" role="tab" aria-selected={view === 'operations'} className={view === 'operations' ? 'active' : ''} onClick={() => setView('operations')}><ClipboardList size={15} />操作日志</button>
     </div>
-    {view === 'operations' ? <AuditLogs data={data} loading={loading} embedded /> : view === 'ai' && isAdmin ? <AIAuditReviews data={data} client={client} notify={notify} /> : view === 'policy' && isAdmin ? <SubscriptionAuditPolicySettings initialPolicy={subscriptionOverview?.policy || data.settings?.subscription_audit_policy} auditAction={String(data.settings?.audit_action || 'restrict')} client={client} notify={notify} onSaved={savedPolicy => setSubscriptionOverview(current => current ? { ...current, policy: savedPolicy } : current)} /> : <>
+    {view === 'operations' ? <AuditLogs data={data} loading={loading} embedded /> : view === 'ai' && isAdmin ? <AIAuditReviews data={data} client={client} notify={notify} /> : view === 'policy' && isAdmin ? <SubscriptionAuditPolicySettings initialPolicy={subscriptionOverview?.policy || data.settings?.subscription_audit_policy} auditAction={String(data.settings?.audit_action || 'restrict')} client={client} notify={notify} onSaved={savedPolicy => setSubscriptionOverview(current => current ? { ...current, policy: savedPolicy } : current)} /> : view === 'settings' && isAdmin ? <AuditSettingsPanel data={data} client={client} load={load} notify={notify} /> : <>
       <div className="audit-overview-grid">
         {view === 'combined' ? <>
           <div><span>审计用户</span><strong>{combinedOverview?.users?.length || 0}</strong><small>{windowHours} 小时历史范围</small></div>
