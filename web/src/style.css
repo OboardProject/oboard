@@ -3080,9 +3080,18 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .proxy-path-entry-picker {
   min-width: 0;
-  flex: 1 1 420px;
+  flex: 1 1 360px;
   display: grid;
   grid-template-columns: auto minmax(220px, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.proxy-path-focus-picker {
+  min-width: 0;
+  flex: 0 1 300px;
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr);
   align-items: center;
   gap: 10px;
 }
@@ -3095,7 +3104,20 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .graph-entry-select { width: 100%; }
-.proxy-path-entry-picker .custom-select-trigger { min-height: 36px; }
+.graph-path-select { width: 100%; }
+.proxy-path-entry-picker .custom-select-trigger,
+.proxy-path-focus-picker .custom-select-trigger { min-height: 36px; }
+.path-focus-option-label {
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+}
+.path-focus-option-label > svg { color: var(--primary); }
+.path-focus-option-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.path-focus-option-label > small { color: var(--muted); font-size: 9.5px; font-variant-numeric: tabular-nums; }
 .entry-server-option-label {
   min-width: 0;
   width: 100%;
@@ -4149,7 +4171,8 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
     flex-direction: column;
   }
   .proxy-path-view-switch { align-self: flex-start; }
-  .proxy-path-entry-picker { width: 100%; flex: 0 0 auto; }
+  .proxy-path-entry-picker,
+  .proxy-path-focus-picker { width: 100%; flex: 0 0 auto; }
   .proxy-editor-workspace,
   .proxy-editor-workspace.toolbox-collapsed,
   .proxy-editor-workspace.inspector-open {
@@ -4175,7 +4198,8 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 @media (max-width: 520px) {
   .proxy-path-view-switch { width: 100%; }
   .proxy-path-view-switch button { flex: 1 1 0; }
-  .proxy-path-entry-picker { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .proxy-path-entry-picker,
+  .proxy-path-focus-picker { grid-template-columns: minmax(0, 1fr); gap: 5px; }
   .graph-node-picker-body .graph-server-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -10969,6 +10993,14 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   stroke-linejoin: round;
   filter: drop-shadow(0 1px 1px rgba(15, 23, 42, .16));
 }
+.flow .react-flow__edge .proxy-edge-casing {
+  fill: none;
+  stroke: var(--surface-solid);
+  stroke-width: 7px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: .94;
+}
 .flow .react-flow__edge.transport-direct .react-flow__edge-path { stroke: var(--graph-direct) !important; }
 .flow .react-flow__edge.transport-singbox .react-flow__edge-path { stroke: var(--graph-chain) !important; }
 .flow .react-flow__edge.transport-port_forward .react-flow__edge-path { stroke: var(--graph-forward) !important; }
@@ -10980,6 +11012,40 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 .flow .react-flow__edge .edge-flow { pointer-events: none; }
 .flow .react-flow__edge .edge-flow-core { filter: drop-shadow(0 0 3px currentColor); }
+.flow .react-flow__node.graph-node,
+.flow .react-flow__edge.proxy-transport-edge,
+.proxy-edge-label { transition: opacity 140ms ease; }
+.flow .react-flow__node.graph-node.path-focus-muted { opacity: .2; }
+.flow .react-flow__node.graph-node.path-focus-context { opacity: .42; }
+.flow .react-flow__node.graph-node.path-focus-active { opacity: 1; }
+.flow .react-flow__edge.proxy-transport-edge.path-focus-muted { opacity: .1; }
+.flow .react-flow__edge.proxy-transport-edge.path-focus-context { opacity: .28; }
+.flow .react-flow__edge.proxy-transport-edge.path-focus-active { opacity: 1; }
+.flow .react-flow__edge.proxy-transport-edge.path-focus-active .react-flow__edge-path { stroke-width: 3.6px !important; }
+.proxy-edge-label {
+  position: absolute;
+  z-index: 11;
+  max-width: 148px;
+  min-height: 0;
+  padding: 3px 7px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-solid) 96%, transparent);
+  box-shadow: 0 3px 9px rgba(15, 23, 42, .1);
+  color: var(--primary);
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: all;
+}
+button.proxy-edge-label:hover { transform: none; border-color: var(--primary); background: var(--surface-solid); }
+.proxy-edge-label.shared { color: var(--text-secondary); border-color: var(--border-strong); cursor: default; }
+.proxy-edge-label.path-focus-muted { opacity: .08; pointer-events: none; }
+.proxy-edge-label.path-focus-context { opacity: .28; }
+.proxy-edge-label.path-focus-active { opacity: 1; }
 @media (prefers-reduced-motion: reduce) {
   .flow .react-flow__edge .edge-flow { display: none; }
 }
@@ -11555,13 +11621,17 @@ button[aria-busy="true"] {
   transition: stroke 150ms ease, stroke-width 150ms ease;
   stroke: var(--muted-2);
 }
-.flow .react-flow__edge:hover .react-flow__edge-path {
+.flow .react-flow__edge:not(.proxy-transport-edge):hover .react-flow__edge-path {
   stroke: var(--primary) !important;
   stroke-width: 3.5px !important;
 }
-.flow .react-flow__edge.selected .react-flow__edge-path {
+.flow .react-flow__edge:not(.proxy-transport-edge).selected .react-flow__edge-path {
   stroke: var(--primary) !important;
   stroke-width: 4px !important;
+}
+.flow .react-flow__edge.proxy-transport-edge:hover .react-flow__edge-path,
+.flow .react-flow__edge.proxy-transport-edge.selected .react-flow__edge-path {
+  stroke-width: 3.6px !important;
 }
 .flow .react-flow__connection-path {
   stroke: var(--primary) !important;
@@ -14960,7 +15030,8 @@ button.ui-btn-ghost:hover {
   .sub-assign-submit { min-height: 44px; }
 
   .automation-section-head > button { min-height: 44px; }
-  .proxy-path-entry-picker .custom-select-trigger { min-height: 44px; }
+  .proxy-path-entry-picker .custom-select-trigger,
+  .proxy-path-focus-picker .custom-select-trigger { min-height: 44px; }
 
   .transport-copy-modes button { min-height: 40px; }
   .exit-region-probe {

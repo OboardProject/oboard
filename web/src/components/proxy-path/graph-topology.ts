@@ -80,6 +80,66 @@ export type GraphRouteEdge = {
   auxiliary?: boolean
 }
 
+export type GraphPathMembershipEdge = {
+  id: string
+  source: string
+  target: string
+  pathIDs: number[]
+}
+
+export type GraphPathEdgeLabel = {
+  text: string
+  title: string
+  pathID?: number
+}
+
+export type GraphPathFocusState = 'active' | 'muted' | 'context'
+
+export function mergeGraphPathIDs(pathIDs: number[] | undefined, pathID: number) {
+  return Array.from(new Set([...(pathIDs || []), pathID])).sort((left, right) => left - right)
+}
+
+export function graphPathFocusState(pathIDs: number[] | undefined, activePathIDs: number[]) {
+  if (!activePathIDs.length) return undefined
+  if (!pathIDs?.length) return 'context' as const
+  const active = new Set(activePathIDs)
+  return pathIDs.some(pathID => active.has(pathID)) ? 'active' as const : 'muted' as const
+}
+
+function samePathIDs(left: number[], right: number[]) {
+  return left.length === right.length && left.every((pathID, index) => pathID === right[index])
+}
+
+/** Labels a route once, then labels it again only where shared membership changes. */
+export function graphPathEdgeLabels(
+  edges: GraphPathMembershipEdge[],
+  pathLabel: (pathID: number) => string,
+) {
+  const incomingByNode = new Map<string, GraphPathMembershipEdge[]>()
+  edges.forEach(edge => incomingByNode.set(edge.target, [...(incomingByNode.get(edge.target) || []), edge]))
+
+  const labels = new Map<string, GraphPathEdgeLabel>()
+  edges.forEach(edge => {
+    const pathIDs = edge.pathIDs.slice().sort((left, right) => left - right)
+    if (!pathIDs.length) return
+    const continuesSameMembership = (incomingByNode.get(edge.source) || [])
+      .some(incoming => samePathIDs(incoming.pathIDs, pathIDs))
+    if (continuesSameMembership) return
+    if (pathIDs.length === 1) {
+      const pathID = pathIDs[0]
+      const label = pathLabel(pathID)
+      labels.set(edge.id, { text: label, title: label, pathID })
+      return
+    }
+    const names = pathIDs.map(pathLabel)
+    labels.set(edge.id, {
+      text: `${pathIDs.length} 条路径共享`,
+      title: names.join('\n'),
+    })
+  })
+  return labels
+}
+
 /** Assigns separate horizontal tracks to edges that fan out from one node. */
 export function graphBranchRouteOffsets(
   edges: GraphRouteEdge[],

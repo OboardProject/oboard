@@ -10,6 +10,7 @@
     "test": "NODE_ENV=test vitest run"
   },
   "dependencies": {
+    "@tisoap/react-flow-smart-edge": "3.0.0",
     "@vitejs/plugin-react": "latest",
     "lucide-react": "^1.24.0",
     "motion": "^12.42.2",

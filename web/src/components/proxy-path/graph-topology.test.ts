@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphBranchRouteOffsets } from './graph-topology'
+import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphBranchRouteOffsets, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './graph-topology'
 import type { ProxyPath, ProxyPathStep } from './types'
 
 const path = (id: number, inboundID = 10): ProxyPath => ({
@@ -79,5 +79,30 @@ describe('proxy graph shared topology', () => {
 
     expect(Math.min(...values)).toBe(-90)
     expect(Math.max(...values)).toBe(90)
+  })
+
+  it('keeps shared edge path membership sorted and unique', () => {
+    expect(mergeGraphPathIDs(mergeGraphPathIDs([9, 2], 5), 2)).toEqual([2, 5, 9])
+  })
+
+  it('labels a shared trunk and each branch only where membership changes', () => {
+    const labels = graphPathEdgeLabels([
+      { id: 'trunk', source: 'root', target: 'shared', pathIDs: [1, 2] },
+      { id: 'left', source: 'shared', target: 'left-node', pathIDs: [1] },
+      { id: 'left-tail', source: 'left-node', target: 'left-exit', pathIDs: [1] },
+      { id: 'right', source: 'shared', target: 'right-node', pathIDs: [2] },
+    ], pathID => `path-${pathID}`)
+
+    expect(labels.get('trunk')).toEqual({ text: '2 条路径共享', title: 'path-1\npath-2' })
+    expect(labels.get('left')).toEqual({ text: 'path-1', title: 'path-1', pathID: 1 })
+    expect(labels.has('left-tail')).toBe(false)
+    expect(labels.get('right')).toEqual({ text: 'path-2', title: 'path-2', pathID: 2 })
+  })
+
+  it('keeps shared trunks active while muting unrelated branches', () => {
+    expect(graphPathFocusState([1, 2], [2])).toBe('active')
+    expect(graphPathFocusState([1], [2])).toBe('muted')
+    expect(graphPathFocusState([], [2])).toBe('context')
+    expect(graphPathFocusState([1], [])).toBeUndefined()
   })
 })

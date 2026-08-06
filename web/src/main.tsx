@@ -7,9 +7,10 @@ import {
   normalizeTheme,
   toggleThemeWithTransition,
 } from './theme'
-import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, Controls, Edge, EdgeChange, Handle, MarkerType, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getSmoothStepPath, getViewportForBounds } from 'reactflow'
+import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, MarkerType, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getSmoothStepPath, getViewportForBounds, useNodes } from 'reactflow'
 import type { EdgeProps, ReactFlowInstance } from 'reactflow'
 import 'reactflow/dist/style.css'
+import { getSmartEdge, pathfindingJumpPointNoDiagonal, svgDrawSmoothLinePath } from '@tisoap/react-flow-smart-edge'
 import type {
   CertificateMode,
   DNSRecordTypes,
@@ -49,7 +50,8 @@ import {
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
 import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
 import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
-import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphBranchRouteOffsets } from './components/proxy-path/graph-topology'
+import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphBranchRouteOffsets, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
+import type { GraphPathFocusState } from './components/proxy-path/graph-topology'
 import { buildProxyPathMatrix, proxyPathMatrixStepScope, type ProxyPathMatrixCell } from './components/proxy-path/matrix'
 import './style.css'
 import logo from './assets/logo.svg'
@@ -7839,6 +7841,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(() => window.innerWidth <= 820)
   const [entryServerQuery, setEntryServerQuery] = useState('')
   const [entryServerRegion, setEntryServerRegion] = useState('all')
+  const [focusedPathID, setFocusedPathID] = useState(0)
+  const [hoveredPathIDs, setHoveredPathIDs] = useState<number[]>([])
   const [toolboxPosition, setToolboxPosition] = useState<GraphPosition>(() => loadGraphToolboxPosition())
   const [toolboxDragging, setToolboxDragging] = useState(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
@@ -7849,7 +7853,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const pendingServerSafeFit = useRef(0)
   const serverSafeFitTimer = useRef<number | null>(null)
   const [initialViewportReady, setInitialViewportReady] = useState(false)
-  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(() => loadGraphPositions())
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(() => ({
+    ...autoLayoutProxyGraphPositions(data, selected?.id || servers[0]?.id || 0),
+    ...loadGraphPositions(),
+  }))
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null)
 	const [canvasImportedIDs, setCanvasImportedIDs] = useState<number[]>([])
 	const [canvasServerInstances, setCanvasServerInstances] = useState<CanvasServerInstance[]>([])
@@ -7858,6 +7865,14 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const canvasServerSequence = useRef(0)
 	const canvasDirectExitSequence = useRef(0)
 	const canvasWARPSequence = useRef(0)
+	const visibleProxyPaths = useMemo(() => {
+	  if (!selected?.id) return [] as ProxyPath[]
+	  const visibleEntryIDs = new Set(entries.filter(entry => entry.server_id === selected.id && entry.enabled !== false).map(entry => entry.id))
+	  return ((data.proxy_paths || []) as ProxyPath[])
+	    .filter(path => path.enabled !== false && visibleEntryIDs.has(path.inbound_id))
+	    .slice()
+	    .sort((left, right) => left.id - right.id)
+	}, [data.proxy_paths, entries, selected?.id])
 	const builtFlow = useMemo(() => editableProxyFlow(data, positions, selected?.id || 0, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances), [data.servers, data.inbounds, data.external_outbounds, data.warp_profiles, data.proxy_paths, data.proxy_path_steps, data.port_forwards, data.tunnels, positions, selected?.id, canvasImportedIDs.join(','), canvasServerInstances.map(item => `${item.instance_id}:${item.server_id}`).join(','), canvasDirectExitInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasWARPInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(',')])
   const graphTopologyFingerprint = builtFlow.edges
     .map(edge => `${edge.id}:${edge.source}:${edge.sourceHandle || ''}>${edge.target}:${edge.targetHandle || ''}`)
@@ -7884,6 +7899,36 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const [graphMenu, setGraphMenu] = useState<{ x: number; y: number; entity: GraphEntity } | null>(null)
   const [activeGraphEntity, setActiveGraphEntity] = useState<GraphEntity | null>(null)
   useEffect(() => { setNodes(builtFlow.nodes); setEdges(builtFlow.edges) }, [builtFlow])
+  useEffect(() => {
+    if (focusedPathID && !visibleProxyPaths.some(path => path.id === focusedPathID)) setFocusedPathID(0)
+    setHoveredPathIDs([])
+  }, [selected?.id, visibleProxyPaths.map(path => path.id).join(',')])
+  const activePathIDs = focusedPathID ? [focusedPathID] : hoveredPathIDs
+  const activePathKey = activePathIDs.join(',')
+  const displayNodes = useMemo(() => {
+    if (!activePathIDs.length) return nodes
+    return nodes.map(node => {
+      const pathIDs = (node.data?.pathIDs || []) as number[]
+      const focusState = graphPathFocusState(pathIDs, activePathIDs)!
+      return {
+        ...node,
+        className: `${node.className || ''} path-focus-${focusState}`.trim(),
+      }
+    })
+  }, [nodes, activePathKey])
+  const displayEdges = useMemo(() => {
+    return edges.map(edge => {
+      const data = edge.data as GraphTransportEdgeData | undefined
+      const pathIDs = data?.pathIDs || []
+      const focusState = graphPathFocusState(pathIDs, activePathIDs)
+      return {
+        ...edge,
+        className: `${edge.className || ''}${focusState ? ` path-focus-${focusState}` : ''}`.trim(),
+        zIndex: focusState === 'active' ? 4 : focusState === 'context' ? 1 : 0,
+        data: data ? { ...data, focusState, onFocusPath: setFocusedPathID } : data,
+      }
+    })
+  }, [edges, activePathKey])
   useEffect(() => {
     if (!selectedServer && servers[0]) setSelectedServer(servers[0].id)
     if (selectedServer && !servers.some(s => s.id === selectedServer) && servers[0]) setSelectedServer(servers[0].id)
@@ -8075,6 +8120,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const selectEntryServer = (value: string | number) => {
     const nextServerID = Number(value)
     if (!nextServerID || nextServerID === selected?.id) return
+	setFocusedPathID(0)
+	setHoveredPathIDs([])
     if (viewMode === 'graph') {
       const laidOut = autoLayoutProxyGraphPositions(data, nextServerID, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances)
       if (Object.keys(laidOut).length) {
@@ -8088,6 +8135,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   }
   const changeViewMode = (mode: ProxyPathViewMode) => {
     setViewMode(mode)
+	setHoveredPathIDs([])
     saveProxyPathViewMode(mode)
     if (mode === 'graph') window.setTimeout(() => fitGraphToSafeArea(0), 0)
   }
@@ -8959,10 +9007,19 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     }
 		  if (entity?.type === 'direct' && entity.path_id) editProxyPathNameForEntity(entity)
   }
-  const onNodeClick = (_: React.MouseEvent, _node: Node) => {
-	  setGraphMenu(null)
-    setActiveGraphEntity(_node.data?.entity as GraphEntity || null)
-  }
+	  const graphPathIDs = (item: Node | Edge) => ((item.data?.pathIDs || []) as number[])
+	  const previewGraphPaths = (item: Node | Edge) => {
+	    if (!focusedPathID) setHoveredPathIDs(graphPathIDs(item))
+	  }
+	  const stopPreviewingGraphPaths = () => {
+	    if (!focusedPathID) setHoveredPathIDs([])
+	  }
+	  const onNodeClick = (_: React.MouseEvent, _node: Node) => {
+		  setGraphMenu(null)
+	    setActiveGraphEntity(_node.data?.entity as GraphEntity || null)
+	    const pathIDs = graphPathIDs(_node)
+	    if (pathIDs.length === 1) setFocusedPathID(pathIDs[0])
+	  }
 	  const openGraphContextMenu = (clientX: number, clientY: number, entity: GraphEntity) => {
 	    const menuWidth = Math.min(260, Math.max(148, window.innerWidth - 16))
 		    const menuHeight = entity.type === 'proxy-path-step' || (entity.type === 'direct' && entity.path_id) ? 166 : entity.type === 'direct' ? 126 : 86
@@ -8986,14 +9043,21 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     e.stopPropagation()
     openGraphContextMenu(e.clientX, e.clientY, entity)
   }
-  const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
-    setGraphMenu(null)
-    setActiveGraphEntity(edge.data?.entity as GraphEntity || null)
-  }
-  const closeGraphMenu = () => {
-    setGraphMenu(null)
-    setActiveGraphEntity(null)
-  }
+	  const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
+	    setGraphMenu(null)
+	    setActiveGraphEntity(edge.data?.entity as GraphEntity || null)
+	    const pathIDs = graphPathIDs(edge)
+	    if (pathIDs.length === 1) setFocusedPathID(pathIDs[0])
+	  }
+	  const closeGraphMenu = () => {
+	    setGraphMenu(null)
+	    setActiveGraphEntity(null)
+	  }
+	  const clearGraphSelection = () => {
+	    closeGraphMenu()
+	    setFocusedPathID(0)
+	    setHoveredPathIDs([])
+	  }
   const toggleInspector = () => {
     const next = !inspectorOpen
     setInspectorOpen(next)
@@ -9062,6 +9126,16 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   }
   const selectOptions = filteredEntryServers.map(server => ({ value: String(server.id), label: serverSelectLabel(server) }))
   const selectedServerLabel = selected ? serverSelectLabel(selected) : undefined
+  const pathFocusLabel = (path?: ProxyPath) => <span className="path-focus-option-label">
+    <Workflow size={13} aria-hidden="true" />
+    <span>{path ? (path.name || `路径 ${path.id}`) : '全部路径'}</span>
+    <small>{path ? `#${path.id}` : visibleProxyPaths.length}</small>
+  </span>
+  const pathFocusOptions = [
+    { value: '0', label: pathFocusLabel() },
+    ...visibleProxyPaths.map(path => ({ value: String(path.id), label: pathFocusLabel(path) })),
+  ]
+  const focusedPath = visibleProxyPaths.find(path => path.id === focusedPathID)
   const entryServerMenuHeader = <div className="entry-server-menu-tools">
     <label className="entry-server-search">
       <Search size={15} aria-hidden="true" />
@@ -9115,6 +9189,21 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
               ariaLabel="选择当前入口服务器"
             />
           </div>
+		  {viewMode === 'graph' && visibleProxyPaths.length > 0 && <div className="proxy-path-focus-picker">
+		    <span className="proxy-path-entry-label">路径聚焦</span>
+		    <CustomSelect
+		      className="graph-path-select"
+		      value={String(focusedPathID)}
+		      onChange={value => {
+		        setFocusedPathID(Number(value) || 0)
+		        setHoveredPathIDs([])
+		        setActiveGraphEntity(null)
+		      }}
+		      options={pathFocusOptions}
+		      selectedLabel={pathFocusLabel(focusedPath)}
+		      ariaLabel="聚焦一条代理路径"
+		    />
+		  </div>}
         </div>,
         topbarTarget,
       )}
@@ -9141,21 +9230,25 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         </div>
         <div className={`flow proxy-flow ${initialViewportReady ? 'initial-viewport-ready' : 'initial-viewport-pending'}`} onDragOver={onToolDragOver} onDrop={onToolDrop}>
         <ReactFlow 
-          nodes={nodes} 
-          edges={edges} 
+		  nodes={displayNodes}
+		  edges={displayEdges}
           nodeTypes={proxyGraphNodeTypes}
           edgeTypes={proxyGraphEdgeTypes}
           onInit={initializeFlow} 
           onNodesChange={onNodesChange} 
           onNodeDragStop={onNodeDragStop} 
-          onNodeClick={onNodeClick} 
-          onNodeContextMenu={onNodeContextMenu} 
+		  onNodeClick={onNodeClick}
+		  onNodeMouseEnter={(_, node) => previewGraphPaths(node)}
+		  onNodeMouseLeave={stopPreviewingGraphPaths}
+		  onNodeContextMenu={onNodeContextMenu}
           onNodeDoubleClick={onNodeDoubleClick} 
           onEdgesChange={onEdgesChange} 
-          onEdgeClick={onEdgeClick}
-          onEdgeContextMenu={onEdgeContextMenu} 
-          onPaneClick={closeGraphMenu} 
-          onMoveStart={closeGraphMenu} 
+		  onEdgeClick={onEdgeClick}
+		  onEdgeMouseEnter={(_, edge) => previewGraphPaths(edge)}
+		  onEdgeMouseLeave={stopPreviewingGraphPaths}
+		  onEdgeContextMenu={onEdgeContextMenu}
+		  onPaneClick={clearGraphSelection}
+		  onMoveStart={closeGraphMenu}
           onConnect={onConnect}
           panOnScroll={false}
           zoomOnScroll
@@ -9182,7 +9275,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	          {activeGraphActionLabel && <button type="button" className="ghost" onClick={() => void openActiveGraphEntity()}><Edit3 size={13} />{activeGraphActionLabel}</button>}
 			  {activeGraphEntity.type === 'direct' && <button type="button" className="ghost" onClick={() => copyDirectExit(activeGraphEntity)}><Copy size={13} />复制直接出口</button>}
 			  <button type="button" className="ghost danger-text" onClick={() => void deleteActiveGraphEntity()}><Trash2 size={13} />{activeGraphEntity.node_id?.startsWith('canvas-server-') || activeGraphEntity.node_id?.startsWith('direct-exit-canvas-') || activeGraphEntity.node_id?.startsWith('warp-canvas-') ? '移出画布' : activeGraphEntity.type === 'proxy-path-step' ? '断开后续' : '删除'}</button>
-          <button type="button" className="ghost icon-button" onClick={() => setActiveGraphEntity(null)} aria-label="取消选择" title="取消选择"><X size={13} /></button>
+		  <button type="button" className="ghost icon-button" onClick={clearGraphSelection} aria-label="取消选择" title="取消选择"><X size={13} /></button>
         </div>}
         {!nodes.length && <div className="graph-empty-state"><ServerIcon size={22} /><strong>还没有服务器</strong><span>添加服务器后即可创建入口和代理链路。</span><button onClick={() => addServer()}>添加服务器</button></div>}
 
@@ -10565,6 +10658,12 @@ type GraphTransportEdgeData = {
   detail?: string
   unhealthy?: boolean
   routeOffset?: number
+  pathIDs?: number[]
+  pathLabel?: string
+  pathLabelTitle?: string
+  pathLabelID?: number
+  focusState?: GraphPathFocusState
+  onFocusPath?: (pathID: number) => void
 }
 type GraphServerRole = {
   isRoot: boolean
@@ -10601,7 +10700,30 @@ function ProxyGraphEdge({
   style,
   data,
 }: EdgeProps<GraphTransportEdgeData>) {
-  const [path] = getSmoothStepPath({
+  const graphNodes = useNodes()
+  const nodeGeometryKey = graphNodes.map(node => [
+    node.id,
+    node.positionAbsolute?.x ?? node.position.x,
+    node.positionAbsolute?.y ?? node.position.y,
+    node.width || 0,
+    node.height || 0,
+  ].join(':')).join('|')
+  const smartPath = useMemo(() => getSmartEdge({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    nodes: graphNodes,
+    options: {
+      gridRatio: 12,
+      nodePadding: 16,
+      drawEdge: svgDrawSmoothLinePath,
+      generatePath: pathfindingJumpPointNoDiagonal,
+    },
+  }), [nodeGeometryKey, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition])
+  const [fallbackPath, fallbackLabelX, fallbackLabelY] = getSmoothStepPath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -10612,12 +10734,16 @@ function ProxyGraphEdge({
     offset: 24,
     centerY: data?.routeOffset ? (sourceY + targetY) / 2 + data.routeOffset : undefined,
   })
+  const path = smartPath?.svgPathString || fallbackPath
+  const labelX = smartPath?.edgeCenterX ?? fallbackLabelX
+  const labelY = smartPath?.edgeCenterY ?? fallbackLabelY
   let phaseHash = 0
   for (let index = 0; index < id.length; index++) phaseHash = (phaseHash * 31 + id.charCodeAt(index)) >>> 0
   const phase = (phaseHash % 2400) / 1000
   return <>
+    <path d={path} className="proxy-edge-casing" pointerEvents="none" />
     <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={22} />
-    {!data?.unhealthy && (
+    {!data?.unhealthy && data?.focusState === 'active' && (
       <g className="edge-flow" pointerEvents="none" style={{ color: style?.stroke as string }}>
         <circle r="1.7" fill="currentColor" opacity="0.5">
           <animateMotion dur="2.4s" begin={`${-(phase + 0.3)}s`} repeatCount="indefinite" path={path} />
@@ -10627,6 +10753,24 @@ function ProxyGraphEdge({
         </circle>
       </g>
     )}
+    {data?.pathLabel && <EdgeLabelRenderer>
+      {data.pathLabelID && data.onFocusPath
+        ? <button
+            type="button"
+            className={`proxy-edge-label nodrag nopan${data.focusState ? ` path-focus-${data.focusState}` : ''}`}
+            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+            title={data.pathLabelTitle || data.pathLabel}
+            onClick={event => {
+              event.stopPropagation()
+              data.onFocusPath?.(data.pathLabelID!)
+            }}
+          >{data.pathLabel}</button>
+        : <span
+            className={`proxy-edge-label shared nodrag nopan${data.focusState ? ` path-focus-${data.focusState}` : ''}`}
+            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+            title={data.pathLabelTitle || data.pathLabel}
+          >{data.pathLabel}</span>}
+    </EdgeLabelRenderer>}
   </>
 }
 
@@ -10826,6 +10970,21 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   })
   const sharedTopology = buildSharedProxyPathTopology(visiblePaths, data.proxy_path_steps || [])
   const stepNodeID = (step: ProxyPathStep) => proxyPathStepNodeID(canonicalProxyPathStep(sharedTopology, step))
+  const pathDisplayName = (pathID: number) => {
+    const path = pathByID.get(pathID)
+    return path?.name || `路径 ${pathID}`
+  }
+  const pathIDsByEntry = new Map<number, number[]>()
+  visiblePaths.forEach(path => pathIDsByEntry.set(path.inbound_id, mergeGraphPathIDs(pathIDsByEntry.get(path.inbound_id), path.id)))
+  const pathIDsByServer = new Map<number, number[]>()
+  visiblePaths.forEach(path => {
+    const root = inboundByID.get(path.inbound_id)
+    if (root) pathIDsByServer.set(root.server_id, mergeGraphPathIDs(pathIDsByServer.get(root.server_id), path.id))
+    ;(stepsByPath.get(path.id) || []).forEach(step => {
+      const serverID = graphStepServerID(step, inboundByID)
+      if (serverID) pathIDsByServer.set(serverID, mergeGraphPathIDs(pathIDsByServer.get(serverID), path.id))
+    })
+  })
   const serverRoles = new Map<number, GraphServerRole>()
   const entryPathInfo = new Map<number, GraphEntryPathInfo>()
   const foreignPaths = foreignProxyPathsByServer(data, rootID)
@@ -10875,7 +11034,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   const continuationByNode = new Map<string, GraphPathHandle[]>()
   const addContinuation = (nodeID: string, step: ProxyPathStep, path: ProxyPath) => {
     const list = continuationByNode.get(nodeID) || []
-    list.push({ step_id: step.id, label: `继续 · 路径 ${path.id}`, title: `${path.name || `路径 ${path.id}`} / 第 ${step.position} 跳后继续连接` })
+    list.push({ step_id: step.id, label: pathDisplayName(path.id), title: `${pathDisplayName(path.id)} / 第 ${step.position} 跳后继续连接` })
     continuationByNode.set(nodeID, list)
   }
   visiblePaths.forEach(path => {
@@ -10906,7 +11065,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     serverWidths.set(s.id, serverWidth)
 	    const entrySources = serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))
 	    const pathSources = continuationByNode.get(id) || []
-	    nodes.push({ id, className: 'graph-node server-graph-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: s.id, label: s.name || `服务器 ${s.id}` } as GraphEntity, sourceOptions: graphServerSourceOptions(entrySources, pathSources), label: <GraphNode kind={s.id === rootID ? '一级服务器' : '服务器'} title={s.name} meta={`${labelValue(s.status || 'unknown')} · ${serverDefaultEntryAddress(s) || '无公网 IP'}`} entryHandles={entrySources} pathHandles={pathSources} role={displayRole(s.id, s.id === rootID)} status={s.status} ipv4={s.public_ipv4 || '未检测'} cpu={Math.round(s.cpu_usage_percent || 0)} memory={s.memory_total_bytes ? Math.round((s.memory_used_bytes / s.memory_total_bytes) * 100) : 0} /> } })
+	    nodes.push({ id, className: 'graph-node server-graph-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: s.id, label: s.name || `服务器 ${s.id}` } as GraphEntity, pathIDs: pathIDsByServer.get(s.id) || [], sourceOptions: graphServerSourceOptions(entrySources, pathSources), label: <GraphNode kind={s.id === rootID ? '一级服务器' : '服务器'} title={s.name} meta={`${labelValue(s.status || 'unknown')} · ${serverDefaultEntryAddress(s) || '无公网 IP'}`} entryHandles={entrySources} pathHandles={pathSources} role={displayRole(s.id, s.id === rootID)} status={s.status} ipv4={s.public_ipv4 || '未检测'} cpu={Math.round(s.cpu_usage_percent || 0)} memory={s.memory_total_bytes ? Math.round((s.memory_used_bytes / s.memory_total_bytes) * 100) : 0} /> } })
   })
   canvasServerInstances.forEach((instance, index) => {
     const server = (data.servers || []).find((item: Server) => item.id === instance.server_id) as Server | undefined
@@ -10928,7 +11087,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const entryCount = serverEntryCounts.get(x.server_id) || visibleEntryCountByServer.get(x.server_id) || 1
     const position = positions[id] || defaultEntryGraphPosition(serverPosition, entryIndex, entryCount, serverWidths.get(x.server_id) || graphServerNodeWidth(entryCount))
     const probe = latestInboundProbeSummary(data, x.id)
-    nodes.push({ id, className: `graph-node entry-graph-node probe-${probe.tone}`, position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity: { type: 'entry', id: x.id, label: x.name || `入口 ${x.id}` } as GraphEntity, label: <GraphNode kind="一级入口" title={x.name} meta="" pathHandles={continuationByNode.get(id) || []} entryPathInfo={entryPathInfo.get(x.id)} entryDetails={{ protocol: labelProtocol(x.protocol), address: formatHostPort(inboundEntryAddress(data, x), x.port), probe: probe.label, access: inboundAccessSummary(data, x), dns: x.dns_sync_enabled ? `DNS ${x.dns_sync_error ? '同步失败' : '已同步'}` : '' }} /> } })
+	    nodes.push({ id, className: `graph-node entry-graph-node probe-${probe.tone}`, position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity: { type: 'entry', id: x.id, label: x.name || `入口 ${x.id}` } as GraphEntity, pathIDs: pathIDsByEntry.get(x.id) || [], label: <GraphNode kind="一级入口" title={x.name} meta="" pathHandles={continuationByNode.get(id) || []} entryPathInfo={entryPathInfo.get(x.id)} entryDetails={{ protocol: labelProtocol(x.protocol), address: formatHostPort(inboundEntryAddress(data, x), x.port), probe: probe.label, access: inboundAccessSummary(data, x), dns: x.dns_sync_enabled ? `DNS ${x.dns_sync_error ? '同步失败' : '已同步'}` : '' }} /> } })
     edges.push({
       id: `belongs-${x.id}`,
       source: id,
@@ -10966,6 +11125,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       const canonicalPathSteps = (stepsByPath.get(canonicalPath.id) || []).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
       const sharedSteps = sharedTopology.stepsByCanonicalID.get(canonicalStep.id) || [canonicalStep]
       const sharedCount = sharedSteps.length
+      const sharedPathIDs = Array.from(new Set(sharedSteps.map(member => member.path_id))).sort((left, right) => left - right)
       const sharedTerminal = sharedSteps.every(member => {
         const memberSteps = stepsByPath.get(member.path_id) || []
         return member === memberSteps[memberSteps.length - 1]
@@ -10978,20 +11138,20 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
         const server = (data.servers || []).find((item: Server) => item.id === serverID) as Server | undefined
         const profile = (data.warp_profiles || []).find((item: WARPProfile) => item.server_id === serverID) as WARPProfile | undefined
         const status = profile?.status || 'needed'
-        nodes.push({ id, className: `graph-node warp-graph-node proxy-path-instance-node status-${status}`, position, style: { width: 220 }, data: { entity, label: <WARPGraphNode connected title="WARP" meta={`${server?.name || `服务器 ${serverID}`} · ${labelValue(status)}`} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
+	        nodes.push({ id, className: `graph-node warp-graph-node proxy-path-instance-node status-${status}`, position, style: { width: 220 }, data: { entity, pathIDs: sharedPathIDs, label: <WARPGraphNode connected title="WARP" meta={`${server?.name || `服务器 ${serverID}`} · ${labelValue(status)}`} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
         return
       }
       if (canonicalStep.node_type === 'imported' && canonicalStep.external_outbound_id) {
         const imported = (data.external_outbounds || []).find((item: ExternalOutbound) => item.id === canonicalStep.external_outbound_id) as ExternalOutbound | undefined
         if (!imported) return
-        nodes.push({ id, className: 'graph-node imported-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="导入节点" title={imported.name} meta={`${labelProtocol(imported.protocol)} · ${formatHostPort(imported.target_address, imported.target_port)} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : `路径 ${canonicalPath.id}`}`} pathHandles={continuationByNode.get(id) || []} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
+	        nodes.push({ id, className: 'graph-node imported-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, pathIDs: sharedPathIDs, label: <GraphNode kind="导入节点" title={imported.name} meta={`${labelProtocol(imported.protocol)} · ${formatHostPort(imported.target_address, imported.target_port)} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : pathDisplayName(canonicalPath.id)}`} pathHandles={continuationByNode.get(id) || []} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
         return
       }
       const serverID = graphStepServerID(canonicalStep, inboundByID)
       const server = (data.servers || []).find((item: Server) => item.id === serverID) as Server | undefined
       if (!server) return
       const pathSources = continuationByNode.get(id) || []
-      nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, sourceOptions: graphServerSourceOptions([], pathSources), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : `路径 ${canonicalPath.id}`}`} pathHandles={pathSources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
+	      nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, pathIDs: sharedPathIDs, sourceOptions: graphServerSourceOptions([], pathSources), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : pathDisplayName(canonicalPath.id)}`} pathHandles={pathSources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
     })
   })
   const directPaths = visiblePaths.filter(path => path.kind === 'direct')
@@ -11017,6 +11177,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       style: { width: 220 },
       data: {
         entity: { type: 'direct', id: path.id, path_id: path.id, label: path.name || '直接出口', node_id: id } as GraphEntity,
+		pathIDs: [path.id],
 		label: <DirectExitGraphNode connected title={path.name || '直接出口'} meta={`${exitServer?.name || `服务器 ${exitServerID}`} · 直出`} exitRegion={{ code: path.effective_exit_region_code, status: path.exit_region_status }} />,
       },
     })
@@ -11042,7 +11203,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const position = positions[id] || { x: rootPosition.x + index * 240, y: rootPosition.y + 300 }
     nodes.push({ id, className: 'graph-node warp-graph-node canvas-warp-node', position, style: { width: 220 }, data: { entity: { type: 'warp', id: 0, label: 'WARP 出口', node_id: id } as GraphEntity, label: <WARPGraphNode title="WARP" meta="未连接" /> } })
   })
-  const renderedPathEdges = new Set<string>()
+	const renderedPathEdges = new Map<string, Edge<GraphTransportEdgeData>>()
   visiblePaths.forEach(path => {
     const root = inboundByID.get(path.inbound_id)
     if (!root) return
@@ -11055,9 +11216,11 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       if (!target) return
       const transport = proxyPathTransportPresentation(step)
       const sharedEdgeKey = `${source}\u001f${target}\u001f${transport.kind}`
-      if (!renderedPathEdges.has(sharedEdgeKey)) {
-        renderedPathEdges.add(sharedEdgeKey)
-        edges.push(graphTransportEdge(
+	    const existingEdge = renderedPathEdges.get(sharedEdgeKey)
+      if (existingEdge) {
+        existingEdge.data = { ...existingEdge.data!, pathIDs: mergeGraphPathIDs(existingEdge.data?.pathIDs, path.id) }
+      } else {
+	      const edge = graphTransportEdge(
           `proxy-path-${path.id}-${step.id}`,
           source,
           target,
@@ -11066,9 +11229,12 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
             kind: transport.kind,
             title: transport.title,
             detail: index === 0 ? (path.name || root.name || `路径 ${path.id}`) : `第 ${step.position} 跳`,
+			pathIDs: [path.id],
           },
           { sourceHandle, targetHandle: 'target-top', animated: path.enabled !== false },
-        ))
+	      ) as Edge<GraphTransportEdgeData>
+	      renderedPathEdges.set(sharedEdgeKey, edge)
+	      edges.push(edge)
       }
       source = target
       sourceHandle = pathStepHandleID(step.id)
@@ -11083,6 +11249,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
           kind: 'direct',
           title: '直接出口',
           detail: path.name || root.name || `入口 ${root.id}`,
+		  pathIDs: [path.id],
         },
         { sourceHandle, targetHandle: 'target-top', animated: false },
       ))
@@ -11110,6 +11277,25 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       title: x.type === 'wireguard' ? 'WireGuard 组网' : 'SSH 隧道',
       detail: x.listen_port ? `本地端口 ${x.listen_port}` : (x.target_endpoint || x.name),
     }, { animated: x.enabled !== false, targetHandle: 'target-top' }))
+  })
+  const pathLabels = graphPathEdgeLabels(
+    edges.flatMap(edge => {
+      const edgeData = edge.data as GraphTransportEdgeData | undefined
+      return edgeData?.pathIDs?.length
+        ? [{ id: edge.id, source: edge.source, target: edge.target, pathIDs: edgeData.pathIDs }]
+        : []
+    }),
+    pathDisplayName,
+  )
+  edges.forEach(edge => {
+    const label = pathLabels.get(edge.id)
+    if (!label) return
+    edge.data = {
+      ...(edge.data as GraphTransportEdgeData),
+      pathLabel: label.text,
+      pathLabelTitle: label.title,
+      pathLabelID: label.pathID,
+    }
   })
   const routeOffsets = graphBranchRouteOffsets(
     edges.map(edge => ({ id: edge.id, source: edge.source, target: edge.target, auxiliary: Boolean(edge.data?.auxiliary) })),
