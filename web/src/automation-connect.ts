@@ -10,7 +10,6 @@ export const codexOAuthScopes = [
   'inventory:read',
   'servers:read',
   'servers:plan',
-  'servers:onboard',
   'topology:read',
   'topology:plan',
   'topology:write',
@@ -19,6 +18,16 @@ export const codexOAuthScopes = [
   'deployments:apply',
   'offline_access',
 ]
+
+export const codexOAuthRisk2Scopes = [
+  'servers:onboard',
+  'subscriptions:resume',
+  'subscriptions:manage',
+]
+
+export type AutomationConnectPermissions = {
+  risk2?: boolean
+}
 
 export function normalizeAutomationControllerURL(raw: string) {
   const value = String(raw || '').trim().replace(/\/+$/, '')
@@ -37,12 +46,14 @@ export function automationMCPURL(controllerURL: string) {
   return base ? `${base}/mcp` : ''
 }
 
-export function automationConnectArtifacts(client: AutomationConnectClient, controllerURL: string): AutomationConnectArtifacts {
+export function automationConnectArtifacts(client: AutomationConnectClient, controllerURL: string, permissions: AutomationConnectPermissions = {}): AutomationConnectArtifacts {
   const base = normalizeAutomationControllerURL(controllerURL)
   if (!base) return { command: '', config: '', prompt: '' }
+  const includeRisk2 = permissions.risk2 !== false
+  const scopes = includeRisk2 ? [...codexOAuthScopes, ...codexOAuthRisk2Scopes] : codexOAuthScopes
   const mcpURL = `${base}/mcp`
   const command = clientCommand(client, mcpURL)
-  const config = clientConfig(client, mcpURL, base)
+  const config = clientConfig(client, mcpURL, base, scopes)
   const completion = client === 'codex'
     ? '完成配置后运行 `codex mcp login oboard`，等待我完成浏览器授权。'
     : client === 'claude'
@@ -56,6 +67,12 @@ export function automationConnectArtifacts(client: AutomationConnectClient, cont
 - MCP 地址：${mcpURL}
 - 服务名称：oboard
 - 认证：使用服务端 OAuth 2.1 discovery；需要我在浏览器中登录并确认 OBoard 展示的权限与资源范围
+
+权限选择（风险 2 级）：
+${includeRisk2 ? '- 已勾选：接入服务器（servers:onboard）、恢复订阅访问（subscriptions:resume）、订阅自定义路径（subscriptions:manage）' : '- 未勾选：不申请接入服务器、恢复订阅、订阅自定义路径等风险 2 级写权限'}
+
+请在 OAuth 授权页核对「申请的权限」清单与上述选择一致后再允许授权。需要申请的范围：
+${scopes.map(scope => `- ${scope}`).join('\n')}
 
 请先检查现有的用户级 MCP 配置，仅幂等新增或更新 oboard，保留其他服务器配置，不要修改当前项目或仓库文件。
 
@@ -80,10 +97,10 @@ function clientCommand(client: AutomationConnectClient, mcpURL: string) {
   return ''
 }
 
-function clientConfig(client: AutomationConnectClient, mcpURL: string, baseURL: string) {
+function clientConfig(client: AutomationConnectClient, mcpURL: string, baseURL: string, scopes: string[]) {
   if (client === 'codex') {
-    const scopes = codexOAuthScopes.map(scope => `  ${JSON.stringify(scope)},`).join('\n')
-    return `[mcp_servers.oboard]\nurl = ${JSON.stringify(mcpURL)}\nauth = "oauth"\noauth_resource = ${JSON.stringify(mcpURL)}\nrequired = true\ntool_timeout_sec = 120\ndefault_tools_approval_mode = "writes"\nscopes = [\n${scopes}\n]`
+    const scopeLines = scopes.map(scope => `  ${JSON.stringify(scope)},`).join('\n')
+    return `[mcp_servers.oboard]\nurl = ${JSON.stringify(mcpURL)}\nauth = "oauth"\noauth_resource = ${JSON.stringify(mcpURL)}\nrequired = true\ntool_timeout_sec = 120\ndefault_tools_approval_mode = "writes"\nscopes = [\n${scopeLines}\n]`
   }
   const server: Record<string, unknown> = { type: 'http', url: mcpURL }
   if (client === 'claude') return JSON.stringify({ mcpServers: { oboard: server } }, null, 2)

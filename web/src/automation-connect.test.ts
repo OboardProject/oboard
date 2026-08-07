@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   automationConnectArtifacts,
   automationMCPURL,
+  codexOAuthRisk2Scopes,
   codexOAuthScopes,
   normalizeAutomationControllerURL,
   type AutomationConnectClient,
@@ -32,9 +33,24 @@ describe('automation MCP connection artifacts', () => {
     expect(codex.config).toContain('oauth_resource = "https://panel.example.com/mcp"')
     expect(codex.config).toContain('default_tools_approval_mode = "writes"')
     for (const scope of codexOAuthScopes) expect(codex.config).toContain(`"${scope}"`)
+    for (const scope of codexOAuthRisk2Scopes) expect(codex.config).toContain(`"${scope}"`)
     const claude = automationConnectArtifacts('claude', 'https://panel.example.com')
     expect(claude.command).toContain('claude mcp add --transport http --scope user')
     expect(claude.config).not.toContain('Authorization')
+  })
+
+  it('adds risk 2 write scopes to the request only when enabled', () => {
+    const enabled = automationConnectArtifacts('codex', 'https://panel.example.com', { risk2: true })
+    for (const scope of codexOAuthRisk2Scopes) {
+      expect(enabled.config).toContain(`"${scope}"`)
+      expect(enabled.prompt).toContain(`- ${scope}`)
+    }
+    expect(enabled.prompt).toContain('已勾选')
+    const disabled = automationConnectArtifacts('codex', 'https://panel.example.com', { risk2: false })
+    for (const scope of codexOAuthRisk2Scopes) expect(disabled.config).not.toContain(`"${scope}"`)
+    for (const scope of codexOAuthScopes) expect(disabled.config).toContain(`"${scope}"`)
+    expect(disabled.prompt).toContain('未勾选')
+    expect(disabled.prompt).not.toContain('- servers:onboard')
   })
 
   it('uses RFC well-known locations when the controller has a base path', () => {

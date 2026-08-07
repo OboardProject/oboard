@@ -9976,6 +9976,33 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .automation-connect-choices > div { display: grid; min-width: 0; gap: 7px; }
 .automation-connect-choices > div > span,
 .automation-connect-endpoint > span { color: var(--muted); font-size: 11px; }
+.automation-connect-permission {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  background: var(--surface-solid);
+}
+.automation-connect-permission:has(input:checked) { background: var(--primary-soft); }
+.automation-connect-permission input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+.automation-connect-permission > span { display: grid; gap: 2px; min-width: 0; }
+.automation-connect-permission strong { color: var(--text-strong); font-size: 12.5px; }
+.automation-connect-permission small { color: var(--text-secondary); font-size: 11px; }
+.automation-connect-permission em {
+  padding: 1px 5px;
+  border-radius: var(--radius-full);
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 11%, transparent);
+  font-size: 9.5px;
+  font-style: normal;
+  white-space: nowrap;
+}
 .automation-connect-segments {
   display: grid;
   grid-auto-flow: column;

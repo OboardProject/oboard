@@ -2884,6 +2884,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
   const [connectDialogOpen, setConnectDialogOpen] = useState(false)
   const [serviceTokenDialogOpen, setServiceTokenDialogOpen] = useState(false)
   const [connectClient, setConnectClient] = useState<AutomationConnectClient>('codex')
+  const [connectRisk2, setConnectRisk2] = useState(true)
   const [connectToken, setConnectToken] = useState<{ value: string; expiresAt: string } | null>(null)
   const [controllerURL, setControllerURL] = useState(() => data?.settings?.controller_url || '')
   const [editingServiceID, setEditingServiceID] = useState('')
@@ -3194,7 +3195,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
 
   const serviceAccounts = snapshot.principals.filter((item: any) => item.type === 'service_account')
   const publicControllerURL = normalizeAutomationControllerURL(controllerURL)
-  const connectArtifacts = automationConnectArtifacts(connectClient, publicControllerURL)
+  const connectArtifacts = automationConnectArtifacts(connectClient, publicControllerURL, { risk2: connectRisk2 })
   const connectReady = true
   const grantResourceSummary = (value: any) => {
     const filter = typeof value === 'string' ? (() => { try { return JSON.parse(value) } catch { return {} } })() : (value || {})
@@ -3300,10 +3301,15 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
           <Info size={18} /><div><strong>缺少主控公开地址</strong><span>请先在系统设置中填写客户端可访问的完整 HTTPS 地址。</span></div>
           <button type="button" onClick={() => window.location.assign(appPath('/settings'))}>前往设置</button>
         </div> : <>
-          <div className="automation-connect-choices is-single">
+          <div className="automation-connect-choices">
             <div><span>客户端</span><div className="automation-connect-segments" role="radiogroup" aria-label="客户端">{([
               ['codex', 'Codex'], ['claude', 'Claude Code'], ['generic', '通用 MCP'],
             ] as [AutomationConnectClient, string][]).map(([value, label]) => <button type="button" role="radio" aria-checked={connectClient === value} className={connectClient === value ? 'active' : ''} key={value} onClick={() => setConnectClient(value)}>{label}</button>)}</div></div>
+            <div><span>权限范围</span><label className="automation-connect-permission" title="勾选后申请风险 2 级写权限：接入服务器、恢复订阅访问、订阅自定义路径">
+              <input type="checkbox" checked={connectRisk2} onChange={event => setConnectRisk2(event.target.checked)} />
+              <span><strong>风险 2 级写权限</strong><small>接入服务器、恢复订阅、订阅自定义路径</small></span>
+              <em>风险 2</em>
+            </label></div>
           </div>
           <div className="automation-connect-endpoint"><span>MCP 地址</span><CopyBlock value={`${publicControllerURL}/mcp`} /></div>
           <div className="automation-connect-notice"><ShieldCheck size={18} /><div><strong>浏览器确认授权</strong><span>OBoard MCP 仅接受 OAuth Access Token。权限、资源范围和自动审批级别均由授权页和服务端策略决定。</span></div></div>
