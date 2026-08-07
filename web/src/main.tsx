@@ -13346,6 +13346,12 @@ function Subscriptions({ data, client, load, notify }: any) {
   const [iconsReady, setIconsReady] = useState(false)
   const [subscriptionFormat, setSubscriptionFormat] = useState<SubscriptionFormat>(defaultSubscriptionFormat)
   const [customPathMode, setCustomPathMode] = useState<SubscriptionCustomPathMode>((data.settings?.subscription_custom_path_mode || 'disabled') as SubscriptionCustomPathMode)
+
+  useEffect(() => {
+    let active = true
+    preloadSubscriptionClientIcons().then(() => { if (active) setIconsReady(true) })
+    return () => { active = false }
+  }, [])
   const [customPathBusy, setCustomPathBusy] = useState('')
 
   const users: User[] = data.users || []

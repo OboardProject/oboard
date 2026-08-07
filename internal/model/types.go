@@ -325,17 +325,18 @@ const (
 // the isolated node set in subscription_plan_revision_nodes. Historical
 // revisions are kept for inspection and rollback.
 type SubscriptionPlanRevision struct {
-	ID                int64              `json:"id"`
-	PlanID            int64              `json:"plan_id"`
-	Revision          int64              `json:"revision"`
-	Status            PlanRevisionStatus `json:"status"`
-	SpeedLimitMbps    int                `json:"speed_limit_mbps"`
-	TrafficLimitBytes int64              `json:"traffic_limit_bytes"`
-	TrafficResetMode  string             `json:"traffic_reset_mode"`
-	TrafficResetDay   int                `json:"traffic_reset_day"`
-	CreatedBy         *int64             `json:"created_by,omitempty"`
-	CreatedAt         time.Time          `json:"created_at"`
-	ActivatedAt       *time.Time         `json:"activated_at,omitempty"`
+	ID                int64                       `json:"id"`
+	PlanID            int64                       `json:"plan_id"`
+	Revision          int64                       `json:"revision"`
+	Status            PlanRevisionStatus          `json:"status"`
+	SpeedLimitMbps    int                         `json:"speed_limit_mbps"`
+	TrafficLimitBytes int64                       `json:"traffic_limit_bytes"`
+	TrafficResetMode  string                      `json:"traffic_reset_mode"`
+	TrafficResetDay   int                         `json:"traffic_reset_day"`
+	NodeOrderPolicy   SubscriptionNodeOrderPolicy `json:"node_order_policy,omitempty"`
+	CreatedBy         *int64                      `json:"created_by,omitempty"`
+	CreatedAt         time.Time                   `json:"created_at"`
+	ActivatedAt       *time.Time                  `json:"activated_at,omitempty"`
 }
 
 // SubscriptionPlanRevisionNode is one node of a frozen revision. Rows are
@@ -349,7 +350,87 @@ type SubscriptionPlanRevisionNode struct {
 	DisplayGroup string             `json:"display_group"`
 	SourceType   PlanNodeSourceType `json:"source_type"`
 	SourceRuleID int64              `json:"source_rule_id,omitempty"`
+	SortPosition *int               `json:"sort_position,omitempty"`
 	CreatedAt    time.Time          `json:"created_at"`
+}
+
+// SubscriptionNodeOrderMode controls how a plan revision's nodes are ordered in
+// every rendered subscription format. The order is presentation metadata owned
+// by the revision snapshot: it is copied into drafts, cloned, restored and
+// published together with the node set.
+type SubscriptionNodeOrderMode string
+
+const (
+	// SubscriptionNodeOrderLegacyGroupName preserves the pre-ordering behavior
+	// (DisplayGroup then node name with stable input order). It is the
+	// migration default for existing revisions so upgrades never change an
+	// already-issued subscription body or ETag.
+	SubscriptionNodeOrderLegacyGroupName SubscriptionNodeOrderMode = "legacy_group_name"
+	// SubscriptionNodeOrderExitRegion orders by exit region first.
+	SubscriptionNodeOrderExitRegion SubscriptionNodeOrderMode = "exit_region"
+	// SubscriptionNodeOrderEntry orders by entry region then exact inbound.
+	SubscriptionNodeOrderEntry SubscriptionNodeOrderMode = "entry"
+	// SubscriptionNodeOrderManual uses explicit sort_position values.
+	SubscriptionNodeOrderManual SubscriptionNodeOrderMode = "manual"
+)
+
+const (
+	// SubscriptionNodeOrderVersion is the current policy snapshot version.
+	SubscriptionNodeOrderVersion = 1
+	// SubscriptionNodeEntryRegionOrderInheritExit makes the entry region order
+	// follow the exit region order.
+	SubscriptionNodeEntryRegionOrderInheritExit = "inherit_exit"
+	// SubscriptionNodeEntryRegionOrderCustom uses the explicit entry region
+	// order list.
+	SubscriptionNodeEntryRegionOrderCustom = "custom"
+)
+
+// SubscriptionNodeOrderPolicy is a versioned JSON snapshot stored on each plan
+// revision. Region lists are ISO 3166-1 alpha-2 codes normalized to upper
+// case; EntryOrder holds stable "inbound:<id>" keys.
+type SubscriptionNodeOrderPolicy struct {
+	Version              int                       `json:"version"`
+	Mode                 SubscriptionNodeOrderMode `json:"mode"`
+	ManualSeed           SubscriptionNodeOrderMode `json:"manual_seed,omitempty"`
+	ExitRegionOrder      []string                  `json:"exit_region_order"`
+	EntryRegionOrderMode string                    `json:"entry_region_order_mode"`
+	EntryRegionOrder     []string                  `json:"entry_region_order"`
+	EntryOrder           []string                  `json:"entry_order"`
+}
+
+// DefaultSubscriptionNodeOrderPolicy returns the migration default used for
+// existing revisions: legacy ordering with an exit-region manual seed.
+func DefaultSubscriptionNodeOrderPolicy() SubscriptionNodeOrderPolicy {
+	return SubscriptionNodeOrderPolicy{
+		Version:              SubscriptionNodeOrderVersion,
+		Mode:                 SubscriptionNodeOrderLegacyGroupName,
+		ManualSeed:           SubscriptionNodeOrderExitRegion,
+		ExitRegionOrder:      []string{},
+		EntryRegionOrderMode: SubscriptionNodeEntryRegionOrderInheritExit,
+		EntryRegionOrder:     []string{},
+		EntryOrder:           []string{},
+	}
+}
+
+// DefaultSubscriptionNodeOrderPolicyJSON is the exact legacy snapshot used as
+// the column default so upgraded revisions keep their existing subscription
+// order without a rewrite.
+func DefaultSubscriptionNodeOrderPolicyJSON() string {
+	return `{"version":1,"mode":"legacy_group_name","manual_seed":"exit_region","exit_region_order":[],"entry_region_order_mode":"inherit_exit","entry_region_order":[],"entry_order":[]}`
+}
+
+// NewSubscriptionNodeOrderPolicy is the default for newly created plans:
+// exit-region ordering with the entry region order following the exit order.
+func NewSubscriptionNodeOrderPolicy() SubscriptionNodeOrderPolicy {
+	return SubscriptionNodeOrderPolicy{
+		Version:              SubscriptionNodeOrderVersion,
+		Mode:                 SubscriptionNodeOrderExitRegion,
+		ManualSeed:           SubscriptionNodeOrderExitRegion,
+		ExitRegionOrder:      []string{},
+		EntryRegionOrderMode: SubscriptionNodeEntryRegionOrderInheritExit,
+		EntryRegionOrder:     []string{},
+		EntryOrder:           []string{},
+	}
 }
 
 type SubscriptionPlanNode struct {
@@ -361,6 +442,7 @@ type SubscriptionPlanNode struct {
 	DisplayGroup string             `json:"display_group"`
 	SourceType   PlanNodeSourceType `json:"source_type"`
 	SourceRuleID int64              `json:"source_rule_id,omitempty"`
+	SortPosition *int               `json:"sort_position,omitempty"`
 	Enabled      bool               `json:"enabled"`
 	CreatedAt    time.Time          `json:"created_at"`
 	UpdatedAt    time.Time          `json:"updated_at"`
@@ -451,12 +533,12 @@ const (
 type AccessChangeTargetStatus string
 
 const (
-	AccessChangeTargetPending   AccessChangeTargetStatus = "pending"
-	AccessChangeTargetPreparing AccessChangeTargetStatus = "preparing"
-	AccessChangeTargetPrepared  AccessChangeTargetStatus = "prepared"
+	AccessChangeTargetPending    AccessChangeTargetStatus = "pending"
+	AccessChangeTargetPreparing  AccessChangeTargetStatus = "preparing"
+	AccessChangeTargetPrepared   AccessChangeTargetStatus = "prepared"
 	AccessChangeTargetFinalizing AccessChangeTargetStatus = "finalizing"
-	AccessChangeTargetFinalized AccessChangeTargetStatus = "finalized"
-	AccessChangeTargetFailed    AccessChangeTargetStatus = "failed"
+	AccessChangeTargetFinalized  AccessChangeTargetStatus = "finalized"
+	AccessChangeTargetFailed     AccessChangeTargetStatus = "failed"
 )
 
 // AccessChange is one authorization mutation with a two-phase deployment. The
@@ -464,36 +546,36 @@ const (
 // orchestration survives restarts and later plan edits without changing what
 // the change deploys.
 type AccessChange struct {
-	ID                       int64               `json:"id"`
-	ChangeType               AccessChangeType    `json:"change_type"`
-	SourcePlanID             int64               `json:"source_plan_id,omitempty"`
-	CandidateRevisionID      int64               `json:"candidate_revision_id,omitempty"`
-	ExpectedActiveRevisionID int64               `json:"expected_active_revision_id,omitempty"`
-	Status                   AccessChangeStatus  `json:"status"`
-	PreviewHash              string              `json:"preview_hash,omitempty"`
-	AffectedUserCount        int                 `json:"affected_user_count"`
-	ActivateAt               *time.Time          `json:"activate_at,omitempty"`
-	PayloadJSON              string              `json:"-"`
-	PrepareProjectionJSON    string              `json:"-"`
-	FinalizeProjectionJSON   string              `json:"-"`
-	Error                    string              `json:"error,omitempty"`
-	CreatedBy                *int64              `json:"created_by,omitempty"`
-	CreatedAt                time.Time           `json:"created_at"`
-	ActivatedAt              *time.Time          `json:"activated_at,omitempty"`
-	FinalizedAt              *time.Time          `json:"finalized_at,omitempty"`
-	FailedAt                 *time.Time          `json:"failed_at,omitempty"`
+	ID                       int64                `json:"id"`
+	ChangeType               AccessChangeType     `json:"change_type"`
+	SourcePlanID             int64                `json:"source_plan_id,omitempty"`
+	CandidateRevisionID      int64                `json:"candidate_revision_id,omitempty"`
+	ExpectedActiveRevisionID int64                `json:"expected_active_revision_id,omitempty"`
+	Status                   AccessChangeStatus   `json:"status"`
+	PreviewHash              string               `json:"preview_hash,omitempty"`
+	AffectedUserCount        int                  `json:"affected_user_count"`
+	ActivateAt               *time.Time           `json:"activate_at,omitempty"`
+	PayloadJSON              string               `json:"-"`
+	PrepareProjectionJSON    string               `json:"-"`
+	FinalizeProjectionJSON   string               `json:"-"`
+	Error                    string               `json:"error,omitempty"`
+	CreatedBy                *int64               `json:"created_by,omitempty"`
+	CreatedAt                time.Time            `json:"created_at"`
+	ActivatedAt              *time.Time           `json:"activated_at,omitempty"`
+	FinalizedAt              *time.Time           `json:"finalized_at,omitempty"`
+	FailedAt                 *time.Time           `json:"failed_at,omitempty"`
 	Targets                  []AccessChangeTarget `json:"targets,omitempty"`
 }
 
 // AccessChangeTarget tracks the per-server Agent tasks of one change phase.
 type AccessChangeTarget struct {
-	AccessChangeID int64                  `json:"access_change_id"`
-	ServerID       int64                  `json:"server_id"`
-	PrepareTaskID  int64                  `json:"prepare_task_id,omitempty"`
-	FinalizeTaskID int64                  `json:"finalize_task_id,omitempty"`
+	AccessChangeID int64                    `json:"access_change_id"`
+	ServerID       int64                    `json:"server_id"`
+	PrepareTaskID  int64                    `json:"prepare_task_id,omitempty"`
+	FinalizeTaskID int64                    `json:"finalize_task_id,omitempty"`
 	Status         AccessChangeTargetStatus `json:"status"`
-	Error          string                 `json:"error,omitempty"`
-	UpdatedAt      time.Time              `json:"updated_at"`
+	Error          string                   `json:"error,omitempty"`
+	UpdatedAt      time.Time                `json:"updated_at"`
 }
 
 type ControllerBackup struct {

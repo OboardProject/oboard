@@ -23,18 +23,25 @@ const (
 // plan. Topology resources (servers, inbounds, path steps, shared chains,
 // tunnels, port forwards) are not assignable.
 type AssignableNode struct {
-	Type            model.AssignableNodeType `json:"type"`
-	ID              int64                    `json:"id"`
-	Key             string                   `json:"key"`
-	Name            string                   `json:"name"`
-	EntryServerID   int64                    `json:"entry_server_id,omitempty"`
-	EntryServerName string                   `json:"entry_server_name,omitempty"`
-	EntryProtocol   model.Protocol           `json:"entry_protocol,omitempty"`
-	EntryPort       int                      `json:"entry_port,omitempty"`
-	PathSummary     []string                 `json:"path_summary,omitempty"`
-	ExitRegion      string                   `json:"exit_region,omitempty"`
-	Enabled         bool                     `json:"enabled"`
-	Status          AssignableNodeStatus     `json:"status"`
+	Type                   model.AssignableNodeType   `json:"type"`
+	ID                     int64                      `json:"id"`
+	Key                    string                     `json:"key"`
+	Name                   string                     `json:"name"`
+	EntryKey               string                     `json:"entry_key,omitempty"`
+	EntryServerID          int64                      `json:"entry_server_id,omitempty"`
+	EntryServerName        string                     `json:"entry_server_name,omitempty"`
+	EntryRegion            string                     `json:"entry_region,omitempty"`
+	EntryProtocol          model.Protocol             `json:"entry_protocol,omitempty"`
+	EntryPort              int                        `json:"entry_port,omitempty"`
+	ExitServerID           int64                      `json:"exit_server_id,omitempty"`
+	ExitServerName         string                     `json:"exit_server_name,omitempty"`
+	ExitExternalOutboundID int64                      `json:"exit_external_outbound_id,omitempty"`
+	PathServers            []AssignableNodeServerRole `json:"path_servers,omitempty"`
+	PathSummary            []string                   `json:"path_summary,omitempty"`
+	ExitRegion             string                     `json:"exit_region,omitempty"`
+	Enabled                bool                       `json:"enabled"`
+	Status                 AssignableNodeStatus       `json:"status"`
+	Renderable             bool                       `json:"renderable"`
 }
 
 // AssignableNodeCatalogInput carries the topology snapshot the catalog is
@@ -57,9 +64,10 @@ type AssignableNodeCatalogInput struct {
 // standalone inbounds that have no path branches (transitional until migration
 // materializes them as direct proxy_paths).
 func BuildAssignableNodeCatalog(input AssignableNodeCatalogInput) ([]AssignableNode, error) {
-	paths := ResolveProxyPathNames(input.ProxyPaths, input.ProxyPathSteps, input.Servers, input.Inbounds, input.ExternalOutbounds)
-	var externals []model.ExternalOutbound
-	paths, externals = ResolveProxyPathExitRegions(paths, input.ProxyPathSteps, input.Servers, input.Inbounds, input.ExternalOutbounds, input.EgressResults)
+	topologies, paths, externals, err := ResolveAssignableNodeTopologies(input)
+	if err != nil {
+		return nil, err
+	}
 	serverByID := map[int64]model.Server{}
 	for _, server := range input.Servers {
 		serverByID[server.ID] = server
@@ -113,19 +121,33 @@ func BuildAssignableNodeCatalog(input AssignableNodeCatalogInput) ([]AssignableN
 		drafts = append(drafts, draftNode{node: AssignableNode{
 			Type:            model.AssignableNodeInbound,
 			ID:              inbound.ID,
+			EntryKey:        "inbound:" + strconv.FormatInt(inbound.ID, 10),
 			EntryServerID:   server.ID,
 			EntryServerName: label,
+			EntryRegion:     regionCode,
 			EntryProtocol:   inbound.Protocol,
 			EntryPort:       inbound.Port,
 			ExitRegion:      regionCode,
 			Enabled:         true,
 			Status:          assignableNodeStatusFor(server, true),
+			Renderable:      true,
 		}, name: label, regionCode: regionCode, serverID: server.ID, protocol: inbound.Protocol})
 	}
 
 	pathByID := map[int64]model.ProxyPath{}
 	for _, path := range paths {
 		pathByID[path.ID] = path
+	}
+	applyTopology := func(node *AssignableNode) {
+		if topo, ok := topologies[node.Key]; ok {
+			node.EntryKey = topo.EntryKey
+			node.EntryRegion = topo.EntryRegion
+			node.ExitServerID = topo.ExitServerID
+			node.ExitServerName = topo.ExitServerName
+			node.ExitExternalOutboundID = topo.ExitExternalOutboundID
+			node.PathServers = topo.ServerRoles
+			node.Renderable = node.Enabled
+		}
 	}
 	for _, path := range paths {
 		root, ok := inboundByID[path.InboundID]
@@ -158,6 +180,7 @@ func BuildAssignableNodeCatalog(input AssignableNodeCatalogInput) ([]AssignableN
 			ExitRegion:      path.EffectiveExitRegionCode,
 			Enabled:         enabled,
 			Status:          status,
+			Renderable:      enabled,
 		}, name: pathName, regionCode: path.EffectiveExitRegionCode, serverID: root.ServerID, protocol: root.Protocol})
 	}
 
@@ -178,6 +201,7 @@ func BuildAssignableNodeCatalog(input AssignableNodeCatalogInput) ([]AssignableN
 			ExitRegion: external.EffectiveRegionCode,
 			Enabled:    true,
 			Status:     AssignableNodeStatusOK,
+			Renderable: true,
 		}, name: name, regionCode: external.EffectiveRegionCode})
 	}
 
@@ -185,6 +209,7 @@ func BuildAssignableNodeCatalog(input AssignableNodeCatalogInput) ([]AssignableN
 	for i := range drafts {
 		drafts[i].node.Name = RegionFlagEmoji(drafts[i].regionCode) + " " + drafts[i].name
 		drafts[i].node.Key = NodeKeyOf(drafts[i].node.Type, drafts[i].node.ID)
+		applyTopology(&drafts[i].node)
 	}
 
 	// Resolve final standalone names after protocol-suffix disambiguation:

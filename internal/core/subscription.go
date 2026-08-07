@@ -22,15 +22,37 @@ type SubscriptionOptions struct {
 	// EffectiveNodeGroups maps node key to the display group from the granting
 	// plan node. Nodes without an explicit group keep the default group.
 	EffectiveNodeGroups map[string]string
+	// NodeOrderPolicy is the active revision's ordering policy. An empty
+	// policy falls back to the legacy group/name ordering so users without a
+	// plan binding never see an ordering change after an upgrade.
+	NodeOrderPolicy model.SubscriptionNodeOrderPolicy
+	// NodeOrderPositions maps node key to the revision's manual sort position
+	// (0-based, present only in manual mode).
+	NodeOrderPositions map[string]int
 }
 
 type SubscriptionNode struct {
-	Name     string         `json:"name"`
-	Group    string         `json:"group"`
-	ServerID int64          `json:"server_id"`
-	Inbound  model.Inbound  `json:"-"`
-	Server   model.Server   `json:"-"`
-	Raw      map[string]any `json:"raw"`
+	Key      string                   `json:"key"`
+	NodeType model.AssignableNodeType `json:"node_type"`
+	NodeID   int64                    `json:"node_id"`
+
+	Name  string `json:"name"`
+	Group string `json:"group"`
+
+	EntryKey       string `json:"entry_key"`
+	EntryInboundID int64  `json:"entry_inbound_id"`
+	EntryServerID  int64  `json:"entry_server_id"`
+	EntryRegion    string `json:"entry_region"`
+
+	ExitServerID           int64  `json:"exit_server_id"`
+	ExitExternalOutboundID int64  `json:"exit_external_outbound_id"`
+	ExitRegion             string `json:"exit_region"`
+
+	ManualPosition *int           `json:"manual_position,omitempty"`
+	ServerID       int64          `json:"server_id"`
+	Inbound        model.Inbound  `json:"-"`
+	Server         model.Server   `json:"-"`
+	Raw            map[string]any `json:"raw"`
 }
 
 type subscriptionNodeNameKind uint8
@@ -59,8 +81,19 @@ func GenerateSubscriptionWithOptions(user model.User, servers []model.Server, in
 }
 
 func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []model.Inbound, opts SubscriptionOptions) ([]SubscriptionNode, error) {
-	opts.ProxyPaths = ResolveProxyPathNames(opts.ProxyPaths, opts.ProxyPathSteps, servers, inbounds, opts.ExternalOutbounds)
-	opts.ProxyPaths, opts.ExternalOutbounds = ResolveProxyPathExitRegions(opts.ProxyPaths, opts.ProxyPathSteps, servers, inbounds, opts.ExternalOutbounds, opts.ProxyPathEgressResults)
+	topologies, resolvedPaths, resolvedExternals, err := ResolveAssignableNodeTopologies(AssignableNodeCatalogInput{
+		Servers:           servers,
+		Inbounds:          inbounds,
+		ProxyPaths:        opts.ProxyPaths,
+		ProxyPathSteps:    opts.ProxyPathSteps,
+		EgressResults:     opts.ProxyPathEgressResults,
+		ExternalOutbounds: opts.ExternalOutbounds,
+	})
+	if err != nil {
+		return nil, err
+	}
+	opts.ProxyPaths = resolvedPaths
+	opts.ExternalOutbounds = resolvedExternals
 	serverByID := map[int64]model.Server{}
 	for _, server := range servers {
 		serverByID[server.ID] = server
@@ -92,20 +125,6 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 			continue
 		}
 		standaloneName := proxyPathServerLabel(server, server.ID)
-		group := defaultGroup
-		if opts.EffectiveNodeGroups != nil {
-			for _, path := range authorizedBranches {
-				if g := strings.TrimSpace(opts.EffectiveNodeGroups[NodeKeyOf(model.AssignableNodeProxyPath, path.ID)]); g != "" {
-					group = g
-					break
-				}
-			}
-			if len(authorizedBranches) == 0 {
-				if g := strings.TrimSpace(opts.EffectiveNodeGroups[NodeKeyOf(model.AssignableNodeInbound, inbound.ID)]); g != "" {
-					group = g
-				}
-			}
-		}
 		if inbound.Protocol == model.ProtocolSSH {
 			hostKey := strings.TrimSpace(opts.SSHServerHostKeys[server.ID])
 			if strings.TrimSpace(user.ProxyPassword) == "" || strings.TrimSpace(user.SSHRandomID) == "" || hostKey == "" {
@@ -117,6 +136,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 				if branchName == "" {
 					branchName = fmt.Sprintf("%s 分支 %d", standaloneName, path.ID)
 				}
+				group := nodeGroupFor(opts.EffectiveNodeGroups, NodeKeyOf(model.AssignableNodeProxyPath, path.ID), defaultGroup)
 				raw := map[string]any{
 					"type":         "ssh",
 					"server":       server.EntryAddress,
@@ -126,7 +146,8 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 					"host_key":     []string{hostKey},
 					"oboard_group": group,
 				}
-				nodes = append(nodes, SubscriptionNode{Name: branchName, Group: group, ServerID: server.ID, Inbound: inbound, Server: server, Raw: raw})
+				topo := topologies[NodeKeyOf(model.AssignableNodeProxyPath, path.ID)]
+				nodes = append(nodes, newSubscriptionNode(topo, model.AssignableNodeProxyPath, path.ID, branchName, group, opts.NodeOrderPositions, inbound, server, raw))
 				nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameProxyPath, resourceID: path.ID, serverID: server.ID, regionCode: path.EffectiveExitRegionCode})
 			}
 			continue
@@ -140,12 +161,14 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 			if len(configuredBranches) > 0 {
 				continue
 			}
+			group := nodeGroupFor(opts.EffectiveNodeGroups, NodeKeyOf(model.AssignableNodeInbound, inbound.ID), defaultGroup)
 			raw, err := adapter.SubscriptionNode(user, inbound, server)
 			if err != nil {
 				return nil, err
 			}
 			raw["oboard_group"] = group
-			nodes = append(nodes, SubscriptionNode{Name: standaloneName, Group: group, ServerID: server.ID, Inbound: inbound, Server: server, Raw: raw})
+			topo := topologies[NodeKeyOf(model.AssignableNodeInbound, inbound.ID)]
+			nodes = append(nodes, newSubscriptionNode(topo, model.AssignableNodeInbound, inbound.ID, standaloneName, group, opts.NodeOrderPositions, inbound, server, raw))
 			regionCode, _ := EffectiveServerRegion(server)
 			nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameStandalone, resourceID: inbound.ID, serverID: server.ID, regionCode: regionCode})
 			continue
@@ -160,8 +183,10 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 			if branchName == "" {
 				branchName = fmt.Sprintf("%s 分支 %d", standaloneName, path.ID)
 			}
+			group := nodeGroupFor(opts.EffectiveNodeGroups, NodeKeyOf(model.AssignableNodeProxyPath, path.ID), defaultGroup)
 			raw["oboard_group"] = group
-			nodes = append(nodes, SubscriptionNode{Name: branchName, Group: group, ServerID: server.ID, Inbound: inbound, Server: server, Raw: raw})
+			topo := topologies[NodeKeyOf(model.AssignableNodeProxyPath, path.ID)]
+			nodes = append(nodes, newSubscriptionNode(topo, model.AssignableNodeProxyPath, path.ID, branchName, group, opts.NodeOrderPositions, inbound, server, raw))
 			nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameProxyPath, resourceID: path.ID, serverID: server.ID, regionCode: path.EffectiveExitRegionCode})
 		}
 	}
@@ -180,14 +205,10 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		if name == "" {
 			name = fmt.Sprintf("%s-%d", external.Protocol, external.ID)
 		}
-		group := defaultGroup
-		if opts.EffectiveNodeGroups != nil {
-			if g := strings.TrimSpace(opts.EffectiveNodeGroups[NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID)]); g != "" {
-				group = g
-			}
-		}
+		group := nodeGroupFor(opts.EffectiveNodeGroups, NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID), defaultGroup)
 		raw["oboard_group"] = group
-		nodes = append(nodes, SubscriptionNode{Name: name, Group: group, Raw: raw})
+		topo := topologies[NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID)]
+		nodes = append(nodes, newSubscriptionNode(topo, model.AssignableNodeExternalOutbound, external.ID, name, group, opts.NodeOrderPositions, model.Inbound{}, model.Server{}, raw))
 		nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameExternal, resourceID: external.ID, regionCode: external.EffectiveRegionCode})
 	}
 	resolveSubscriptionNodeNames(nodes, nameRefs)
@@ -195,13 +216,46 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		nodes[ref.index].Name = RegionFlagEmoji(ref.regionCode) + " " + nodes[ref.index].Name
 		nodes[ref.index].Raw["tag"] = nodes[ref.index].Name
 	}
-	sort.SliceStable(nodes, func(i, j int) bool {
-		if nodes[i].Group == nodes[j].Group {
-			return nodes[i].Name < nodes[j].Name
+	policy := opts.NodeOrderPolicy
+	if strings.TrimSpace(string(policy.Mode)) == "" {
+		policy = model.DefaultSubscriptionNodeOrderPolicy()
+	}
+	return OrderSubscriptionNodes(nodes, policy), nil
+}
+
+func nodeGroupFor(groups map[string]string, key, fallback string) string {
+	if groups != nil {
+		if g := strings.TrimSpace(groups[key]); g != "" {
+			return g
 		}
-		return nodes[i].Group < nodes[j].Group
-	})
-	return nodes, nil
+	}
+	return fallback
+}
+
+func newSubscriptionNode(topo AssignableNodeTopology, nodeType model.AssignableNodeType, nodeID int64, name, group string, positions map[string]int, inbound model.Inbound, server model.Server, raw map[string]any) SubscriptionNode {
+	node := SubscriptionNode{
+		Key:                    NodeKeyOf(nodeType, nodeID),
+		NodeType:               nodeType,
+		NodeID:                 nodeID,
+		Name:                   name,
+		Group:                  group,
+		EntryKey:               topo.EntryKey,
+		EntryInboundID:         topo.EntryInboundID,
+		EntryServerID:          topo.EntryServerID,
+		EntryRegion:            topo.EntryRegion,
+		ExitServerID:           topo.ExitServerID,
+		ExitExternalOutboundID: topo.ExitExternalOutboundID,
+		ExitRegion:             topo.ExitRegion,
+		ServerID:               topo.EntryServerID,
+		Inbound:                inbound,
+		Server:                 server,
+		Raw:                    raw,
+	}
+	if position, ok := positions[node.Key]; ok && position >= 0 {
+		position := position
+		node.ManualPosition = &position
+	}
+	return node
 }
 
 func resolveSubscriptionNodeNames(nodes []SubscriptionNode, refs []subscriptionNodeNameRef) {

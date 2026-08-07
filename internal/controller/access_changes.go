@@ -170,15 +170,42 @@ func effectiveWindow(at time.Time, startsAt, expiresAt *time.Time) time.Time {
 // Preview hash
 // ---------------------------------------------------------------------------
 
+type PlanRevisionNodeDigest struct {
+	Key          string `json:"key"`
+	DisplayGroup string `json:"display_group"`
+	SortPosition *int   `json:"sort_position"`
+}
+
 type planChangePreviewData struct {
-	PlanID                   int64    `json:"plan_id"`
-	ExpectedActiveRevisionID int64    `json:"expected_active_revision_id"`
-	CandidateRevisionID      int64    `json:"candidate_revision_id"`
-	NodeKeys                 []string `json:"node_keys"`
-	SpeedLimitMbps           int      `json:"speed_limit_mbps"`
-	TrafficLimitBytes        int64    `json:"traffic_limit_bytes"`
-	TrafficResetMode         string   `json:"traffic_reset_mode"`
-	TrafficResetDay          int      `json:"traffic_reset_day"`
+	PlanID                   int64                             `json:"plan_id"`
+	ExpectedActiveRevisionID int64                             `json:"expected_active_revision_id"`
+	CandidateRevisionID      int64                             `json:"candidate_revision_id"`
+	Nodes                    []PlanRevisionNodeDigest          `json:"nodes"`
+	OrderPolicy              model.SubscriptionNodeOrderPolicy `json:"order_policy"`
+	SpeedLimitMbps           int                               `json:"speed_limit_mbps"`
+	TrafficLimitBytes        int64                             `json:"traffic_limit_bytes"`
+	TrafficResetMode         string                            `json:"traffic_reset_mode"`
+	TrafficResetDay          int                               `json:"traffic_reset_day"`
+}
+
+// planRevisionNodeDigests renders the full revision node set as a sorted
+// digest so any node, display group or manual position change alters the
+// preview hash.
+func planRevisionNodeDigests(nodes []model.SubscriptionPlanNode) []PlanRevisionNodeDigest {
+	out := make([]PlanRevisionNodeDigest, 0, len(nodes))
+	for _, pn := range nodes {
+		digest := PlanRevisionNodeDigest{
+			Key:          core.NodeKeyOf(pn.NodeType, pn.NodeID),
+			DisplayGroup: pn.DisplayGroup,
+		}
+		if pn.SortPosition != nil {
+			position := *pn.SortPosition
+			digest.SortPosition = &position
+		}
+		out = append(out, digest)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }
 
 func planChangePreviewHash(data planChangePreviewData) string {
@@ -191,8 +218,11 @@ func planChangePreviewHash(data planChangePreviewData) string {
 }
 
 // planChangePreview computes the publish preview for one plan: node diff,
+// presentation deltas (ordering policy, manual positions, display groups),
 // affected users and authentication servers, plus the deterministic preview
-// hash the apply call must echo back.
+// hash the apply call must echo back. Authorization changes deploy agent
+// tasks; pure presentation changes create the same plan_publish access change
+// but with zero tasks.
 func (s *Server) planChangePreview(ctx context.Context, plan *model.SubscriptionPlan, revisionID int64) (map[string]any, error) {
 	activeNodes, err := s.store.ListActivePlanNodes(ctx, plan.ID)
 	if err != nil {
@@ -203,12 +233,18 @@ func (s *Server) planChangePreview(ctx context.Context, plan *model.Subscription
 		return nil, err
 	}
 	activeKeys := map[string]bool{}
+	activeByKey := map[string]model.SubscriptionPlanNode{}
 	for _, pn := range activeNodes {
-		activeKeys[core.NodeKeyOf(pn.NodeType, pn.NodeID)] = true
+		key := core.NodeKeyOf(pn.NodeType, pn.NodeID)
+		activeKeys[key] = true
+		activeByKey[key] = pn
 	}
 	draftKeys := map[string]bool{}
+	draftByKey := map[string]model.SubscriptionPlanNode{}
 	for _, pn := range draftNodes {
-		draftKeys[core.NodeKeyOf(pn.NodeType, pn.NodeID)] = true
+		key := core.NodeKeyOf(pn.NodeType, pn.NodeID)
+		draftKeys[key] = true
+		draftByKey[key] = pn
 	}
 	added := sortedNodeKeySet(draftKeys, activeKeys)
 	removed := sortedNodeKeySet(activeKeys, draftKeys)
@@ -239,11 +275,62 @@ func (s *Server) planChangePreview(ctx context.Context, plan *model.Subscription
 	if err != nil {
 		return nil, err
 	}
+	activeRevision, err := s.store.GetPlanRevision(ctx, plan.ID, plan.ActiveRevisionID)
+	if err != nil && plan.ActiveRevisionID != 0 {
+		return nil, err
+	}
+	normalizedPolicy, _ := core.ValidateSubscriptionNodeOrderPolicy(revision.NodeOrderPolicy)
+	membershipChanged := len(added) > 0 || len(removed) > 0
+	limitsChanged := activeRevision == nil ||
+		activeRevision.SpeedLimitMbps != revision.SpeedLimitMbps ||
+		activeRevision.TrafficLimitBytes != revision.TrafficLimitBytes ||
+		activeRevision.TrafficResetMode != revision.TrafficResetMode ||
+		activeRevision.TrafficResetDay != revision.TrafficResetDay
+	orderingChanged := false
+	displayGroupsChanged := false
+	if activeRevision != nil && !membershipChanged {
+		activePolicy, _ := core.ValidateSubscriptionNodeOrderPolicy(activeRevision.NodeOrderPolicy)
+		orderingChanged = !sameOrderPolicy(activePolicy, normalizedPolicy)
+		if !orderingChanged {
+			for key := range draftKeys {
+				activePN, aOK := activeByKey[key]
+				draftPN, dOK := draftByKey[key]
+				if !aOK || !dOK {
+					continue
+				}
+				if sortPositionOf(activePN) != sortPositionOf(draftPN) {
+					orderingChanged = true
+					break
+				}
+			}
+		}
+	} else if activeRevision == nil {
+		orderingChanged = true
+	}
+	if activeRevision != nil {
+		for key := range draftKeys {
+			activePN, aOK := activeByKey[key]
+			draftPN, dOK := draftByKey[key]
+			if !aOK || !dOK {
+				continue
+			}
+			if activePN.DisplayGroup != draftPN.DisplayGroup {
+				displayGroupsChanged = true
+				break
+			}
+		}
+	}
+	changeClass := "presentation_only"
+	if membershipChanged || limitsChanged {
+		changeClass = "authorization"
+	}
+	taskCount := len(servers)
 	hash := planChangePreviewHash(planChangePreviewData{
 		PlanID:                   plan.ID,
 		ExpectedActiveRevisionID: plan.ActiveRevisionID,
 		CandidateRevisionID:      revisionID,
-		NodeKeys:                 sortedNodeKeys(draftKeys),
+		Nodes:                    planRevisionNodeDigests(draftNodes),
+		OrderPolicy:              normalizedPolicy,
 		SpeedLimitMbps:           revision.SpeedLimitMbps,
 		TrafficLimitBytes:        revision.TrafficLimitBytes,
 		TrafficResetMode:         revision.TrafficResetMode,
@@ -253,14 +340,32 @@ func (s *Server) planChangePreview(ctx context.Context, plan *model.Subscription
 		"preview_hash":                hash,
 		"expected_active_revision_id": plan.ActiveRevisionID,
 		"candidate_revision_id":       revisionID,
+		"change_class":                changeClass,
+		"membership_changed":          membershipChanged,
+		"limits_changed":              limitsChanged,
+		"display_groups_changed":      displayGroupsChanged,
+		"ordering_changed":            orderingChanged,
 		"added_nodes":                 added,
 		"removed_nodes":               removed,
 		"affected_users":              affectedUsers,
 		"affected_servers":            servers,
 		"affected_paths":              affectedPaths,
 		"offline_servers":             offline,
-		"task_count":                  len(servers),
+		"task_count":                  taskCount,
 	}, nil
+}
+
+func sortPositionOf(pn model.SubscriptionPlanNode) int {
+	if pn.SortPosition == nil {
+		return -1
+	}
+	return *pn.SortPosition
+}
+
+func sameOrderPolicy(a, b model.SubscriptionNodeOrderPolicy) bool {
+	ra, _ := json.Marshal(a)
+	rb, _ := json.Marshal(b)
+	return string(ra) == string(rb)
 }
 
 func sortedNodeKeySet(in, exclude map[string]bool) []string {
@@ -1010,12 +1115,28 @@ func (s *Server) createUserBindingChange(ctx context.Context, r *http.Request, d
 // from/to; targetStatus is applied to the changed exception at activation.
 func (s *Server) createExceptionChange(ctx context.Context, r *http.Request, data store.FullRoutingConfig, before, after []model.UserNodeException, changed model.UserNodeException, targetStatus model.UserNodeExceptionStatus) (*model.AccessChange, error) {
 	now := time.Now()
-	effective, err := s.store.ListEffectiveUserPlanBindings(ctx, now)
+	at := effectiveWindow(now, changed.StartsAt, &changed.ExpiresAt)
+	change, err := s.createExceptionChanges(ctx, r, data, before, after, []int64{changed.ID}, targetStatus, 1, at)
 	if err != nil {
 		return nil, err
 	}
-	at := effectiveWindow(now, changed.StartsAt, &changed.ExpiresAt)
-	oldSnap := s.snapshotFromConfig(data, effective, data.ActivePlanNodes, before, now)
+	if err := s.store.SetUserNodeExceptionChange(ctx, changed.ID, change.ID); err != nil {
+		return nil, err
+	}
+	return change, nil
+}
+
+// createExceptionChanges materializes the two-phase projections for one
+// aggregate exception mutation (single-row or batch). before/after are the
+// exception lists the runtime moves from/to; exceptionIDs are the rows that
+// become visible at activation and targetStatus is applied to each of them.
+// The batch always produces exactly one access change.
+func (s *Server) createExceptionChanges(ctx context.Context, r *http.Request, data store.FullRoutingConfig, before, after []model.UserNodeException, exceptionIDs []int64, targetStatus model.UserNodeExceptionStatus, affectedUserCount int, at time.Time) (*model.AccessChange, error) {
+	effective, err := s.store.ListEffectiveUserPlanBindings(ctx, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	oldSnap := s.snapshotFromConfig(data, effective, data.ActivePlanNodes, before, time.Now())
 	newSnap := s.snapshotFromConfig(data, effective, data.ActivePlanNodes, after, at)
 	prepare := core.MergeProjections(oldSnap.Projection(), newSnap.Projection())
 	finalize := newSnap.Projection()
@@ -1030,17 +1151,14 @@ func (s *Server) createExceptionChange(ctx context.Context, r *http.Request, dat
 	servers, _, _ := core.AffectedAuthServers(diffKeys, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, serverOnline)
 	change, err := s.createAccessChange(ctx, r, accessChangeDraft{
 		changeType:         model.AccessChangeExceptions,
-		affectedUserCount:  1,
+		affectedUserCount:  affectedUserCount,
 		activateAt:         &at,
-		payload:            accessChangePayload{ExceptionIDs: []int64{changed.ID}, TargetStatus: string(targetStatus)},
+		payload:            accessChangePayload{ExceptionIDs: exceptionIDs, TargetStatus: string(targetStatus)},
 		prepareProjection:  prepare,
 		finalizeProjection: finalize,
 		serverIDs:          servers,
 	})
 	if err != nil {
-		return nil, err
-	}
-	if err := s.store.SetUserNodeExceptionChange(ctx, changed.ID, change.ID); err != nil {
 		return nil, err
 	}
 	return change, nil

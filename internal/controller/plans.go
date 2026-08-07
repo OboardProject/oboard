@@ -748,6 +748,20 @@ func (s *Server) subscriptionPlanSubroutes(w http.ResponseWriter, r *http.Reques
 		default:
 			fail(w, errors.New("unknown subscription plan subroute"), 404)
 		}
+	case "ordering":
+		if len(parts) == 2 && parts[1] == "preview" {
+			if r.Method != http.MethodPost {
+				method(w)
+				return
+			}
+			s.planOrderingPreview(w, r, id)
+			return
+		}
+		if len(parts) != 1 {
+			fail(w, errors.New("unknown subscription plan subroute"), 404)
+			return
+		}
+		s.planOrdering(w, r, id)
 	case "publish":
 		if len(parts) != 1 || r.Method != http.MethodPost {
 			method(w)

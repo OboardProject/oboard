@@ -301,6 +301,19 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureSSHPasswordDeploymentDeviceIdentity(ctx); err != nil {
 		return err
 	}
+	// Subscription node ordering: each revision carries a versioned JSON
+	// ordering policy and each revision node carries an optional manual
+	// position. Existing revisions default to the legacy comparator so an
+	// upgrade never reorders an issued subscription.
+	if err := s.ensureColumn(ctx, "subscription_plan_revisions", "node_order_policy_json", `alter table subscription_plan_revisions add column node_order_policy_json text not null default '`+model.DefaultSubscriptionNodeOrderPolicyJSON()+`'`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "subscription_plan_revision_nodes", "sort_position", `alter table subscription_plan_revision_nodes add column sort_position integer`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_plan_revision_node_sort_position on subscription_plan_revision_nodes(revision_id, sort_position) where sort_position is not null`); err != nil {
+		return err
+	}
 	for _, migration := range []struct {
 		table  string
 		column string

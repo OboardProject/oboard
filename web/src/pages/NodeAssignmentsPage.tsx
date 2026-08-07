@@ -4,7 +4,8 @@ import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
 import { Input } from '../components/ui/input'
-import { X, Filter, RefreshCw } from 'lucide-react'
+import { PlanNodeOrderingPanel } from '../components/node-ordering/PlanNodeOrderingPanel'
+import { X, Filter, RefreshCw, ListOrdered } from 'lucide-react'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -44,6 +45,12 @@ function nodeTypeLabel(type: string) {
 }
 
 export function NodeAssignmentsPage({ data, client, load }: { data: any; client: AnyClient; load: () => Promise<void> }) {
+  const [tab, setTab] = React.useState<'catalog' | 'ordering'>('catalog')
+  const [toast, setToast] = React.useState('')
+  const notify = (message: string, tone?: 'success' | 'error' | 'warning') => {
+    setToast(message)
+    window.setTimeout(() => setToast(''), 4000)
+  }
   const [query, setQuery] = React.useState('')
   const [entryServerID, setEntryServerID] = React.useState(0)
   const [entryRegion, setEntryRegion] = React.useState('')
@@ -145,9 +152,20 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
 
   return (
     <div className="panel node-assignments-panel">
-      <div className="panel-head"><h2>节点分配</h2></div>
+      <div className="panel-head" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <h2 style={{ margin: 0 }}>节点分配</h2>
+        <div className="section-toolbar" style={{ gap: 4 }}>
+          <Button variant={tab === 'catalog' ? 'default' : 'outline'} size="sm" onClick={() => setTab('catalog')}>节点目录</Button>
+          <Button variant={tab === 'ordering' ? 'default' : 'outline'} size="sm" onClick={() => setTab('ordering')}><ListOrdered size={14} /> 订阅排序</Button>
+        </div>
+      </div>
       <div className="panel-body">
-        <p className="muted">可分配节点目录由代理链路、导入节点与独立入口统一汇总；此处把节点加入方案草稿，发布后才会对绑定用户生效。</p>
+        {toast && <p style={{ margin: '0 0 8px', color: 'var(--color-success, #16a34a)' }}>{toast}</p>}
+        {tab === 'ordering' ? (
+          <PlanNodeOrderingPanel data={data} client={client} notify={notify} />
+        ) : (
+          <>
+            <p className="muted">可分配节点目录由代理链路、导入节点与独立入口统一汇总；此处把节点加入方案草稿，发布后才会对绑定用户生效。</p>
 
         <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
           <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索名称 / 服务器 / 协议 / 地区" style={{ maxWidth: 260 }} />
@@ -279,7 +297,9 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
             </div>
           )}
         </div>
-        {syncMessage && <p style={{ marginTop: 8, color: syncMessage.startsWith('操作失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{syncMessage}</p>}
+            {syncMessage && <p style={{ marginTop: 8, color: syncMessage.startsWith('操作失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{syncMessage}</p>}
+          </>
+        )}
       </div>
 
       <Dialog isOpen={detail !== null} onClose={() => setDetail(null)} title={detail ? detail.node?.name || '节点详情' : ''} size="lg">

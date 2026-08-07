@@ -267,12 +267,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/users/", s.auth(s.users, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/assignable-nodes", s.auth(s.assignableNodes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/assignable-nodes/", s.auth(s.assignableNodeDetail, model.RoleOperator))
+	mux.HandleFunc("/api/v1/assignable-node-scopes/preview", s.auth(s.assignableNodeScopePreview, model.RoleOperator))
 	mux.HandleFunc("/api/v1/subscription-plans", s.auth(s.subscriptionPlans, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/subscription-plans/", s.auth(s.subscriptionPlans, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/users/plan-assignment", s.auth(s.userPlanAssignment, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/users/plan-assignment/", s.auth(s.userPlanAssignment, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/user-node-exceptions", s.auth(s.userNodeExceptions, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/user-node-exceptions/", s.auth(s.userNodeExceptions, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/user-node-exceptions/batch", s.auth(s.userNodeExceptionsBatch, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/user-node-exceptions/batch/", s.auth(s.userNodeExceptionsBatch, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/access-changes", s.auth(s.accessChanges, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/access-changes/", s.auth(s.accessChanges, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists", s.auth(s.dnsLists, model.RoleAdmin))
@@ -10024,6 +10027,11 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	effectiveNodes := snapshot.EffectiveNodeKeys(user.ID)
 	effectiveGroups := snapshot.EffectiveNodeGroups(user.ID)
+	orderPolicy, orderPositions, err := s.store.GetEffectiveSubscriptionNodeOrdering(r.Context(), user.ID, time.Now())
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
 	pullPathUsers := snapshot.ProxyPathUserBindings()
 	subscriptionIdentity := sshPasswordDeploymentIdentityForUser(subscriptionUser)
 	for _, server := range servers {
@@ -10059,6 +10067,11 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		SSHServerHostKeys:      sshServerHostKeys,
 		EffectiveNodes:         effectiveNodes,
 		EffectiveNodeGroups:    effectiveGroups,
+		NodeOrderPolicy:        model.SubscriptionNodeOrderPolicy{},
+		NodeOrderPositions:     orderPositions,
+	}
+	if orderPolicy != nil {
+		opts.NodeOrderPolicy = *orderPolicy
 	}
 	sub, err := core.GenerateSubscriptionWithOptions(subscriptionUser, servers, in, opts)
 	if err != nil {
