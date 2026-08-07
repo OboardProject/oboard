@@ -98,6 +98,7 @@ import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServ
 import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
 import { controllerUpdatePendingToast, isControllerUpdateInProgressStatus, isExpectedControllerUpdateDisconnect } from './controller-update'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
+import { buildSlaTimeline } from './connectivity-sla'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
   automationConnectArtifacts,
@@ -7615,14 +7616,13 @@ function ServerConnectivityDialog({ server, initialSamples, client, onClose }: {
   }
   useEffect(() => { void loadSamples() }, [])
 
-  const probes = useMemo(() => samples
-    .filter((sample): sample is ServerMetricSample & { connectivity_available: boolean } => sample.connectivity_available !== undefined)
-    .sort((a, b) => Date.parse(a.sampled_at) - Date.parse(b.sampled_at)), [samples])
+  const probes = useMemo(() => buildSlaTimeline(samples, server), [samples, server])
 
   const stats = useMemo(() => {
     const total = probes.length
     const available = probes.reduce((sum, sample) => sum + (sample.connectivity_available ? 1 : 0), 0)
     const unavailable = total - available
+    const offlineCount = probes.reduce((sum, sample) => sum + (sample.offline_synthetic ? 1 : 0), 0)
     const latencies = probes.filter(sample => sample.connectivity_available && Number(sample.connectivity_latency_ms) > 0).map(sample => Number(sample.connectivity_latency_ms))
     const avgLatency = latencies.length ? latencies.reduce((sum, value) => sum + value, 0) / latencies.length : 0
     const minLatency = latencies.length ? Math.min(...latencies) : 0
@@ -7648,6 +7648,7 @@ function ServerConnectivityDialog({ server, initialSamples, client, onClose }: {
       total,
       available,
       unavailable,
+      offlineCount,
       slaRate: total ? (available / total) * 100 : 0,
       avgLatency,
       minLatency,
@@ -7767,7 +7768,7 @@ function ServerConnectivityDialog({ server, initialSamples, client, onClose }: {
         <div className="connectivity-section-head"><Activity size={14} aria-hidden="true" /><h3>24 小时可用性</h3><span className="connectivity-section-note">每小时聚合</span></div>
         <div className="connectivity-hour-strip" role="img" aria-label="近 24 小时每小时可用率">
           {hourlyBuckets.map(bucket => (
-            <span key={bucket.timeMs} className={`connectivity-hour-cell ${connectivityBucketTone(bucket.ratio)}`} title={bucket.count ? `${bucket.dateLabel} · SLA ${((bucket.available / bucket.count) * 100).toFixed(1)}% · ${bucket.available}/${bucket.count} 次` : `${bucket.dateLabel} · 无数据`} aria-label={bucket.count ? `${bucket.dateLabel} 可用率 ${((bucket.available / bucket.count) * 100).toFixed(1)}%` : `${bucket.dateLabel} 无数据`} />
+            <span key={bucket.timeMs} className={`connectivity-hour-cell ${connectivityBucketTone(bucket.ratio)}`} title={bucket.count ? (bucket.available === 0 ? `${bucket.dateLabel} · 不可用` : `${bucket.dateLabel} · SLA ${((bucket.available / bucket.count) * 100).toFixed(1)}% · ${bucket.available}/${bucket.count} 次`) : `${bucket.dateLabel} · 无数据`} aria-label={bucket.count ? `${bucket.dateLabel} 可用率 ${((bucket.available / bucket.count) * 100).toFixed(1)}%` : `${bucket.dateLabel} 无数据`} />
           ))}
         </div>
         <div className="connectivity-hour-axis"><span>{firstBucket.hourLabel}</span><span>{midBucket.hourLabel}</span><span>{lastBucket.hourLabel}</span></div>
@@ -7797,7 +7798,7 @@ function ServerConnectivityDialog({ server, initialSamples, client, onClose }: {
       </section>
 
       <section className="connectivity-section">
-        <div className="connectivity-section-head"><Database size={14} aria-hidden="true" /><h3>检测统计</h3><span className="connectivity-section-note">{stats.total} 次检测</span></div>
+        <div className="connectivity-section-head"><Database size={14} aria-hidden="true" /><h3>检测统计</h3><span className="connectivity-section-note">{stats.offlineCount ? `${stats.total} 次记录（离线计入 ${stats.offlineCount} 分钟）` : `${stats.total} 次检测`}</span></div>
         <div className="connectivity-stats">
           <div className="connectivity-stat ok"><strong>{stats.available}</strong><span>可用</span></div>
           <div className="connectivity-stat danger"><strong>{stats.unavailable}</strong><span>不可用</span></div>
