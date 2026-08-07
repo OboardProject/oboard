@@ -275,8 +275,8 @@ func (s *Server) planChangePreview(ctx context.Context, plan *model.Subscription
 	if err != nil {
 		return nil, err
 	}
-	activeRevision, err := s.store.GetPlanRevision(ctx, plan.ID, plan.ActiveRevisionID)
-	if err != nil && plan.ActiveRevisionID != 0 {
+	activeRevision, err := s.store.GetPlanRevision(ctx, plan.ID, plan.CurrentRevisionID)
+	if err != nil && plan.CurrentRevisionID != 0 {
 		return nil, err
 	}
 	normalizedPolicy, _ := core.ValidateSubscriptionNodeOrderPolicy(revision.NodeOrderPolicy)
@@ -327,7 +327,7 @@ func (s *Server) planChangePreview(ctx context.Context, plan *model.Subscription
 	taskCount := len(servers)
 	hash := planChangePreviewHash(planChangePreviewData{
 		PlanID:                   plan.ID,
-		ExpectedActiveRevisionID: plan.ActiveRevisionID,
+		ExpectedActiveRevisionID: plan.CurrentRevisionID,
 		CandidateRevisionID:      revisionID,
 		Nodes:                    planRevisionNodeDigests(draftNodes),
 		OrderPolicy:              normalizedPolicy,
@@ -338,7 +338,7 @@ func (s *Server) planChangePreview(ctx context.Context, plan *model.Subscription
 	})
 	return map[string]any{
 		"preview_hash":                hash,
-		"expected_active_revision_id": plan.ActiveRevisionID,
+		"expected_active_revision_id": plan.CurrentRevisionID,
 		"candidate_revision_id":       revisionID,
 		"change_class":                changeClass,
 		"membership_changed":          membershipChanged,
@@ -625,15 +625,15 @@ func (s *Server) activateAccessChange(ctx context.Context, change *model.AccessC
 	case model.AccessChangePlanPublish, model.AccessChangePlanRestore:
 		// Idempotent: a crash between durable activation and the finalize
 		// queue leaves the change open; re-activating must not fail because
-		// the publish already happened.
+		// the activation already happened.
 		plan, err := s.store.GetSubscriptionPlan(ctx, change.SourcePlanID)
 		if err != nil {
 			return err
 		}
-		if plan.ActiveRevisionID == change.CandidateRevisionID {
+		if plan.CurrentRevisionID == change.CandidateRevisionID {
 			return nil
 		}
-		if _, err := s.store.PublishPlanRevisionGuarded(ctx, change.SourcePlanID, change.ExpectedActiveRevisionID, change.CandidateRevisionID); err != nil {
+		if err := s.store.ActivatePlanVersionGuarded(ctx, change.SourcePlanID, change.ExpectedActiveRevisionID, change.CandidateRevisionID, change.ID); err != nil {
 			return err
 		}
 	case model.AccessChangePlanDisable:
@@ -860,17 +860,17 @@ func (s *Server) planChangePreviewHandler(w http.ResponseWriter, r *http.Request
 	_ = decode(w, r, &req)
 	expected := req.ExpectedRevision
 	if expected == 0 {
-		expected = plan.Revision
+		expected = plan.LockVersion
 	}
-	if plan.Revision != expected {
+	if plan.LockVersion != expected {
 		fail(w, store.ErrPlanRevisionConflict, http.StatusConflict)
 		return
 	}
-	if plan.DraftRevisionID == 0 {
-		fail(w, errors.New("subscription plan has no draft revision to preview"), 400)
+	if plan.PendingRevisionID == 0 {
+		fail(w, errors.New("subscription plan has no pending version to preview"), 400)
 		return
 	}
-	preview, err := s.planChangePreview(r.Context(), plan, plan.DraftRevisionID)
+	preview, err := s.planChangePreview(r.Context(), plan, plan.PendingRevisionID)
 	if err != nil {
 		fail(w, err, 500)
 		return
@@ -894,15 +894,19 @@ func (s *Server) planChangeApplyHandler(w http.ResponseWriter, r *http.Request, 
 		fail(w, err, 404)
 		return
 	}
-	if req.ExpectedActiveRevisionID != 0 && plan.ActiveRevisionID != req.ExpectedActiveRevisionID {
+	if req.ExpectedActiveRevisionID != 0 && plan.CurrentRevisionID != req.ExpectedActiveRevisionID {
 		fail(w, store.ErrPlanRevisionConflict, http.StatusConflict)
 		return
 	}
-	if plan.DraftRevisionID == 0 {
-		fail(w, errors.New("subscription plan has no draft revision to publish"), 400)
+	if plan.PendingRevisionID == 0 {
+		// No pending version means the plan state has already moved on (the
+		// pending version was applied, cancelled, or never created). Treat a
+		// stale apply attempt as a conflict so the client re-previewes
+		// instead of silently succeeding.
+		fail(w, store.ErrPlanRevisionConflict, http.StatusConflict)
 		return
 	}
-	preview, err := s.planChangePreview(r.Context(), plan, plan.DraftRevisionID)
+	preview, err := s.planChangePreview(r.Context(), plan, plan.PendingRevisionID)
 	if err != nil {
 		fail(w, err, 500)
 		return
@@ -912,7 +916,7 @@ func (s *Server) planChangeApplyHandler(w http.ResponseWriter, r *http.Request, 
 		fail(w, errors.New("preview_hash mismatch: the plan changed since preview; re-preview"), http.StatusConflict)
 		return
 	}
-	change, err := s.createPlanPublishChange(r.Context(), r, plan, plan.DraftRevisionID)
+	change, err := s.createPlanPublishChange(r.Context(), r, plan, plan.PendingRevisionID)
 	if err != nil {
 		fail(w, err, planWriteStatus(err))
 		return
@@ -968,7 +972,7 @@ func (s *Server) createPlanPublishChange(ctx context.Context, r *http.Request, p
 		changeType:               model.AccessChangePlanPublish,
 		sourcePlanID:             plan.ID,
 		candidateRevisionID:      revisionID,
-		expectedActiveRevisionID: plan.ActiveRevisionID,
+		expectedActiveRevisionID: plan.CurrentRevisionID,
 		previewHash:              hash,
 		affectedUserCount:        affectedUsers,
 		prepareProjection:        prepare,
@@ -976,6 +980,9 @@ func (s *Server) createPlanPublishChange(ctx context.Context, r *http.Request, p
 		serverIDs:                servers,
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := s.store.SetPlanRevisionActivationChange(ctx, plan.ID, revisionID, change.ID); err != nil {
 		return nil, err
 	}
 	return change, nil

@@ -4,11 +4,10 @@ import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
 import { Input } from '../components/ui/input'
-import { PlanNodeOrderingPanel } from '../components/node-ordering/PlanNodeOrderingPanel'
 import { NodeScopeMenu, type NodeScopeRequest, type ScopeNode } from '../components/node-assignment/NodeScopeMenu'
 import { NodeScopeActionDialog } from '../components/node-assignment/NodeScopeActionDialog'
 import { AssignPlanUsersDialog } from '../components/node-assignment/AssignPlanUsersDialog'
-import { X, Filter, RefreshCw, ListOrdered, MoreHorizontal, Users } from 'lucide-react'
+import { X, Filter, RefreshCw, MoreHorizontal, Users } from 'lucide-react'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -43,7 +42,6 @@ function nodeTypeLabel(type: string) {
 }
 
 export function NodeAssignmentsPage({ data, client, load }: { data: any; client: AnyClient; load: () => Promise<void> }) {
-  const [tab, setTab] = React.useState<'catalog' | 'ordering'>('catalog')
   const [toast, setToast] = React.useState('')
   const notify = (message: string, tone?: 'success' | 'error' | 'warning') => {
     setToast(message)
@@ -151,15 +149,22 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
     setSyncBusy(true)
     setSyncMessage('')
     try {
-      const plan = await client.request<{ subscription_plan?: { revision: number } }>(`/subscription-plans/${syncPlanID}`)
-      const revision = plan.subscription_plan?.revision || 0
-      if (!revision) throw new Error('无法获取方案修订号，请刷新后重试')
+      const plan = await client.request<{ subscription_plan?: { lock_version: number; latest_revision_id: number } }>(`/subscription-plans/${syncPlanID}`)
+      const lockVersion = plan.subscription_plan?.lock_version || 0
+      const baseRevisionID = plan.subscription_plan?.latest_revision_id || 0
+      if (!lockVersion || !baseRevisionID) throw new Error('无法获取方案版本信息，请刷新后重试')
       const nodeRefs = nodes.filter(n => selected[n.key]).map(n => ({ node_type: n.type, node_id: n.id }))
-      await client.request(`/subscription-plans/${syncPlanID}/nodes/sync`, {
+      const res = await client.request<{ access_change_id?: number; no_change?: boolean }>(`/subscription-plans/${syncPlanID}/nodes/apply`, {
         method: 'POST',
-        body: JSON.stringify({ op: syncOp, nodes: nodeRefs, expected_revision: revision }),
+        body: JSON.stringify({ op: syncOp, nodes: nodeRefs, base_revision_id: baseRevisionID, expected_lock_version: lockVersion }),
       })
-      setSyncMessage(`已${syncOp === 'add' ? '加入' : syncOp === 'remove' ? '移除' : '替换'} ${nodeRefs.length} 个节点到方案草稿`)
+      if (res.no_change) {
+        setSyncMessage('节点集合没有变化，未创建新版本')
+      } else if (res.access_change_id) {
+        setSyncMessage(`已保存为新版本，正在应用变更 #${res.access_change_id}`)
+      } else {
+        setSyncMessage(`已${syncOp === 'add' ? '加入' : syncOp === 'remove' ? '移除' : '替换'} ${nodeRefs.length} 个节点并保存为新版本`)
+      }
       setSelected({})
       await refresh()
     } catch (e: any) {
@@ -186,18 +191,11 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
     <div className="panel node-assignments-panel">
       <div className="panel-head" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <h2 style={{ margin: 0 }}>节点分配</h2>
-        <div className="section-toolbar" style={{ gap: 4 }}>
-          <Button variant={tab === 'catalog' ? 'default' : 'outline'} size="sm" onClick={() => setTab('catalog')}>节点目录</Button>
-          <Button variant={tab === 'ordering' ? 'default' : 'outline'} size="sm" onClick={() => setTab('ordering')}><ListOrdered size={14} /> 订阅排序</Button>
-        </div>
       </div>
       <div className="panel-body">
         {toast && <p style={{ margin: '0 0 8px', color: 'var(--color-success, #16a34a)' }}>{toast}</p>}
-        {tab === 'ordering' ? (
-          <PlanNodeOrderingPanel data={data} client={client} notify={notify} onSaved={() => void load()} />
-        ) : (
-          <>
-            <p className="muted">可分配节点目录由代理链路、导入节点与独立入口统一汇总；右键节点或点击行内「⋯」选择范围后，可加入方案草稿或批量创建用户临时例外。</p>
+        <>
+            <p className="muted">可分配节点目录由代理链路、导入节点与独立入口统一汇总；右键节点或点击行内「⋯」选择范围后，可加入方案或批量创建用户临时例外。</p>
 
         <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
           <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索名称 / 服务器 / 协议 / 地区" style={{ maxWidth: 260 }} />
@@ -332,18 +330,17 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
                 {plans.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </Select>
               <Select value={syncOp} onChange={e => setSyncOp(e.target.value as 'add' | 'remove' | 'replace')} aria-label="操作类型">
-                <option value="add">加入草稿</option>
-                <option value="remove">从草稿移除</option>
-                <option value="replace">替换草稿</option>
+                <option value="add">加入方案</option>
+                <option value="remove">从方案移除</option>
+                <option value="replace">替换方案节点</option>
               </Select>
-              <Button size="sm" disabled={!syncPlanID || syncBusy} onClick={() => void runSync()}>{syncBusy ? '同步中...' : '同步到方案草稿'}</Button>
+              <Button size="sm" disabled={!syncPlanID || syncBusy} onClick={() => void runSync()}>{syncBusy ? '保存中...' : '保存到方案'}</Button>
             </div>
           )}
-          {!isAdmin && <span className="muted" style={{ marginLeft: 'auto' }}>方案草稿修改、临时例外与方案分配需要管理员权限。</span>}
+          {!isAdmin && <span className="muted" style={{ marginLeft: 'auto' }}>方案修改、临时例外与方案分配需要管理员权限。</span>}
         </div>
             {syncMessage && <p style={{ marginTop: 8, color: syncMessage.startsWith('操作失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{syncMessage}</p>}
           </>
-        )}
       </div>
 
       <Dialog isOpen={detail !== null} onClose={() => setDetail(null)} title={detail ? detail.node?.name || '节点详情' : ''} size="lg">

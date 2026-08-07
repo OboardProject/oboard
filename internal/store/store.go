@@ -233,8 +233,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists notification_announcements (id integer primary key autoincrement, actor_user_id integer not null references users(id) on delete cascade, actor_name text not null, title text not null, body text not null, user_ids_json text not null default '[]', queued_count integer not null default 0, created_at text not null)`,
 		`create table if not exists notification_deliveries (id integer primary key autoincrement, channel_id integer not null references notification_channels(id) on delete cascade, event text not null, event_key text not null, title text not null, body text not null, status text not null default 'pending', attempts integer not null default 0, error text not null default '', next_attempt_at text not null, created_at text not null, updated_at text not null, sent_at text, unique(channel_id,event,event_key))`,
 		`create table if not exists server_offline_notices (server_id integer primary key references servers(id) on delete cascade, status text not null, since_at text not null, notify_at text not null, group_key text not null default '', notified integer not null default 0, updated_at text not null)`,
-		`create table if not exists subscription_plans (id integer primary key autoincrement, name text not null unique, description text not null default '', enabled integer not null default 1, revision integer not null default 0, active_revision_id integer references subscription_plan_revisions(id) on delete set null, draft_revision_id integer references subscription_plan_revisions(id) on delete set null, created_at text not null, updated_at text not null)`,
-		`create table if not exists subscription_plan_revisions (id integer primary key autoincrement, plan_id integer not null references subscription_plans(id) on delete cascade, revision integer not null, status text not null default 'draft', speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, created_by integer references users(id) on delete set null, created_at text not null, activated_at text, unique(plan_id, revision))`,
+		`create table if not exists subscription_plans (id integer primary key autoincrement, name text not null unique, description text not null default '', enabled integer not null default 1, revision integer not null default 0, active_revision_id integer references subscription_plan_revisions(id) on delete set null, draft_revision_id integer references subscription_plan_revisions(id) on delete set null, lock_version integer not null default 1, current_revision_id integer references subscription_plan_revisions(id) on delete set null, latest_revision_id integer references subscription_plan_revisions(id) on delete set null, pending_revision_id integer references subscription_plan_revisions(id) on delete set null, created_at text not null, updated_at text not null)`,
+		`create table if not exists subscription_plan_revisions (id integer primary key autoincrement, plan_id integer not null references subscription_plans(id) on delete cascade, revision integer not null, version_no integer, based_on_revision_id integer, change_kind text not null default '', change_summary text not null default '', activation_change_id integer, status text not null default 'draft', speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, created_by integer references users(id) on delete set null, created_at text not null, activated_at text, unique(plan_id, revision))`,
 		`create table if not exists subscription_plan_revision_nodes (id integer primary key autoincrement, revision_id integer not null references subscription_plan_revisions(id) on delete cascade, node_type text not null, node_id integer not null, display_group text not null default '', source_type text not null default 'explicit', source_rule_id integer not null default 0, created_at text not null, unique(revision_id, node_type, node_id))`,
 		`create table if not exists user_plan_bindings (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, plan_id integer not null references subscription_plans(id) on delete cascade, enabled integer not null default 1, status text not null default 'active', starts_at text, expires_at text, assigned_by integer references users(id) on delete set null, created_at text not null, updated_at text not null, deployed_at text, expiry_synced_at text)`,
 		`create table if not exists user_node_exceptions (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, node_type text not null, node_id integer not null, effect text not null, reason text not null, status text not null default 'active', starts_at text, expires_at text not null, created_by integer references users(id) on delete set null, created_at text not null, expiry_synced_at text, change_id integer references access_changes(id) on delete set null)`,
@@ -313,6 +313,32 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	}
 	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_plan_revision_node_sort_position on subscription_plan_revision_nodes(revision_id, sort_position) where sort_position is not null`); err != nil {
 		return err
+	}
+	// Immutable plan version model (phase 1): the plan row gains
+	// lock_version/current/latest/pending pointers and each revision gains
+	// version metadata. The legacy draft/active/archived columns are kept for
+	// read compatibility and removed only by a later table rebuild. Existing
+	// plans are backfilled so an upgrade never reorders an issued
+	// subscription: current = old active, latest = old draft (frozen as an
+	// unapplied legacy migration version) or old active when no draft exists.
+	for _, migration := range []struct {
+		table  string
+		column string
+		sql    string
+	}{
+		{"subscription_plans", "lock_version", `alter table subscription_plans add column lock_version integer not null default 1`},
+		{"subscription_plans", "current_revision_id", `alter table subscription_plans add column current_revision_id integer references subscription_plan_revisions(id) on delete set null`},
+		{"subscription_plans", "latest_revision_id", `alter table subscription_plans add column latest_revision_id integer references subscription_plan_revisions(id) on delete set null`},
+		{"subscription_plans", "pending_revision_id", `alter table subscription_plans add column pending_revision_id integer references subscription_plan_revisions(id) on delete set null`},
+		{"subscription_plan_revisions", "version_no", `alter table subscription_plan_revisions add column version_no integer`},
+		{"subscription_plan_revisions", "based_on_revision_id", `alter table subscription_plan_revisions add column based_on_revision_id integer`},
+		{"subscription_plan_revisions", "change_kind", `alter table subscription_plan_revisions add column change_kind text not null default ''`},
+		{"subscription_plan_revisions", "change_summary", `alter table subscription_plan_revisions add column change_summary text not null default ''`},
+		{"subscription_plan_revisions", "activation_change_id", `alter table subscription_plan_revisions add column activation_change_id integer`},
+	} {
+		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.sql); err != nil {
+			return err
+		}
 	}
 	for _, migration := range []struct {
 		table  string
@@ -542,6 +568,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.migratePlanRevisions(ctx); err != nil {
+		return err
+	}
+	if err := s.migratePlanVersionPointers(ctx); err != nil {
 		return err
 	}
 	if err := s.migrateUserNodeExceptionLifecycle(ctx); err != nil {

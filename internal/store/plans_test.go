@@ -28,7 +28,7 @@ func createPlanTestUser(t *testing.T, s *Store, id int64, username string) {
 	}
 }
 
-func TestSubscriptionPlanCRUDAndNodeSync(t *testing.T) {
+func TestSubscriptionPlanCRUDAndNodeVersions(t *testing.T) {
 	ctx := context.Background()
 	s := openPlansTestStore(t)
 
@@ -57,85 +57,131 @@ func TestSubscriptionPlanCRUDAndNodeSync(t *testing.T) {
 		t.Fatalf("active nodes = %d, want 2: %#v", len(activeNodes), activeNodes)
 	}
 
-	// Draft edits must not touch the active snapshot: adding a node creates a
-	// draft revision copied from active, leaving the active set frozen.
-	if err := s.SyncPlanDraftNodes(ctx, plan.ID, plan.Revision, []model.SubscriptionPlanNode{
-		{NodeType: model.AssignableNodeProxyPath, NodeID: 1, DisplayGroup: "HK2"},
-		{NodeType: model.AssignableNodeExternalOutbound, NodeID: 7},
-	}, "add"); err != nil {
-		t.Fatal(err)
-	}
-	draftNodes, err := s.ListDraftPlanNodes(ctx, plan.ID)
+	// A node change creates an immutable version and sets the pending pointer
+	// without touching the current snapshot.
+	created, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Nodes: &PlanNodesMutation{Op: "add", Nodes: []model.SubscriptionPlanNode{
+			{NodeType: model.AssignableNodeProxyPath, NodeID: 1, DisplayGroup: "HK2"},
+			{NodeType: model.AssignableNodeExternalOutbound, NodeID: 7},
+		}},
+		ChangeKind:    model.PlanChangeKindNodes,
+		ChangeSummary: "加入节点",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(draftNodes) != 3 {
-		t.Fatalf("draft nodes = %d, want 3: %#v", len(draftNodes), draftNodes)
+	if created.NoChange || created.RequiresDeployment != true || created.EffectiveNow {
+		t.Fatalf("node version result = %#v", created)
+	}
+	versionNodes, err := s.ListPlanRevisionNodes(ctx, created.Revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(versionNodes) != 3 {
+		t.Fatalf("version nodes = %d, want 3: %#v", len(versionNodes), versionNodes)
 	}
 	foundUpsert := false
-	for _, pn := range draftNodes {
+	for _, pn := range versionNodes {
 		if pn.NodeType == model.AssignableNodeProxyPath && pn.NodeID == 1 {
 			foundUpsert = true
 			if pn.DisplayGroup != "HK2" {
-				t.Fatalf("upsert must adopt the new display group: %#v", pn)
+				t.Fatalf("add must adopt the new display group: %#v", pn)
 			}
 		}
 	}
 	if !foundUpsert {
-		t.Fatalf("upserted node missing: %#v", draftNodes)
+		t.Fatalf("added node missing: %#v", versionNodes)
 	}
 	activeNodes, _ = s.ListActivePlanNodes(ctx, plan.ID)
 	if len(activeNodes) != 2 {
-		t.Fatalf("active nodes changed while editing draft: %#v", activeNodes)
+		t.Fatalf("current nodes changed while a version is pending: %#v", activeNodes)
 	}
 	plan, err = s.GetSubscriptionPlan(ctx, plan.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Revision != 2 || plan.DraftRevisionID == 0 {
-		t.Fatalf("revision = %d draft_id = %d, want 2/draft", plan.Revision, plan.DraftRevisionID)
+	if plan.LockVersion != 2 || plan.PendingRevisionID != created.Revision.ID || plan.CurrentRevisionID != created.Revision.BasedOnRevisionID {
+		t.Fatalf("plan after node version = %#v", plan)
 	}
 
-	// A stale expected revision must conflict instead of overwriting.
-	if err := s.SyncPlanDraftNodes(ctx, plan.ID, plan.Revision-1, []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 9}}, "add"); !errors.Is(err, ErrPlanRevisionConflict) {
-		t.Fatalf("stale sync err = %v, want ErrPlanRevisionConflict", err)
+	// A stale lock version conflicts instead of overwriting.
+	if _, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: 1,
+		Nodes:               &PlanNodesMutation{Op: "add", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 9}}},
+	}); !errors.Is(err, ErrPlanRevisionConflict) {
+		t.Fatalf("stale lock err = %v, want ErrPlanRevisionConflict", err)
 	}
 
-	// Publish activates the draft and clears it.
-	if _, err := s.PublishPlanRevision(ctx, plan.ID, plan.Revision); err != nil {
+	// A stale base revision conflicts.
+	if _, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		BaseRevisionID:      plan.CurrentRevisionID,
+		Nodes:               &PlanNodesMutation{Op: "add", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 9}}},
+	}); !errors.Is(err, ErrPlanRevisionConflict) {
+		t.Fatalf("stale base err = %v, want ErrPlanRevisionConflict", err)
+	}
+
+	// A second save while a version is pending is rejected.
+	if _, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Nodes:               &PlanNodesMutation{Op: "add", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 9}}},
+	}); !errors.Is(err, ErrPlanVersionApplying) {
+		t.Fatalf("concurrent save err = %v, want ErrPlanVersionApplying", err)
+	}
+
+	// Activation advances the current pointer and clears pending.
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, created.Revision.ID, 7); err != nil {
 		t.Fatal(err)
 	}
 	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
-	if plan.ActiveRevisionID == 0 || plan.DraftRevisionID != 0 {
-		t.Fatalf("plan after publish = %#v", plan)
+	if plan.CurrentRevisionID != created.Revision.ID || plan.PendingRevisionID != 0 || plan.LockVersion != 3 {
+		t.Fatalf("plan after activation = %#v", plan)
 	}
 	activeNodes, _ = s.ListActivePlanNodes(ctx, plan.ID)
 	if len(activeNodes) != 3 {
-		t.Fatalf("active nodes after publish = %d, want 3", len(activeNodes))
+		t.Fatalf("current nodes after activation = %d, want 3", len(activeNodes))
 	}
 	revisions, err := s.ListPlanRevisions(ctx, plan.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(revisions) != 2 || revisions[0].Status != model.PlanRevisionActive || revisions[1].Status != model.PlanRevisionArchived {
+	if len(revisions) != 2 || revisions[0].VersionNo != 2 || revisions[0].ActivationChangeID == nil || *revisions[0].ActivationChangeID != 7 {
 		t.Fatalf("revisions = %#v", revisions)
 	}
 
-	// Remove and replace operate on the draft.
-	if err := s.SyncPlanDraftNodes(ctx, plan.ID, plan.Revision, []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 2}}, "remove"); err != nil {
+	// Remove and replace create further versions.
+	if _, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Nodes:               &PlanNodesMutation{Op: "remove", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 2}}},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SyncPlanDraftNodes(ctx, plan.ID, 0, []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeInbound, NodeID: 42, Enabled: true}}, "replace"); err != nil {
+	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
+	removedID := plan.PendingRevisionID
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, removedID, 8); err != nil {
 		t.Fatal(err)
 	}
-	draftNodes, _ = s.ListDraftPlanNodes(ctx, plan.ID)
-	if len(draftNodes) != 1 || draftNodes[0].NodeType != model.AssignableNodeInbound || draftNodes[0].NodeID != 42 {
-		t.Fatalf("draft nodes after replace = %#v", draftNodes)
+	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
+	if _, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Nodes:               &PlanNodesMutation{Op: "replace", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeInbound, NodeID: 42}}},
+	}); err != nil {
+		t.Fatal(err)
 	}
-	// The active snapshot still has the published set.
+	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
+	latest, err := s.GetPlanRevision(ctx, plan.ID, plan.LatestRevisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latestNodes, _ := s.ListPlanRevisionNodes(ctx, latest.ID)
+	if len(latestNodes) != 1 || latestNodes[0].NodeType != model.AssignableNodeInbound || latestNodes[0].NodeID != 42 {
+		t.Fatalf("latest nodes after replace = %#v", latestNodes)
+	}
+	// The current snapshot still has the activated set (3 nodes from v2).
 	activeNodes, _ = s.ListActivePlanNodes(ctx, plan.ID)
-	if len(activeNodes) != 3 {
-		t.Fatalf("active nodes after draft replace = %#v", activeNodes)
+	if len(activeNodes) != 2 {
+		t.Fatalf("current nodes after replace = %#v", activeNodes)
 	}
 	plansForNode, err := s.ListPlansForNode(ctx, string(model.AssignableNodeProxyPath), 1)
 	if err != nil {
@@ -145,35 +191,233 @@ func TestSubscriptionPlanCRUDAndNodeSync(t *testing.T) {
 		t.Fatalf("plans for node = %#v", plansForNode)
 	}
 
-	// Restore a historical revision into the draft.
-	active := revisions[0]
-	restored, err := s.RestorePlanRevision(ctx, plan.ID, active.ID, 0)
+	// Restore creates a new version based on a historical revision.
+	historical := revisions[0]
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, plan.PendingRevisionID, 8); err != nil {
+		t.Fatal(err)
+	}
+	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
+	restored, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Nodes:               &PlanNodesMutation{Op: "replace", Nodes: historicalNodesForTest(t, s, historical.ID)},
+		ChangeKind:          model.PlanChangeKindRestore,
+		ChangeSummary:       "基于历史版本恢复",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredNodes, err := s.ListPlanRevisionNodes(ctx, restored)
+	restoredNodes, err := s.ListPlanRevisionNodes(ctx, restored.Revision.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(restoredNodes) != 3 {
 		t.Fatalf("restored nodes = %#v", restoredNodes)
 	}
+	if restored.Revision.BasedOnRevisionID != plan.LatestRevisionID {
+		t.Fatalf("restored based_on = %d, want latest %d", restored.Revision.BasedOnRevisionID, plan.LatestRevisionID)
+	}
 
-	// Re-adding an existing draft node is an idempotent upsert, never a duplicate.
+	// Re-adding an existing node in the same mutation is idempotent.
 	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
-	if err := s.SyncPlanDraftNodes(ctx, plan.ID, plan.Revision, []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 1}}, "add"); err != nil {
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, plan.PendingRevisionID, 8); err != nil {
 		t.Fatal(err)
 	}
-	draftNodes, _ = s.ListDraftPlanNodes(ctx, plan.ID)
-	if len(draftNodes) != 3 {
-		t.Fatalf("upsert created duplicate rows: %#v", draftNodes)
+	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
+	same, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Nodes:               &PlanNodesMutation{Op: "add", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 1}}},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+	_ = same
 	if err := s.DeleteSubscriptionPlan(ctx, plan.ID); err != nil {
 		t.Fatal(err)
 	}
 	nodes, _ := s.ListActivePlanNodes(ctx, plan.ID)
 	if len(nodes) != 0 {
 		t.Fatalf("plan nodes must cascade-delete, got %#v", nodes)
+	}
+}
+
+func historicalNodesForTest(t *testing.T, s *Store, revisionID int64) []model.SubscriptionPlanNode {
+	t.Helper()
+	nodes, err := s.ListPlanRevisionNodes(context.Background(), revisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return nodes
+}
+
+func TestPlanVersionNoopSaveDoesNotCreateVersion(t *testing.T) {
+	ctx := context.Background()
+	s := openPlansTestStore(t)
+	plan := &model.SubscriptionPlan{Name: "noop", Enabled: true}
+	nodes := []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 1, DisplayGroup: "A"}}
+	if err := s.CreateSubscriptionPlan(ctx, plan, nodes); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Ordering: &PlanOrderingMutation{
+			Policy:      model.NewSubscriptionNodeOrderPolicy(),
+			ManualOrder: nil,
+		},
+		ChangeKind: model.PlanChangeKindOrdering,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.NoChange {
+		t.Fatalf("identical ordering save must be NoChange: %#v", result)
+	}
+	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
+	if plan.LatestRevisionID != plan.CurrentRevisionID || plan.LockVersion != 1 {
+		t.Fatalf("noop save changed the plan: %#v", plan)
+	}
+	revisions, _ := s.ListPlanRevisions(ctx, plan.ID)
+	if len(revisions) != 1 {
+		t.Fatalf("noop save created a version: %#v", revisions)
+	}
+}
+
+func TestPlanVersionOrderingAdvancesCurrentImmediately(t *testing.T) {
+	ctx := context.Background()
+	s := openPlansTestStore(t)
+	plan := &model.SubscriptionPlan{Name: "ordering-immediate", Enabled: true}
+	if err := s.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 1},
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	policy := orderingPolicyForStore(model.SubscriptionNodeOrderManual)
+	result, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Ordering:            &PlanOrderingMutation{Policy: policy, ManualOrder: []string{"proxy_path:2"}},
+		ChangeKind:          model.PlanChangeKindOrdering,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.EffectiveNow || result.RequiresDeployment || result.ChangeClass != "presentation_only" {
+		t.Fatalf("ordering version result = %#v", result)
+	}
+	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
+	if plan.CurrentRevisionID != result.Revision.ID || plan.LatestRevisionID != result.Revision.ID || plan.PendingRevisionID != 0 {
+		t.Fatalf("plan after ordering save = %#v", plan)
+	}
+	_, versionNodes, err := s.GetPlanRevisionOrdering(ctx, plan.ID, result.Revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	positions := map[int64]*int{}
+	for _, node := range versionNodes {
+		positions[node.NodeID] = node.SortPosition
+	}
+	if positions[2] == nil || *positions[2] != 0 {
+		t.Fatalf("manual positions = %#v", positions)
+	}
+	if positions[1] != nil {
+		t.Fatalf("unlisted node must keep NULL position: %#v", positions)
+	}
+	// Auto-mode save after manual keeps the manual positions (spec 4.4).
+	auto, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Ordering:            &PlanOrderingMutation{Policy: orderingPolicyForStore(model.SubscriptionNodeOrderExitRegion)},
+		ChangeKind:          model.PlanChangeKindOrdering,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, autoNodes, _ := s.GetPlanRevisionOrdering(ctx, plan.ID, auto.Revision.ID)
+	kept := 0
+	for _, node := range autoNodes {
+		if node.SortPosition != nil {
+			kept++
+		}
+	}
+	if kept != 1 {
+		t.Fatalf("auto-mode save kept positions = %d, want 1", kept)
+	}
+}
+
+func TestPlanVersionCloneCopiesLatestSnapshot(t *testing.T) {
+	ctx := context.Background()
+	s := openPlansTestStore(t)
+	plan := &model.SubscriptionPlan{Name: "clone-source", Enabled: true}
+	if err := s.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 1, DisplayGroup: "A"},
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 2, DisplayGroup: "B"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	policy := orderingPolicyForStore(model.SubscriptionNodeOrderManual)
+	if _, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Ordering:            &PlanOrderingMutation{Policy: policy, ManualOrder: []string{"proxy_path:2"}},
+		ChangeKind:          model.PlanChangeKindOrdering,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	clone, err := s.CloneSubscriptionPlan(ctx, plan.ID, "clone-copy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cloneNodes, err := s.ListActivePlanNodes(ctx, clone.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cloneNodes) != 2 {
+		t.Fatalf("clone nodes = %d", len(cloneNodes))
+	}
+	for _, node := range cloneNodes {
+		if node.NodeID == 2 && (node.SortPosition == nil || *node.SortPosition != 0) {
+			t.Fatalf("clone did not copy sort_position: %#v", node)
+		}
+	}
+	cloneRevision, err := s.GetPlanRevision(ctx, clone.ID, clone.CurrentRevisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cloneRevision.NodeOrderPolicy.Mode != model.SubscriptionNodeOrderManual {
+		t.Fatalf("clone policy = %#v", cloneRevision.NodeOrderPolicy)
+	}
+}
+
+func TestPlanVersionActivationConflictKeepsCurrent(t *testing.T) {
+	ctx := context.Background()
+	s := openPlansTestStore(t)
+	plan := &model.SubscriptionPlan{Name: "activation-conflict", Enabled: true}
+	if err := s.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Nodes:               &PlanNodesMutation{Op: "add", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 2}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
+	currentBefore := plan.CurrentRevisionID
+	// Wrong current or wrong pending both conflict and keep the plan intact.
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID+1, created.Revision.ID, 1); !errors.Is(err, ErrPlanRevisionConflict) {
+		t.Fatalf("stale current err = %v", err)
+	}
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, 99999, 1); !errors.Is(err, ErrPlanRevisionConflict) {
+		t.Fatalf("stale pending err = %v", err)
+	}
+	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
+	if plan.CurrentRevisionID != currentBefore || plan.PendingRevisionID == 0 {
+		t.Fatalf("conflicting activation mutated plan: %#v", plan)
+	}
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, created.Revision.ID, 9); err != nil {
+		t.Fatal(err)
+	}
+	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
+	if plan.CurrentRevisionID != created.Revision.ID || plan.PendingRevisionID != 0 {
+		t.Fatalf("plan after successful activation = %#v", plan)
 	}
 }
 
@@ -188,28 +432,40 @@ func TestPlanDraftLimits(t *testing.T) {
 	if got.SpeedLimitMbps != 50 || got.TrafficLimitBytes != 1<<30 {
 		t.Fatalf("initial limits = %#v", got)
 	}
-	// Draft limits must not affect the active plan limits.
-	draftID, err := s.UpdatePlanDraftLimits(ctx, plan.ID, got.Revision, 200, 2<<30, "month_day", 15)
+	// Limit changes create a pending version; the current limits stay until
+	// activation.
+	speed := 200
+	traffic := int64(2 << 30)
+	mode := "month_day"
+	day := 15
+	created, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: got.LockVersion,
+		Settings:            &PlanSettingsMutation{SpeedLimitMbps: &speed, TrafficLimitBytes: &traffic, TrafficResetMode: &mode, TrafficResetDay: &day},
+		ChangeKind:          model.PlanChangeKindSettings,
+	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if created.ChangeClass != "authorization" || !created.RequiresDeployment || created.EffectiveNow {
+		t.Fatalf("limits version = %#v", created)
 	}
 	got, _ = s.GetSubscriptionPlan(ctx, plan.ID)
-	if got.SpeedLimitMbps != 50 || got.DraftRevisionID == 0 {
-		t.Fatalf("active limits changed by draft edit: %#v", got)
+	if got.SpeedLimitMbps != 50 || got.PendingRevisionID != created.Revision.ID {
+		t.Fatalf("current limits changed while pending: %#v", got)
 	}
-	draftRev, err := s.GetPlanRevision(ctx, plan.ID, draftID)
+	versionRev, err := s.GetPlanRevision(ctx, plan.ID, created.Revision.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if draftRev.SpeedLimitMbps != 200 || draftRev.TrafficResetDay != 15 {
-		t.Fatalf("draft revision = %#v", draftRev)
+	if versionRev.SpeedLimitMbps != 200 || versionRev.TrafficResetDay != 15 {
+		t.Fatalf("version revision = %#v", versionRev)
 	}
-	if _, err := s.PublishPlanRevision(ctx, plan.ID, got.Revision); err != nil {
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, got.CurrentRevisionID, created.Revision.ID, 3); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.GetSubscriptionPlan(ctx, plan.ID)
 	if got.SpeedLimitMbps != 200 || got.TrafficResetMode != "month_day" {
-		t.Fatalf("plan limits after publish = %#v", got)
+		t.Fatalf("plan limits after activation = %#v", got)
 	}
 }
 

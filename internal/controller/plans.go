@@ -496,6 +496,11 @@ func (s *Server) subscriptionPlanList(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	versionByRevision, err := s.store.ListPlanRevisionVersionNumbers(r.Context())
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
 	allNodes, err := s.store.ListAllPlanNodes(r.Context())
 	if err != nil {
 		fail(w, err, 500)
@@ -529,6 +534,11 @@ func (s *Server) subscriptionPlanList(w http.ResponseWriter, r *http.Request) {
 			"active_revision_id":  plan.ActiveRevisionID,
 			"draft_revision_id":   plan.DraftRevisionID,
 			"has_draft":           plan.DraftRevisionID != 0,
+			"lock_version":        plan.LockVersion,
+			"current_revision_id": plan.CurrentRevisionID,
+			"latest_revision_id":  plan.LatestRevisionID,
+			"pending_revision_id": plan.PendingRevisionID,
+			"latest_version_no":   versionByRevision[plan.LatestRevisionID],
 			"node_count":          nodeCount[plan.ID],
 			"member_count":        memberCount[plan.ID],
 			"created_at":          plan.CreatedAt,
@@ -549,7 +559,7 @@ func (s *Server) subscriptionPlanDetail(w http.ResponseWriter, r *http.Request, 
 		fail(w, err, 500)
 		return
 	}
-	draftNodes, err := s.store.ListDraftPlanNodes(r.Context(), id)
+	latestNodes, err := s.store.ListPlanRevisionNodes(r.Context(), plan.LatestRevisionID)
 	if err != nil {
 		fail(w, err, 500)
 		return
@@ -567,7 +577,7 @@ func (s *Server) subscriptionPlanDetail(w http.ResponseWriter, r *http.Request, 
 	write(w, 200, map[string]any{
 		"subscription_plan":          plan,
 		"nodes":                      activeNodes,
-		"draft_nodes":                draftNodes,
+		"latest_nodes":               latestNodes,
 		"revisions":                  revisions,
 		"member_count":               len(members),
 		"runtime_authorization_mode": s.authorizationMode(r.Context()),
@@ -631,7 +641,7 @@ func (s *Server) subscriptionPlanPatch(w http.ResponseWriter, r *http.Request, i
 	}
 	expected := req.ExpectedRevision
 	if expected == 0 {
-		expected = plan.Revision
+		expected = plan.LockVersion
 	}
 	name, description := plan.Name, plan.Description
 	if req.Name != nil {
@@ -640,18 +650,19 @@ func (s *Server) subscriptionPlanPatch(w http.ResponseWriter, r *http.Request, i
 	if req.Description != nil {
 		description = strings.TrimSpace(*req.Description)
 	}
-	meta := model.SubscriptionPlan{Name: name, Description: description, Enabled: plan.Enabled}
+	metaModel := model.SubscriptionPlan{Name: name, Description: description, Enabled: plan.Enabled}
 	if req.Enabled != nil {
-		meta.Enabled = *req.Enabled
+		metaModel.Enabled = *req.Enabled
 	}
-	if err := validateSubscriptionPlanFields(&meta); err != nil {
+	if err := validateSubscriptionPlanFields(&metaModel); err != nil {
 		fail(w, err, 400)
 		return
 	}
-	if err := s.store.UpdateSubscriptionPlanMeta(r.Context(), id, expected, meta.Name, meta.Description, req.Enabled); err != nil {
-		fail(w, err, planWriteStatus(err))
-		return
+	var meta *store.PlanMetaMutation
+	if req.Name != nil || req.Description != nil || req.Enabled != nil {
+		meta = &store.PlanMetaMutation{Name: req.Name, Description: req.Description, Enabled: req.Enabled}
 	}
+	var settings *store.PlanSettingsMutation
 	if req.SpeedLimitMbps != nil || req.TrafficLimitBytes != nil || req.TrafficResetMode != nil || req.TrafficResetDay != nil {
 		speed, traffic, mode, day := plan.SpeedLimitMbps, plan.TrafficLimitBytes, plan.TrafficResetMode, plan.TrafficResetDay
 		if req.SpeedLimitMbps != nil {
@@ -670,7 +681,30 @@ func (s *Server) subscriptionPlanPatch(w http.ResponseWriter, r *http.Request, i
 			fail(w, errors.New("limits must be >= 0"), 400)
 			return
 		}
-		if _, err := s.store.UpdatePlanDraftLimits(r.Context(), id, 0, speed, traffic, mode, day); err != nil {
+		settings = &store.PlanSettingsMutation{SpeedLimitMbps: &speed, TrafficLimitBytes: &traffic, TrafficResetMode: &mode, TrafficResetDay: &day}
+	}
+	changeKind := model.PlanChangeKindSettings
+	changeSummary := "更新方案设置"
+	if settings == nil {
+		changeKind = model.PlanChangeKindSettings
+		changeSummary = "更新方案信息"
+	}
+	result, err := s.store.CreatePlanVersion(r.Context(), id, store.PlanVersionMutation{
+		BaseRevisionID:      plan.LatestRevisionID,
+		ExpectedLockVersion: expected,
+		Meta:                meta,
+		Settings:            settings,
+		ChangeKind:          changeKind,
+		ChangeSummary:       changeSummary,
+	})
+	if err != nil {
+		s.planVersionConflict(w, err, id)
+		return
+	}
+	var change *model.AccessChange
+	if !result.NoChange && result.RequiresDeployment {
+		change, err = s.createPlanPublishChange(r.Context(), r, plan, result.Revision.ID)
+		if err != nil {
 			fail(w, err, planWriteStatus(err))
 			return
 		}
@@ -681,7 +715,20 @@ func (s *Server) subscriptionPlanPatch(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	auditReq(s, r, "patch", "subscription-plan", fmt.Sprint(id))
-	write(w, 200, map[string]any{"subscription_plan": updated})
+	out := map[string]any{"subscription_plan": updated, "no_change": result.NoChange}
+	if result.NoChange {
+		out["latest_revision_id"] = result.LatestRevisionID
+	} else {
+		out["version_no"] = result.Revision.VersionNo
+		out["revision"] = result.Revision
+		out["pending_revision_id"] = result.PendingRevisionID
+		if change != nil {
+			out["access_change_id"] = change.ID
+			out["access_change_status"] = change.Status
+			out["queued_tasks"] = len(change.Targets)
+		}
+	}
+	write(w, 200, out)
 }
 
 func (s *Server) subscriptionPlanDelete(w http.ResponseWriter, r *http.Request, id int64) {
@@ -745,10 +792,20 @@ func (s *Server) subscriptionPlanSubroutes(w http.ResponseWriter, r *http.Reques
 			s.planNodesPreview(w, r, id)
 		case "sync":
 			s.planNodesSync(w, r, id)
+		case "apply":
+			s.planNodesApply(w, r, id)
 		default:
 			fail(w, errors.New("unknown subscription plan subroute"), 404)
 		}
 	case "ordering":
+		if len(parts) == 2 && parts[1] == "versions" {
+			if r.Method != http.MethodPost {
+				method(w)
+				return
+			}
+			s.planOrderingVersionCreate(w, r, id)
+			return
+		}
 		if len(parts) == 2 && parts[1] == "preview" {
 			if r.Method != http.MethodPost {
 				method(w)
@@ -838,6 +895,23 @@ func (s *Server) planClone(w http.ResponseWriter, r *http.Request, id int64) {
 	write(w, 201, map[string]any{"subscription_plan": clone})
 }
 
+// manualOrderFromNodes returns the manual order list of a revision: node keys
+// sorted by their explicit sort_position.
+func manualOrderFromNodes(nodes []model.SubscriptionPlanNode) []string {
+	placed := make([]model.SubscriptionPlanNode, 0, len(nodes))
+	for _, pn := range nodes {
+		if pn.SortPosition != nil {
+			placed = append(placed, pn)
+		}
+	}
+	sort.Slice(placed, func(i, j int) bool { return *placed[i].SortPosition < *placed[j].SortPosition })
+	out := make([]string, 0, len(placed))
+	for _, pn := range placed {
+		out = append(out, core.NodeKeyOf(pn.NodeType, pn.NodeID))
+	}
+	return out
+}
+
 func (s *Server) planRevisions(w http.ResponseWriter, r *http.Request, id int64, parts []string) {
 	if len(parts) == 0 {
 		if r.Method != http.MethodGet {
@@ -877,7 +951,9 @@ func (s *Server) planRevisions(w http.ResponseWriter, r *http.Request, id int64,
 	}
 	if len(parts) == 2 && parts[1] == "restore" && r.Method == http.MethodPost {
 		var req struct {
-			ExpectedRevision int64 `json:"expected_revision"`
+			ExpectedLockVersion int64  `json:"expected_lock_version"`
+			ExpectedRevision    int64  `json:"expected_revision"`
+			ChangeSummary       string `json:"change_summary"`
 		}
 		_ = decode(w, r, &req)
 		plan, err := s.store.GetSubscriptionPlan(r.Context(), id)
@@ -885,22 +961,50 @@ func (s *Server) planRevisions(w http.ResponseWriter, r *http.Request, id int64,
 			fail(w, err, 404)
 			return
 		}
-		expected := req.ExpectedRevision
+		expected := req.ExpectedLockVersion
 		if expected == 0 {
-			expected = plan.Revision
+			expected = req.ExpectedRevision
 		}
-		draftID, err := s.store.RestorePlanRevision(r.Context(), id, revisionID, expected)
+		if expected == 0 {
+			expected = plan.LockVersion
+		}
+		historical, histNodes, err := s.store.GetPlanRevisionOrdering(r.Context(), id, revisionID)
 		if err != nil {
-			fail(w, err, planWriteStatus(err))
+			fail(w, err, 404)
 			return
 		}
-		change, err := s.createPlanPublishChange(r.Context(), r, plan, draftID)
+		speed, traffic := historical.SpeedLimitMbps, historical.TrafficLimitBytes
+		mode, day := historical.TrafficResetMode, historical.TrafficResetDay
+		result, err := s.store.CreatePlanVersion(r.Context(), id, store.PlanVersionMutation{
+			ExpectedLockVersion: expected,
+			Settings: &store.PlanSettingsMutation{
+				SpeedLimitMbps:    &speed,
+				TrafficLimitBytes: &traffic,
+				TrafficResetMode:  &mode,
+				TrafficResetDay:   &day,
+			},
+			Nodes:         &store.PlanNodesMutation{Op: "replace", Nodes: histNodes},
+			Ordering:      &store.PlanOrderingMutation{Policy: historical.NodeOrderPolicy, ManualOrder: manualOrderFromNodes(histNodes)},
+			ChangeKind:    model.PlanChangeKindRestore,
+			ChangeSummary: strings.TrimSpace(req.ChangeSummary),
+		})
 		if err != nil {
-			fail(w, err, planWriteStatus(err))
+			s.planVersionConflict(w, err, id)
 			return
 		}
-		auditReq(s, r, "restore", "access-change", fmt.Sprintf("plan=%d revision=%d change=%d", id, revisionID, change.ID))
-		write(w, 200, map[string]any{"restored": true, "draft_revision_id": draftID, "access_change_id": change.ID, "access_change_status": change.Status, "runtime_authorization_mode": s.authorizationMode(r.Context())})
+		out := map[string]any{"restored": !result.NoChange, "no_change": result.NoChange, "revision": result.Revision, "version_no": result.Revision.VersionNo, "latest_revision_id": result.LatestRevisionID, "pending_revision_id": result.PendingRevisionID, "runtime_authorization_mode": s.authorizationMode(r.Context())}
+		if !result.NoChange && result.RequiresDeployment {
+			change, err := s.createPlanPublishChange(r.Context(), r, plan, result.Revision.ID)
+			if err != nil {
+				fail(w, err, planWriteStatus(err))
+				return
+			}
+			out["access_change_id"] = change.ID
+			out["access_change_status"] = change.Status
+			out["queued_tasks"] = len(change.Targets)
+		}
+		auditReq(s, r, "restore", "subscription-plan", fmt.Sprintf("plan=%d revision=%d", id, revisionID))
+		write(w, 200, out)
 		return
 	}
 	fail(w, errors.New("unknown subscription plan subroute"), 404)
@@ -974,10 +1078,91 @@ func (s *Server) planNodesSync(w http.ResponseWriter, r *http.Request, id int64)
 	write(w, 200, map[string]any{"subscription_plan": updated, "revision": updated.Revision})
 }
 
-// computePlanNodesChange previews one draft node edit: the diff against the
-// current draft (or active when no draft exists), the active-vs-draft diff,
-// affected authentication servers, and the expected revision for optimistic
-// concurrency.
+// planNodesApply serves POST /subscription-plans/:id/nodes/apply. It creates
+// an immutable version with the node change; because node membership affects
+// authorization, the version stays pending and an access change drives the
+// prepare/activate/finalize deployment.
+func (s *Server) planNodesApply(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	var req struct {
+		BaseRevisionID      int64             `json:"base_revision_id"`
+		ExpectedLockVersion int64             `json:"expected_lock_version"`
+		Op                  string            `json:"op"` // add | remove | replace
+		Nodes               []planNodeRequest `json:"nodes"`
+		DisplayGroup        string            `json:"display_group,omitempty"`
+		ChangeSummary       string            `json:"change_summary"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	req.Op = strings.ToLower(strings.TrimSpace(req.Op))
+	if req.Op == "" {
+		req.Op = "add"
+	}
+	plan, err := s.store.GetSubscriptionPlan(r.Context(), id)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	expected := req.ExpectedLockVersion
+	if expected == 0 {
+		expected = plan.LockVersion
+	}
+	nodes, err := s.validatePlanNodeRequests(r.Context(), req.Nodes, req.DisplayGroup, req.Op == "remove")
+	if err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	result, err := s.store.CreatePlanVersion(r.Context(), id, store.PlanVersionMutation{
+		BaseRevisionID:      req.BaseRevisionID,
+		ExpectedLockVersion: expected,
+		Nodes:               &store.PlanNodesMutation{Op: req.Op, Nodes: nodes},
+		ChangeKind:          model.PlanChangeKindNodes,
+		ChangeSummary:       strings.TrimSpace(req.ChangeSummary),
+	})
+	if err != nil {
+		s.planVersionConflict(w, err, id)
+		return
+	}
+	if result.NoChange {
+		write(w, 200, map[string]any{
+			"no_change":                  true,
+			"lock_version":               result.LockVersion,
+			"latest_revision_id":         result.LatestRevisionID,
+			"runtime_authorization_mode": s.authorizationMode(r.Context()),
+		})
+		return
+	}
+	change, err := s.createPlanPublishChange(r.Context(), r, plan, result.Revision.ID)
+	if err != nil {
+		fail(w, err, planWriteStatus(err))
+		return
+	}
+	auditReq(s, r, req.Op, "subscription-plan-nodes", fmt.Sprintf("%d:%d change=%d", id, len(nodes), change.ID))
+	updated, err := s.store.GetSubscriptionPlan(r.Context(), id)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	write(w, 200, map[string]any{
+		"subscription_plan":          updated,
+		"revision":                   result.Revision,
+		"version_no":                 result.Revision.VersionNo,
+		"latest_revision_id":         result.LatestRevisionID,
+		"pending_revision_id":        result.PendingRevisionID,
+		"access_change_id":           change.ID,
+		"access_change_status":       change.Status,
+		"queued_tasks":               len(change.Targets),
+		"runtime_authorization_mode": s.authorizationMode(r.Context()),
+	})
+}
+
+// computePlanNodesChange previews one node edit against the latest saved
+// version: the diff against the current snapshot, the affected authentication
+// servers, and the expected lock version for optimistic concurrency.
 func (s *Server) computePlanNodesChange(ctx context.Context, id int64, req planNodesSyncRequest) (map[string]any, error) {
 	nodes, err := s.validatePlanNodeRequests(ctx, req.Nodes, req.DisplayGroup, req.Op == "remove")
 	if err != nil {
@@ -995,14 +1180,11 @@ func (s *Server) computePlanNodesChange(ctx context.Context, id int64, req planN
 	if err != nil {
 		return nil, err
 	}
-	draftNodes, err := s.store.ListDraftPlanNodes(ctx, id)
+	latestNodes, err := s.store.ListPlanRevisionNodes(ctx, plan.LatestRevisionID)
 	if err != nil {
 		return nil, err
 	}
-	currentNodes := draftNodes
-	if len(currentNodes) == 0 {
-		currentNodes = activeNodes
-	}
+	currentNodes := latestNodes
 	targetNodes := append([]model.SubscriptionPlanNode(nil), currentNodes...)
 	switch req.Op {
 	case "add":
@@ -1034,13 +1216,15 @@ func (s *Server) computePlanNodesChange(ctx context.Context, id int64, req planN
 	}
 	preview := core.PreviewPlanNodeChange(data.users, data.bindings, data.plans, data.planNodes, data.exceptions, id, targetNodes, data.config.ProxyPaths, data.config.ProxyPathSteps, data.config.Inbounds, data.serverOnline, data.now())
 	out := map[string]any{
-		"preview":           preview,
-		"expected_revision": plan.Revision,
-		"draft_node_count":  len(targetNodes),
+		"preview":               preview,
+		"expected_revision":     plan.LockVersion,
+		"expected_lock_version": plan.LockVersion,
+		"base_revision_id":      plan.LatestRevisionID,
+		"node_count":            len(targetNodes),
 	}
-	if len(draftNodes) > 0 {
-		added, removed, unchanged := nodeSetDiff(activeNodes, draftNodes)
-		out["active_vs_draft"] = map[string]any{"nodes_added": added, "nodes_removed": removed, "nodes_unchanged": unchanged}
+	if plan.LatestRevisionID != plan.CurrentRevisionID {
+		added, removed, unchanged := nodeSetDiff(activeNodes, latestNodes)
+		out["current_vs_latest"] = map[string]any{"nodes_added": added, "nodes_removed": removed, "nodes_unchanged": unchanged}
 	}
 	return out, nil
 }

@@ -80,7 +80,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
   const [planID, setPlanID] = React.useState(0)
   const [planOp, setPlanOp] = React.useState<'add' | 'remove' | 'replace'>('add')
   const [displayGroup, setDisplayGroup] = React.useState('')
-  const [planPreview, setPlanPreview] = React.useState<{ preview: PlanChangePreview; expected_revision: number; draft_node_count: number } | null>(null)
+  const [planPreview, setPlanPreview] = React.useState<{ preview: PlanChangePreview; expected_revision: number; expected_lock_version: number; base_revision_id: number; node_count: number } | null>(null)
   const [planBusy, setPlanBusy] = React.useState(false)
   const [planApplyBusy, setPlanApplyBusy] = React.useState(false)
   const [planMessage, setPlanMessage] = React.useState('')
@@ -131,7 +131,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     setPlanBusy(true)
     setPlanMessage('')
     try {
-      const res = await client.request<{ preview: PlanChangePreview; expected_revision: number; draft_node_count: number }>(`/subscription-plans/${planID}/nodes/preview`, {
+      const res = await client.request<{ preview: PlanChangePreview; expected_revision: number; expected_lock_version: number; base_revision_id: number; node_count: number }>(`/subscription-plans/${planID}/nodes/preview`, {
         method: 'POST',
         body: JSON.stringify({ op: planOp, nodes: preview.node_refs, display_group: planOp === 'remove' ? '' : displayGroup }),
       })
@@ -148,16 +148,23 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     setPlanApplyBusy(true)
     setPlanMessage('')
     try {
-      await client.request(`/subscription-plans/${planID}/nodes/sync`, {
+      const res = await client.request<{ access_change_id?: number; no_change?: boolean }>(`/subscription-plans/${planID}/nodes/apply`, {
         method: 'POST',
         body: JSON.stringify({
           op: planOp,
           nodes: preview.node_refs,
           display_group: planOp === 'remove' ? '' : displayGroup,
-          expected_revision: planPreview.expected_revision,
+          base_revision_id: planPreview.base_revision_id || 0,
+          expected_lock_version: planPreview.expected_lock_version || planPreview.expected_revision || 0,
         }),
       })
-      notify?.('方案草稿节点已更新，发布后生效', 'success')
+      if (res.no_change) {
+        notify?.('节点集合没有变化，未创建新版本', 'warning')
+      } else if (res.access_change_id) {
+        notify?.(`已保存为新版本，正在应用变更 #${res.access_change_id}`, 'success')
+      } else {
+        notify?.('已保存为新版本', 'success')
+      }
       setPlanPreview(null)
       await onDone()
     } catch (e: any) {
@@ -225,8 +232,6 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     }
   }
 
-  const opLabels: Record<string, string> = { add: '加入草稿', remove: '从草稿移除', replace: '替换草稿' }
-
   return (
     <Dialog isOpen={open} onClose={onClose} title={node ? `节点操作：${node.name}` : '节点操作'} size="lg">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -251,16 +256,16 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
             </div>
 
             <div className="card-custom" style={{ padding: 12 }}>
-              <h3 style={{ marginTop: 0 }}>方案草稿</h3>
+              <h3 style={{ marginTop: 0 }}>方案节点</h3>
               <div className="section-toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <Select value={planID} onChange={e => setPlanID(Number(e.target.value))} style={{ minWidth: 160 }} aria-label="选择方案">
                   <option value={0}>选择方案</option>
                   {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </Select>
                 <Select value={planOp} onChange={e => setPlanOp(e.target.value as 'add' | 'remove' | 'replace')} aria-label="操作类型">
-                  <option value="add">加入草稿</option>
-                  <option value="remove">从草稿移除</option>
-                  <option value="replace">替换草稿</option>
+                  <option value="add">加入方案</option>
+                  <option value="remove">从方案移除</option>
+                  <option value="replace">替换方案节点</option>
                 </Select>
                 {planOp !== 'remove' && (
                   <Input value={displayGroup} onChange={e => setDisplayGroup(e.target.value)} placeholder="展示分组（可选）" style={{ maxWidth: 180 }} />
@@ -271,7 +276,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
               {planPreview && (
                 <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <p className="muted" style={{ margin: 0 }}>
-                    草稿将变为 {planPreview.draft_node_count} 个节点 · 新增 {planPreview.preview.nodes_added?.length || 0} · 移除 {planPreview.preview.nodes_removed?.length || 0} · 不变 {planPreview.preview.nodes_unchanged || 0} · 受影响用户 {planPreview.preview.users_affected} · 任务 {planPreview.preview.task_count}
+                    新版本将为 {planPreview.node_count} 个节点 · 新增 {planPreview.preview.nodes_added?.length || 0} · 移除 {planPreview.preview.nodes_removed?.length || 0} · 不变 {planPreview.preview.nodes_unchanged || 0} · 受影响用户 {planPreview.preview.users_affected} · 任务 {planPreview.preview.task_count}
                   </p>
                   {(planPreview.preview.capacity_issues || []).length > 0 && (
                     <p style={{ color: 'var(--color-danger)', margin: 0 }}>{planPreview.preview.capacity_issues.join('；')}</p>

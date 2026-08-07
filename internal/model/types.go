@@ -287,32 +287,43 @@ const (
 
 // SubscriptionPlan is the single axis of node authorization: a plan owns a node
 // set plus the service limits of that subscription product. User groups no
-// longer grant nodes; a user's effective nodes come from the one active plan
-// binding combined with temporary per-user exceptions.
+// longer grant nodes; a user's effective nodes come from the one current plan
+// revision combined with temporary per-user exceptions.
 //
 // Limits and the node set belong to revisions, not to the plan row itself.
 // SpeedLimitMbps/TrafficLimitBytes/TrafficResetMode/TrafficResetDay mirror the
-// current active revision for read APIs; every mutation goes through a draft
-// revision and is published atomically.
+// current revision for read APIs. Every save creates an immutable new version:
+// LockVersion guards concurrent writes, CurrentRevisionID is what bound users
+// actually get, LatestRevisionID is the newest saved snapshot the editor works
+// from, and PendingRevisionID (when set) is a version being applied to agents.
 type SubscriptionPlan struct {
-	ID                int64     `json:"id"`
-	Name              string    `json:"name"`
-	Description       string    `json:"description"`
-	Enabled           bool      `json:"enabled"`
-	SpeedLimitMbps    int       `json:"speed_limit_mbps"`
-	TrafficLimitBytes int64     `json:"traffic_limit_bytes"`
-	TrafficResetMode  string    `json:"traffic_reset_mode"`
-	TrafficResetDay   int       `json:"traffic_reset_day"`
-	Revision          int64     `json:"revision"`
-	ActiveRevisionID  int64     `json:"active_revision_id"`
-	DraftRevisionID   int64     `json:"draft_revision_id,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                int64  `json:"id"`
+	Name              string `json:"name"`
+	Description       string `json:"description"`
+	Enabled           bool   `json:"enabled"`
+	SpeedLimitMbps    int    `json:"speed_limit_mbps"`
+	TrafficLimitBytes int64  `json:"traffic_limit_bytes"`
+	TrafficResetMode  string `json:"traffic_reset_mode"`
+	TrafficResetDay   int    `json:"traffic_reset_day"`
+	LockVersion       int64  `json:"lock_version"`
+	CurrentRevisionID int64  `json:"current_revision_id"`
+	LatestRevisionID  int64  `json:"latest_revision_id"`
+	PendingRevisionID int64  `json:"pending_revision_id,omitempty"`
+	// Revision, ActiveRevisionID and DraftRevisionID are legacy aliases kept
+	// for read compatibility during the phased migration. They mirror
+	// LockVersion, CurrentRevisionID and (when a frozen legacy draft exists)
+	// the old draft pointer. New writes never touch the legacy columns.
+	Revision         int64     `json:"revision"`
+	ActiveRevisionID int64     `json:"active_revision_id"`
+	DraftRevisionID  int64     `json:"draft_revision_id,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
-// PlanRevisionStatus is the lifecycle of one frozen plan revision. An active
-// revision is immutable; all changes land in a draft revision and become active
-// only through an explicit publish.
+// PlanRevisionStatus is the legacy lifecycle of one plan revision row. It is
+// kept only for read compatibility: the draft/active/archived wording belongs
+// to the old model and new versions derive their state from the plan pointers
+// (current/latest/pending) instead.
 type PlanRevisionStatus string
 
 const (
@@ -321,22 +332,41 @@ const (
 	PlanRevisionArchived PlanRevisionStatus = "archived"
 )
 
-// SubscriptionPlanRevision is one frozen snapshot of a plan: its limits plus
-// the isolated node set in subscription_plan_revision_nodes. Historical
-// revisions are kept for inspection and rollback.
+// PlanChangeKind describes why an immutable plan version was created. It is
+// shown in the version history and used to decide whether a version affects
+// authorization (nodes or limits) or is presentation-only (ordering).
+const (
+	PlanChangeKindCreate               = "create"
+	PlanChangeKindSettings             = "settings"
+	PlanChangeKindNodes                = "nodes"
+	PlanChangeKindOrdering             = "ordering"
+	PlanChangeKindMixed                = "mixed"
+	PlanChangeKindRestore              = "restore"
+	PlanChangeKindClone                = "clone"
+	PlanChangeKindLegacyDraftMigration = "legacy_draft_migration"
+)
+
+// SubscriptionPlanRevision is one immutable snapshot of a plan: its limits plus
+// the isolated node set in subscription_plan_revision_nodes. Versions are
+// never updated after creation; editing always creates the next version.
 type SubscriptionPlanRevision struct {
-	ID                int64                       `json:"id"`
-	PlanID            int64                       `json:"plan_id"`
-	Revision          int64                       `json:"revision"`
-	Status            PlanRevisionStatus          `json:"status"`
-	SpeedLimitMbps    int                         `json:"speed_limit_mbps"`
-	TrafficLimitBytes int64                       `json:"traffic_limit_bytes"`
-	TrafficResetMode  string                      `json:"traffic_reset_mode"`
-	TrafficResetDay   int                         `json:"traffic_reset_day"`
-	NodeOrderPolicy   SubscriptionNodeOrderPolicy `json:"node_order_policy,omitempty"`
-	CreatedBy         *int64                      `json:"created_by,omitempty"`
-	CreatedAt         time.Time                   `json:"created_at"`
-	ActivatedAt       *time.Time                  `json:"activated_at,omitempty"`
+	ID                 int64                       `json:"id"`
+	PlanID             int64                       `json:"plan_id"`
+	VersionNo          int64                       `json:"version_no"`
+	BasedOnRevisionID  int64                       `json:"based_on_revision_id,omitempty"`
+	ChangeKind         string                      `json:"change_kind,omitempty"`
+	ChangeSummary      string                      `json:"change_summary,omitempty"`
+	ActivationChangeID *int64                      `json:"activation_change_id,omitempty"`
+	Revision           int64                       `json:"revision"`
+	Status             PlanRevisionStatus          `json:"status"`
+	SpeedLimitMbps     int                         `json:"speed_limit_mbps"`
+	TrafficLimitBytes  int64                       `json:"traffic_limit_bytes"`
+	TrafficResetMode   string                      `json:"traffic_reset_mode"`
+	TrafficResetDay    int                         `json:"traffic_reset_day"`
+	NodeOrderPolicy    SubscriptionNodeOrderPolicy `json:"node_order_policy,omitempty"`
+	CreatedBy          *int64                      `json:"created_by,omitempty"`
+	CreatedAt          time.Time                   `json:"created_at"`
+	ActivatedAt        *time.Time                  `json:"activated_at,omitempty"`
 }
 
 // SubscriptionPlanRevisionNode is one node of a frozen revision. Rows are

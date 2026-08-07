@@ -503,6 +503,14 @@ func TestPlanLegacySchemaMigratesBeforePlanIndexes(t *testing.T) {
 	}{
 		{"subscription_plans", "active_revision_id"},
 		{"subscription_plans", "draft_revision_id"},
+		{"subscription_plans", "lock_version"},
+		{"subscription_plans", "current_revision_id"},
+		{"subscription_plans", "latest_revision_id"},
+		{"subscription_plans", "pending_revision_id"},
+		{"subscription_plan_revisions", "version_no"},
+		{"subscription_plan_revisions", "based_on_revision_id"},
+		{"subscription_plan_revisions", "change_kind"},
+		{"subscription_plan_revisions", "activation_change_id"},
 		{"user_node_exceptions", "status"},
 		{"user_node_exceptions", "starts_at"},
 		{"user_node_exceptions", "change_id"},
@@ -518,7 +526,7 @@ func TestPlanLegacySchemaMigratesBeforePlanIndexes(t *testing.T) {
 			t.Fatalf("missing migrated column %s.%s", column.table, column.column)
 		}
 	}
-	for _, index := range []string{"idx_user_node_exceptions_status", "idx_user_plan_bindings_deploy", "idx_plan_revisions_one_active", "idx_plan_revisions_one_draft"} {
+	for _, index := range []string{"idx_user_node_exceptions_status", "idx_user_plan_bindings_deploy", "idx_subscription_plan_revision_version_no"} {
 		var count int
 		if err := s.db.QueryRow(`select count(*) from sqlite_master where type='index' and name='` + index + `'`).Scan(&count); err != nil {
 			t.Fatalf("check index %s: %v", index, err)
@@ -533,6 +541,22 @@ func TestPlanLegacySchemaMigratesBeforePlanIndexes(t *testing.T) {
 	}
 	if revisionCount != 1 {
 		t.Fatalf("active revision backfill = %d", revisionCount)
+	}
+	var pointerPlan model.SubscriptionPlan
+	planRows, err := s.db.Query(`select lock_version,coalesce(current_revision_id,0),coalesce(latest_revision_id,0),coalesce(pending_revision_id,0) from subscription_plans where id=1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planRows.Next() {
+		if err := planRows.Scan(&pointerPlan.LockVersion, &pointerPlan.CurrentRevisionID, &pointerPlan.LatestRevisionID, &pointerPlan.PendingRevisionID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := planRows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if pointerPlan.LockVersion != 3 || pointerPlan.CurrentRevisionID == 0 || pointerPlan.LatestRevisionID != pointerPlan.CurrentRevisionID {
+		t.Fatalf("version pointer backfill = %+v", pointerPlan)
 	}
 	var nodeCount int
 	if err := s.db.QueryRow(`select count(*) from subscription_plan_revision_nodes where node_type='proxy_path' and node_id=7`).Scan(&nodeCount); err != nil {

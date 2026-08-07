@@ -714,7 +714,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   'external-outbounds': { label: '导入节点', desc: '导入第三方 SS、SOCKS、VLESS 等节点。', group: '流量' },
   users: { label: '用户', desc: '多用户、凭据、限速、流量额度和订阅令牌。', group: '访问控制' },
   nodes: { label: '节点分配', desc: '可分配节点目录：筛选、分组、方案归属、有效用户与例外。', group: '访问控制' },
-  plans: { label: '订阅方案', desc: '方案草稿、发布预览、两阶段部署与历史修订。', group: '访问控制' },
+  plans: { label: '订阅方案', desc: '方案节点、排序、限额、版本历史与两阶段部署。', group: '访问控制' },
   dns: { label: 'DNS 设置', desc: '为服务器选择解析服务并检查解析速度。', group: '网络' },
   'dns-records': { label: '域名解析', desc: '管理云服务商账号和域名解析记录。', group: '网络' },
   mtu: { label: 'MTU', desc: '检测路径 MTU、给出建议并可由 Agent 应用。', group: '网络' },
@@ -13119,14 +13119,24 @@ let subscriptionClientIconsReady: Promise<void> | null = null
 function preloadSubscriptionClientIcons() {
   if (subscriptionClientIconsReady) return subscriptionClientIconsReady
   const sources = Array.from(new Set(Object.values(subscriptionClientIcons)))
+  // Never let icon preloading block the subscription page: Image.decode()
+  // can hang in some browsers, so race every image against a short timeout.
   subscriptionClientIconsReady = Promise.all(sources.map(source => new Promise<void>(resolve => {
-    const image = new Image()
     const finish = () => resolve()
+    const timer = window.setTimeout(finish, 1500)
+    const image = new Image()
     image.onload = () => {
-      if (typeof image.decode === 'function') image.decode().then(finish, finish)
-      else finish()
+      window.clearTimeout(timer)
+      if (typeof image.decode === 'function') {
+        image.decode().then(finish, finish)
+      } else {
+        finish()
+      }
     }
-    image.onerror = finish
+    image.onerror = () => {
+      window.clearTimeout(timer)
+      finish()
+    }
     image.src = source
   }))).then(() => undefined)
   return subscriptionClientIconsReady

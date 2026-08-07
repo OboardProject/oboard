@@ -206,10 +206,15 @@ func TestPlanModeAccessChangeFlow(t *testing.T) {
 		t.Fatalf("user nodes after finalize = %#v", userNodes["nodes"])
 	}
 
-	// Draft edit + preview + apply with hash; a stale hash must conflict.
-	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/nodes/sync", token, map[string]any{
-		"op": "add", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": pathID, "display_group": "HK"}},
+	// Node change creates a pending version + access change; previewing the
+	// pending version reports the change, and a stale hash must conflict.
+	path2Inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless2", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 8443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
+	path2 := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": int64(path2Inbound["id"].(float64)), "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
+	path2ID := int64(path2["id"].(float64))
+	appliedNodes := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
+		"op": "add", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": path2ID, "display_group": "HK"}},
 	}, http.StatusOK)
+	publishChangeID := int64(appliedNodes["access_change_id"].(float64))
 	preview := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/changes/preview", token, map[string]any{}, http.StatusOK)
 	hash := preview["preview_hash"].(string)
 	expectedActive := int64(preview["expected_active_revision_id"].(float64))
@@ -219,19 +224,15 @@ func TestPlanModeAccessChangeFlow(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/changes/apply", token, map[string]any{
 		"preview_hash": "stale", "expected_active_revision_id": expectedActive,
 	}, http.StatusConflict)
-	appliedPublish := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/changes/apply", token, map[string]any{
-		"preview_hash": hash, "expected_active_revision_id": expectedActive,
-	}, http.StatusOK)
-	publishChangeID := int64(appliedPublish["access_change_id"].(float64))
 	change = driveAccessChange(t, srv, token, publishChangeID)
 	if change["status"] != "finalized" {
 		t.Fatalf("publish change status = %#v", change)
 	}
 	detail := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID), token, nil, http.StatusOK)
 	planAfter := detail["subscription_plan"].(map[string]any)
-	draftAfter, _ := planAfter["draft_revision_id"].(float64)
-	activeAfter, _ := planAfter["active_revision_id"].(float64)
-	if draftAfter != 0 || activeAfter == 0 {
+	pendingAfter, _ := planAfter["pending_revision_id"].(float64)
+	currentAfter, _ := planAfter["current_revision_id"].(float64)
+	if pendingAfter != 0 || currentAfter == 0 {
 		t.Fatalf("plan after publish = %#v", detail)
 	}
 
@@ -249,7 +250,7 @@ func TestPlanModeAccessChangeFlow(t *testing.T) {
 		t.Fatalf("exception change status = %#v", change)
 	}
 	userNodes = request(t, h, http.MethodGet, "/api/v2/ui/users/"+itoa(userID)+"/nodes", token, nil, http.StatusOK)
-	if len(userNodes["nodes"].([]any)) != 1 {
+	if len(userNodes["nodes"].([]any)) != 2 {
 		t.Fatalf("user nodes with allow exception = %#v", userNodes["nodes"])
 	}
 
@@ -260,7 +261,7 @@ func TestPlanModeAccessChangeFlow(t *testing.T) {
 		"effect": "deny", "reason": "违规",
 	}, http.StatusOK)
 	userNodes = request(t, h, http.MethodGet, "/api/v2/ui/users/"+itoa(userID)+"/nodes", token, nil, http.StatusOK)
-	if len(userNodes["nodes"].([]any)) != 0 {
+	if len(userNodes["nodes"].([]any)) != 1 {
 		t.Fatalf("deny must hide the node immediately: %#v", userNodes["nodes"])
 	}
 	denyChangeID := int64(deny["access_change_id"].(float64))

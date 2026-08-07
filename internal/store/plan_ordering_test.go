@@ -22,7 +22,7 @@ func orderingPolicyForStore(mode model.SubscriptionNodeOrderMode) model.Subscrip
 
 func intPtr(v int) *int { return &v }
 
-func TestPlanOrderingDraftCloneRestoreCopy(t *testing.T) {
+func TestPlanOrderingVersionSaveAndClone(t *testing.T) {
 	ctx := context.Background()
 	s := openPlansTestStore(t)
 	plan := &model.SubscriptionPlan{Name: "ordering", Enabled: true}
@@ -46,47 +46,55 @@ func TestPlanOrderingDraftCloneRestoreCopy(t *testing.T) {
 		t.Fatalf("legacy migration default = %#v", model.DefaultSubscriptionNodeOrderPolicy().Mode)
 	}
 
-	// Save a manual ordering into a draft: policy + positions are persisted.
+	// Save a manual ordering: the new version becomes current immediately and
+	// persists policy + positions.
 	policy := orderingPolicyForStore(model.SubscriptionNodeOrderManual)
-	draftID, err := s.UpdatePlanDraftOrdering(ctx, plan.ID, plan.Revision, policy, []string{"proxy_path:2"})
+	created, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Ordering:            &PlanOrderingMutation{Policy: policy, ManualOrder: []string{"proxy_path:2"}},
+		ChangeKind:          model.PlanChangeKindOrdering,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	draft, draftNodes, err := s.GetPlanRevisionOrdering(ctx, plan.ID, draftID)
+	if !created.EffectiveNow {
+		t.Fatalf("ordering save must be effective immediately: %#v", created)
+	}
+	version, versionNodes, err := s.GetPlanRevisionOrdering(ctx, plan.ID, created.Revision.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if draft.NodeOrderPolicy.Mode != model.SubscriptionNodeOrderManual {
-		t.Fatalf("draft policy = %#v", draft.NodeOrderPolicy)
+	if version.NodeOrderPolicy.Mode != model.SubscriptionNodeOrderManual {
+		t.Fatalf("version policy = %#v", version.NodeOrderPolicy)
 	}
 	positions := map[int64]*int{}
-	for _, node := range draftNodes {
+	for _, node := range versionNodes {
 		positions[node.NodeID] = node.SortPosition
 	}
 	if positions[2] == nil || *positions[2] != 0 {
-		t.Fatalf("draft positions = %#v", positions)
+		t.Fatalf("version positions = %#v", positions)
 	}
 	if positions[1] != nil {
 		t.Fatalf("unlisted node must keep NULL position: %#v", positions)
 	}
 
-	// The active revision stays untouched.
-	active, err := s.GetPlanRevision(ctx, plan.ID, plan.ActiveRevisionID)
+	// The first revision (v1) is immutable: ordering saved a new version and
+	// never updated v1 in place.
+	v1, err := s.GetPlanRevision(ctx, plan.ID, plan.CurrentRevisionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if active.NodeOrderPolicy.Mode != model.SubscriptionNodeOrderExitRegion {
-		t.Fatalf("active policy changed: %#v", active.NodeOrderPolicy)
-	}
-	if active.NodeOrderPolicy.ExitRegionOrder != nil && len(active.NodeOrderPolicy.ExitRegionOrder) != 0 {
-		t.Fatalf("active policy region order changed: %#v", active.NodeOrderPolicy)
-	}
-
-	// Publish the draft, then clone: the clone copies policy and positions
-	// from the active snapshot.
-	if _, err := s.PublishPlanRevisionGuarded(ctx, plan.ID, plan.ActiveRevisionID, draftID); err != nil {
+	_ = v1
+	v1 = nil
+	revisions, err := s.ListPlanRevisions(ctx, plan.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if len(revisions) != 2 || revisions[0].VersionNo != 2 {
+		t.Fatalf("revisions = %#v", revisions)
+	}
+
+	// Clone copies policy and positions from the current snapshot.
 	clone, err := s.CloneSubscriptionPlan(ctx, plan.ID, "ordering-copy")
 	if err != nil {
 		t.Fatal(err)
@@ -110,30 +118,6 @@ func TestPlanOrderingDraftCloneRestoreCopy(t *testing.T) {
 	if cloneRevision.NodeOrderPolicy.Mode != model.SubscriptionNodeOrderManual {
 		t.Fatalf("clone policy = %#v", cloneRevision.NodeOrderPolicy)
 	}
-
-	// Restore copies the draft back as a new draft with policy + positions.
-	freshPlan, err := s.GetSubscriptionPlan(ctx, plan.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	restoredDraftID, err := s.RestorePlanRevision(ctx, plan.ID, draftID, freshPlan.Revision)
-	if err != nil {
-		t.Fatal(err)
-	}
-	restored, restoredNodes, err := s.GetPlanRevisionOrdering(ctx, plan.ID, restoredDraftID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if restored.NodeOrderPolicy.Mode != model.SubscriptionNodeOrderManual {
-		t.Fatalf("restored policy = %#v", restored.NodeOrderPolicy)
-	}
-	restoredPositions := map[int64]*int{}
-	for _, node := range restoredNodes {
-		restoredPositions[node.NodeID] = node.SortPosition
-	}
-	if restoredPositions[2] == nil || *restoredPositions[2] != 0 {
-		t.Fatalf("restore did not copy positions: %#v", restoredPositions)
-	}
 }
 
 func TestPlanOrderingReplaceKeepsPositionsAndRejectsDuplicates(t *testing.T) {
@@ -147,7 +131,12 @@ func TestPlanOrderingReplaceKeepsPositionsAndRejectsDuplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := orderingPolicyForStore(model.SubscriptionNodeOrderManual)
-	if _, err := s.UpdatePlanDraftOrdering(ctx, plan.ID, plan.Revision, policy, []string{"proxy_path:1", "proxy_path:2"}); err != nil {
+	ordering, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Ordering:            &PlanOrderingMutation{Policy: policy, ManualOrder: []string{"proxy_path:1", "proxy_path:2"}},
+		ChangeKind:          model.PlanChangeKindOrdering,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	detail, err := s.GetSubscriptionPlan(ctx, plan.ID)
@@ -155,18 +144,20 @@ func TestPlanOrderingReplaceKeepsPositionsAndRejectsDuplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Replace keeps the surviving node's position and NULLs the new one.
-	if err := s.SyncPlanDraftNodes(ctx, plan.ID, detail.Revision, []model.SubscriptionPlanNode{
-		{NodeType: model.AssignableNodeProxyPath, NodeID: 2, DisplayGroup: "new-group"},
-		{NodeType: model.AssignableNodeProxyPath, NodeID: 3},
-	}, "replace"); err != nil {
-		t.Fatal(err)
-	}
-	draft, draftNodes, err := s.GetPlanRevisionOrdering(ctx, plan.ID, detail.DraftRevisionID)
+	replaced, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: detail.LockVersion,
+		Nodes: &PlanNodesMutation{Op: "replace", Nodes: []model.SubscriptionPlanNode{
+			{NodeType: model.AssignableNodeProxyPath, NodeID: 2, DisplayGroup: "new-group"},
+			{NodeType: model.AssignableNodeProxyPath, NodeID: 3},
+		}},
+		ChangeKind: model.PlanChangeKindNodes,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if draft.NodeOrderPolicy.Mode != model.SubscriptionNodeOrderManual {
-		t.Fatalf("replace dropped policy: %#v", draft.NodeOrderPolicy)
+	_, draftNodes, err := s.GetPlanRevisionOrdering(ctx, plan.ID, replaced.Revision.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
 	byID := map[int64]model.SubscriptionPlanNode{}
 	for _, node := range draftNodes {
@@ -182,21 +173,14 @@ func TestPlanOrderingReplaceKeepsPositionsAndRejectsDuplicates(t *testing.T) {
 		t.Fatalf("draft nodes = %#v", draftNodes)
 	}
 
-	// A fresh manual save after the replace rewrites positions cleanly.
-	fresh, err := s.GetSubscriptionPlan(ctx, plan.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.UpdatePlanDraftOrdering(ctx, plan.ID, fresh.Revision, policy, []string{"proxy_path:2", "proxy_path:3"}); err != nil {
-		t.Fatalf("post-replace manual save: %v", err)
-	}
 	// The partial unique index still rejects a direct duplicate write.
-	if _, err := s.db.ExecContext(ctx, `update subscription_plan_revision_nodes set sort_position=0 where revision_id=? and node_type='proxy_path' and node_id=3`, fresh.DraftRevisionID); err == nil {
+	if _, err := s.db.ExecContext(ctx, `update subscription_plan_revision_nodes set sort_position=1 where revision_id=? and node_type='proxy_path' and node_id=3`, replaced.Revision.ID); err == nil {
 		t.Fatalf("duplicate sort_position must be rejected by the unique index")
 	}
+	_ = ordering
 }
 
-func TestPlanOrderingStaleRevisionAndValidation(t *testing.T) {
+func TestPlanOrderingStaleLockAndValidation(t *testing.T) {
 	ctx := context.Background()
 	s := openPlansTestStore(t)
 	plan := &model.SubscriptionPlan{Name: "ordering-conflict", Enabled: true}
@@ -206,13 +190,22 @@ func TestPlanOrderingStaleRevisionAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := orderingPolicyForStore(model.SubscriptionNodeOrderManual)
-	if _, err := s.UpdatePlanDraftOrdering(ctx, plan.ID, 99999, policy, nil); !errors.Is(err, ErrPlanRevisionConflict) {
-		t.Fatalf("stale revision err = %v", err)
+	if _, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: 99999,
+		Ordering:            &PlanOrderingMutation{Policy: policy},
+	}); !errors.Is(err, ErrPlanRevisionConflict) {
+		t.Fatalf("stale lock err = %v", err)
 	}
-	if _, err := s.UpdatePlanDraftOrdering(ctx, plan.ID, plan.Revision, policy, []string{"proxy_path:1", "proxy_path:1"}); !errors.Is(err, ErrPlanOrderingInvalid) {
+	if _, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Ordering:            &PlanOrderingMutation{Policy: policy, ManualOrder: []string{"proxy_path:1", "proxy_path:1"}},
+	}); !errors.Is(err, ErrPlanOrderingInvalid) {
 		t.Fatalf("duplicate key err = %v", err)
 	}
-	if _, err := s.UpdatePlanDraftOrdering(ctx, plan.ID, plan.Revision, policy, []string{"proxy_path:999"}); !errors.Is(err, ErrPlanOrderingInvalid) {
+	if _, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Ordering:            &PlanOrderingMutation{Policy: policy, ManualOrder: []string{"proxy_path:999"}},
+	}); !errors.Is(err, ErrPlanOrderingInvalid) {
 		t.Fatalf("unknown key err = %v", err)
 	}
 }

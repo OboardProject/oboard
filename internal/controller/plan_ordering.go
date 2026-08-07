@@ -21,13 +21,12 @@ import (
 // Subscription plan ordering
 // ---------------------------------------------------------------------------
 
-// planOrdering serves GET/PUT /subscription-plans/:id/ordering.
+// planOrdering serves the ordering editor GET route. Saving goes through
+// POST /subscription-plans/:id/ordering/versions (see planOrderingVersionCreate).
 func (s *Server) planOrdering(w http.ResponseWriter, r *http.Request, id int64) {
 	switch r.Method {
 	case http.MethodGet:
 		s.planOrderingGet(w, r, id)
-	case http.MethodPut:
-		s.planOrderingUpdate(w, r, id)
 	default:
 		method(w)
 	}
@@ -41,7 +40,7 @@ func (s *Server) planOrderingGet(w http.ResponseWriter, r *http.Request, id int6
 	}
 	revisionID, err := s.planOrderingRevisionID(r, plan)
 	if err != nil {
-		fail(w, err, 400)
+		fail(w, err, 404)
 		return
 	}
 	revision, nodes, err := s.store.GetPlanRevisionOrdering(r.Context(), id, revisionID)
@@ -59,13 +58,17 @@ func (s *Server) planOrderingGet(w http.ResponseWriter, r *http.Request, id int6
 		fail(w, err, 500)
 		return
 	}
-	views, unplaced, warnings := s.orderingNodeViews(r.Context(), config, ordered)
+	views, unplaced, warnings := s.orderingNodeViews(r.Context(), config, ordered, revision.NodeOrderPolicy.Mode == model.SubscriptionNodeOrderManual)
 	write(w, 200, map[string]any{
 		"plan_id":                    plan.ID,
-		"plan_revision":              plan.Revision,
+		"lock_version":               plan.LockVersion,
+		"base_revision_id":           plan.LatestRevisionID,
 		"revision_id":                revision.ID,
-		"revision_status":            revision.Status,
-		"editable":                   revision.Status == model.PlanRevisionDraft,
+		"version_no":                 revision.VersionNo,
+		"read_only":                  revisionID != plan.LatestRevisionID,
+		"is_current":                 revisionID == plan.CurrentRevisionID,
+		"is_latest":                  revisionID == plan.LatestRevisionID,
+		"pending_revision_id":        plan.PendingRevisionID,
 		"policy":                     revision.NodeOrderPolicy,
 		"nodes":                      views,
 		"unplaced_count":             unplaced,
@@ -74,31 +77,42 @@ func (s *Server) planOrderingGet(w http.ResponseWriter, r *http.Request, id int6
 	})
 }
 
-// planOrderingRevisionID resolves the ?revision= query (draft | active |
-// numeric revision id) to a revision id. Empty defaults to the active
-// revision.
+// planOrderingRevisionID resolves the editor's target revision. Empty or
+// ?revision_id= defaults to the latest saved version (the working base); the
+// legacy ?revision=draft|active selectors still map to the frozen legacy draft
+// or the current version during the migration.
 func (s *Server) planOrderingRevisionID(r *http.Request, plan *model.SubscriptionPlan) (int64, error) {
-	raw := strings.TrimSpace(r.URL.Query().Get("revision"))
-	switch raw {
-	case "", "active":
-		if plan.ActiveRevisionID == 0 {
-			return 0, errors.New("plan has no active revision")
+	if raw := strings.TrimSpace(r.URL.Query().Get("revision_id")); raw != "" {
+		revisionID, err := parseRevisionID(raw)
+		if err != nil {
+			return 0, errors.New("revision_id must be a revision id")
 		}
-		return plan.ActiveRevisionID, nil
-	case "draft":
-		if plan.DraftRevisionID == 0 {
-			return 0, errors.New("plan has no draft revision")
+		if _, err := s.store.GetPlanRevision(r.Context(), plan.ID, revisionID); err != nil {
+			return 0, errors.New("revision not found")
 		}
-		return plan.DraftRevisionID, nil
+		return revisionID, nil
 	}
-	revisionID, err := parseRevisionID(raw)
-	if err != nil {
-		return 0, errors.New("revision must be draft, active or a revision id")
+	if legacy := strings.TrimSpace(r.URL.Query().Get("revision")); legacy != "" {
+		switch legacy {
+		case "active", "current":
+			if plan.CurrentRevisionID == 0 {
+				return 0, errors.New("plan has no current revision")
+			}
+			return plan.CurrentRevisionID, nil
+		case "draft":
+			if plan.DraftRevisionID == 0 {
+				return 0, errors.New("plan has no draft revision")
+			}
+			return plan.DraftRevisionID, nil
+		}
+		// Unknown legacy selectors are rejected instead of silently falling
+		// back to the latest version.
+		return 0, errors.New("revision must be draft, current or a revision id")
 	}
-	if _, err := s.store.GetPlanRevision(r.Context(), plan.ID, revisionID); err != nil {
-		return 0, errors.New("revision not found")
+	if plan.LatestRevisionID == 0 {
+		return 0, errors.New("plan has no saved version")
 	}
-	return revisionID, nil
+	return plan.LatestRevisionID, nil
 }
 
 func parseRevisionID(raw string) (int64, error) {
@@ -116,6 +130,9 @@ type orderingNodeView struct {
 	Name              string                   `json:"name"`
 	Group             string                   `json:"group"`
 	EntryKey          string                   `json:"entry_key,omitempty"`
+	EntryName         string                   `json:"entry_name,omitempty"`
+	EntryProtocol     string                   `json:"entry_protocol,omitempty"`
+	EntryPort         int                      `json:"entry_port,omitempty"`
 	EntryServerID     int64                    `json:"entry_server_id,omitempty"`
 	EntryRegion       string                   `json:"entry_region,omitempty"`
 	ExitServerID      int64                    `json:"exit_server_id,omitempty"`
@@ -126,7 +143,7 @@ type orderingNodeView struct {
 	Warning           string                   `json:"warning,omitempty"`
 }
 
-func (s *Server) orderingNodeViews(ctx context.Context, config store.FullRoutingConfig, ordered []core.SubscriptionNode) ([]orderingNodeView, int, []string) {
+func (s *Server) orderingNodeViews(ctx context.Context, config store.FullRoutingConfig, ordered []core.SubscriptionNode, countUnplaced bool) ([]orderingNodeView, int, []string) {
 	renderable := renderableNodeKeys(config)
 	serverByID := map[int64]string{}
 	for _, server := range config.Servers {
@@ -150,10 +167,15 @@ func (s *Server) orderingNodeViews(ctx context.Context, config store.FullRouting
 			EffectivePosition: position,
 			Renderable:        renderable[node.Key],
 		}
+		if node.Inbound.ID != 0 {
+			view.EntryName = node.Inbound.Name
+			view.EntryProtocol = string(node.Inbound.Protocol)
+			view.EntryPort = node.Inbound.Port
+		}
 		if node.ManualPosition != nil {
 			position := *node.ManualPosition
 			view.ManualPosition = &position
-		} else {
+		} else if countUnplaced {
 			unplaced++
 		}
 		if !view.Renderable {
@@ -229,17 +251,24 @@ func renderableNodeKeys(config store.FullRoutingConfig) map[string]bool {
 }
 
 // planOrderingUpdate serves PUT /subscription-plans/:id/ordering.
-func (s *Server) planOrderingUpdate(w http.ResponseWriter, r *http.Request, id int64) {
+// planOrderingVersionCreate serves POST /subscription-plans/:id/ordering/versions.
+// The request derives a new immutable version from the latest saved snapshot.
+// Ordering is presentation-only: the version becomes current immediately and
+// no agent task is created. Conflicts return 409 with the current lock and
+// latest version so the UI can offer a reload.
+func (s *Server) planOrderingVersionCreate(w http.ResponseWriter, r *http.Request, id int64) {
 	var req struct {
-		ExpectedRevision int64                             `json:"expected_revision"`
-		Policy           model.SubscriptionNodeOrderPolicy `json:"policy"`
-		ManualNodeOrder  []string                          `json:"manual_node_order"`
+		BaseRevisionID      int64                             `json:"base_revision_id"`
+		ExpectedLockVersion int64                             `json:"expected_lock_version"`
+		Policy              model.SubscriptionNodeOrderPolicy `json:"policy"`
+		ManualNodeOrder     []string                          `json:"manual_node_order"`
+		ChangeSummary       string                            `json:"change_summary"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	if req.ExpectedRevision <= 0 {
-		fail(w, errors.New("expected_revision is required"), 400)
+	if req.ExpectedLockVersion <= 0 {
+		fail(w, errors.New("expected_lock_version is required"), 400)
 		return
 	}
 	policy, err := core.ValidateSubscriptionNodeOrderPolicy(req.Policy)
@@ -263,19 +292,40 @@ func (s *Server) planOrderingUpdate(w http.ResponseWriter, r *http.Request, id i
 			seen[key] = true
 		}
 	}
-	draftID, err := s.store.UpdatePlanDraftOrdering(r.Context(), id, req.ExpectedRevision, policy, manualOrder)
+	result, err := s.store.CreatePlanVersion(r.Context(), id, store.PlanVersionMutation{
+		BaseRevisionID:      req.BaseRevisionID,
+		ExpectedLockVersion: req.ExpectedLockVersion,
+		Ordering:            &store.PlanOrderingMutation{Policy: policy, ManualOrder: manualOrder},
+		ChangeKind:          model.PlanChangeKindOrdering,
+		ChangeSummary:       strings.TrimSpace(req.ChangeSummary),
+	})
 	if err != nil {
 		if errors.Is(err, store.ErrPlanOrderingInvalid) {
 			fail(w, err, 400)
 			return
 		}
-		fail(w, err, planWriteStatus(err))
+		s.planVersionConflict(w, err, id)
 		return
 	}
-	auditReq(s, r, "ordering", "subscription-plan", fmt.Sprintf("plan=%d draft=%d mode=%s", id, draftID, policy.Mode))
+	auditReq(s, r, "ordering", "subscription-plan", fmt.Sprintf("plan=%d version=%d mode=%s", id, result.Revision.ID, policy.Mode))
+	if result.NoChange {
+		write(w, 200, map[string]any{
+			"no_change":                  true,
+			"revision_id":                result.LatestRevisionID,
+			"lock_version":               result.LockVersion,
+			"effective_immediately":      true,
+			"runtime_authorization_mode": s.authorizationMode(r.Context()),
+		})
+		return
+	}
 	write(w, 200, map[string]any{
-		"revision_id":                draftID,
-		"policy":                     policy,
+		"revision":                   result.Revision,
+		"version_no":                 result.Revision.VersionNo,
+		"revision_id":                result.Revision.ID,
+		"effective_immediately":      true,
+		"current_revision_id":        result.CurrentRevisionID,
+		"latest_revision_id":         result.LatestRevisionID,
+		"lock_version":               result.LockVersion,
 		"runtime_authorization_mode": s.authorizationMode(r.Context()),
 	})
 }
@@ -292,12 +342,34 @@ func normalizeManualOrder(list []string) []string {
 	return out
 }
 
+// planVersionConflict writes the 409 plan_version_conflict response with the
+// current lock version and latest revision so the UI can prompt a reload.
+func (s *Server) planVersionConflict(w http.ResponseWriter, err error, planID int64) {
+	out := map[string]any{
+		"code":    "plan_version_conflict",
+		"message": "方案已由其他管理员保存新版本，请重新加载后再次调整",
+	}
+	if errors.Is(err, store.ErrPlanVersionApplying) {
+		out["code"] = "plan_version_applying"
+		out["message"] = "方案版本正在应用，完成后才能继续保存新的方案版本"
+	}
+	if plan, loadErr := s.store.GetSubscriptionPlan(context.Background(), planID); loadErr == nil {
+		out["current_lock_version"] = plan.LockVersion
+		out["latest_revision_id"] = plan.LatestRevisionID
+		if revision, revErr := s.store.GetPlanRevision(context.Background(), planID, plan.LatestRevisionID); revErr == nil {
+			out["latest_version_no"] = revision.VersionNo
+		}
+	}
+	write(w, http.StatusConflict, out)
+}
+
 // planOrderingPreview serves POST /subscription-plans/:id/ordering/preview.
-// It never writes: the base node set is the draft revision when one exists,
-// otherwise the active revision, and the requested policy is applied by the
-// real ordering engine.
+// It never writes: the base node set is the requested base revision (defaults
+// to the latest saved version) and the requested policy is applied by the real
+// ordering engine.
 func (s *Server) planOrderingPreview(w http.ResponseWriter, r *http.Request, id int64) {
 	var req struct {
+		BaseRevisionID  int64                             `json:"base_revision_id"`
 		Policy          model.SubscriptionNodeOrderPolicy `json:"policy"`
 		ManualNodeOrder []string                          `json:"manual_node_order"`
 	}
@@ -314,9 +386,9 @@ func (s *Server) planOrderingPreview(w http.ResponseWriter, r *http.Request, id 
 		fail(w, err, 404)
 		return
 	}
-	revisionID := plan.DraftRevisionID
+	revisionID := req.BaseRevisionID
 	if revisionID == 0 {
-		revisionID = plan.ActiveRevisionID
+		revisionID = plan.LatestRevisionID
 	}
 	if revisionID == 0 {
 		fail(w, errors.New("plan has no revision to preview"), 400)
@@ -353,11 +425,11 @@ func (s *Server) planOrderingPreview(w http.ResponseWriter, r *http.Request, id 
 		fail(w, err, 500)
 		return
 	}
-	views, unplaced, warnings := s.orderingNodeViews(r.Context(), config, ordered)
+	views, unplaced, warnings := s.orderingNodeViews(r.Context(), config, ordered, policy.Mode == model.SubscriptionNodeOrderManual)
 	write(w, 200, map[string]any{
 		"plan_id":                    plan.ID,
-		"revision_id":                revision.ID,
-		"revision_status":            revision.Status,
+		"base_revision_id":           revision.ID,
+		"version_no":                 revision.VersionNo,
 		"policy":                     policy,
 		"nodes":                      views,
 		"unplaced_count":             unplaced,
@@ -456,10 +528,8 @@ func (s *Server) assignableNodeScopePreview(w http.ResponseWriter, r *http.Reque
 	var serverID int64
 	switch kind {
 	case nodeScopeNode:
-		if anchor.EntryKey == "" {
-			fail(w, errors.New("当前节点没有 OBoard 入口，无法按入口选择"), 400)
-			return
-		}
+		// "仅选择此节点" is a single-node scope: it must never depend on the
+		// anchor having an OBoard root inbound (imported exits have none).
 	case nodeScopeEntryInbound:
 		if anchor.EntryKey == "" {
 			fail(w, errors.New("当前节点没有 OBoard 入口，无法按入口选择"), 400)
