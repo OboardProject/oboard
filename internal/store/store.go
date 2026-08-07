@@ -304,6 +304,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureNullableAuthChallengeUser(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureSSHPasswordDeploymentDeviceIdentity(ctx); err != nil {
+		return err
+	}
 	for _, migration := range []struct {
 		table  string
 		column string
@@ -554,6 +557,40 @@ func (s *Store) ensureNullableAuthChallengeUser(ctx context.Context) error {
 		`insert into auth_challenges(token_hash,kind,user_id,data_encrypted,expires_at,created_at) select token_hash,kind,user_id,data_encrypted,expires_at,created_at from auth_challenges_required_user`,
 		`drop table auth_challenges_required_user`,
 		`create index idx_auth_challenges_expiry on auth_challenges(expires_at)`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ensureSSHPasswordDeploymentDeviceIdentity rebuilds ssh_password_deployments
+// created before the device-identity credential model: create-if-not-exists
+// cannot add device_id_hash/credential_epoch/credential_status or widen the
+// primary key, and every subscription pull reads this table. Legacy rows
+// survive as the single legacy credential identity.
+func (s *Store) ensureSSHPasswordDeploymentDeviceIdentity(ctx context.Context) error {
+	var hasDeviceColumn int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from pragma_table_info('ssh_password_deployments') where name='device_id_hash'`).Scan(&hasDeviceColumn); err != nil {
+		return err
+	}
+	if hasDeviceColumn == 1 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	statements := []string{
+		`drop index if exists idx_ssh_password_deployments_user`,
+		`alter table ssh_password_deployments rename to ssh_password_deployments_legacy_identity`,
+		`create table ssh_password_deployments (server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, device_id_hash text not null default '', credential_epoch integer not null default 0, credential_status text not null default 'active', password_digest text not null, config_version integer not null, updated_at text not null, primary key(server_id,user_id,device_id_hash,credential_epoch))`,
+		`insert into ssh_password_deployments(server_id,user_id,device_id_hash,credential_epoch,credential_status,password_digest,config_version,updated_at) select server_id,user_id,'',0,'active',password_digest,config_version,updated_at from ssh_password_deployments_legacy_identity`,
+		`drop table ssh_password_deployments_legacy_identity`,
+		`create index idx_ssh_password_deployments_user on ssh_password_deployments(user_id, server_id)`,
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
