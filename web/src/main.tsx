@@ -64,7 +64,7 @@ import {
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
-  ArrowUpDown, GripVertical, ListFilter, Table2
+  ArrowUpDown, GripVertical, ListFilter, Table2, Layers
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -126,6 +126,9 @@ import {
   type DNSBulkPatch,
   type DNSBulkResult,
 } from './dns-bulk'
+import { NodeAssignmentsPage } from './pages/NodeAssignmentsPage'
+import { SubscriptionPlansPage } from './pages/SubscriptionPlansPage'
+import { UserPlanDialog } from './pages/UserPlanDialog'
 
 const appBasePath = (() => {
   const href = document.querySelector('base')?.getAttribute('href') || '/'
@@ -713,6 +716,8 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   routing: { label: '分流规则', desc: '为任意服务器配置分流规则、直连、链路或导入节点。', group: '流量' },
   'external-outbounds': { label: '导入节点', desc: '导入第三方 SS、SOCKS、VLESS 等节点。', group: '流量' },
   users: { label: '用户', desc: '多用户、凭据、限速、流量额度和订阅令牌。', group: '访问控制' },
+  nodes: { label: '节点分配', desc: '可分配节点目录：筛选、分组、方案归属、有效用户与例外。', group: '访问控制' },
+  plans: { label: '订阅方案', desc: '方案草稿、发布预览、两阶段部署与历史修订。', group: '访问控制' },
   dns: { label: 'DNS 设置', desc: '为服务器选择解析服务并检查解析速度。', group: '网络' },
   'dns-records': { label: '域名解析', desc: '管理云服务商账号和域名解析记录。', group: '网络' },
   mtu: { label: 'MTU', desc: '检测路径 MTU、给出建议并可由 Agent 应用。', group: '网络' },
@@ -730,7 +735,7 @@ const navGroups = [
   { label: '基础设施', tabs: ['servers'] },
   { label: '代理链路', tabs: ['proxy-paths'] },
   { label: '网络', tabs: ['dns', 'dns-records'] },
-  { label: '访问控制', tabs: ['users', 'subscriptions'] },
+  { label: '访问控制', tabs: ['users', 'nodes', 'plans', 'subscriptions'] },
   { label: '', tabs: ['notifications'] },
   { label: '运维审计', tabs: ['tasks', 'audit'] },
   { label: '系统', tabs: ['automation', 'settings'] },
@@ -742,6 +747,7 @@ const tabMinimumRole: Record<string, Role> = {
   account: 'none', dashboard: 'operator', tasks: 'operator', audit: 'operator',
   servers: 'operator', 'proxy-paths': 'operator',
   users: 'admin', subscriptions: 'viewer', notifications: 'viewer', automation: 'admin', settings: 'admin',
+  nodes: 'operator', plans: 'admin',
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
 }
 
@@ -749,7 +755,7 @@ const preloadTabsByRole: Record<Role, string[]> = {
   none: ['account'],
   viewer: ['subscriptions', 'account', 'notifications'],
   operator: ['subscriptions', 'servers', 'proxy-paths', 'tasks', 'audit', 'mtu'],
-  admin: ['servers', 'proxy-paths', 'users', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
+  admin: ['servers', 'proxy-paths', 'users', 'nodes', 'plans', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
 }
 
 const realtimeResourcePages: Record<string, string[]> = {
@@ -2439,6 +2445,8 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'routing') return <RoutingRules data={data} client={client} load={load} />
   if (tab === 'external-outbounds') return <ExternalOutbounds data={data} client={client} load={load} />
   if (tab === 'users') return <UserManagement data={data} client={client} load={load} />
+  if (tab === 'nodes') return <NodeAssignmentsPage data={data} client={client} load={load} />
+  if (tab === 'plans') return <SubscriptionPlansPage data={data} client={client} load={load} notify={notify} />
   if (tab === 'dns') return <DNS data={data} client={client} load={load} notify={notify} />
   if (tab === 'dns-records') return <ManagedDNSSettings data={data} client={client} load={load} notify={notify} />
   if (tab === 'mtu') return <MTU data={data} client={client} load={load} notify={notify} />
@@ -12748,6 +12756,7 @@ function UserManagement({ data, client, load }: any) {
   const [groupCreateOpen, setGroupCreateOpen] = useState(false)
   const [managingGroupID, setManagingGroupID] = useState<number | null>(null)
   const [passwordUser, setPasswordUser] = useState<User | null>(null)
+  const [planUser, setPlanUser] = useState<User | null>(null)
   const createUser = async () => {
     await client.request('/users', { method: 'POST', body: JSON.stringify(userDraftPayload(draft, true)) })
     setCreateOpen(false)
@@ -12823,16 +12832,18 @@ function UserManagement({ data, client, load }: any) {
       <div className="user-table-scroll">
         <table className="user-data-table">
           <colgroup>
-            <col style={{ width: '20%' }} />
+            <col style={{ width: '17%' }} />
+            <col style={{ width: '10%' }} />
             <col style={{ width: '11%' }} />
             <col style={{ width: '13%' }} />
             <col style={{ width: '18%' }} />
-            <col style={{ width: '27%' }} />
+            <col style={{ width: '25%' }} />
             <col style={{ width: '11%' }} />
           </colgroup>
           <thead>
             <tr style={{ borderBottom: '1.5px solid var(--border-color)', color: 'var(--text-muted)' }}>
               <th className="user-col-user" style={{ fontWeight: 600 }}>用户</th>
+              <th className="user-col-plan" style={{ fontWeight: 600 }}>方案</th>
               <th className="user-col-limit" style={{ fontWeight: 600 }}>限速</th>
               <th className="user-col-groups" style={{ fontWeight: 600 }}>所属组</th>
               <th className="user-col-traffic" style={{ fontWeight: 600 }}>流量配额</th>
@@ -12847,6 +12858,8 @@ function UserManagement({ data, client, load }: any) {
               const isQuotaExceeded = usr.traffic_quota_state === 'quota_exceeded';
               const isUnavailable = isSuspended || isQuotaExceeded;
               const speedLimitText = limits.speed > 0 ? `${limits.speed} Mbps` : '不限速';
+              const planBinding = (data.user_plan_bindings || []).find((b: any) => b.user_id === usr.id);
+              const userPlan = planBinding ? (data.subscription_plans || []).find((p: any) => p.id === planBinding.plan_id) : null;
               
               // Groups membership
               const userMembers = (data.user_group_members || []).filter((m: UserGroupMember) => m.user_id === usr.id && m.enabled !== false);
@@ -12876,6 +12889,13 @@ function UserManagement({ data, client, load }: any) {
                       </div>
                       {usr.traffic_quota_state && <span className="user-table-period">{trafficQuotaLabel(usr.traffic_quota_state)}{usr.traffic_period_end ? ` · ${formatDate(usr.traffic_period_end)}` : ''}</span>}
                     </div>
+                  </td>
+                  <td className="user-col-plan" data-label="方案">
+                    {userPlan ? (
+                      <span className="badge-custom badge-muted user-table-group" style={{ fontWeight: 500 }} title={planBinding.expires_at ? `到期 ${formatDate(planBinding.expires_at)}` : '长期有效'}>
+                        {userPlan.name}{planBinding.starts_at ? ' · 待生效' : ''}
+                      </span>
+                    ) : <span className="muted" style={{ fontSize: 12 }}>无方案</span>}
                   </td>
                   <td className="user-col-limit" data-label="限速" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
                     {speedLimitText}
@@ -12912,6 +12932,14 @@ function UserManagement({ data, client, load }: any) {
                   <td className="user-col-actions" style={{ textAlign: 'right' }}>
                     <div className="user-row-actions">
                       <button 
+                        onClick={() => setPlanUser(usr)}
+                        className="btn-custom btn-secondary user-row-icon-button" 
+                        title="方案与例外"
+                        aria-label={`方案与例外 ${usr.username}`}
+                      >
+                        <Layers size={14} />
+                      </button>
+                      <button 
                         onClick={() => openEditUser(usr)}
                         className="btn-custom btn-secondary user-row-icon-button" 
                         title="编辑"
@@ -12945,6 +12973,7 @@ function UserManagement({ data, client, load }: any) {
     <AnimatePresence>{editingGroup && <UserGroupEditDialog group={editingGroup} draft={groupEditDraft} setDraft={setGroupEditDraft} onCancel={() => setEditingGroup(null)} onSubmit={updateGroup} />}</AnimatePresence>
     <AnimatePresence>{managingGroupID !== null && <UserGroupMembersDialog groupID={managingGroupID} data={data} selectedUserID={memberDraft[managingGroupID] || 0} onSelectUser={userID => setMemberDraft({ ...memberDraft, [managingGroupID]: userID })} onAddMember={() => addGroupMember(managingGroupID)} onDeleteMember={deleteMember} onCancel={() => setManagingGroupID(null)} />}</AnimatePresence>
     <AnimatePresence>{passwordUser && <UserPasswordDialog user={passwordUser} onCancel={() => setPasswordUser(null)} onSubmit={updatePassword} />}</AnimatePresence>
+    <AnimatePresence>{planUser && <UserPlanDialog user={planUser} binding={(data.user_plan_bindings || []).find((b: any) => b.user_id === planUser.id)} plans={data.subscription_plans || []} client={client} load={load} onClose={() => setPlanUser(null)} />}</AnimatePresence>
   </Panel>
 }
 
