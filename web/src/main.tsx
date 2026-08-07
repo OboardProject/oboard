@@ -3499,7 +3499,7 @@ function AIProviderRawLogDialog({ client, onClose }: { client: ReturnType<typeof
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'authorization' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3513,6 +3513,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [subscriptionAgePolicy, setSubscriptionAgePolicy] = useState<'optional' | 'required'>(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional')
   const [trafficTimezone, setTrafficTimezone] = useState(data.settings?.traffic_timezone || 'Asia/Shanghai')
   const [trafficMode, setTrafficMode] = useState(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
+  const [authorizationMode, setAuthorizationMode] = useState<string>(data.settings?.authorization_mode || 'legacy')
   const [controllerLogMaxMB, setControllerLogMaxMB] = useState(Number(data.settings?.controller_log_max_mb || 32))
   const [controllerLogBackups, setControllerLogBackups] = useState(Number(data.settings?.controller_log_backups || 5))
   const [serverDefaultMTUMode, setServerDefaultMTUMode] = useState(String(data.settings?.server_default_mtu_mode || 'detect'))
@@ -3544,6 +3545,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     setRegistrationDefaultGroupID(Number(data.settings?.registration_default_group_id || 0))
   }, [data.settings?.registration_enabled, data.settings?.registration_default_group_id])
   useEffect(() => { setTrafficTimezone(data.settings?.traffic_timezone || 'Asia/Shanghai'); setTrafficMode(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject') }, [data.settings?.traffic_timezone, data.settings?.traffic_enforcement_mode])
+  useEffect(() => { setAuthorizationMode(data.settings?.authorization_mode || 'legacy') }, [data.settings?.authorization_mode])
   useEffect(() => {
     setControllerLogMaxMB(Number(data.settings?.controller_log_max_mb || 32))
     setControllerLogBackups(Number(data.settings?.controller_log_backups || 5))
@@ -3647,6 +3649,11 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ traffic_timezone: trafficTimezone.trim() || 'Asia/Shanghai', traffic_enforcement_mode: trafficMode }) })
     }, '流量控制设置已保存')
   }
+  const saveAuthorizationMode = async () => {
+    await runSave('authorization', async () => {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ authorization_mode: authorizationMode }) })
+    }, '授权模式已保存')
+  }
   const saveSubscriptionAgePolicy = async () => {
     await runSave('subscription-age', async () => {
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: subscriptionAgePolicy }) })
@@ -3679,6 +3686,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   return <section className="settings-shell">
     <nav className="settings-tabs" role="tablist" aria-label="设置分类">
       <button className={activeSection === 'connection' ? 'active' : ''} role="tab" aria-selected={activeSection === 'connection'} onClick={() => setActiveSection('connection')}><LinkIcon size={15} />基础设置</button>
+      <button className={activeSection === 'authorization' ? 'active' : ''} role="tab" aria-selected={activeSection === 'authorization'} onClick={() => setActiveSection('authorization')}><ShieldCheck size={15} />授权模式</button>
       <button className={activeSection === 'registration' ? 'active' : ''} role="tab" aria-selected={activeSection === 'registration'} onClick={() => setActiveSection('registration')}><UserPlus size={15} />注册</button>
       <button className={activeSection === 'servers' ? 'active' : ''} role="tab" aria-selected={activeSection === 'servers'} onClick={() => setActiveSection('servers')}><ServerIcon size={15} />服务器默认值</button>
       <button className={activeSection === 'certificates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'certificates'} onClick={() => setActiveSection('certificates')}><Lock size={15} />证书</button>
@@ -3768,6 +3776,23 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </div>
           {!reverseProxyStatus.direct_tls && reverseProxyStatus.peer_trusted && !reverseProxyStatus.https && <p className="trusted-proxy-warning">请让反向代理覆盖发送 <code>X-Forwarded-Proto</code>。</p>}
         </div>
+      </section>}
+      {activeSection === 'authorization' && <section className="settings-card">
+        <div className="settings-card-head"><div><h3>授权模式</h3><p className="muted">决定订阅、Agent 配置和流量策略读取哪一套授权来源。</p></div></div>
+        <div className="form settings-form single-field">
+          <FormField label="运行模式" hint="legacy：旧授权表继续生效，方案仅作数据准备；shadow：运行时仍用旧表，同时计算方案结果并报告差异；plan：方案快照成为唯一运行时来源，旧写接口只读。">
+            <Select value={authorizationMode} onChange={e => setAuthorizationMode(e.target.value)}>
+              <option value="legacy">legacy（旧授权表生效）</option>
+              <option value="shadow">shadow（并行对比，不影响运行时）</option>
+              <option value="plan">plan（方案快照生效）</option>
+            </Select>
+          </FormField>
+          <div className="settings-actions">
+            <button onClick={saveAuthorizationMode} disabled={Boolean(saving)}>{saving === 'authorization' ? '保存中...' : '保存'}</button>
+          </div>
+        </div>
+        {authorizationMode === 'plan' && <p style={{ color: 'var(--color-warning)' }}>切换到 plan 后，订阅输出、Agent 凭据与 SSH 用户将只由订阅方案决定；旧授权表变为只读历史。切换前请先在「订阅方案」页完成迁移并确认 Shadow 对比无差异。</p>}
+        {authorizationMode === 'shadow' && <p className="muted">shadow 模式不会改变运行时行为，可在「订阅方案」页生成对比报告，逐项核对用户节点、服务器认证用户、SSH 用户与限额。</p>}
       </section>}
       {activeSection === 'registration' && <section className="settings-card">
         <div className="settings-card-head"><div><h3>公开注册</h3><p className="muted">允许访客自助注册账号。注册用户默认不加入任何用户组、没有任何面板权限，需管理员分配用户组后才能使用。</p></div></div>

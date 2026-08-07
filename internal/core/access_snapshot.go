@@ -360,9 +360,9 @@ func (s *EffectiveAccessSnapshot) EffectiveNodeGroups(userID int64) map[string]s
 // prepare/finalize projections as JSON so orchestration survives restarts and
 // later plan edits.
 type AccessProjection struct {
-	InboundUsers   map[int64][]int64              `json:"inbound_users"`
-	ProxyPathUsers map[int64][]int64              `json:"proxy_path_users"`
-	UserPolicies   map[int64]EffectiveUserPolicy  `json:"user_policies"`
+	InboundUsers   map[int64][]int64             `json:"inbound_users"`
+	ProxyPathUsers map[int64][]int64             `json:"proxy_path_users"`
+	UserPolicies   map[int64]EffectiveUserPolicy `json:"user_policies"`
 }
 
 // Projection returns the serializable view of the snapshot.
@@ -476,12 +476,15 @@ type ShadowUserDivergence struct {
 
 // AccessShadowComparison is a bounded summary of legacy vs plan results.
 type AccessShadowComparison struct {
-	UsersCompared     int                    `json:"users_compared"`
-	DivergentUsers    int                    `json:"divergent_users"`
-	LegacyNodeCount   int                    `json:"legacy_node_count"`
-	PlanNodeCount     int                    `json:"plan_node_count"`
-	SampleDivergences []ShadowUserDivergence `json:"sample_divergences,omitempty"`
-	Truncated         bool                   `json:"truncated"`
+	UsersCompared     int                      `json:"users_compared"`
+	DivergentUsers    int                      `json:"divergent_users"`
+	LegacyNodeCount   int                      `json:"legacy_node_count"`
+	PlanNodeCount     int                      `json:"plan_node_count"`
+	SampleDivergences []ShadowUserDivergence   `json:"sample_divergences,omitempty"`
+	ServerDivergences []ShadowServerDivergence `json:"server_divergences,omitempty"`
+	SSHDivergences    []ShadowSSHDivergence    `json:"ssh_divergences,omitempty"`
+	PolicyDivergences []ShadowPolicyDivergence `json:"policy_divergences,omitempty"`
+	Truncated         bool                     `json:"truncated"`
 }
 
 // CompareLegacyAndPlanAccess computes the per-user node-set difference between

@@ -1207,3 +1207,91 @@ func (s *Store) migrateUserPlanBindingDeployTracking(ctx context.Context) error 
 	}
 	return nil
 }
+
+// PlanNodeReference is one plan whose active or draft revision contains an
+// assignable node.
+type PlanNodeReference struct {
+	PlanID int64  `json:"plan_id"`
+	Name   string `json:"name"`
+	Group  string `json:"group,omitempty"`
+}
+
+// PlanNodeReferences reports which plans reference an assignable node and how
+// many user node exceptions point at it. Active references block deletion;
+// draft references are cleaned automatically.
+type PlanNodeReferences struct {
+	Active     []PlanNodeReference `json:"active"`
+	Draft      []PlanNodeReference `json:"draft"`
+	Exceptions int                 `json:"exceptions"`
+}
+
+// PlanNodeReferences queries active and draft revision membership plus user
+// exception counts for one assignable node.
+func (s *Store) PlanNodeReferences(ctx context.Context, nodeType model.AssignableNodeType, nodeID int64) (PlanNodeReferences, error) {
+	refs := PlanNodeReferences{}
+	rows, err := s.db.QueryContext(ctx, `select r.plan_id,p.name,coalesce(pn.display_group,''),r.status from subscription_plan_revision_nodes pn join subscription_plan_revisions r on r.id=pn.revision_id join subscription_plans p on p.id=r.plan_id where pn.node_type=? and pn.node_id=?`, string(nodeType), nodeID)
+	if err != nil {
+		return refs, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var planID int64
+		var name, group, status string
+		if err := rows.Scan(&planID, &name, &group, &status); err != nil {
+			return refs, err
+		}
+		ref := PlanNodeReference{PlanID: planID, Name: name, Group: group}
+		if status == string(model.PlanRevisionActive) {
+			refs.Active = append(refs.Active, ref)
+		} else {
+			refs.Draft = append(refs.Draft, ref)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return refs, err
+	}
+	if err := s.db.QueryRowContext(ctx, `select count(*) from user_node_exceptions where node_type=? and node_id=?`, string(nodeType), nodeID).Scan(&refs.Exceptions); err != nil {
+		return refs, err
+	}
+	return refs, nil
+}
+
+// RemovePlanNodeFromDraftRevisions drops one node from every draft revision
+// that references it and bumps each affected plan revision so stale previews
+// conflict. Active revisions are never modified.
+func (s *Store) RemovePlanNodeFromDraftRevisions(ctx context.Context, nodeType model.AssignableNodeType, nodeID int64) error {
+	rows, err := s.db.QueryContext(ctx, `select r.plan_id from subscription_plan_revision_nodes pn join subscription_plan_revisions r on r.id=pn.revision_id where pn.node_type=? and pn.node_id=? and r.status=?`, string(nodeType), nodeID, string(model.PlanRevisionDraft))
+	if err != nil {
+		return err
+	}
+	var planIDs []int64
+	for rows.Next() {
+		var planID int64
+		if err := rows.Scan(&planID); err != nil {
+			rows.Close()
+			return err
+		}
+		planIDs = append(planIDs, planID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(planIDs) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, planID := range planIDs {
+		if _, err := tx.ExecContext(ctx, `delete from subscription_plan_revision_nodes where node_type=? and node_id=? and revision_id in (select draft_revision_id from subscription_plans where id=?)`, string(nodeType), nodeID, planID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `update subscription_plans set revision=revision+1,updated_at=? where id=?`, now(), planID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

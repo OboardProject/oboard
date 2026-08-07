@@ -286,6 +286,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/user-node-exceptions/", s.auth(s.userNodeExceptions, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/access-changes", s.auth(s.accessChanges, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/access-changes/", s.auth(s.accessChanges, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/shadow-report", s.auth(s.shadowReport, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/migrations", s.auth(s.migrations, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/migrations/", s.auth(s.migrations, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists", s.auth(s.dnsLists, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists/", s.auth(s.dnsLists, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-benchmarks", s.auth(s.dnsBenchmarks, model.RoleOperator))
@@ -4711,6 +4714,26 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 404)
 			return
 		}
+		// Deleting an inbound also deletes every proxy path rooted at it, so
+		// guard both the standalone inbound node and its paths against active
+		// plan references.
+		if _, err := s.guardAssignableNodeDelete(r.Context(), model.AssignableNodeInbound, id); err != nil {
+			fail(w, err, http.StatusConflict)
+			return
+		}
+		paths, err := s.store.ListProxyPaths(r.Context())
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		for _, path := range paths {
+			if path.InboundID == id {
+				if _, err := s.guardAssignableNodeDelete(r.Context(), model.AssignableNodeProxyPath, path.ID); err != nil {
+					fail(w, err, http.StatusConflict)
+					return
+				}
+			}
+		}
 		if err := s.deleteDNSInboundRecords(r.Context(), *inbound); err != nil {
 			fail(w, err, 502)
 			return
@@ -6560,6 +6583,10 @@ func (s *Server) externalOutbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, errors.New("missing id"), 400)
 			return
 		}
+		if _, err := s.guardAssignableNodeDelete(r.Context(), model.AssignableNodeExternalOutbound, id); err != nil {
+			fail(w, err, http.StatusConflict)
+			return
+		}
 		if err := s.store.DeleteExternalOutboundAccessGrantsForExternal(r.Context(), id); err != nil {
 			fail(w, err, 500)
 			return
@@ -7422,6 +7449,10 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		if id == 0 {
 			fail(w, errors.New("missing id"), 400)
+			return
+		}
+		if _, err := s.guardAssignableNodeDelete(r.Context(), model.AssignableNodeProxyPath, id); err != nil {
+			fail(w, err, http.StatusConflict)
 			return
 		}
 		if err := s.store.DeleteProxyPath(r.Context(), id); err != nil {
