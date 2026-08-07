@@ -8383,15 +8383,15 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 .connectivity-sla-ring {
   position: relative;
-  width: 108px;
-  height: 108px;
-  flex: 0 0 108px;
+  width: 160px;
+  height: 160px;
+  flex: 0 0 160px;
 }
 .connectivity-sla-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
-.connectivity-ring-track { fill: none; stroke: var(--surface-3); stroke-width: 9; }
+.connectivity-ring-track { fill: none; stroke: var(--surface-3); stroke-width: 7; }
 .connectivity-ring-value {
   fill: none;
-  stroke-width: 9;
+  stroke-width: 7;
   stroke-linecap: round;
   transition: stroke-dashoffset 0.6s ease;
 }
@@ -8407,13 +8407,13 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 .connectivity-sla-ring-label strong {
   color: var(--text-strong);
-  font-size: 20px;
+  font-size: 28px;
   line-height: 1.1;
   letter-spacing: -0.02em;
 }
 .connectivity-sla-ring-label span {
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.16em;
   text-transform: uppercase;
