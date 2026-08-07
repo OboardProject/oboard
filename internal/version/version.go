@@ -3,18 +3,18 @@ package version
 import "strings"
 
 var (
-	Version          = "0.1.0-dev"
+	Version          = "0.0.1"
 	Build            = "dev"
 	Commit           = "unknown"
 	Date             = "unknown"
 	ReleasePublicKey = ""
 	// Agent release metadata is injected from the signed manifest bundled by
 	// the Controller build. It intentionally does not mirror Controller data.
-	AgentVersion  = "0.1.0-dev"
+	AgentVersion  = "0.0.1"
 	AgentBuild    = "dev"
 	AgentCommit   = "unknown"
 	AgentDate     = "unknown"
-	KernelVersion = "0.1.0-dev"
+	KernelVersion = "0.0.1"
 	KernelBuild   = "dev"
 )
 

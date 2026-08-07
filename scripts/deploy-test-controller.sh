@@ -3,10 +3,10 @@ set -euo pipefail
 
 CONTROLLER_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 WORKSPACE_DIR=$(CDPATH= cd -- "$CONTROLLER_DIR/.." && pwd)
-VERSION_VALUE=$(tr -d '[:space:]' < "$CONTROLLER_DIR/VERSION")
+VERSION_VALUE=${VERSION:-$(tr -d '[:space:]' < "$CONTROLLER_DIR/VERSION")}
 CONTROLLER_RELEASE_DIR=${CONTROLLER_RELEASE_DIR:-$WORKSPACE_DIR/dist/controller/release}
-ARTIFACT_VERSION=$VERSION_VALUE
-case "$VERSION_VALUE" in *dev*) ARTIFACT_VERSION=dev ;; esac
+ARTIFACT_VERSION=${OBOARD_ARTIFACT_VERSION:-$VERSION_VALUE}
+case "$VERSION_VALUE" in *dev*) ARTIFACT_VERSION=${OBOARD_ARTIFACT_VERSION:-dev} ;; esac
 SSH_PORT=${SSH_PORT:-22}
 HTTP_PORT=${HTTP_PORT:-2787}
 PUBLIC_PORT=${PUBLIC_PORT:-}
@@ -24,6 +24,7 @@ Environment:
   OBOARD_BASE_PATH=/abc Optional path prefix for every Controller endpoint.
   SSH_PORT=22           SSH port; overridden by third argument.
   OBOARD_FORCE_BUILD=1  Rebuild matching release artifact before upload.
+  OBOARD_ARTIFACT_VERSION=dev  Override artifact version, e.g. for dev builds.
   OBOARD_AGENT_RELEASE_DIR=...    Directory containing a signed Agent release.
   OBOARD_RELEASE_PUBLIC_KEY=...   Matching Ed25519 public key for that release.
 
