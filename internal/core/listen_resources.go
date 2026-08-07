@@ -170,6 +170,19 @@ func trustedForwardListenResources(serverID int64, trusted *OBoardTrustedForward
 	return resources
 }
 
+// inboundListenResource converts one persisted inbound into the same listen
+// resource model deployment validation uses, so allocation and final
+// validation share one conflict predicate (address scope, port, TCP/UDP).
+func inboundListenResource(inbound model.Inbound) listenResource {
+	return listenResource{
+		serverID: inbound.ServerID,
+		address:  normalizeListenAddress(inbound.ListenIP),
+		port:     inbound.Port,
+		protocol: portForwardListenTransport(transparentForwardProtocol(inbound)),
+		owner:    fmt.Sprintf("inbound %q (id=%d)", inbound.Name, inbound.ID),
+	}
+}
+
 func portForwardListenTransport(protocol model.ForwardProtocol) listenTransport {
 	switch protocol {
 	case model.ForwardProtocolTCP:

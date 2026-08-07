@@ -493,6 +493,7 @@ type Server struct {
 	PortRangeEnd             int                `json:"port_range_end"`
 	InternalPortRangeStart   int                `json:"internal_port_range_start"`
 	InternalPortRangeEnd     int                `json:"internal_port_range_end"`
+	PortPolicyRevision       int64              `json:"port_policy_revision"`
 	Status                   ServerStatus       `json:"status"`
 	OS                       string             `json:"os"`
 	DistroID                 string             `json:"distro_id"`

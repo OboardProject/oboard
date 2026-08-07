@@ -60,3 +60,34 @@ func TestValidateDeploymentListenResourcesChecksCrossComponentOwners(t *testing.
 		t.Fatal("WireGuard UDP should conflict with a wildcard Shadowsocks UDP listener")
 	}
 }
+
+func TestInboundListenResourceAndAllocationShareConflictModel(t *testing.T) {
+	server := model.Server{ID: 1, Name: "s", ListenIP: "192.0.2.10", PortRangeStart: 30000, PortRangeEnd: 30000}
+	// A TCP inbound on a specific address: a wildcard candidate conflicts with
+	// it, another specific address may reuse the numeric port.
+	specific := model.Inbound{ID: 1, ServerID: 1, Protocol: model.ProtocolVLESS, ListenIP: "192.0.2.10", Port: 30000, Enabled: true}
+	inbounds := map[int64]model.Inbound{1: specific}
+	if port := proxyPathAvailablePortForProtocol(server, 1, 0, 30000, 30000, model.ForwardProtocolTCP, "0.0.0.0", inbounds); port != 0 {
+		t.Fatalf("wildcard candidate reused %d despite specific inbound", port)
+	}
+	if port := proxyPathAvailablePortForProtocol(server, 1, 0, 30000, 30000, model.ForwardProtocolTCP, "192.0.2.11", inbounds); port != 30000 {
+		t.Fatalf("specific-address candidate could not reuse port 30000, got %d", port)
+	}
+	// A UDP-only inbound (Hysteria2) does not block a TCP listener on the same
+	// address and port, but blocks a TCP+UDP candidate (shared Shadowsocks
+	// chain service) exactly like deployment validation would.
+	udpOnly := map[int64]model.Inbound{2: {ID: 2, ServerID: 1, Protocol: model.ProtocolHY2, ListenIP: "0.0.0.0", Port: 30000, Enabled: true}}
+	if port := proxyPathAvailablePortForProtocol(server, 1, 0, 30000, 30000, model.ForwardProtocolTCP, "0.0.0.0", udpOnly); port != 30000 {
+		t.Fatalf("UDP-only inbound blocked a TCP listener on the port, got %d", port)
+	}
+	if port := proxyPathAvailablePortForProtocol(server, 1, 0, 30000, 30000, model.ForwardProtocolTCPUDP, "0.0.0.0", udpOnly); port != 0 {
+		t.Fatalf("TCP+UDP candidate reused port blocked by UDP inbound, got %d", port)
+	}
+	// A wildcard TCP inbound blocks every candidate on the port regardless of
+	// the candidate address.
+	wildcard := model.Inbound{ID: 3, ServerID: 1, Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 30000, Enabled: true}
+	inbounds[3] = wildcard
+	if port := proxyPathAvailablePortForProtocol(server, 1, 0, 30000, 30000, model.ForwardProtocolTCP, "192.0.2.11", inbounds); port != 0 {
+		t.Fatalf("wildcard inbound did not block a specific candidate, got %d", port)
+	}
+}

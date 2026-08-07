@@ -1354,18 +1354,19 @@ func proxyPathInternalInbound(path model.ProxyPath, step model.ProxyPathStep, se
 		listenIP = "127.0.0.1"
 	}
 	port := ledger.resolve(PortRequirement{
-		Kind:     model.ProxyPathPortKindInternal,
-		ScopeKey: fmt.Sprintf("%d:%d", path.ID, step.Position),
-		ServerID: server.ID,
-		Pool:     pool,
-		ListenIP: listenIP,
-		Network:  model.ForwardProtocolTCP,
+		Kind:           model.ProxyPathPortKindInternal,
+		ScopeKey:       fmt.Sprintf("%d:%d", path.ID, step.Position),
+		ServerID:       server.ID,
+		Pool:           pool,
+		ListenIP:       listenIP,
+		Network:        model.ForwardProtocolTCP,
+		PolicyRevision: serverPortPolicyRevision(server),
 		Allocate: func() int {
 			if managedSSH {
 				start, end := proxyPathInternalPortRange(server)
-				return proxyPathAvailablePort(server, path.ID*149, step.Position*29, start, end, inboundByID)
+				return proxyPathAvailablePort(server, path.ID*149, step.Position*29, start, end, "127.0.0.1", inboundByID)
 			}
-			return proxyPathInternalPort(server, path.ID, step.Position, inboundByID)
+			return proxyPathInternalPort(server, path.ID, step.Position, listenIP, inboundByID)
 		},
 	})
 	return model.Inbound{ID: proxyPathInternalOutboundID(path.ID, step.Position), ServerID: server.ID, Name: fmt.Sprintf("%s / 第%d跳内部入口", firstNonEmpty(path.Name, "代理路径"), step.Position), Protocol: model.ProtocolVLESS, ListenIP: listenIP, Port: port, ConfigJSON: `{}`, Enabled: true}
@@ -1382,14 +1383,15 @@ func proxyPathSharedTransparentInboundTag(inboundID int64, position int) string 
 func proxyPathSharedTransparentInbound(inboundID int64, step model.ProxyPathStep, server model.Server, inboundByID map[int64]model.Inbound, ledger *ProxyPathPortLedger) model.Inbound {
 	scopeKey := fmt.Sprintf("inbound:%d:%d", inboundID, step.Position)
 	port := ledger.resolve(PortRequirement{
-		Kind:     model.ProxyPathPortKindInternal,
-		ScopeKey: scopeKey,
-		ServerID: server.ID,
-		Pool:     model.PortPoolPublic,
-		ListenIP: EffectiveListenIP(server, server.ListenIP),
-		Network:  model.ForwardProtocolTCP,
+		Kind:           model.ProxyPathPortKindInternal,
+		ScopeKey:       scopeKey,
+		ServerID:       server.ID,
+		Pool:           model.PortPoolPublic,
+		ListenIP:       EffectiveListenIP(server, server.ListenIP),
+		Network:        model.ForwardProtocolTCP,
+		PolicyRevision: serverPortPolicyRevision(server),
 		Allocate: func() int {
-			return proxyPathInternalPort(server, inboundID, step.Position, inboundByID)
+			return proxyPathInternalPort(server, inboundID, step.Position, EffectiveListenIP(server, server.ListenIP), inboundByID)
 		},
 	})
 	return model.Inbound{ID: proxyPathSharedTransparentInboundID(inboundID, step.Position), ServerID: server.ID, Name: fmt.Sprintf("入口 %d / 透明第%d跳内部入口", inboundID, step.Position), Protocol: model.ProtocolVLESS, ListenIP: EffectiveListenIP(server, server.ListenIP), Port: port, ConfigJSON: `{}`, Enabled: true}
@@ -1399,15 +1401,16 @@ func proxyPathTrustedInnerInbound(path model.ProxyPath, step model.ProxyPathStep
 	inner := outer
 	inner.ListenIP = "127.0.0.1"
 	inner.Port = ledger.resolve(PortRequirement{
-		Kind:     model.ProxyPathPortKindTrustedInner,
-		ScopeKey: fmt.Sprintf("%d:%d", path.ID, step.Position),
-		ServerID: server.ID,
-		Pool:     model.PortPoolInternal,
-		ListenIP: "127.0.0.1",
-		Network:  model.ForwardProtocolTCP,
+		Kind:           model.ProxyPathPortKindTrustedInner,
+		ScopeKey:       fmt.Sprintf("%d:%d", path.ID, step.Position),
+		ServerID:       server.ID,
+		Pool:           model.PortPoolInternal,
+		ListenIP:       "127.0.0.1",
+		Network:        model.ForwardProtocolTCP,
+		PolicyRevision: serverPortPolicyRevision(server),
 		Allocate: func() int {
 			start, end := proxyPathInternalPortRange(server)
-			return proxyPathAvailablePort(server, path.ID*193, step.Position*37, start, end, inboundByID)
+			return proxyPathAvailablePort(server, path.ID*193, step.Position*37, start, end, "127.0.0.1", inboundByID)
 		},
 	})
 	return inner
@@ -1417,15 +1420,16 @@ func proxyPathSharedTrustedInnerInbound(inboundID int64, position int, server mo
 	inner := outer
 	inner.ListenIP = "127.0.0.1"
 	inner.Port = ledger.resolve(PortRequirement{
-		Kind:     model.ProxyPathPortKindTrustedInner,
-		ScopeKey: fmt.Sprintf("inbound:%d:%d", inboundID, position),
-		ServerID: server.ID,
-		Pool:     model.PortPoolInternal,
-		ListenIP: "127.0.0.1",
-		Network:  model.ForwardProtocolTCP,
+		Kind:           model.ProxyPathPortKindTrustedInner,
+		ScopeKey:       fmt.Sprintf("inbound:%d:%d", inboundID, position),
+		ServerID:       server.ID,
+		Pool:           model.PortPoolInternal,
+		ListenIP:       "127.0.0.1",
+		Network:        model.ForwardProtocolTCP,
+		PolicyRevision: serverPortPolicyRevision(server),
 		Allocate: func() int {
 			start, end := proxyPathInternalPortRange(server)
-			return proxyPathAvailablePort(server, inboundID*193, position*37, start, end, inboundByID)
+			return proxyPathAvailablePort(server, inboundID*193, position*37, start, end, "127.0.0.1", inboundByID)
 		},
 	})
 	return inner
@@ -1439,9 +1443,9 @@ func proxyPathInternalUser(path model.ProxyPath, step model.ProxyPathStep) model
 	return model.User{ID: proxyPathInternalOutboundID(path.ID, step.Position), Username: fmt.Sprintf("__oboard_path_%d_step_%d", path.ID, step.Position), Status: "active", ProxyUUID: deterministicUUID(fmt.Sprintf("%s:step:%d:uuid", seed, step.Position)), ProxyPassword: deterministicSecret(fmt.Sprintf("%s:step:%d:password", seed, step.Position))}
 }
 
-func proxyPathInternalPort(server model.Server, pathID int64, position int, inboundByID map[int64]model.Inbound) int {
+func proxyPathInternalPort(server model.Server, pathID int64, position int, listenIP string, inboundByID map[int64]model.Inbound) int {
 	start, end := proxyPathServerPortRange(server)
-	return proxyPathAvailablePort(server, pathID*97, position*17, start, end, inboundByID)
+	return proxyPathAvailablePort(server, pathID*97, position*17, start, end, listenIP, inboundByID)
 }
 
 func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourceServer model.Server, serverByID map[int64]model.Server, inboundByID map[int64]model.Inbound, externalByID map[int64]model.ExternalOutbound, users []model.User, outboundTag string, services map[proxyPathChainServiceKey]*proxyPathChainService, ledger *ProxyPathPortLedger) (map[string]any, error) {

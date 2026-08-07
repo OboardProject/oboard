@@ -30,8 +30,8 @@ var proxyPathChainMethods = map[string]int{
 // PortRequirement describes one generated listener Controller needs a port
 // for. The pool, listen address and network classify the listener; the ledger
 // persists them with the port so allocation and final deployment share the same
-// address/port/protocol model and so a future policy change can decide which
-// owners must migrate without guessing from the port number.
+// address/port/protocol model and so a policy change can decide which owners
+// must migrate without guessing from the port number.
 type PortRequirement struct {
 	Kind           string
 	ScopeKey       string
@@ -41,6 +41,35 @@ type PortRequirement struct {
 	Network        model.ForwardProtocol
 	PolicyRevision int64
 	Allocate       func() int
+	// AllocateOrdinal, when set, allocates the port for one ordinal of a
+	// multiport owner (Mieru). It is used for atomic group allocation: every
+	// ordinal is probed before any row is recorded, so a group either commits
+	// whole or leaves the ledger unchanged.
+	AllocateOrdinal func(ordinal int) int
+}
+
+// Migration phase views for generation-aware projections. Ordinary deployments
+// read only the active generation; a migration renders more generations
+// depending on its phase.
+const (
+	PortMigrationPhasePrepare = "prepare"
+	PortMigrationPhaseSwitch  = "switch"
+	PortMigrationPhaseRetire  = "retire"
+)
+
+// proxyPathPortGeneration is one generation of one logical owner. Steady state
+// is a single active generation; a migration adds a preparing generation and
+// keeps the old one around as retiring until the migration flow deletes it.
+type proxyPathPortGeneration struct {
+	generation     int
+	state          string
+	policyRevision int64
+	ports          map[int]model.ProxyPathPortAllocation
+}
+
+type proxyPathPortOwner struct {
+	key         proxyPathPortKey
+	generations []*proxyPathPortGeneration
 }
 
 // ProxyPathPortLedger holds the persisted generated-listener ports and records
@@ -51,15 +80,20 @@ type PortRequirement struct {
 // other way around; a policy change may assign the owner a new port without
 // rotating any identity that depends on the owner.
 //
+// Generations are selected by explicit state, never by "highest generation":
+// ordinary resolve() reads the active generation only, so a preparing or
+// retiring row can never leak into a normal deployment.
+//
 // The ledger is read-only with respect to the database. Controller persists
 // Pending() after a projection succeeds, so a rejected deployment leaves no
 // half-claimed ports behind.
 type ProxyPathPortLedger struct {
-	stored   map[proxyPathPortKey]model.ProxyPathPortAllocation
-	pending  map[proxyPathPortKey]model.ProxyPathPortAllocation
-	used     map[proxyPathPortKey]bool
-	order    []proxyPathPortKey
-	complete bool
+	owners       map[proxyPathPortKey]*proxyPathPortOwner
+	pending      []model.ProxyPathPortAllocation
+	pendingByKey map[proxyPathPortKey]bool
+	used         map[proxyPathPortKey]bool
+	removed      map[int64]bool
+	complete     bool
 }
 
 type proxyPathPortKey struct {
@@ -70,64 +104,418 @@ type proxyPathPortKey struct {
 
 // NewProxyPathPortLedger builds a ledger from persisted allocations. A nil or
 // empty slice yields a ledger that allocates everything fresh, which is also the
-// behavior pure-Core callers and fixtures get.
+// behavior pure-Core callers and fixtures get. Legacy rows without lifecycle
+// metadata are normalized to generation 1 active ordinal 0.
 func NewProxyPathPortLedger(allocations []model.ProxyPathPortAllocation) *ProxyPathPortLedger {
-	ledger := &ProxyPathPortLedger{stored: make(map[proxyPathPortKey]model.ProxyPathPortAllocation, len(allocations)), pending: map[proxyPathPortKey]model.ProxyPathPortAllocation{}}
+	ledger := &ProxyPathPortLedger{
+		owners:       map[proxyPathPortKey]*proxyPathPortOwner{},
+		pendingByKey: map[proxyPathPortKey]bool{},
+		used:         map[proxyPathPortKey]bool{},
+		removed:      map[int64]bool{},
+	}
 	for _, item := range allocations {
-		if item.Port > 0 {
-			ledger.stored[proxyPathPortKey{Kind: item.Kind, ScopeKey: item.ScopeKey, ServerID: item.ServerID}] = item
+		if item.Port <= 0 {
+			continue
 		}
+		owner := ledger.ownerFor(item.Kind, item.ScopeKey, item.ServerID)
+		generation := item.Generation
+		if generation <= 0 {
+			generation = 1
+		}
+		gen := owner.generationFor(generation)
+		gen.state = normalizeAllocationState(item.State)
+		if item.PolicyRevision > gen.policyRevision {
+			gen.policyRevision = item.PolicyRevision
+		}
+		ordinal := item.Ordinal
+		if ordinal < 0 {
+			ordinal = 0
+		}
+		gen.ports[ordinal] = item
 	}
 	return ledger
 }
 
-// resolve returns the port for one listener, allocating through Allocate only
-// when neither a stored nor an already-pending value exists. A stored port is
-// returned unchanged even when it no longer matches the current policy; only
-// Controller's migration flow may move it. Metadata (pool, listen address,
-// network) follows the requirement so Pending() can converge legacy rows.
+func normalizeAllocationState(state string) string {
+	switch state {
+	case model.PortAllocationStatePreparing, model.PortAllocationStateRetiring, model.PortAllocationStateActive:
+		return state
+	default:
+		return model.PortAllocationStateActive
+	}
+}
+
+func (l *ProxyPathPortLedger) ownerFor(kind, scopeKey string, serverID int64) *proxyPathPortOwner {
+	key := proxyPathPortKey{Kind: kind, ScopeKey: scopeKey, ServerID: serverID}
+	owner, ok := l.owners[key]
+	if !ok {
+		owner = &proxyPathPortOwner{key: key}
+		l.owners[key] = owner
+	}
+	return owner
+}
+
+func (o *proxyPathPortOwner) generationFor(generation int) *proxyPathPortGeneration {
+	for _, gen := range o.generations {
+		if gen.generation == generation {
+			return gen
+		}
+	}
+	gen := &proxyPathPortGeneration{generation: generation, state: model.PortAllocationStateActive, ports: map[int]model.ProxyPathPortAllocation{}}
+	o.generations = append(o.generations, gen)
+	sort.Slice(o.generations, func(i, j int) bool { return o.generations[i].generation < o.generations[j].generation })
+	return gen
+}
+
+func (o *proxyPathPortOwner) nextGeneration() int {
+	next := 1
+	for _, gen := range o.generations {
+		if gen.generation >= next {
+			next = gen.generation + 1
+		}
+	}
+	return next
+}
+
+func (o *proxyPathPortOwner) activeGeneration() *proxyPathPortGeneration {
+	var active *proxyPathPortGeneration
+	for _, gen := range o.generations {
+		if gen.state != model.PortAllocationStateActive {
+			continue
+		}
+		if active == nil || gen.generation > active.generation {
+			active = gen
+		}
+	}
+	return active
+}
+
+func (o *proxyPathPortOwner) generationByState(state string) *proxyPathPortGeneration {
+	for _, gen := range o.generations {
+		if gen.state == state {
+			return gen
+		}
+	}
+	return nil
+}
+
+func (g *proxyPathPortGeneration) primaryRow() (model.ProxyPathPortAllocation, bool) {
+	var best model.ProxyPathPortAllocation
+	found := false
+	ordinals := make([]int, 0, len(g.ports))
+	for ordinal := range g.ports {
+		ordinals = append(ordinals, ordinal)
+	}
+	sort.Ints(ordinals)
+	for _, ordinal := range ordinals {
+		if !found || ordinal < best.Ordinal {
+			best = g.ports[ordinal]
+			found = true
+		}
+	}
+	return best, found
+}
+
+func (l *ProxyPathPortLedger) recordPending(row model.ProxyPathPortAllocation, key proxyPathPortKey) {
+	l.pending = append(l.pending, row)
+	l.pendingByKey[key] = true
+}
+
+// resolve returns the port of the active generation for one listener,
+// allocating through Allocate only when the owner has no active generation yet.
+// A stored port is returned unchanged even when it no longer matches the
+// current policy; only Controller's migration flow may move it. Metadata (pool,
+// listen address, network) follows the requirement so Pending() can converge
+// legacy rows.
 func (l *ProxyPathPortLedger) resolve(requirement PortRequirement) int {
 	if l == nil {
-		return requirement.Allocate()
+		if requirement.Allocate != nil {
+			return requirement.Allocate()
+		}
+		return 0
 	}
 	key := proxyPathPortKey{Kind: requirement.Kind, ScopeKey: requirement.ScopeKey, ServerID: requirement.ServerID}
-	if stored, ok := l.stored[key]; ok {
-		if l.used == nil {
-			l.used = map[proxyPathPortKey]bool{}
+	owner := l.ownerFor(requirement.Kind, requirement.ScopeKey, requirement.ServerID)
+	l.used[key] = true
+	if gen := owner.activeGeneration(); gen != nil {
+		item, ok := gen.primaryRow()
+		if !ok {
+			return 0
 		}
-		l.used[key] = true
-		if metadataDiverges(stored, requirement) {
-			corrected := stored
+		if metadataDiverges(item, requirement) {
+			corrected := item
 			corrected.Pool = requirement.Pool
 			corrected.ListenIP = requirement.ListenIP
 			corrected.Network = forwardNetworkName(requirement.Network)
-			l.pending[key] = corrected
-			l.order = append(l.order, key)
+			gen.ports[item.Ordinal] = corrected
+			l.recordPending(corrected, key)
 		}
-		return stored.Port
+		return item.Port
 	}
-	if pending, ok := l.pending[key]; ok {
-		return pending.Port
+	port := 0
+	if requirement.AllocateOrdinal != nil {
+		port = requirement.AllocateOrdinal(0)
 	}
-	port := requirement.Allocate()
+	if port <= 0 && requirement.Allocate != nil {
+		port = requirement.Allocate()
+	}
 	if port <= 0 {
 		return 0
 	}
-	l.pending[key] = model.ProxyPathPortAllocation{
+	generation := owner.nextGeneration()
+	gen := &proxyPathPortGeneration{generation: generation, state: model.PortAllocationStateActive, policyRevision: requirement.PolicyRevision, ports: map[int]model.ProxyPathPortAllocation{}}
+	row := model.ProxyPathPortAllocation{
 		Kind:           requirement.Kind,
 		ScopeKey:       requirement.ScopeKey,
 		ServerID:       requirement.ServerID,
 		Pool:           requirement.Pool,
 		ListenIP:       requirement.ListenIP,
 		Network:        forwardNetworkName(requirement.Network),
-		Generation:     1,
+		Generation:     generation,
 		Ordinal:        0,
 		Port:           port,
 		State:          model.PortAllocationStateActive,
 		PolicyRevision: requirement.PolicyRevision,
 	}
-	l.order = append(l.order, key)
+	gen.ports[0] = row
+	owner.generations = append(owner.generations, gen)
+	sort.Slice(owner.generations, func(i, j int) bool { return owner.generations[i].generation < owner.generations[j].generation })
+	l.recordPending(row, key)
 	return port
+}
+
+// AllocatePreparing reserves a fresh preparing generation for one owner while
+// the active generation keeps running. count is the number of ordinals (1 for
+// single-port listeners, more for atomic multiport owners such as Mieru). Every
+// candidate port is probed before any row is recorded; a single failure leaves
+// the ledger unchanged so the caller can abort the reservation without side
+// effects. The new rows carry the requirement's policy revision so a later
+// migration can prove which policy revision the generation was built for.
+func (l *ProxyPathPortLedger) AllocatePreparing(requirement PortRequirement, count int) ([]model.ProxyPathPortAllocation, error) {
+	if l == nil {
+		return nil, errors.New("port ledger is nil")
+	}
+	if count <= 0 {
+		count = 1
+	}
+	key := proxyPathPortKey{Kind: requirement.Kind, ScopeKey: requirement.ScopeKey, ServerID: requirement.ServerID}
+	owner := l.ownerFor(requirement.Kind, requirement.ScopeKey, requirement.ServerID)
+	if owner.activeGeneration() == nil {
+		return nil, fmt.Errorf("owner %s/%s on server %d has no active generation to migrate", requirement.Kind, requirement.ScopeKey, requirement.ServerID)
+	}
+	candidates := make([]int, count)
+	for ordinal := 0; ordinal < count; ordinal++ {
+		port := 0
+		if requirement.AllocateOrdinal != nil {
+			port = requirement.AllocateOrdinal(ordinal)
+		} else if requirement.Allocate != nil {
+			port = requirement.Allocate()
+		}
+		if port <= 0 {
+			return nil, fmt.Errorf("no port available in pool %s for %s/%s generation %d ordinal %d", requirement.Pool, requirement.Kind, requirement.ScopeKey, owner.nextGeneration(), ordinal)
+		}
+		candidates[ordinal] = port
+	}
+	generation := owner.nextGeneration()
+	gen := &proxyPathPortGeneration{generation: generation, state: model.PortAllocationStatePreparing, policyRevision: requirement.PolicyRevision, ports: map[int]model.ProxyPathPortAllocation{}}
+	rows := make([]model.ProxyPathPortAllocation, 0, count)
+	for ordinal, port := range candidates {
+		row := model.ProxyPathPortAllocation{
+			Kind:           requirement.Kind,
+			ScopeKey:       requirement.ScopeKey,
+			ServerID:       requirement.ServerID,
+			Pool:           requirement.Pool,
+			ListenIP:       requirement.ListenIP,
+			Network:        forwardNetworkName(requirement.Network),
+			Generation:     generation,
+			Ordinal:        ordinal,
+			Port:           port,
+			State:          model.PortAllocationStatePreparing,
+			PolicyRevision: requirement.PolicyRevision,
+		}
+		gen.ports[ordinal] = row
+		rows = append(rows, row)
+	}
+	owner.generations = append(owner.generations, gen)
+	sort.Slice(owner.generations, func(i, j int) bool { return owner.generations[i].generation < owner.generations[j].generation })
+	for _, row := range rows {
+		l.recordPending(row, key)
+	}
+	return rows, nil
+}
+
+// RowsForPhase returns the rows one migration phase must render for an owner:
+//   - prepare keeps the active generation and adds the preparing listeners;
+//   - switch uses the preparing generation as the new target while the active
+//     generation stays as a compatibility listener;
+//   - retire renders the new active generation plus the old retiring one.
+//
+// Ordinary deployments never call this; resolve() reads the active generation
+// only.
+func (l *ProxyPathPortLedger) RowsForPhase(requirement PortRequirement, phase string) []model.ProxyPathPortAllocation {
+	if l == nil {
+		return nil
+	}
+	owner, ok := l.owners[proxyPathPortKey{Kind: requirement.Kind, ScopeKey: requirement.ScopeKey, ServerID: requirement.ServerID}]
+	if !ok {
+		return nil
+	}
+	var out []model.ProxyPathPortAllocation
+	for _, gen := range owner.generations {
+		if !generationInPhase(gen.state, phase) {
+			continue
+		}
+		ordinals := make([]int, 0, len(gen.ports))
+		for ordinal := range gen.ports {
+			ordinals = append(ordinals, ordinal)
+		}
+		sort.Ints(ordinals)
+		for _, ordinal := range ordinals {
+			out = append(out, gen.ports[ordinal])
+		}
+	}
+	return out
+}
+
+func generationInPhase(state, phase string) bool {
+	switch phase {
+	case PortMigrationPhasePrepare, PortMigrationPhaseSwitch:
+		return state == model.PortAllocationStateActive || state == model.PortAllocationStatePreparing
+	case PortMigrationPhaseRetire:
+		return state == model.PortAllocationStateActive || state == model.PortAllocationStateRetiring
+	default:
+		return state == model.PortAllocationStateActive
+	}
+}
+
+// ResolveForPhase returns the port a consumer should dial during one migration
+// phase. Prepare leaves consumers on the active generation, switch moves them
+// to the preparing generation, and retire keeps them on the (new) active
+// generation.
+func (l *ProxyPathPortLedger) ResolveForPhase(requirement PortRequirement, phase string) int {
+	if l == nil {
+		return 0
+	}
+	if phase != PortMigrationPhaseSwitch {
+		return l.resolve(requirement)
+	}
+	owner, ok := l.owners[proxyPathPortKey{Kind: requirement.Kind, ScopeKey: requirement.ScopeKey, ServerID: requirement.ServerID}]
+	if !ok {
+		return 0
+	}
+	gen := owner.generationByState(model.PortAllocationStatePreparing)
+	if gen == nil {
+		return 0
+	}
+	item, ok := gen.primaryRow()
+	if !ok {
+		return 0
+	}
+	return item.Port
+}
+
+// PromotePreparing completes a migration cutover: the preparing generation
+// becomes active and the previous active generation becomes retiring. Retiring
+// rows stay in the ledger and the database until DeleteRetired removes them, so
+// the old listeners keep serving during the grace period.
+func (l *ProxyPathPortLedger) PromotePreparing(kind, scopeKey string, serverID int64) ([]model.ProxyPathPortAllocation, error) {
+	if l == nil {
+		return nil, errors.New("port ledger is nil")
+	}
+	owner, ok := l.owners[proxyPathPortKey{Kind: kind, ScopeKey: scopeKey, ServerID: serverID}]
+	if !ok {
+		return nil, fmt.Errorf("owner %s/%s on server %d has no generations", kind, scopeKey, serverID)
+	}
+	preparing := owner.generationByState(model.PortAllocationStatePreparing)
+	if preparing == nil {
+		return nil, fmt.Errorf("owner %s/%s on server %d has no preparing generation", kind, scopeKey, serverID)
+	}
+	active := owner.activeGeneration()
+	preparing.state = model.PortAllocationStateActive
+	var out []model.ProxyPathPortAllocation
+	for ordinal, item := range preparing.ports {
+		item.State = model.PortAllocationStateActive
+		preparing.ports[ordinal] = item
+		out = append(out, item)
+		l.recordPending(item, owner.key)
+	}
+	if active != nil {
+		active.state = model.PortAllocationStateRetiring
+		for ordinal, item := range active.ports {
+			item.State = model.PortAllocationStateRetiring
+			active.ports[ordinal] = item
+			out = append(out, item)
+			l.recordPending(item, owner.key)
+		}
+	}
+	return out, nil
+}
+
+// MarkActiveRetiring flags the current active generation as retiring without
+// promoting anything; used when a cutover must first move consumers off the old
+// listeners and the new generation is not ready to promote yet.
+func (l *ProxyPathPortLedger) MarkActiveRetiring(kind, scopeKey string, serverID int64) ([]model.ProxyPathPortAllocation, error) {
+	if l == nil {
+		return nil, errors.New("port ledger is nil")
+	}
+	owner, ok := l.owners[proxyPathPortKey{Kind: kind, ScopeKey: scopeKey, ServerID: serverID}]
+	if !ok {
+		return nil, fmt.Errorf("owner %s/%s on server %d has no generations", kind, scopeKey, serverID)
+	}
+	active := owner.activeGeneration()
+	if active == nil {
+		return nil, fmt.Errorf("owner %s/%s on server %d has no active generation to retire", kind, scopeKey, serverID)
+	}
+	active.state = model.PortAllocationStateRetiring
+	var out []model.ProxyPathPortAllocation
+	for ordinal, item := range active.ports {
+		item.State = model.PortAllocationStateRetiring
+		active.ports[ordinal] = item
+		out = append(out, item)
+		l.recordPending(item, owner.key)
+	}
+	return out, nil
+}
+
+// DeleteRetired removes one retiring generation from the ledger and marks its
+// persisted row IDs for deletion. It is the only operation that may drop a
+// generation, and only after the new active generation is verified; stale
+// cleanup never deletes a retiring generation on its own.
+func (l *ProxyPathPortLedger) DeleteRetired(kind, scopeKey string, serverID int64, generation int) ([]int64, error) {
+	if l == nil {
+		return nil, errors.New("port ledger is nil")
+	}
+	owner, ok := l.owners[proxyPathPortKey{Kind: kind, ScopeKey: scopeKey, ServerID: serverID}]
+	if !ok {
+		return nil, fmt.Errorf("owner %s/%s on server %d has no generations", kind, scopeKey, serverID)
+	}
+	var target *proxyPathPortGeneration
+	for _, gen := range owner.generations {
+		if gen.generation == generation {
+			target = gen
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("owner %s/%s on server %d has no generation %d", kind, scopeKey, serverID, generation)
+	}
+	if target.state != model.PortAllocationStateRetiring {
+		return nil, fmt.Errorf("owner %s/%s on server %d generation %d is %s, not retiring", kind, scopeKey, serverID, generation, target.state)
+	}
+	var ids []int64
+	for _, item := range target.ports {
+		if item.ID > 0 && !l.removed[item.ID] {
+			l.removed[item.ID] = true
+			ids = append(ids, item.ID)
+		}
+	}
+	remaining := owner.generations[:0]
+	for _, gen := range owner.generations {
+		if gen != target {
+			remaining = append(remaining, gen)
+		}
+	}
+	owner.generations = remaining
+	return ids, nil
 }
 
 func metadataDiverges(stored model.ProxyPathPortAllocation, requirement PortRequirement) bool {
@@ -158,6 +546,12 @@ func (l *ProxyPathPortLedger) markProjectionComplete() {
 // StaleProxyPathPortAllocationIDs reports the persisted records no listener
 // claims anymore, so Controller can release those ports for future allocation.
 //
+// An owner is claimed when any of its generations resolved in the current
+// projection; every generation of a claimed owner survives, because preparing
+// and retiring rows are owned by the migration flow, not by stale cleanup. An
+// unclaimed owner releases every generation. Rows explicitly deleted by
+// DeleteRetired are always reported.
+//
 // Releasing requires a complete projection. A run that aborted partway resolved
 // only some listeners, and treating that partial view as authoritative would drop
 // allocations that are still deployed.
@@ -167,11 +561,15 @@ func StaleProxyPathPortAllocationIDs(stored []model.ProxyPathPortAllocation, led
 	}
 	out := []int64{}
 	for _, item := range stored {
+		if ledger.removed[item.ID] {
+			out = append(out, item.ID)
+			continue
+		}
 		key := proxyPathPortKey{Kind: item.Kind, ScopeKey: item.ScopeKey, ServerID: item.ServerID}
 		if ledger.used[key] {
 			continue
 		}
-		if _, ok := ledger.pending[key]; ok {
+		if ledger.pendingByKey[key] {
 			continue
 		}
 		out = append(out, item.ID)
@@ -186,10 +584,8 @@ func (l *ProxyPathPortLedger) Pending() []model.ProxyPathPortAllocation {
 	if l == nil {
 		return nil
 	}
-	out := make([]model.ProxyPathPortAllocation, 0, len(l.order))
-	for _, key := range l.order {
-		out = append(out, l.pending[key])
-	}
+	out := make([]model.ProxyPathPortAllocation, 0, len(l.pending))
+	out = append(out, l.pending...)
 	return out
 }
 
@@ -362,14 +758,15 @@ func buildProxyPathChainServices(paths []model.ProxyPath, steps []model.ProxyPat
 			portProtocol = model.ForwardProtocolTCPUDP
 		}
 		port := ledger.resolve(PortRequirement{
-			Kind:     model.ProxyPathPortKindChainService,
-			ScopeKey: proxyPathChainServiceScopeKey(key),
-			ServerID: server.ID,
-			Pool:     model.PortPoolPublic,
-			ListenIP: firstNonEmpty(server.ListenIP, "0.0.0.0"),
-			Network:  portProtocol,
+			Kind:           model.ProxyPathPortKindChainService,
+			ScopeKey:       proxyPathChainServiceScopeKey(key),
+			ServerID:       server.ID,
+			Pool:           model.PortPoolPublic,
+			ListenIP:       firstNonEmpty(server.ListenIP, "0.0.0.0"),
+			Network:        portProtocol,
+			PolicyRevision: serverPortPolicyRevision(server),
 			Allocate: func() int {
-				return proxyPathAvailablePortForProtocol(server, server.ID*977, seed, start, end, portProtocol, occupied)
+				return proxyPathAvailablePortForProtocol(server, server.ID*977, seed, start, end, portProtocol, firstNonEmpty(server.ListenIP, "0.0.0.0"), occupied)
 			},
 		})
 		if port == 0 {
@@ -1420,12 +1817,13 @@ func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sour
 			return model.Tunnel{}, fmt.Errorf("路径 %s 第 %d 跳生成共享 SSH 凭据: %w", path.Name, step.Position, err)
 		}
 		listenPort := ledger.resolve(PortRequirement{
-			Kind:     model.ProxyPathPortKindTunnelSSH,
-			ScopeKey: fmt.Sprint(tunnel.ID),
-			ServerID: source.ID,
-			Pool:     model.PortPoolInternal,
-			ListenIP: "127.0.0.1",
-			Network:  model.ForwardProtocolTCP,
+			Kind:           model.ProxyPathPortKindTunnelSSH,
+			ScopeKey:       fmt.Sprint(tunnel.ID),
+			ServerID:       source.ID,
+			Pool:           model.PortPoolInternal,
+			ListenIP:       "127.0.0.1",
+			Network:        model.ForwardProtocolTCP,
+			PolicyRevision: serverPortPolicyRevision(source),
 			Allocate: func() int {
 				return proxyPathTunnelPort(source, tunnel.ID, 0, 31, inbounds)
 			},
@@ -1465,12 +1863,13 @@ func proxyPathManagedTunnel(path model.ProxyPath, step model.ProxyPathStep, sour
 		}
 		sourceAddress, targetAddress := proxyPathWireGuardAddresses(tunnel.ID, 0)
 		listenPort := ledger.resolve(PortRequirement{
-			Kind:     model.ProxyPathPortKindTunnelWG,
-			ScopeKey: fmt.Sprint(tunnel.ID),
-			ServerID: target.ID,
-			Pool:     model.PortPoolPublic,
-			ListenIP: "*",
-			Network:  model.ForwardProtocolUDP,
+			Kind:           model.ProxyPathPortKindTunnelWG,
+			ScopeKey:       fmt.Sprint(tunnel.ID),
+			ServerID:       target.ID,
+			Pool:           model.PortPoolPublic,
+			ListenIP:       "*",
+			Network:        model.ForwardProtocolUDP,
+			PolicyRevision: serverPortPolicyRevision(target),
 			Allocate: func() int {
 				return proxyPathTunnelPort(target, tunnel.ID, 0, 47, inbounds)
 			},
@@ -1536,34 +1935,49 @@ func proxyPathTunnelPort(server model.Server, pathID int64, position, salt int, 
 	// touch it.
 	if salt == 31 {
 		start, end := proxyPathInternalPortRange(server)
-		return proxyPathAvailablePort(server, pathID*193, position*71+salt, start, end, inbounds)
+		return proxyPathAvailablePort(server, pathID*193, position*71+salt, start, end, "127.0.0.1", inbounds)
 	}
 	start, end := proxyPathServerPortRange(server)
 	protocol := model.ForwardProtocolTCP
+	listenIP := EffectiveListenIP(server, server.ListenIP)
 	if salt == 47 {
 		protocol = model.ForwardProtocolUDP
+		listenIP = "*"
 	}
-	return proxyPathAvailablePortForProtocol(server, pathID*193, position*71+salt, start, end, protocol, inbounds)
+	return proxyPathAvailablePortForProtocol(server, pathID*193, position*71+salt, start, end, protocol, listenIP, inbounds)
 }
 
-func proxyPathAvailablePort(server model.Server, pathSeed int64, positionSeed, start, end int, inbounds map[int64]model.Inbound) int {
-	return proxyPathAvailablePortForProtocol(server, pathSeed, positionSeed, start, end, "", inbounds)
+func proxyPathAvailablePort(server model.Server, pathSeed int64, positionSeed, start, end int, listenIP string, inbounds map[int64]model.Inbound) int {
+	return proxyPathAvailablePortForProtocol(server, pathSeed, positionSeed, start, end, "", listenIP, inbounds)
 }
 
 // proxyPathAvailablePortForProtocol finds a free port inside [start, end] using
-// the stable seed and the same occupied-set rules as deployment. Exhaustion
-// returns 0: managed public listeners must never silently fall back outside the
-// configured auto range — a port that cannot be reached through the provider's
-// NAT or firewall is useless even if the bind would succeed.
-func proxyPathAvailablePortForProtocol(server model.Server, pathSeed int64, positionSeed, start, end int, protocol model.ForwardProtocol, inbounds map[int64]model.Inbound) int {
-	occupied := map[int]bool{}
+// the stable seed and the same listen-resource conflict model as deployment
+// validation: address scope, TCP/UDP transport and port all participate, so two
+// listeners may share a numeric port when they bind different concrete
+// addresses or use non-overlapping transports, and a wildcard address conflicts
+// with everything. Exhaustion returns 0: managed public listeners must never
+// silently fall back outside the configured auto range — a port that cannot be
+// reached through the provider's NAT or firewall is useless even if the bind
+// would succeed.
+func proxyPathAvailablePortForProtocol(server model.Server, pathSeed int64, positionSeed, start, end int, protocol model.ForwardProtocol, listenIP string, inbounds map[int64]model.Inbound) int {
+	reserved := make([]listenResource, 0, len(inbounds))
 	for _, inbound := range inbounds {
 		// Disabled inbounds are reserved too. Allocation is deterministic, so
 		// handing a disabled inbound's port to a generated listener would create a
 		// listener conflict the operator cannot resolve by re-enabling it.
-		if inbound.ServerID == server.ID && inbound.Port > 0 && (protocol == "" || proxyPathInboundUsesProtocol(inbound, protocol)) {
-			occupied[inbound.Port] = true
+		if inbound.ServerID == server.ID && inbound.Port > 0 {
+			reserved = append(reserved, inboundListenResource(inbound))
 		}
+	}
+	// The candidate carries the address the listener will actually bind:
+	// loopback for SSH forwards, wildcard for WireGuard, and the server listen
+	// address elsewhere. Using the wrong scope would let allocation pick a port
+	// that deployment validation later rejects (or skip one it could reuse).
+	candidate := listenResource{
+		serverID: server.ID,
+		address:  normalizeListenAddress(listenIP),
+		protocol: listenTransportForAllocation(protocol),
 	}
 	span := end - start + 1
 	if span <= 0 {
@@ -1574,12 +1988,31 @@ func proxyPathAvailablePortForProtocol(server model.Server, pathSeed int64, posi
 		seed = -seed
 	}
 	for offset := 0; offset < span; offset++ {
-		candidate := start + (seed+offset)%span
-		if !occupied[candidate] {
-			return candidate
+		candidate.port = start + (seed+offset)%span
+		free := true
+		for _, existing := range reserved {
+			if candidate.conflicts(existing) {
+				free = false
+				break
+			}
+		}
+		if free {
+			return candidate.port
 		}
 	}
 	return 0
+}
+
+// listenTransportForAllocation maps a requested network to the transport bits
+// allocation checks. An empty network means a TCP listener in every current
+// call site; it deliberately does not expand to "both transports", which would
+// wrongly block UDP-only inbounds (for example Hysteria2) from sharing the
+// numeric port with a TCP listener.
+func listenTransportForAllocation(protocol model.ForwardProtocol) listenTransport {
+	if protocol == "" {
+		return listenTCP
+	}
+	return portForwardListenTransport(protocol)
 }
 
 func proxyPathPortAvailable(serverID int64, port int, protocol model.ForwardProtocol, inbounds map[int64]model.Inbound) bool {
@@ -1603,7 +2036,7 @@ func proxyPathServerPortRange(server model.Server) (int, int) {
 	if server.PortRangeStart > 0 && server.PortRangeEnd >= server.PortRangeStart {
 		return server.PortRangeStart, server.PortRangeEnd
 	}
-	return 30000, 60000
+	return DefaultPublicPortRangeStart, DefaultPublicPortRangeEnd
 }
 
 // proxyPathInternalPortRange returns the loopback-only allocation pool. The
@@ -1613,7 +2046,18 @@ func proxyPathInternalPortRange(server model.Server) (int, int) {
 	if server.InternalPortRangeStart > 0 && server.InternalPortRangeEnd >= server.InternalPortRangeStart {
 		return server.InternalPortRangeStart, server.InternalPortRangeEnd
 	}
-	return 30000, 59999
+	return DefaultInternalPortRangeStart, DefaultInternalPortRangeEnd
+}
+
+// serverPortPolicyRevision returns the active port policy revision of a server.
+// Rows created before the field existed normalize to revision 1, the first
+// policy generation. New allocations and migration generations carry this
+// revision so a migration can prove which policy an owner was built for.
+func serverPortPolicyRevision(server model.Server) int64 {
+	if server.PortPolicyRevision <= 0 {
+		return 1
+	}
+	return server.PortPolicyRevision
 }
 
 // PortAllocationPoolForKind classifies legacy allocation rows whose pool column

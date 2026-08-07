@@ -1829,7 +1829,7 @@ func TestProxyPathInternalPortsAvoidOccupiedSinglePortRanges(t *testing.T) {
 	existing := model.Inbound{ID: 9, ServerID: server.ID, Protocol: model.ProtocolVLESS, Port: 11122, Enabled: true}
 	inbounds := map[int64]model.Inbound{existing.ID: existing}
 
-	internalPort := proxyPathInternalPort(server, 4, 1, inbounds)
+	internalPort := proxyPathInternalPort(server, 4, 1, "0.0.0.0", inbounds)
 	if internalPort != 0 {
 		t.Fatalf("internal port = %d, want exhausted public range to fail without overflow", internalPort)
 	}

@@ -671,7 +671,7 @@ func TestGeneratedPortSkipsDisabledInboundPort(t *testing.T) {
 	disabled := model.Inbound{ID: 21, ServerID: server.ID, Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 30000, ConfigJSON: `{}`, Enabled: false}
 	inbounds := map[int64]model.Inbound{disabled.ID: disabled}
 	for attempt := 0; attempt < 4; attempt++ {
-		port := proxyPathAvailablePortForProtocol(server, int64(attempt), 0, 30000, 30001, model.ForwardProtocolTCP, inbounds)
+		port := proxyPathAvailablePortForProtocol(server, int64(attempt), 0, 30000, 30001, model.ForwardProtocolTCP, "0.0.0.0", inbounds)
 		if port == disabled.Port {
 			t.Fatalf("generated listener took the disabled inbound's port %d", port)
 		}

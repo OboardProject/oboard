@@ -30,7 +30,7 @@ const (
 	configVersionSetting  = "system.config_version_sequence"
 )
 
-const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_token_hash,''),chain_secret,coalesce(enrollment_hash,''),enrollment_expires_at,entry_address,coalesce(public_ipv4,''),coalesce(public_ipv6,''),coalesce(interface_ipv6,''),coalesce(region_code,''),coalesce(detected_region_code,''),coalesce(region_mode,'auto'),coalesce(entry_ip_mode,'auto'),listen_ip,coalesce(listen_mode,'auto'),ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,internal_port_range_start,internal_port_range_end,status,os,coalesce(distro_id,''),coalesce(distro_version,''),coalesce(distro_name,''),coalesce(libc,''),coalesce(service_manager,''),coalesce(package_manager,''),arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,coalesce(agent_version,''),coalesce(agent_build,''),sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at from servers`
+const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_token_hash,''),chain_secret,coalesce(enrollment_hash,''),enrollment_expires_at,entry_address,coalesce(public_ipv4,''),coalesce(public_ipv6,''),coalesce(interface_ipv6,''),coalesce(region_code,''),coalesce(detected_region_code,''),coalesce(region_mode,'auto'),coalesce(entry_ip_mode,'auto'),listen_ip,coalesce(listen_mode,'auto'),ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,internal_port_range_start,internal_port_range_end,port_policy_revision,status,os,coalesce(distro_id,''),coalesce(distro_version,''),coalesce(distro_name,''),coalesce(libc,''),coalesce(service_manager,''),coalesce(package_manager,''),arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,coalesce(agent_version,''),coalesce(agent_build,''),sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at from servers`
 
 const serverTelemetrySelectSQL = `select server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error,offline_notify_enabled,offline_after_seconds from server_telemetry`
 
@@ -186,7 +186,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists ssh_server_host_keys (server_id integer primary key references servers(id) on delete cascade, public_key text not null, fingerprint text not null, config_version integer not null, updated_at text not null)`,
 		`create table if not exists ssh_deployment_plans (server_id integer primary key references servers(id) on delete cascade, plan_digest text not null, config_version integer not null, updated_at text not null)`,
 		`create table if not exists ssh_password_deployments (server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, device_id_hash text not null default '', credential_epoch integer not null default 0, credential_status text not null default 'active', password_digest text not null, config_version integer not null, updated_at text not null, primary key(server_id,user_id,device_id_hash,credential_epoch))`,
-		`create table if not exists servers (id integer primary key autoincrement, name text not null, agent_id text unique, agent_token_hash text, chain_secret text not null, enrollment_hash text, enrollment_expires_at text, entry_address text, public_ipv4 text not null default '', public_ipv6 text not null default '', region_code text not null default '', detected_region_code text not null default '', region_mode text not null default 'auto', entry_ip_mode text not null default 'auto', listen_ip text, ip_stack text not null default 'auto', udp_inbound_mode text not null default 'allow', mtu_mode text not null default 'detect', mtu_value integer not null default 0, mtu_probe_host text not null default '1.1.1.1', mtu_probe_port integer not null default 443, mtu_overhead_bytes integer not null default 0, bbr_enabled integer not null default 0, port_range_start integer not null default 10000, port_range_end integer not null default 20000, internal_port_range_start integer not null default 30000, internal_port_range_end integer not null default 59999, status text not null, os text, distro_id text not null default '', distro_version text not null default '', distro_name text not null default '', libc text not null default '', service_manager text not null default '', package_manager text not null default '', arch text, kernel text, cpu text, memory_bytes integer not null default 0, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, agent_memory_bytes integer not null default 0, disk_bytes integer not null default 0, agent_version text not null default '', agent_build text not null default '', sing_box_version text, connection_audit_enabled integer not null default 0, last_seen_at text, created_at text not null, updated_at text not null)`,
+		`create table if not exists servers (id integer primary key autoincrement, name text not null, agent_id text unique, agent_token_hash text, chain_secret text not null, enrollment_hash text, enrollment_expires_at text, entry_address text, public_ipv4 text not null default '', public_ipv6 text not null default '', region_code text not null default '', detected_region_code text not null default '', region_mode text not null default 'auto', entry_ip_mode text not null default 'auto', listen_ip text, ip_stack text not null default 'auto', udp_inbound_mode text not null default 'allow', mtu_mode text not null default 'detect', mtu_value integer not null default 0, mtu_probe_host text not null default '1.1.1.1', mtu_probe_port integer not null default 443, mtu_overhead_bytes integer not null default 0, bbr_enabled integer not null default 0, port_range_start integer not null default 10000, port_range_end integer not null default 20000, internal_port_range_start integer not null default 30000, internal_port_range_end integer not null default 59999, port_policy_revision integer not null default 1, status text not null, os text, distro_id text not null default '', distro_version text not null default '', distro_name text not null default '', libc text not null default '', service_manager text not null default '', package_manager text not null default '', arch text, kernel text, cpu text, memory_bytes integer not null default 0, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, agent_memory_bytes integer not null default 0, disk_bytes integer not null default 0, agent_version text not null default '', agent_build text not null default '', sing_box_version text, connection_audit_enabled integer not null default 0, last_seen_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_credentials (id integer primary key autoincrement, name text not null unique, provider text not null, zone_name text not null, zone_id text not null default '', config_encrypted text not null, enabled integer not null default 1, verified_at text, last_error text not null default '', created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_credential_zones (id integer primary key autoincrement, credential_id integer not null references dns_credentials(id) on delete cascade, zone_name text not null, provider_zone_id text not null default '', server_id integer references servers(id) on delete set null, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_record_metadata (dns_zone_id integer not null references dns_credential_zones(id) on delete cascade, provider_record_id text not null, comment text not null default '', server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, updated_at text not null, primary key(dns_zone_id,provider_record_id))`,
@@ -382,6 +382,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureColumn(ctx, "servers", "internal_port_range_end", `alter table servers add column internal_port_range_end integer not null default 59999`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn(ctx, "servers", "port_policy_revision", `alter table servers add column port_policy_revision integer not null default 1`); err != nil {
+		return err
+	}
 	for _, column := range []struct {
 		name string
 		sql  string
@@ -397,6 +400,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		if err := s.ensureColumn(ctx, "proxy_path_port_allocations", column.name, column.sql); err != nil {
 			return err
 		}
+	}
+	if err := s.migrateProxyPathPortAllocations(ctx); err != nil {
+		return err
 	}
 	if err := s.ensureColumn(ctx, "inbound_access_grants", "proxy_path_id", `alter table inbound_access_grants add column proxy_path_id integer references proxy_paths(id) on delete cascade`); err != nil {
 		return err
@@ -604,6 +610,159 @@ func (s *Store) ensureSSHPasswordDeploymentDeviceIdentity(ctx context.Context) e
 		}
 	}
 	return tx.Commit()
+}
+
+// migrateProxyPathPortAllocations rebuilds the generated-listener port table
+// when it still carries the pre-generation three-field unique key. That
+// constraint cannot hold an active and a preparing row for the same logical
+// owner, so saving a new generation would silently overwrite the live port.
+// The rebuild is a no-op for fresh tables (which already use the generation
+// key) and idempotent for databases rebuilt by an earlier run.
+func (s *Store) migrateProxyPathPortAllocations(ctx context.Context) error {
+	legacy, err := s.proxyPathPortAllocationLegacyKeyPresent(ctx)
+	if err != nil {
+		return err
+	}
+	if !legacy {
+		return nil
+	}
+	generation, err := s.proxyPathPortAllocationGenerationKeyPresent(ctx)
+	if err != nil {
+		return err
+	}
+	if generation {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var before int
+	if err := tx.QueryRowContext(ctx, `select count(*) from proxy_path_port_allocations`).Scan(&before); err != nil {
+		return err
+	}
+	statements := []string{
+		`drop index if exists idx_proxy_path_port_allocations_server`,
+		`alter table proxy_path_port_allocations rename to proxy_path_port_allocations_legacy`,
+		`create table proxy_path_port_allocations (id integer primary key autoincrement, kind text not null, scope_key text not null, server_id integer not null references servers(id) on delete cascade, pool text not null default 'public', listen_ip text not null default '', network text not null default 'tcp_udp', generation integer not null default 1, ordinal integer not null default 0, port integer not null, state text not null default 'active', policy_revision integer not null default 0, created_at text not null, updated_at text not null, unique(kind,scope_key,server_id,generation,ordinal), check(pool in ('public','internal')), check(network in ('tcp','udp','tcp_udp')), check(state in ('active','preparing','retiring')), check(generation>0), check(ordinal>=0), check(port between 1 and 65535))`,
+		`insert into proxy_path_port_allocations(kind,scope_key,server_id,pool,listen_ip,network,generation,ordinal,port,state,policy_revision,created_at,updated_at) select kind,scope_key,server_id, case when kind in ('trusted_forward_inner','tunnel_ssh_loopback') then 'internal' else 'public' end, case when kind in ('trusted_forward_inner','tunnel_ssh_loopback') then '127.0.0.1' when kind='tunnel_wireguard' then '*' else coalesce(listen_ip,'') end, case kind when 'tunnel_ssh_loopback' then 'tcp' when 'tunnel_wireguard' then 'udp' else coalesce(network,'tcp_udp') end, coalesce(generation,1), coalesce(ordinal,0), port, coalesce(state,'active'), coalesce(policy_revision,0), created_at, updated_at from proxy_path_port_allocations_legacy`,
+		`drop table proxy_path_port_allocations_legacy`,
+		`create index idx_proxy_path_port_allocations_server on proxy_path_port_allocations(server_id)`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("proxy_path_port_allocations rebuild: %w", err)
+		}
+	}
+	var after int
+	if err := tx.QueryRowContext(ctx, `select count(*) from proxy_path_port_allocations`).Scan(&after); err != nil {
+		return err
+	}
+	if after != before {
+		return fmt.Errorf("proxy_path_port_allocations rebuild changed row count from %d to %d", before, after)
+	}
+	generation, err = s.proxyPathPortAllocationGenerationKeyPresentTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if !generation {
+		return errors.New("proxy_path_port_allocations rebuild did not produce the generation unique key")
+	}
+	return tx.Commit()
+}
+
+// proxyPathPortAllocationLegacyKeyPresent reports whether the table still
+// carries the pre-generation unique index (kind, scope_key, server_id). Such a
+// database cannot hold two generations of one owner and must be rebuilt before
+// the ledger can save a preparing row beside an active one.
+func (s *Store) proxyPathPortAllocationLegacyKeyPresent(ctx context.Context) (bool, error) {
+	columns, err := s.proxyPathPortAllocationUniqueKeyColumns(ctx)
+	if err != nil {
+		return false, err
+	}
+	return len(columns) == 3 && columns[0] == "kind" && columns[1] == "scope_key" && columns[2] == "server_id", nil
+}
+
+// proxyPathPortAllocationGenerationKeyPresent reports whether the table uses
+// the generation-aware unique index (kind, scope_key, server_id, generation,
+// ordinal) that allows one logical owner to hold several generations at once.
+func (s *Store) proxyPathPortAllocationGenerationKeyPresent(ctx context.Context) (bool, error) {
+	columns, err := s.proxyPathPortAllocationUniqueKeyColumns(ctx)
+	if err != nil {
+		return false, err
+	}
+	return len(columns) == 5 && columns[0] == "kind" && columns[1] == "scope_key" && columns[2] == "server_id" && columns[3] == "generation" && columns[4] == "ordinal", nil
+}
+
+// proxyPathPortAllocationUniqueKeyColumns returns the columns of the widest
+// unique auto index on the allocation table. A rebuilt table has exactly one
+// (the generation key); a legacy table has the three-field key.
+func (s *Store) proxyPathPortAllocationUniqueKeyColumns(ctx context.Context) ([]string, error) {
+	return s.proxyPathPortAllocationUniqueKeyColumnsTx(ctx, nil)
+}
+
+func (s *Store) proxyPathPortAllocationUniqueKeyColumnsTx(ctx context.Context, tx *sql.Tx) ([]string, error) {
+	var queryer interface {
+		QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	} = s.db
+	if tx != nil {
+		queryer = tx
+	}
+	rows, err := queryer.QueryContext(ctx, `select name from pragma_index_list('proxy_path_port_allocations') where "unique"=1 and origin='u'`)
+	if err != nil {
+		return nil, err
+	}
+	var indexes []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		indexes = append(indexes, name)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	best := []string{}
+	for _, index := range indexes {
+		columns, err := s.proxyPathPortAllocationIndexColumns(ctx, queryer, index)
+		if err != nil {
+			return nil, err
+		}
+		if len(columns) > len(best) {
+			best = columns
+		}
+	}
+	return best, nil
+}
+
+func (s *Store) proxyPathPortAllocationIndexColumns(ctx context.Context, queryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, index string) ([]string, error) {
+	rows, err := queryer.QueryContext(ctx, `select name from pragma_index_info(?) order by seqno`, index)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var columns []string
+	for rows.Next() {
+		var column string
+		if err := rows.Scan(&column); err != nil {
+			return nil, err
+		}
+		columns = append(columns, column)
+	}
+	return columns, rows.Err()
+}
+
+func (s *Store) proxyPathPortAllocationGenerationKeyPresentTx(ctx context.Context, tx *sql.Tx) (bool, error) {
+	columns, err := s.proxyPathPortAllocationUniqueKeyColumnsTx(ctx, tx)
+	if err != nil {
+		return false, err
+	}
+	return len(columns) == 5 && columns[0] == "kind" && columns[1] == "scope_key" && columns[2] == "server_id" && columns[3] == "generation" && columns[4] == "ordinal", nil
 }
 
 // ensureProxyPathStepPositions compacts each path's positions to a dense 1..N
@@ -1668,7 +1827,10 @@ func (s *Store) CreateServer(ctx context.Context, v *model.Server) error {
 	}
 	normalizeServerEntryIP(v)
 	normalizeServerRegion(v)
-	res, err := s.db.ExecContext(ctx, `insert into servers(name,agent_id,agent_token_hash,chain_secret,enrollment_hash,entry_address,public_ipv4,public_ipv6,interface_ipv6,region_code,detected_region_code,region_mode,entry_ip_mode,listen_ip,listen_mode,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,internal_port_range_start,internal_port_range_end,status,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,agent_version,agent_build,sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.Name, nullEmpty(v.AgentID), nullEmpty(v.AgentTokenHash), v.ChainSecret, nullEmpty(v.EnrollmentHash), v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.InternalPortRangeStart, v.InternalPortRangeEnd, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), ts, ts)
+	if v.PortPolicyRevision <= 0 {
+		v.PortPolicyRevision = 1
+	}
+	res, err := s.db.ExecContext(ctx, `insert into servers(name,agent_id,agent_token_hash,chain_secret,enrollment_hash,entry_address,public_ipv4,public_ipv6,interface_ipv6,region_code,detected_region_code,region_mode,entry_ip_mode,listen_ip,listen_mode,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,internal_port_range_start,internal_port_range_end,status,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,agent_version,agent_build,sing_box_version,connection_audit_enabled,port_policy_revision,last_seen_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.Name, nullEmpty(v.AgentID), nullEmpty(v.AgentTokenHash), v.ChainSecret, nullEmpty(v.EnrollmentHash), v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.InternalPortRangeStart, v.InternalPortRangeEnd, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), v.PortPolicyRevision, nilTime(v.LastSeenAt), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -1687,7 +1849,7 @@ func (s *Store) UpdateServer(ctx context.Context, v *model.Server) error {
 	// Note: enrollment_hash is intentionally not cleared via empty string here —
 	// coalesce(nullif('',''), enrollment_hash) would preserve the old hash.
 	// Use SetServerEnrollmentHash / ClaimServerEnrollment for one-time token lifecycle.
-	_, err := s.db.ExecContext(ctx, `update servers set name=?, agent_id=coalesce(nullif(?,''),agent_id), agent_token_hash=coalesce(nullif(?,''),agent_token_hash), chain_secret=coalesce(nullif(?,''),chain_secret), enrollment_hash=coalesce(nullif(?,''),enrollment_hash), entry_address=?, public_ipv4=?, public_ipv6=?, interface_ipv6=?, region_code=?, detected_region_code=?, region_mode=?, entry_ip_mode=?, listen_ip=?, listen_mode=?, ip_stack=?, udp_inbound_mode=?, mtu_mode=?, mtu_value=?, mtu_probe_host=?, mtu_probe_port=?, mtu_overhead_bytes=?, bbr_enabled=?, port_range_start=?, port_range_end=?, internal_port_range_start=?, internal_port_range_end=?, status=?, os=?, distro_id=?, distro_version=?, distro_name=?, libc=?, service_manager=?, package_manager=?, arch=?, kernel=?, cpu=?, memory_bytes=?, cpu_usage_percent=?, memory_used_bytes=?, memory_total_bytes=?, agent_memory_bytes=?, disk_bytes=?, agent_version=?, agent_build=?, sing_box_version=?, connection_audit_enabled=?, last_seen_at=?, updated_at=? where id=?`, v.Name, v.AgentID, v.AgentTokenHash, v.ChainSecret, v.EnrollmentHash, v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.InternalPortRangeStart, v.InternalPortRangeEnd, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), v.UpdatedAt.Format(time.RFC3339Nano), v.ID)
+	_, err := s.db.ExecContext(ctx, `update servers set name=?, agent_id=coalesce(nullif(?,''),agent_id), agent_token_hash=coalesce(nullif(?,''),agent_token_hash), chain_secret=coalesce(nullif(?,''),chain_secret), enrollment_hash=coalesce(nullif(?,''),enrollment_hash), entry_address=?, public_ipv4=?, public_ipv6=?, interface_ipv6=?, region_code=?, detected_region_code=?, region_mode=?, entry_ip_mode=?, listen_ip=?, listen_mode=?, ip_stack=?, udp_inbound_mode=?, mtu_mode=?, mtu_value=?, mtu_probe_host=?, mtu_probe_port=?, mtu_overhead_bytes=?, bbr_enabled=?, port_range_start=?, port_range_end=?, internal_port_range_start=?, internal_port_range_end=?, port_policy_revision=case when ?<=0 then port_policy_revision else ? end, status=?, os=?, distro_id=?, distro_version=?, distro_name=?, libc=?, service_manager=?, package_manager=?, arch=?, kernel=?, cpu=?, memory_bytes=?, cpu_usage_percent=?, memory_used_bytes=?, memory_total_bytes=?, agent_memory_bytes=?, disk_bytes=?, agent_version=?, agent_build=?, sing_box_version=?, connection_audit_enabled=?, last_seen_at=?, updated_at=? where id=?`, v.Name, v.AgentID, v.AgentTokenHash, v.ChainSecret, v.EnrollmentHash, v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.InternalPortRangeStart, v.InternalPortRangeEnd, v.PortPolicyRevision, v.PortPolicyRevision, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), v.UpdatedAt.Format(time.RFC3339Nano), v.ID)
 	if err != nil {
 		return err
 	}
@@ -1791,7 +1953,7 @@ func scanServers(rows *sql.Rows) ([]model.Server, error) {
 		var v model.Server
 		var last, enrollExp sql.NullString
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.Name, &v.AgentID, &v.AgentTokenHash, &v.ChainSecret, &v.EnrollmentHash, &enrollExp, &v.EntryAddress, &v.PublicIPv4, &v.PublicIPv6, &v.InterfaceIPv6, &v.RegionCode, &v.DetectedRegionCode, &v.RegionMode, &v.EntryIPMode, &v.ListenIP, &v.ListenMode, &v.IPStack, &v.UDPInboundMode, &v.MTUMode, &v.MTUValue, &v.MTUProbeHost, &v.MTUProbePort, &v.MTUOverheadBytes, &v.BBREnabled, &v.PortRangeStart, &v.PortRangeEnd, &v.InternalPortRangeStart, &v.InternalPortRangeEnd, &v.Status, &v.OS, &v.DistroID, &v.DistroVersion, &v.DistroName, &v.Libc, &v.ServiceManager, &v.PackageManager, &v.Arch, &v.Kernel, &v.CPU, &v.MemoryBytes, &v.CPUUsagePercent, &v.MemoryUsedBytes, &v.MemoryTotalBytes, &v.AgentMemoryBytes, &v.DiskBytes, &v.AgentVersion, &v.AgentBuild, &v.SingBoxVersion, &v.ConnectionAuditEnabled, &last, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.Name, &v.AgentID, &v.AgentTokenHash, &v.ChainSecret, &v.EnrollmentHash, &enrollExp, &v.EntryAddress, &v.PublicIPv4, &v.PublicIPv6, &v.InterfaceIPv6, &v.RegionCode, &v.DetectedRegionCode, &v.RegionMode, &v.EntryIPMode, &v.ListenIP, &v.ListenMode, &v.IPStack, &v.UDPInboundMode, &v.MTUMode, &v.MTUValue, &v.MTUProbeHost, &v.MTUProbePort, &v.MTUOverheadBytes, &v.BBREnabled, &v.PortRangeStart, &v.PortRangeEnd, &v.InternalPortRangeStart, &v.InternalPortRangeEnd, &v.PortPolicyRevision, &v.Status, &v.OS, &v.DistroID, &v.DistroVersion, &v.DistroName, &v.Libc, &v.ServiceManager, &v.PackageManager, &v.Arch, &v.Kernel, &v.CPU, &v.MemoryBytes, &v.CPUUsagePercent, &v.MemoryUsedBytes, &v.MemoryTotalBytes, &v.AgentMemoryBytes, &v.DiskBytes, &v.AgentVersion, &v.AgentBuild, &v.SingBoxVersion, &v.ConnectionAuditEnabled, &last, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if enrollExp.Valid && enrollExp.String != "" {
@@ -1817,6 +1979,9 @@ func scanServers(rows *sql.Rows) ([]model.Server, error) {
 		}
 		if v.MTUProbePort == 0 {
 			v.MTUProbePort = 443
+		}
+		if v.PortPolicyRevision <= 0 {
+			v.PortPolicyRevision = 1
 		}
 		v.LastSeenAt = parseNullTime(last)
 		v.CreatedAt = parseTime(ca)
@@ -3269,7 +3434,7 @@ func (s *Store) SaveProxyPathPortAllocations(ctx context.Context, added []model.
 	defer tx.Rollback()
 	ts := now()
 	for _, item := range added {
-		if _, err := tx.ExecContext(ctx, `insert into proxy_path_port_allocations(kind,scope_key,server_id,pool,listen_ip,network,generation,ordinal,port,state,policy_revision,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict do update set pool=excluded.pool,listen_ip=excluded.listen_ip,network=excluded.network,port=excluded.port,state=excluded.state,policy_revision=excluded.policy_revision,updated_at=excluded.updated_at`, item.Kind, item.ScopeKey, item.ServerID, item.Pool, item.ListenIP, item.Network, item.Generation, item.Ordinal, item.Port, item.State, item.PolicyRevision, ts, ts); err != nil {
+		if _, err := tx.ExecContext(ctx, `insert into proxy_path_port_allocations(kind,scope_key,server_id,pool,listen_ip,network,generation,ordinal,port,state,policy_revision,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(kind,scope_key,server_id,generation,ordinal) do update set pool=excluded.pool,listen_ip=excluded.listen_ip,network=excluded.network,port=excluded.port,state=excluded.state,policy_revision=excluded.policy_revision,updated_at=excluded.updated_at`, item.Kind, item.ScopeKey, item.ServerID, item.Pool, item.ListenIP, item.Network, item.Generation, item.Ordinal, item.Port, item.State, item.PolicyRevision, ts, ts); err != nil {
 			return err
 		}
 	}

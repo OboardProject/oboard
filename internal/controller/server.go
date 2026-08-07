@@ -1388,7 +1388,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		mtuMode, bbrEnabled, timeMode := serverCreationDefaults(settings)
-		out["server_creation_defaults"] = map[string]any{"mtu_mode": mtuMode, "bbr_enabled": bbrEnabled, "time_correction_mode": timeMode}
+		out["server_creation_defaults"] = map[string]any{"mtu_mode": mtuMode, "bbr_enabled": bbrEnabled, "time_correction_mode": timeMode, "public_port_range_start": core.DefaultPublicPortRangeStart, "public_port_range_end": core.DefaultPublicPortRangeEnd, "internal_port_range_start": core.DefaultInternalPortRangeStart, "internal_port_range_end": core.DefaultInternalPortRangeEnd}
 		return nil
 	}
 	addUsers := func() error {
@@ -4099,16 +4099,16 @@ func validateServer(v *model.Server) error {
 		v.MTUProbePort = 443
 	}
 	if v.PortRangeStart == 0 {
-		v.PortRangeStart = 10000
+		v.PortRangeStart = core.DefaultPublicPortRangeStart
 	}
 	if v.PortRangeEnd == 0 {
-		v.PortRangeEnd = 20000
+		v.PortRangeEnd = core.DefaultPublicPortRangeEnd
 	}
 	if v.InternalPortRangeStart == 0 {
-		v.InternalPortRangeStart = 30000
+		v.InternalPortRangeStart = core.DefaultInternalPortRangeStart
 	}
 	if v.InternalPortRangeEnd == 0 {
-		v.InternalPortRangeEnd = 59999
+		v.InternalPortRangeEnd = core.DefaultInternalPortRangeEnd
 	}
 	switch strings.ToLower(strings.TrimSpace(v.MonitoringMode)) {
 	case "", "lightweight":
@@ -4157,7 +4157,7 @@ func portPolicyChanged(current, next model.Server) bool {
 	// field existed; an unset stored value is the default policy, not a change.
 	curInternalStart, curInternalEnd := current.InternalPortRangeStart, current.InternalPortRangeEnd
 	if curInternalStart == 0 || curInternalEnd == 0 {
-		curInternalStart, curInternalEnd = 30000, 59999
+		curInternalStart, curInternalEnd = core.DefaultInternalPortRangeStart, core.DefaultInternalPortRangeEnd
 	}
 	return current.PortRangeStart != next.PortRangeStart ||
 		current.PortRangeEnd != next.PortRangeEnd ||

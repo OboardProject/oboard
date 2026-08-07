@@ -4,6 +4,16 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+// Product-wide default port policy. Every surface that creates a server, every
+// validation default and every Core fallback for unset legacy rows must use
+// these constants; there is exactly one set of defaults.
+const (
+	DefaultPublicPortRangeStart   = 10000
+	DefaultPublicPortRangeEnd     = 20000
+	DefaultInternalPortRangeStart = 30000
+	DefaultInternalPortRangeEnd   = 59999
+)
+
 // ServerPortPolicy describes the two managed allocation pools of one server:
 // the public auto pool for listeners other devices or servers must reach, and
 // the internal loopback pool for components that bind 127.0.0.1 or ::1 only.
@@ -16,11 +26,15 @@ type ServerPortPolicy struct {
 
 func ServerPortPolicyFor(server model.Server) ServerPortPolicy {
 	policy := ServerPortPolicy{PublicStart: server.PortRangeStart, PublicEnd: server.PortRangeEnd, InternalStart: server.InternalPortRangeStart, InternalEnd: server.InternalPortRangeEnd}
+	// Unset legacy rows normalize to the product default. Non-zero invalid
+	// ranges are rejected by server validation on every write path; this
+	// fallback is only a defensive last resort and must never select a
+	// different range than the product default.
 	if policy.PublicStart <= 0 || policy.PublicEnd < policy.PublicStart {
-		policy.PublicStart, policy.PublicEnd = 30000, 60000
+		policy.PublicStart, policy.PublicEnd = DefaultPublicPortRangeStart, DefaultPublicPortRangeEnd
 	}
 	if policy.InternalStart <= 0 || policy.InternalEnd < policy.InternalStart {
-		policy.InternalStart, policy.InternalEnd = 30000, 59999
+		policy.InternalStart, policy.InternalEnd = DefaultInternalPortRangeStart, DefaultInternalPortRangeEnd
 	}
 	return policy
 }
@@ -76,9 +90,13 @@ func PreviewServerPortPolicyChange(current, next model.Server, allocations []mod
 		if item.ServerID != next.ID || item.Port <= 0 {
 			continue
 		}
-		pool := item.Pool
-		if pool == "" {
-			pool = PortAllocationPoolForKind(item.Kind)
+		// The kind invariant wins over historical pool metadata: loopback-only
+		// kinds are internal even when a pre-pool row was backfilled with the
+		// generic default. Other kinds keep a stored valid pool because
+		// internal_inbound legitimately spans both pools depending on transport.
+		pool := PortAllocationPoolForKind(item.Kind)
+		if pool != model.PortPoolInternal && (item.Pool == model.PortPoolPublic || item.Pool == model.PortPoolInternal) {
+			pool = item.Pool
 		}
 		if pool == model.PortPoolInternal && !preview.InternalRangeChanged {
 			continue

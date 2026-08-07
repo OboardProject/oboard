@@ -81,3 +81,43 @@ func TestPreviewServerPortPolicyChangeUnchangedRangeDoesNothing(t *testing.T) {
 		t.Fatalf("unchanged range must be a no-op: %#v", preview)
 	}
 }
+
+func TestServerPortPolicyForUsesProductDefaultsForUnsetLegacyRows(t *testing.T) {
+	policy := ServerPortPolicyFor(model.Server{})
+	if policy.PublicStart != DefaultPublicPortRangeStart || policy.PublicEnd != DefaultPublicPortRangeEnd {
+		t.Fatalf("public default = %d-%d, want %d-%d", policy.PublicStart, policy.PublicEnd, DefaultPublicPortRangeStart, DefaultPublicPortRangeEnd)
+	}
+	if policy.InternalStart != DefaultInternalPortRangeStart || policy.InternalEnd != DefaultInternalPortRangeEnd {
+		t.Fatalf("internal default = %d-%d, want %d-%d", policy.InternalStart, policy.InternalEnd, DefaultInternalPortRangeStart, DefaultInternalPortRangeEnd)
+	}
+}
+
+func TestPreviewServerPortPolicyKindInvariantOverridesHistoricalPool(t *testing.T) {
+	current := model.Server{ID: 1, PortRangeStart: 10000, PortRangeEnd: 10100, InternalPortRangeStart: 30000, InternalPortRangeEnd: 59999}
+	// Public range change: the loopback-only kinds must stay put even when a
+	// legacy backfill stamped them with the generic 'public' pool.
+	next := model.Server{ID: 1, PortRangeStart: 20000, PortRangeEnd: 20100, InternalPortRangeStart: 30000, InternalPortRangeEnd: 59999}
+	allocations := []model.ProxyPathPortAllocation{
+		{Kind: model.ProxyPathPortKindTrustedInner, ScopeKey: "7:2", ServerID: 1, Pool: model.PortPoolPublic, Port: 40010},
+		{Kind: model.ProxyPathPortKindTunnelSSH, ScopeKey: "555", ServerID: 1, Pool: model.PortPoolPublic, Port: 40020},
+	}
+	preview := PreviewServerPortPolicyChange(current, next, allocations, nil)
+	if preview.RequiresMigration() || len(preview.AffectedManaged) != 0 {
+		t.Fatalf("kind-internal rows must not migrate on public range change: %#v", preview)
+	}
+}
+
+func TestPreviewServerPortPolicyInternalInboundKeepsStoredInternalPool(t *testing.T) {
+	current := model.Server{ID: 1, PortRangeStart: 10000, PortRangeEnd: 10100, InternalPortRangeStart: 30000, InternalPortRangeEnd: 59999}
+	next := model.Server{ID: 1, PortRangeStart: 20000, PortRangeEnd: 20100, InternalPortRangeStart: 60000, InternalPortRangeEnd: 61000}
+	allocations := []model.ProxyPathPortAllocation{
+		// internal_inbound legitimately spans both pools; a stored internal pool
+		// must win over the kind default.
+		{Kind: model.ProxyPathPortKindInternal, ScopeKey: "7:2", ServerID: 1, Pool: model.PortPoolInternal, Port: 40010},
+		{Kind: model.ProxyPathPortKindInternal, ScopeKey: "7:3", ServerID: 1, Pool: model.PortPoolPublic, Port: 10050},
+	}
+	preview := PreviewServerPortPolicyChange(current, next, allocations, nil)
+	if !preview.RequiresMigration() || len(preview.AffectedManaged) != 2 {
+		t.Fatalf("internal range change must flag both internal_inbound rows: %#v", preview.AffectedManaged)
+	}
+}
