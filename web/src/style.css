@@ -14836,3 +14836,94 @@ button.ui-btn-ghost:hover {
     flex: 1 1 100%;
   }
 }
+
+/* Drag-and-drop ordering handle (@dnd-kit) */
+.sortable-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  color: var(--muted);
+  background: transparent !important;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: grab;
+  padding: 0;
+  box-shadow: none !important;
+}
+.sortable-handle:hover {
+  color: var(--text-strong) !important;
+  background: var(--surface-2) !important;
+  border-color: var(--border-strong);
+}
+.sortable-handle:active {
+  cursor: grabbing;
+}
+
+/* Node scope context menu */
+.node-scope-menu-overlay { position: fixed; inset: 0; z-index: 190; }
+.node-scope-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 280px;
+  max-width: 340px;
+  background: var(--surface-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.node-scope-menu-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.node-scope-menu-title span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-scope-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent !important;
+  color: var(--text-strong) !important;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: none !important;
+}
+.node-scope-menu-item:hover:not(:disabled) {
+  background: var(--surface-2) !important;
+}
+.node-scope-menu-item:disabled { cursor: not-allowed; opacity: 0.55; }
+.node-scope-menu-reason {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-scope-menu-sub-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 14px;
+  border-left: 1px solid var(--border);
+  padding-left: 6px;
+}
+.node-scope-menu { max-height: calc(100vh - 16px); overflow-y: auto; }

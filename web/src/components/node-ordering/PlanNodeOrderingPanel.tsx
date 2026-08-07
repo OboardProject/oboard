@@ -3,7 +3,24 @@ import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, MoveDown, MoveUp, Plus, RefreshCw, Save, Sparkles, Trash2 } from 'lucide-react'
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, GripVertical, MoveDown, MoveUp, Plus, RefreshCw, Save, Sparkles, Trash2 } from 'lucide-react'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -80,7 +97,7 @@ function moveItem<T>(list: T[], index: number, delta: number): T[] {
   return next
 }
 
-export function PlanNodeOrderingPanel({ data, client, notify }: { data: any; client: AnyClient; notify?: (message: string, tone?: 'success' | 'error' | 'warning') => void }) {
+export function PlanNodeOrderingPanel({ data, client, notify, onSaved }: { data: any; client: AnyClient; notify?: (message: string, tone?: 'success' | 'error' | 'warning') => void; onSaved?: () => void }) {
   const plans: { id: number; name: string; revision: number; draft_revision_id?: number; active_revision_id?: number }[] = data.subscription_plans || []
   const [planID, setPlanID] = React.useState(0)
   const [state, setState] = React.useState<OrderingState | null>(null)
@@ -147,6 +164,12 @@ export function PlanNodeOrderingPanel({ data, client, notify }: { data: any; cli
     setRegionInput('')
   }
 
+  const entryLabel = (key: string, node: OrderingNode) => {
+    const region = node.entry_region ? `[${node.entry_region}] ` : ''
+    const server = (data.servers || []).find((s: any) => s.id === node.entry_server_id)
+    return `${region}${server?.name || key}（${key}）`
+  }
+
   const entryKeys = React.useMemo(() => {
     const seen = new Set<string>()
     const out: { key: string; label: string; count: number }[] = []
@@ -168,17 +191,13 @@ export function PlanNodeOrderingPanel({ data, client, notify }: { data: any; cli
     return out
   }, [state, draftPolicy])
 
-  const entryLabel = (key: string, node: OrderingNode) => {
-    const region = node.entry_region ? `[${node.entry_region}] ` : ''
-    const server = (data.servers || []).find((s: any) => s.id === node.entry_server_id)
-    return `${region}${server?.name || key}（${key}）`
-  }
-
   const setEntryOrder = (list: string[]) => {
     if (!draftPolicy) return
     setDraftPolicy({ ...draftPolicy, entry_order: list })
     setPreviewNodes(null)
   }
+
+  const entryKeyList = React.useMemo(() => entryKeys.map(e => e.key), [entryKeys])
 
   const runPreview = async (policyOverride?: OrderingPolicy, manualOverride?: string[]) => {
     if (!planID) return
@@ -272,6 +291,7 @@ export function PlanNodeOrderingPanel({ data, client, notify }: { data: any; cli
       })
       notify?.(`排序已保存到方案草稿（修订 v${res.revision_id}），发布后生效`, 'success')
       await loadOrdering(planID)
+      onSaved?.()
     } catch (e: any) {
       const message = e?.message || String(e)
       setError(message.includes('conflict') || message.includes('409') ? '方案已发生变化，请重新加载后重试' : message)
@@ -359,16 +379,21 @@ export function PlanNodeOrderingPanel({ data, client, notify }: { data: any; cli
               <div>
                 <h3>同地区内的入口顺序</h3>
                 <p className="muted">未列出的入口按服务器 ID 与入口 ID 稳定排序，放在已列出的入口之后。相同入口的节点在订阅中始终连续。</p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {entryKeys.map((entry, index) => (
-                    <div key={entry.key} className="card-custom" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px' }}>
-                      <span style={{ flex: 1, fontSize: 13 }}>{entry.label} <span className="muted">({entry.count} 个节点)</span></span>
-                      <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => setEntryOrder(moveItem(draftPolicy.entry_order.slice(), index, -1))} aria-label={`上移 ${entry.key}`}><ChevronUp size={14} /></Button>
-                      <Button variant="ghost" size="icon" disabled={index === entryKeys.length - 1} onClick={() => setEntryOrder(moveItem(draftPolicy.entry_order.slice(), index, 1))} aria-label={`下移 ${entry.key}`}><ChevronDown size={14} /></Button>
-                    </div>
-                  ))}
-                  {entryKeys.length === 0 && <p className="muted">该修订没有带 OBoard 入口的节点。</p>}
-                </div>
+                {entryKeys.length === 0 ? (
+                  <p className="muted">该修订没有带 OBoard 入口的节点。</p>
+                ) : (
+                  <SortableList items={entryKeyList} onReorder={setEntryOrder} renderRow={(key, index) => {
+                    const entry = entryKeys[index]
+                    if (!entry) return null
+                    return (
+                      <>
+                        <span style={{ flex: 1, fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={entry.label}>{entry.label} <span className="muted">({entry.count} 个节点)</span></span>
+                        <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => setEntryOrder(moveItem(entryKeyList, index, -1))} aria-label={`上移 ${entry.key}`}><ChevronUp size={14} /></Button>
+                        <Button variant="ghost" size="icon" disabled={index === entryKeys.length - 1} onClick={() => setEntryOrder(moveItem(entryKeyList, index, 1))} aria-label={`下移 ${entry.key}`}><ChevronDown size={14} /></Button>
+                      </>
+                    )
+                  }} />
+                )}
               </div>
             </>
           )}
@@ -385,28 +410,31 @@ export function PlanNodeOrderingPanel({ data, client, notify }: { data: any; cli
                   <Button variant="outline" size="sm" busy={previewing} onClick={() => void generateManualSeed()}><Sparkles size={14} /> 按规则生成手动顺序</Button>
                   <Button variant="ghost" size="sm" onClick={appendAllUnplaced}><MoveDown size={14} /> 把待排节点追加到末尾</Button>
                 </div>
-                <p className="muted" style={{ marginTop: 8 }}>生成后可用上移、下移、移到顶部、移到底部调整；新加入方案的节点不会自动插入已有顺序。</p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
-                  {manualOrder.map((key, index) => {
-                    const node = (state.nodes || []).find(n => n.key === key)
-                    if (!node) return null
-                    return (
-                      <div key={key} className="card-custom" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px' }}>
-                        <span style={{ width: 28, fontSize: 12, color: 'var(--color-muted)' }}>{index + 1}</span>
-                        <span style={{ flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={node.name}>
-                          {node.name}
-                          {node.entry_region && <span className="muted"> · 入口 {node.entry_region}</span>}
-                          {node.exit_region && <span className="muted"> · 出口 {node.exit_region}</span>}
-                        </span>
-                        <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => moveManualToEdge(key, true)} aria-label="移到顶部"><MoveUp size={14} /></Button>
-                        <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => moveManual(key, -1)} aria-label="上移"><ArrowUp size={14} /></Button>
-                        <Button variant="ghost" size="icon" disabled={index === manualOrder.length - 1} onClick={() => moveManual(key, 1)} aria-label="下移"><ArrowDown size={14} /></Button>
-                        <Button variant="ghost" size="icon" disabled={index === manualOrder.length - 1} onClick={() => moveManualToEdge(key, false)} aria-label="移到底部"><MoveDown size={14} /></Button>
-                        <Button variant="ghost" size="icon" onClick={() => removeManual(key)} aria-label="移出顺序"><Trash2 size={14} /></Button>
-                      </div>
-                    )
-                  })}
-                  {manualOrder.length === 0 && <p className="muted">尚未放置节点，点击“按规则生成手动顺序”开始。</p>}
+                <p className="muted" style={{ marginTop: 8 }}>按住手柄拖拽调整顺序，也可使用上移、下移、移到顶部、移到底部按钮；新加入方案的节点不会自动插入已有顺序。</p>
+                <div style={{ marginTop: 8 }}>
+                  {manualOrder.length === 0 ? (
+                    <p className="muted">尚未放置节点，点击“按规则生成手动顺序”开始。</p>
+                  ) : (
+                    <SortableList items={manualOrder} onReorder={setManualOrder} renderRow={(key, index) => {
+                      const node = (state.nodes || []).find(n => n.key === key)
+                      if (!node) return null
+                      return (
+                        <>
+                          <span style={{ width: 28, fontSize: 12, color: 'var(--color-muted)' }}>{index + 1}</span>
+                          <span style={{ flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={node.name}>
+                            {node.name}
+                            {node.entry_region && <span className="muted"> · 入口 {node.entry_region}</span>}
+                            {node.exit_region && <span className="muted"> · 出口 {node.exit_region}</span>}
+                          </span>
+                          <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => moveManualToEdge(key, true)} aria-label="移到顶部"><MoveUp size={14} /></Button>
+                          <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => moveManual(key, -1)} aria-label="上移"><ArrowUp size={14} /></Button>
+                          <Button variant="ghost" size="icon" disabled={index === manualOrder.length - 1} onClick={() => moveManual(key, 1)} aria-label="下移"><ArrowDown size={14} /></Button>
+                          <Button variant="ghost" size="icon" disabled={index === manualOrder.length - 1} onClick={() => moveManualToEdge(key, false)} aria-label="移到底部"><MoveDown size={14} /></Button>
+                          <Button variant="ghost" size="icon" onClick={() => removeManual(key)} aria-label="移出顺序"><Trash2 size={14} /></Button>
+                        </>
+                      )
+                    }} />
+                  )}
                 </div>
                 {unplacedNodes.length > 0 && (
                   <div style={{ marginTop: 10 }}>
@@ -471,17 +499,79 @@ export function PlanNodeOrderingPanel({ data, client, notify }: { data: any; cli
 }
 
 function RegionOrderEditor({ list, onChange }: { list: string[]; onChange: (list: string[]) => void }) {
+  if (list.length === 0) return <p className="muted">未配置自定义顺序。</p>
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      {list.map((code, index) => (
-        <div key={code} className="card-custom" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px' }}>
-          <span style={{ flex: 1, fontSize: 13, fontFamily: 'var(--font-mono)' }}>{code}</span>
-          <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => onChange(moveItem(list, index, -1))} aria-label={`上移 ${code}`}><ChevronUp size={14} /></Button>
-          <Button variant="ghost" size="icon" disabled={index === list.length - 1} onClick={() => onChange(moveItem(list, index, 1))} aria-label={`下移 ${code}`}><ChevronDown size={14} /></Button>
-          <Button variant="ghost" size="icon" onClick={() => onChange(list.filter(c => c !== code))} aria-label={`移除 ${code}`}><Trash2 size={14} /></Button>
+    <SortableList items={list} onReorder={onChange} renderRow={(code, index) => (
+      <>
+        <span style={{ flex: 1, fontSize: 13, fontFamily: 'var(--font-mono)' }}>{code}</span>
+        <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => onChange(moveItem(list, index, -1))} aria-label={`上移 ${code}`}><ChevronUp size={14} /></Button>
+        <Button variant="ghost" size="icon" disabled={index === list.length - 1} onClick={() => onChange(moveItem(list, index, 1))} aria-label={`下移 ${code}`}><ChevronDown size={14} /></Button>
+        <Button variant="ghost" size="icon" onClick={() => onChange(list.filter(c => c !== code))} aria-label={`移除 ${code}`}><Trash2 size={14} /></Button>
+      </>
+    )} />
+  )
+}
+
+function SortableList({ items, onReorder, renderRow }: {
+  items: string[]
+  onReorder: (next: string[]) => void
+  renderRow: (item: string, index: number) => React.ReactNode
+}) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = items.indexOf(String(active.id))
+    const newIndex = items.indexOf(String(over.id))
+    if (oldIndex === -1 || newIndex === -1) return
+    onReorder(arrayMove(items, oldIndex, newIndex))
+  }
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={items} strategy={verticalListSortingStrategy}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {items.map((item, index) => (
+            <SortableRow key={item} id={item}>{renderRow(item, index)}</SortableRow>
+          ))}
         </div>
-      ))}
-      {list.length === 0 && <p className="muted">未配置自定义顺序。</p>}
+      </SortableContext>
+    </DndContext>
+  )
+}
+
+function SortableRow({ id, children }: { id: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id })
+  return (
+    <div
+      ref={setNodeRef}
+      className="card-custom"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '6px 10px',
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.6 : 1,
+        position: 'relative',
+        zIndex: isDragging ? 20 : undefined,
+      }}
+    >
+      <button
+        ref={setActivatorNodeRef}
+        type="button"
+        className="sortable-handle"
+        aria-label="拖拽排序"
+        title="拖拽排序；也可使用上移/下移按钮"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical size={14} />
+      </button>
+      {children}
     </div>
   )
 }

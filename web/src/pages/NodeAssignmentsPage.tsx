@@ -5,21 +5,19 @@ import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
 import { Input } from '../components/ui/input'
 import { PlanNodeOrderingPanel } from '../components/node-ordering/PlanNodeOrderingPanel'
-import { X, Filter, RefreshCw, ListOrdered } from 'lucide-react'
+import { NodeScopeMenu, type NodeScopeRequest, type ScopeNode } from '../components/node-assignment/NodeScopeMenu'
+import { NodeScopeActionDialog } from '../components/node-assignment/NodeScopeActionDialog'
+import { AssignPlanUsersDialog } from '../components/node-assignment/AssignPlanUsersDialog'
+import { X, Filter, RefreshCw, ListOrdered, MoreHorizontal, Users } from 'lucide-react'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
-type CatalogNode = {
-  type: string
-  id: number
-  key: string
+type CatalogNode = ScopeNode & {
   name: string
-  entry_server_id?: number
   entry_server_name?: string
   entry_protocol?: string
   entry_port?: number
   path_summary?: string[]
-  exit_region?: string
   enabled: boolean
   status: 'ok' | 'offline' | 'disabled'
   group?: string
@@ -74,10 +72,26 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
   const [syncBusy, setSyncBusy] = React.useState(false)
   const [syncMessage, setSyncMessage] = React.useState('')
   const [filtersOpen, setFiltersOpen] = React.useState(false)
+  const [menu, setMenu] = React.useState<{ x: number; y: number; node: CatalogNode } | null>(null)
+  const [scopeAction, setScopeAction] = React.useState<{ node: CatalogNode; scope: NodeScopeRequest } | null>(null)
+  const [assignOpen, setAssignOpen] = React.useState(false)
+  const [users, setUsers] = React.useState<any[] | null>(null)
 
   const servers = data.servers || []
   const plans = data.subscription_plans || []
+  const isAdmin = data.session?.role === 'admin'
   const regionCodes = Array.from(new Set(servers.flatMap((s: any) => [s.region_code, s.detected_region_code]).filter((x: any) => Boolean(x)))) as string[]
+
+  const ensureUsers = async () => {
+    if (users) return users
+    try {
+      const res = await client.request<{ users: any[] }>('/users')
+      setUsers(res.users || [])
+      return res.users || []
+    } catch {
+      return []
+    }
+  }
 
   const loadNodes = React.useCallback(async (nextPage = page) => {
     setLoading(true)
@@ -127,25 +141,43 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
   const selectedKeys = Object.keys(selected).filter(k => selected[k])
   const selectedCount = selectedKeys.length
 
+  const refresh = async () => {
+    await load()
+    await loadNodes(page)
+  }
+
   const runSync = async () => {
     if (!syncPlanID || selectedCount === 0) return
     setSyncBusy(true)
     setSyncMessage('')
     try {
+      const plan = await client.request<{ subscription_plan?: { revision: number } }>(`/subscription-plans/${syncPlanID}`)
+      const revision = plan.subscription_plan?.revision || 0
+      if (!revision) throw new Error('无法获取方案修订号，请刷新后重试')
       const nodeRefs = nodes.filter(n => selected[n.key]).map(n => ({ node_type: n.type, node_id: n.id }))
       await client.request(`/subscription-plans/${syncPlanID}/nodes/sync`, {
         method: 'POST',
-        body: JSON.stringify({ op: syncOp, nodes: nodeRefs, expected_revision: 0 }),
+        body: JSON.stringify({ op: syncOp, nodes: nodeRefs, expected_revision: revision }),
       })
       setSyncMessage(`已${syncOp === 'add' ? '加入' : syncOp === 'remove' ? '移除' : '替换'} ${nodeRefs.length} 个节点到方案草稿`)
       setSelected({})
-      await load()
-      await loadNodes(page)
+      await refresh()
     } catch (e: any) {
-      setSyncMessage('操作失败：' + (e?.message || String(e)))
+      const message = e?.message || String(e)
+      setSyncMessage(message.includes('conflict') || message.includes('409') ? '操作失败：方案已发生变化（冲突），请刷新后重试' : '操作失败：' + message)
     } finally {
       setSyncBusy(false)
     }
+  }
+
+  const openScopeMenu = (node: CatalogNode, x: number, y: number) => {
+    setMenu({ x, y, node })
+  }
+
+  const handleScopeSelect = (scope: NodeScopeRequest) => {
+    if (!menu) return
+    setScopeAction({ node: menu.node, scope })
+    void ensureUsers()
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
@@ -162,15 +194,20 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
       <div className="panel-body">
         {toast && <p style={{ margin: '0 0 8px', color: 'var(--color-success, #16a34a)' }}>{toast}</p>}
         {tab === 'ordering' ? (
-          <PlanNodeOrderingPanel data={data} client={client} notify={notify} />
+          <PlanNodeOrderingPanel data={data} client={client} notify={notify} onSaved={() => void load()} />
         ) : (
           <>
-            <p className="muted">可分配节点目录由代理链路、导入节点与独立入口统一汇总；此处把节点加入方案草稿，发布后才会对绑定用户生效。</p>
+            <p className="muted">可分配节点目录由代理链路、导入节点与独立入口统一汇总；右键节点或点击行内「⋯」选择范围后，可加入方案草稿或批量创建用户临时例外。</p>
 
         <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
           <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索名称 / 服务器 / 协议 / 地区" style={{ maxWidth: 260 }} />
           <Button variant="outline" size="sm" onClick={() => setFiltersOpen(v => !v)}><Filter size={14} /> 筛选</Button>
           <Button variant="ghost" size="sm" onClick={() => { setQuery(''); setEntryServerID(0); setEntryRegion(''); setExitRegion(''); setProtocol(''); setStatus(''); setPlanID(0); setUnassigned(false); setGroupBy(''); setSort('name'); setPage(1) }}><RefreshCw size={14} /> 重置</Button>
+          {isAdmin && (
+            <Button variant="outline" size="sm" onClick={() => { setAssignOpen(true); void ensureUsers() }}>
+              <Users size={14} /> 将此方案分配给用户
+            </Button>
+          )}
           <span className="muted" style={{ marginLeft: 'auto' }}>共 {total} 个节点</span>
         </div>
 
@@ -227,7 +264,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
         {error && <p style={{ color: 'var(--color-danger)' }}>{error}</p>}
 
         <div className="card-custom" style={{ marginTop: 12, overflow: 'auto' }}>
-          <table className="user-data-table node-catalog-table" style={{ minWidth: 900 }}>
+          <table className="user-data-table node-catalog-table" style={{ minWidth: 960 }}>
             <thead>
               <tr>
                 <th style={{ width: 32 }}><input type="checkbox" checked={nodes.length > 0 && selectedCount === nodes.length} onChange={e => toggleAll(e.target.checked)} aria-label="全选本页" /></th>
@@ -245,7 +282,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
             </thead>
             <tbody>
               {nodes.map(n => (
-                <tr key={n.key} className="table-row-hover">
+                <tr key={n.key} className="table-row-hover" onContextMenu={e => { e.preventDefault(); openScopeMenu(n, e.clientX, e.clientY) }}>
                   <td><input type="checkbox" checked={Boolean(selected[n.key])} onChange={e => setSelected(s => ({ ...s, [n.key]: e.target.checked }))} aria-label={`选择 ${n.name}`} /></td>
                   <td style={{ fontWeight: 600 }}>{n.name}{n.group ? <span className="muted" style={{ display: 'block', fontSize: 12 }}>{n.group}</span> : null}</td>
                   <td><Badge variant="secondary">{nodeTypeLabel(n.type)}</Badge></td>
@@ -266,7 +303,13 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
                     {n.deny_exceptions > 0 && <Badge variant="destructive">拒绝 {n.deny_exceptions}</Badge>}
                     {n.allow_exceptions === 0 && n.deny_exceptions === 0 && <span className="muted">—</span>}
                   </td>
-                  <td style={{ textAlign: 'right' }}><Button variant="outline" size="sm" onClick={() => void openDetail(n)}>详情</Button></td>
+                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <Button variant="outline" size="sm" onClick={() => void openDetail(n)}>详情</Button>
+                    <Button variant="ghost" size="icon" onClick={e => {
+                      const rect = e.currentTarget.getBoundingClientRect()
+                      openScopeMenu(n, rect.right, rect.bottom + 4)
+                    }} aria-label={`节点操作 ${n.name}`} title="选择节点范围"><MoreHorizontal size={16} /></Button>
+                  </td>
                 </tr>
               ))}
               {nodes.length === 0 && !loading && <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: 24 }}>没有匹配的节点</td></tr>}
@@ -281,14 +324,14 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
             <span className="muted">第 {page} / {totalPages} 页</span>
             <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>下一页</Button>
           </div>
-          {selectedCount > 0 && (
+          {isAdmin && selectedCount > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexWrap: 'wrap' }}>
               <span className="muted">已选 {selectedCount} 个节点</span>
-              <Select value={syncPlanID} onChange={e => setSyncPlanID(Number(e.target.value))} style={{ minWidth: 160 }}>
+              <Select value={syncPlanID} onChange={e => setSyncPlanID(Number(e.target.value))} style={{ minWidth: 160 }} aria-label="选择方案">
                 <option value={0}>选择方案</option>
                 {plans.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </Select>
-              <Select value={syncOp} onChange={e => setSyncOp(e.target.value as 'add' | 'remove' | 'replace')}>
+              <Select value={syncOp} onChange={e => setSyncOp(e.target.value as 'add' | 'remove' | 'replace')} aria-label="操作类型">
                 <option value="add">加入草稿</option>
                 <option value="remove">从草稿移除</option>
                 <option value="replace">替换草稿</option>
@@ -296,6 +339,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
               <Button size="sm" disabled={!syncPlanID || syncBusy} onClick={() => void runSync()}>{syncBusy ? '同步中...' : '同步到方案草稿'}</Button>
             </div>
           )}
+          {!isAdmin && <span className="muted" style={{ marginLeft: 'auto' }}>方案草稿修改、临时例外与方案分配需要管理员权限。</span>}
         </div>
             {syncMessage && <p style={{ marginTop: 8, color: syncMessage.startsWith('操作失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{syncMessage}</p>}
           </>
@@ -348,6 +392,39 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
           </div>
         )}
       </Dialog>
+
+      {menu && (
+        <NodeScopeMenu
+          x={menu.x}
+          y={menu.y}
+          node={menu.node}
+          onSelect={handleScopeSelect}
+          onClose={() => setMenu(null)}
+        />
+      )}
+
+      <NodeScopeActionDialog
+        open={scopeAction !== null}
+        node={scopeAction?.node || null}
+        scope={scopeAction?.scope || null}
+        plans={plans}
+        users={users || []}
+        client={client}
+        notify={notify}
+        onClose={() => setScopeAction(null)}
+        onDone={refresh}
+      />
+
+      <AssignPlanUsersDialog
+        open={assignOpen}
+        defaultPlanID={planID}
+        plans={plans}
+        users={users || []}
+        client={client}
+        notify={notify}
+        onClose={() => setAssignOpen(false)}
+        onDone={refresh}
+      />
     </div>
   )
 }
