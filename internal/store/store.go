@@ -284,8 +284,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_plan_revision_nodes_node on subscription_plan_revision_nodes(node_type, node_id)`,
 		`create index if not exists idx_user_node_exceptions_user on user_node_exceptions(user_id, expires_at)`,
 		`create index if not exists idx_user_node_exceptions_node on user_node_exceptions(node_type, node_id, expires_at)`,
-		`create index if not exists idx_user_node_exceptions_status on user_node_exceptions(status, expires_at)`,
-		`create index if not exists idx_user_plan_bindings_deploy on user_plan_bindings(deployed_at, starts_at, expires_at)`,
 		`create index if not exists idx_access_changes_status on access_changes(status)`,
 		`create index if not exists idx_access_change_targets_change on access_change_targets(access_change_id)`,
 		`create index if not exists idx_subscription_one_time_tokens_user on subscription_one_time_tokens(user_id)`,

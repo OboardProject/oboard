@@ -463,6 +463,86 @@ func TestProxyPathLegacyNamesMigrateToAutomaticMode(t *testing.T) {
 	}
 }
 
+func TestPlanLegacySchemaMigratesBeforePlanIndexes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := []string{
+		`create table subscription_plans (id integer primary key autoincrement, name text not null unique, description text not null default '', enabled integer not null default 1, speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, revision integer not null default 0, active_revision integer not null default 0, draft_revision integer not null default 0, created_at text not null, updated_at text not null)`,
+		`create table subscription_plan_nodes (id integer primary key autoincrement, plan_id integer not null references subscription_plans(id) on delete cascade, node_type text not null, node_id integer not null, display_group text not null default '', source_type text not null default 'explicit', source_rule_id integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(plan_id, node_type, node_id))`,
+		`create table user_plan_bindings (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, plan_id integer not null references subscription_plans(id) on delete cascade, enabled integer not null default 1, starts_at text, expires_at text, assigned_by integer references users(id) on delete set null, created_at text not null, updated_at text not null)`,
+		`create table user_node_exceptions (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, node_type text not null, node_id integer not null, effect text not null, reason text not null, expires_at text not null, created_by integer references users(id) on delete set null, created_at text not null)`,
+	}
+	for _, stmt := range legacy {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("create legacy table: %v", err)
+		}
+	}
+	ts := "2026-01-01T00:00:00Z"
+	if _, err := db.Exec(`insert into subscription_plans(name,enabled,speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,revision,created_at,updated_at) values('legacy-plan',1,25,1000000000,'monthly',1,3,?,?)`, ts, ts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into subscription_plan_nodes(plan_id,node_type,node_id,display_group,enabled,created_at,updated_at) values(1,'proxy_path',7,'jp',1,?,?)`, ts, ts); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("open after legacy plan schema: %v", err)
+	}
+	defer s.Close()
+
+	for _, column := range []struct {
+		table  string
+		column string
+	}{
+		{"subscription_plans", "active_revision_id"},
+		{"subscription_plans", "draft_revision_id"},
+		{"user_node_exceptions", "status"},
+		{"user_node_exceptions", "starts_at"},
+		{"user_node_exceptions", "change_id"},
+		{"user_plan_bindings", "status"},
+		{"user_plan_bindings", "deployed_at"},
+		{"user_plan_bindings", "expiry_synced_at"},
+	} {
+		var count int
+		if err := s.db.QueryRow(`select count(*) from pragma_table_info('` + column.table + `') where name='` + column.column + `'`).Scan(&count); err != nil {
+			t.Fatalf("check column %s.%s: %v", column.table, column.column, err)
+		}
+		if count != 1 {
+			t.Fatalf("missing migrated column %s.%s", column.table, column.column)
+		}
+	}
+	for _, index := range []string{"idx_user_node_exceptions_status", "idx_user_plan_bindings_deploy", "idx_plan_revisions_one_active", "idx_plan_revisions_one_draft"} {
+		var count int
+		if err := s.db.QueryRow(`select count(*) from sqlite_master where type='index' and name='` + index + `'`).Scan(&count); err != nil {
+			t.Fatalf("check index %s: %v", index, err)
+		}
+		if count != 1 {
+			t.Fatalf("missing migrated index %s", index)
+		}
+	}
+	var revisionCount int
+	if err := s.db.QueryRow(`select count(*) from subscription_plan_revisions where plan_id=1 and status='active'`).Scan(&revisionCount); err != nil {
+		t.Fatal(err)
+	}
+	if revisionCount != 1 {
+		t.Fatalf("active revision backfill = %d", revisionCount)
+	}
+	var nodeCount int
+	if err := s.db.QueryRow(`select count(*) from subscription_plan_revision_nodes where node_type='proxy_path' and node_id=7`).Scan(&nodeCount); err != nil {
+		t.Fatal(err)
+	}
+	if nodeCount != 1 {
+		t.Fatalf("legacy node backfill = %d", nodeCount)
+	}
+}
+
 func TestDNSCredentialZonesPreserveRecordMetadataOnUpdate(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

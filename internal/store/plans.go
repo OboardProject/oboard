@@ -1187,6 +1187,9 @@ func (s *Store) migrateUserNodeExceptionLifecycle(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_user_node_exceptions_user_node on user_node_exceptions(user_id, node_type, node_id)`); err != nil {
 		return err
 	}
+	if _, err := s.db.ExecContext(ctx, `create index if not exists idx_user_node_exceptions_status on user_node_exceptions(status, expires_at)`); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1204,6 +1207,9 @@ func (s *Store) migrateUserPlanBindingDeployTracking(ctx context.Context) error 
 		if err := s.ensureColumn(ctx, "user_plan_bindings", column.name, column.sql); err != nil {
 			return err
 		}
+	}
+	if _, err := s.db.ExecContext(ctx, `create index if not exists idx_user_plan_bindings_deploy on user_plan_bindings(deployed_at, starts_at, expires_at)`); err != nil {
+		return err
 	}
 	return nil
 }
