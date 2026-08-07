@@ -57,7 +57,7 @@ import logo from './assets/logo.svg'
 import { 
   LayoutDashboard, Server as ServerIcon, Workflow, Users as UsersIcon, Link as LinkIcon, 
   Bell, CheckSquare, ClipboardList, Settings as SettingsIcon, LogOut, Shield,
-  Settings2, Activity, ArrowLeftRight, HelpCircle, HardDrive, 
+  Settings2, Activity, ArrowLeftRight, HardDrive, 
   Zap, Sliders, Menu, X, Sun, Moon, RefreshCw, ChevronDown, ChevronRight, Check, Info,
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
@@ -71,6 +71,7 @@ import { Input } from './components/ui/input'
 import { Select } from './components/ui/select'
 import { Toast } from './components/ui/toast'
 import { Dialog } from './components/ui/dialog'
+import { FormField, TrafficLimitInput } from './components/ui/form-field'
 import { TableSkeleton, CardSkeleton, DashboardSkeleton } from './components/ui/skeleton'
 import { AnimatePresence, LazyMotion, domAnimation, m, motion, useReducedMotion } from 'motion/react'
 import { MotionPage, MotionDialogPanel, MotionList, MotionCard } from './components/ui/motion'
@@ -7092,42 +7093,6 @@ function MTUSettingsDialog({ draft, onCancel, onSave, nested = true }: { draft: 
   </MotionDialogPanel>
 }
 
-function FormField({ label, hint, required, children, className = '', full = false }: { label: string; hint?: string; required?: boolean; children: React.ReactNode; className?: string; full?: boolean }) {
-  const [hintOpen, setHintOpen] = useState(false)
-  const hintID = React.useId()
-  const useHintPopover = Boolean(hint && hint.length > 16)
-  return (
-    <label className={`form-field${full ? ' form-field-full' : ''}${className ? ` ${className}` : ''}`.trim()}>
-      <div className="form-field-meta">
-        <span className="form-field-label">
-          {label}
-          {required ? <em aria-label="必填">*</em> : null}
-          {useHintPopover ? (
-            <button
-              type="button"
-              className="form-field-help"
-              aria-label={`${label}说明`}
-              aria-describedby={hintID}
-              aria-expanded={hintOpen}
-              onClick={event => {
-                event.preventDefault()
-                event.stopPropagation()
-                setHintOpen(open => !open)
-              }}
-              onBlur={() => setHintOpen(false)}
-            >
-              <HelpCircle size={14} aria-hidden="true" />
-              <span id={hintID} role="tooltip" className="form-field-help-popover" data-open={hintOpen || undefined}>{hint}</span>
-            </button>
-          ) : null}
-        </span>
-        {hint && !useHintPopover ? <small className="form-field-hint">{hint}</small> : null}
-      </div>
-      <div className="form-field-control">{children}</div>
-    </label>
-  )
-}
-
 function DetectedEntryAddressNote({ ipv4, ipv6 }: { ipv4?: string; ipv6?: string }) {
   return (
     <small className="detected-address-note">
@@ -12436,18 +12401,6 @@ function UserGroupMembersDialog({ groupID, data, selectedUserID, onSelectUser, o
     </div>
     <footer className="dialog-actions"><button onClick={onCancel}>完成</button></footer>
   </MotionDialogPanel>
-}
-
-type TrafficDisplayUnit = 'GB' | 'TB'
-
-function TrafficLimitInput({ bytes, onChange }: { bytes: number; onChange: (bytes: number) => void }) {
-  const [unit, setUnit] = useState<TrafficDisplayUnit>(() => bytes >= 1024 ** 4 ? 'TB' : 'GB')
-  const multiplier = unit === 'TB' ? 1024 ** 4 : 1024 ** 3
-  const displayValue = bytes > 0 ? Number((bytes / multiplier).toFixed(3)) : 0
-  return <div className="traffic-limit-input">
-    <input type="number" min={0} step="any" value={displayValue} onChange={e => onChange(Math.round(Math.max(0, Number(e.target.value)) * multiplier))} />
-    <Select variant="segmented" value={unit} onChange={e => setUnit(e.target.value as TrafficDisplayUnit)} aria-label="流量额度单位"><option value="GB">GB</option><option value="TB">TB</option></Select>
-  </div>
 }
 
 function UserPasswordDialog({ user, onCancel, onSubmit }: { user: User; onCancel: () => void; onSubmit: (password: string, confirm: string) => Promise<void> }) {

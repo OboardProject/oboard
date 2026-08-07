@@ -4,7 +4,8 @@ import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
 import { Input } from '../components/ui/input'
-import { Plus, Trash2, RefreshCw, RotateCcw, Ban, Copy, GitCompareArrows } from 'lucide-react'
+import { Plus, Trash2, RefreshCw, RotateCcw, Ban, Copy, GitCompareArrows, X } from 'lucide-react'
+import { FormField, TrafficLimitInput } from '../components/ui/form-field'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -24,7 +25,7 @@ type Plan = {
   updated_at?: string
 }
 
-type PlanNode = { node_type: string; node_id: number; display_group?: string }
+type PlanNode = { node_type: string; node_id: number; display_group?: string; name?: string }
 type Revision = { id: number; revision: number; status: 'draft' | 'active' | 'archived' | string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; activated_at?: string; created_at: string }
 type AccessChange = {
   id: number
@@ -137,6 +138,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     setPickerQuery('')
     setPickerResults([])
     setCreateOpen(true)
+    void runPickerSearch('')
   }
 
   const runPickerSearch = async (query: string) => {
@@ -158,7 +160,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
       // create mode
       setCreateNodes(list => {
         const exists = list.some(x => x.node_type === n.type && x.node_id === n.id)
-        return exists ? list.filter(x => !(x.node_type === n.type && x.node_id === n.id)) : [...list, { node_type: n.type, node_id: n.id }]
+        return exists ? list.filter(x => !(x.node_type === n.type && x.node_id === n.id)) : [...list, { node_type: n.type, node_id: n.id, name: n.name }]
       })
       return
     }
@@ -176,7 +178,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     if (!createDraft.name.trim()) { setMessage('请输入方案名称'); return }
     setMessage('')
     try {
-      await client.request('/subscription-plans', { method: 'POST', body: JSON.stringify({ ...createDraft, nodes: createNodes }) })
+      await client.request('/subscription-plans', { method: 'POST', body: JSON.stringify({ ...createDraft, nodes: createNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id })) }) })
       setCreateOpen(false)
       await refreshPlans()
       notify?.('方案已创建', 'success')
@@ -418,23 +420,35 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                     {plan.enabled && <Button variant="outline" size="sm" onClick={() => void disablePlan()}><Ban size={14} /> 停用</Button>}
                   </div>
                 </div>
-                <div className="form" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))' }}>
-                  <Input value={limitDraft?.name ?? plan.name} onChange={e => setLimitDraft(d => d ? { ...d, name: e.target.value } : d)} placeholder="名称" />
-                  <Input value={limitDraft?.description ?? plan.description} onChange={e => setLimitDraft(d => d ? { ...d, description: e.target.value } : d)} placeholder="描述" />
-                  <Input type="number" min={0} value={limitDraft?.speed_limit_mbps ?? 0} onChange={e => setLimitDraft(d => d ? { ...d, speed_limit_mbps: Number(e.target.value) } : d)} placeholder="限速 Mbps（0=不限）" />
-                  <Input type="number" min={0} value={limitDraft?.traffic_limit_bytes ?? 0} onChange={e => setLimitDraft(d => d ? { ...d, traffic_limit_bytes: Number(e.target.value) } : d)} placeholder="流量限额 Bytes（0=不限）" />
-                  <Select value={limitDraft?.traffic_reset_mode ?? 'monthly'} onChange={e => setLimitDraft(d => d ? { ...d, traffic_reset_mode: e.target.value } : d)}>
-                    <option value="monthly">每月重置</option><option value="never">不重置</option>
-                  </Select>
-                  <Input type="number" min={1} max={31} value={limitDraft?.traffic_reset_day ?? 1} onChange={e => setLimitDraft(d => d ? { ...d, traffic_reset_day: Number(e.target.value) } : d)} placeholder="重置日" />
-                  <Button size="sm" onClick={() => void saveLimits()}>保存信息</Button>
-                </div>
+                <form className="form settings-form" onSubmit={e => { e.preventDefault(); void saveLimits() }}>
+                  <FormField label="名称" required>
+                    <Input value={limitDraft?.name ?? plan.name} onChange={e => setLimitDraft(d => d ? { ...d, name: e.target.value } : d)} placeholder="例如：标准方案" />
+                  </FormField>
+                  <FormField label="描述" hint="仅管理端可见的备注。">
+                    <Input value={limitDraft?.description ?? plan.description} onChange={e => setLimitDraft(d => d ? { ...d, description: e.target.value } : d)} placeholder="可选" />
+                  </FormField>
+                  <FormField label="速度上限" hint="0 表示不限速。">
+                    <div className="input-with-unit"><Input type="number" min={0} value={limitDraft?.speed_limit_mbps ?? 0} onChange={e => setLimitDraft(d => d ? { ...d, speed_limit_mbps: Number(e.target.value) } : d)} /><span>Mbps</span></div>
+                  </FormField>
+                  <FormField label="流量额度" hint="0 表示不限量，按重置周期统计。">
+                    <TrafficLimitInput bytes={limitDraft?.traffic_limit_bytes ?? 0} onChange={v => setLimitDraft(d => d ? { ...d, traffic_limit_bytes: v } : d)} />
+                  </FormField>
+                  <FormField label="重置方式" hint="每月重置会按重置日清空已用流量。">
+                    <Select value={limitDraft?.traffic_reset_mode ?? 'monthly'} onChange={e => setLimitDraft(d => d ? { ...d, traffic_reset_mode: e.target.value } : d)}>
+                      <option value="monthly">每月重置</option><option value="never">不重置</option>
+                    </Select>
+                  </FormField>
+                  <FormField label="重置日" hint="1–31；仅重置方式为每月重置时生效。">
+                    <div className="input-with-unit"><Input type="number" min={1} max={31} disabled={(limitDraft?.traffic_reset_mode ?? 'monthly') !== 'monthly'} value={limitDraft?.traffic_reset_day ?? 1} onChange={e => setLimitDraft(d => d ? { ...d, traffic_reset_day: Number(e.target.value) } : d)} /><span>日</span></div>
+                  </FormField>
+                  <Button size="sm" type="submit">保存信息</Button>
+                </form>
               </div>
 
               <div className="card-custom" style={{ padding: 16 }}>
                 <div className="section-toolbar">
                   <div><h3 style={{ margin: 0 }}>草稿节点（{detail.draft_nodes?.length || 0}）</h3><p className="muted">先编辑草稿，再预览发布；Active 快照不受影响。</p></div>
-                  <Button variant="outline" size="sm" onClick={() => { setPickerPlanID(selectedID); setPickerQuery(''); setPickerResults([]); setMessage('') }}><Plus size={14} /> 添加节点</Button>
+                  <Button variant="outline" size="sm" onClick={() => { setPickerPlanID(selectedID); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }}><Plus size={14} /> 添加节点</Button>
                 </div>
                 <table className="user-data-table" style={{ width: '100%' }}>
                   <thead><tr><th>节点</th><th>类型</th><th>分组</th><th style={{ textAlign: 'right' }}>操作</th></tr></thead>
@@ -542,23 +556,48 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
         )}
       </div>
       <Dialog isOpen={createOpen} onClose={() => setCreateOpen(false)} title="新建方案" size="lg">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div className="form" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))' }}>
-            <Input value={createDraft.name} onChange={e => setCreateDraft(d => ({ ...d, name: e.target.value }))} placeholder="名称" />
-            <Input value={createDraft.description} onChange={e => setCreateDraft(d => ({ ...d, description: e.target.value }))} placeholder="描述" />
-            <Input type="number" min={0} value={createDraft.speed_limit_mbps} onChange={e => setCreateDraft(d => ({ ...d, speed_limit_mbps: Number(e.target.value) }))} placeholder="限速 Mbps" />
-            <Input type="number" min={0} value={createDraft.traffic_limit_bytes} onChange={e => setCreateDraft(d => ({ ...d, traffic_limit_bytes: Number(e.target.value) }))} placeholder="流量限额 Bytes" />
-            <Select value={createDraft.traffic_reset_mode} onChange={e => setCreateDraft(d => ({ ...d, traffic_reset_mode: e.target.value }))}>
-              <option value="monthly">每月重置</option><option value="never">不重置</option>
-            </Select>
-            <Input type="number" min={1} max={31} value={createDraft.traffic_reset_day} onChange={e => setCreateDraft(d => ({ ...d, traffic_reset_day: Number(e.target.value) }))} placeholder="重置日" />
-          </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <p className="muted" style={{ margin: 0 }}>方案定义可分配节点与速度/流量限额；创建后先保存为草稿，发布后对用户生效。</p>
+          <form id="create-plan-form" className="form settings-form" onSubmit={e => { e.preventDefault(); void createPlan() }}>
+            <FormField label="名称" required>
+              <Input autoFocus value={createDraft.name} onChange={e => setCreateDraft(d => ({ ...d, name: e.target.value }))} placeholder="例如：标准方案" />
+            </FormField>
+            <FormField label="描述" hint="仅管理端可见的备注。">
+              <Input value={createDraft.description} onChange={e => setCreateDraft(d => ({ ...d, description: e.target.value }))} placeholder="可选" />
+            </FormField>
+            <FormField label="速度上限" hint="0 表示不限速。">
+              <div className="input-with-unit"><Input type="number" min={0} value={createDraft.speed_limit_mbps} onChange={e => setCreateDraft(d => ({ ...d, speed_limit_mbps: Number(e.target.value) }))} /><span>Mbps</span></div>
+            </FormField>
+            <FormField label="流量额度" hint="0 表示不限量，按重置周期统计。">
+              <TrafficLimitInput bytes={createDraft.traffic_limit_bytes} onChange={v => setCreateDraft(d => ({ ...d, traffic_limit_bytes: v }))} />
+            </FormField>
+            <FormField label="重置方式" hint="每月重置会按重置日清空已用流量。">
+              <Select value={createDraft.traffic_reset_mode} onChange={e => setCreateDraft(d => ({ ...d, traffic_reset_mode: e.target.value }))}>
+                <option value="monthly">每月重置</option><option value="never">不重置</option>
+              </Select>
+            </FormField>
+            <FormField label="重置日" hint="1–31；仅重置方式为每月重置时生效。">
+              <div className="input-with-unit"><Input type="number" min={1} max={31} disabled={createDraft.traffic_reset_mode !== 'monthly'} value={createDraft.traffic_reset_day} onChange={e => setCreateDraft(d => ({ ...d, traffic_reset_day: Number(e.target.value) }))} /><span>日</span></div>
+            </FormField>
+          </form>
           <div>
-            <h3 style={{ marginTop: 0 }}>初始节点（{createNodes.length}）</h3>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-              <Input value={pickerQuery} onChange={e => setPickerQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void runPickerSearch(pickerQuery) }} placeholder="搜索节点..." />
-              <Button variant="outline" size="sm" disabled={pickerBusy} onClick={() => void runPickerSearch(pickerQuery)}>搜索</Button>
+            <div className="section-toolbar">
+              <div><h3 style={{ margin: 0 }}>初始节点（{createNodes.length}）</h3><p className="muted">选择该方案可分配的节点；可留空，创建后在草稿中继续添加。</p></div>
             </div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <Input value={pickerQuery} onChange={e => setPickerQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void runPickerSearch(pickerQuery) }} placeholder="搜索节点名称、协议或地区" />
+              <Button variant="outline" size="sm" style={{ whiteSpace: 'nowrap' }} busy={pickerBusy} onClick={() => void runPickerSearch(pickerQuery)}>搜索</Button>
+            </div>
+            {createNodes.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                {createNodes.map(n => (
+                  <Badge key={`${n.node_type}:${n.node_id}`} variant="secondary">
+                    {n.name || `${n.node_type}:${n.node_id}`}
+                    <button type="button" className="ghost icon-button" style={{ width: 16, height: 16, minHeight: 16, minWidth: 16 }} aria-label={`移除 ${n.name || `${n.node_type}:${n.node_id}`}`} onClick={() => togglePickerNode({ type: n.node_type, id: n.node_id, key: `${n.node_type}:${n.node_id}`, name: n.name || '', status: '' })}><X size={12} /></button>
+                  </Badge>
+                ))}
+              </div>
+            )}
             <div className="card-custom" style={{ maxHeight: 240, overflow: 'auto' }}>
               {pickerResults.map(n => {
                 const exists = createNodes.some(x => x.node_type === n.type && x.node_id === n.id)
@@ -570,13 +609,13 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                   </label>
                 )
               })}
-              {pickerResults.length === 0 && !pickerBusy && <p className="muted" style={{ padding: 12 }}>输入关键词搜索节点</p>}
+              {pickerResults.length === 0 && !pickerBusy && <p className="muted" style={{ padding: 12 }}>没有匹配的节点，可留空稍后添加。</p>}
             </div>
           </div>
           {message && <p style={{ color: 'var(--color-danger)' }}>{message}</p>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>取消</Button>
-            <Button onClick={() => void createPlan()}>创建方案</Button>
+            <Button disabled={!createDraft.name.trim()} type="submit" form="create-plan-form">创建方案</Button>
           </div>
         </div>
       </Dialog>
@@ -585,7 +624,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', gap: 8 }}>
             <Input value={pickerQuery} onChange={e => setPickerQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void runPickerSearch(pickerQuery) }} placeholder="搜索节点..." />
-            <Button variant="outline" size="sm" disabled={pickerBusy} onClick={() => void runPickerSearch(pickerQuery)}>搜索</Button>
+            <Button variant="outline" size="sm" style={{ whiteSpace: 'nowrap' }} busy={pickerBusy} onClick={() => void runPickerSearch(pickerQuery)}>搜索</Button>
           </div>
           <div className="card-custom" style={{ maxHeight: 320, overflow: 'auto' }}>
             {pickerResults.map(n => {
@@ -598,7 +637,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                 </label>
               )
             })}
-            {pickerResults.length === 0 && !pickerBusy && <p className="muted" style={{ padding: 12 }}>输入关键词搜索节点</p>}
+            {pickerResults.length === 0 && !pickerBusy && <p className="muted" style={{ padding: 12 }}>没有匹配的节点。</p>}
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button variant="outline" onClick={() => setPickerPlanID(0)}>关闭</Button>
