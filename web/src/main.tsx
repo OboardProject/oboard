@@ -7716,6 +7716,7 @@ function ServerConnectivityDialog({ server, initialSamples, client, onClose }: {
   const slaTone = connectivitySlaTone(stats.slaRate)
   const ringRadius = 34
   const ringLength = 2 * Math.PI * ringRadius
+  const [slaWhole, slaFrac] = stats.slaRate.toFixed(2).split('.')
   const firstBucket = hourlyBuckets[0]
   const midBucket = hourlyBuckets[12]
   const lastBucket = hourlyBuckets[23]
@@ -7736,9 +7737,9 @@ function ServerConnectivityDialog({ server, initialSamples, client, onClose }: {
         <div className={`connectivity-sla-ring ${slaTone}`} role="img" aria-label={`统计期 SLA ${stats.slaRate.toFixed(2)}%`}>
           <svg viewBox="0 0 80 80">
             <circle cx="40" cy="40" r={ringRadius} className="connectivity-ring-track" />
-            <circle cx="40" cy="40" r={ringRadius} className="connectivity-ring-value" strokeDasharray={ringLength} strokeDashoffset={ringLength * (1 - stats.slaRate / 100)} />
+            <circle cx="40" cy="40" r={ringRadius} className="connectivity-ring-value" strokeDasharray={ringLength} strokeDashoffset={ringLength * (1 - stats.slaRate / 100)} style={{ '--connectivity-ring-length': `${ringLength}` } as React.CSSProperties} />
           </svg>
-          <div className="connectivity-sla-ring-label"><strong>{stats.slaRate.toFixed(2)}%</strong><span>SLA</span></div>
+          <div className="connectivity-sla-ring-label"><strong><span>{slaWhole}<span>.{slaFrac}%</span></span></strong><span>SLA</span></div>
         </div>
         <div className="connectivity-hero-info">
           <div className="connectivity-hero-status-row">

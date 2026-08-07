@@ -8386,32 +8386,54 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   width: 160px;
   height: 160px;
   flex: 0 0 160px;
+  animation: connectivity-sla-ring-in 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes connectivity-sla-ring-in {
+  from { transform: scale(0.86); opacity: 0; }
 }
 .connectivity-sla-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
-.connectivity-ring-track { fill: none; stroke: var(--surface-3); stroke-width: 7; }
+.connectivity-ring-track {
+  fill: none;
+  stroke: var(--surface-3);
+  stroke-width: 7;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: connectivity-ring-track-in 1.15s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes connectivity-ring-track-in {
+  from { transform: rotate(-180deg); opacity: 0.35; }
+}
 .connectivity-ring-value {
   fill: none;
   stroke-width: 7;
   stroke-linecap: round;
   transition: stroke-dashoffset 0.6s ease;
+  animation: connectivity-ring-fill 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes connectivity-ring-fill {
+  from { stroke-dashoffset: var(--connectivity-ring-length, 213.628); }
 }
 .connectivity-sla-ring.great .connectivity-ring-value { stroke: var(--success); }
 .connectivity-sla-ring.fair .connectivity-ring-value { stroke: var(--warning); }
 .connectivity-sla-ring.poor .connectivity-ring-value { stroke: var(--danger); }
-.connectivity-sla-ring-label {
+.connectivity-sla-ring-label { position: absolute; inset: 0; text-align: center; }
+.connectivity-sla-ring-label strong {
   position: absolute;
   inset: 0;
   display: grid;
-  place-content: center;
-  text-align: center;
-}
-.connectivity-sla-ring-label strong {
+  place-items: center;
   color: var(--text-strong);
-  font-size: 28px;
-  line-height: 1.1;
+  font-size: 32px;
+  line-height: 1;
   letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
-.connectivity-sla-ring-label span {
+.connectivity-sla-ring-label strong span span { font-size: 13px; letter-spacing: 0; }
+.connectivity-sla-ring-label > span {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 10px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
