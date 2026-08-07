@@ -717,8 +717,8 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   mtu: { label: 'MTU', desc: '检测路径 MTU、给出建议并可由 Agent 应用。', group: '网络' },
   'port-forwards': { label: '端口转发', desc: '配置 Realm、nft 或内置端口转发与延迟探测。', group: '拓扑' },
   tunnels: { label: '隧道', desc: '配置 WireGuard / SSH 服务器间隧道。', group: '拓扑' },
-  notifications: { label: '通知', desc: '配置消息通道、接收提醒并管理通知模板。', group: '通知' },
-  subscriptions: { label: '订阅', desc: '管理订阅配置、节点分组和用户分配。', group: '访问控制' },
+  notifications: { label: '通知中心', desc: '', group: '' },
+  subscriptions: { label: '订阅', desc: '', group: '访问控制' },
   tasks: { label: '任务', desc: '查询配置下发、Agent 任务和部署回执。', group: '运维' },
   audit: { label: '审计台', desc: '分析连接来源、出口行为和操作记录。', group: '运维' },
   automation: { label: '自动化', desc: '管理 API、MCP、审批策略、变更集与内置 AI。', group: '系统' },
@@ -730,7 +730,7 @@ const navGroups = [
   { label: '代理链路', tabs: ['proxy-paths'] },
   { label: '网络', tabs: ['dns', 'dns-records'] },
   { label: '访问控制', tabs: ['users', 'subscriptions'] },
-  { label: '通知', tabs: ['notifications'] },
+  { label: '', tabs: ['notifications'] },
   { label: '运维审计', tabs: ['tasks', 'audit'] },
   { label: '系统', tabs: ['automation', 'settings'] },
   { label: '账户', tabs: ['account'] },
@@ -1852,7 +1852,7 @@ function App() {
     users: '用户与分组管理',
     dns: 'DNS 设置',
     'dns-records': '域名解析',
-    subscriptions: sessionUser?.role === 'admin' ? '节点订阅分发' : '我的订阅',
+    subscriptions: sessionUser?.role === 'admin' ? '节点订阅' : '我的订阅',
     notifications: '通知中心',
     tasks: '任务部署中心',
     audit: '审计台',
@@ -4690,7 +4690,7 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
   const serverName = (id?: number) => id ? serverNames.get(id) || '' : ''
   return <div className="settings-grid dns-management">
     <div className="settings-tabs dns-management-tabs" role="tablist" aria-label="域名解析视图">
-      <button type="button" className={activeTab === 'records' ? 'active' : ''} onClick={() => setActiveTab('records')} role="tab" aria-selected={activeTab === 'records'}><Globe size={15} />域名记录</button>
+      <button type="button" className={activeTab === 'records' ? 'active' : ''} onClick={() => setActiveTab('records')} role="tab" aria-selected={activeTab === 'records'}><Globe size={15} />域名解析</button>
       <button type="button" className={activeTab === 'settings' ? 'active' : ''} onClick={() => setActiveTab('settings')} role="tab" aria-selected={activeTab === 'settings'}><Settings2 size={15} />解析设置</button>
     </div>
     {activeTab === 'records' ? <section className="settings-card dns-management-card">
