@@ -949,6 +949,12 @@ function localizeErrorMessage(message: unknown) {
   return errorMessages[raw] || errorMessages[raw.toLowerCase()] || raw
 }
 
+function apiErrorMessage(data: any, res: Response) {
+  const detail = typeof data?.message === 'string' ? data.message.trim() : ''
+  if (detail) return detail
+  return localizeErrorMessage(data?.error || res.statusText)
+}
+
 function showToast(setToast: React.Dispatch<React.SetStateAction<ToastState>>, message: unknown, kind: ToastKind = 'error') {
   setToast({ id: Date.now(), kind, message: kind === 'error' ? localizeErrorMessage(message) : String(message) })
 }
@@ -1272,7 +1278,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
         if (!onUnauthorized(token)) throw new SupersededAuthRequestError()
         throw new Error('登录已过期，请重新登录')
       }
-      throw new Error(localizeErrorMessage(data.error || res.statusText))
+      throw new Error(apiErrorMessage(data, res))
     }
     return data
   }
@@ -1293,7 +1299,8 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
         if (!onUnauthorized(token)) throw new SupersededAuthRequestError()
         throw new Error('登录已过期，请重新登录')
       }
-      throw new Error(localizeErrorMessage(payload?.error?.message || payload?.error || res.statusText))
+      const v2Error = payload?.error && typeof payload.error === 'object' ? payload.error : null
+      throw new Error(apiErrorMessage({ error: v2Error?.message || payload?.error, message: payload?.message }, res))
     }
     return payload.data as T
   }
@@ -1301,7 +1308,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
     const res = await fetch(appPath('/api/v2/ui' + path), { credentials: 'same-origin', headers: authHeaders })
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
-      throw new Error(localizeErrorMessage(data.error || res.statusText))
+      throw new Error(apiErrorMessage(data, res))
     }
     const disposition = res.headers.get('content-disposition') || ''
     const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || 'oboard-logs.zip'
@@ -1310,7 +1317,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
   async function upload<T = any>(path: string, body: FormData): Promise<T> {
     const res = await fetch(appPath('/api/v2/ui' + path), { method: 'POST', body, credentials: 'same-origin', headers: { ...authHeaders, ...csrfHeaders } })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(localizeErrorMessage(data.error || res.statusText))
+    if (!res.ok) throw new Error(apiErrorMessage(data, res))
     return data
   }
   return { request, requestV2, download, upload }

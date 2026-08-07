@@ -32,6 +32,7 @@ describe('global overlay layers', () => {
     expect(stylesheet).toMatch(/\.dialog-backdrop\s*\{[^}]*z-index:\s*var\(--z-dialog\)/s)
     expect(stylesheet).toMatch(/\.dialog-backdrop-nested\s*\{[^}]*z-index:\s*var\(--z-dialog-nested\)/s)
     expect(stylesheet).toMatch(/\.dialog-backdrop-system\s*\{[^}]*z-index:\s*var\(--z-dialog-system\)/s)
+    expect(stylesheet).toMatch(/\.dialog-root\s*\{[^}]*z-index:\s*var\(--z-dialog-system\)/s)
     expect(stylesheet).toMatch(/\.custom-select-menu\s*\{[^}]*z-index:\s*var\(--z-popover\)/s)
     expect(stylesheet).toMatch(/\.portal-loader\s*\{[^}]*z-index:\s*var\(--z-loading\)/s)
   })

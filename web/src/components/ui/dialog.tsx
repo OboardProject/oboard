@@ -1,4 +1,5 @@
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { m, AnimatePresence, useReducedMotion } from "motion/react"
 
 export interface DialogProps {
@@ -40,7 +41,7 @@ export function Dialog({
   }
   const isCompact = className.split(/\s+/).includes("dialog-host-compact")
 
-  return (
+  const content = (
     <AnimatePresence>
       {isOpen && (
         <div className="dialog-root fixed inset-0 flex items-center justify-center p-4">
@@ -87,4 +88,5 @@ export function Dialog({
       )}
     </AnimatePresence>
   )
+  return typeof document === "undefined" ? content : createPortal(content, document.body)
 }
