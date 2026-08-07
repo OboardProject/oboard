@@ -543,7 +543,7 @@ func TestPageDataIncludesMinimalCurrentUser(t *testing.T) {
 	if self["subscription_token"] != "private-subscription" {
 		t.Fatalf("self subscription token missing: %#v", self)
 	}
-	for _, privateAdminField := range []string{"users", "user_groups", "subscription_profiles", "subscription_assignments", "servers", "settings"} {
+	for _, privateAdminField := range []string{"users", "user_groups", "subscription_plans", "subscription_plan_nodes", "user_plan_bindings", "user_node_exceptions", "servers", "settings"} {
 		if _, ok := subscriptions[privateAdminField]; ok {
 			t.Fatalf("viewer subscription page leaked admin field %s: %#v", privateAdminField, subscriptions)
 		}
@@ -835,9 +835,7 @@ func TestAgentTrafficRequiresLocalInboundAuthorizationAndIsIdempotent(t *testing
 	if err := db.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: inboundB.ID, UserID: user.ID, Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
+	grantTestPlanInboundNode(t, db, user.ID, inboundB.ID)
 	h := newTestServer(db, "test-secret", "").Handler()
 	report := func(inboundID *int64, reportID string, want int) {
 		t.Helper()
@@ -859,9 +857,7 @@ func TestAgentTrafficRequiresLocalInboundAuthorizationAndIsIdempotent(t *testing
 	report(nil, "missing-inbound", http.StatusBadRequest)
 	report(&inboundB.ID, "cross-server", http.StatusForbidden)
 	report(&inboundA.ID, "unauthorized-user", http.StatusForbidden)
-	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: inboundA.ID, UserID: user.ID, Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
+	grantTestPlanInboundNode(t, db, user.ID, inboundA.ID)
 	report(&inboundA.ID, "authorized-report", http.StatusOK)
 	report(&inboundA.ID, "authorized-report", http.StatusOK)
 	storedUser, err := db.GetUser(ctx, user.ID)
@@ -898,13 +894,11 @@ func TestAgentTrafficAcceptsOnlyTransparentPathProcessingServer(t *testing.T) {
 	if err := db.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: root.ID, UserID: user.ID, Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
 	path := &model.ProxyPath{Name: "source-forward-processing", InboundID: root.ID, Secret: "path-secret", Enabled: true}
 	if err := db.CreateProxyPath(ctx, path); err != nil {
 		t.Fatal(err)
 	}
+	grantTestPlanNode(t, db, user.ID, model.AssignableNodeProxyPath, path.ID)
 	processingID := servers[1].ID
 	step := &model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportPortForward, ProcessingRole: true, ServerID: &processingID, ConfigJSON: "{}"}
 	if err := db.CreateProxyPathStep(ctx, step); err != nil {

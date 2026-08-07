@@ -344,14 +344,14 @@ func TestTrafficRuntimePoliciesIncludeUnlimitedUsers(t *testing.T) {
 	if err := db.CreateUser(ctx, &user); err != nil {
 		t.Fatal(err)
 	}
-	filtered, err := srv.trafficRuntimePolicies(ctx, server.ID, []model.User{user}, nil, nil, map[int64]bool{}, nil)
+	filtered, err := srv.trafficRuntimePolicies(ctx, server.ID, []model.User{user}, map[int64]bool{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(filtered) != 0 {
 		t.Fatalf("non-accounting downstream server received user policy: %#v", filtered)
 	}
-	policies, err := srv.trafficRuntimePolicies(ctx, server.ID, []model.User{user}, nil, nil, nil, nil)
+	policies, err := srv.trafficRuntimePolicies(ctx, server.ID, []model.User{user}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,28 +390,21 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	base["config_json"] = `{"exposure_confirmed":true,"exposure_confirmation_version":"ssh-inbound-v1","access_mode":"restricted_proxy"}`
 	created := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, base, http.StatusCreated)
 	inboundID := int64(created["inbound"].(map[string]any)["id"].(float64))
-	bindings := request(t, h, http.MethodGet, "/api/v2/ui/inbound-users", token, nil, http.StatusOK)["inbound_users"].([]any)
-	for _, raw := range bindings {
-		binding := raw.(map[string]any)
-		if int64(binding["inbound_id"].(float64)) == inboundID {
-			request(t, h, http.MethodDelete, "/api/v2/ui/inbound-users/"+strconv.Itoa(int(binding["id"].(float64))), token, nil, http.StatusOK)
-		}
-	}
-	request(t, h, http.MethodPost, "/api/v2/ui/inbound-users", token, map[string]any{"inbound_id": inboundID, "user_id": user.ID, "enabled": true}, http.StatusCreated)
 	directPath := &model.ProxyPath{Kind: model.ProxyPathKindDirect, Name: "direct", InboundID: inboundID, Secret: "direct-secret", Enabled: true}
 	if err := db.CreateProxyPath(ctx, directPath); err != nil {
 		t.Fatal(err)
 	}
+	grantTestPlanNode(t, db, user.ID, model.AssignableNodeProxyPath, directPath.ID)
 
 	data, err := db.FullRoutingConfigData(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	policies, err := srv.trafficRuntimePolicies(ctx, server.ID, data.Users, data.UserGroups, data.UserGroupMembers, nil, nil)
+	policies, err := srv.trafficRuntimePolicies(ctx, server.ID, data.Users, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := buildSSHInboundPlan(2, *server, data, effectiveProxyPathUsersForRouting(data), policies)
+	plan, err := buildSSHInboundPlan(2, *server, data, snapshotBindingsFromData(data), policies)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,18 +439,16 @@ func TestSSHInboundPlanExpandsDeviceCredentialsPerRoute(t *testing.T) {
 	if err := db.CreateInbound(ctx, inbound); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: inbound.ID, UserID: user.ID, Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
 	path := &model.ProxyPath{Kind: model.ProxyPathKindDirect, Name: "direct", InboundID: inbound.ID, Secret: "direct-secret", Enabled: true}
 	if err := db.CreateProxyPath(ctx, path); err != nil {
 		t.Fatal(err)
 	}
+	grantTestPlanNode(t, db, user.ID, model.AssignableNodeProxyPath, path.ID)
 	data, err := db.FullRoutingConfigData(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := buildSSHInboundPlan(7, *server, data, effectiveProxyPathUsersForRouting(data), nil)
+	plan, err := buildSSHInboundPlan(7, *server, data, snapshotBindingsFromData(data), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +503,7 @@ func TestSSHInboundPlanListenFollowsDetectedFamilies(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			plan, err := buildSSHInboundPlan(2, server, data, effectiveProxyPathUsersForRouting(data), nil)
+			plan, err := buildSSHInboundPlan(2, server, data, snapshotBindingsFromData(data), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -647,13 +638,11 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	if err := db.CreateInbound(ctx, inbound); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: inbound.ID, UserID: user.ID, Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
 	path := &model.ProxyPath{Kind: model.ProxyPathKindDirect, Name: "direct", InboundID: inbound.ID, Secret: "direct-secret", Enabled: true}
 	if err := db.CreateProxyPath(ctx, path); err != nil {
 		t.Fatal(err)
 	}
+	grantTestPlanNode(t, db, user.ID, model.AssignableNodeProxyPath, path.ID)
 	_, hostPrivateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -667,7 +656,7 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := buildSSHInboundPlan(0, *server, config, effectiveProxyPathUsersForRouting(config), nil)
+	plan, err := buildSSHInboundPlan(0, *server, config, snapshotBindingsFromData(config), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1871,9 +1860,12 @@ func TestImportedNodeURIProxyPathAndGrantAPI(t *testing.T) {
 	}
 	externalID := int64(external["id"].(float64))
 
-	grant := request(t, h, http.MethodPost, "/api/v2/ui/external-outbound-access-grants", token, map[string]any{"external_outbound_id": externalID, "subject_type": "user", "subject_id": userID, "enabled": true}, http.StatusCreated)
-	if grant["external_outbound_access_grant"].(map[string]any)["id"] == nil {
-		t.Fatalf("grant missing id: %#v", grant)
+	grantPlan := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{"name": "imported", "enabled": true, "nodes": []map[string]any{{"node_type": "external_outbound", "node_id": externalID}}}, http.StatusCreated)
+	if grantPlan["subscription_plan"].(map[string]any)["id"] == nil {
+		t.Fatalf("plan missing id: %#v", grantPlan)
+	}
+	if err := db.SetUserPlanBindings(context.Background(), []model.UserPlanBinding{{UserID: userID, PlanID: int64(grantPlan["subscription_plan"].(map[string]any)["id"].(float64))}}); err != nil {
+		t.Fatal(err)
 	}
 
 	path := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"name": "via-socks", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
@@ -2405,7 +2397,7 @@ func TestProtocolAuthDefaultsArePersisted(t *testing.T) {
 	}
 }
 
-func TestInboundUserBindingsAPI(t *testing.T) {
+func TestSingleUserInboundPlanCapacityPreview(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -2418,19 +2410,25 @@ func TestInboundUserBindingsAPI(t *testing.T) {
 	token := login["token"].(string)
 	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(server["server"].(map[string]any)["id"].(float64))
-	user := request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "bob", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
-	userID := int64(user["user"].(map[string]any)["id"].(float64))
+	userA := request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "alice", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	userB := request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "bob", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	userAID, userBID := int64(userA["user"].(map[string]any)["id"].(float64)), int64(userB["user"].(map[string]any)["id"].(float64))
 
 	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "single-password-ss", "protocol": "shadowsocks", "listen_ip": "0.0.0.0", "port": 8388, "config_json": `{"method":"chacha20-ietf-poly1305"}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
-	bindings := request(t, h, http.MethodGet, "/api/v2/ui/inbound-users", token, nil, http.StatusOK)
-	if len(bindings["inbound_users"].([]any)) != 1 {
-		t.Fatalf("creator binding missing: %#v", bindings)
+	plan := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{"name": "single", "enabled": true, "nodes": []map[string]any{{"node_type": "inbound", "node_id": inboundID}}}, http.StatusCreated)
+	planID := int64(plan["subscription_plan"].(map[string]any)["id"].(float64))
+	if err := db.SetUserPlanBindings(context.Background(), []model.UserPlanBinding{{UserID: userAID, PlanID: planID}, {UserID: userBID, PlanID: planID}}); err != nil {
+		t.Fatal(err)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/inbound-users", token, map[string]any{"inbound_id": inboundID, "user_id": userID, "enabled": true}, http.StatusBadRequest)
+	preview := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+strconv.FormatInt(planID, 10)+"/nodes/preview", token, map[string]any{"op": "replace", "nodes": []map[string]any{{"node_type": "inbound", "node_id": inboundID}}}, http.StatusOK)
+	capacity := preview["preview"].(map[string]any)["capacity_issues"].([]any)
+	if len(capacity) == 0 {
+		t.Fatalf("single-user inbound overflow was not reported: %#v", preview)
+	}
 }
 
-func TestUserGroupsAndInboundAccessGrantsAPI(t *testing.T) {
+func TestPlanGrantedSubscriptionIncludesInboundNode(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -2448,28 +2446,23 @@ func TestUserGroupsAndInboundAccessGrantsAPI(t *testing.T) {
 	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
 
-	group := request(t, h, http.MethodPost, "/api/v2/ui/user-groups", token, map[string]any{"name": "vip", "enabled": true}, http.StatusCreated)
-	groupID := int64(group["user_group"].(map[string]any)["id"].(float64))
-	member := request(t, h, http.MethodPost, "/api/v2/ui/user-group-members", token, map[string]any{"group_id": groupID, "user_id": userID, "enabled": true}, http.StatusCreated)
-	if member["user_group_member"].(map[string]any)["id"] == nil {
-		t.Fatalf("member missing id: %#v", member)
-	}
-	grant := request(t, h, http.MethodPost, "/api/v2/ui/inbound-access-grants", token, map[string]any{"subject_type": "group", "subject_id": groupID, "scope_type": "server", "server_id": serverID, "enabled": true}, http.StatusCreated)
-	if grant["inbound_access_grant"].(map[string]any)["id"] == nil {
-		t.Fatalf("grant missing id: %#v", grant)
+	plan := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{"name": "vip", "enabled": true, "nodes": []map[string]any{{"node_type": "inbound", "node_id": inboundID}}}, http.StatusCreated)
+	planID := int64(plan["subscription_plan"].(map[string]any)["id"].(float64))
+	if err := db.SetUserPlanBindings(context.Background(), []model.UserPlanBinding{{UserID: userID, PlanID: planID}}); err != nil {
+		t.Fatal(err)
 	}
 	sub, err := core.GenerateSubscriptionWithOptions(
 		model.User{ID: userID, Username: "bob", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass"},
 		[]model.Server{{ID: serverID, Name: "s1", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: inboundID, ServerID: serverID, Name: "vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
-		core.SubscriptionOptions{InboundUsers: core.EffectiveInboundUsers([]model.Inbound{{ID: inboundID, ServerID: serverID, Name: "vless", Protocol: model.ProtocolVLESS, Enabled: true}}, []model.User{{ID: userID, Status: "active"}}, nil, []model.UserGroup{{ID: groupID, Enabled: true}}, []model.UserGroupMember{{GroupID: groupID, UserID: userID, Enabled: true}}, []model.InboundAccessGrant{{SubjectType: model.AccessSubjectGroup, SubjectID: groupID, ScopeType: model.AccessScopeServer, ServerID: &serverID, Enabled: true}})},
+		core.SubscriptionOptions{EffectiveNodes: map[string]bool{core.NodeKeyOf(model.AssignableNodeInbound, inboundID): true}},
 	)
 	if err != nil || !strings.Contains(sub, "vless") {
-		t.Fatalf("subscription did not include group-granted inbound: %v %s", err, sub)
+		t.Fatalf("subscription did not include plan-granted inbound: %v %s", err, sub)
 	}
 }
 
-func TestSyncProxyPathAccessGrantsOnlyChangesSelectedPaths(t *testing.T) {
+func TestPlanNodeSyncChangesOnlyTheDraftRevision(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -2480,24 +2473,32 @@ func TestSyncProxyPathAccessGrantsOnlyChangesSelectedPaths(t *testing.T) {
 	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "listen_ip": "0.0.0.0"}, http.StatusCreated)["server"].(map[string]any)
 	serverID := int64(server["id"].(float64))
-	user := request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "path-user", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
-	userID := int64(user["id"].(float64))
 	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
 	inboundID := int64(inbound["id"].(float64))
 	pathA := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
 	pathB := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
 	pathAID, pathBID := int64(pathA["id"].(float64)), int64(pathB["id"].(float64))
+	plan := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{"name": "paths", "enabled": true, "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": pathAID}}}, http.StatusCreated)
+	planID := int64(plan["subscription_plan"].(map[string]any)["id"].(float64))
 
-	request(t, h, http.MethodPost, "/api/v2/ui/inbound-access-grants/sync", token, map[string]any{"scope_type": "proxy_path", "proxy_path_ids": []int64{pathAID}, "user_ids": []int64{userID}, "group_ids": []int64{}}, http.StatusOK)
-	request(t, h, http.MethodPost, "/api/v2/ui/inbound-access-grants/sync", token, map[string]any{"scope_type": "proxy_path", "proxy_path_ids": []int64{pathBID}, "user_ids": []int64{userID}, "group_ids": []int64{}}, http.StatusOK)
-	request(t, h, http.MethodPost, "/api/v2/ui/inbound-access-grants/sync", token, map[string]any{"scope_type": "proxy_path", "proxy_path_ids": []int64{pathAID}, "user_ids": []int64{}, "group_ids": []int64{}}, http.StatusOK)
-
-	grants, err := db.ListInboundAccessGrants(context.Background())
+	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+strconv.FormatInt(planID, 10)+"/nodes/sync", token, map[string]any{"op": "add", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": pathBID}}}, http.StatusOK)
+	activeNodes, err := db.ListActivePlanNodes(context.Background(), planID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(grants) != 1 || grants[0].ProxyPathID == nil || *grants[0].ProxyPathID != pathBID || grants[0].SubjectID != userID {
-		t.Fatalf("path grants = %#v, want only path B", grants)
+	if len(activeNodes) != 1 || activeNodes[0].NodeID != pathAID {
+		t.Fatalf("active plan nodes changed while editing draft: %#v", activeNodes)
+	}
+	draftNodes, err := db.ListDraftPlanNodes(context.Background(), planID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int64]bool{}
+	for _, node := range draftNodes {
+		got[node.NodeID] = true
+	}
+	if !got[pathAID] || !got[pathBID] {
+		t.Fatalf("draft plan nodes = %#v, want A and B", draftNodes)
 	}
 }
 
@@ -2569,9 +2570,39 @@ func TestRealityKeyPairAPIAndInboundDefaults(t *testing.T) {
 	if strings.Contains(singBoxConfig, generatedPublic) || strings.Contains(singBoxConfig, `"public_key"`) {
 		t.Fatalf("server config leaked public key: %s", singBoxConfig)
 	}
-	subscription, err := core.GenerateSubscriptionWithOptions(users[0], []model.Server{*server}, []model.Inbound{*storedInbound}, core.SubscriptionOptions{Format: model.SubscriptionFormatSingBox})
+
+	// The subscription is authorized by the plan snapshot: bind the user to a
+	// plan containing the inbound and derive the effective node key.
+	plan := &model.SubscriptionPlan{Name: "reality-plan", Enabled: true}
+	if err := db.CreateSubscriptionPlan(context.Background(), plan, []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeInbound, NodeID: inboundID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetUserPlanBindings(context.Background(), []model.UserPlanBinding{{UserID: users[0].ID, PlanID: plan.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	plans, err := db.ListSubscriptionPlans(context.Background())
 	if err != nil {
 		t.Fatal(err)
+	}
+	planNodes, err := db.ListAllPlanNodes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := db.ListEffectiveUserPlanBindings(context.Background(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := core.BuildEffectiveAccessSnapshot(core.EffectiveAccessInput{
+		Users: users, Bindings: bindings, Plans: plans, PlanNodes: planNodes,
+		Inbounds: []model.Inbound{*storedInbound}, Now: time.Now(),
+	})
+	effective := snap.EffectiveNodeKeys(users[0].ID)
+	subscription, err := core.GenerateSubscriptionWithOptions(users[0], []model.Server{*server}, []model.Inbound{*storedInbound}, core.SubscriptionOptions{Format: model.SubscriptionFormatSingBox, EffectiveNodes: effective})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(effective) != 1 {
+		t.Fatalf("effective nodes = %#v", effective)
 	}
 	if !strings.Contains(subscription, generatedPublic) {
 		t.Fatalf("subscription missing public key: %s", subscription)

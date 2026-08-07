@@ -93,7 +93,7 @@ func BuildAssignableNodeCatalog(input AssignableNodeCatalogInput) ([]AssignableN
 		if !inbound.Enabled {
 			continue
 		}
-		configuredBranches := subscriptionBranchesForInbound(inbound, paths, input.ProxyPathSteps, 0, nil)
+		configuredBranches := subscriptionBranchesForInbound(inbound, paths, input.ProxyPathSteps)
 		if len(configuredBranches) > 0 {
 			continue
 		}

@@ -366,14 +366,14 @@ func (s *Server) generateServerCoreConfigForProjection(ctx context.Context, serv
 	pathBindings := snap.ProxyPathUserBindings()
 	userPolicies := snap.UserLimitPolicyMap()
 	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, bindings, pathBindings)
-	trafficPolicies, err := s.trafficRuntimePolicies(ctx, server.ID, data.Users, data.UserGroups, data.UserGroupMembers, accountingUsers, userPolicies)
+	trafficPolicies, err := s.trafficRuntimePolicies(ctx, server.ID, data.Users, accountingUsers, userPolicies)
 	if err != nil {
 		return generatedServerCoreConfig{}, err
 	}
 	config, err := core.GenerateServerConfigWithOptions(server, inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
 		RoutingRules: data.RoutingRules, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
 		Servers: data.Servers, Inbounds: inbounds, WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
-		UserGroups: data.UserGroups, UserGroupMembers: data.UserGroupMembers, AccessSnapshot: snap, UserPolicies: userPolicies, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
+		AccessSnapshot: snap, UserPolicies: userPolicies, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
 		PortLedger: ledger,
 	})
 	if err != nil {
@@ -951,22 +951,13 @@ func (s *Server) planDisable(w http.ResponseWriter, r *http.Request, id int64) {
 		fail(w, errors.New("subscription plan is already disabled"), 400)
 		return
 	}
-	if s.authorizationMode(r.Context()) == model.AuthorizationModePlan {
-		change, err := s.createPlanDisableChange(r.Context(), r, plan)
-		if err != nil {
-			fail(w, err, planWriteStatus(err))
-			return
-		}
-		auditReq(s, r, "disable", "access-change", fmt.Sprintf("plan=%d change=%d", id, change.ID))
-		write(w, 200, map[string]any{"disabled": false, "access_change_id": change.ID, "access_change_status": change.Status, "runtime_authorization_mode": model.AuthorizationModePlan})
+	change, err := s.createPlanDisableChange(r.Context(), r, plan)
+	if err != nil {
+		fail(w, err, planWriteStatus(err))
 		return
 	}
-	if err := s.store.SetSubscriptionPlanEnabled(r.Context(), id, false); err != nil {
-		fail(w, err, 500)
-		return
-	}
-	auditReq(s, r, "disable", "subscription-plan", fmt.Sprint(id))
-	write(w, 200, map[string]any{"disabled": true, "runtime_authorization_mode": s.authorizationMode(r.Context())})
+	auditReq(s, r, "disable", "access-change", fmt.Sprintf("plan=%d change=%d", id, change.ID))
+	write(w, 200, map[string]any{"disabled": false, "access_change_id": change.ID, "access_change_status": change.Status, "runtime_authorization_mode": s.authorizationMode(r.Context())})
 }
 
 // createUserBindingChange materializes the two-phase projections for a user
@@ -1134,4 +1125,27 @@ func nodeKeyUsersDiffer(a, b *core.EffectiveAccessSnapshot, key string) bool {
 		}
 	}
 	return false
+}
+
+// guardAssignableNodeDelete blocks deletion of nodes referenced by active plan
+// revisions and prunes the node from draft revisions. Active references require
+// an access change to remove the node before the deletion can proceed.
+func (s *Server) guardAssignableNodeDelete(ctx context.Context, nodeType model.AssignableNodeType, nodeID int64) (store.PlanNodeReferences, error) {
+	refs, err := s.store.PlanNodeReferences(ctx, nodeType, nodeID)
+	if err != nil {
+		return refs, err
+	}
+	if len(refs.Active) > 0 {
+		names := make([]string, 0, len(refs.Active))
+		for _, ref := range refs.Active {
+			names = append(names, ref.Name)
+		}
+		return refs, fmt.Errorf("node is referenced by active subscription plan(s): %s; publish a plan change to remove it first", strings.Join(names, ", "))
+	}
+	if len(refs.Draft) > 0 {
+		if err := s.store.RemovePlanNodeFromDraftRevisions(ctx, nodeType, nodeID); err != nil {
+			return refs, err
+		}
+	}
+	return refs, nil
 }

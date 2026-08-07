@@ -247,23 +247,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/agents/update-all", s.auth(s.agentsUpdateAll, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/inbounds", s.auth(s.inbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/inbounds/", s.auth(s.inbounds, model.RoleOperator))
-	mux.HandleFunc("/api/v1/inbound-users", s.auth(s.inboundUsers, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/inbound-users/", s.auth(s.inboundUsers, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/user-groups", s.auth(s.userGroups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/user-groups/", s.auth(s.userGroups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/user-group-members", s.auth(s.userGroupMembers, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/user-group-members/", s.auth(s.userGroupMembers, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/inbound-access-grants", s.auth(s.inboundAccessGrants, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/inbound-access-grants/", s.auth(s.inboundAccessGrants, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/inbound-access-grants/sync", s.auth(s.syncInboundAccessGrants, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/outbounds", s.auth(s.outbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/outbounds/", s.auth(s.outbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/routing-rules", s.auth(s.routingRules, model.RoleOperator))
 	mux.HandleFunc("/api/v1/routing-rules/", s.auth(s.routingRules, model.RoleOperator))
 	mux.HandleFunc("/api/v1/external-outbounds", s.auth(s.externalOutbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/external-outbounds/", s.auth(s.externalOutbounds, model.RoleOperator))
-	mux.HandleFunc("/api/v1/external-outbound-access-grants", s.auth(s.externalOutboundAccessGrants, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/external-outbound-access-grants/", s.auth(s.externalOutboundAccessGrants, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/proxy-paths", s.auth(s.proxyPaths, model.RoleOperator))
 	mux.HandleFunc("/api/v1/proxy-paths/", s.auth(s.proxyPaths, model.RoleOperator))
 	mux.HandleFunc("/api/v1/proxy-path-steps", s.auth(s.proxyPathSteps, model.RoleOperator))
@@ -272,10 +265,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/warp-profiles/", s.auth(s.warpProfiles, model.RoleOperator))
 	mux.HandleFunc("/api/v1/users", s.auth(s.users, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/users/", s.auth(s.users, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/subscription-profiles", s.auth(s.subscriptionProfiles, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/subscription-profiles/", s.auth(s.subscriptionProfiles, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/subscription-assignments", s.auth(s.subscriptionAssignments, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/subscription-assignments/", s.auth(s.subscriptionAssignments, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/assignable-nodes", s.auth(s.assignableNodes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/assignable-nodes/", s.auth(s.assignableNodeDetail, model.RoleOperator))
 	mux.HandleFunc("/api/v1/subscription-plans", s.auth(s.subscriptionPlans, model.RoleAdmin))
@@ -286,9 +275,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/user-node-exceptions/", s.auth(s.userNodeExceptions, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/access-changes", s.auth(s.accessChanges, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/access-changes/", s.auth(s.accessChanges, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/shadow-report", s.auth(s.shadowReport, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/migrations", s.auth(s.migrations, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/migrations/", s.auth(s.migrations, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists", s.auth(s.dnsLists, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists/", s.auth(s.dnsLists, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-benchmarks", s.auth(s.dnsBenchmarks, model.RoleOperator))
@@ -722,7 +708,6 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			NotificationMergeOffline    *bool              `json:"notification_server_merge_offline"`
 			RegistrationEnabled         *bool              `json:"registration_enabled"`
 			RegistrationDefaultGroupID  *int64             `json:"registration_default_group_id"`
-			AuthorizationMode           *string            `json:"authorization_mode"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -1091,20 +1076,6 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, settingRegistrationDefaultGroupID)
 		}
-		if req.AuthorizationMode != nil {
-			mode := model.AuthorizationMode(strings.ToLower(strings.TrimSpace(*req.AuthorizationMode)))
-			switch mode {
-			case model.AuthorizationModeLegacy, model.AuthorizationModeShadow, model.AuthorizationModePlan:
-			default:
-				fail(w, errors.New("authorization_mode must be legacy, shadow or plan"), http.StatusBadRequest)
-				return
-			}
-			if err := s.store.SetSetting(r.Context(), authorizationModeSetting, string(mode)); err != nil {
-				fail(w, err, http.StatusInternalServerError)
-				return
-			}
-			changed = append(changed, AuthorizationModeSettingName)
-		}
 		if len(changed) > 0 {
 			auditReq(s, r, "update", "settings", strings.Join(changed, ","))
 		}
@@ -1129,12 +1100,11 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
 	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	for key, value := range items {
-		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == authorizationModeSetting {
+		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID {
 			continue
 		}
 		out[key] = value
 	}
-	out[AuthorizationModeSettingName] = string(s.authorizationMode(ctx))
 	if raw := strings.TrimSpace(items[settingRegistrationEnabled]); raw != "" {
 		out[settingRegistrationEnabled] = settingBool(items, settingRegistrationEnabled, false)
 	}
@@ -1516,23 +1486,11 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			inboundUsers, err := s.store.ListInboundUsers(ctx)
-			if err != nil {
-				return err
-			}
-			grants, err := s.store.ListInboundAccessGrants(ctx)
-			if err != nil {
-				return err
-			}
 			groups, err := s.store.ListUserGroups(ctx)
 			if err != nil {
 				return err
 			}
 			members, err := s.store.ListUserGroupMembers(ctx)
-			if err != nil {
-				return err
-			}
-			externalGrants, err := s.store.ListExternalOutboundAccessGrants(ctx)
 			if err != nil {
 				return err
 			}
@@ -1545,11 +1503,8 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 			out["users"] = users
-			out["inbound_users"] = inboundUsers
-			out["inbound_access_grants"] = grants
 			out["user_groups"] = groups
 			out["user_group_members"] = members
-			out["external_outbound_access_grants"] = externalGrants
 			out["settings"] = s.publicSettings(ctx, settings)
 			out["reverse_proxy_status"] = s.reverseProxyStatus(r)
 		}
@@ -1584,17 +1539,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			inboundUsers, err := s.store.ListInboundUsers(ctx)
-			if err != nil {
-				return err
-			}
-			grants, err := s.store.ListInboundAccessGrants(ctx)
-			if err != nil {
-				return err
-			}
 			out["users"] = users
-			out["inbound_users"] = inboundUsers
-			out["inbound_access_grants"] = grants
 		}
 		return nil
 	}
@@ -1649,17 +1594,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			groups, err := s.store.ListUserGroups(ctx)
-			if err != nil {
-				return err
-			}
-			grants, err := s.store.ListExternalOutboundAccessGrants(ctx)
-			if err != nil {
-				return err
-			}
 			out["users"] = users
-			out["user_groups"] = groups
-			out["external_outbound_access_grants"] = grants
 		}
 		return nil
 	}
@@ -1913,22 +1848,8 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			err = addGroups()
 		}
 		if err == nil {
-			// Entry servers + proxy paths power the subscription assignment UI.
+			// Entry servers + proxy paths power the plan node assignment UI.
 			err = addProxy()
-		}
-		if err == nil {
-			var profiles []model.SubscriptionProfile
-			profiles, err = s.store.ListSubscriptionProfiles(ctx)
-			if err == nil {
-				out["subscription_profiles"] = profiles
-			}
-		}
-		if err == nil {
-			var assignments []model.SubscriptionAssignment
-			assignments, err = s.store.ListSubscriptionAssignments(ctx)
-			if err == nil {
-				out["subscription_assignments"] = assignments
-			}
 		}
 		if err == nil {
 			var plans []model.SubscriptionPlan
@@ -3193,10 +3114,6 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		if err := s.store.DeleteInboundAccessGrantsForServer(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
 		if inbounds, err := s.store.ListInbounds(r.Context()); err != nil {
 			fail(w, err, 500)
 			return
@@ -3205,14 +3122,6 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 				if inbound.ServerID == id {
 					if err := s.deleteDNSInboundRecords(r.Context(), inbound); err != nil {
 						fail(w, err, 502)
-						return
-					}
-					if err := s.store.DeleteInboundUsersForInbound(r.Context(), inbound.ID); err != nil {
-						fail(w, err, 500)
-						return
-					}
-					if err := s.store.DeleteInboundAccessGrantsForInbound(r.Context(), inbound.ID); err != nil {
-						fail(w, err, 500)
 						return
 					}
 					if err := s.store.DeleteProxyPathsForInbound(r.Context(), inbound.ID); err != nil {
@@ -4641,14 +4550,6 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		if actor := currentUser(r); actor != nil {
-			binding := model.InboundUser{InboundID: v.ID, UserID: actor.ID, Enabled: true}
-			if err := s.store.CreateInboundUser(r.Context(), &binding); err != nil {
-				_ = s.store.Delete(r.Context(), "inbounds", v.ID)
-				fail(w, err, 500)
-				return
-			}
-		}
 		auditReq(s, r, "create", "inbound", fmt.Sprint(v.ID))
 		write(w, 201, map[string]any{"inbound": v})
 	case http.MethodPatch:
@@ -4710,16 +4611,6 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, http.StatusConflict)
 			return
 		}
-		if err := s.ensureInboundUserCapacity(r.Context(), v); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.validateAccessCapacityWith(r.Context(), func(data *accessData) {
-			replaceInbound(data, v)
-		}); err != nil {
-			fail(w, err, 400)
-			return
-		}
 		oldDomain := normalizeDomainName(current.DNSDomain)
 		newDomain := normalizeDomainName(v.DNSDomain)
 		if current.DNSSyncEnabled && (!v.DNSSyncEnabled || oldDomain != newDomain) {
@@ -4769,14 +4660,6 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.deleteDNSInboundRecords(r.Context(), *inbound); err != nil {
 			fail(w, err, 502)
-			return
-		}
-		if err := s.store.DeleteInboundUsersForInbound(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.store.DeleteInboundAccessGrantsForInbound(r.Context(), id); err != nil {
-			fail(w, err, 500)
 			return
 		}
 		if err := s.store.DeleteProxyPathsForInbound(r.Context(), id); err != nil {
@@ -4839,92 +4722,6 @@ func (s *Server) ensureInboundListenAvailable(ctx context.Context, v model.Inbou
 	return nil
 }
 
-func (s *Server) inboundUsers(w http.ResponseWriter, r *http.Request) {
-	id := idFromPath(r.URL.Path, "/api/v1/inbound-users/")
-	switch r.Method {
-	case http.MethodGet:
-		if id != 0 {
-			item, err := s.store.GetInboundUser(r.Context(), id)
-			if err != nil {
-				fail(w, err, 404)
-				return
-			}
-			write(w, 200, map[string]any{"inbound_user": item})
-			return
-		}
-		items, err := s.store.ListInboundUsers(r.Context())
-		if err != nil {
-			fail(w, err, 500)
-			return
-		}
-		write(w, 200, map[string]any{"inbound_users": items})
-	case http.MethodPost:
-		var v model.InboundUser
-		if !decode(w, r, &v) {
-			return
-		}
-		if err := s.validateInboundUserBinding(r.Context(), v, 0); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.validateAccessCapacityWith(r.Context(), func(data *accessData) {
-			upsertInboundUser(data, v)
-		}); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.store.CreateInboundUser(r.Context(), &v); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "grant", "inbound-user", fmt.Sprintf("%d:%d", v.InboundID, v.UserID))
-		write(w, 201, map[string]any{"inbound_user": v})
-	case http.MethodPatch:
-		if id == 0 {
-			fail(w, errors.New("missing id"), 400)
-			return
-		}
-		current, err := s.store.GetInboundUser(r.Context(), id)
-		if err != nil {
-			fail(w, err, 404)
-			return
-		}
-		v := *current
-		if !decode(w, r, &v) {
-			return
-		}
-		v.ID = id
-		if err := s.validateInboundUserBinding(r.Context(), v, id); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.validateAccessCapacityWith(r.Context(), func(data *accessData) {
-			replaceInboundUser(data, v)
-		}); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.store.UpdateInboundUser(r.Context(), &v); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		write(w, 200, map[string]any{"inbound_user": v})
-	case http.MethodDelete:
-		if id == 0 {
-			fail(w, errors.New("missing id"), 400)
-			return
-		}
-		if err := s.store.DeleteInboundUser(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "revoke", "inbound-user", fmt.Sprint(id))
-		write(w, 200, map[string]any{"deleted": true})
-	default:
-		method(w)
-	}
-}
-
 func (s *Server) userGroups(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/user-groups/")
 	parts := pathParts(r.URL.Path, "/api/v1/user-groups/")
@@ -4959,12 +4756,6 @@ func (s *Server) userGroups(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		if err := s.validateAccessCapacityWith(r.Context(), func(data *accessData) {
-			data.Groups = append(data.Groups, v)
-		}); err != nil {
-			fail(w, err, 400)
-			return
-		}
 		if err := s.store.CreateUserGroup(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
@@ -4996,12 +4787,6 @@ func (s *Server) userGroups(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		if err := s.validateAccessCapacityWith(r.Context(), func(data *accessData) {
-			replaceUserGroup(data, v)
-		}); err != nil {
-			fail(w, err, 400)
-			return
-		}
 		if err := s.store.UpdateUserGroup(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
@@ -5023,14 +4808,6 @@ func (s *Server) userGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.store.DeleteUserGroupMembersForGroup(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.store.DeleteInboundAccessGrantsForGroup(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.store.DeleteExternalOutboundAccessGrantsForGroup(r.Context(), id); err != nil {
 			fail(w, err, 500)
 			return
 		}
@@ -5073,12 +4850,6 @@ func (s *Server) userGroupMembers(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		if err := s.validateAccessCapacityWith(r.Context(), func(data *accessData) {
-			upsertUserGroupMember(data, v)
-		}); err != nil {
-			fail(w, err, 400)
-			return
-		}
 		if err := s.store.CreateUserGroupMember(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
@@ -5108,12 +4879,6 @@ func (s *Server) userGroupMembers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.validateUserGroupMember(r.Context(), v); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.validateAccessCapacityWith(r.Context(), func(data *accessData) {
-			replaceUserGroupMember(data, v)
-		}); err != nil {
 			fail(w, err, 400)
 			return
 		}
@@ -5161,196 +4926,6 @@ func (s *Server) protectedAdminMembership(ctx context.Context, member model.User
 	return s.store.IsBootstrapAdmin(ctx, member.UserID)
 }
 
-func (s *Server) inboundAccessGrants(w http.ResponseWriter, r *http.Request) {
-	id := idFromPath(r.URL.Path, "/api/v1/inbound-access-grants/")
-	switch r.Method {
-	case http.MethodGet:
-		if id != 0 {
-			item, err := s.store.GetInboundAccessGrant(r.Context(), id)
-			if err != nil {
-				fail(w, err, 404)
-				return
-			}
-			write(w, 200, map[string]any{"inbound_access_grant": item})
-			return
-		}
-		items, err := s.store.ListInboundAccessGrants(r.Context())
-		if err != nil {
-			fail(w, err, 500)
-			return
-		}
-		write(w, 200, map[string]any{"inbound_access_grants": items})
-	case http.MethodPost:
-		var v model.InboundAccessGrant
-		if !decode(w, r, &v) {
-			return
-		}
-		if err := s.validateInboundAccessGrant(r.Context(), &v, 0); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.validateAccessCapacityWith(r.Context(), func(data *accessData) {
-			data.Grants = append(data.Grants, v)
-		}); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.store.CreateInboundAccessGrant(r.Context(), &v); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "grant", "inbound-access", fmt.Sprint(v.ID))
-		write(w, 201, map[string]any{"inbound_access_grant": v})
-	case http.MethodPatch:
-		if id == 0 {
-			fail(w, errors.New("missing id"), 400)
-			return
-		}
-		current, err := s.store.GetInboundAccessGrant(r.Context(), id)
-		if err != nil {
-			fail(w, err, 404)
-			return
-		}
-		v := *current
-		if !decode(w, r, &v) {
-			return
-		}
-		v.ID = id
-		if err := s.validateInboundAccessGrant(r.Context(), &v, id); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.validateAccessCapacityWith(r.Context(), func(data *accessData) {
-			replaceInboundAccessGrant(data, v)
-		}); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.store.UpdateInboundAccessGrant(r.Context(), &v); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "update", "inbound-access", fmt.Sprint(id))
-		write(w, 200, map[string]any{"inbound_access_grant": v})
-	case http.MethodDelete:
-		if id == 0 {
-			fail(w, errors.New("missing id"), 400)
-			return
-		}
-		if err := s.store.Delete(r.Context(), "inbound_access_grants", id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "revoke", "inbound-access", fmt.Sprint(id))
-		write(w, 200, map[string]any{"deleted": true})
-	default:
-		method(w)
-	}
-}
-
-type inboundAccessSyncRequest struct {
-	ScopeType    model.AccessScopeType `json:"scope_type"`
-	ServerID     *int64                `json:"server_id,omitempty"`
-	InboundID    *int64                `json:"inbound_id,omitempty"`
-	ProxyPathIDs []int64               `json:"proxy_path_ids,omitempty"`
-	UserIDs      []int64               `json:"user_ids"`
-	GroupIDs     []int64               `json:"group_ids"`
-}
-
-func (s *Server) syncInboundAccessGrants(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		method(w)
-		return
-	}
-	var req inboundAccessSyncRequest
-	if !decode(w, r, &req) {
-		return
-	}
-	req.ProxyPathIDs = uniquePositiveIDs(req.ProxyPathIDs)
-	req.UserIDs = uniquePositiveIDs(req.UserIDs)
-	req.GroupIDs = uniquePositiveIDs(req.GroupIDs)
-	switch req.ScopeType {
-	case model.AccessScopeServer:
-		req.InboundID = nil
-		req.ProxyPathIDs = nil
-	case model.AccessScopeInbound:
-		req.ServerID = nil
-		req.ProxyPathIDs = nil
-	case model.AccessScopeProxyPath:
-		req.ServerID = nil
-		req.InboundID = nil
-	}
-	if err := s.validateInboundAccessSyncRequest(r.Context(), req); err != nil {
-		fail(w, err, http.StatusBadRequest)
-		return
-	}
-	data, err := s.loadAccessData(r.Context())
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	applyInboundAccessSync(data, req)
-	if err := core.ValidateProxyPathAccessCapacity(data.Paths, data.Inbounds, data.Users, data.InboundUsers, data.Groups, data.Members, data.Grants); err != nil {
-		fail(w, err, http.StatusBadRequest)
-		return
-	}
-	if err := s.store.SyncInboundAccessScope(r.Context(), req.ScopeType, req.ServerID, req.InboundID, req.ProxyPathIDs, req.UserIDs, req.GroupIDs); err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	auditReq(s, r, "sync", "inbound-access", string(req.ScopeType))
-	grants, err := s.store.ListInboundAccessGrants(r.Context())
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	bindings, err := s.store.ListInboundUsers(r.Context())
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	write(w, http.StatusOK, map[string]any{"inbound_access_grants": grants, "inbound_users": bindings})
-}
-
-func (s *Server) validateInboundAccessSyncRequest(ctx context.Context, req inboundAccessSyncRequest) error {
-	for _, userID := range req.UserIDs {
-		if _, err := s.store.GetUser(ctx, userID); err != nil {
-			return fmt.Errorf("user_id %d: %w", userID, err)
-		}
-	}
-	for _, groupID := range req.GroupIDs {
-		if _, err := s.store.GetUserGroup(ctx, groupID); err != nil {
-			return fmt.Errorf("group_id %d: %w", groupID, err)
-		}
-	}
-	switch req.ScopeType {
-	case model.AccessScopeServer:
-		if req.ServerID == nil || *req.ServerID <= 0 {
-			return errors.New("server_id required for server scope")
-		}
-		_, err := s.store.GetServer(ctx, *req.ServerID)
-		return err
-	case model.AccessScopeInbound:
-		if req.InboundID == nil || *req.InboundID <= 0 {
-			return errors.New("inbound_id required for inbound scope")
-		}
-		_, err := s.store.GetInbound(ctx, *req.InboundID)
-		return err
-	case model.AccessScopeProxyPath:
-		if len(req.ProxyPathIDs) == 0 {
-			return errors.New("proxy_path_ids required for proxy_path scope")
-		}
-		for _, pathID := range req.ProxyPathIDs {
-			if _, err := s.store.GetProxyPath(ctx, pathID); err != nil {
-				return fmt.Errorf("proxy_path_id %d: %w", pathID, err)
-			}
-		}
-		return nil
-	default:
-		return errors.New("scope_type must be server, inbound or proxy_path")
-	}
-}
-
 func uniquePositiveIDs(ids []int64) []int64 {
 	seen := map[int64]bool{}
 	out := make([]int64, 0, len(ids))
@@ -5364,142 +4939,7 @@ func uniquePositiveIDs(ids []int64) []int64 {
 	return out
 }
 
-func applyInboundAccessSync(data *accessData, req inboundAccessSyncRequest) {
-	pathIDs := map[int64]bool{}
-	for _, pathID := range req.ProxyPathIDs {
-		pathIDs[pathID] = true
-	}
-	filteredGrants := data.Grants[:0]
-	for _, grant := range data.Grants {
-		remove := grant.ScopeType == req.ScopeType && ((req.ScopeType == model.AccessScopeServer && grant.ServerID != nil && req.ServerID != nil && *grant.ServerID == *req.ServerID) || (req.ScopeType == model.AccessScopeInbound && grant.InboundID != nil && req.InboundID != nil && *grant.InboundID == *req.InboundID) || (req.ScopeType == model.AccessScopeProxyPath && grant.ProxyPathID != nil && pathIDs[*grant.ProxyPathID]))
-		if !remove {
-			filteredGrants = append(filteredGrants, grant)
-		}
-	}
-	data.Grants = filteredGrants
-	if req.ScopeType == model.AccessScopeInbound && req.InboundID != nil {
-		filteredBindings := data.InboundUsers[:0]
-		for _, binding := range data.InboundUsers {
-			if binding.InboundID != *req.InboundID {
-				filteredBindings = append(filteredBindings, binding)
-			}
-		}
-		data.InboundUsers = filteredBindings
-		for _, userID := range req.UserIDs {
-			data.InboundUsers = append(data.InboundUsers, model.InboundUser{InboundID: *req.InboundID, UserID: userID, Enabled: true})
-		}
-	}
-	appendGrant := func(subjectType model.AccessSubjectType, subjectID int64, pathID *int64) {
-		data.Grants = append(data.Grants, model.InboundAccessGrant{SubjectType: subjectType, SubjectID: subjectID, ScopeType: req.ScopeType, ServerID: req.ServerID, InboundID: req.InboundID, ProxyPathID: pathID, Enabled: true})
-	}
-	if req.ScopeType == model.AccessScopeInbound {
-		for _, groupID := range req.GroupIDs {
-			appendGrant(model.AccessSubjectGroup, groupID, nil)
-		}
-		return
-	}
-	if req.ScopeType == model.AccessScopeProxyPath {
-		for _, pathID := range req.ProxyPathIDs {
-			pathID := pathID
-			for _, userID := range req.UserIDs {
-				appendGrant(model.AccessSubjectUser, userID, &pathID)
-			}
-			for _, groupID := range req.GroupIDs {
-				appendGrant(model.AccessSubjectGroup, groupID, &pathID)
-			}
-		}
-		return
-	}
-	for _, userID := range req.UserIDs {
-		appendGrant(model.AccessSubjectUser, userID, nil)
-	}
-	for _, groupID := range req.GroupIDs {
-		appendGrant(model.AccessSubjectGroup, groupID, nil)
-	}
-}
-
-func (s *Server) ensureInboundUserCapacity(ctx context.Context, inbound model.Inbound) error {
-	if core.InboundSupportsMultipleUsers(inbound) {
-		return nil
-	}
-	bindings, err := s.store.ListInboundUsersForInbound(ctx, inbound.ID)
-	if err != nil {
-		return err
-	}
-	active := 0
-	for _, binding := range bindings {
-		if binding.Enabled {
-			active++
-		}
-	}
-	if active > 1 {
-		return errors.New("this inbound type supports only one user")
-	}
-	return nil
-}
-
-type accessData struct {
-	Inbounds     []model.Inbound
-	Paths        []model.ProxyPath
-	Users        []model.User
-	InboundUsers []model.InboundUser
-	Groups       []model.UserGroup
-	Members      []model.UserGroupMember
-	Grants       []model.InboundAccessGrant
-}
-
-func (s *Server) loadAccessData(ctx context.Context) (*accessData, error) {
-	users, err := s.store.ListUsers(ctx)
-	if err != nil {
-		return nil, err
-	}
-	inbounds, err := s.store.ListInbounds(ctx)
-	if err != nil {
-		return nil, err
-	}
-	inboundUsers, err := s.store.ListInboundUsers(ctx)
-	if err != nil {
-		return nil, err
-	}
-	groups, err := s.store.ListUserGroups(ctx)
-	if err != nil {
-		return nil, err
-	}
-	members, err := s.store.ListUserGroupMembers(ctx)
-	if err != nil {
-		return nil, err
-	}
-	grants, err := s.store.ListInboundAccessGrants(ctx)
-	if err != nil {
-		return nil, err
-	}
-	paths, err := s.store.ListProxyPaths(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &accessData{Inbounds: inbounds, Paths: paths, Users: users, InboundUsers: inboundUsers, Groups: groups, Members: members, Grants: grants}, nil
-}
-
-func (s *Server) validateAccessCapacityWith(ctx context.Context, mutate func(*accessData)) error {
-	data, err := s.loadAccessData(ctx)
-	if err != nil {
-		return err
-	}
-	if mutate != nil {
-		mutate(data)
-	}
-	return core.ValidateProxyPathAccessCapacity(data.Paths, data.Inbounds, data.Users, data.InboundUsers, data.Groups, data.Members, data.Grants)
-}
-
-func effectiveInboundUsersForRouting(data store.FullRoutingConfig) []model.InboundUser {
-	return core.EffectiveInboundUsers(data.Inbounds, data.Users, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
-}
-
-func effectiveProxyPathUsersForRouting(data store.FullRoutingConfig) []model.ProxyPathUser {
-	return core.EffectiveProxyPathUsers(data.ProxyPaths, data.Inbounds, data.Users, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
-}
-
-func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, users []model.User, groups []model.UserGroup, members []model.UserGroupMember, accountingUsers map[int64]bool, userPolicies map[int64]core.UserLimitPolicy) (map[int64]model.TrafficRuntimePolicy, error) {
+func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, users []model.User, accountingUsers map[int64]bool, userPolicies map[int64]core.UserLimitPolicy) (map[int64]model.TrafficRuntimePolicy, error) {
 	settings, _ := s.store.ListSettings(ctx)
 	loc := trafficLocation(settings)
 	enforcement := trafficEnforcementMode(settings)
@@ -5517,7 +4957,7 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 		}
 		limit, okLimit := userPolicies[user.ID]
 		if !okLimit {
-			limit = core.EffectiveUserLimitPolicy(user, groups, members)
+			limit = defaultUserLimitPolicy(user)
 		}
 		periodKey, start, end := trafficWindow(time.Now(), limit.TrafficResetMode, limit.TrafficResetDay, loc)
 		period, err := s.store.EnsureTrafficPeriod(ctx, user.ID, periodKey, start, end, limit.TrafficLimitBytes)
@@ -5675,191 +5115,6 @@ func (s *Server) validateUserGroupMember(ctx context.Context, v model.UserGroupM
 	}
 	if _, err := s.store.GetUser(ctx, v.UserID); err != nil {
 		return fmt.Errorf("user_id: %w", err)
-	}
-	return nil
-}
-
-func (s *Server) validateInboundAccessGrant(ctx context.Context, v *model.InboundAccessGrant, currentID int64) error {
-	switch v.SubjectType {
-	case model.AccessSubjectUser:
-		if _, err := s.store.GetUser(ctx, v.SubjectID); err != nil {
-			return fmt.Errorf("subject_id: %w", err)
-		}
-	case model.AccessSubjectGroup:
-		if _, err := s.store.GetUserGroup(ctx, v.SubjectID); err != nil {
-			return fmt.Errorf("subject_id: %w", err)
-		}
-	default:
-		return errors.New("subject_type must be user or group")
-	}
-	switch v.ScopeType {
-	case model.AccessScopeGlobal:
-		v.ServerID = nil
-		v.InboundID = nil
-		v.ProxyPathID = nil
-	case model.AccessScopeServer:
-		if v.ServerID == nil || *v.ServerID == 0 {
-			return errors.New("server_id required for server scope")
-		}
-		if _, err := s.store.GetServer(ctx, *v.ServerID); err != nil {
-			return fmt.Errorf("server_id: %w", err)
-		}
-		v.InboundID = nil
-		v.ProxyPathID = nil
-	case model.AccessScopeInbound:
-		if v.InboundID == nil || *v.InboundID == 0 {
-			return errors.New("inbound_id required for inbound scope")
-		}
-		if _, err := s.store.GetInbound(ctx, *v.InboundID); err != nil {
-			return fmt.Errorf("inbound_id: %w", err)
-		}
-		v.ServerID = nil
-		v.ProxyPathID = nil
-	case model.AccessScopeProxyPath:
-		if v.ProxyPathID == nil || *v.ProxyPathID == 0 {
-			return errors.New("proxy_path_id required for proxy_path scope")
-		}
-		if _, err := s.store.GetProxyPath(ctx, *v.ProxyPathID); err != nil {
-			return fmt.Errorf("proxy_path_id: %w", err)
-		}
-		v.ServerID = nil
-		v.InboundID = nil
-	default:
-		return errors.New("scope_type must be global, server, inbound or proxy_path")
-	}
-	items, err := s.store.ListInboundAccessGrants(ctx)
-	if err != nil {
-		return err
-	}
-	for _, item := range items {
-		if item.ID == currentID {
-			continue
-		}
-		if sameInboundAccessGrant(item, *v) {
-			return errors.New("same access grant already exists")
-		}
-	}
-	return nil
-}
-
-func sameInboundAccessGrant(a, b model.InboundAccessGrant) bool {
-	return a.SubjectType == b.SubjectType && a.SubjectID == b.SubjectID && a.ScopeType == b.ScopeType && ptrInt64Equal(a.ServerID, b.ServerID) && ptrInt64Equal(a.InboundID, b.InboundID) && ptrInt64Equal(a.ProxyPathID, b.ProxyPathID)
-}
-
-func ptrInt64Equal(a, b *int64) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
-func upsertInboundUser(data *accessData, v model.InboundUser) {
-	for i := range data.InboundUsers {
-		if data.InboundUsers[i].InboundID == v.InboundID && data.InboundUsers[i].UserID == v.UserID {
-			v.ID = data.InboundUsers[i].ID
-			data.InboundUsers[i] = v
-			return
-		}
-	}
-	data.InboundUsers = append(data.InboundUsers, v)
-}
-
-func replaceInboundUser(data *accessData, v model.InboundUser) {
-	for i := range data.InboundUsers {
-		if data.InboundUsers[i].ID == v.ID {
-			data.InboundUsers[i] = v
-			return
-		}
-	}
-	data.InboundUsers = append(data.InboundUsers, v)
-}
-
-func replaceUser(data *accessData, v model.User) {
-	for i := range data.Users {
-		if data.Users[i].ID == v.ID {
-			data.Users[i] = v
-			return
-		}
-	}
-	data.Users = append(data.Users, v)
-}
-
-func replaceInbound(data *accessData, v model.Inbound) {
-	for i := range data.Inbounds {
-		if data.Inbounds[i].ID == v.ID {
-			data.Inbounds[i] = v
-			return
-		}
-	}
-	data.Inbounds = append(data.Inbounds, v)
-}
-
-func replaceUserGroup(data *accessData, v model.UserGroup) {
-	for i := range data.Groups {
-		if data.Groups[i].ID == v.ID {
-			data.Groups[i] = v
-			return
-		}
-	}
-	data.Groups = append(data.Groups, v)
-}
-
-func upsertUserGroupMember(data *accessData, v model.UserGroupMember) {
-	for i := range data.Members {
-		if data.Members[i].GroupID == v.GroupID && data.Members[i].UserID == v.UserID {
-			v.ID = data.Members[i].ID
-			data.Members[i] = v
-			return
-		}
-	}
-	data.Members = append(data.Members, v)
-}
-
-func replaceUserGroupMember(data *accessData, v model.UserGroupMember) {
-	for i := range data.Members {
-		if data.Members[i].ID == v.ID {
-			data.Members[i] = v
-			return
-		}
-	}
-	data.Members = append(data.Members, v)
-}
-
-func replaceInboundAccessGrant(data *accessData, v model.InboundAccessGrant) {
-	for i := range data.Grants {
-		if data.Grants[i].ID == v.ID {
-			data.Grants[i] = v
-			return
-		}
-	}
-	data.Grants = append(data.Grants, v)
-}
-
-func (s *Server) validateInboundUserBinding(ctx context.Context, v model.InboundUser, currentID int64) error {
-	if v.InboundID == 0 || v.UserID == 0 {
-		return errors.New("inbound_id and user_id required")
-	}
-	inbound, err := s.store.GetInbound(ctx, v.InboundID)
-	if err != nil {
-		return err
-	}
-	if _, err := s.store.GetUser(ctx, v.UserID); err != nil {
-		return err
-	}
-	if !v.Enabled {
-		return nil
-	}
-	if core.InboundSupportsMultipleUsers(*inbound) {
-		return nil
-	}
-	existing, err := s.store.ListInboundUsersForInbound(ctx, v.InboundID)
-	if err != nil {
-		return err
-	}
-	for _, item := range existing {
-		if item.ID != currentID && item.Enabled && item.UserID != v.UserID {
-			return errors.New("this inbound type supports only one user")
-		}
 	}
 	return nil
 }
@@ -6620,10 +5875,6 @@ func (s *Server) externalOutbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, http.StatusConflict)
 			return
 		}
-		if err := s.store.DeleteExternalOutboundAccessGrantsForExternal(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
 		if err := s.store.DeleteProxyPathStepsForExternal(r.Context(), id); err != nil {
 			fail(w, err, 500)
 			return
@@ -7185,115 +6436,6 @@ func validateSocksExternalConfig(raw string) error {
 	}
 	if version := strings.TrimSpace(stringFromMap(cfg, "version")); version != "" && version != "4" && version != "4a" && version != "5" {
 		return errors.New("socks version must be 4, 4a or 5")
-	}
-	return nil
-}
-
-func (s *Server) externalOutboundAccessGrants(w http.ResponseWriter, r *http.Request) {
-	id := idFromPath(r.URL.Path, "/api/v1/external-outbound-access-grants/")
-	switch r.Method {
-	case http.MethodGet:
-		if id != 0 {
-			item, err := s.store.GetExternalOutboundAccessGrant(r.Context(), id)
-			if err != nil {
-				fail(w, err, 404)
-				return
-			}
-			write(w, 200, map[string]any{"external_outbound_access_grant": item})
-			return
-		}
-		items, err := s.store.ListExternalOutboundAccessGrants(r.Context())
-		if err != nil {
-			fail(w, err, 500)
-			return
-		}
-		write(w, 200, map[string]any{"external_outbound_access_grants": items})
-	case http.MethodPost:
-		var v model.ExternalOutboundAccessGrant
-		if !decode(w, r, &v) {
-			return
-		}
-		if err := s.validateExternalOutboundAccessGrant(r.Context(), &v, 0); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.store.CreateExternalOutboundAccessGrant(r.Context(), &v); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "grant", "external-outbound-access", fmt.Sprint(v.ID))
-		write(w, 201, map[string]any{"external_outbound_access_grant": v})
-	case http.MethodPatch:
-		if id == 0 {
-			fail(w, errors.New("missing id"), 400)
-			return
-		}
-		current, err := s.store.GetExternalOutboundAccessGrant(r.Context(), id)
-		if err != nil {
-			fail(w, err, 404)
-			return
-		}
-		v := *current
-		if !decode(w, r, &v) {
-			return
-		}
-		v.ID = id
-		if err := s.validateExternalOutboundAccessGrant(r.Context(), &v, id); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.store.UpdateExternalOutboundAccessGrant(r.Context(), &v); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "update", "external-outbound-access", fmt.Sprint(id))
-		write(w, 200, map[string]any{"external_outbound_access_grant": v})
-	case http.MethodDelete:
-		if id == 0 {
-			fail(w, errors.New("missing id"), 400)
-			return
-		}
-		if err := s.store.Delete(r.Context(), "external_outbound_access_grants", id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "revoke", "external-outbound-access", fmt.Sprint(id))
-		write(w, 200, map[string]any{"deleted": true})
-	default:
-		method(w)
-	}
-}
-
-func (s *Server) validateExternalOutboundAccessGrant(ctx context.Context, v *model.ExternalOutboundAccessGrant, currentID int64) error {
-	if v.ExternalOutboundID == 0 {
-		return errors.New("external_outbound_id required")
-	}
-	if _, err := s.store.GetExternalOutbound(ctx, v.ExternalOutboundID); err != nil {
-		return fmt.Errorf("external_outbound_id: %w", err)
-	}
-	switch v.SubjectType {
-	case model.AccessSubjectUser:
-		if _, err := s.store.GetUser(ctx, v.SubjectID); err != nil {
-			return fmt.Errorf("subject_id: %w", err)
-		}
-	case model.AccessSubjectGroup:
-		if _, err := s.store.GetUserGroup(ctx, v.SubjectID); err != nil {
-			return fmt.Errorf("subject_id: %w", err)
-		}
-	default:
-		return errors.New("subject_type must be user or group")
-	}
-	items, err := s.store.ListExternalOutboundAccessGrants(ctx)
-	if err != nil {
-		return err
-	}
-	for _, item := range items {
-		if item.ID == currentID {
-			continue
-		}
-		if item.ExternalOutboundID == v.ExternalOutboundID && item.SubjectType == v.SubjectType && item.SubjectID == v.SubjectID {
-			return errors.New("same access grant already exists")
-		}
 	}
 	return nil
 }
@@ -8826,12 +7968,6 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		if err := s.validateAccessCapacityWith(r.Context(), func(data *accessData) {
-			replaceUser(data, u)
-		}); err != nil {
-			fail(w, err, 400)
-			return
-		}
 		if err := s.store.UpdateUser(r.Context(), &u); err != nil {
 			fail(w, err, 500)
 			return
@@ -8862,23 +7998,7 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 404)
 			return
 		}
-		if err := s.store.DeleteSubscriptionAssignmentsForUser(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.store.DeleteInboundUsersForUser(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
 		if err := s.store.DeleteUserGroupMembersForUser(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.store.DeleteInboundAccessGrantsForUser(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.store.DeleteExternalOutboundAccessGrantsForUser(r.Context(), id); err != nil {
 			fail(w, err, 500)
 			return
 		}
@@ -8946,7 +8066,7 @@ func (s *Server) withTrafficStatus(ctx context.Context, users []model.User) []mo
 		users[i].Protected, _ = s.store.IsBootstrapAdmin(ctx, users[i].ID)
 		limit, okLimit := userPolicies[users[i].ID]
 		if !okLimit {
-			limit = core.EffectiveUserLimitPolicy(users[i], groups, members)
+			limit = defaultUserLimitPolicy(users[i])
 		}
 		periodKey, start, end := trafficWindow(time.Now(), limit.TrafficResetMode, limit.TrafficResetDay, loc)
 		period, err := s.store.EnsureTrafficPeriod(ctx, users[i].ID, periodKey, start, end, limit.TrafficLimitBytes)
@@ -9087,233 +8207,6 @@ func (s *Server) userSubscriptionAge(w http.ResponseWriter, r *http.Request, id 
 	}
 	auditReq(s, r, "update", "subscription-age", fmt.Sprint(id))
 	write(w, 200, map[string]any{"user": user})
-}
-
-func (s *Server) subscriptionProfiles(w http.ResponseWriter, r *http.Request) {
-	id := idFromPath(r.URL.Path, "/api/v1/subscription-profiles/")
-	switch r.Method {
-	case http.MethodGet:
-		if id != 0 {
-			item, err := s.store.GetSubscriptionProfile(r.Context(), id)
-			if err != nil {
-				fail(w, err, 404)
-				return
-			}
-			write(w, 200, map[string]any{"subscription_profile": item})
-			return
-		}
-		items, err := s.store.ListSubscriptionProfiles(r.Context())
-		if err != nil {
-			fail(w, err, 500)
-			return
-		}
-		write(w, 200, map[string]any{"subscription_profiles": items})
-	case http.MethodPost:
-		var v model.SubscriptionProfile
-		if !decode(w, r, &v) {
-			return
-		}
-		if err := validateSubscriptionProfile(&v); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.store.CreateSubscriptionProfile(r.Context(), &v); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "create", "subscription-profile", fmt.Sprint(v.ID))
-		write(w, 201, map[string]any{"subscription_profile": v})
-	case http.MethodPatch:
-		if id == 0 {
-			fail(w, errors.New("missing id"), 400)
-			return
-		}
-		current, err := s.store.GetSubscriptionProfile(r.Context(), id)
-		if err != nil {
-			fail(w, err, 404)
-			return
-		}
-		var v model.SubscriptionProfile
-		if !decode(w, r, &v) {
-			return
-		}
-		mergeSubscriptionProfilePatch(&v, current)
-		v.ID = id
-		if err := validateSubscriptionProfile(&v); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.store.UpdateSubscriptionProfile(r.Context(), &v); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "update", "subscription-profile", fmt.Sprint(id))
-		write(w, 200, map[string]any{"subscription_profile": v})
-	case http.MethodDelete:
-		if id == 0 {
-			fail(w, errors.New("missing id"), 400)
-			return
-		}
-		if err := s.store.DeleteSubscriptionAssignmentsForProfile(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.store.Delete(r.Context(), "subscription_profiles", id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "delete", "subscription-profile", fmt.Sprint(id))
-		write(w, 200, map[string]any{"deleted": true})
-	default:
-		method(w)
-	}
-}
-
-func (s *Server) subscriptionAssignments(w http.ResponseWriter, r *http.Request) {
-	id := idFromPath(r.URL.Path, "/api/v1/subscription-assignments/")
-	switch r.Method {
-	case http.MethodGet:
-		if id != 0 {
-			item, err := s.store.GetSubscriptionAssignment(r.Context(), id)
-			if err != nil {
-				fail(w, err, 404)
-				return
-			}
-			write(w, 200, map[string]any{"subscription_assignment": item})
-			return
-		}
-		items, err := s.store.ListSubscriptionAssignments(r.Context())
-		if err != nil {
-			fail(w, err, 500)
-			return
-		}
-		write(w, 200, map[string]any{"subscription_assignments": items})
-	case http.MethodPost:
-		var v model.SubscriptionAssignment
-		if !decode(w, r, &v) {
-			return
-		}
-		if err := s.validateSubscriptionAssignment(r.Context(), &v); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.store.CreateSubscriptionAssignment(r.Context(), &v); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "create", "subscription-assignment", fmt.Sprint(v.ID))
-		write(w, 201, map[string]any{"subscription_assignment": v})
-	case http.MethodPatch:
-		if id == 0 {
-			fail(w, errors.New("missing id"), 400)
-			return
-		}
-		current, err := s.store.GetSubscriptionAssignment(r.Context(), id)
-		if err != nil {
-			fail(w, err, 404)
-			return
-		}
-		var v model.SubscriptionAssignment
-		if !decode(w, r, &v) {
-			return
-		}
-		mergeSubscriptionAssignmentPatch(&v, current)
-		v.ID = id
-		if err := s.validateSubscriptionAssignment(r.Context(), &v); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if err := s.store.UpdateSubscriptionAssignment(r.Context(), &v); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "update", "subscription-assignment", fmt.Sprint(id))
-		write(w, 200, map[string]any{"subscription_assignment": v})
-	case http.MethodDelete:
-		if id == 0 {
-			fail(w, errors.New("missing id"), 400)
-			return
-		}
-		if err := s.store.Delete(r.Context(), "subscription_assignments", id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "delete", "subscription-assignment", fmt.Sprint(id))
-		write(w, 200, map[string]any{"deleted": true})
-	default:
-		method(w)
-	}
-}
-
-func validateSubscriptionProfile(v *model.SubscriptionProfile) error {
-	if strings.TrimSpace(v.Name) == "" {
-		return errors.New("name required")
-	}
-	if strings.TrimSpace(v.GroupName) == "" {
-		v.GroupName = "default"
-	}
-	if v.ConfigJSON == "" {
-		v.ConfigJSON = "{}"
-	}
-	return validJSONObject(v.ConfigJSON)
-}
-
-func (s *Server) validateSubscriptionAssignment(ctx context.Context, v *model.SubscriptionAssignment) error {
-	if v.ProfileID == 0 || v.UserID == 0 {
-		return errors.New("profile_id and user_id are required")
-	}
-	if _, err := s.store.GetSubscriptionProfile(ctx, v.ProfileID); err != nil {
-		return fmt.Errorf("profile_id: %w", err)
-	}
-	if _, err := s.store.GetUser(ctx, v.UserID); err != nil {
-		return fmt.Errorf("user_id: %w", err)
-	}
-	if v.ServerID != nil {
-		if _, err := s.store.GetServer(ctx, *v.ServerID); err != nil {
-			return fmt.Errorf("server_id: %w", err)
-		}
-	}
-	if v.InboundID != nil {
-		if _, err := s.store.GetInbound(ctx, *v.InboundID); err != nil {
-			return fmt.Errorf("inbound_id: %w", err)
-		}
-	}
-	return nil
-}
-
-func mergeSubscriptionProfilePatch(v *model.SubscriptionProfile, current *model.SubscriptionProfile) {
-	if v.Name == "" {
-		v.Name = current.Name
-	}
-	if v.GroupName == "" {
-		v.GroupName = current.GroupName
-	}
-	if v.Description == "" {
-		v.Description = current.Description
-	}
-	if v.ConfigJSON == "" {
-		v.ConfigJSON = current.ConfigJSON
-	}
-	v.Enabled = v.Enabled || current.Enabled
-}
-
-func mergeSubscriptionAssignmentPatch(v *model.SubscriptionAssignment, current *model.SubscriptionAssignment) {
-	if v.ProfileID == 0 {
-		v.ProfileID = current.ProfileID
-	}
-	if v.UserID == 0 {
-		v.UserID = current.UserID
-	}
-	if v.ServerID == nil {
-		v.ServerID = current.ServerID
-	}
-	if v.InboundID == nil {
-		v.InboundID = current.InboundID
-	}
-	if v.GroupName == "" {
-		v.GroupName = current.GroupName
-	}
-	v.Enabled = v.Enabled || current.Enabled
 }
 
 func validateUser(u *model.User) error {
@@ -10806,14 +9699,14 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 		return generatedServerCoreConfig{}, err
 	}
 	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, bindings, pathBindings)
-	trafficPolicies, err := s.trafficRuntimePolicies(ctx, server.ID, data.Users, data.UserGroups, data.UserGroupMembers, accountingUsers, userPolicies)
+	trafficPolicies, err := s.trafficRuntimePolicies(ctx, server.ID, data.Users, accountingUsers, userPolicies)
 	if err != nil {
 		return generatedServerCoreConfig{}, err
 	}
 	config, err := core.GenerateServerConfigWithOptions(server, inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
 		RoutingRules: data.RoutingRules, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
 		Servers: data.Servers, Inbounds: inbounds, WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
-		UserGroups: data.UserGroups, UserGroupMembers: data.UserGroupMembers, UserPolicies: userPolicies, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
+		UserPolicies: userPolicies, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
 		PortLedger: ledger,
 	})
 	if err != nil {
@@ -11111,25 +10004,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, status)
 		return
 	}
-	var profile *model.SubscriptionProfile
-	profileID := int64Query(r, "profile_id", 0)
 	var requestedProfileID *int64
-	if profileID != 0 {
-		requestedProfileID = &profileID
-	}
-	if profileID != 0 {
-		profile, err = s.store.GetSubscriptionProfile(r.Context(), profileID)
-		if err != nil {
-			s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, "subscription profile not found")
-			fail(w, err, 404)
-			return
-		}
-		if !profile.Enabled {
-			s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, "subscription profile is disabled")
-			fail(w, errors.New("subscription profile is disabled"), 403)
-			return
-		}
-	}
 	data, err := s.store.FullRoutingConfigData(r.Context())
 	if err != nil {
 		fail(w, err, 500)
@@ -11142,25 +10017,14 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, deploymentErr, 500)
 		return
 	}
-	assignments, err := s.store.ListSubscriptionAssignmentsForUser(r.Context(), user.ID)
+	snapshot, err := s.buildAccessSnapshot(r.Context(), data)
 	if err != nil {
 		fail(w, err, 500)
 		return
 	}
-	var snapshot *core.EffectiveAccessSnapshot
-	var effectiveNodes map[string]bool
-	var effectiveGroups map[string]string
-	pullPathUsers := effectiveProxyPathUsersForRouting(data)
-	if s.authorizationMode(r.Context()) == model.AuthorizationModePlan {
-		snapshot, err = s.buildAccessSnapshot(r.Context(), data)
-		if err != nil {
-			fail(w, err, 500)
-			return
-		}
-		effectiveNodes = snapshot.EffectiveNodeKeys(user.ID)
-		effectiveGroups = snapshot.EffectiveNodeGroups(user.ID)
-		pullPathUsers = snapshot.ProxyPathUserBindings()
-	}
+	effectiveNodes := snapshot.EffectiveNodeKeys(user.ID)
+	effectiveGroups := snapshot.EffectiveNodeGroups(user.ID)
+	pullPathUsers := snapshot.ProxyPathUserBindings()
 	subscriptionIdentity := sshPasswordDeploymentIdentityForUser(subscriptionUser)
 	for _, server := range servers {
 		plan, planErr := buildSSHInboundPlan(0, server, data, pullPathUsers, nil)
@@ -11186,15 +10050,6 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if effectiveNodes == nil && profileID != 0 {
-		filtered := assignments[:0]
-		for _, assignment := range assignments {
-			if assignment.ProfileID == profileID {
-				filtered = append(filtered, assignment)
-			}
-		}
-		assignments = filtered
-	}
 	opts := core.SubscriptionOptions{
 		Format:                 format,
 		ProxyPaths:             data.ProxyPaths,
@@ -11202,19 +10057,8 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		ProxyPathEgressResults: data.ProxyPathEgressResults,
 		ExternalOutbounds:      data.ExternalOutbounds,
 		SSHServerHostKeys:      sshServerHostKeys,
-	}
-	if effectiveNodes != nil {
-		opts.EffectiveNodes = effectiveNodes
-		opts.EffectiveNodeGroups = effectiveGroups
-	} else {
-		opts.Profile = profile
-		opts.RequireAssignments = profileID != 0
-		opts.Assignments = assignments
-		opts.InboundUsers = core.EffectiveInboundUsers(in, []model.User{subscriptionUser}, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
-		opts.ProxyPathUsers = core.EffectiveProxyPathUsers(data.ProxyPaths, in, []model.User{subscriptionUser}, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
-		opts.ExternalOutboundAccessGrants = data.ExternalOutboundAccessGrants
-		opts.UserGroups = data.UserGroups
-		opts.UserGroupMembers = data.UserGroupMembers
+		EffectiveNodes:         effectiveNodes,
+		EffectiveNodeGroups:    effectiveGroups,
 	}
 	sub, err := core.GenerateSubscriptionWithOptions(subscriptionUser, servers, in, opts)
 	if err != nil {
@@ -11972,46 +10816,40 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accepted := []string{}
-	access, err := s.loadAccessData(r.Context())
+	data, err := s.store.FullRoutingConfigData(r.Context())
 	if err != nil {
 		fail(w, err, 500)
 		return
 	}
-	users := access.Users
-	groups := access.Groups
-	members := access.Members
-	planPolicies, _ := s.userPlanPolicies(r.Context(), users)
+	users := data.Users
+	snapshot, err := s.buildAccessSnapshot(r.Context(), data)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	planPolicies := snapshot.UserLimitPolicyMap()
 	userByID := map[int64]model.User{}
 	for _, u := range users {
 		userByID[u.ID] = u
 	}
 	inboundByID := map[int64]model.Inbound{}
-	for _, inbound := range access.Inbounds {
+	for _, inbound := range data.Inbounds {
 		inboundByID[inbound.ID] = inbound
 	}
 	type accessPair struct{ inboundID, userID, pathID int64 }
 	allowed := map[accessPair]struct{}{}
-	for _, binding := range core.EffectiveInboundUsers(access.Inbounds, access.Users, access.InboundUsers, access.Groups, access.Members, access.Grants) {
+	for _, binding := range snapshot.InboundUserBindings() {
 		if binding.Enabled {
 			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID}] = struct{}{}
 		}
 	}
-	pathBindings := core.EffectiveProxyPathUsers(access.Paths, access.Inbounds, access.Users, access.InboundUsers, access.Groups, access.Members, access.Grants)
+	pathBindings := snapshot.ProxyPathUserBindings()
 	for _, binding := range pathBindings {
 		if binding.Enabled {
 			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID, pathID: binding.ProxyPathID}] = struct{}{}
 		}
 	}
-	paths, err := s.store.ListProxyPaths(r.Context())
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
-	steps, err := s.store.ListProxyPathSteps(r.Context())
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
+	paths, steps := data.ProxyPaths, data.ProxyPathSteps
 	for _, item := range req.Items {
 		if item.Upload < 0 || item.Download < 0 || item.UserID <= 0 {
 			fail(w, errors.New("traffic report is invalid"), 400)
@@ -12032,8 +10870,8 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 				fail(w, errors.New("traffic report path_id must be positive"), 400)
 				return
 			}
-			accountingLocation = core.IsProxyPathAccountingLocation(server.ID, inbound.ID, *item.PathID, paths, steps, access.Inbounds)
-		} else if core.ProxyPathRequiresAccountingPathID(inbound.ID, paths, steps, access.Inbounds) {
+			accountingLocation = core.IsProxyPathAccountingLocation(server.ID, inbound.ID, *item.PathID, paths, steps, data.Inbounds)
+		} else if core.ProxyPathRequiresAccountingPathID(inbound.ID, paths, steps, data.Inbounds) {
 			fail(w, errors.New("traffic report must identify the transparent proxy path"), 400)
 			return
 		}
@@ -12056,7 +10894,7 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 		}
 		limit, okLimit := planPolicies[item.UserID]
 		if !okLimit {
-			limit = core.EffectiveUserLimitPolicy(u, groups, members)
+			limit = defaultUserLimitPolicy(u)
 		}
 		reportedPeriodKey := strings.TrimSpace(item.PeriodKey)
 		if reportedPeriodKey == "" {
@@ -12080,9 +10918,8 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 			s.notifyTrafficQuotaExceeded(r.Context(), u, period)
 		}
 	}
-	effectiveBindings := core.EffectiveInboundUsers(access.Inbounds, access.Users, access.InboundUsers, access.Groups, access.Members, access.Grants)
-	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, paths, steps, access.Inbounds, effectiveBindings, pathBindings)
-	policies, err := s.trafficRuntimePolicies(r.Context(), server.ID, users, groups, members, accountingUsers, nil)
+	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, paths, steps, data.Inbounds, snapshot.InboundUserBindings(), pathBindings)
+	policies, err := s.trafficRuntimePolicies(r.Context(), server.ID, users, accountingUsers, planPolicies)
 	if err != nil {
 		fail(w, err, 500)
 		return

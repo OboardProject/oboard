@@ -100,9 +100,7 @@ func TestAgentConnectionReportsAcknowledgeStaleItemsWithoutBlockingValidReports(
 			t.Fatal(err)
 		}
 	}
-	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: inbound.ID, UserID: activeUser.ID, Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
+	grantTestPlanInboundNode(t, db, activeUser.ID, inbound.ID)
 	nowTime := time.Now().UTC()
 	item := func(reportID string, userID int64) map[string]any {
 		return map[string]any{
@@ -168,9 +166,7 @@ func TestControllerConnectionPresenceIsIdempotent(t *testing.T) {
 	if err := db.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: inbound.ID, UserID: user.ID, Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
+	grantTestPlanInboundNode(t, db, user.ID, inbound.ID)
 	nowTime := time.Now().UTC()
 	event := model.ConnectionPresenceEvent{Sequence: 1, ServerID: server.ID, UserID: user.ID, InboundID: inbound.ID, SourceIP: "198.51.100.10", Network: "tcp", Event: "first_meaningful_payload", State: "active", ActiveConnections: 1, Meaningful: true, PayloadLastAt: nowTime, At: nowTime}
 	sut := newTestServer(db, "test-secret", "")
@@ -261,9 +257,7 @@ func TestAgentConnectionReportsRejectCrossServerInbound(t *testing.T) {
 	if err := db.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: inboundB.ID, UserID: user.ID, Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
+	grantTestPlanInboundNode(t, db, user.ID, inboundB.ID)
 	nowTime := time.Now().UTC()
 	body, err := json.Marshal(map[string]any{"items": []map[string]any{{
 		"report_id": "cross-server-report", "user_id": user.ID, "inbound_id": inboundB.ID,
@@ -312,9 +306,7 @@ func TestAgentConnectionReportsRejectedWhenGlobalAuditDisabled(t *testing.T) {
 	if err := db.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateInboundUser(ctx, &model.InboundUser{InboundID: inbound.ID, UserID: user.ID, Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
+	grantTestPlanInboundNode(t, db, user.ID, inbound.ID)
 	nowTime := time.Now().UTC()
 	body, err := json.Marshal(map[string]any{"items": []map[string]any{{
 		"report_id": "gated-report", "user_id": user.ID, "inbound_id": inbound.ID,

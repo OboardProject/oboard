@@ -205,24 +205,3 @@ func TestEffectiveUserPolicyPrecedence(t *testing.T) {
 		t.Fatalf("override policy = %#v", p)
 	}
 }
-
-func TestCompareLegacyAndPlanAccess(t *testing.T) {
-	now := time.Now()
-	alice := model.User{ID: 1, Username: "alice", Status: "active"}
-	plan := snapshotTestPlan(1, "premium")
-	snapshot := BuildEffectiveAccessSnapshot(EffectiveAccessInput{
-		Users:     []model.User{alice},
-		Bindings:  []model.UserPlanBinding{{UserID: 1, PlanID: 1, Enabled: true}},
-		Plans:     []model.SubscriptionPlan{plan},
-		PlanNodes: []model.SubscriptionPlanNode{snapshotTestNode(model.AssignableNodeProxyPath, 10)},
-		Now:       now,
-	})
-	legacy := LegacyAccessInput{Paths: []model.ProxyPath{{ID: 10, Enabled: true}}}
-	comparison := CompareLegacyAndPlanAccess([]model.User{alice}, legacy, snapshot, 5)
-	if comparison.UsersCompared != 1 || comparison.DivergentUsers != 1 {
-		t.Fatalf("comparison = %#v", comparison)
-	}
-	if len(comparison.SampleDivergences) != 1 || len(comparison.SampleDivergences[0].PlanNodes) != 1 || len(comparison.SampleDivergences[0].LegacyNodes) != 0 {
-		t.Fatalf("divergence = %#v", comparison.SampleDivergences)
-	}
-}

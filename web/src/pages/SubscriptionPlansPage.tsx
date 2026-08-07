@@ -92,13 +92,6 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
   const [syncBusy, setSyncBusy] = React.useState(false)
   const [changes, setChanges] = React.useState<AccessChange[]>([])
   const [message, setMessage] = React.useState('')
-  const [shadowReport, setShadowReport] = React.useState<any>(null)
-  const [shadowBusy, setShadowBusy] = React.useState(false)
-  const [inboundPreview, setInboundPreview] = React.useState<any>(null)
-  const [inboundBusy, setInboundBusy] = React.useState(false)
-  const [matPreview, setMatPreview] = React.useState<any>(null)
-  const [matBusy, setMatBusy] = React.useState(false)
-  const [migMessage, setMigMessage] = React.useState('')
 
   const refreshPlans = async () => {
     const res = await client.request<{ subscription_plans: Plan[] }>('/subscription-plans')
@@ -122,75 +115,6 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
       setChanges(res.access_changes || [])
     } catch { /* 访问变更列表失败时静默，页面主体不受影响 */ }
   }, [client])
-
-  const loadShadowReport = async () => {
-    setShadowBusy(true)
-    setMigMessage('')
-    try {
-      const res = await client.request<any>('/shadow-report')
-      setShadowReport(res.shadow)
-    } catch (e: any) {
-      setMigMessage('报告生成失败：' + (e?.message || String(e)))
-    } finally {
-      setShadowBusy(false)
-    }
-  }
-
-  const runInboundPreview = async () => {
-    setInboundBusy(true)
-    setMigMessage('')
-    try {
-      const res = await client.request<any>('/migrations/standalone-inbounds/preview', { method: 'POST', body: '{}' })
-      setInboundPreview(res)
-    } catch (e: any) {
-      setMigMessage('预览失败：' + (e?.message || String(e)))
-    } finally {
-      setInboundBusy(false)
-    }
-  }
-
-  const runInboundApply = async () => {
-    setInboundBusy(true)
-    setMigMessage('')
-    try {
-      const res = await client.request<any>('/migrations/standalone-inbounds/apply', { method: 'POST', body: '{}' })
-      setInboundPreview(null)
-      setMigMessage(`已创建 ${res.created_count} 条直出路径${res.skipped_count ? `，跳过 ${res.skipped_count} 条` : ''}，受影响服务器已排队部署`)
-      await load()
-    } catch (e: any) {
-      setMigMessage('转换失败：' + (e?.message || String(e)))
-    } finally {
-      setInboundBusy(false)
-    }
-  }
-
-  const runMatPreview = async () => {
-    setMatBusy(true)
-    setMigMessage('')
-    try {
-      const res = await client.request<any>('/migrations/materialize-plans/preview', { method: 'POST', body: '{}' })
-      setMatPreview(res)
-    } catch (e: any) {
-      setMigMessage('物化预览失败：' + (e?.message || String(e)))
-    } finally {
-      setMatBusy(false)
-    }
-  }
-
-  const runMatApply = async () => {
-    setMatBusy(true)
-    setMigMessage('')
-    try {
-      const res = await client.request<any>('/migrations/materialize-plans/apply', { method: 'POST', body: '{}' })
-      setMatPreview(null)
-      setMigMessage(`已创建 ${res.created_count} 个迁移方案并绑定 ${res.bound_users} 个用户${res.skipped_nodes ? `（跳过 ${res.skipped_nodes} 个不可用节点）` : ''}`)
-      await load()
-    } catch (e: any) {
-      setMigMessage('物化失败：' + (e?.message || String(e)))
-    } finally {
-      setMatBusy(false)
-    }
-  }
 
   React.useEffect(() => {
     void refreshPlans()
@@ -616,77 +540,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
             </div>
           </div>
         )}
-        <div className="card-custom" style={{ padding: 16, marginTop: 16 }}>
-          <div className="section-toolbar">
-            <div><h3 style={{ margin: 0 }}>迁移与 Shadow 对比</h3><p className="muted">物化旧授权结果、统一节点类型，并在切换 authorization_mode=plan 前核对差异。</p></div>
-            <Button variant="outline" size="sm" disabled={shadowBusy} onClick={() => void loadShadowReport()}><GitCompareArrows size={14} /> {shadowBusy ? '生成中...' : '生成 Shadow 报告'}</Button>
-          </div>
-          {migMessage && <p style={{ marginTop: 8, color: migMessage.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{migMessage}</p>}
-          {shadowReport && (
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                <span><strong>{shadowReport.users_compared}</strong> 用户</span>
-                <span><strong>{shadowReport.divergent_users}</strong> 节点集合不一致</span>
-                <span><strong>{shadowReport.legacy_node_count}</strong> → <strong>{shadowReport.plan_node_count}</strong> 节点总数</span>
-                <span><strong>{shadowReport.server_divergences?.length || 0}</strong> 服务器认证用户差异</span>
-                <span><strong>{shadowReport.ssh_divergences?.length || 0}</strong> SSH 用户差异</span>
-                <span><strong>{shadowReport.policy_divergences?.length || 0}</strong> 限额差异</span>
-              </div>
-              {(shadowReport.sample_divergences || []).map((d: any, i: number) => (
-                <div key={i} className="card-custom" style={{ padding: 10, fontSize: 13 }}>
-                  <strong>{d.username}</strong>：旧 {d.legacy_nodes?.length || 0} 节点 / 新 {d.plan_nodes?.length || 0} 节点
-                  <div className="muted" style={{ marginTop: 4, wordBreak: 'break-all' }}>旧：{d.legacy_nodes?.join(', ') || '—'}</div>
-                  <div className="muted" style={{ wordBreak: 'break-all' }}>新：{d.plan_nodes?.join(', ') || '—'}</div>
-                </div>
-              ))}
-              {(shadowReport.server_divergences || []).map((d: any, i: number) => (
-                <div key={'s' + i} className="card-custom" style={{ padding: 10, fontSize: 13 }}>
-                  <strong>服务器 {d.server_name || d.server_id}</strong>：旧 {d.legacy_users?.join(', ') || '—'} / 新 {d.plan_users?.join(', ') || '—'}
-                </div>
-              ))}
-              {(shadowReport.ssh_divergences || []).map((d: any, i: number) => (
-                <div key={'h' + i} className="card-custom" style={{ padding: 10, fontSize: 13 }}>
-                  <strong>SSH {d.path_name || d.path_id}</strong>：旧 {d.legacy_users?.join(', ') || '—'} / 新 {d.plan_users?.join(', ') || '—'}
-                </div>
-              ))}
-              {(shadowReport.policy_divergences || []).map((d: any, i: number) => (
-                <div key={'p' + i} className="card-custom" style={{ padding: 10, fontSize: 13 }}>
-                  <strong>{d.username}</strong>：限速 旧 {d.legacy_speed_mbps} / 新 {d.plan_speed_mbps} Mbps · 流量 旧 {fmtBytes(d.legacy_traffic_bytes)} / 新 {fmtBytes(d.plan_traffic_bytes)}
-                </div>
-              ))}
-            </div>
-          )}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12, marginTop: 14 }}>
-            <div className="card-custom" style={{ padding: 12 }}>
-              <h4 style={{ margin: '0 0 6px' }}>独立入口 → 直出路径</h4>
-              <p className="muted" style={{ fontSize: 12 }}>为每个独立入口创建零步骤 direct proxy_path，统一节点类型；凭据切换为路径派生凭据，受影响服务器自动排队完整部署。</p>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <Button size="sm" variant="outline" disabled={inboundBusy} onClick={() => void runInboundPreview()}>预览</Button>
-                <Button size="sm" disabled={inboundBusy || !inboundPreview} onClick={() => void runInboundApply()}>{inboundBusy ? '处理中...' : '执行转换'}</Button>
-              </div>
-              {inboundPreview && (
-                <div style={{ marginTop: 8, fontSize: 12 }} className="muted">
-                  共 {inboundPreview.count} 个独立入口{inboundPreview.standalone_inbounds?.length ? `：${inboundPreview.standalone_inbounds.map((i: any) => `${i.inbound_name}（${i.effective_users} 用户）`).join('、')}` : ''}
-                </div>
-              )}
-            </div>
-            <div className="card-custom" style={{ padding: 12 }}>
-              <h4 style={{ margin: '0 0 6px' }}>物化迁移方案</h4>
-              <p className="muted" style={{ fontSize: 12 }}>按旧授权结果（节点集合 + 限额）自动分组生成方案并绑定用户；重复执行幂等，已匹配的方案不会重复创建。</p>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <Button size="sm" variant="outline" disabled={matBusy} onClick={() => void runMatPreview()}>预览</Button>
-                <Button size="sm" disabled={matBusy || !matPreview} onClick={() => void runMatApply()}>{matBusy ? '处理中...' : '生成方案并绑定'}</Button>
-              </div>
-              {matPreview && (
-                <div style={{ marginTop: 8, fontSize: 12 }} className="muted">
-                  {matPreview.group_count} 个用户分组，将新建 {matPreview.would_create} 个方案
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
       </div>
-
       <Dialog isOpen={createOpen} onClose={() => setCreateOpen(false)} title="新建方案" size="lg">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div className="form" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))' }}>

@@ -12,29 +12,13 @@ import (
 )
 
 type SubscriptionOptions struct {
-	Format  model.SubscriptionFormat
-	Profile *model.SubscriptionProfile
-	// RequireAssignments forces deny-by-default assignment filtering even when
-	// Assignments is empty. Used when a concrete profile_id is requested so an
-	// empty profile cannot fall back to every accessible inbound.
-	RequireAssignments           bool
-	Assignments                  []model.SubscriptionAssignment
-	InboundUsers                 []model.InboundUser
-	ProxyPathUsers               []model.ProxyPathUser
-	ProxyPaths                   []model.ProxyPath
-	ProxyPathSteps               []model.ProxyPathStep
-	ProxyPathEgressResults       []model.ProxyPathEgressResult
-	ExternalOutbounds            []model.ExternalOutbound
-	ExternalOutboundAccessGrants []model.ExternalOutboundAccessGrant
-	UserGroups                   []model.UserGroup
-	UserGroupMembers             []model.UserGroupMember
-	SSHServerHostKeys            map[int64]string
-	// EffectiveNodes, when non-nil, is the plan authorization source: the node
-	// key set this user may use. It replaces Profile/Assignments/InboundUsers/
-	// ProxyPathUsers/ExternalOutboundAccessGrants filtering entirely, so
-	// subscription output and Agent configuration derive from the same
-	// EffectiveAccessSnapshot.
-	EffectiveNodes map[string]bool
+	Format                 model.SubscriptionFormat
+	ProxyPaths             []model.ProxyPath
+	ProxyPathSteps         []model.ProxyPathStep
+	ProxyPathEgressResults []model.ProxyPathEgressResult
+	ExternalOutbounds      []model.ExternalOutbound
+	SSHServerHostKeys      map[int64]string
+	EffectiveNodes         map[string]bool
 	// EffectiveNodeGroups maps node key to the display group from the granting
 	// plan node. Nodes without an explicit group keep the default group.
 	EffectiveNodeGroups map[string]string
@@ -81,55 +65,22 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 	for _, server := range servers {
 		serverByID[server.ID] = server
 	}
-	assignmentByInbound := map[int64]model.SubscriptionAssignment{}
-	serverAssignment := map[int64]model.SubscriptionAssignment{}
-	useAssignments := opts.RequireAssignments
-	for _, a := range opts.Assignments {
-		if !a.Enabled || a.UserID != user.ID || a.ProfileID == 0 {
-			continue
-		}
-		useAssignments = true
-		if a.InboundID != nil {
-			assignmentByInbound[*a.InboundID] = a
-			continue
-		}
-		if a.ServerID != nil {
-			serverAssignment[*a.ServerID] = a
-		}
-	}
 	defaultGroup := "default"
-	if opts.Profile != nil && strings.TrimSpace(opts.Profile.GroupName) != "" {
-		defaultGroup = strings.TrimSpace(opts.Profile.GroupName)
-	}
 	nodes := []SubscriptionNode{}
 	nameRefs := []subscriptionNodeNameRef{}
 	for _, inbound := range inbounds {
 		if !inbound.Enabled {
 			continue
 		}
-		configuredBranches := subscriptionBranchesForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps, 0, nil)
-		authorizedBranches := subscriptionBranchesForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps, user.ID, opts.ProxyPathUsers)
-		inboundAllowed := opts.InboundUsers == nil || subscriptionInboundAllowed(user.ID, inbound.ID, opts.InboundUsers)
-		if opts.EffectiveNodes != nil {
-			planBranches := authorizedBranches[:0]
-			for _, path := range authorizedBranches {
-				if opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeProxyPath, path.ID)] {
-					planBranches = append(planBranches, path)
-				}
+		configuredBranches := subscriptionBranchesForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps)
+		authorizedBranches := configuredBranches[:0]
+		for _, path := range configuredBranches {
+			if opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeProxyPath, path.ID)] {
+				authorizedBranches = append(authorizedBranches, path)
 			}
-			authorizedBranches = planBranches
-			inboundAllowed = opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeInbound, inbound.ID)]
-		} else if opts.ProxyPathUsers == nil && !inboundAllowed {
-			authorizedBranches = nil
 		}
+		inboundAllowed := opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeInbound, inbound.ID)]
 		if !inboundAllowed && len(authorizedBranches) == 0 {
-			continue
-		}
-		assignment, ok := assignmentByInbound[inbound.ID]
-		if !ok {
-			assignment, ok = serverAssignment[inbound.ServerID]
-		}
-		if useAssignments && !ok {
 			continue
 		}
 		server, ok := serverByID[inbound.ServerID]
@@ -142,10 +93,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		}
 		standaloneName := proxyPathServerLabel(server, server.ID)
 		group := defaultGroup
-		if strings.TrimSpace(assignment.GroupName) != "" {
-			group = strings.TrimSpace(assignment.GroupName)
-		}
-		if opts.EffectiveNodes != nil && opts.EffectiveNodeGroups != nil {
+		if opts.EffectiveNodeGroups != nil {
 			for _, path := range authorizedBranches {
 				if g := strings.TrimSpace(opts.EffectiveNodeGroups[NodeKeyOf(model.AssignableNodeProxyPath, path.ID)]); g != "" {
 					group = g
@@ -221,11 +169,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		if !external.Enabled || !external.ExposeToUsers {
 			continue
 		}
-		if opts.EffectiveNodes != nil {
-			if !opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID)] {
-				continue
-			}
-		} else if !subscriptionExternalAllowed(user.ID, external.ID, opts.ExternalOutboundAccessGrants, opts.UserGroups, opts.UserGroupMembers) {
+		if !opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID)] {
 			continue
 		}
 		raw, err := externalOutboundSubscriptionRaw(external)
@@ -237,7 +181,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 			name = fmt.Sprintf("%s-%d", external.Protocol, external.ID)
 		}
 		group := defaultGroup
-		if opts.EffectiveNodes != nil && opts.EffectiveNodeGroups != nil {
+		if opts.EffectiveNodeGroups != nil {
 			if g := strings.TrimSpace(opts.EffectiveNodeGroups[NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID)]); g != "" {
 				group = g
 			}
@@ -378,7 +322,7 @@ func disambiguateSubscriptionNodeNames(nodes []SubscriptionNode, refs []subscrip
 	}
 }
 
-func subscriptionBranchesForInbound(inbound model.Inbound, paths []model.ProxyPath, steps []model.ProxyPathStep, userID int64, pathUsers []model.ProxyPathUser) []model.ProxyPath {
+func subscriptionBranchesForInbound(inbound model.Inbound, paths []model.ProxyPath, steps []model.ProxyPathStep) []model.ProxyPath {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -388,40 +332,12 @@ func subscriptionBranchesForInbound(inbound model.Inbound, paths []model.ProxyPa
 	}
 	out := []model.ProxyPath{}
 	for _, path := range paths {
-		allowed := userID == 0 || pathUsers == nil || ProxyPathUserAllowed(path.ID, userID, pathUsers)
-		if allowed && path.Enabled && path.InboundID == inbound.ID && (path.Kind == model.ProxyPathKindDirect || hasStep[path.ID]) {
+		if path.Enabled && path.InboundID == inbound.ID && (path.Kind == model.ProxyPathKindDirect || hasStep[path.ID]) {
 			out = append(out, path)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
-}
-
-func subscriptionExternalAllowed(userID, externalID int64, grants []model.ExternalOutboundAccessGrant, groups []model.UserGroup, members []model.UserGroupMember) bool {
-	activeGroups := map[int64]bool{}
-	for _, group := range groups {
-		if group.Enabled {
-			activeGroups[group.ID] = true
-		}
-	}
-	userGroups := map[int64]bool{}
-	for _, member := range members {
-		if member.Enabled && member.UserID == userID && activeGroups[member.GroupID] {
-			userGroups[member.GroupID] = true
-		}
-	}
-	for _, grant := range grants {
-		if !grant.Enabled || grant.ExternalOutboundID != externalID {
-			continue
-		}
-		if grant.SubjectType == model.AccessSubjectUser && grant.SubjectID == userID {
-			return true
-		}
-		if grant.SubjectType == model.AccessSubjectGroup && userGroups[grant.SubjectID] {
-			return true
-		}
-	}
-	return false
 }
 
 func externalOutboundSubscriptionRaw(external model.ExternalOutbound) (map[string]any, error) {
@@ -466,15 +382,6 @@ func externalOutboundSubscriptionRaw(external model.ExternalOutbound) (map[strin
 	default:
 		return nil, fmt.Errorf("unsupported imported node protocol %q", external.Protocol)
 	}
-}
-
-func subscriptionInboundAllowed(userID, inboundID int64, bindings []model.InboundUser) bool {
-	for _, binding := range bindings {
-		if binding.Enabled && binding.UserID == userID && binding.InboundID == inboundID {
-			return true
-		}
-	}
-	return false
 }
 
 func renderSingBoxSubscription(nodes []SubscriptionNode) (string, error) {

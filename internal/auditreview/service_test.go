@@ -22,9 +22,14 @@ func TestResolveScopeCombinations(t *testing.T) {
 			{ID: 100, ServerID: 10, Enabled: true},
 			{ID: 200, ServerID: 20, Enabled: true},
 		},
-		InboundUsers: []model.InboundUser{
-			{InboundID: 100, UserID: 1, Enabled: true},
-			{InboundID: 200, UserID: 2, Enabled: true},
+		SubscriptionPlans: []model.SubscriptionPlan{{ID: 1, Name: "plan-a", Enabled: true}, {ID: 2, Name: "plan-b", Enabled: true}},
+		ActivePlanNodes: []model.SubscriptionPlanNode{
+			{PlanID: 1, NodeType: model.AssignableNodeInbound, NodeID: 100, Enabled: true},
+			{PlanID: 2, NodeType: model.AssignableNodeInbound, NodeID: 200, Enabled: true},
+		},
+		PlanBindings: []model.UserPlanBinding{
+			{UserID: 1, PlanID: 1, Enabled: true},
+			{UserID: 2, PlanID: 2, Enabled: true},
 		},
 	}
 	historical := map[int64]map[int64]bool{3: {10: true}}

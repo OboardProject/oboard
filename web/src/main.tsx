@@ -52,7 +52,6 @@ import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetO
 import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
 import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphBranchRouteOffsets, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
 import type { GraphPathFocusState } from './components/proxy-path/graph-topology'
-import { buildProxyPathMatrix, proxyPathMatrixStepScope, type ProxyPathMatrixCell } from './components/proxy-path/matrix'
 import './style.css'
 import logo from './assets/logo.svg'
 import { 
@@ -64,7 +63,7 @@ import {
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
-  ArrowUpDown, GripVertical, ListFilter, Table2, Layers
+  ArrowUpDown, GripVertical, ListFilter, Layers
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -221,11 +220,8 @@ type NotificationChannel = { id: number; owner_user_id: number; owner_username?:
 type NotificationAnnouncement = { id: number; actor_user_id: number; actor_name: string; title: string; body: string; user_ids: number[]; queued_count: number; created_at: string }
 type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'interface'
 type RoutingRule = { id: number; server_id: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; enabled: boolean }
-type ExternalOutboundAccessGrant = { id: number; external_outbound_id: number; subject_type: AccessSubjectType; subject_id: number; enabled: boolean }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
 type SubscriptionFormat = 'stash' | 'clash-meta' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'sing-box-mieru' | 'mieru' | 'v2ray' | 'v2ray-uri' | 'clash'
-type SubscriptionProfile = { id: number; name: string; group_name: string; description: string; config_json: string; enabled: boolean; created_at?: string; updated_at?: string }
-type SubscriptionAssignment = { id: number; profile_id: number; user_id: number; server_id?: number; inbound_id?: number; group_name: string; enabled: boolean }
 type AuditLog = { id: number; actor_id?: number; action: string; target: string; detail: string; ip: string; created_at: string }
 type AuditTone = 'success' | 'warning' | 'danger' | 'neutral'
 type AuditRiskLevel = 'normal' | 'watch' | 'alert' | 'high' | 'critical' | 'confirmed'
@@ -3499,7 +3495,7 @@ function AIProviderRawLogDialog({ client, onClose }: { client: ReturnType<typeof
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'authorization' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3513,7 +3509,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [subscriptionAgePolicy, setSubscriptionAgePolicy] = useState<'optional' | 'required'>(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional')
   const [trafficTimezone, setTrafficTimezone] = useState(data.settings?.traffic_timezone || 'Asia/Shanghai')
   const [trafficMode, setTrafficMode] = useState(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
-  const [authorizationMode, setAuthorizationMode] = useState<string>(data.settings?.authorization_mode || 'legacy')
   const [controllerLogMaxMB, setControllerLogMaxMB] = useState(Number(data.settings?.controller_log_max_mb || 32))
   const [controllerLogBackups, setControllerLogBackups] = useState(Number(data.settings?.controller_log_backups || 5))
   const [serverDefaultMTUMode, setServerDefaultMTUMode] = useState(String(data.settings?.server_default_mtu_mode || 'detect'))
@@ -3545,7 +3540,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     setRegistrationDefaultGroupID(Number(data.settings?.registration_default_group_id || 0))
   }, [data.settings?.registration_enabled, data.settings?.registration_default_group_id])
   useEffect(() => { setTrafficTimezone(data.settings?.traffic_timezone || 'Asia/Shanghai'); setTrafficMode(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject') }, [data.settings?.traffic_timezone, data.settings?.traffic_enforcement_mode])
-  useEffect(() => { setAuthorizationMode(data.settings?.authorization_mode || 'legacy') }, [data.settings?.authorization_mode])
   useEffect(() => {
     setControllerLogMaxMB(Number(data.settings?.controller_log_max_mb || 32))
     setControllerLogBackups(Number(data.settings?.controller_log_backups || 5))
@@ -3649,11 +3643,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ traffic_timezone: trafficTimezone.trim() || 'Asia/Shanghai', traffic_enforcement_mode: trafficMode }) })
     }, '流量控制设置已保存')
   }
-  const saveAuthorizationMode = async () => {
-    await runSave('authorization', async () => {
-      await client.request('/settings', { method: 'POST', body: JSON.stringify({ authorization_mode: authorizationMode }) })
-    }, '授权模式已保存')
-  }
   const saveSubscriptionAgePolicy = async () => {
     await runSave('subscription-age', async () => {
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: subscriptionAgePolicy }) })
@@ -3686,7 +3675,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   return <section className="settings-shell">
     <nav className="settings-tabs" role="tablist" aria-label="设置分类">
       <button className={activeSection === 'connection' ? 'active' : ''} role="tab" aria-selected={activeSection === 'connection'} onClick={() => setActiveSection('connection')}><LinkIcon size={15} />基础设置</button>
-      <button className={activeSection === 'authorization' ? 'active' : ''} role="tab" aria-selected={activeSection === 'authorization'} onClick={() => setActiveSection('authorization')}><ShieldCheck size={15} />授权模式</button>
       <button className={activeSection === 'registration' ? 'active' : ''} role="tab" aria-selected={activeSection === 'registration'} onClick={() => setActiveSection('registration')}><UserPlus size={15} />注册</button>
       <button className={activeSection === 'servers' ? 'active' : ''} role="tab" aria-selected={activeSection === 'servers'} onClick={() => setActiveSection('servers')}><ServerIcon size={15} />服务器默认值</button>
       <button className={activeSection === 'certificates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'certificates'} onClick={() => setActiveSection('certificates')}><Lock size={15} />证书</button>
@@ -3776,23 +3764,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </div>
           {!reverseProxyStatus.direct_tls && reverseProxyStatus.peer_trusted && !reverseProxyStatus.https && <p className="trusted-proxy-warning">请让反向代理覆盖发送 <code>X-Forwarded-Proto</code>。</p>}
         </div>
-      </section>}
-      {activeSection === 'authorization' && <section className="settings-card">
-        <div className="settings-card-head"><div><h3>授权模式</h3><p className="muted">决定订阅、Agent 配置和流量策略读取哪一套授权来源。</p></div></div>
-        <div className="form settings-form single-field">
-          <FormField label="运行模式" hint="legacy：旧授权表继续生效，方案仅作数据准备；shadow：运行时仍用旧表，同时计算方案结果并报告差异；plan：方案快照成为唯一运行时来源，旧写接口只读。">
-            <Select value={authorizationMode} onChange={e => setAuthorizationMode(e.target.value)}>
-              <option value="legacy">legacy（旧授权表生效）</option>
-              <option value="shadow">shadow（并行对比，不影响运行时）</option>
-              <option value="plan">plan（方案快照生效）</option>
-            </Select>
-          </FormField>
-          <div className="settings-actions">
-            <button onClick={saveAuthorizationMode} disabled={Boolean(saving)}>{saving === 'authorization' ? '保存中...' : '保存'}</button>
-          </div>
-        </div>
-        {authorizationMode === 'plan' && <p style={{ color: 'var(--color-warning)' }}>切换到 plan 后，订阅输出、Agent 凭据与 SSH 用户将只由订阅方案决定；旧授权表变为只读历史。切换前请先在「订阅方案」页完成迁移并确认 Shadow 对比无差异。</p>}
-        {authorizationMode === 'shadow' && <p className="muted">shadow 模式不会改变运行时行为，可在「订阅方案」页生成对比报告，逐项核对用户节点、服务器认证用户、SSH 用户与限额。</p>}
       </section>}
       {activeSection === 'registration' && <section className="settings-card">
         <div className="settings-card-head"><div><h3>公开注册</h3><p className="muted">允许访客自助注册账号。注册用户默认不加入任何用户组、没有任何面板权限，需管理员分配用户组后才能使用。</p></div></div>
@@ -8058,367 +8029,6 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
   }
 }
 
-type ProxyPathViewMode = 'graph' | 'matrix'
-
-const PROXY_PATH_VIEW_KEY = 'oboard.proxyPaths.view.v1'
-
-function loadProxyPathViewMode(): ProxyPathViewMode {
-  try {
-    return localStorage.getItem(PROXY_PATH_VIEW_KEY) === 'matrix' ? 'matrix' : 'graph'
-  } catch {
-    return 'graph'
-  }
-}
-
-function saveProxyPathViewMode(mode: ProxyPathViewMode) {
-  try {
-    localStorage.setItem(PROXY_PATH_VIEW_KEY, mode)
-  } catch {
-  }
-}
-
-type ProxyMatrixAccessTarget = {
-  scopeType: 'server' | 'inbound' | 'proxy_path'
-  title: string
-  detail: string
-  serverID?: number
-  inboundID?: number
-  proxyPathIDs: number[]
-}
-
-function IndeterminateCheckbox({ checked, indeterminate, onChange, label }: { checked: boolean; indeterminate?: boolean; onChange: (checked: boolean) => void; label: string }) {
-  const inputRef = useRef<HTMLInputElement>(null)
-  useEffect(() => { if (inputRef.current) inputRef.current.indeterminate = Boolean(indeterminate) }, [indeterminate])
-  return <input ref={inputRef} type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} aria-label={label} />
-}
-
-function ProxyMatrixAccessDialog({ target, data, client, load, onClose }: { target: ProxyMatrixAccessTarget; data: any; client: any; load: () => Promise<void>; onClose: () => void }) {
-  const returnFocusRef = useRef<HTMLElement | null>(null)
-  const users: User[] = (data.users || []).filter((user: User) => !String(user.username || '').startsWith('__oboard_'))
-  const groups: UserGroup[] = data.user_groups || []
-  const paths: ProxyPath[] = data.proxy_paths || []
-  const inbounds: Inbound[] = data.inbounds || []
-  const grants: InboundAccessGrant[] = (data.inbound_access_grants || []).filter((grant: InboundAccessGrant) => grant.enabled !== false)
-  const bindings: InboundUser[] = (data.inbound_users || []).filter((binding: InboundUser) => binding.enabled !== false)
-  const members: UserGroupMember[] = (data.user_group_members || []).filter((member: UserGroupMember) => member.enabled !== false)
-  const enabledGroupIDs = new Set(groups.filter(group => group.enabled !== false).map(group => group.id))
-  const [selectedPathIDs, setSelectedPathIDs] = useState<number[]>(target.proxyPathIDs)
-  const [selectedUserIDs, setSelectedUserIDs] = useState<number[]>([])
-  const [selectedGroupIDs, setSelectedGroupIDs] = useState<number[]>([])
-  const [partialUserIDs, setPartialUserIDs] = useState<number[]>([])
-  const [partialGroupIDs, setPartialGroupIDs] = useState<number[]>([])
-  const [saving, setSaving] = useState(false)
-  const [feedback, setFeedback] = useState('')
-
-  useEffect(() => {
-    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      onClose()
-    }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('keydown', closeOnEscape)
-      returnFocusRef.current?.focus()
-    }
-  }, [onClose])
-
-  const exactCounts = (subjectType: AccessSubjectType) => {
-    const counts = new Map<number, number>()
-    if (target.scopeType === 'inbound' && target.inboundID) {
-      if (subjectType === 'user') bindings.filter(binding => binding.inbound_id === target.inboundID).forEach(binding => counts.set(binding.user_id, 1))
-      grants.filter(grant => grant.scope_type === 'inbound' && grant.inbound_id === target.inboundID && grant.subject_type === subjectType).forEach(grant => counts.set(grant.subject_id, 1))
-      return { counts, total: 1 }
-    }
-    if (target.scopeType === 'server' && target.serverID) {
-      grants.filter(grant => grant.scope_type === 'server' && grant.server_id === target.serverID && grant.subject_type === subjectType).forEach(grant => counts.set(grant.subject_id, 1))
-      return { counts, total: 1 }
-    }
-    selectedPathIDs.forEach(pathID => {
-      grants.filter(grant => grant.scope_type === 'proxy_path' && grant.proxy_path_id === pathID && grant.subject_type === subjectType).forEach(grant => counts.set(grant.subject_id, (counts.get(grant.subject_id) || 0) + 1))
-    })
-    return { counts, total: selectedPathIDs.length }
-  }
-
-  useEffect(() => {
-    const usersState = exactCounts('user')
-    const groupsState = exactCounts('group')
-    setSelectedUserIDs(Array.from(usersState.counts).filter(([, count]) => count === usersState.total).map(([id]) => id))
-    setPartialUserIDs(Array.from(usersState.counts).filter(([, count]) => count > 0 && count < usersState.total).map(([id]) => id))
-    setSelectedGroupIDs(Array.from(groupsState.counts).filter(([, count]) => count === groupsState.total).map(([id]) => id))
-    setPartialGroupIDs(Array.from(groupsState.counts).filter(([, count]) => count > 0 && count < groupsState.total).map(([id]) => id))
-    setFeedback('')
-  }, [selectedPathIDs.join(','), target.scopeType, target.serverID, target.inboundID])
-
-  const pathLabel = (pathID: number) => {
-    const path = paths.find(item => item.id === pathID)
-    const inbound = inbounds.find(item => item.id === path?.inbound_id)
-    return `${inbound?.name || `入口 ${path?.inbound_id || '-'}`} · ${path?.name || `路径 ${pathID}`}`
-  }
-  const inheritedCoverage = (subjectType: AccessSubjectType, subjectID: number) => {
-    const subjectIDs = new Set<number>([subjectType === 'group' ? -subjectID : subjectID])
-    if (subjectType === 'user') members.filter(member => member.user_id === subjectID && enabledGroupIDs.has(member.group_id)).forEach(member => subjectIDs.add(-member.group_id))
-    const targetPaths = target.scopeType === 'proxy_path' ? selectedPathIDs.map(pathID => paths.find(path => path.id === pathID)).filter(Boolean) as ProxyPath[] : []
-    const applies = (grant: InboundAccessGrant, path?: ProxyPath) => {
-      const grantSubject = grant.subject_type === 'group' ? -grant.subject_id : grant.subject_id
-      if (!subjectIDs.has(grantSubject)) return false
-      if (grant.scope_type === 'global') return true
-      if (target.scopeType === 'server') return false
-      const inboundID = path?.inbound_id || target.inboundID
-      const inbound = inbounds.find(item => item.id === inboundID)
-      if (grant.scope_type === 'server') return grant.server_id === inbound?.server_id
-      if (grant.scope_type === 'inbound') return grant.inbound_id === inboundID
-      if (grant.scope_type === 'proxy_path') return subjectType === 'user' && grant.subject_type === 'group' && grant.proxy_path_id === path?.id
-      return false
-    }
-    if (target.scopeType === 'proxy_path') return targetPaths.filter(path =>
-      (subjectType === 'user' && bindings.some(binding => binding.user_id === subjectID && binding.inbound_id === path.inbound_id)) ||
-      grants.some(grant => applies(grant, path)),
-    ).length
-    return grants.some(grant => applies(grant)) ? 1 : 0
-  }
-  const toggleID = (id: number, checked: boolean, selected: number[], setSelected: React.Dispatch<React.SetStateAction<number[]>>, setPartial: React.Dispatch<React.SetStateAction<number[]>>) => {
-    setPartial(current => current.filter(item => item !== id))
-    setSelected(checked ? Array.from(new Set([...selected, id])) : selected.filter(item => item !== id))
-  }
-  const save = async () => {
-    if (target.scopeType === 'proxy_path' && !selectedPathIDs.length) return
-    setSaving(true)
-    setFeedback('')
-    try {
-      await client.request('/inbound-access-grants/sync', {
-        method: 'POST',
-        body: JSON.stringify({
-          scope_type: target.scopeType,
-          server_id: target.serverID,
-          inbound_id: target.inboundID,
-          proxy_path_ids: target.scopeType === 'proxy_path' ? selectedPathIDs : [],
-          user_ids: selectedUserIDs,
-          group_ids: selectedGroupIDs,
-        }),
-      })
-      await load()
-      setFeedback('权限已保存，请执行完整下发后生效。')
-    } catch (error: any) {
-      setFeedback(localizeErrorMessage(error?.message || error))
-    } finally {
-      setSaving(false)
-    }
-  }
-  const subjectList = (subjectType: AccessSubjectType) => {
-    const items = subjectType === 'user' ? users : groups
-    const selected = subjectType === 'user' ? selectedUserIDs : selectedGroupIDs
-    const partial = subjectType === 'user' ? partialUserIDs : partialGroupIDs
-    const setSelected = subjectType === 'user' ? setSelectedUserIDs : setSelectedGroupIDs
-    const setPartial = subjectType === 'user' ? setPartialUserIDs : setPartialGroupIDs
-    return <div className="matrix-access-subject-list">
-      {items.length ? items.map(item => {
-        const id = item.id
-        const coverage = inheritedCoverage(subjectType, id)
-        const total = target.scopeType === 'proxy_path' ? selectedPathIDs.length : 1
-        const name = subjectType === 'user' ? (item as User).username : (item as UserGroup).name
-        const state = subjectType === 'user' ? (item as User).status : (item as UserGroup).enabled === false ? 'disabled' : 'enabled'
-        return <label className="matrix-access-subject" key={`${subjectType}-${id}`}>
-          <IndeterminateCheckbox checked={selected.includes(id)} indeterminate={partial.includes(id)} onChange={checked => toggleID(id, checked, selected, setSelected, setPartial)} label={`${checkedLabel(subjectType)} ${name}`} />
-          <span><strong>{name}</strong><small>{labelValue(state)}{coverage ? ` · 继承覆盖 ${coverage}/${total}` : ''}</small></span>
-        </label>
-      }) : <div className="empty small">暂无可分配的{subjectType === 'user' ? '用户' : '用户组'}。</div>}
-    </div>
-  }
-  return <MotionDialogPanel onCancel={onClose} className="matrix-access-dialog">
-    <header className="dialog-head">
-      <div><h2>分配节点访问权限</h2><p className="muted">{target.title} · {target.detail}</p></div>
-      <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭" autoFocus><X /></button>
-    </header>
-    <div className="dialog-body matrix-access-body">
-      {target.scopeType === 'proxy_path' && <section className="matrix-access-scope">
-        <div className="matrix-access-section-head"><strong>受影响路径</strong><span>{selectedPathIDs.length}/{target.proxyPathIDs.length} 条</span></div>
-        <div className="matrix-access-paths">{target.proxyPathIDs.map(pathID => <label key={pathID}>
-          <input type="checkbox" checked={selectedPathIDs.includes(pathID)} onChange={event => setSelectedPathIDs(current => event.target.checked ? Array.from(new Set([...current, pathID])) : current.filter(id => id !== pathID))} />
-          <span>{pathLabel(pathID)}</span>
-        </label>)}</div>
-      </section>}
-      <div className="access-note"><strong>权限规则</strong><span>宽范围和用户组继承权限优先；这里只同步当前范围的直接分配。</span></div>
-      <div className="matrix-access-columns">
-        <section><div className="matrix-access-section-head"><strong>用户</strong><span>{selectedUserIDs.length} 个直接分配</span></div>{subjectList('user')}</section>
-        <section><div className="matrix-access-section-head"><strong>用户组</strong><span>{selectedGroupIDs.length} 个直接分配</span></div>{subjectList('group')}</section>
-      </div>
-      {feedback && <div className={`access-note ${feedback.includes('已保存') ? '' : 'warning'}`} role="status"><strong>{feedback.includes('已保存') ? '保存完成' : '保存失败'}</strong><span>{feedback}</span></div>}
-    </div>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onClose}>关闭</button><button type="button" onClick={() => void save()} disabled={saving || (target.scopeType === 'proxy_path' && !selectedPathIDs.length)}>{saving ? '保存中...' : '保存分配'}</button></footer>
-  </MotionDialogPanel>
-}
-
-function checkedLabel(subjectType: AccessSubjectType) {
-  return subjectType === 'user' ? '用户' : '用户组'
-}
-
-function ProxyPathMatrixCellView({ cell, data, onAssign }: { cell: ProxyPathMatrixCell; data: any; onAssign: (cell: ProxyPathMatrixCell) => void }) {
-  if (cell.kind === 'entry') {
-    const entry = cell.entry
-    const probe = latestInboundProbeSummary(data, entry.id)
-    const address = formatHostPort(inboundEntryAddress(data, entry), entry.port)
-    return <button type="button" className="proxy-matrix-node matrix-node-entry" title={`${entry.name || `入口 ${entry.id}`} · ${labelProtocol(entry.protocol)} · ${address}`} onClick={() => onAssign(cell)} aria-haspopup="dialog">
-      <div className="proxy-matrix-node-head">
-        <span className="proxy-matrix-node-icon"><Globe size={15} /></span>
-        <span className="proxy-matrix-node-title"><small>代理入口</small><strong>{entry.name || `入口 ${entry.id}`}</strong></span>
-        <span className="proxy-matrix-node-badge">{labelProtocol(entry.protocol)}</span>
-      </div>
-      <code>{address}</code>
-      <div className="proxy-matrix-node-meta">
-        <span className={`matrix-probe-${probe.tone}`}>{probe.label}</span>
-        <span>{inboundAccessSummary(data, entry)}</span>
-      </div>
-    </button>
-  }
-
-  if (cell.kind === 'direct') {
-    return <button type="button" className="proxy-matrix-node matrix-node-direct" title={`${cell.path.name || `路径 ${cell.path.id}`} · 直接出口`} onClick={() => onAssign(cell)} aria-haspopup="dialog">
-      <div className="proxy-matrix-node-head">
-        <span className="proxy-matrix-node-icon"><LogOut size={15} /></span>
-        <span className="proxy-matrix-node-title"><small>出口分支</small><strong>直接出口</strong></span>
-      </div>
-      <div className="proxy-matrix-node-meta"><span>{cell.path.name || `路径 ${cell.path.id}`}</span></div>
-      <ExitRegionBadge code={cell.path.effective_exit_region_code} status={cell.path.exit_region_status} compact />
-    </button>
-  }
-
-  const { path, step, terminal } = cell
-  const transport = proxyPathTransportPresentation(step)
-  if (step.node_type === 'imported') {
-    const imported = ((data.external_outbounds || []) as ExternalOutbound[]).find(item => item.id === step.external_outbound_id)
-    return <button type="button" className="proxy-matrix-node matrix-node-imported" title={`${imported?.name || `导入节点 ${step.external_outbound_id || ''}`} · ${transport.title}`} onClick={() => onAssign(cell)} aria-haspopup="dialog">
-      <div className="proxy-matrix-node-head">
-        <span className="proxy-matrix-node-icon"><LinkIcon size={15} /></span>
-        <span className="proxy-matrix-node-title"><small>第三方代理</small><strong>{imported?.name || `导入节点 ${step.external_outbound_id || ''}`}</strong></span>
-        <span className="proxy-matrix-node-badge">{labelProtocol(imported?.protocol || '')}</span>
-      </div>
-      <code>{imported ? formatHostPort(imported.target_address, imported.target_port) : '节点已删除'}</code>
-      <div className="proxy-matrix-node-meta"><span>{transport.title}</span></div>
-      {terminal && <ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact />}
-    </button>
-  }
-
-  if (step.node_type === 'warp') {
-    const inboundByID = new Map(((data.inbounds || []) as Inbound[]).map(entry => [entry.id, entry]))
-    const steps = ((data.proxy_path_steps || []) as ProxyPathStep[])
-      .filter(item => item.path_id === path.id)
-      .sort((left, right) => (left.position - right.position) || (left.id - right.id))
-    const serverID = graphWARPServerID(path, steps, step, inboundByID)
-    const server = ((data.servers || []) as Server[]).find(item => item.id === serverID)
-    const profile = ((data.warp_profiles || []) as WARPProfile[]).find(item => item.server_id === serverID)
-    return <button type="button" className="proxy-matrix-node matrix-node-warp" title={`WARP · ${server?.name || `服务器 ${serverID}`} · ${labelValue(profile?.status || 'needed')}`} onClick={() => onAssign(cell)} aria-haspopup="dialog">
-      <div className="proxy-matrix-node-head">
-        <span className="proxy-matrix-node-icon"><Zap size={15} /></span>
-        <span className="proxy-matrix-node-title"><small>WARP 出口</small><strong>{server?.name || `服务器 ${serverID}`}</strong></span>
-        <span className="proxy-matrix-node-badge">{labelValue(profile?.status || 'needed')}</span>
-      </div>
-      <div className="proxy-matrix-node-meta"><span>{transport.title}</span></div>
-      {terminal && <ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact />}
-    </button>
-  }
-
-  const inbound = ((data.inbounds || []) as Inbound[]).find(item => item.id === step.inbound_id)
-  const serverID = step.server_id || inbound?.server_id || 0
-  const server = ((data.servers || []) as Server[]).find(item => item.id === serverID)
-  const online = server?.status?.toLowerCase() === 'online'
-  return <button type="button" className="proxy-matrix-node matrix-node-server" title={`${server?.name || `服务器 ${serverID}`} · ${transport.title}`} onClick={() => onAssign(cell)} aria-haspopup="dialog">
-    <div className="proxy-matrix-node-head">
-      <span className="proxy-matrix-node-icon"><ServerIcon size={15} /></span>
-      <span className="proxy-matrix-node-title"><small>链路服务器</small><strong>{server?.name || `服务器 ${serverID}`}</strong></span>
-      <span className={`proxy-matrix-server-state ${online ? 'online' : 'offline'}`}><i />{online ? '在线' : '离线'}</span>
-    </div>
-    <code>{serverDefaultEntryAddress(server) || '无公网 IP'}</code>
-    <div className="proxy-matrix-node-meta"><span>{transport.title}</span></div>
-    {terminal && <ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact />}
-  </button>
-}
-
-function ProxyPathMatrixView({ data, server, client, load }: { data: any; server?: Server; client: any; load: () => Promise<void> }) {
-  const matrix = useMemo(() => buildProxyPathMatrix(data, server?.id || 0), [data.inbounds, data.proxy_paths, data.proxy_path_steps, server?.id])
-  const [hoveredColumn, setHoveredColumn] = useState('')
-  const [accessTarget, setAccessTarget] = useState<ProxyMatrixAccessTarget | null>(null)
-  if (!server) return <div className="proxy-matrix-empty" role="status"><ServerIcon size={22} /><strong>还没有服务器</strong><span>暂无可显示的代理链路数据。</span></div>
-  if (!matrix.groups.length) return <div className="proxy-matrix-empty" role="status"><Globe size={22} /><strong>这台服务器还没有入口</strong><span>暂无可显示的代理链路数据。</span></div>
-
-  const columns = matrix.groups.flatMap(group => group.columns)
-  const openServerAccess = () => setAccessTarget({ scopeType: 'server', title: server.name || `服务器 ${server.id}`, detail: '全部入口和分支', serverID: server.id, proxyPathIDs: [] })
-  const openInboundAccess = (entry: Inbound) => setAccessTarget({ scopeType: 'inbound', title: entry.name || `入口 ${entry.id}`, detail: '该入口全部分支', inboundID: entry.id, proxyPathIDs: [] })
-  const openPathAccess = (path: ProxyPath) => setAccessTarget({ scopeType: 'proxy_path', title: path.name || `路径 ${path.id}`, detail: '仅此路径', proxyPathIDs: [path.id] })
-  const openCellAccess = (cell: ProxyPathMatrixCell) => {
-    if (cell.kind === 'entry') return openInboundAccess(cell.entry)
-    if (cell.kind === 'direct') return openPathAccess(cell.path)
-    const scope = proxyPathMatrixStepScope(data, server.id, cell.path.id, cell.step.position)
-    setAccessTarget({ scopeType: 'proxy_path', title: cell.step.position === 1 ? '一级链路节点' : `第 ${cell.step.position} 层链路节点`, detail: `${scope.proxyPathIDs.length} 条共享前缀路径`, proxyPathIDs: scope.proxyPathIDs })
-  }
-  return <>
-  <section className="proxy-matrix" aria-label={`${server.name} 的代理链路矩阵`}>
-    <div className="proxy-matrix-summary">
-      <span className={`proxy-matrix-summary-status ${server.status?.toLowerCase() === 'online' ? 'online' : 'offline'}`}><i />{labelValue(server.status || 'unknown')}</span>
-      <button type="button" className="proxy-matrix-summary-target" onClick={openServerAccess} aria-haspopup="dialog"><strong>{server.name || `服务器 ${server.id}`}</strong><small>分配全部入口与分支</small></button>
-      <span>{matrix.groups.length} 个入口</span>
-      <span>{matrix.pathCount} 条路径</span>
-    </div>
-    <div className="proxy-matrix-scroll">
-      <table onMouseLeave={() => setHoveredColumn('')}>
-        <caption className="sr-only">{server.name} 的入口和代理路径矩阵</caption>
-        <thead>
-          <tr>
-            <th className="proxy-matrix-corner" rowSpan={2} scope="col">链路层级</th>
-            {matrix.groups.map(group => <th
-              key={group.entry.id}
-              className={`proxy-matrix-entry-group${group.columns.some(column => column.id === hoveredColumn) ? ' column-hovered' : ''}`}
-              colSpan={group.columns.length}
-              scope="colgroup"
-            >
-              <button type="button" className="proxy-matrix-header-target" onClick={() => openInboundAccess(group.entry)} aria-haspopup="dialog">
-                <span><Globe size={13} />{group.entry.name || `入口 ${group.entry.id}`}</span>
-                <small>{labelProtocol(group.entry.protocol)} · {group.entry.port}</small>
-              </button>
-            </th>)}
-          </tr>
-          <tr>
-            {columns.map(column => <th
-              key={column.id}
-              className={column.id === hoveredColumn ? 'column-hovered' : ''}
-              scope="col"
-              onMouseEnter={() => setHoveredColumn(column.id)}
-            >
-              <button type="button" className="proxy-matrix-header-target" onClick={() => column.path && openPathAccess(column.path)} disabled={!column.path} aria-haspopup={column.path ? 'dialog' : undefined}>
-              <span className="proxy-matrix-path-title">{column.path?.name || '未配置路径'}</span>
-              <span className="proxy-matrix-path-meta">
-                {column.branch && <em>{column.branchDepth > 0 ? `第 ${column.branchDepth} 跳分支` : '入口分支'}</em>}
-                {column.path?.kind === 'direct' && <em>直出</em>}
-                {!column.path && <em>空</em>}
-              </span>
-              </button>
-            </th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {matrix.rows.map(depth => <tr key={depth}>
-            <th scope="row">{depth === 0 ? '入口' : `第 ${depth} 层`}</th>
-            {columns.map(column => {
-              const cell = column.cells.get(depth)
-              return <td
-                key={column.id}
-                className={`${cell ? `matrix-cell-${cell.kind}` : 'matrix-cell-empty'}${column.id === hoveredColumn ? ' column-hovered' : ''}`}
-                onMouseEnter={() => setHoveredColumn(column.id)}
-                aria-label={cell ? undefined : '空'}
-              >
-                {cell ? <ProxyPathMatrixCellView cell={cell} data={data} onAssign={openCellAccess} /> : null}
-              </td>
-            })}
-          </tr>)}
-        </tbody>
-      </table>
-    </div>
-  </section>
-  <AnimatePresence>{accessTarget && <ProxyMatrixAccessDialog key={`${accessTarget.scopeType}:${accessTarget.serverID || accessTarget.inboundID || accessTarget.proxyPathIDs.join(',')}`} target={accessTarget} data={data} client={client} load={load} onClose={() => setAccessTarget(null)} />}</AnimatePresence>
-  </>
-}
-
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
 type RoutingDraft = { server_id: number; name: string; priority: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; interface_name: string; enabled: boolean }
 type TransportMode = 'port-forward' | 'tunnel'
@@ -8449,7 +8059,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const entries: Inbound[] = data.inbounds || []
   const selected = servers.find(s => s.id === selectedServer) || servers[0]
   const selectedEntries = selected ? entries.filter(x => x.server_id === selected.id) : []
-  const [viewMode, setViewMode] = useState<ProxyPathViewMode>(() => loadProxyPathViewMode())
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(() => window.innerWidth <= 820)
   const [entryServerQuery, setEntryServerQuery] = useState('')
@@ -8500,7 +8109,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const [serverDraft, setServerDraft] = useState<ReturnType<typeof defaultServerDraft> | null>(null)
   const serverDraftPosition = useRef<GraphPosition | null>(null)
   const [entryDraft, setEntryDraft] = useState<any | null>(null)
-  const [accessEntry, setAccessEntry] = useState<Inbound | null>(null)
   const [editEntry, setEditEntry] = useState<any | null>(null)
 	const [routingDraft, setRoutingDraft] = useState<RoutingDraft | null>(null)
 	const [transportDraft, setTransportDraft] = useState<TransportDraft | null>(null)
@@ -8735,22 +8343,14 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     if (!nextServerID || nextServerID === selected?.id) return
 	setFocusedPathID(0)
 	setHoveredPathIDs([])
-    if (viewMode === 'graph') {
-      const laidOut = autoLayoutProxyGraphPositions(data, nextServerID, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances)
-      if (Object.keys(laidOut).length) {
-        const next = { ...positions, ...laidOut }
-        setPositions(next)
-        saveGraphPositions(next)
-      }
-      pendingServerSafeFit.current = nextServerID
+    const laidOut = autoLayoutProxyGraphPositions(data, nextServerID, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances)
+    if (Object.keys(laidOut).length) {
+      const next = { ...positions, ...laidOut }
+      setPositions(next)
+      saveGraphPositions(next)
     }
+    pendingServerSafeFit.current = nextServerID
     setSelectedServer(nextServerID)
-  }
-  const changeViewMode = (mode: ProxyPathViewMode) => {
-    setViewMode(mode)
-	setHoveredPathIDs([])
-    saveProxyPathViewMode(mode)
-    if (mode === 'graph') window.setTimeout(() => fitGraphToSafeArea(0), 0)
   }
   const placeGraphNode = (id: string, position: GraphPosition) => {
     const next = { ...positions, [id]: snapGraphPosition(position) }
@@ -9286,9 +8886,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     __edit: true,
     __graphPosition: null,
     __custom_sni: Boolean(entry.certificate_domain && entry.certificate_domain !== entry.dns_domain),
-    access_scope: 'inbound' as AccessScopeType,
-    access_user_ids: [] as number[],
-    access_group_ids: [] as number[],
   })
   const openEditEntry = (entry: Inbound) => setEditEntry(inboundDraftFromEntry(entry))
   const addEntry = async (position?: GraphPosition) => {
@@ -9296,7 +8893,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     if (!server) return dialogs.alert({ title: '无法添加入口', message: '请先添加服务器。' })
     const preset = inboundPreset(defaultInboundPreset('vless'))
     const port = nextAvailableInboundPort(data, server, preset.protocol, preset.defaultPort)
-    setEntryDraft({ __graphPosition: position || null, __port_manual: false, __custom_sni: false, access_scope: 'inbound' as AccessScopeType, access_user_ids: [] as number[], access_group_ids: [] as number[], server_id: server.id, name: autoInboundName(server, preset.protocol, port), protocol: preset.protocol, listen_ip: server.listen_ip || '0.0.0.0', port, entry_ip_mode: 'auto' as EntryIPMode, external_ip: '', dns_sync_enabled: false, dns_credential_id: undefined, dns_domain: '', dns_proxy_enabled: false, dns_record_types: 'a' as DNSRecordTypes, ddns_enabled: false, ddns_interval_seconds: 300, tls: presetRequiresCertificate(preset.id), certificate_mode: presetRequiresCertificate(preset.id) ? 'auto' : 'external', certificate_domain: '', certificate_id: undefined, config_json: buildInboundPresetConfig(preset.id), enabled: true })
+    setEntryDraft({ __graphPosition: position || null, __port_manual: false, __custom_sni: false, server_id: server.id, name: autoInboundName(server, preset.protocol, port), protocol: preset.protocol, listen_ip: server.listen_ip || '0.0.0.0', port, entry_ip_mode: 'auto' as EntryIPMode, external_ip: '', dns_sync_enabled: false, dns_credential_id: undefined, dns_domain: '', dns_proxy_enabled: false, dns_record_types: 'a' as DNSRecordTypes, ddns_enabled: false, ddns_interval_seconds: 300, tls: presetRequiresCertificate(preset.id), certificate_mode: presetRequiresCertificate(preset.id) ? 'auto' : 'external', certificate_domain: '', certificate_id: undefined, config_json: buildInboundPresetConfig(preset.id), enabled: true })
   }
   const submitEntryDraft = async () => {
     if (!entryDraft) return
@@ -9307,11 +8904,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         if (!confirmed) return
         finalDraft = { ...finalDraft, config_json: JSON.stringify({ ...(parseConfig(finalDraft.config_json) || {}), exposure_confirmed: true, exposure_confirmation_version: 'ssh-inbound-v1', access_mode: 'restricted_proxy' }) }
       }
-      const { __graphPosition, __port_manual, __custom_sni, access_scope, access_user_ids, access_group_ids, ...body } = finalDraft
+      const { __graphPosition, __port_manual, __custom_sni, ...body } = finalDraft
       const result = await client.request('/inbounds', { method: 'POST', body: JSON.stringify(body) }) as { inbound?: Inbound }
       if (result.inbound?.id) {
         placeGraphNode(`entry-${result.inbound.id}`, __graphPosition || nextEntryGraphPosition(data, positions, Number(body.server_id), selected?.id || Number(body.server_id)))
-        await createEntryAccessGrants(client, result.inbound, access_scope || 'inbound', access_user_ids || [], access_group_ids || [])
       }
       setEntryDraft(null)
       await load()
@@ -9328,7 +8924,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         if (!confirmed) return
         finalDraft = { ...finalDraft, config_json: JSON.stringify({ ...(parseConfig(finalDraft.config_json) || {}), exposure_confirmed: true, exposure_confirmation_version: 'ssh-inbound-v1', access_mode: 'restricted_proxy' }) }
       }
-      const { __edit, __graphPosition, __port_manual, __custom_sni, access_scope, access_user_ids, access_group_ids, ...body } = finalDraft
+      const { __edit, __graphPosition, __port_manual, __custom_sni, ...body } = finalDraft
       await client.request(`/inbounds/${body.id}`, { method: 'PATCH', body: JSON.stringify(body) })
       setEditEntry(null)
       await load()
@@ -9781,10 +9377,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     <div className="proxy-editor">
       {topbarTarget && createPortal(
         <div className="proxy-path-topbar-controls">
-          <div className="proxy-path-view-switch" role="group" aria-label="代理链路显示方式">
-            <button type="button" className={viewMode === 'graph' ? 'selected' : ''} aria-pressed={viewMode === 'graph'} onClick={() => changeViewMode('graph')}><Workflow size={14} />链路图</button>
-            <button type="button" className={viewMode === 'matrix' ? 'selected' : ''} aria-pressed={viewMode === 'matrix'} onClick={() => changeViewMode('matrix')}><Table2 size={14} />矩阵表</button>
-          </div>
           <div className="proxy-path-entry-picker">
             <span className="proxy-path-entry-label">入口服务器</span>
             <CustomSelect
@@ -9802,7 +9394,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
               ariaLabel="选择当前入口服务器"
             />
           </div>
-		  {viewMode === 'graph' && visibleProxyPaths.length > 0 && <div className="proxy-path-focus-picker">
+		  {visibleProxyPaths.length > 0 && <div className="proxy-path-focus-picker">
 		    <span className="proxy-path-entry-label">路径聚焦</span>
 		    <CustomSelect
 		      className="graph-path-select"
@@ -9820,7 +9412,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         </div>,
         topbarTarget,
       )}
-      {viewMode === 'matrix' ? <ProxyPathMatrixView data={data} server={selected} client={client} load={load} /> : <div ref={workspaceRef} className={`proxy-editor-workspace${isToolbarCollapsed ? ' toolbox-collapsed' : ''}${inspectorOpen ? ' inspector-open' : ''}`}>
+      <div ref={workspaceRef} className={`proxy-editor-workspace${isToolbarCollapsed ? ' toolbox-collapsed' : ''}${inspectorOpen ? ' inspector-open' : ''}`}>
         <div ref={toolboxRef} className={`proxy-editor-sidebar${toolboxDragging ? ' is-dragging' : ''}`} style={{ left: toolboxPosition.x, top: toolboxPosition.y }}>
           <ProxyGraphToolbox
             collapsed={isToolbarCollapsed}
@@ -9909,16 +9501,15 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
               <div className="host-list">{servers.map(s => <button key={s.id} className={selected?.id === s.id ? '' : 'ghost'} onClick={() => selectEntryServer(s.id)}>{s.name}<small>{labelValue(s.status || 'unknown')}</small></button>)}</div>
             </div>
             <div className="branch-panel compact-panel">
-              {selected ? <ServerBranchTree data={data} server={selected} onManageEntry={setAccessEntry} /> : <p className="muted">暂无服务器</p>}
+              {selected ? <ServerBranchTree data={data} server={selected} /> : <p className="muted">暂无服务器</p>}
             </div>
           </div>
         </aside>}
-      </div>}
+      </div>
     </div>
     <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{entryDraft && <EntryDraftDialog mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} />}</AnimatePresence>
     <AnimatePresence>{editEntry && <EntryDraftDialog mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} />}</AnimatePresence>
-    <AnimatePresence>{accessEntry && <EntryUsersDialog entry={accessEntry} data={data} client={client} load={load} onCancel={() => setAccessEntry(null)} />}</AnimatePresence>
     <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} onCancel={() => setRoutingDraft(null)} onSubmit={submitRoutingDraft} />}</AnimatePresence>
     <AnimatePresence>{transportDraft && <TransportDraftDialog draft={transportDraft} setDraft={setTransportDraft} servers={servers} onCancel={() => setTransportDraft(null)} onSubmit={submitTransportDraft} />}</AnimatePresence>
     <AnimatePresence>{importDraft && <ImportNodeDialog draft={importDraft} setDraft={setImportDraft} servers={servers} onCancel={() => setImportDraft(null)} onSubmit={submitImportNode} />}</AnimatePresence>
@@ -10450,7 +10041,6 @@ function ImportNodeDialog({ draft, setDraft, servers, onCancel, onSubmit }: { dr
 
 function ImportedNodeConfigDialog({ node, data, client, load, onClose }: { node: ExternalOutbound; data: any; client: ReturnType<typeof api>; load: () => Promise<void>; onClose: () => void }) {
   const dialogs = useDialogs()
-  const grants: ExternalOutboundAccessGrant[] = (data.external_outbound_access_grants || []).filter((x: ExternalOutboundAccessGrant) => x.external_outbound_id === node.id)
 	const [regionMode, setRegionMode] = useState<RegionMode>(node.region_mode === 'manual' ? 'manual' : 'auto')
 	const [regionCode, setRegionCode] = useState(node.region_code || node.effective_region_code || 'CN')
 	const [savingRegion, setSavingRegion] = useState(false)
@@ -10473,22 +10063,6 @@ function ImportedNodeConfigDialog({ node, data, client, load, onClose }: { node:
 		setSavingRegion(false)
 	  }
 	}
-  const grantUser = async () => {
-    const users: User[] = data.users || []
-    if (!users.length) return dialogs.alert({ title: '没有用户', message: '请先创建用户。' })
-    const selected = await dialogs.prompt({ title: '授权用户使用导入节点', message: '授权后该节点会出现在该用户订阅中。', defaultValue: String(users[0].id), choices: users.map(u => ({ value: String(u.id), label: u.username })) })
-    if (!selected) return
-    await client.request('/external-outbound-access-grants', { method: 'POST', body: JSON.stringify({ external_outbound_id: node.id, subject_type: 'user', subject_id: Number(selected), enabled: true }) })
-    await load()
-  }
-  const grantGroup = async () => {
-    const groups: UserGroup[] = data.user_groups || []
-    if (!groups.length) return dialogs.alert({ title: '没有用户组', message: '请先在用户页面创建用户组。' })
-    const selected = await dialogs.prompt({ title: '授权用户组使用导入节点', message: '授权后该节点会出现在该用户组成员订阅中。', defaultValue: String(groups[0].id), choices: groups.map(g => ({ value: String(g.id), label: g.name })) })
-    if (!selected) return
-    await client.request('/external-outbound-access-grants', { method: 'POST', body: JSON.stringify({ external_outbound_id: node.id, subject_type: 'group', subject_id: Number(selected), enabled: true }) })
-    await load()
-  }
   return <MotionDialogPanel onCancel={onClose} className="graph-form-dialog">
       <header className="dialog-head">
         <div><h2 id="imported-node-title">{node.name}</h2><p className="muted">{labelProtocol(node.protocol)} · {formatHostPort(node.target_address, node.target_port)} · {node.scope === 'server' ? '单服务器可用' : '全部服务器可用'}</p></div>
@@ -10517,10 +10091,6 @@ function ImportedNodeConfigDialog({ node, data, client, load, onClose }: { node:
 			{linkedPaths.length ? linkedPaths.map(path => <div key={path.id}><span>{path.name || `路径 ${path.id}`}</span><ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact /></div>) : <span className="muted">连接到代理链路后会自动探测。</span>}
 		  </div>}
 		</div>
-        {node.expose_to_users && <div className="compact-panel">
-          <div className="section-toolbar"><div><h3>订阅授权</h3><p className="muted">只控制这个导入节点是否出现在用户订阅，不影响链路图下发。</p></div><div className="section-actions"><button onClick={grantUser}>授权用户</button><button onClick={grantGroup}>授权用户组</button></div></div>
-          {grants.length ? <div className="chip-list">{grants.map(g => <span className="chip" key={g.id}>{g.subject_type === 'user' ? userName(data, g.subject_id) : groupName(data, g.subject_id)} <button onClick={async () => { await client.request(`/external-outbound-access-grants/${g.id}`, { method: 'DELETE' }); await load() }}>×</button></span>)}</div> : <p className="muted">暂无授权。</p>}
-        </div>}
         <div className="compact-panel">
           <h3>配置</h3>
           <p className="muted">列表里默认隐藏密钥；这里用于排查和复制原始配置。</p>
@@ -10577,25 +10147,6 @@ function preferredProtocolPortInRange(protocol: Protocol, start: number, end: nu
     if (port >= start && port <= end && !used.has(port)) return port
   }
   return 0
-}
-
-async function createEntryAccessGrants(client: any, inbound: Inbound, scope: AccessScopeType, userIDs: number[], groupIDs: number[]) {
-  const grantPayload = (subjectType: AccessSubjectType, subjectID: number) => {
-    const payload: any = { subject_type: subjectType, subject_id: subjectID, scope_type: scope, enabled: true }
-    if (scope === 'server') payload.server_id = inbound.server_id
-    if (scope === 'inbound') payload.inbound_id = inbound.id
-    return payload
-  }
-  for (const userID of userIDs) {
-    if (scope === 'inbound') {
-      await client.request('/inbound-users', { method: 'POST', body: JSON.stringify({ inbound_id: inbound.id, user_id: userID, enabled: true }) })
-    } else {
-      await client.request('/inbound-access-grants', { method: 'POST', body: JSON.stringify(grantPayload('user', userID)) })
-    }
-  }
-  for (const groupID of groupIDs) {
-    await client.request('/inbound-access-grants', { method: 'POST', body: JSON.stringify(grantPayload('group', groupID)) })
-  }
 }
 
 function certificateCoversSNI(certificate: Certificate, serverName: string) {
@@ -10732,12 +10283,6 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     update({ dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? suggestedSNI(selectedCertificate, dnsDomain, draft.external_ip) : draft.certificate_domain })
   }
   const updateConfig = (patch: Record<string, any>) => update({ config_json: JSON.stringify({ ...cfg, ...patch }, null, 2) })
-  const toggleDraftID = (key: 'access_user_ids' | 'access_group_ids', id: number) => {
-    const current = new Set<number>(draft[key] || [])
-    if (current.has(id)) current.delete(id)
-    else current.add(id)
-    update({ [key]: Array.from(current) })
-  }
   const previewConfig = presetID === 'vless-reality' ? redactRealityPrivateKey(draft.config_json || '') : (draft.config_json || '')
   const copyConfig = async () => { await copyText(previewConfig) }
   const regenerate = () => {
@@ -10815,23 +10360,6 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
           <FormField label="监听端口" required><div className="inline-field-action"><input value={draft.port} onChange={e => changePort(Number(e.target.value))} inputMode="numeric" /><button type="button" className="ghost" onClick={chooseAutoPort}>自动选择</button></div><small className="field-hint">{draft.__port_manual ? '已手动指定。' : '从服务器端口池自动选择。'}</small></FormField>
           <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
           {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onGenerateRealityKeypair={() => generateRealityKeypair(false)} realityKeyLoading={realityKeyLoading} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} />}
-          {mode === 'create' && <details className="entry-access-settings">
-            <summary>用户权限与授权范围</summary>
-            <div className="entry-access-settings-body">
-              <div className="access-note"><strong>默认绑定创建者</strong><span>也可授权其他用户或用户组。</span></div>
-              <FormField label="授权范围">
-                <Select variant="segmented" value={draft.access_scope || 'inbound'} onChange={e => update({ access_scope: e.target.value as AccessScopeType })}>
-                  <option value="inbound">仅此入口</option>
-                  <option value="server">这台服务器全部入口</option>
-                  <option value="global">全部入口</option>
-                </Select>
-              </FormField>
-              <div className="access-pick-grid">
-                <div><strong>用户</strong>{(data.users || []).map((u: User) => <label className="check-row compact" key={u.id}><input type="checkbox" checked={(draft.access_user_ids || []).includes(u.id)} onChange={() => toggleDraftID('access_user_ids', u.id)} /><span>{u.username}（{labelValue(u.status)}）</span></label>)}</div>
-                <div><strong>用户组</strong>{(data.user_groups || []).length ? (data.user_groups || []).map((g: UserGroup) => <label className="check-row compact" key={g.id}><input type="checkbox" checked={(draft.access_group_ids || []).includes(g.id)} onChange={() => toggleDraftID('access_group_ids', g.id)} /><span>{g.name}{g.enabled === false ? '（禁用）' : ''}</span></label>) : <p className="muted">还没有用户组。</p>}</div>
-              </div>
-            </div>
-          </details>}
         </div>
         <details className="advanced-config">
           <summary>高级：查看生成配置</summary>
@@ -10973,49 +10501,40 @@ function dnsRecordTypeLabel(value: DNSRecordTypes) {
   return '自动'
 }
 
-function inboundBindings(data: any, entry: Inbound) {
-  return ((data.inbound_users || []) as InboundUser[]).filter(x => x.inbound_id === entry.id && x.enabled !== false)
-}
-
-function activeUsers(data: any) {
-  return ((data.users || []) as User[]).filter(u => u.status === 'active')
-}
-
-function accessGrantAppliesToEntry(grant: InboundAccessGrant, entry: Inbound) {
-  if (grant.enabled === false) return false
-  if (grant.scope_type === 'global') return true
-  if (grant.scope_type === 'server') return Number(grant.server_id || 0) === entry.server_id
-  if (grant.scope_type === 'inbound') return Number(grant.inbound_id || 0) === entry.id
-  return false
-}
-
-function entryAccessGrants(data: any, entry: Inbound) {
-  const pathIDs = new Set(((data.proxy_paths || []) as ProxyPath[]).filter(path => path.inbound_id === entry.id).map(path => path.id))
-  return ((data.inbound_access_grants || []) as InboundAccessGrant[]).filter(grant => accessGrantAppliesToEntry(grant, entry) || (grant.scope_type === 'proxy_path' && pathIDs.has(Number(grant.proxy_path_id || 0))))
-}
-
-function effectiveInboundUserIDs(data: any, entry: Inbound) {
+// planGrantedUserIDsForEntry resolves the users whose active plan grants the
+// entry (as a standalone inbound node or as the root of a proxy path), then
+// applies allow/deny exceptions. This is the single frontend view of the plan
+// authorization snapshot.
+function planGrantedUserIDsForEntry(data: any, entry: Inbound): Set<number> {
   const ids = new Set<number>()
-  const active = new Set(activeUsers(data).map(u => u.id))
-  inboundBindings(data, entry).forEach(x => { if (active.has(x.user_id)) ids.add(x.user_id) })
-  const groups: UserGroup[] = data.user_groups || []
-  const members: UserGroupMember[] = data.user_group_members || []
-  const groupEnabled = new Set(groups.filter(g => g.enabled !== false).map(g => g.id))
-  entryAccessGrants(data, entry).forEach(grant => {
-    if (grant.subject_type === 'user' && active.has(grant.subject_id)) ids.add(grant.subject_id)
-    if (grant.subject_type === 'group' && groupEnabled.has(grant.subject_id)) {
-      members.filter(m => m.enabled !== false && m.group_id === grant.subject_id && active.has(m.user_id)).forEach(m => ids.add(m.user_id))
+  const active = new Set<number>()
+  ;((data.users || []) as User[]).forEach(u => { if (u.status === 'active') active.add(u.id) })
+  const pathIDs = new Set(((data.proxy_paths || []) as ProxyPath[]).filter(path => path.inbound_id === entry.id && path.enabled !== false).map(path => path.id))
+  const plans = new Set<number>()
+  for (const pn of ((data.subscription_plan_nodes || []) as Array<{ plan_id: number; node_type: string; node_id: number; enabled?: boolean }>)) {
+    if (pn.enabled === false) continue
+    if ((pn.node_type === 'inbound' && pn.node_id === entry.id) || (pn.node_type === 'proxy_path' && pathIDs.has(pn.node_id))) plans.add(pn.plan_id)
+  }
+  if (plans.size) {
+    for (const binding of ((data.user_plan_bindings || []) as Array<{ user_id: number; plan_id: number; enabled?: boolean }>)) {
+      if (binding.enabled === false || !plans.has(binding.plan_id) || !active.has(binding.user_id)) continue
+      ids.add(binding.user_id)
     }
-  })
+  }
+  for (const ex of ((data.user_node_exceptions || []) as Array<{ user_id: number; node_type: string; node_id: number; effect: string; enabled?: boolean }>)) {
+    if (ex.enabled === false) continue
+    const matches = (ex.node_type === 'inbound' && ex.node_id === entry.id) || (ex.node_type === 'proxy_path' && pathIDs.has(ex.node_id))
+    if (!matches) continue
+    if (ex.effect === 'deny') ids.delete(ex.user_id)
+    if (ex.effect === 'allow' && active.has(ex.user_id)) ids.add(ex.user_id)
+  }
   return ids
 }
 
 function inboundAccessSummary(data: any, entry: Inbound) {
-  const count = effectiveInboundUserIDs(data, entry).size
-  if (!count) return '未绑定用户 · 临时占位下发'
-  const hasGroup = entryAccessGrants(data, entry).some(x => x.subject_type === 'group')
-  const hasRange = entryAccessGrants(data, entry).some(x => x.scope_type !== 'inbound')
-  return `${count} 个用户${hasGroup ? ' · 含用户组' : ''}${hasRange ? ' · 含范围授权' : ''}`
+  const count = planGrantedUserIDsForEntry(data, entry).size
+  if (!count) return '方案未授权用户'
+  return `${count} 个方案用户`
 }
 
 function latestInboundProbeSummary(data: any, inboundID: number) {
@@ -11085,167 +10604,8 @@ function userByID(data: any, id: number) {
 function groupByID(data: any, id: number) {
   return ((data.user_groups || []) as UserGroup[]).find(g => g.id === id)
 }
-function userName(data: any, id: number) {
-  return userByID(data, id)?.username || `用户 ${id}`
-}
-function groupName(data: any, id: number) {
-  return groupByID(data, id)?.name || `用户组 ${id}`
-}
 
-function accessSubjectLabel(data: any, grant: InboundAccessGrant) {
-  if (grant.subject_type === 'group') return `用户组 ${groupByID(data, grant.subject_id)?.name || grant.subject_id}`
-  return userByID(data, grant.subject_id)?.username || `用户 ${grant.subject_id}`
-}
-
-function accessScopeLabel(data: any, grant: InboundAccessGrant) {
-  if (grant.scope_type === 'global') return '全部入口'
-  if (grant.scope_type === 'server') {
-    const server = ((data.servers || []) as Server[]).find(s => s.id === Number(grant.server_id || 0))
-    return `${server?.name || '该服务器'}全部入口`
-  }
-  if (grant.scope_type === 'proxy_path') {
-    const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === Number(grant.proxy_path_id || 0))
-    return path?.name || `路径 ${grant.proxy_path_id || ''}`
-  }
-  const inbound = ((data.inbounds || []) as Inbound[]).find(x => x.id === Number(grant.inbound_id || 0))
-  return inbound?.name || '仅此入口'
-}
-
-function EntryUsersDialog({ entry, data, client, load, onCancel }: { entry: Inbound; data: any; client: any; load: () => Promise<void>; onCancel: () => void }) {
-  const dialogs = useDialogs()
-  const liveEntry: Inbound = (data.inbounds || []).find((item: Inbound) => item.id === entry.id) || entry
-  const users: User[] = data.users || []
-  const groups: UserGroup[] = data.user_groups || []
-  const bindings = inboundBindings(data, entry)
-  const grants = entryAccessGrants(data, entry)
-  const effectiveIDs = effectiveInboundUserIDs(data, entry)
-  const multi = inboundSupportsMultipleUsersUI(entry)
-  const [subjectType, setSubjectType] = useState<AccessSubjectType>('user')
-  const [subjectID, setSubjectID] = useState(0)
-  const [scopeType, setScopeType] = useState<AccessScopeType>('inbound')
-  const [dnsSyncing, setDNSSyncing] = useState(false)
-  const [dnsFeedback, setDNSFeedback] = useState('')
-  const boundIDs = new Set(bindings.map(x => x.user_id))
-  const candidates = subjectType === 'user' ? users.filter(u => scopeType !== 'inbound' || !boundIDs.has(u.id)) : groups.filter(g => g.enabled !== false)
-  const canAdd = !!subjectID && (multi || effectiveIDs.size === 0)
-  const add = async () => {
-    if (!canAdd) return
-    try {
-      if (subjectType === 'user' && scopeType === 'inbound') {
-        await client.request('/inbound-users', { method: 'POST', body: JSON.stringify({ inbound_id: entry.id, user_id: subjectID, enabled: true }) })
-      } else {
-        const payload: any = { subject_type: subjectType, subject_id: subjectID, scope_type: scopeType, enabled: true }
-        if (scopeType === 'server') payload.server_id = entry.server_id
-        if (scopeType === 'inbound') payload.inbound_id = entry.id
-        await client.request('/inbound-access-grants', { method: 'POST', body: JSON.stringify(payload) })
-      }
-      setSubjectID(0)
-      await load()
-    } catch (e: any) {
-      await dialogs.alert({ title: '添加授权失败', message: localizeErrorMessage(e.message || e) })
-    }
-  }
-  const removeBinding = async (binding: InboundUser) => {
-    const user = userByID(data, binding.user_id)
-    const ok = await dialogs.confirm({ title: '移除用户', message: `确认移除 ${user?.username || '该用户'} 对这个入口的使用权限？`, tone: 'danger', confirmText: '移除' })
-    if (!ok) return
-    try {
-      await client.request(`/inbound-users/${binding.id}`, { method: 'DELETE' })
-      await load()
-    } catch (e: any) {
-      await dialogs.alert({ title: '移除失败', message: localizeErrorMessage(e.message || e) })
-    }
-  }
-  const removeGrant = async (grant: InboundAccessGrant) => {
-    const ok = await dialogs.confirm({ title: '移除授权', message: `确认移除 ${accessSubjectLabel(data, grant)} 对 ${accessScopeLabel(data, grant)} 的使用权限？`, tone: 'danger', confirmText: '移除' })
-    if (!ok) return
-    try {
-      await client.request(`/inbound-access-grants/${grant.id}`, { method: 'DELETE' })
-      await load()
-    } catch (e: any) {
-      await dialogs.alert({ title: '移除失败', message: localizeErrorMessage(e.message || e) })
-    }
-  }
-  const deleteEntry = async () => {
-    const ok = await dialogs.confirm({ title: '删除入口协议', message: `确认删除 ${entry.name}？这个入口下的用户权限也会一起移除。`, tone: 'danger', confirmText: '删除' })
-    if (!ok) return
-    try {
-      await client.request(`/inbounds/${entry.id}`, { method: 'DELETE' })
-      onCancel()
-      await load()
-    } catch (e: any) {
-      await dialogs.alert({ title: '删除失败', message: localizeErrorMessage(e.message || e) })
-    }
-  }
-  const syncDNSEntry = async () => {
-    if (dnsSyncing) return
-    setDNSSyncing(true)
-    setDNSFeedback('')
-    try {
-      const result = await client.request('/dns-sync', { method: 'POST', body: JSON.stringify({ inbound_id: entry.id }) }) as { success_count?: number; items?: Array<{ status: string; error?: string }> }
-      const item = result.items?.[0]
-      if (!result.success_count || item?.error) {
-        throw new Error(item?.error || '同步失败')
-      }
-      setDNSFeedback(item?.status || '同步成功')
-      await load()
-    } catch (error: any) {
-      await dialogs.alert({ title: '域名同步失败', message: localizeErrorMessage(error?.message || error) })
-    } finally {
-      setDNSSyncing(false)
-    }
-  }
-  return <MotionDialogPanel onCancel={onCancel} className="entry-users-dialog">
-      <header className="dialog-head">
-        <div><h2 id="entry-users-title">入口用户</h2><p className="muted">{entry.name} · {labelProtocol(entry.protocol)} · {entry.listen_ip}:{entry.port}</p></div>
-        <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
-      </header>
-      <div className="dialog-body">
-        {liveEntry.dns_sync_enabled && <div className={`access-note managed-entry-status${liveEntry.dns_sync_error ? ' warning' : ''}`}>
-          <div><strong>DNS 解析</strong><span>{liveEntry.dns_domain}</span></div>
-          <span>{dnsFeedback || liveEntry.dns_sync_error || liveEntry.dns_sync_status || '等待首次同步'}{liveEntry.dns_last_synced_at ? ` · ${formatTableTime(liveEntry.dns_last_synced_at)}` : ''}</span>
-          <button className="ghost" onClick={syncDNSEntry} disabled={dnsSyncing}>{dnsSyncing ? '同步中...' : '立即同步'}</button>
-        </div>}
-        <div className="access-note"><strong>使用权限</strong><span>授权用户或用户组使用此入口。</span></div>
-        {!effectiveIDs.size && <div className="access-note warning"><strong>未绑定用户</strong><span>可先下发，绑定后会自动替换占位凭据。</span></div>}
-        {!multi && <div className="access-note warning"><strong>单用户协议</strong><span>此入口只能绑定一个用户。</span></div>}
-        {!users.length ? <p className="muted">没有可选择的用户，或当前账号没有用户管理权限。</p> : <div className="entry-user-add entry-access-add">
-          <Select variant="segmented" value={subjectType} onChange={e => { setSubjectType(e.target.value as AccessSubjectType); setSubjectID(0) }}>
-            <option value="user">用户</option>
-            <option value="group">用户组</option>
-          </Select>
-          <Select value={subjectID} onChange={e => setSubjectID(Number(e.target.value))} disabled={!multi && effectiveIDs.size > 0}>
-            <option value={0}>选择{subjectType === 'group' ? '用户组' : '用户'}</option>
-            {subjectType === 'user'
-              ? (candidates as User[]).map(u => <option key={u.id} value={u.id}>{u.username}（{labelValue(u.status)}）</option>)
-              : (candidates as UserGroup[]).map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-          </Select>
-          <Select variant="segmented" value={scopeType} onChange={e => setScopeType(e.target.value as AccessScopeType)} disabled={!multi && effectiveIDs.size > 0}>
-            <option value="inbound">仅此入口</option>
-            <option value="server">这台服务器全部入口</option>
-            <option value="global">全部入口</option>
-          </Select>
-          <button onClick={add} disabled={!canAdd}>添加授权</button>
-        </div>}
-        <div className="entry-user-list">
-          {!!grants.length && <div className="entry-access-section"><strong>范围 / 用户组授权</strong>{grants.map(grant => <div className="entry-user-row" key={`grant-${grant.id}`}>
-            <div><strong>{accessSubjectLabel(data, grant)}</strong><span>{accessScopeLabel(data, grant)} · {grant.enabled === false ? '已禁用' : '已启用'}</span></div>
-            <button className="ghost" onClick={() => removeGrant(grant)}>移除</button>
-          </div>)}</div>}
-          {bindings.length ? bindings.map(binding => {
-            const user = userByID(data, binding.user_id)
-            return <div className="entry-user-row" key={binding.id}>
-              <div><strong>{user?.username || `用户 ${binding.user_id}`}</strong><span>{user ? `${labelValue(user.status)} · ${userLimitSummary(data, user)} · 已用 ${formatBytes(user.traffic_used_bytes || 0)}` : '用户信息不可见'}</span></div>
-              <button className="ghost" onClick={() => removeBinding(binding)}>移除</button>
-            </div>
-          }) : !grants.length ? <div className="empty small">暂无用户能使用这个入口；下发时会使用临时占位凭据。</div> : null}
-        </div>
-      </div>
-      <footer className="dialog-actions"><button className="ghost danger-text" onClick={deleteEntry}>删除入口</button><button className="ghost" onClick={onCancel}>关闭</button></footer>
-  </MotionDialogPanel>
-}
-
-function ServerBranchTree({ data, server, onManageEntry }: { data: any; server: Server; onManageEntry?: (entry: Inbound) => void }) {
+function ServerBranchTree({ data, server }: { data: any; server: Server }) {
   const entries: Inbound[] = (data.inbounds || []).filter((x: Inbound) => x.server_id === server.id)
   const forwards: PortForward[] = (data.port_forwards || []).filter((x: PortForward) => x.source_server_id === server.id)
   const tunnels: Tunnel[] = (data.tunnels || []).filter((x: Tunnel) => x.source_server_id === server.id)
@@ -11254,7 +10614,7 @@ function ServerBranchTree({ data, server, onManageEntry }: { data: any; server: 
     <MotionList className="tree-lane" stagger={0.03}>
       <MotionCard className="tree-node root-node" whileHover={{}}><strong>主机</strong><span>{labelValue(server.status || 'unknown')}</span></MotionCard>
       {entries.length ? entries.map(x => <div className="tree-branch" key={`in-${x.id}`}>
-        <MotionCard className="tree-node entry-node" whileHover={{}}><strong>{x.name}</strong><span>{labelProtocol(x.protocol)} · {formatHostPort(inboundEntryAddress(data, x), x.port)}</span><small>{entryAddressModeLabel(x.entry_ip_mode || 'auto', server)} · {inboundAccessSummary(data, x)}{x.dns_sync_enabled ? ` · DNS ${x.dns_sync_error ? '失败' : (x.dns_sync_status || '待同步')}` : ''}</small>{onManageEntry && <button className="tiny-button" onClick={() => onManageEntry(x)}>用户</button>}</MotionCard>
+        <MotionCard className="tree-node entry-node" whileHover={{}}><strong>{x.name}</strong><span>{labelProtocol(x.protocol)} · {formatHostPort(inboundEntryAddress(data, x), x.port)}</span><small>{entryAddressModeLabel(x.entry_ip_mode || 'auto', server)} · {inboundAccessSummary(data, x)}{x.dns_sync_enabled ? ` · DNS ${x.dns_sync_error ? '失败' : (x.dns_sync_status || '待同步')}` : ''}</small></MotionCard>
         <MotionCard className="tree-node exit-node" whileHover={{}}><strong>出口</strong><span>Direct / 路径出口</span></MotionCard>
       </div>) : <MotionCard className="tree-node muted-node" whileHover={{}}>这台主机还没有入口节点。把“入口节点”工具拖到链路图里创建。</MotionCard>}
       {!!forwards.length && <MotionCard className="branch-note" whileHover={{}}>端口转发：{forwards.map(x => `${x.listen_port}->${x.target_port}`).join('、')}</MotionCard>}
@@ -14032,161 +13392,14 @@ function Subscriptions({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
   const [iconsReady, setIconsReady] = useState(false)
   const [subscriptionFormat, setSubscriptionFormat] = useState<SubscriptionFormat>(defaultSubscriptionFormat)
-  const [expandedServers, setExpandedServers] = useState<Record<number, boolean>>({})
-  const [selectedInboundIDs, setSelectedInboundIDs] = useState<number[]>([])
-  const [selectedUserIDs, setSelectedUserIDs] = useState<number[]>([])
-  const [selectedGroupIDs, setSelectedGroupIDs] = useState<number[]>([])
-  const [activeProfileID, setActiveProfileID] = useState<number>(0)
-  const [newGroupName, setNewGroupName] = useState('')
-  const [creatingGroup, setCreatingGroup] = useState(false)
-  const [assigning, setAssigning] = useState(false)
-  const [namingPath, setNamingPath] = useState<ProxyPath | null>(null)
   const [customPathMode, setCustomPathMode] = useState<SubscriptionCustomPathMode>((data.settings?.subscription_custom_path_mode || 'disabled') as SubscriptionCustomPathMode)
   const [customPathBusy, setCustomPathBusy] = useState('')
 
   const users: User[] = data.users || []
-  const servers: Server[] = data.servers || []
-  const inbounds: Inbound[] = (data.inbounds || []).filter((x: Inbound) => x.enabled !== false && x.protocol !== 'ssh')
   const sshInbounds: Inbound[] = (data.inbounds || []).filter((x: Inbound) => x.enabled !== false && x.protocol === 'ssh')
-  const profiles: SubscriptionProfile[] = data.subscription_profiles || []
-  const assignments: SubscriptionAssignment[] = data.subscription_assignments || []
   const userGroups: UserGroup[] = data.user_groups || []
-  const members: UserGroupMember[] = data.user_group_members || []
-  const paths: ProxyPath[] = (data.proxy_paths || []).filter((p: ProxyPath) => p.enabled !== false)
   const agePolicy = data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional'
   const ageRequired = agePolicy === 'required'
-
-  useEffect(() => {
-    let active = true
-    preloadSubscriptionClientIcons().then(() => {
-      if (active) setIconsReady(true)
-    })
-    return () => { active = false }
-  }, [])
-
-  useEffect(() => {
-    if (!activeProfileID && profiles[0]?.id) setActiveProfileID(profiles[0].id)
-    if (activeProfileID && !profiles.some(p => p.id === activeProfileID)) {
-      setActiveProfileID(profiles[0]?.id || 0)
-    }
-  }, [profiles.length, activeProfileID])
-
-  useEffect(() => { setCustomPathMode((data.settings?.subscription_custom_path_mode || 'disabled') as SubscriptionCustomPathMode) }, [data.settings?.subscription_custom_path_mode])
-
-  const entryServers = useMemo(() => {
-    const byServer = new Map<number, Inbound[]>()
-    inbounds.forEach(inbound => {
-      const list = byServer.get(inbound.server_id) || []
-      list.push(inbound)
-      byServer.set(inbound.server_id, list)
-    })
-    return servers
-      .filter(s => byServer.has(s.id))
-      .slice()
-      .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), 'zh'))
-      .map(server => {
-        const serverInbounds = (byServer.get(server.id) || []).slice().sort((a, b) => (a.port - b.port) || (a.id - b.id))
-        const serverPaths = paths.filter(path => {
-          const root = inbounds.find(x => x.id === path.inbound_id)
-          return root?.server_id === server.id
-        })
-        return { server, inbounds: serverInbounds, paths: serverPaths }
-      })
-  }, [servers, inbounds, paths])
-
-  const activeProfile = profiles.find(p => p.id === activeProfileID) || null
-
-  const toggleServerExpand = (serverID: number) => {
-    setExpandedServers(prev => ({ ...prev, [serverID]: !prev[serverID] }))
-  }
-
-  const toggleInbound = (inboundID: number) => {
-    setSelectedInboundIDs(prev => prev.includes(inboundID) ? prev.filter(id => id !== inboundID) : [...prev, inboundID])
-  }
-
-  const toggleServerInbounds = (serverInbounds: Inbound[]) => {
-    const ids = serverInbounds.map(x => x.id)
-    const allSelected = ids.every(id => selectedInboundIDs.includes(id))
-    setSelectedInboundIDs(prev => allSelected
-      ? prev.filter(id => !ids.includes(id))
-      : Array.from(new Set([...prev, ...ids])))
-  }
-
-  const createGroup = async () => {
-    const name = newGroupName.trim()
-    if (!name) {
-      notify?.('请填写分组名称', 'warning')
-      return
-    }
-    setCreatingGroup(true)
-    try {
-      const res = await client.request('/subscription-profiles', {
-        method: 'POST',
-        body: JSON.stringify({ name, group_name: name, description: '', config_json: '{}', enabled: true }),
-      })
-      const created = res.subscription_profile as SubscriptionProfile | undefined
-      setNewGroupName('')
-      await load()
-      if (created?.id) setActiveProfileID(created.id)
-      notify?.(`已创建分组「${name}」`, 'success')
-    } catch (e: any) {
-      notify?.(localizeErrorMessage(e.message || e), 'error')
-    } finally {
-      setCreatingGroup(false)
-    }
-  }
-
-  const resolveTargetUserIDs = () => {
-    const ids = new Set(selectedUserIDs)
-    selectedGroupIDs.forEach(groupID => {
-      members.filter(m => m.group_id === groupID && m.enabled !== false).forEach(m => ids.add(m.user_id))
-    })
-    return Array.from(ids)
-  }
-
-  const assignSelection = async () => {
-    if (!activeProfileID) {
-      notify?.('请先选择或创建一个订阅分组', 'warning')
-      return
-    }
-    if (!selectedInboundIDs.length) {
-      notify?.('请先勾选要分配的入口节点', 'warning')
-      return
-    }
-    const targetUsers = resolveTargetUserIDs()
-    if (!targetUsers.length) {
-      notify?.('请选择目标用户或用户组', 'warning')
-      return
-    }
-    setAssigning(true)
-    try {
-      const groupName = activeProfile?.group_name || activeProfile?.name || 'default'
-      let created = 0
-      for (const userID of targetUsers) {
-        for (const inboundID of selectedInboundIDs) {
-          const exists = assignments.some(a => a.enabled !== false && a.profile_id === activeProfileID && a.user_id === userID && a.inbound_id === inboundID)
-          if (exists) continue
-          await client.request('/subscription-assignments', {
-            method: 'POST',
-            body: JSON.stringify({
-              profile_id: activeProfileID,
-              user_id: userID,
-              inbound_id: inboundID,
-              group_name: groupName,
-              enabled: true,
-            }),
-          })
-          created++
-        }
-      }
-      await load()
-      notify?.(created ? `已分配 ${created} 条订阅规则` : '所选规则均已存在，未重复创建', created ? 'success' : 'info')
-    } catch (e: any) {
-      notify?.(localizeErrorMessage(e.message || e), 'error')
-    } finally {
-      setAssigning(false)
-    }
-  }
 
   const configureUserAge = async (user: User) => {
     const publicKey = await dialogs.prompt({
@@ -14312,15 +13525,6 @@ function Subscriptions({ data, client, load, notify }: any) {
     }
     const ok = await copyText(subscriptionURLForCustomPath(user.subscription_custom_path, subscriptionFormat, encrypted))
     notify?.(ok ? `${user.username} 的自定义订阅链接已复制` : '复制失败，请重试', ok ? 'success' : 'error')
-  }
-
-  const assignmentSummaryForInbound = (inboundID: number) => {
-    const related = assignments.filter(a => a.enabled !== false && a.inbound_id === inboundID)
-    if (!related.length) return '未分配'
-    const userNames = related.map(a => users.find(u => u.id === a.user_id)?.username || `#${a.user_id}`)
-    const unique = Array.from(new Set(userNames))
-    if (unique.length <= 2) return unique.join('、')
-    return `${unique.slice(0, 2).join('、')} 等 ${unique.length} 人`
   }
 
   return <>
@@ -14452,12 +13656,12 @@ function Subscriptions({ data, client, load, notify }: any) {
             <div className="sub-section-head">
               <div>
                 <h3><Lock size={16} />SSH 受限代理</h3>
-                <p className="muted">使用用户代理密码认证，并向支持 SSH 的订阅客户端分发。Agent 仅开放本地/动态转发。</p>
+                <p className="muted">使用用户代理密码认证，并向支持 SSH 的订阅客户端分发。Agent 仅开放本地/动态转发。授权用户由订阅方案中的 SSH 入口节点决定。</p>
               </div>
             </div>
             <div className="sub-user-table">
               {sshInbounds.map(inbound => {
-                const granted = Array.from(effectiveInboundUserIDs(data, inbound)).map(id => users.find(user => user.id === id)).filter(Boolean) as User[]
+                const granted = Array.from(planGrantedUserIDsForEntry(data, inbound)).map(id => users.find(user => user.id === id)).filter(Boolean) as User[]
                 const endpoint = formatHostPort(inboundEntryAddress(data, inbound), inbound.port)
                 return <div className="sub-user-row" key={inbound.id}>
                   <div className="sub-user-main"><span className="sub-user-avatar"><Lock size={14} /></span><div><strong>{inbound.name}</strong><small>{endpoint}</small></div></div>
@@ -14471,185 +13675,11 @@ function Subscriptions({ data, client, load, notify }: any) {
               })}
             </div>
           </section>}
-
-          <section className="sub-section sub-assign-layout">
-            <div className="sub-assign-main">
-              <div className="sub-section-head">
-                <div>
-                  <h3><ServerIcon size={16} />入口服务器与代理链路</h3>
-                  <p className="muted">展开查看入口节点和简单代理链，勾选后分配到右侧分组与用户。</p>
-                </div>
-                <div className="sub-selection-meta">
-                  已选 <strong>{selectedInboundIDs.length}</strong> 个入口
-                  {selectedInboundIDs.length > 0 && (
-                    <button type="button" className="ghost" onClick={() => setSelectedInboundIDs([])}>清空选择</button>
-                  )}
-                </div>
-              </div>
-
-              {!entryServers.length ? (
-                <div className="sub-empty large">还没有可用入口。请先在代理链路中创建入口节点。</div>
-              ) : (
-                <div className="sub-server-list">
-                  {entryServers.map(({ server, inbounds: serverInbounds, paths: serverPaths }) => {
-                    const open = Boolean(expandedServers[server.id])
-                    const selectedCount = serverInbounds.filter(x => selectedInboundIDs.includes(x.id)).length
-                    const allSelected = serverInbounds.length > 0 && selectedCount === serverInbounds.length
-                    return (
-                      <article key={server.id} className={`sub-server-card ${open ? 'open' : ''}`}>
-                        <div className="sub-server-head">
-                          <label className="sub-check">
-                            <input
-                              type="checkbox"
-                              checked={allSelected}
-                              ref={el => { if (el) el.indeterminate = selectedCount > 0 && !allSelected }}
-                              onChange={() => toggleServerInbounds(serverInbounds)}
-                            />
-                          </label>
-                          <button type="button" className="sub-server-toggle" onClick={() => toggleServerExpand(server.id)}>
-                            <div className="sub-server-title">
-                              <strong>{server.name || `服务器 #${server.id}`}</strong>
-                              <span>{labelValue(server.status || 'unknown')} · {serverInbounds.length} 个入口 · {serverPaths.length} 条链路</span>
-                            </div>
-                            <ChevronRight size={16} className={open ? 'task-chevron open' : 'task-chevron'} />
-                          </button>
-                        </div>
-                        {open && (
-                          <div className="sub-server-body">
-                            {serverInbounds.map(inbound => {
-                              const inboundPaths = serverPaths.filter(p => p.inbound_id === inbound.id)
-                              const checked = selectedInboundIDs.includes(inbound.id)
-                              return (
-                                <div key={inbound.id} className={`sub-entry-block ${checked ? 'selected' : ''}`}>
-                                  <label className="sub-entry-row">
-                                    <input type="checkbox" checked={checked} onChange={() => toggleInbound(inbound.id)} />
-                                    <div className="sub-entry-copy">
-                                      <strong>{inbound.name || `${labelProtocol(inbound.protocol)}:${inbound.port}`}</strong>
-                                      <span>{labelProtocol(inbound.protocol)} · 端口 {inbound.port} · {assignmentSummaryForInbound(inbound.id)}</span>
-                                    </div>
-                                  </label>
-                                  <div className="sub-chain-list">
-                                    {inboundPaths.length ? inboundPaths.map(path => {
-                                      const hops = proxyPathChainLabels(data, path)
-                                      return (
-                                        <div key={path.id} className="sub-chain-row">
-                                          <span className="sub-chain-name">{path.name || `链路 #${path.id}`}</span>
-                                          <div className="sub-chain-hops">
-                                            {hops.map((hop, index) => (
-                                              <React.Fragment key={`${path.id}-${index}`}>
-                                                {index > 0 && <span className="sub-chain-arrow">→</span>}
-                                                <span className="sub-chain-hop">{hop}</span>
-                                              </React.Fragment>
-                                            ))}
-                                          </div>
-										  <button type="button" className="ghost icon-button sub-chain-name-edit" onClick={() => setNamingPath(path)} aria-label={`编辑 ${path.name || `链路 #${path.id}`} 名称`} title="编辑链路名称"><Edit3 size={14} /></button>
-                                        </div>
-                                      )
-                                    }) : (
-                                      <div className="sub-chain-row muted-row">
-                                        <span>直连入口节点（暂无后续代理链路）</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </article>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-
-            <aside className="sub-assign-side">
-              <div className="sub-side-card">
-                <div className="sub-section-head compact">
-                  <div>
-                    <h3>订阅分组</h3>
-                    <p className="muted">创建分组后，将勾选的入口分配给用户或用户组。</p>
-                  </div>
-                </div>
-                <div className="sub-group-create">
-                  <input value={newGroupName} onChange={e => setNewGroupName(e.target.value)} placeholder="新分组名称，例如 香港线路" />
-                  <button type="button" onClick={() => void createGroup()} disabled={creatingGroup}>{creatingGroup ? '创建中…' : '创建'}</button>
-                </div>
-                <div className="sub-group-list">
-                  {profiles.length ? profiles.map(profile => (
-                    <button
-                      key={profile.id}
-                      type="button"
-                      className={`sub-group-item ${activeProfileID === profile.id ? 'active' : ''}`}
-                      onClick={() => setActiveProfileID(profile.id)}
-                    >
-                      <div>
-                        <strong>{profile.name}</strong>
-                        <span>{profile.group_name || profile.name} · {assignments.filter(a => a.profile_id === profile.id && a.enabled !== false).length} 条规则</span>
-                      </div>
-                      <button
-                        type="button"
-                        className="ghost icon-button danger-text"
-                        title="删除分组"
-                        onClick={e => {
-                          e.stopPropagation()
-                          void remove(client, `/subscription-profiles/${profile.id}`, load, dialogs, profile)
-                        }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </button>
-                  )) : <div className="sub-empty">还没有分组，先创建一个。</div>}
-                </div>
-              </div>
-
-              <div className="sub-side-card">
-                <div className="sub-section-head compact">
-                  <div>
-                    <h3>分配给</h3>
-                    <p className="muted">可同时选择用户与用户组（用户组会展开为成员）。</p>
-                  </div>
-                </div>
-                <div className="sub-target-block">
-                  <span className="sub-target-label">用户组</span>
-                  <div className="sub-chip-list">
-                    {userGroups.length ? userGroups.map(group => {
-                      const active = selectedGroupIDs.includes(group.id)
-                      const count = members.filter(m => m.group_id === group.id && m.enabled !== false).length
-                      return (
-                        <button key={group.id} type="button" className={`sub-chip ${active ? 'active' : ''}`} onClick={() => setSelectedGroupIDs(prev => active ? prev.filter(id => id !== group.id) : [...prev, group.id])}>
-                          {group.name}<small>{count}</small>
-                        </button>
-                      )
-                    }) : <span className="muted">暂无用户组</span>}
-                  </div>
-                </div>
-                <div className="sub-target-block">
-                  <span className="sub-target-label">用户</span>
-                  <div className="sub-chip-list">
-                    {users.map(user => {
-                      const active = selectedUserIDs.includes(user.id)
-                      return (
-                        <button key={user.id} type="button" className={`sub-chip ${active ? 'active' : ''}`} onClick={() => setSelectedUserIDs(prev => active ? prev.filter(id => id !== user.id) : [...prev, user.id])}>
-                          {user.username}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-                <button type="button" className="sub-assign-submit" onClick={() => void assignSelection()} disabled={assigning}>
-                  {assigning ? '分配中…' : `分配到${activeProfile ? `「${activeProfile.name}」` : '分组'}`}
-                </button>
-              </div>
-            </aside>
-          </section>
         </div>
       )}
     </Panel>
-	<AnimatePresence>{namingPath && <ProxyPathNameDialog path={namingPath} data={data} client={client} load={load} onClose={() => setNamingPath(null)} />}</AnimatePresence>
   </>
 }
-
 const fallbackNotificationEventOptions: NotificationEventDefinition[] = [
   { value: 'server_offline', label: '服务器失联', description: '服务器超过设置的离线判断时间未连接时提醒', variables: ['ServerName', 'ServerID', 'LastSeen', 'Time'] },
   { value: 'server_online', label: '服务器恢复', description: '失联服务器恢复在线并保持一段时间后提醒', variables: ['ServerName', 'ServerID', 'Time'] },

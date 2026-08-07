@@ -394,7 +394,11 @@ func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 		t.Fatalf("C should terminate the two-hop branch with direct: %s", configC)
 	}
 	subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{serverA, serverB, serverC}, []model.Inbound{rootInbound}, SubscriptionOptions{
-		InboundUsers:   opts.InboundUsers,
+		EffectiveNodes: map[string]bool{
+			NodeKeyOf(model.AssignableNodeProxyPath, chain.ID):   true,
+			NodeKeyOf(model.AssignableNodeProxyPath, direct.ID):  true,
+			NodeKeyOf(model.AssignableNodeProxyPath, directC.ID): true,
+		},
 		ProxyPaths:     opts.ProxyPaths,
 		ProxyPathSteps: opts.ProxyPathSteps,
 	})
@@ -791,7 +795,11 @@ func TestProxyPathBranchesUseAuthUserRoutesAndSubscriptionNodes(t *testing.T) {
 	if !routeA || !routeB || !routeDirect {
 		t.Fatalf("branch auth_user routes missing: routeA=%v routeB=%v routeDirect=%v config=%s", routeA, routeB, routeDirect, config)
 	}
-	sub, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{InboundUsers: opts.InboundUsers, ProxyPaths: opts.ProxyPaths, ProxyPathSteps: opts.ProxyPathSteps})
+	sub, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
+		EffectiveNodes:  map[string]bool{NodeKeyOf(model.AssignableNodeProxyPath, pathA.ID): true, NodeKeyOf(model.AssignableNodeProxyPath, pathB.ID): true, NodeKeyOf(model.AssignableNodeProxyPath, pathDirect.ID): true},
+		ProxyPaths:      opts.ProxyPaths,
+		ProxyPathSteps:  opts.ProxyPathSteps,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1037,7 +1045,7 @@ func TestPlaceholderDoesNotEnterSubscription(t *testing.T) {
 		model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"},
 		[]model.Server{{ID: 1, Name: "edge", PublicIPv4: "203.0.113.10"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
-		SubscriptionOptions{InboundUsers: []model.InboundUser{}},
+		SubscriptionOptions{EffectiveNodes: map[string]bool{}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1068,7 +1076,7 @@ func TestImportedSocksSubscriptionRequiresGrant(t *testing.T) {
 	if strings.Contains(withoutGrant, "socks-a") {
 		t.Fatalf("imported node leaked without grant: %s", withoutGrant)
 	}
-	withGrant, err := GenerateSubscriptionWithOptions(user, nil, nil, SubscriptionOptions{ExternalOutbounds: []model.ExternalOutbound{external}, ExternalOutboundAccessGrants: []model.ExternalOutboundAccessGrant{{ExternalOutboundID: external.ID, SubjectType: model.AccessSubjectUser, SubjectID: user.ID, Enabled: true}}})
+	withGrant, err := GenerateSubscriptionWithOptions(user, nil, nil, SubscriptionOptions{ExternalOutbounds: []model.ExternalOutbound{external}, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID): true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1729,9 +1737,7 @@ func TestGeneratedConfigIncludesRuntimeRateLimits(t *testing.T) {
 		{ID: 2, Username: "bob", Status: "active", ProxyUUID: "22222222-2222-4222-8222-222222222222", ProxyPassword: "pass-b", SpeedLimitMbps: 10},
 	}
 	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, nil, users, ConfigOptions{
-		InboundUsers:     []model.InboundUser{{InboundID: 1, UserID: 1, Enabled: true}, {InboundID: 1, UserID: 2, Enabled: true}},
-		UserGroups:       []model.UserGroup{{ID: 1, Name: "limited", Enabled: true, SpeedLimitMbps: 20}},
-		UserGroupMembers: []model.UserGroupMember{{GroupID: 1, UserID: 1, Enabled: true}, {GroupID: 1, UserID: 2, Enabled: true}},
+		InboundUsers: []model.InboundUser{{InboundID: 1, UserID: 1, Enabled: true}, {InboundID: 1, UserID: 2, Enabled: true}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1743,8 +1749,8 @@ func TestGeneratedConfigIncludesRuntimeRateLimits(t *testing.T) {
 	if parsed.OBoard == nil || parsed.OBoard.RateLimits.Users == nil {
 		t.Fatalf("missing runtime limits: %s", config)
 	}
-	if got := parsed.OBoard.RateLimits.Users["alice"].SpeedLimitMbps; got != 20 {
-		t.Fatalf("alice speed limit = %d, want group limit 20", got)
+	if got := parsed.OBoard.RateLimits.Users["alice"].SpeedLimitMbps; got != 0 {
+		t.Fatalf("alice speed limit = %d, want default 0", got)
 	}
 	if got := parsed.OBoard.RateLimits.Users["bob"].SpeedLimitMbps; got != 10 {
 		t.Fatalf("bob speed limit = %d, want user override 10", got)

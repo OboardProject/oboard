@@ -407,11 +407,11 @@ func realtimeResourcesForRequest(path string) []string {
 		return []string{"mtu", "servers", "tasks", "probes"}
 	case "port-forward-probes", "inbound-probes":
 		return []string{"probes", "port_forwards", "topology", "tasks"}
-	case "users", "user-groups", "user-group-members", "inbound-users", "inbound-access-grants":
+	case "users", "user-groups", "user-group-members":
 		return []string{"users", "subscriptions", "account", "topology"}
-	case "subscriptions", "subscription-profiles", "subscription-assignments":
+	case "subscriptions":
 		return []string{"subscriptions", "account"}
-	case "inbounds", "outbounds", "routing-rules", "external-outbounds", "external-outbound-access-grants", "proxy-paths", "proxy-path-steps", "warp-profiles":
+	case "inbounds", "outbounds", "routing-rules", "external-outbounds", "proxy-paths", "proxy-path-steps", "warp-profiles":
 		return []string{"topology", "subscriptions", "servers", "deployments"}
 	case "port-forwards":
 		return []string{"port_forwards", "topology", "deployments"}

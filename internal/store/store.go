@@ -194,14 +194,11 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists google_eab_credentials (id integer primary key autoincrement, key_id text not null unique, remark text not null default '', hmac_key_encrypted text not null, created_at text not null, updated_at text not null)`,
 		`create table if not exists certificates (id integer primary key autoincrement, name text not null, primary_domain text not null, domains_json text not null default '[]', wildcard integer not null default 0, challenge_type text not null, dns_credential_id integer references dns_credentials(id) on delete set null, issuance_server_id integer references servers(id) on delete set null, acme_ca text not null default 'letsencrypt', account_email text not null default '', google_eab_credential_id integer references google_eab_credentials(id) on delete restrict, eab_key_id text not null default '', eab_hmac_key_encrypted text not null default '', status text not null default 'pending', certificate_pem text not null default '', fullchain_pem text not null default '', private_key_encrypted text not null default '', revision text not null default '', not_before text, not_after text, auto_renew integer not null default 1, validation_records_json text not null default '[]', last_error text not null default '', last_issued_at text, last_renewal_attempt_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists inbound_certificate_bindings (inbound_id integer primary key references inbounds(id) on delete cascade, certificate_id integer references certificates(id) on delete set null, mode text not null default 'auto', server_name text not null default '', created_at text not null, updated_at text not null)`,
-		`create table if not exists inbound_users (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, user_id integer not null references users(id) on delete cascade, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(inbound_id,user_id))`,
 		`create table if not exists user_groups (id integer primary key autoincrement, name text not null unique, description text not null default '', role text not null default 'viewer', system_key text not null default '', enabled integer not null default 1, speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists user_group_members (id integer primary key autoincrement, group_id integer not null references user_groups(id) on delete cascade, user_id integer not null references users(id) on delete cascade, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(group_id,user_id))`,
-		`create table if not exists inbound_access_grants (id integer primary key autoincrement, subject_type text not null, subject_id integer not null, scope_type text not null, server_id integer references servers(id) on delete cascade, inbound_id integer references inbounds(id) on delete cascade, proxy_path_id integer references proxy_paths(id) on delete cascade, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists outbounds (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, next_server_id integer references servers(id) on delete set null, name text not null, protocol text not null, target_address text not null, target_port integer not null, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists routing_rules (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, priority integer not null default 100, match_json text not null default '{}', action text not null, outbound_id integer references outbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, target_server_id integer references servers(id) on delete set null, outbound_tag text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists external_outbounds (id integer primary key autoincrement, server_id integer references servers(id) on delete set null, name text not null, protocol text not null, scope text not null default 'global', target_address text not null default '', target_port integer not null default 0, config_json text not null default '{}', region_mode text not null default 'auto', region_code text not null default '', expose_to_users integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
-		`create table if not exists external_outbound_access_grants (id integer primary key autoincrement, external_outbound_id integer not null references external_outbounds(id) on delete cascade, subject_type text not null, subject_id integer not null, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(external_outbound_id,subject_type,subject_id))`,
 		`create table if not exists proxy_paths (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, kind text not null default 'chain', branch_source_step_id integer references proxy_path_steps(id) on delete set null, name_mode text not null default 'auto', name_template_json text not null default '[]', exit_region_mode text not null default 'auto', exit_region_code text not null default '', secret text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_steps (id integer primary key autoincrement, path_id integer not null references proxy_paths(id) on delete cascade, position integer not null, node_type text not null, transport_mode text not null default 'singbox', processing_role integer not null default 0, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, config_json text not null default '{}', created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_port_allocations (id integer primary key autoincrement, kind text not null, scope_key text not null, server_id integer not null references servers(id) on delete cascade, pool text not null default 'public', listen_ip text not null default '', network text not null default 'tcp_udp', generation integer not null default 1, ordinal integer not null default 0, port integer not null, state text not null default 'active', policy_revision integer not null default 0, created_at text not null, updated_at text not null, unique(kind,scope_key,server_id,generation,ordinal))`,
@@ -236,8 +233,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists notification_announcements (id integer primary key autoincrement, actor_user_id integer not null references users(id) on delete cascade, actor_name text not null, title text not null, body text not null, user_ids_json text not null default '[]', queued_count integer not null default 0, created_at text not null)`,
 		`create table if not exists notification_deliveries (id integer primary key autoincrement, channel_id integer not null references notification_channels(id) on delete cascade, event text not null, event_key text not null, title text not null, body text not null, status text not null default 'pending', attempts integer not null default 0, error text not null default '', next_attempt_at text not null, created_at text not null, updated_at text not null, sent_at text, unique(channel_id,event,event_key))`,
 		`create table if not exists server_offline_notices (server_id integer primary key references servers(id) on delete cascade, status text not null, since_at text not null, notify_at text not null, group_key text not null default '', notified integer not null default 0, updated_at text not null)`,
-		`create table if not exists subscription_profiles (id integer primary key autoincrement, name text not null unique, group_name text not null default 'default', description text not null default '', config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
-		`create table if not exists subscription_assignments (id integer primary key autoincrement, profile_id integer not null references subscription_profiles(id) on delete cascade, user_id integer not null references users(id) on delete cascade, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, group_name text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists subscription_plans (id integer primary key autoincrement, name text not null unique, description text not null default '', enabled integer not null default 1, revision integer not null default 0, active_revision_id integer references subscription_plan_revisions(id) on delete set null, draft_revision_id integer references subscription_plan_revisions(id) on delete set null, created_at text not null, updated_at text not null)`,
 		`create table if not exists subscription_plan_revisions (id integer primary key autoincrement, plan_id integer not null references subscription_plans(id) on delete cascade, revision integer not null, status text not null default 'draft', speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, created_by integer references users(id) on delete set null, created_at text not null, activated_at text, unique(plan_id, revision))`,
 		`create table if not exists subscription_plan_revision_nodes (id integer primary key autoincrement, revision_id integer not null references subscription_plan_revisions(id) on delete cascade, node_type text not null, node_id integer not null, display_group text not null default '', source_type text not null default 'explicit', source_rule_id integer not null default 0, created_at text not null, unique(revision_id, node_type, node_id))`,
@@ -256,14 +251,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_traffic_periods_user on traffic_periods(user_id, period_key)`,
 		`create index if not exists idx_traffic_leases_server on traffic_leases(server_id, period_key)`,
 		`create index if not exists idx_server_metric_samples_server_time on server_metric_samples(server_id, sampled_at desc)`,
-		`create index if not exists idx_inbound_users_inbound on inbound_users(inbound_id, enabled)`,
-		`create index if not exists idx_inbound_users_user on inbound_users(user_id, enabled)`,
 		`create index if not exists idx_user_group_members_group on user_group_members(group_id, enabled)`,
 		`create index if not exists idx_user_group_members_user on user_group_members(user_id, enabled)`,
-		`create index if not exists idx_inbound_access_grants_subject on inbound_access_grants(subject_type, subject_id, enabled)`,
-		`create index if not exists idx_inbound_access_grants_scope on inbound_access_grants(scope_type, server_id, inbound_id, enabled)`,
-		`create index if not exists idx_external_outbound_access_grants_subject on external_outbound_access_grants(subject_type, subject_id, enabled)`,
-		`create index if not exists idx_external_outbound_access_grants_external on external_outbound_access_grants(external_outbound_id, enabled)`,
 		`create index if not exists idx_port_forwards_source on port_forwards(source_server_id, enabled, priority)`,
 		`create index if not exists idx_tunnels_source on tunnels(source_server_id, enabled, priority)`,
 		`create index if not exists idx_dns_bench_server on dns_benchmark_results(server_id, created_at)`,
@@ -274,8 +263,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_inbound_probe_inbound on inbound_probe_results(inbound_id, created_at)`,
 		`create index if not exists idx_notification_targets_user on notification_channel_user_targets(user_id, channel_id)`,
 		`create index if not exists idx_notification_delivery_pending on notification_deliveries(status, next_attempt_at, attempts)`,
-		`create index if not exists idx_subscription_assignments_user on subscription_assignments(user_id, enabled)`,
-		`create index if not exists idx_subscription_assignments_profile on subscription_assignments(profile_id, enabled)`,
 		`create unique index if not exists idx_user_plan_bindings_active on user_plan_bindings(user_id) where enabled=1`,
 		`create index if not exists idx_user_plan_bindings_plan on user_plan_bindings(plan_id, enabled)`,
 		`create unique index if not exists idx_plan_revisions_one_active on subscription_plan_revisions(plan_id) where status='active'`,
@@ -406,12 +393,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		}
 	}
 	if err := s.migrateProxyPathPortAllocations(ctx); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "inbound_access_grants", "proxy_path_id", `alter table inbound_access_grants add column proxy_path_id integer references proxy_paths(id) on delete cascade`); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_inbound_access_grants_scope on inbound_access_grants(subject_type,subject_id,scope_type,coalesce(server_id,0),coalesce(inbound_id,0),coalesce(proxy_path_id,0))`); err != nil {
 		return err
 	}
 	serverTelemetryColumns := []struct {
@@ -555,6 +536,13 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	}
 	if err := s.migrateUserPlanBindingDeployTracking(ctx); err != nil {
 		return err
+	}
+	// The legacy authorization tables are removed after the plan revision
+	// migration backfills subscription_plan_nodes into revision snapshots.
+	for _, legacyTable := range []string{"subscription_plan_nodes", "subscription_profiles", "subscription_assignments", "inbound_users", "inbound_access_grants", "external_outbound_access_grants"} {
+		if _, err := s.db.ExecContext(ctx, `drop table if exists `+legacyTable); err != nil {
+			return err
+		}
 	}
 	return s.ensureDefaultDNSLists(ctx)
 }
@@ -1680,150 +1668,6 @@ func scanUsers(rows *sql.Rows) ([]model.User, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) CreateSubscriptionProfile(ctx context.Context, v *model.SubscriptionProfile) error {
-	ts := now()
-	v.CreatedAt = parseTime(ts)
-	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into subscription_profiles(name,group_name,description,config_json,enabled,created_at,updated_at) values(?,?,?,?,?,?,?)`, v.Name, v.GroupName, v.Description, v.ConfigJSON, boolInt(v.Enabled), ts, ts)
-	if err != nil {
-		return err
-	}
-	v.ID, _ = res.LastInsertId()
-	return nil
-}
-
-func (s *Store) UpdateSubscriptionProfile(ctx context.Context, v *model.SubscriptionProfile) error {
-	_, err := s.db.ExecContext(ctx, `update subscription_profiles set name=?,group_name=?,description=?,config_json=?,enabled=?,updated_at=? where id=?`, v.Name, v.GroupName, v.Description, v.ConfigJSON, boolInt(v.Enabled), now(), v.ID)
-	return err
-}
-
-func (s *Store) ListSubscriptionProfiles(ctx context.Context) ([]model.SubscriptionProfile, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,name,group_name,description,config_json,enabled,created_at,updated_at from subscription_profiles order by id desc`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanSubscriptionProfiles(rows)
-}
-
-func (s *Store) GetSubscriptionProfile(ctx context.Context, id int64) (*model.SubscriptionProfile, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,name,group_name,description,config_json,enabled,created_at,updated_at from subscription_profiles where id=?`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items, err := scanSubscriptionProfiles(rows)
-	if err != nil || len(items) == 0 {
-		if err != nil {
-			return nil, err
-		}
-		return nil, sql.ErrNoRows
-	}
-	return &items[0], nil
-}
-
-func scanSubscriptionProfiles(rows *sql.Rows) ([]model.SubscriptionProfile, error) {
-	var out []model.SubscriptionProfile
-	for rows.Next() {
-		var v model.SubscriptionProfile
-		var enabled int
-		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.Name, &v.GroupName, &v.Description, &v.ConfigJSON, &enabled, &ca, &ua); err != nil {
-			return nil, err
-		}
-		v.Enabled = enabled == 1
-		v.CreatedAt = parseTime(ca)
-		v.UpdatedAt = parseTime(ua)
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) CreateSubscriptionAssignment(ctx context.Context, v *model.SubscriptionAssignment) error {
-	ts := now()
-	v.CreatedAt = parseTime(ts)
-	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into subscription_assignments(profile_id,user_id,server_id,inbound_id,group_name,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?)`, v.ProfileID, v.UserID, v.ServerID, v.InboundID, v.GroupName, boolInt(v.Enabled), ts, ts)
-	if err != nil {
-		return err
-	}
-	v.ID, _ = res.LastInsertId()
-	return nil
-}
-
-func (s *Store) UpdateSubscriptionAssignment(ctx context.Context, v *model.SubscriptionAssignment) error {
-	_, err := s.db.ExecContext(ctx, `update subscription_assignments set profile_id=?,user_id=?,server_id=?,inbound_id=?,group_name=?,enabled=?,updated_at=? where id=?`, v.ProfileID, v.UserID, v.ServerID, v.InboundID, v.GroupName, boolInt(v.Enabled), now(), v.ID)
-	return err
-}
-
-func (s *Store) ListSubscriptionAssignments(ctx context.Context) ([]model.SubscriptionAssignment, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,profile_id,user_id,server_id,inbound_id,group_name,enabled,created_at,updated_at from subscription_assignments order by id desc`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanSubscriptionAssignments(rows)
-}
-
-func (s *Store) ListSubscriptionAssignmentsForUser(ctx context.Context, userID int64) ([]model.SubscriptionAssignment, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,profile_id,user_id,server_id,inbound_id,group_name,enabled,created_at,updated_at from subscription_assignments where user_id=? and enabled=1 order by id desc`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanSubscriptionAssignments(rows)
-}
-
-func (s *Store) GetSubscriptionAssignment(ctx context.Context, id int64) (*model.SubscriptionAssignment, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,profile_id,user_id,server_id,inbound_id,group_name,enabled,created_at,updated_at from subscription_assignments where id=?`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items, err := scanSubscriptionAssignments(rows)
-	if err != nil || len(items) == 0 {
-		if err != nil {
-			return nil, err
-		}
-		return nil, sql.ErrNoRows
-	}
-	return &items[0], nil
-}
-
-func (s *Store) DeleteSubscriptionAssignmentsForUser(ctx context.Context, userID int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from subscription_assignments where user_id=?`, userID)
-	return err
-}
-
-func (s *Store) DeleteSubscriptionAssignmentsForProfile(ctx context.Context, profileID int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from subscription_assignments where profile_id=?`, profileID)
-	return err
-}
-
-func scanSubscriptionAssignments(rows *sql.Rows) ([]model.SubscriptionAssignment, error) {
-	var out []model.SubscriptionAssignment
-	for rows.Next() {
-		var v model.SubscriptionAssignment
-		var serverID, inboundID sql.NullInt64
-		var enabled int
-		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.ProfileID, &v.UserID, &serverID, &inboundID, &v.GroupName, &enabled, &ca, &ua); err != nil {
-			return nil, err
-		}
-		if serverID.Valid {
-			v.ServerID = &serverID.Int64
-		}
-		if inboundID.Valid {
-			v.InboundID = &inboundID.Int64
-		}
-		v.Enabled = enabled == 1
-		v.CreatedAt = parseTime(ca)
-		v.UpdatedAt = parseTime(ua)
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-
 func (s *Store) CreateServer(ctx context.Context, v *model.Server) error {
 	ts := now()
 	v.CreatedAt = parseTime(ts)
@@ -2559,92 +2403,6 @@ func (s *Store) GetInbound(ctx context.Context, id int64) (*model.Inbound, error
 	return nil, sql.ErrNoRows
 }
 
-func (s *Store) CreateInboundUser(ctx context.Context, v *model.InboundUser) error {
-	ts := now()
-	v.CreatedAt = parseTime(ts)
-	v.UpdatedAt = v.CreatedAt
-	_, err := s.db.ExecContext(ctx, `insert into inbound_users(inbound_id,user_id,enabled,created_at,updated_at) values(?,?,?,?,?) on conflict(inbound_id,user_id) do update set enabled=excluded.enabled, updated_at=excluded.updated_at`, v.InboundID, v.UserID, boolInt(v.Enabled), ts, ts)
-	if err != nil {
-		return err
-	}
-	current, err := s.GetInboundUserByPair(ctx, v.InboundID, v.UserID)
-	if err != nil {
-		return err
-	}
-	*v = *current
-	return nil
-}
-
-func (s *Store) UpdateInboundUser(ctx context.Context, v *model.InboundUser) error {
-	_, err := s.db.ExecContext(ctx, `update inbound_users set inbound_id=?,user_id=?,enabled=?,updated_at=? where id=?`, v.InboundID, v.UserID, boolInt(v.Enabled), now(), v.ID)
-	return err
-}
-
-func (s *Store) ListInboundUsers(ctx context.Context) ([]model.InboundUser, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,inbound_id,user_id,enabled,created_at,updated_at from inbound_users order by id desc`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanInboundUsers(rows)
-}
-
-func (s *Store) ListInboundUsersForInbound(ctx context.Context, inboundID int64) ([]model.InboundUser, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,inbound_id,user_id,enabled,created_at,updated_at from inbound_users where inbound_id=? order by id desc`, inboundID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanInboundUsers(rows)
-}
-
-func (s *Store) GetInboundUser(ctx context.Context, id int64) (*model.InboundUser, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,inbound_id,user_id,enabled,created_at,updated_at from inbound_users where id=?`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items, err := scanInboundUsers(rows)
-	if err != nil || len(items) == 0 {
-		if err != nil {
-			return nil, err
-		}
-		return nil, sql.ErrNoRows
-	}
-	return &items[0], nil
-}
-
-func (s *Store) GetInboundUserByPair(ctx context.Context, inboundID, userID int64) (*model.InboundUser, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,inbound_id,user_id,enabled,created_at,updated_at from inbound_users where inbound_id=? and user_id=?`, inboundID, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items, err := scanInboundUsers(rows)
-	if err != nil || len(items) == 0 {
-		if err != nil {
-			return nil, err
-		}
-		return nil, sql.ErrNoRows
-	}
-	return &items[0], nil
-}
-
-func (s *Store) DeleteInboundUser(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from inbound_users where id=?`, id)
-	return err
-}
-
-func (s *Store) DeleteInboundUsersForInbound(ctx context.Context, inboundID int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from inbound_users where inbound_id=?`, inboundID)
-	return err
-}
-
-func (s *Store) DeleteInboundUsersForUser(ctx context.Context, userID int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from inbound_users where user_id=?`, userID)
-	return err
-}
-
 func (s *Store) ApplySSHDeploymentState(ctx context.Context, hostKey model.SSHServerHostKey, deployments []model.SSHPasswordDeployment) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -2720,23 +2478,6 @@ func (s *Store) ListSSHPasswordDeploymentsForUser(ctx context.Context, userID in
 		}
 		item.UpdatedAt = parseTime(updatedAt)
 		out = append(out, item)
-	}
-	return out, rows.Err()
-}
-
-func scanInboundUsers(rows *sql.Rows) ([]model.InboundUser, error) {
-	var out []model.InboundUser
-	for rows.Next() {
-		var v model.InboundUser
-		var enabled int
-		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.InboundID, &v.UserID, &enabled, &ca, &ua); err != nil {
-			return nil, err
-		}
-		v.Enabled = enabled == 1
-		v.CreatedAt = parseTime(ca)
-		v.UpdatedAt = parseTime(ua)
-		out = append(out, v)
 	}
 	return out, rows.Err()
 }
@@ -2884,141 +2625,6 @@ func scanUserGroupMembers(rows *sql.Rows) ([]model.UserGroupMember, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) CreateInboundAccessGrant(ctx context.Context, v *model.InboundAccessGrant) error {
-	ts := now()
-	v.CreatedAt = parseTime(ts)
-	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into inbound_access_grants(subject_type,subject_id,scope_type,server_id,inbound_id,proxy_path_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)`, v.SubjectType, v.SubjectID, v.ScopeType, v.ServerID, v.InboundID, v.ProxyPathID, boolInt(v.Enabled), ts, ts)
-	if err != nil {
-		return err
-	}
-	v.ID, _ = res.LastInsertId()
-	return nil
-}
-
-func (s *Store) UpdateInboundAccessGrant(ctx context.Context, v *model.InboundAccessGrant) error {
-	_, err := s.db.ExecContext(ctx, `update inbound_access_grants set subject_type=?,subject_id=?,scope_type=?,server_id=?,inbound_id=?,proxy_path_id=?,enabled=?,updated_at=? where id=?`, v.SubjectType, v.SubjectID, v.ScopeType, v.ServerID, v.InboundID, v.ProxyPathID, boolInt(v.Enabled), now(), v.ID)
-	return err
-}
-
-func (s *Store) ListInboundAccessGrants(ctx context.Context) ([]model.InboundAccessGrant, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,subject_type,subject_id,scope_type,server_id,inbound_id,proxy_path_id,enabled,created_at,updated_at from inbound_access_grants order by id desc`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanInboundAccessGrants(rows)
-}
-
-func (s *Store) GetInboundAccessGrant(ctx context.Context, id int64) (*model.InboundAccessGrant, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,subject_type,subject_id,scope_type,server_id,inbound_id,proxy_path_id,enabled,created_at,updated_at from inbound_access_grants where id=?`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items, err := scanInboundAccessGrants(rows)
-	if err != nil || len(items) == 0 {
-		if err != nil {
-			return nil, err
-		}
-		return nil, sql.ErrNoRows
-	}
-	return &items[0], nil
-}
-
-func scanInboundAccessGrants(rows *sql.Rows) ([]model.InboundAccessGrant, error) {
-	var out []model.InboundAccessGrant
-	for rows.Next() {
-		var v model.InboundAccessGrant
-		var serverID, inboundID, proxyPathID sql.NullInt64
-		var enabled int
-		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.SubjectType, &v.SubjectID, &v.ScopeType, &serverID, &inboundID, &proxyPathID, &enabled, &ca, &ua); err != nil {
-			return nil, err
-		}
-		if serverID.Valid {
-			v.ServerID = &serverID.Int64
-		}
-		if inboundID.Valid {
-			v.InboundID = &inboundID.Int64
-		}
-		if proxyPathID.Valid {
-			v.ProxyPathID = &proxyPathID.Int64
-		}
-		v.Enabled = enabled == 1
-		v.CreatedAt = parseTime(ca)
-		v.UpdatedAt = parseTime(ua)
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) SyncInboundAccessScope(ctx context.Context, scopeType model.AccessScopeType, serverID, inboundID *int64, proxyPathIDs, userIDs, groupIDs []int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	timestamp := now()
-	insertGrant := func(subjectType model.AccessSubjectType, subjectID int64, pathID *int64) error {
-		_, err := tx.ExecContext(ctx, `insert into inbound_access_grants(subject_type,subject_id,scope_type,server_id,inbound_id,proxy_path_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?)`, subjectType, subjectID, scopeType, serverID, inboundID, pathID, 1, timestamp, timestamp)
-		return err
-	}
-	switch scopeType {
-	case model.AccessScopeServer:
-		if _, err := tx.ExecContext(ctx, `delete from inbound_access_grants where scope_type=? and server_id=?`, scopeType, serverID); err != nil {
-			return err
-		}
-		for _, userID := range userIDs {
-			if err := insertGrant(model.AccessSubjectUser, userID, nil); err != nil {
-				return err
-			}
-		}
-		for _, groupID := range groupIDs {
-			if err := insertGrant(model.AccessSubjectGroup, groupID, nil); err != nil {
-				return err
-			}
-		}
-	case model.AccessScopeInbound:
-		if _, err := tx.ExecContext(ctx, `delete from inbound_users where inbound_id=?`, inboundID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `delete from inbound_access_grants where scope_type=? and inbound_id=?`, scopeType, inboundID); err != nil {
-			return err
-		}
-		for _, userID := range userIDs {
-			if _, err := tx.ExecContext(ctx, `insert into inbound_users(inbound_id,user_id,enabled,created_at,updated_at) values(?,?,?,?,?)`, inboundID, userID, 1, timestamp, timestamp); err != nil {
-				return err
-			}
-		}
-		for _, groupID := range groupIDs {
-			if err := insertGrant(model.AccessSubjectGroup, groupID, nil); err != nil {
-				return err
-			}
-		}
-	case model.AccessScopeProxyPath:
-		for _, pathID := range proxyPathIDs {
-			if _, err := tx.ExecContext(ctx, `delete from inbound_access_grants where scope_type=? and proxy_path_id=?`, scopeType, pathID); err != nil {
-				return err
-			}
-			pathID := pathID
-			for _, userID := range userIDs {
-				if err := insertGrant(model.AccessSubjectUser, userID, &pathID); err != nil {
-					return err
-				}
-			}
-			for _, groupID := range groupIDs {
-				if err := insertGrant(model.AccessSubjectGroup, groupID, &pathID); err != nil {
-					return err
-				}
-			}
-		}
-	default:
-		return fmt.Errorf("unsupported access scope %q", scopeType)
-	}
-	return tx.Commit()
-}
-
 func (s *Store) DeleteUserGroupMembersForGroup(ctx context.Context, groupID int64) error {
 	_, err := s.db.ExecContext(ctx, `delete from user_group_members where group_id=?`, groupID)
 	return err
@@ -3026,26 +2632,6 @@ func (s *Store) DeleteUserGroupMembersForGroup(ctx context.Context, groupID int6
 
 func (s *Store) DeleteUserGroupMembersForUser(ctx context.Context, userID int64) error {
 	_, err := s.db.ExecContext(ctx, `delete from user_group_members where user_id=?`, userID)
-	return err
-}
-
-func (s *Store) DeleteInboundAccessGrantsForGroup(ctx context.Context, groupID int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from inbound_access_grants where subject_type=? and subject_id=?`, model.AccessSubjectGroup, groupID)
-	return err
-}
-
-func (s *Store) DeleteInboundAccessGrantsForUser(ctx context.Context, userID int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from inbound_access_grants where subject_type=? and subject_id=?`, model.AccessSubjectUser, userID)
-	return err
-}
-
-func (s *Store) DeleteInboundAccessGrantsForInbound(ctx context.Context, inboundID int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from inbound_access_grants where scope_type=? and inbound_id=?`, model.AccessScopeInbound, inboundID)
-	return err
-}
-
-func (s *Store) DeleteInboundAccessGrantsForServer(ctx context.Context, serverID int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from inbound_access_grants where scope_type=? and server_id=?`, model.AccessScopeServer, serverID)
 	return err
 }
 
@@ -3229,73 +2815,6 @@ func (s *Store) GetExternalOutbound(ctx context.Context, id int64) (*model.Exter
 		}
 	}
 	return nil, sql.ErrNoRows
-}
-
-func (s *Store) CreateExternalOutboundAccessGrant(ctx context.Context, v *model.ExternalOutboundAccessGrant) error {
-	ts := now()
-	v.CreatedAt = parseTime(ts)
-	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into external_outbound_access_grants(external_outbound_id,subject_type,subject_id,enabled,created_at,updated_at) values(?,?,?,?,?,?)`, v.ExternalOutboundID, v.SubjectType, v.SubjectID, boolInt(v.Enabled), ts, ts)
-	if err != nil {
-		return err
-	}
-	v.ID, _ = res.LastInsertId()
-	return nil
-}
-
-func (s *Store) UpdateExternalOutboundAccessGrant(ctx context.Context, v *model.ExternalOutboundAccessGrant) error {
-	_, err := s.db.ExecContext(ctx, `update external_outbound_access_grants set external_outbound_id=?,subject_type=?,subject_id=?,enabled=?,updated_at=? where id=?`, v.ExternalOutboundID, v.SubjectType, v.SubjectID, boolInt(v.Enabled), now(), v.ID)
-	return err
-}
-
-func (s *Store) ListExternalOutboundAccessGrants(ctx context.Context) ([]model.ExternalOutboundAccessGrant, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,external_outbound_id,subject_type,subject_id,enabled,created_at,updated_at from external_outbound_access_grants order by id desc`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []model.ExternalOutboundAccessGrant
-	for rows.Next() {
-		var v model.ExternalOutboundAccessGrant
-		var enabled int
-		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.ExternalOutboundID, &v.SubjectType, &v.SubjectID, &enabled, &ca, &ua); err != nil {
-			return nil, err
-		}
-		v.Enabled = enabled == 1
-		v.CreatedAt = parseTime(ca)
-		v.UpdatedAt = parseTime(ua)
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) GetExternalOutboundAccessGrant(ctx context.Context, id int64) (*model.ExternalOutboundAccessGrant, error) {
-	items, err := s.ListExternalOutboundAccessGrants(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for i := range items {
-		if items[i].ID == id {
-			return &items[i], nil
-		}
-	}
-	return nil, sql.ErrNoRows
-}
-
-func (s *Store) DeleteExternalOutboundAccessGrantsForExternal(ctx context.Context, externalID int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from external_outbound_access_grants where external_outbound_id=?`, externalID)
-	return err
-}
-
-func (s *Store) DeleteExternalOutboundAccessGrantsForUser(ctx context.Context, userID int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from external_outbound_access_grants where subject_type='user' and subject_id=?`, userID)
-	return err
-}
-
-func (s *Store) DeleteExternalOutboundAccessGrantsForGroup(ctx context.Context, groupID int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from external_outbound_access_grants where subject_type='group' and subject_id=?`, groupID)
-	return err
 }
 
 func (s *Store) CreateProxyPath(ctx context.Context, v *model.ProxyPath) error {
@@ -5447,29 +4966,26 @@ func (s *Store) Dashboard(ctx context.Context) (model.DashboardSummary, error) {
 }
 
 type FullRoutingConfig struct {
-	Servers                      []model.Server                      `json:"servers"`
-	Inbounds                     []model.Inbound                     `json:"inbounds"`
-	InboundUsers                 []model.InboundUser                 `json:"inbound_users"`
-	UserGroups                   []model.UserGroup                   `json:"user_groups"`
-	UserGroupMembers             []model.UserGroupMember             `json:"user_group_members"`
-	InboundAccessGrants          []model.InboundAccessGrant          `json:"inbound_access_grants"`
-	Outbounds                    []model.Outbound                    `json:"outbounds"`
-	RoutingRules                 []model.RoutingRule                 `json:"routing_rules"`
-	ExternalOutbounds            []model.ExternalOutbound            `json:"external_outbounds"`
-	ExternalOutboundAccessGrants []model.ExternalOutboundAccessGrant `json:"external_outbound_access_grants"`
-	ProxyPaths                   []model.ProxyPath                   `json:"proxy_paths"`
-	ProxyPathSteps               []model.ProxyPathStep               `json:"proxy_path_steps"`
-	ProxyPathEgressResults       []model.ProxyPathEgressResult       `json:"proxy_path_egress_results"`
-	WARPProfiles                 []model.WARPProfile                 `json:"warp_profiles"`
-	DNSLists                     []model.DNSList                     `json:"dns_lists"`
-	ServerDNSPolicies            []model.ServerDNSPolicy             `json:"server_dns_policies"`
-	Users                        []model.User                        `json:"users"`
-	UserDevices                  []model.UserDevice                  `json:"user_devices"`
-	ProxyPathPortAllocations     []model.ProxyPathPortAllocation     `json:"proxy_path_port_allocations"`
-	SubscriptionPlans            []model.SubscriptionPlan            `json:"subscription_plans,omitempty"`
-	ActivePlanNodes              []model.SubscriptionPlanNode        `json:"active_plan_nodes,omitempty"`
-	PlanBindings                 []model.UserPlanBinding             `json:"plan_bindings,omitempty"`
-	UserNodeExceptions           []model.UserNodeException           `json:"user_node_exceptions,omitempty"`
+	Servers                  []model.Server                  `json:"servers"`
+	Inbounds                 []model.Inbound                 `json:"inbounds"`
+	UserGroups               []model.UserGroup               `json:"user_groups"`
+	UserGroupMembers         []model.UserGroupMember         `json:"user_group_members"`
+	Outbounds                []model.Outbound                `json:"outbounds"`
+	RoutingRules             []model.RoutingRule             `json:"routing_rules"`
+	ExternalOutbounds        []model.ExternalOutbound        `json:"external_outbounds"`
+	ProxyPaths               []model.ProxyPath               `json:"proxy_paths"`
+	ProxyPathSteps           []model.ProxyPathStep           `json:"proxy_path_steps"`
+	ProxyPathEgressResults   []model.ProxyPathEgressResult   `json:"proxy_path_egress_results"`
+	WARPProfiles             []model.WARPProfile             `json:"warp_profiles"`
+	DNSLists                 []model.DNSList                 `json:"dns_lists"`
+	ServerDNSPolicies        []model.ServerDNSPolicy         `json:"server_dns_policies"`
+	Users                    []model.User                    `json:"users"`
+	UserDevices              []model.UserDevice              `json:"user_devices"`
+	ProxyPathPortAllocations []model.ProxyPathPortAllocation `json:"proxy_path_port_allocations"`
+	SubscriptionPlans        []model.SubscriptionPlan        `json:"subscription_plans,omitempty"`
+	ActivePlanNodes          []model.SubscriptionPlanNode    `json:"active_plan_nodes,omitempty"`
+	PlanBindings             []model.UserPlanBinding         `json:"plan_bindings,omitempty"`
+	UserNodeExceptions       []model.UserNodeException       `json:"user_node_exceptions,omitempty"`
 }
 
 func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, error) {
@@ -5513,10 +5029,6 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
-	externalGrants, err := s.ListExternalOutboundAccessGrants(ctx)
-	if err != nil {
-		return FullRoutingConfig{}, err
-	}
 	proxyPaths, err := s.ListProxyPaths(ctx)
 	if err != nil {
 		return FullRoutingConfig{}, err
@@ -5533,19 +5045,11 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
-	inboundUsers, err := s.ListInboundUsers(ctx)
-	if err != nil {
-		return FullRoutingConfig{}, err
-	}
 	groups, err := s.ListUserGroups(ctx)
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
 	members, err := s.ListUserGroupMembers(ctx)
-	if err != nil {
-		return FullRoutingConfig{}, err
-	}
-	grants, err := s.ListInboundAccessGrants(ctx)
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
@@ -5565,7 +5069,7 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
-	return FullRoutingConfig{Servers: servers, Inbounds: in, InboundUsers: inboundUsers, UserGroups: groups, UserGroupMembers: members, InboundAccessGrants: grants, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ExternalOutboundAccessGrants: externalGrants, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, ProxyPathEgressResults: proxyPathEgressResults, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, UserDevices: userDevices, ProxyPathPortAllocations: portAllocations, SubscriptionPlans: plans, ActivePlanNodes: activePlanNodes, PlanBindings: planBindings, UserNodeExceptions: planExceptions}, nil
+	return FullRoutingConfig{Servers: servers, Inbounds: in, UserGroups: groups, UserGroupMembers: members, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, ProxyPathEgressResults: proxyPathEgressResults, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, UserDevices: userDevices, ProxyPathPortAllocations: portAllocations, SubscriptionPlans: plans, ActivePlanNodes: activePlanNodes, PlanBindings: planBindings, UserNodeExceptions: planExceptions}, nil
 }
 
 func nullEmpty(v string) any {
@@ -5632,22 +5136,16 @@ func deleteSQLForTable(t string) (string, bool) {
 		return `delete from servers where id=?`, true
 	case "inbounds":
 		return `delete from inbounds where id=?`, true
-	case "inbound_users":
-		return `delete from inbound_users where id=?`, true
 	case "user_groups":
 		return `delete from user_groups where id=?`, true
 	case "user_group_members":
 		return `delete from user_group_members where id=?`, true
-	case "inbound_access_grants":
-		return `delete from inbound_access_grants where id=?`, true
 	case "outbounds":
 		return `delete from outbounds where id=?`, true
 	case "routing_rules":
 		return `delete from routing_rules where id=?`, true
 	case "external_outbounds":
 		return `delete from external_outbounds where id=?`, true
-	case "external_outbound_access_grants":
-		return `delete from external_outbound_access_grants where id=?`, true
 	case "proxy_paths":
 		return `delete from proxy_paths where id=?`, true
 	case "proxy_path_steps":
@@ -5660,10 +5158,6 @@ func deleteSQLForTable(t string) (string, bool) {
 		return `delete from tunnels where id=?`, true
 	case "notification_channels":
 		return `delete from notification_channels where id=?`, true
-	case "subscription_profiles":
-		return `delete from subscription_profiles where id=?`, true
-	case "subscription_assignments":
-		return `delete from subscription_assignments where id=?`, true
 	default:
 		return "", false
 	}

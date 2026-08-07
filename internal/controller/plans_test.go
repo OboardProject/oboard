@@ -23,7 +23,7 @@ func setupPlansAPITest(t *testing.T) (http.Handler, string) {
 }
 
 func TestSubscriptionPlansAndAssignmentAPI(t *testing.T) {
-	h, token := setupPlansAPITest(t)
+	h, srv, token := setupPlansAPITestServer(t)
 	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
 	serverID := int64(server["id"].(float64))
 	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
@@ -64,6 +64,7 @@ func TestSubscriptionPlansAndAssignmentAPI(t *testing.T) {
 	if applied["applied"] != true {
 		t.Fatalf("apply response = %#v", applied)
 	}
+	driveAccessChange(t, srv, token, int64(applied["access_change_id"].(float64)))
 
 	// The user's effective nodes now contain the path.
 	userNodes := request(t, h, http.MethodGet, "/api/v2/ui/users/"+itoa(userID)+"/nodes", token, nil, http.StatusOK)
@@ -89,7 +90,8 @@ func TestSubscriptionPlansAndAssignmentAPI(t *testing.T) {
 		t.Fatalf("replace preview = %#v", preview)
 	}
 	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/nodes/sync", token, map[string]any{"op": "replace", "nodes": []map[string]any{}}, http.StatusOK)
-	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/publish", token, map[string]any{}, http.StatusOK)
+	published := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/publish", token, map[string]any{}, http.StatusOK)
+	driveAccessChange(t, srv, token, int64(published["access_change_id"].(float64)))
 
 	// Removing a node that is no longer in the catalog (e.g. a deleted path)
 	// must still work so stale plan membership can be cleaned up.
@@ -163,9 +165,6 @@ func driveAccessChange(t *testing.T, srv *Server, token string, changeID int64) 
 // the durable state flips only at activation, and stale previews conflict.
 func TestPlanModeAccessChangeFlow(t *testing.T) {
 	h, srv, token := setupPlansAPITestServer(t)
-	if err := srv.store.SetSetting(t.Context(), "authorization.mode", "plan"); err != nil {
-		t.Fatal(err)
-	}
 	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
 	serverID := int64(server["id"].(float64))
 	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)

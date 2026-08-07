@@ -501,7 +501,19 @@ func resolveScope(scope model.AuditReviewScope, routing store.FullRoutingConfig,
 	for _, inbound := range routing.Inbounds {
 		serverByInbound[inbound.ID] = inbound.ServerID
 	}
-	bindings := core.EffectiveInboundUsers(routing.Inbounds, routing.Users, routing.InboundUsers, routing.UserGroups, routing.UserGroupMembers, routing.InboundAccessGrants)
+	snapshot := core.BuildEffectiveAccessSnapshot(core.EffectiveAccessInput{
+		Users:             routing.Users,
+		Bindings:          routing.PlanBindings,
+		Plans:             routing.SubscriptionPlans,
+		PlanNodes:         routing.ActivePlanNodes,
+		Exceptions:        routing.UserNodeExceptions,
+		Paths:             routing.ProxyPaths,
+		Steps:             routing.ProxyPathSteps,
+		Inbounds:          routing.Inbounds,
+		ExternalOutbounds: routing.ExternalOutbounds,
+		Now:               time.Now(),
+	})
+	bindings := snapshot.InboundUserBindings()
 	for _, binding := range bindings {
 		serverID := serverByInbound[binding.InboundID]
 		if access[binding.UserID] == nil {
@@ -509,7 +521,7 @@ func resolveScope(scope model.AuditReviewScope, routing store.FullRoutingConfig,
 		}
 		access[binding.UserID][serverID] = true
 	}
-	for _, binding := range core.EffectiveProxyPathUsers(routing.ProxyPaths, routing.Inbounds, routing.Users, routing.InboundUsers, routing.UserGroups, routing.UserGroupMembers, routing.InboundAccessGrants) {
+	for _, binding := range snapshot.ProxyPathUserBindings() {
 		serverID := serverByInbound[binding.InboundID]
 		if access[binding.UserID] == nil {
 			access[binding.UserID] = map[int64]bool{}

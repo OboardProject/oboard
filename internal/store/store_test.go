@@ -683,7 +683,7 @@ func TestForeignKeysEnabled(t *testing.T) {
 		t.Fatalf("foreign_keys = %d, err=%v", enabled, err)
 	}
 	var fkCount int
-	rows, err := s.db.Query(`pragma foreign_key_list(inbound_users)`)
+	rows, err := s.db.Query(`pragma foreign_key_list(user_plan_bindings)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -693,11 +693,11 @@ func TestForeignKeysEnabled(t *testing.T) {
 	if err := rows.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if fkCount != 2 {
-		t.Fatalf("inbound_users foreign key count = %d, want 2", fkCount)
+	if fkCount != 3 {
+		t.Fatalf("user_plan_bindings foreign key count = %d, want 3", fkCount)
 	}
-	if _, err := s.db.Exec(`insert into inbound_users(inbound_id,user_id,enabled,created_at,updated_at) values(999,999,1,'x','x')`); err == nil {
-		t.Fatal("fresh schema accepted orphan inbound user")
+	if _, err := s.db.Exec(`insert into user_plan_bindings(user_id,plan_id,enabled,created_at,updated_at) values(999,999,1,'x','x')`); err == nil {
+		t.Fatal("fresh schema accepted orphan plan binding")
 	}
 	defer s.Close()
 }

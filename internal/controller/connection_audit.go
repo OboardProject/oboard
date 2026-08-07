@@ -82,41 +82,37 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 		fail(w, errors.New("too many connection audit items in one report"), http.StatusBadRequest)
 		return
 	}
-	access, err := s.loadAccessData(r.Context())
+	data, err := s.store.FullRoutingConfigData(r.Context())
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
-	userByID := make(map[int64]model.User, len(access.Users))
-	for _, user := range access.Users {
+	snapshot, err := s.buildAccessSnapshot(r.Context(), data)
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	userByID := make(map[int64]model.User, len(data.Users))
+	for _, user := range data.Users {
 		userByID[user.ID] = user
 	}
-	inboundByID := make(map[int64]model.Inbound, len(access.Inbounds))
-	for _, inbound := range access.Inbounds {
+	inboundByID := make(map[int64]model.Inbound, len(data.Inbounds))
+	for _, inbound := range data.Inbounds {
 		inboundByID[inbound.ID] = inbound
 	}
 	type accessPair struct{ inboundID, userID, pathID int64 }
 	allowed := map[accessPair]struct{}{}
-	for _, binding := range core.EffectiveInboundUsers(access.Inbounds, access.Users, access.InboundUsers, access.Groups, access.Members, access.Grants) {
+	for _, binding := range snapshot.InboundUserBindings() {
 		if binding.Enabled {
 			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID}] = struct{}{}
 		}
 	}
-	for _, binding := range core.EffectiveProxyPathUsers(access.Paths, access.Inbounds, access.Users, access.InboundUsers, access.Groups, access.Members, access.Grants) {
+	for _, binding := range snapshot.ProxyPathUserBindings() {
 		if binding.Enabled {
 			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID, pathID: binding.ProxyPathID}] = struct{}{}
 		}
 	}
-	paths, err := s.store.ListProxyPaths(r.Context())
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	steps, err := s.store.ListProxyPathSteps(r.Context())
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
+	paths, steps := data.ProxyPaths, data.ProxyPathSteps
 	reports := make([]model.ConnectionAuditReport, 0, len(req.Items))
 	accepted := make([]string, 0, len(req.Items))
 	for _, item := range req.Items {
@@ -169,8 +165,8 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 				accepted = append(accepted, report.ReportID)
 				continue
 			}
-			accountingLocation = core.IsProxyPathAccountingLocation(server.ID, inbound.ID, path.ID, paths, steps, access.Inbounds)
-		} else if core.ProxyPathRequiresAccountingPathID(inbound.ID, paths, steps, access.Inbounds) {
+			accountingLocation = core.IsProxyPathAccountingLocation(server.ID, inbound.ID, path.ID, paths, steps, data.Inbounds)
+		} else if core.ProxyPathRequiresAccountingPathID(inbound.ID, paths, steps, data.Inbounds) {
 			if inbound.ServerID != server.ID {
 				fail(w, errors.New("connection audit inbound does not belong to this agent"), http.StatusForbidden)
 				return

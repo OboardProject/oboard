@@ -102,15 +102,13 @@ type ConfigOptions struct {
 	WARPProfiles      []model.WARPProfile
 	InboundUsers      []model.InboundUser
 	ProxyPathUsers    []model.ProxyPathUser
-	UserGroups        []model.UserGroup
-	UserGroupMembers  []model.UserGroupMember
 	// AccessSnapshot, when non-nil, is the plan authorization source. It
-	// replaces InboundUsers/ProxyPathUsers/UserGroups/UserGroupMembers as the
-	// user-node relation for this configuration; config generation never reads
-	// legacy authorization tables on its own.
+	// replaces InboundUsers/ProxyPathUsers as the user-node relation for this
+	// configuration; config generation never reads authorization tables on its
+	// own.
 	AccessSnapshot *EffectiveAccessSnapshot
 	// UserPolicies, when present, is the resolved speed/traffic policy per user
-	// from the plan model. It takes precedence over group-inherited limits.
+	// from the plan model. When absent the user's own limits apply.
 	UserPolicies    map[int64]UserLimitPolicy
 	TrafficPolicies map[int64]model.TrafficRuntimePolicy
 	// UserDevices is the active device projection from the Controller routing
@@ -505,8 +503,6 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 	if opts.AccessSnapshot != nil {
 		opts.InboundUsers = opts.AccessSnapshot.InboundUserBindings()
 		opts.ProxyPathUsers = opts.AccessSnapshot.ProxyPathUserBindings()
-		opts.UserGroups = nil
-		opts.UserGroupMembers = nil
 	}
 	users = ExpandDeviceUsers(users, opts.UserDevices)
 	pathInboundByID := map[int64]model.Inbound{}
@@ -722,7 +718,18 @@ func runtimeLimitsForUsers(users []model.User, opts ConfigOptions) map[string]OB
 		}
 		policy, okPolicy := opts.UserPolicies[user.ID]
 		if !okPolicy {
-			policy = EffectiveUserLimitPolicy(user, opts.UserGroups, opts.UserGroupMembers)
+			policy = UserLimitPolicy{
+				SpeedLimitMbps:    user.SpeedLimitMbps,
+				TrafficLimitBytes: user.TrafficLimitBytes,
+				TrafficResetMode:  user.TrafficResetMode,
+				TrafficResetDay:   user.TrafficResetDay,
+			}
+			if strings.TrimSpace(policy.TrafficResetMode) == "" {
+				policy.TrafficResetMode = "monthly"
+			}
+			if policy.TrafficResetDay <= 0 {
+				policy.TrafficResetDay = 1
+			}
 		}
 		speed, traffic := policy.SpeedLimitMbps, policy.TrafficLimitBytes
 		limit := OBoardUserRuntimeLimit{

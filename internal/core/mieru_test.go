@@ -165,7 +165,7 @@ func TestMieruSubscriptionTargetMatrix(t *testing.T) {
 		{format: model.SubscriptionFormatV2RayURI},
 	} {
 		t.Run(string(test.format), func(t *testing.T) {
-			subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{Format: test.format})
+			subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{Format: test.format, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -194,7 +194,7 @@ func TestMieruExtendedSubscriptionPreservesDisjointRanges(t *testing.T) {
 		ID: 1, ServerID: server.ID, Name: "Mieru", Protocol: model.ProtocolMieru, Port: 8964, Enabled: true,
 		ConfigJSON: `{"transport":"UDP","listen_ports":["9000-9001"]}`,
 	}
-	subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{Format: model.SubscriptionFormatSingBoxMieru})
+	subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{Format: model.SubscriptionFormatSingBoxMieru, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -44,14 +44,26 @@ func (s *Server) acceptConnectionPresenceDelta(ctx context.Context, server *mode
 	for _, path := range data.ProxyPaths {
 		paths[path.ID] = path
 	}
+	snapshot := core.BuildEffectiveAccessSnapshot(core.EffectiveAccessInput{
+		Users:             data.Users,
+		Bindings:          data.PlanBindings,
+		Plans:             data.SubscriptionPlans,
+		PlanNodes:         data.ActivePlanNodes,
+		Exceptions:        data.UserNodeExceptions,
+		Paths:             data.ProxyPaths,
+		Steps:             data.ProxyPathSteps,
+		Inbounds:          data.Inbounds,
+		ExternalOutbounds: data.ExternalOutbounds,
+		Now:               time.Now(),
+	})
 	type accessPair struct{ inboundID, userID, pathID int64 }
 	allowed := map[accessPair]bool{}
-	for _, binding := range core.EffectiveInboundUsers(data.Inbounds, data.Users, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants) {
+	for _, binding := range snapshot.InboundUserBindings() {
 		if binding.Enabled {
 			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID}] = true
 		}
 	}
-	for _, binding := range core.EffectiveProxyPathUsers(data.ProxyPaths, data.Inbounds, data.Users, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants) {
+	for _, binding := range snapshot.ProxyPathUserBindings() {
 		if binding.Enabled {
 			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID, pathID: binding.ProxyPathID}] = true
 		}

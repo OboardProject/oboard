@@ -29,9 +29,6 @@ func (s *Server) StartAccessLifecycleWorker(ctx context.Context) {
 }
 
 func (s *Server) reconcileAccessLifecycle(ctx context.Context) {
-	if s.authorizationMode(ctx) != model.AuthorizationModePlan {
-		return
-	}
 	now := time.Now()
 
 	// Bindings whose window is open but that no access change deployed yet.

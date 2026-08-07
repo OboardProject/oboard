@@ -44,6 +44,7 @@ type EffectiveAccessSnapshot struct {
 	ExternalOutboundUsers map[int64][]int64
 	NodeUsers             map[string][]int64
 	UserPolicies          map[int64]EffectiveUserPolicy
+	PathInboundIDs        map[int64]int64
 }
 
 // EffectiveAccessInput carries the plan authorization data one snapshot is
@@ -79,6 +80,7 @@ func BuildEffectiveAccessSnapshot(input EffectiveAccessInput) *EffectiveAccessSn
 		ExternalOutboundUsers: map[int64][]int64{},
 		NodeUsers:             map[string][]int64{},
 		UserPolicies:          map[int64]EffectiveUserPolicy{},
+		PathInboundIDs:        map[int64]int64{},
 	}
 	active := map[int64]bool{}
 	for _, user := range input.Users {
@@ -132,6 +134,7 @@ func BuildEffectiveAccessSnapshot(input EffectiveAccessInput) *EffectiveAccessSn
 	pathByID := map[int64]model.ProxyPath{}
 	for _, path := range input.Paths {
 		pathByID[path.ID] = path
+		snap.PathInboundIDs[path.ID] = path.InboundID
 	}
 
 	for userID := range active {
@@ -302,7 +305,7 @@ func (s *EffectiveAccessSnapshot) ProxyPathUserBindings() []model.ProxyPathUser 
 	out := make([]model.ProxyPathUser, 0, len(s.ProxyPathUsers))
 	for pathID, userIDs := range s.ProxyPathUsers {
 		for _, userID := range userIDs {
-			out = append(out, model.ProxyPathUser{ProxyPathID: pathID, UserID: userID, Enabled: true})
+			out = append(out, model.ProxyPathUser{ProxyPathID: pathID, InboundID: s.PathInboundIDs[pathID], UserID: userID, Enabled: true})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -312,6 +315,14 @@ func (s *EffectiveAccessSnapshot) ProxyPathUserBindings() []model.ProxyPathUser 
 		return out[i].ProxyPathID < out[j].ProxyPathID
 	})
 	return out
+}
+
+// UserLimitPolicy is the resolved speed/traffic policy for one user.
+type UserLimitPolicy struct {
+	SpeedLimitMbps    int
+	TrafficLimitBytes int64
+	TrafficResetMode  string
+	TrafficResetDay   int
 }
 
 // UserLimitPolicyMap converts the snapshot policies into the legacy policy
@@ -363,6 +374,7 @@ type AccessProjection struct {
 	InboundUsers   map[int64][]int64             `json:"inbound_users"`
 	ProxyPathUsers map[int64][]int64             `json:"proxy_path_users"`
 	UserPolicies   map[int64]EffectiveUserPolicy `json:"user_policies"`
+	PathInboundIDs map[int64]int64               `json:"path_inbound_ids"`
 }
 
 // Projection returns the serializable view of the snapshot.
@@ -371,6 +383,7 @@ func (s *EffectiveAccessSnapshot) Projection() AccessProjection {
 		InboundUsers:   cloneUserIDMap(s.InboundUsers),
 		ProxyPathUsers: cloneUserIDMap(s.ProxyPathUsers),
 		UserPolicies:   s.UserPolicies,
+		PathInboundIDs: cloneInt64Map(s.PathInboundIDs),
 	}
 }
 
@@ -382,6 +395,7 @@ func MergeProjections(a, b AccessProjection) AccessProjection {
 		InboundUsers:   cloneUserIDMap(a.InboundUsers),
 		ProxyPathUsers: cloneUserIDMap(a.ProxyPathUsers),
 		UserPolicies:   map[int64]EffectiveUserPolicy{},
+		PathInboundIDs: cloneInt64Map(a.PathInboundIDs),
 	}
 	for key, list := range b.InboundUsers {
 		merged := append([]int64(nil), out.InboundUsers[key]...)
@@ -409,6 +423,9 @@ func MergeProjections(a, b AccessProjection) AccessProjection {
 	for userID, policy := range b.UserPolicies {
 		out.UserPolicies[userID] = policy
 	}
+	for pathID, inboundID := range b.PathInboundIDs {
+		out.PathInboundIDs[pathID] = inboundID
+	}
 	return out
 }
 
@@ -425,6 +442,7 @@ func ProjectionSnapshot(projection AccessProjection, users []model.User) *Effect
 		ExternalOutboundUsers: map[int64][]int64{},
 		NodeUsers:             map[string][]int64{},
 		UserPolicies:          projection.UserPolicies,
+		PathInboundIDs:        cloneInt64Map(projection.PathInboundIDs),
 	}
 	for _, user := range users {
 		snap.Users[user.ID] = user
@@ -443,6 +461,17 @@ func cloneUserIDMap(in map[int64][]int64) map[int64][]int64 {
 	return out
 }
 
+func cloneInt64Map(in map[int64]int64) map[int64]int64 {
+	if in == nil {
+		return map[int64]int64{}
+	}
+	out := make(map[int64]int64, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
 func containsInt64(list []int64, id int64) bool {
 	for _, v := range list {
 		if v == id {
@@ -450,154 +479,4 @@ func containsInt64(list []int64, id int64) bool {
 		}
 	}
 	return false
-}
-
-// LegacyAccessInput is the legacy authorization input needed to compute the
-// legacy effective node set per user for shadow comparison.
-type LegacyAccessInput struct {
-	Inbounds                     []model.Inbound
-	InboundUsers                 []model.InboundUser
-	UserGroups                   []model.UserGroup
-	UserGroupMembers             []model.UserGroupMember
-	InboundAccessGrants          []model.InboundAccessGrant
-	ExternalOutbounds            []model.ExternalOutbound
-	ExternalOutboundAccessGrants []model.ExternalOutboundAccessGrant
-	Paths                        []model.ProxyPath
-	Steps                        []model.ProxyPathStep
-}
-
-// ShadowUserDivergence records one user whose legacy and plan node sets differ.
-type ShadowUserDivergence struct {
-	UserID      int64    `json:"user_id"`
-	Username    string   `json:"username"`
-	LegacyNodes []string `json:"legacy_nodes"`
-	PlanNodes   []string `json:"plan_nodes"`
-}
-
-// AccessShadowComparison is a bounded summary of legacy vs plan results.
-type AccessShadowComparison struct {
-	UsersCompared     int                      `json:"users_compared"`
-	DivergentUsers    int                      `json:"divergent_users"`
-	LegacyNodeCount   int                      `json:"legacy_node_count"`
-	PlanNodeCount     int                      `json:"plan_node_count"`
-	SampleDivergences []ShadowUserDivergence   `json:"sample_divergences,omitempty"`
-	ServerDivergences []ShadowServerDivergence `json:"server_divergences,omitempty"`
-	SSHDivergences    []ShadowSSHDivergence    `json:"ssh_divergences,omitempty"`
-	PolicyDivergences []ShadowPolicyDivergence `json:"policy_divergences,omitempty"`
-	Truncated         bool                     `json:"truncated"`
-}
-
-// CompareLegacyAndPlanAccess computes the per-user node-set difference between
-// the legacy authorization result and the plan snapshot. It never affects
-// runtime behavior.
-func CompareLegacyAndPlanAccess(users []model.User, legacy LegacyAccessInput, snapshot *EffectiveAccessSnapshot, maxSamples int) AccessShadowComparison {
-	if maxSamples <= 0 {
-		maxSamples = 10
-	}
-	legacyByUser := LegacyEffectiveNodeKeys(users, legacy)
-	comparison := AccessShadowComparison{}
-	for _, user := range users {
-		if user.Status != "active" {
-			continue
-		}
-		legacyKeys := legacyByUser[user.ID]
-		planKeys := snapshot.EffectiveNodeKeys(user.ID)
-		comparison.UsersCompared++
-		comparison.LegacyNodeCount += len(legacyKeys)
-		comparison.PlanNodeCount += len(planKeys)
-		if nodeSetsEqual(legacyKeys, planKeys) {
-			continue
-		}
-		comparison.DivergentUsers++
-		if len(comparison.SampleDivergences) < maxSamples {
-			comparison.SampleDivergences = append(comparison.SampleDivergences, ShadowUserDivergence{
-				UserID:      user.ID,
-				Username:    user.Username,
-				LegacyNodes: sortedNodeKeys(legacyKeys),
-				PlanNodes:   sortedNodeKeys(planKeys),
-			})
-		} else {
-			comparison.Truncated = true
-		}
-	}
-	return comparison
-}
-
-// LegacyEffectiveNodeKeys computes the legacy effective node keys per active
-// user using the same primitives as the legacy subscription generator.
-func LegacyEffectiveNodeKeys(users []model.User, legacy LegacyAccessInput) map[int64]map[string]bool {
-	out := map[int64]map[string]bool{}
-	active := map[int64]bool{}
-	for _, user := range users {
-		if user.Status == "active" {
-			active[user.ID] = true
-		}
-	}
-	pathUsers := EffectiveProxyPathUsers(legacy.Paths, legacy.Inbounds, users, legacy.InboundUsers, legacy.UserGroups, legacy.UserGroupMembers, legacy.InboundAccessGrants)
-	for _, binding := range pathUsers {
-		if !binding.Enabled {
-			continue
-		}
-		if out[binding.UserID] == nil {
-			out[binding.UserID] = map[string]bool{}
-		}
-		out[binding.UserID][NodeKeyOf(model.AssignableNodeProxyPath, binding.ProxyPathID)] = true
-	}
-	inboundUsers := EffectiveInboundUsers(legacy.Inbounds, users, legacy.InboundUsers, legacy.UserGroups, legacy.UserGroupMembers, legacy.InboundAccessGrants)
-	for _, binding := range inboundUsers {
-		if !binding.Enabled {
-			continue
-		}
-		for _, inbound := range legacy.Inbounds {
-			if inbound.ID != binding.InboundID || !inbound.Enabled {
-				continue
-			}
-			if len(subscriptionBranchesForInbound(inbound, legacy.Paths, legacy.Steps, 0, nil)) > 0 {
-				continue
-			}
-			if out[binding.UserID] == nil {
-				out[binding.UserID] = map[string]bool{}
-			}
-			out[binding.UserID][NodeKeyOf(model.AssignableNodeInbound, inbound.ID)] = true
-		}
-	}
-	for _, external := range legacy.ExternalOutbounds {
-		if !external.Enabled || !external.ExposeToUsers {
-			continue
-		}
-		for _, user := range users {
-			if !active[user.ID] {
-				continue
-			}
-			if !subscriptionExternalAllowed(user.ID, external.ID, legacy.ExternalOutboundAccessGrants, legacy.UserGroups, legacy.UserGroupMembers) {
-				continue
-			}
-			if out[user.ID] == nil {
-				out[user.ID] = map[string]bool{}
-			}
-			out[user.ID][NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID)] = true
-		}
-	}
-	return out
-}
-
-func nodeSetsEqual(a, b map[string]bool) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for key := range a {
-		if !b[key] {
-			return false
-		}
-	}
-	return true
-}
-
-func sortedNodeKeys(keys map[string]bool) []string {
-	out := make([]string, 0, len(keys))
-	for key := range keys {
-		out = append(out, key)
-	}
-	sort.Strings(out)
-	return out
 }

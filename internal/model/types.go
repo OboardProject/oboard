@@ -262,29 +262,6 @@ const (
 	SubscriptionFormatClash        SubscriptionFormat = "clash"
 )
 
-type SubscriptionProfile struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	GroupName   string    `json:"group_name"`
-	Description string    `json:"description"`
-	ConfigJSON  string    `json:"config_json"`
-	Enabled     bool      `json:"enabled"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-type SubscriptionAssignment struct {
-	ID        int64     `json:"id"`
-	ProfileID int64     `json:"profile_id"`
-	UserID    int64     `json:"user_id"`
-	ServerID  *int64    `json:"server_id,omitempty"`
-	InboundID *int64    `json:"inbound_id,omitempty"`
-	GroupName string    `json:"group_name"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
 // AssignableNodeType identifies a client-visible node in the assignable node
 // catalog. proxy_path and external_outbound are the final assignable units;
 // inbound is transitional and only covers standalone inbounds that have no
@@ -306,24 +283,6 @@ type PlanNodeSourceType string
 const (
 	PlanNodeSourceExplicit PlanNodeSourceType = "explicit"
 	PlanNodeSourceRule     PlanNodeSourceType = "rule"
-)
-
-// AuthorizationMode controls which authorization source feeds the runtime
-// chain: subscription generation, Agent core configuration, SSH inbound plans,
-// connection presence/audit gates, and traffic policies.
-//
-//   - legacy: the legacy profile/assignment/group tables stay the only runtime
-//     source; plans are prepared as data only and never reported as active.
-//   - shadow: the runtime still uses the legacy source, while the plan
-//     snapshot is computed alongside and differences are reported to admins.
-//   - plan: the effective plan snapshot is the only runtime source; legacy
-//     write surfaces are read-only history.
-type AuthorizationMode string
-
-const (
-	AuthorizationModeLegacy AuthorizationMode = "legacy"
-	AuthorizationModeShadow AuthorizationMode = "shadow"
-	AuthorizationModePlan   AuthorizationMode = "plan"
 )
 
 // SubscriptionPlan is the single axis of node authorization: a plan owns a node
@@ -822,22 +781,6 @@ type SSHPasswordDeployment struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
-type AccessSubjectType string
-
-const (
-	AccessSubjectUser  AccessSubjectType = "user"
-	AccessSubjectGroup AccessSubjectType = "group"
-)
-
-type AccessScopeType string
-
-const (
-	AccessScopeGlobal    AccessScopeType = "global"
-	AccessScopeServer    AccessScopeType = "server"
-	AccessScopeInbound   AccessScopeType = "inbound"
-	AccessScopeProxyPath AccessScopeType = "proxy_path"
-)
-
 type UserGroup struct {
 	ID                           int64                        `json:"id"`
 	Name                         string                       `json:"name"`
@@ -884,19 +827,6 @@ type UserGroupMember struct {
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-}
-
-type InboundAccessGrant struct {
-	ID          int64             `json:"id"`
-	SubjectType AccessSubjectType `json:"subject_type"`
-	SubjectID   int64             `json:"subject_id"`
-	ScopeType   AccessScopeType   `json:"scope_type"`
-	ServerID    *int64            `json:"server_id,omitempty"`
-	InboundID   *int64            `json:"inbound_id,omitempty"`
-	ProxyPathID *int64            `json:"proxy_path_id,omitempty"`
-	Enabled     bool              `json:"enabled"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
 type ProxyPathUser struct {
@@ -958,16 +888,6 @@ type ExternalOutbound struct {
 	Enabled             bool                  `json:"enabled"`
 	CreatedAt           time.Time             `json:"created_at"`
 	UpdatedAt           time.Time             `json:"updated_at"`
-}
-
-type ExternalOutboundAccessGrant struct {
-	ID                 int64             `json:"id"`
-	ExternalOutboundID int64             `json:"external_outbound_id"`
-	SubjectType        AccessSubjectType `json:"subject_type"`
-	SubjectID          int64             `json:"subject_id"`
-	Enabled            bool              `json:"enabled"`
-	CreatedAt          time.Time         `json:"created_at"`
-	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
 type ProxyPath struct {

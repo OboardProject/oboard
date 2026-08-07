@@ -8,9 +8,8 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-func TestGenerateSubscriptionWithAssignmentsAndGroups(t *testing.T) {
+func TestGenerateSubscriptionWithPlanNodesAndGroups(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111", ProxyPassword: "pass-a"}
-	profile := &model.SubscriptionProfile{ID: 3, Name: "premium", GroupName: "默认组", Enabled: true}
 	inboundID := int64(101)
 	nodes, err := BuildSubscriptionNodes(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}, {ID: 2, Name: "sg", PublicIPv4: "203.0.113.2"}},
@@ -18,7 +17,10 @@ func TestGenerateSubscriptionWithAssignmentsAndGroups(t *testing.T) {
 			{ID: inboundID, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true},
 			{ID: 102, ServerID: 2, Name: "sg-ss", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: `{}`, Enabled: true},
 		},
-		SubscriptionOptions{Profile: profile, Assignments: []model.SubscriptionAssignment{{ProfileID: 3, UserID: 7, InboundID: &inboundID, GroupName: "香港", Enabled: true}}},
+		SubscriptionOptions{
+			EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inboundID): true},
+			EffectiveNodeGroups: map[string]string{NodeKeyOf(model.AssignableNodeInbound, inboundID): "香港"},
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +38,7 @@ func TestGenerateSubscriptionWithAssignmentsAndGroups(t *testing.T) {
 	sub, err := GenerateSubscriptionWithOptions(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: inboundID, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
-		SubscriptionOptions{Profile: profile, Assignments: []model.SubscriptionAssignment{{ProfileID: 3, UserID: 7, InboundID: &inboundID, GroupName: "香港", Enabled: true}}},
+		SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inboundID): true}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +60,7 @@ func TestSubscriptionRespectsInboundUserBindings(t *testing.T) {
 			{ID: 1, ServerID: 1, Name: "allowed", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true},
 			{ID: 2, ServerID: 1, Name: "blocked", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 8443, ConfigJSON: `{}`, Enabled: true},
 		},
-		SubscriptionOptions{InboundUsers: []model.InboundUser{{InboundID: 1, UserID: 7, Enabled: true}}},
+		SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +75,7 @@ func TestSSHSubscriptionRequiresDeployedHostAndAuthorization(t *testing.T) {
 	server := model.Server{ID: 1, Name: "tokyo", PublicIPv4: "203.0.113.10"}
 	inbound := model.Inbound{ID: 11, ServerID: server.ID, Name: "ssh", Protocol: model.ProtocolSSH, ListenIP: "0.0.0.0", Port: 2222, EntryIPMode: model.EntryIPModeIPv4, Enabled: true}
 	base := SubscriptionOptions{
-		InboundUsers:      []model.InboundUser{{InboundID: inbound.ID, UserID: user.ID, Enabled: true}},
+		EffectiveNodes:    map[string]bool{NodeKeyOf(model.AssignableNodeProxyPath, 17): true},
 		SSHServerHostKeys: map[int64]string{server.ID: sshSubscriptionHostKey},
 		ProxyPaths:        []model.ProxyPath{{ID: 17, Kind: model.ProxyPathKindDirect, Name: "direct", InboundID: inbound.ID, Enabled: true}},
 	}
@@ -85,11 +87,7 @@ func TestSSHSubscriptionRequiresDeployedHostAndAuthorization(t *testing.T) {
 		{name: "all state matches", want: 1},
 		{name: "missing agent host key", mutate: func(opts *SubscriptionOptions) { opts.SSHServerHostKeys = nil }},
 		{name: "user not authorized", mutate: func(opts *SubscriptionOptions) {
-			opts.InboundUsers = []model.InboundUser{{InboundID: inbound.ID, UserID: 8, Enabled: true}}
-		}},
-		{name: "profile assignment missing", mutate: func(opts *SubscriptionOptions) {
-			opts.Profile = &model.SubscriptionProfile{ID: 3, Enabled: true}
-			opts.RequireAssignments = true
+			opts.EffectiveNodes = map[string]bool{}
 		}},
 	}
 	for _, test := range tests {
@@ -116,26 +114,20 @@ func TestSSHSubscriptionRequiresDeployedHostAndAuthorization(t *testing.T) {
 	}
 }
 
-func TestSubscriptionProfileWithoutAssignmentsReturnsNoNodes(t *testing.T) {
+func TestSubscriptionWithoutEffectiveNodesReturnsNoNodes(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
-	profile := &model.SubscriptionProfile{ID: 9, Name: "empty-profile", GroupName: "default", Enabled: true}
 	nodes, err := BuildSubscriptionNodes(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{
 			{ID: 1, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true},
 		},
-		SubscriptionOptions{
-			Profile:            profile,
-			RequireAssignments: true,
-			Assignments:        nil,
-			InboundUsers:       []model.InboundUser{{InboundID: 1, UserID: 7, Enabled: true}},
-		},
+		SubscriptionOptions{},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(nodes) != 0 {
-		t.Fatalf("profile without assignments leaked nodes: %#v", nodes)
+		t.Fatalf("nodes without authorization leaked: %#v", nodes)
 	}
 }
 
@@ -144,7 +136,7 @@ func TestShadowsocks2022SubscriptionUsesServerAndUserPassword(t *testing.T) {
 	nodes, err := BuildSubscriptionNodes(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "ss2022", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: `{"method":"2022-blake3-aes-128-gcm","password":"server-pass"}`, Enabled: true}},
-		SubscriptionOptions{InboundUsers: []model.InboundUser{{InboundID: 1, UserID: 7, Enabled: true}}},
+		SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +151,7 @@ func TestShadowsocksUoTSubscriptionConfiguresClientOutbound(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "user-pass"}
 	server := model.Server{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1", UDPInboundMode: model.UDPInboundUoT}
 	inbound := model.Inbound{ID: 1, ServerID: 1, Name: "ss", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: `{"method":"chacha20-ietf-poly1305"}`, Enabled: true}
-	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{})
+	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +189,7 @@ func TestVLESSRealitySubscriptionUsesTCPRealityVision(t *testing.T) {
     }
   }
 }`, Enabled: true}},
-		SubscriptionOptions{InboundUsers: []model.InboundUser{{InboundID: 1, UserID: 7, Enabled: true}}},
+		SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -246,8 +238,7 @@ func TestSubscriptionFiltersUnauthorizedProxyPaths(t *testing.T) {
 	inbound := model.Inbound{ID: 1, ServerID: 1, Name: "entry", Protocol: model.ProtocolVLESS, Port: 443, Enabled: true}
 	paths := []model.ProxyPath{{ID: 10, InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Name: "allowed", Enabled: true}, {ID: 11, InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Name: "blocked", Enabled: true}}
 	nodes, err := BuildSubscriptionNodes(user, []model.Server{{ID: 1, Name: "edge", PublicIPv4: "203.0.113.1"}}, []model.Inbound{inbound}, SubscriptionOptions{
-		InboundUsers:   []model.InboundUser{},
-		ProxyPathUsers: []model.ProxyPathUser{{ProxyPathID: 10, InboundID: inbound.ID, UserID: user.ID, Enabled: true}},
+		EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeProxyPath, 10): true},
 		ProxyPaths:     paths,
 	})
 	if err != nil {
@@ -269,11 +260,11 @@ func TestSubscriptionEntryAddressOverride(t *testing.T) {
 			{ID: 3, ServerID: 1, Name: "custom", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 9443, EntryIPMode: model.EntryIPModeCustom, ExternalIP: "entry.example.com", ConfigJSON: `{}`, Enabled: true},
 			{ID: 4, ServerID: 1, Name: "managed", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 10443, EntryIPMode: model.EntryIPModeCustom, ExternalIP: "origin.example.net", DNSSyncEnabled: true, DNSDomain: "edge.example.com", ConfigJSON: `{}`, Enabled: true},
 		},
-		SubscriptionOptions{InboundUsers: []model.InboundUser{
-			{InboundID: 1, UserID: 7, Enabled: true},
-			{InboundID: 2, UserID: 7, Enabled: true},
-			{InboundID: 3, UserID: 7, Enabled: true},
-			{InboundID: 4, UserID: 7, Enabled: true},
+		SubscriptionOptions{EffectiveNodes: map[string]bool{
+			NodeKeyOf(model.AssignableNodeInbound, 1): true,
+			NodeKeyOf(model.AssignableNodeInbound, 2): true,
+			NodeKeyOf(model.AssignableNodeInbound, 3): true,
+			NodeKeyOf(model.AssignableNodeInbound, 4): true,
 		}},
 	)
 	if err != nil {
@@ -307,11 +298,11 @@ func TestSubscriptionStandaloneNamesUseVisibleServersAndProtocols(t *testing.T) 
 		{ID: 302, ServerID: 30, Name: "ignored-second-vless", Protocol: model.ProtocolVLESS, Port: 9443, ConfigJSON: `{}`, Enabled: true},
 		{ID: 301, ServerID: 30, Name: "ignored-first-vless", Protocol: model.ProtocolVLESS, Port: 443, ConfigJSON: `{}`, Enabled: true},
 	}
-	bindings := make([]model.InboundUser, 0, len(inbounds))
+	effective := make(map[string]bool, len(inbounds))
 	for _, inbound := range inbounds {
-		bindings = append(bindings, model.InboundUser{InboundID: inbound.ID, UserID: user.ID, Enabled: true})
+		effective[NodeKeyOf(model.AssignableNodeInbound, inbound.ID)] = true
 	}
-	nodes, err := BuildSubscriptionNodes(user, servers, inbounds, SubscriptionOptions{InboundUsers: bindings})
+	nodes, err := BuildSubscriptionNodes(user, servers, inbounds, SubscriptionOptions{EffectiveNodes: effective})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +330,7 @@ func TestSubscriptionStandaloneNamesUseOnlyVisibleProtocols(t *testing.T) {
 		{ID: 1, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, Port: 443, ConfigJSON: `{}`, Enabled: true},
 		{ID: 2, ServerID: 1, Name: "hy2", Protocol: model.ProtocolHY2, Port: 8443, ConfigJSON: `{}`, Enabled: true},
 	}
-	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, inbounds, SubscriptionOptions{InboundUsers: []model.InboundUser{{InboundID: 1, UserID: user.ID, Enabled: true}}})
+	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, inbounds, SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,18 +358,17 @@ func TestSubscriptionNamesAvoidPathsAndDisambiguateImportedNodes(t *testing.T) {
 		{ID: 40, Name: "导入名", Protocol: model.ProtocolSocks, TargetAddress: "203.0.113.40", TargetPort: 1080, ConfigJSON: `{}`, ExposeToUsers: true, Enabled: true},
 	}
 	nodes, err := BuildSubscriptionNodes(user, servers, inbounds, SubscriptionOptions{
-		InboundUsers: []model.InboundUser{
-			{InboundID: 1, UserID: user.ID, Enabled: true},
-			{InboundID: 2, UserID: user.ID, Enabled: true},
-			{InboundID: 3, UserID: user.ID, Enabled: true},
+		EffectiveNodes: map[string]bool{
+			NodeKeyOf(model.AssignableNodeInbound, 1):      true,
+			NodeKeyOf(model.AssignableNodeInbound, 2):      true,
+			NodeKeyOf(model.AssignableNodeInbound, 3):      true,
+			NodeKeyOf(model.AssignableNodeProxyPath, 10):   true,
+			NodeKeyOf(model.AssignableNodeExternalOutbound, 20): true,
+			NodeKeyOf(model.AssignableNodeExternalOutbound, 30): true,
+			NodeKeyOf(model.AssignableNodeExternalOutbound, 40): true,
 		},
 		ProxyPaths:        paths,
 		ExternalOutbounds: externals,
-		ExternalOutboundAccessGrants: []model.ExternalOutboundAccessGrant{
-			{ExternalOutboundID: 20, SubjectType: model.AccessSubjectUser, SubjectID: user.ID, Enabled: true},
-			{ExternalOutboundID: 30, SubjectType: model.AccessSubjectUser, SubjectID: user.ID, Enabled: true},
-			{ExternalOutboundID: 40, SubjectType: model.AccessSubjectUser, SubjectID: user.ID, Enabled: true},
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -422,7 +412,7 @@ func TestManagedCertificateDomainOverridesSubscriptionSNI(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			inbound := model.Inbound{ID: 1, ServerID: 1, Name: test.name, Protocol: test.protocol, ListenIP: "0.0.0.0", Port: 443, CertificateMode: model.CertificateModeExplicit, CertificateDomain: "entry.example.net", ConfigJSON: test.config, Enabled: true}
-			nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{})
+			nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -446,7 +436,11 @@ func TestGenerateClashMetaSubscription(t *testing.T) {
 	sub, err := GenerateSubscriptionWithOptions(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{"tls":{"enabled":true,"server_name":"example.com"}}`, Enabled: true}},
-		SubscriptionOptions{Format: model.SubscriptionFormatClashMeta, Profile: &model.SubscriptionProfile{GroupName: "自动选择", Enabled: true}},
+		SubscriptionOptions{
+			Format:               model.SubscriptionFormatClashMeta,
+			EffectiveNodes:       map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true},
+			EffectiveNodeGroups:  map[string]string{NodeKeyOf(model.AssignableNodeInbound, 1): "自动选择"},
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -463,7 +457,11 @@ func TestSubscriptionFormatUsesRequestOption(t *testing.T) {
 	sub, err := GenerateSubscriptionWithOptions(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
-		SubscriptionOptions{Format: model.SubscriptionFormatClashMeta, Profile: &model.SubscriptionProfile{GroupName: "自动选择", Enabled: true}},
+		SubscriptionOptions{
+			Format:               model.SubscriptionFormatClashMeta,
+			EffectiveNodes:       map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true},
+			EffectiveNodeGroups:  map[string]string{NodeKeyOf(model.AssignableNodeInbound, 1): "自动选择"},
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
