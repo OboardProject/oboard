@@ -241,8 +241,10 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists subscription_plans (id integer primary key autoincrement, name text not null unique, description text not null default '', enabled integer not null default 1, revision integer not null default 0, active_revision_id integer references subscription_plan_revisions(id) on delete set null, draft_revision_id integer references subscription_plan_revisions(id) on delete set null, created_at text not null, updated_at text not null)`,
 		`create table if not exists subscription_plan_revisions (id integer primary key autoincrement, plan_id integer not null references subscription_plans(id) on delete cascade, revision integer not null, status text not null default 'draft', speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, created_by integer references users(id) on delete set null, created_at text not null, activated_at text, unique(plan_id, revision))`,
 		`create table if not exists subscription_plan_revision_nodes (id integer primary key autoincrement, revision_id integer not null references subscription_plan_revisions(id) on delete cascade, node_type text not null, node_id integer not null, display_group text not null default '', source_type text not null default 'explicit', source_rule_id integer not null default 0, created_at text not null, unique(revision_id, node_type, node_id))`,
-		`create table if not exists user_plan_bindings (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, plan_id integer not null references subscription_plans(id) on delete cascade, enabled integer not null default 1, starts_at text, expires_at text, assigned_by integer references users(id) on delete set null, created_at text not null, updated_at text not null)`,
-		`create table if not exists user_node_exceptions (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, node_type text not null, node_id integer not null, effect text not null, reason text not null, expires_at text not null, created_by integer references users(id) on delete set null, created_at text not null)`,
+		`create table if not exists user_plan_bindings (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, plan_id integer not null references subscription_plans(id) on delete cascade, enabled integer not null default 1, status text not null default 'active', starts_at text, expires_at text, assigned_by integer references users(id) on delete set null, created_at text not null, updated_at text not null, deployed_at text, expiry_synced_at text)`,
+		`create table if not exists user_node_exceptions (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, node_type text not null, node_id integer not null, effect text not null, reason text not null, status text not null default 'active', starts_at text, expires_at text not null, created_by integer references users(id) on delete set null, created_at text not null, expiry_synced_at text, change_id integer references access_changes(id) on delete set null)`,
+		`create table if not exists access_changes (id integer primary key autoincrement, change_type text not null, source_plan_id integer references subscription_plans(id) on delete cascade, candidate_revision_id integer not null default 0, expected_active_revision_id integer not null default 0, status text not null default 'preparing', preview_hash text not null default '', affected_user_count integer not null default 0, activate_at text, payload_json text not null default '{}', prepare_projection_json text not null default '{}', finalize_projection_json text not null default '{}', error text not null default '', created_by integer references users(id) on delete set null, created_at text not null, activated_at text, finalized_at text, failed_at text, updated_at text not null)`,
+		`create table if not exists access_change_targets (access_change_id integer not null references access_changes(id) on delete cascade, server_id integer not null references servers(id) on delete cascade, prepare_task_id integer not null default 0, finalize_task_id integer not null default 0, status text not null default 'pending', error text not null default '', updated_at text not null, primary key(access_change_id, server_id))`,
 		`create index if not exists idx_tasks_server_status on agent_tasks(server_id, status)`,
 		`create index if not exists idx_controller_backups_created on controller_backups(created_at desc)`,
 		`create index if not exists idx_traffic_server on traffic_stats(server_id, created_at)`,
@@ -282,6 +284,10 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_plan_revision_nodes_node on subscription_plan_revision_nodes(node_type, node_id)`,
 		`create index if not exists idx_user_node_exceptions_user on user_node_exceptions(user_id, expires_at)`,
 		`create index if not exists idx_user_node_exceptions_node on user_node_exceptions(node_type, node_id, expires_at)`,
+		`create index if not exists idx_user_node_exceptions_status on user_node_exceptions(status, expires_at)`,
+		`create index if not exists idx_user_plan_bindings_deploy on user_plan_bindings(deployed_at, starts_at, expires_at)`,
+		`create index if not exists idx_access_changes_status on access_changes(status)`,
+		`create index if not exists idx_access_change_targets_change on access_change_targets(access_change_id)`,
 		`create index if not exists idx_subscription_one_time_tokens_user on subscription_one_time_tokens(user_id)`,
 		`create index if not exists idx_subscription_pull_audits_user_time on subscription_pull_audits(user_id,requested_at desc)`,
 		`create index if not exists idx_subscription_pull_audits_source_time on subscription_pull_audits(source_ip,requested_at desc)`,
@@ -544,6 +550,12 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.migratePlanRevisions(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateUserNodeExceptionLifecycle(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateUserPlanBindingDeployTracking(ctx); err != nil {
 		return err
 	}
 	return s.ensureDefaultDNSLists(ctx)

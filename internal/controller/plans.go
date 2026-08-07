@@ -718,6 +718,33 @@ func (s *Server) subscriptionPlanSubroutes(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	switch parts[0] {
+	case "changes":
+		if len(parts) != 2 {
+			fail(w, errors.New("unknown subscription plan subroute"), 404)
+			return
+		}
+		switch parts[1] {
+		case "preview":
+			if r.Method != http.MethodPost {
+				method(w)
+				return
+			}
+			s.planChangePreviewHandler(w, r, id)
+		case "apply":
+			if r.Method != http.MethodPost {
+				method(w)
+				return
+			}
+			s.planChangeApplyHandler(w, r, id)
+		default:
+			fail(w, errors.New("unknown subscription plan subroute"), 404)
+		}
+	case "disable":
+		if len(parts) != 1 || r.Method != http.MethodPost {
+			method(w)
+			return
+		}
+		s.planDisable(w, r, id)
 	case "nodes":
 		if len(parts) != 2 {
 			fail(w, errors.New("unknown subscription plan subroute"), 404)
@@ -774,13 +801,31 @@ func (s *Server) planPublish(w http.ResponseWriter, r *http.Request, id int64) {
 	if expected == 0 {
 		expected = plan.Revision
 	}
+	if s.authorizationMode(r.Context()) == model.AuthorizationModePlan {
+		if plan.Revision != expected {
+			fail(w, store.ErrPlanRevisionConflict, http.StatusConflict)
+			return
+		}
+		if plan.DraftRevisionID == 0 {
+			fail(w, errors.New("subscription plan has no draft revision to publish"), 400)
+			return
+		}
+		change, err := s.createPlanPublishChange(r.Context(), r, plan, plan.DraftRevisionID)
+		if err != nil {
+			fail(w, err, planWriteStatus(err))
+			return
+		}
+		auditReq(s, r, "publish", "access-change", fmt.Sprintf("plan=%d change=%d", id, change.ID))
+		write(w, 200, map[string]any{"published": false, "access_change_id": change.ID, "status": change.Status, "runtime_authorization_mode": model.AuthorizationModePlan})
+		return
+	}
 	revisionID, err := s.store.PublishPlanRevision(r.Context(), id, expected)
 	if err != nil {
 		fail(w, err, planWriteStatus(err))
 		return
 	}
 	auditReq(s, r, "publish", "subscription-plan", fmt.Sprint(id))
-	write(w, 200, map[string]any{"published": true, "active_revision_id": revisionID})
+	write(w, 200, map[string]any{"published": true, "active_revision_id": revisionID, "runtime_authorization_mode": s.authorizationMode(r.Context())})
 }
 
 func (s *Server) planClone(w http.ResponseWriter, r *http.Request, id int64) {
@@ -855,8 +900,18 @@ func (s *Server) planRevisions(w http.ResponseWriter, r *http.Request, id int64,
 			fail(w, err, planWriteStatus(err))
 			return
 		}
+		if s.authorizationMode(r.Context()) == model.AuthorizationModePlan {
+			change, err := s.createPlanPublishChange(r.Context(), r, plan, draftID)
+			if err != nil {
+				fail(w, err, planWriteStatus(err))
+				return
+			}
+			auditReq(s, r, "restore", "access-change", fmt.Sprintf("plan=%d revision=%d change=%d", id, revisionID, change.ID))
+			write(w, 200, map[string]any{"restored": true, "draft_revision_id": draftID, "access_change_id": change.ID, "access_change_status": change.Status, "runtime_authorization_mode": model.AuthorizationModePlan})
+			return
+		}
 		auditReq(s, r, "restore", "subscription-plan-revision", fmt.Sprintf("%d:%d", id, revisionID))
-		write(w, 200, map[string]any{"restored": true, "draft_revision_id": draftID})
+		write(w, 200, map[string]any{"restored": true, "draft_revision_id": draftID, "runtime_authorization_mode": s.authorizationMode(r.Context())})
 		return
 	}
 	fail(w, errors.New("unknown subscription plan subroute"), 404)
@@ -1272,13 +1327,39 @@ func (s *Server) planAssignmentApply(w http.ResponseWriter, r *http.Request) {
 	for _, userID := range req.UserIDs {
 		bindings = append(bindings, model.UserPlanBinding{UserID: userID, PlanID: req.PlanID, AssignedBy: assignedBy, StartsAt: startsAt, ExpiresAt: expiresAt})
 	}
+	mode := s.authorizationMode(r.Context())
+	if mode == model.AuthorizationModePlan {
+		// Two-phase assignment: the new bindings are stored pending so the
+		// plan snapshot keeps ignoring them until the access change activation
+		// flips them active. Prepare deploys old-union-new credentials first.
+		if err := s.store.SetUserPlanBindingsPending(r.Context(), bindings); err != nil {
+			fail(w, err, 500)
+			return
+		}
+		auditReq(s, r, "assign", "user-plan", fmt.Sprintf("users=%d plan=%d", len(req.UserIDs), req.PlanID))
+		userIDs := make([]int64, 0, len(req.UserIDs))
+		for _, userID := range req.UserIDs {
+			userIDs = append(userIDs, userID)
+		}
+		change, err := s.createUserBindingChange(r.Context(), r, data.config, userIDs, bindings, startsAt, expiresAt)
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		out := map[string]any{"applied": true, "affected_users": len(selected), "access_change_id": change.ID, "status": change.Status, "queued_tasks": len(change.Targets), "runtime_authorization_mode": mode}
+		if startsAt != nil && startsAt.After(time.Now()) {
+			out["status"] = "scheduled"
+			out["activate_at"] = startsAt
+		}
+		write(w, 200, out)
+		return
+	}
 	if err := s.store.SetUserPlanBindings(r.Context(), bindings); err != nil {
 		fail(w, err, 500)
 		return
 	}
 	auditReq(s, r, "assign", "user-plan", fmt.Sprintf("users=%d plan=%d", len(req.UserIDs), req.PlanID))
 
-	mode := s.authorizationMode(r.Context())
 	out := map[string]any{"applied": true, "affected_users": len(selected), "affected_servers": preview.AffectedServers, "runtime_authorization_mode": mode}
 	if mode != model.AuthorizationModePlan {
 		// In legacy and shadow mode the runtime chain still reads the legacy
@@ -1453,12 +1534,42 @@ func (s *Server) userNodeExceptions(w http.ResponseWriter, r *http.Request) {
 		if user := currentUser(r); user != nil {
 			v.CreatedBy = &user.ID
 		}
+		mode := s.authorizationMode(r.Context())
+		if mode == model.AuthorizationModePlan {
+			if v.Effect == model.UserNodeExceptionAllow {
+				v.Status = model.UserNodeExceptionPending
+			}
+			if v.Effect == model.UserNodeExceptionDeny {
+				v.Status = model.UserNodeExceptionActive
+			}
+		} else if strings.TrimSpace(string(v.Status)) == "" {
+			v.Status = model.UserNodeExceptionActive
+		}
+		var before []model.UserNodeException
+		if mode == model.AuthorizationModePlan {
+			var err error
+			before, err = s.store.ListUserNodeExceptions(r.Context())
+			if err != nil {
+				fail(w, err, 500)
+				return
+			}
+		}
 		if err := s.store.CreateUserNodeException(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
 		}
 		auditReq(s, r, "create", "user-node-exception", fmt.Sprintf("%d:%s:%d", v.UserID, v.NodeType, v.NodeID))
-		write(w, 201, map[string]any{"user_node_exception": v, "runtime_authorization_mode": s.authorizationMode(r.Context())})
+		out := map[string]any{"user_node_exception": v, "runtime_authorization_mode": mode}
+		if mode == model.AuthorizationModePlan {
+			change, err := s.exceptionChangeAfterWrite(r.Context(), r, before, v)
+			if err != nil {
+				fail(w, err, 500)
+				return
+			}
+			out["access_change_id"] = change.ID
+			out["access_change_status"] = change.Status
+		}
+		write(w, 201, out)
 	case http.MethodPatch:
 		if id == 0 {
 			fail(w, errors.New("missing id"), 400)
@@ -1491,15 +1602,68 @@ func (s *Server) userNodeExceptions(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if s.authorizationMode(r.Context()) == model.AuthorizationModePlan {
+			if v.Effect == model.UserNodeExceptionAllow {
+				v.Status = model.UserNodeExceptionPending
+			}
+			if v.Effect == model.UserNodeExceptionDeny {
+				v.Status = model.UserNodeExceptionActive
+			}
+		}
 		if err := s.store.UpdateUserNodeException(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
 		}
 		auditReq(s, r, "patch", "user-node-exception", fmt.Sprint(id))
-		write(w, 200, map[string]any{"user_node_exception": v, "runtime_authorization_mode": s.authorizationMode(r.Context())})
+		out := map[string]any{"user_node_exception": v, "runtime_authorization_mode": s.authorizationMode(r.Context())}
+		if s.authorizationMode(r.Context()) == model.AuthorizationModePlan {
+			change, err := s.exceptionChangeAfterWrite(r.Context(), r, items, v)
+			if err != nil {
+				fail(w, err, 500)
+				return
+			}
+			out["access_change_id"] = change.ID
+			out["access_change_status"] = change.Status
+		}
+		write(w, 200, out)
 	case http.MethodDelete:
 		if id == 0 {
 			fail(w, errors.New("missing id"), 400)
+			return
+		}
+		mode := s.authorizationMode(r.Context())
+		if mode == model.AuthorizationModePlan {
+			// Two-phase revocation: the row is kept and flipped to revoked at
+			// activation so the audit trail survives; finalize prunes the
+			// credentials.
+			items, err := s.store.ListUserNodeExceptions(r.Context())
+			if err != nil {
+				fail(w, err, 500)
+				return
+			}
+			var current *model.UserNodeException
+			for i := range items {
+				if items[i].ID == id {
+					current = &items[i]
+					break
+				}
+			}
+			if current == nil {
+				fail(w, sql.ErrNoRows, 404)
+				return
+			}
+			data, err := s.store.FullRoutingConfigData(r.Context())
+			if err != nil {
+				fail(w, err, 500)
+				return
+			}
+			change, err := s.createExceptionChange(r.Context(), r, data, items, exceptionsWithout(items, id), *current, model.UserNodeExceptionRevoked)
+			if err != nil {
+				fail(w, err, 500)
+				return
+			}
+			auditReq(s, r, "delete", "user-node-exception", fmt.Sprint(id))
+			write(w, 200, map[string]any{"deleted": false, "revoking": true, "access_change_id": change.ID, "access_change_status": change.Status, "runtime_authorization_mode": mode})
 			return
 		}
 		if err := s.store.DeleteUserNodeException(r.Context(), id); err != nil {

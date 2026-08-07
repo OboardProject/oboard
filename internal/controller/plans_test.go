@@ -126,3 +126,147 @@ func TestSubscriptionPlansAndAssignmentAPI(t *testing.T) {
 		"user_id": userID, "node_type": "proxy_path", "node_id": 999999, "effect": "allow", "reason": "x", "expires_at": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 	}, http.StatusBadRequest)
 }
+
+func setupPlansAPITestServer(t *testing.T) (http.Handler, *Server, string) {
+	t.Helper()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	return h, srv, token
+}
+
+// driveAccessChange runs the worker until the change reaches a terminal state.
+func driveAccessChange(t *testing.T, srv *Server, token string, changeID int64) map[string]any {
+	t.Helper()
+	var change map[string]any
+	for i := 0; i < 10; i++ {
+		srv.reconcileAccessChanges(t.Context())
+		change = request(t, srv.Handler(), http.MethodGet, "/api/v2/ui/access-changes/"+itoa(changeID), token, nil, http.StatusOK)["access_change"].(map[string]any)
+		switch change["status"] {
+		case "finalized", "failed", "cancelled":
+			return change
+		}
+	}
+	t.Fatalf("access change %d did not reach a terminal state: %#v", changeID, change)
+	return nil
+}
+
+// TestPlanModeAccessChangeFlow drives the prepare -> activate -> finalize
+// state machine through the HTTP API with the worker reconcile functions, and
+// asserts the runtime invariants: credentials are prepared before activation,
+// the durable state flips only at activation, and stale previews conflict.
+func TestPlanModeAccessChangeFlow(t *testing.T) {
+	h, srv, token := setupPlansAPITestServer(t)
+	if err := srv.store.SetSetting(t.Context(), "authorization.mode", "plan"); err != nil {
+		t.Fatal(err)
+	}
+	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
+	serverID := int64(server["id"].(float64))
+	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
+	inboundID := int64(inbound["id"].(float64))
+	path := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
+	pathID := int64(path["id"].(float64))
+	user := request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "alice", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
+	userID := int64(user["id"].(float64))
+	created := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{
+		"name": "premium", "enabled": true, "speed_limit_mbps": 100,
+		"nodes": []map[string]any{{"node_type": "proxy_path", "node_id": pathID}},
+	}, http.StatusCreated)
+	planID := int64(created["subscription_plan"].(map[string]any)["id"].(float64))
+
+	// Apply the assignment: the binding must stay pending until activation and
+	// the runtime must not grant the node before the change finalizes.
+	applied := request(t, h, http.MethodPost, "/api/v2/ui/users/plan-assignment/apply", token, map[string]any{"user_ids": []int64{userID}, "plan_id": planID, "deploy": true}, http.StatusOK)
+	changeID := int64(applied["access_change_id"].(float64))
+	if applied["status"] != "preparing" {
+		t.Fatalf("apply status = %#v", applied)
+	}
+	userNodes := request(t, h, http.MethodGet, "/api/v2/ui/users/"+itoa(userID)+"/nodes", token, nil, http.StatusOK)
+	if len(userNodes["nodes"].([]any)) != 0 {
+		t.Fatalf("user must not hold nodes before activation: %#v", userNodes["nodes"])
+	}
+	change := request(t, h, http.MethodGet, "/api/v2/ui/access-changes/"+itoa(changeID), token, nil, http.StatusOK)["access_change"].(map[string]any)
+	if change["status"] != "preparing" {
+		t.Fatalf("change status = %#v", change)
+	}
+
+	// Drive the worker: prepare -> activate -> finalize. The test server has
+	// no agent, so phases complete without Agent tasks.
+	change = driveAccessChange(t, srv, token, changeID)
+	if change["status"] != "finalized" {
+		t.Fatalf("change status after reconcile = %#v", change)
+	}
+	userNodes = request(t, h, http.MethodGet, "/api/v2/ui/users/"+itoa(userID)+"/nodes", token, nil, http.StatusOK)
+	if len(userNodes["nodes"].([]any)) != 1 {
+		t.Fatalf("user nodes after finalize = %#v", userNodes["nodes"])
+	}
+
+	// Draft edit + preview + apply with hash; a stale hash must conflict.
+	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/nodes/sync", token, map[string]any{
+		"op": "add", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": pathID, "display_group": "HK"}},
+	}, http.StatusOK)
+	preview := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/changes/preview", token, map[string]any{}, http.StatusOK)
+	hash := preview["preview_hash"].(string)
+	expectedActive := int64(preview["expected_active_revision_id"].(float64))
+	if hash == "" || expectedActive == 0 {
+		t.Fatalf("preview = %#v", preview)
+	}
+	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/changes/apply", token, map[string]any{
+		"preview_hash": "stale", "expected_active_revision_id": expectedActive,
+	}, http.StatusConflict)
+	appliedPublish := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/changes/apply", token, map[string]any{
+		"preview_hash": hash, "expected_active_revision_id": expectedActive,
+	}, http.StatusOK)
+	publishChangeID := int64(appliedPublish["access_change_id"].(float64))
+	change = driveAccessChange(t, srv, token, publishChangeID)
+	if change["status"] != "finalized" {
+		t.Fatalf("publish change status = %#v", change)
+	}
+	detail := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID), token, nil, http.StatusOK)
+	planAfter := detail["subscription_plan"].(map[string]any)
+	draftAfter, _ := planAfter["draft_revision_id"].(float64)
+	activeAfter, _ := planAfter["active_revision_id"].(float64)
+	if draftAfter != 0 || activeAfter == 0 {
+		t.Fatalf("plan after publish = %#v", detail)
+	}
+
+	// Allow exception: stored pending, activated by its change.
+	ex := request(t, h, http.MethodPost, "/api/v2/ui/user-node-exceptions", token, map[string]any{
+		"user_id": userID, "node_type": "proxy_path", "node_id": pathID, "effect": "allow", "reason": "临时", "expires_at": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+	}, http.StatusCreated)
+	exChangeID := int64(ex["access_change_id"].(float64))
+	exceptionID := int64(ex["user_node_exception"].(map[string]any)["id"].(float64))
+	if ex["access_change_status"] != "preparing" {
+		t.Fatalf("exception change status = %#v", ex)
+	}
+	change = driveAccessChange(t, srv, token, exChangeID)
+	if change["status"] != "finalized" {
+		t.Fatalf("exception change status = %#v", change)
+	}
+	userNodes = request(t, h, http.MethodGet, "/api/v2/ui/users/"+itoa(userID)+"/nodes", token, nil, http.StatusOK)
+	if len(userNodes["nodes"].([]any)) != 1 {
+		t.Fatalf("user nodes with allow exception = %#v", userNodes["nodes"])
+	}
+
+	// Deny replaces the same row (one exception per user+node): the effect is
+	// active immediately so subscriptions hide the node, while the change
+	// revokes the credential.
+	deny := request(t, h, http.MethodPatch, "/api/v2/ui/user-node-exceptions/"+itoa(exceptionID), token, map[string]any{
+		"effect": "deny", "reason": "违规",
+	}, http.StatusOK)
+	userNodes = request(t, h, http.MethodGet, "/api/v2/ui/users/"+itoa(userID)+"/nodes", token, nil, http.StatusOK)
+	if len(userNodes["nodes"].([]any)) != 0 {
+		t.Fatalf("deny must hide the node immediately: %#v", userNodes["nodes"])
+	}
+	denyChangeID := int64(deny["access_change_id"].(float64))
+	change = driveAccessChange(t, srv, token, denyChangeID)
+	if change["status"] != "finalized" {
+		t.Fatalf("deny change status = %#v", change)
+	}
+}

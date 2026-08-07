@@ -114,6 +114,12 @@ func BuildEffectiveAccessSnapshot(input EffectiveAccessInput) *EffectiveAccessSn
 	}
 	exceptionsByUser := map[int64][]model.UserNodeException{}
 	for _, ex := range input.Exceptions {
+		if ex.Status != "" && ex.Status != model.UserNodeExceptionActive {
+			continue
+		}
+		if ex.StartsAt != nil && ex.StartsAt.After(now) {
+			continue
+		}
 		if !ex.ExpiresAt.After(now) {
 			continue
 		}
@@ -347,6 +353,103 @@ func (s *EffectiveAccessSnapshot) EffectiveNodeGroups(userID int64) map[string]s
 		}
 	}
 	return out
+}
+
+// AccessProjection is the serializable per-server user-binding projection of a
+// snapshot plus the resolved user policies. Access changes materialize their
+// prepare/finalize projections as JSON so orchestration survives restarts and
+// later plan edits.
+type AccessProjection struct {
+	InboundUsers   map[int64][]int64              `json:"inbound_users"`
+	ProxyPathUsers map[int64][]int64              `json:"proxy_path_users"`
+	UserPolicies   map[int64]EffectiveUserPolicy  `json:"user_policies"`
+}
+
+// Projection returns the serializable view of the snapshot.
+func (s *EffectiveAccessSnapshot) Projection() AccessProjection {
+	return AccessProjection{
+		InboundUsers:   cloneUserIDMap(s.InboundUsers),
+		ProxyPathUsers: cloneUserIDMap(s.ProxyPathUsers),
+		UserPolicies:   s.UserPolicies,
+	}
+}
+
+// MergeProjections returns the union of two projections: a user is present for
+// a node if either side grants it, and policies prefer the right side so the
+// new plan limits win during prepare.
+func MergeProjections(a, b AccessProjection) AccessProjection {
+	out := AccessProjection{
+		InboundUsers:   cloneUserIDMap(a.InboundUsers),
+		ProxyPathUsers: cloneUserIDMap(a.ProxyPathUsers),
+		UserPolicies:   map[int64]EffectiveUserPolicy{},
+	}
+	for key, list := range b.InboundUsers {
+		merged := append([]int64(nil), out.InboundUsers[key]...)
+		for _, userID := range list {
+			if !containsInt64(merged, userID) {
+				merged = append(merged, userID)
+			}
+		}
+		sort.Slice(merged, func(i, j int) bool { return merged[i] < merged[j] })
+		out.InboundUsers[key] = merged
+	}
+	for key, list := range b.ProxyPathUsers {
+		merged := append([]int64(nil), out.ProxyPathUsers[key]...)
+		for _, userID := range list {
+			if !containsInt64(merged, userID) {
+				merged = append(merged, userID)
+			}
+		}
+		sort.Slice(merged, func(i, j int) bool { return merged[i] < merged[j] })
+		out.ProxyPathUsers[key] = merged
+	}
+	for userID, policy := range a.UserPolicies {
+		out.UserPolicies[userID] = policy
+	}
+	for userID, policy := range b.UserPolicies {
+		out.UserPolicies[userID] = policy
+	}
+	return out
+}
+
+// ProjectionSnapshot converts a stored projection back into the snapshot shape
+// config generation consumes. UserPolicies always uses the resolved policies
+// recorded with the projection; the user rows are only used for identity data.
+func ProjectionSnapshot(projection AccessProjection, users []model.User) *EffectiveAccessSnapshot {
+	snap := &EffectiveAccessSnapshot{
+		At:                    time.Now(),
+		Users:                 map[int64]model.User{},
+		UserNodes:             map[int64]map[string]EffectiveNodeGrant{},
+		InboundUsers:          cloneUserIDMap(projection.InboundUsers),
+		ProxyPathUsers:        cloneUserIDMap(projection.ProxyPathUsers),
+		ExternalOutboundUsers: map[int64][]int64{},
+		NodeUsers:             map[string][]int64{},
+		UserPolicies:          projection.UserPolicies,
+	}
+	for _, user := range users {
+		snap.Users[user.ID] = user
+	}
+	return snap
+}
+
+func cloneUserIDMap(in map[int64][]int64) map[int64][]int64 {
+	if in == nil {
+		return map[int64][]int64{}
+	}
+	out := make(map[int64][]int64, len(in))
+	for key, list := range in {
+		out[key] = append([]int64(nil), list...)
+	}
+	return out
+}
+
+func containsInt64(list []int64, id int64) bool {
+	for _, v := range list {
+		if v == id {
+			return true
+		}
+	}
+	return false
 }
 
 // LegacyAccessInput is the legacy authorization input needed to compute the

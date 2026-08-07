@@ -524,6 +524,13 @@ func affectedAuthServers(keys map[string]bool, paths []model.ProxyPath, steps []
 	return servers, affectedPaths, offline
 }
 
+// AffectedAuthServers exposes the authentication-server resolution used by the
+// access-change engine: the processing-role server for transparent prefixes,
+// the SSH user entry server, otherwise the root inbound server.
+func AffectedAuthServers(keys map[string]bool, paths []model.ProxyPath, steps []model.ProxyPathStep, inbounds []model.Inbound, serverOnline map[int64]bool) ([]int64, int, []int64) {
+	return affectedAuthServers(keys, paths, steps, inbounds, serverOnline)
+}
+
 func sortedKeys(set map[string]bool) []string {
 	out := make([]string, 0, len(set))
 	for key := range set {

@@ -284,6 +284,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/users/plan-assignment/", s.auth(s.userPlanAssignment, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/user-node-exceptions", s.auth(s.userNodeExceptions, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/user-node-exceptions/", s.auth(s.userNodeExceptions, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/access-changes", s.auth(s.accessChanges, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/access-changes/", s.auth(s.accessChanges, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists", s.auth(s.dnsLists, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists/", s.auth(s.dnsLists, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-benchmarks", s.auth(s.dnsBenchmarks, model.RoleOperator))

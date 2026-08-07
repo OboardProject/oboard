@@ -169,9 +169,17 @@ func (s *Store) UpdatePlanDraftLimits(ctx context.Context, id, expectedRevision 
 }
 
 // DeleteSubscriptionPlan physically removes the plan. Callers must first ensure
-// there are no plan bindings; the foreign-key cascade then removes revisions,
-// revision nodes and bindings together.
+// there are no effective bindings (active or pending, not yet expired); the
+// foreign-key cascade then removes revisions, revision nodes and bindings
+// together. Expired bindings never block archival.
 func (s *Store) DeleteSubscriptionPlan(ctx context.Context, id int64) error {
+	var bound int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from user_plan_bindings where plan_id=? and enabled=1 and status in ('active','pending') and (expires_at is null or expires_at > ?)`, id, now()).Scan(&bound); err != nil {
+		return err
+	}
+	if bound > 0 {
+		return errors.New("subscription plan still has enabled user bindings; disable and migrate users before deleting")
+	}
 	_, err := s.db.ExecContext(ctx, `delete from subscription_plans where id=?`, id)
 	return err
 }
@@ -264,6 +272,57 @@ func (s *Store) PublishPlanRevision(ctx context.Context, id, expectedRevision in
 		return 0, err
 	}
 	return draftID, nil
+}
+
+// PublishPlanRevisionGuarded publishes the draft only when both the active
+// revision and the draft revision are still the exact ones the change was
+// previewed against. Access changes call this at activation time so a
+// concurrent publish or draft edit fails the change instead of activating a
+// different node set than the one that was prepared.
+func (s *Store) PublishPlanRevisionGuarded(ctx context.Context, id, expectedActiveRevisionID, expectedDraftID int64) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var draftID, activeID int64
+	if err := tx.QueryRowContext(ctx, `select draft_revision_id,coalesce(active_revision_id,0) from subscription_plans where id=?`, id).Scan(&draftID, &activeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, sql.ErrNoRows
+		}
+		return 0, err
+	}
+	if activeID != expectedActiveRevisionID {
+		return 0, ErrPlanRevisionConflict
+	}
+	if draftID != expectedDraftID {
+		return 0, ErrPlanRevisionConflict
+	}
+	if draftID == 0 {
+		return 0, errors.New("subscription plan has no draft revision to publish")
+	}
+	ts := now()
+	if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set status=?,activated_at=NULL where id=?`, string(model.PlanRevisionArchived), activeID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set status=?,activated_at=? where id=?`, string(model.PlanRevisionActive), ts, draftID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `update subscription_plans set active_revision_id=?,draft_revision_id=NULL,revision=revision+1,updated_at=? where id=?`, draftID, ts, id); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return draftID, nil
+}
+
+// SetSubscriptionPlanEnabled flips the plan's enabled flag. Disabling a plan
+// removes every bound user's nodes from the effective snapshot immediately;
+// credential removal is carried by an access change finalize.
+func (s *Store) SetSubscriptionPlanEnabled(ctx context.Context, id int64, enabled bool) error {
+	_, err := s.db.ExecContext(ctx, `update subscription_plans set enabled=?,updated_at=? where id=?`, boolInt(enabled), now(), id)
+	return err
 }
 
 func (s *Store) ListPlanRevisions(ctx context.Context, planID int64) ([]model.SubscriptionPlanRevision, error) {
@@ -600,7 +659,7 @@ func (s *Store) GetActiveUserPlanBinding(ctx context.Context, userID int64) (*mo
 }
 
 func (s *Store) ListActiveUserPlanBindings(ctx context.Context) ([]model.UserPlanBinding, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where enabled=1 order by user_id`)
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where enabled=1 and status='active' order by user_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -612,7 +671,7 @@ func (s *Store) ListActiveUserPlanBindings(ctx context.Context) ([]model.UserPla
 // contains at (starts_at <= at AND (expires_at IS NULL OR expires_at > at)).
 // This is the binding set the plan authorization snapshot resolves from.
 func (s *Store) ListEffectiveUserPlanBindings(ctx context.Context, at time.Time) ([]model.UserPlanBinding, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where enabled=1 and (starts_at is null or starts_at <= ?) and (expires_at is null or expires_at > ?) order by user_id`, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano))
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where enabled=1 and status='active' and (starts_at is null or starts_at <= ?) and (expires_at is null or expires_at > ?) order by user_id`, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -621,7 +680,7 @@ func (s *Store) ListEffectiveUserPlanBindings(ctx context.Context, at time.Time)
 }
 
 func (s *Store) ListUserPlanBindingsForPlan(ctx context.Context, planID int64) ([]model.UserPlanBinding, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where plan_id=? and enabled=1 order by user_id`, planID)
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where plan_id=? and enabled=1 and status='active' order by user_id`, planID)
 	if err != nil {
 		return nil, err
 	}
@@ -660,10 +719,22 @@ func scanUserPlanBindings(rows *sql.Rows) ([]model.UserPlanBinding, error) {
 }
 
 // SetUserPlanBindings switches each listed user to the given plan in one
-// transaction. A binding with PlanID==0 removes the active binding. Exactly one
-// enabled binding can exist per user (partial unique index), so each switch
-// disables the previous binding before inserting the new one.
+// transaction with an active lifecycle status. A binding with PlanID==0 removes
+// the active binding. Exactly one enabled binding can exist per user (partial
+// unique index), so each switch disables the previous binding before inserting
+// the new one.
 func (s *Store) SetUserPlanBindings(ctx context.Context, bindings []model.UserPlanBinding) error {
+	return s.setUserPlanBindings(ctx, bindings, "active")
+}
+
+// SetUserPlanBindingsPending is the two-phase variant: the new binding is
+// stored as pending so the plan snapshot keeps ignoring it until the access
+// change activation flips it to active.
+func (s *Store) SetUserPlanBindingsPending(ctx context.Context, bindings []model.UserPlanBinding) error {
+	return s.setUserPlanBindings(ctx, bindings, "pending")
+}
+
+func (s *Store) setUserPlanBindings(ctx context.Context, bindings []model.UserPlanBinding, status string) error {
 	if len(bindings) == 0 {
 		return nil
 	}
@@ -680,18 +751,157 @@ func (s *Store) SetUserPlanBindings(ctx context.Context, bindings []model.UserPl
 		if v.PlanID == 0 {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `insert into user_plan_bindings(user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at) values(?,?,1,?,?,?,?,?)`, v.UserID, v.PlanID, nilTime(v.StartsAt), nilTime(v.ExpiresAt), v.AssignedBy, ts, ts); err != nil {
+		if _, err := tx.ExecContext(ctx, `insert into user_plan_bindings(user_id,plan_id,enabled,status,starts_at,expires_at,assigned_by,created_at,updated_at) values(?,?,1,?,?,?,?,?,?)`, v.UserID, v.PlanID, status, nilTime(v.StartsAt), nilTime(v.ExpiresAt), v.AssignedBy, ts, ts); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
+// SetUserPlanBindingsActive flips pending bindings to active. The lifecycle
+// worker and change activation call this at the binding's effective time.
+func (s *Store) SetUserPlanBindingsActive(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, now())
+	for _, id := range ids {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set status='active',updated_at=? where id in (`+strings.Join(placeholders, ",")+`) and status='pending'`, args...)
+	return err
+}
+
+// SetUserPlanBindingsActiveForUsers flips pending bindings of the given users
+// to active and records the deployed claim in the same statement, so the
+// lifecycle worker never creates a second change for a binding the access
+// change engine already activated.
+func (s *Store) SetUserPlanBindingsActiveForUsers(ctx context.Context, userIDs []int64) error {
+	if len(userIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(userIDs))
+	args := make([]any, 0, len(userIDs)+2)
+	ts := now()
+	args = append(args, ts, ts)
+	for _, id := range userIDs {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set status='active',deployed_at=coalesce(deployed_at,?),updated_at=? where user_id in (`+strings.Join(placeholders, ",")+`) and status='pending'`, args...)
+	return err
+}
+
+// ClaimBindingsDeployedForUsers claims every enabled binding of the users as
+// deployed. Used when a scheduler-created change owns the bindings.
+func (s *Store) ClaimBindingsDeployedForUsers(ctx context.Context, userIDs []int64) error {
+	if len(userIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(userIDs))
+	args := make([]any, 0, len(userIDs)+1)
+	args = append(args, now())
+	for _, id := range userIDs {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set deployed_at=coalesce(deployed_at,?) where user_id in (`+strings.Join(placeholders, ",")+`) and deployed_at is null`, args...)
+	return err
+}
+
+// ListEnabledUserPlanBindings returns every enabled binding for the given
+// users, including future-dated and expired ones, so the access-change engine
+// can compute old-union-new prepare projections.
+func (s *Store) ListEnabledUserPlanBindings(ctx context.Context, userIDs []int64) ([]model.UserPlanBinding, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, 0, len(userIDs))
+	args := make([]any, 0, len(userIDs))
+	for _, id := range userIDs {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where enabled=1 and user_id in (`+strings.Join(placeholders, ",")+`) order by user_id,id desc`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUserPlanBindings(rows)
+}
+
+// ListBindingsDueForDeploy returns enabled bindings whose time window already
+// contains at but whose runtime state was never synced (deployed_at is NULL).
+// The lifecycle worker turns each of them into an access change.
+func (s *Store) ListBindingsDueForDeploy(ctx context.Context, at time.Time) ([]model.UserPlanBinding, error) {
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where enabled=1 and deployed_at is null and (starts_at is null or starts_at <= ?) and (expires_at is null or expires_at > ?) order by id`, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUserPlanBindings(rows)
+}
+
+// ClaimBindingsDeployed marks bindings as claimed by an access change so the
+// lifecycle worker does not create a second change for them.
+func (s *Store) ClaimBindingsDeployed(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, now())
+	for _, id := range ids {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set deployed_at=? where id in (`+strings.Join(placeholders, ",")+`) and deployed_at is null`, args...)
+	return err
+}
+
+// ListExpiredBindingsNeedingSync returns bindings whose window ended, whose
+// runtime state was deployed, and whose removal was never finalized. The
+// lifecycle worker creates removal changes for them.
+func (s *Store) ListExpiredBindingsNeedingSync(ctx context.Context, at time.Time) ([]model.UserPlanBinding, error) {
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where enabled=1 and expires_at is not null and expires_at <= ? and deployed_at is not null and expiry_synced_at is null order by id`, at.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUserPlanBindings(rows)
+}
+
+// MarkBindingsExpirySynced records that a removal change for the expired
+// bindings reached the runtime.
+func (s *Store) MarkBindingsExpirySynced(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, now())
+	for _, id := range ids {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set expiry_synced_at=? where id in (`+strings.Join(placeholders, ",")+`) and expiry_synced_at is null`, args...)
+	return err
+}
+
 func (s *Store) CreateUserNodeException(ctx context.Context, v *model.UserNodeException) error {
 	ts := now()
 	v.CreatedAt = parseTime(ts)
-	res, err := s.db.ExecContext(ctx, `insert into user_node_exceptions(user_id,node_type,node_id,effect,reason,expires_at,created_by,created_at) values(?,?,?,?,?,?,?,?)`, v.UserID, v.NodeType, v.NodeID, v.Effect, v.Reason, v.ExpiresAt.UTC().Format(time.RFC3339Nano), v.CreatedBy, ts)
+	if strings.TrimSpace(string(v.Status)) == "" {
+		v.Status = model.UserNodeExceptionActive
+	}
+	res, err := s.db.ExecContext(ctx, `insert into user_node_exceptions(user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at) values(?,?,?,?,?,?,?,?,?,?)`, v.UserID, v.NodeType, v.NodeID, v.Effect, v.Reason, string(v.Status), nilTime(v.StartsAt), v.ExpiresAt.UTC().Format(time.RFC3339Nano), v.CreatedBy, ts)
 	if err != nil {
+		if isUniqueConstraintError(err) {
+			return errors.New("该用户在此节点上已存在例外，请更新现有例外而不是重复创建")
+		}
 		return err
 	}
 	v.ID, _ = res.LastInsertId()
@@ -699,7 +909,13 @@ func (s *Store) CreateUserNodeException(ctx context.Context, v *model.UserNodeEx
 }
 
 func (s *Store) UpdateUserNodeException(ctx context.Context, v *model.UserNodeException) error {
-	_, err := s.db.ExecContext(ctx, `update user_node_exceptions set user_id=?,node_type=?,node_id=?,effect=?,reason=?,expires_at=? where id=?`, v.UserID, v.NodeType, v.NodeID, v.Effect, v.Reason, v.ExpiresAt.UTC().Format(time.RFC3339Nano), v.ID)
+	if strings.TrimSpace(string(v.Status)) == "" {
+		v.Status = model.UserNodeExceptionActive
+	}
+	_, err := s.db.ExecContext(ctx, `update user_node_exceptions set user_id=?,node_type=?,node_id=?,effect=?,reason=?,status=?,starts_at=?,expires_at=? where id=?`, v.UserID, v.NodeType, v.NodeID, v.Effect, v.Reason, string(v.Status), nilTime(v.StartsAt), v.ExpiresAt.UTC().Format(time.RFC3339Nano), v.ID)
+	if err != nil && isUniqueConstraintError(err) {
+		return errors.New("该用户在此节点上已存在例外，请更新现有例外而不是重复创建")
+	}
 	return err
 }
 
@@ -709,7 +925,7 @@ func (s *Store) DeleteUserNodeException(ctx context.Context, id int64) error {
 }
 
 func (s *Store) ListUserNodeExceptions(ctx context.Context) ([]model.UserNodeException, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,expires_at,created_by,created_at from user_node_exceptions order by id desc`)
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions order by id desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -718,7 +934,7 @@ func (s *Store) ListUserNodeExceptions(ctx context.Context) ([]model.UserNodeExc
 }
 
 func (s *Store) ListUserNodeExceptionsForUser(ctx context.Context, userID int64) ([]model.UserNodeException, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,expires_at,created_by,created_at from user_node_exceptions where user_id=? order by id desc`, userID)
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where user_id=? order by id desc`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -727,7 +943,7 @@ func (s *Store) ListUserNodeExceptionsForUser(ctx context.Context, userID int64)
 }
 
 func (s *Store) ListUserNodeExceptionsForNode(ctx context.Context, nodeType string, nodeID int64) ([]model.UserNodeException, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,expires_at,created_by,created_at from user_node_exceptions where node_type=? and node_id=? order by id desc`, nodeType, nodeID)
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where node_type=? and node_id=? order by id desc`, nodeType, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -745,14 +961,110 @@ func (s *Store) DeleteExpiredUserNodeExceptions(ctx context.Context, at time.Tim
 	return res.RowsAffected()
 }
 
+// GetUserNodeException loads one exception row.
+func (s *Store) GetUserNodeException(ctx context.Context, id int64) (*model.UserNodeException, error) {
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items, err := scanUserNodeExceptions(rows)
+	if err != nil || len(items) == 0 {
+		if err != nil {
+			return nil, err
+		}
+		return nil, sql.ErrNoRows
+	}
+	return &items[0], nil
+}
+
+// SetUserNodeExceptionStatus transitions one exception's audited lifecycle
+// state. Rows are never physically deleted once created.
+func (s *Store) SetUserNodeExceptionStatus(ctx context.Context, id int64, status model.UserNodeExceptionStatus) error {
+	_, err := s.db.ExecContext(ctx, `update user_node_exceptions set status=? where id=?`, string(status), id)
+	return err
+}
+
+// ListUserNodeExceptionsByStatus returns pending or active exceptions whose
+// time window contains at, used by the lifecycle worker and change activation.
+func (s *Store) ListUserNodeExceptionsByStatus(ctx context.Context, at time.Time, statuses ...model.UserNodeExceptionStatus) ([]model.UserNodeException, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, 0, len(statuses))
+	args := make([]any, 0, len(statuses)+2)
+	for _, status := range statuses {
+		placeholders = append(placeholders, "?")
+		args = append(args, string(status))
+	}
+	args = append(args, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano))
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where status in (`+strings.Join(placeholders, ",")+`) and (starts_at is null or starts_at <= ?) and expires_at > ? order by id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUserNodeExceptions(rows)
+}
+
+// ListActiveExceptionsExpired returns active exceptions whose expiry passed
+// and that still need a removal change (expiry_synced_at is NULL).
+func (s *Store) ListActiveExceptionsExpired(ctx context.Context, at time.Time) ([]model.UserNodeException, error) {
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where status='active' and expires_at <= ? and expiry_synced_at is null order by id`, at.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUserNodeExceptions(rows)
+}
+
+// MarkExceptionsExpirySynced records that the removal change for the expired
+// exceptions reached the runtime.
+func (s *Store) MarkExceptionsExpirySynced(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, now())
+	for _, id := range ids {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	_, err := s.db.ExecContext(ctx, `update user_node_exceptions set expiry_synced_at=? where id in (`+strings.Join(placeholders, ",")+`) and expiry_synced_at is null`, args...)
+	return err
+}
+
+// SetUserNodeExceptionChange records the access change that owns a pending
+// exception so the lifecycle fallback never creates a second change for it.
+func (s *Store) SetUserNodeExceptionChange(ctx context.Context, id, changeID int64) error {
+	_, err := s.db.ExecContext(ctx, `update user_node_exceptions set change_id=? where id=?`, nullInt64(changeID), id)
+	return err
+}
+
+// ListPendingExceptionsWithoutChange returns pending exceptions whose time
+// window is open and that no access change owns yet (crash recovery fallback).
+func (s *Store) ListPendingExceptionsWithoutChange(ctx context.Context, at time.Time) ([]model.UserNodeException, error) {
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where status='pending' and change_id is null and (starts_at is null or starts_at <= ?) and expires_at > ? order by id`, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUserNodeExceptions(rows)
+}
+
 func scanUserNodeExceptions(rows *sql.Rows) ([]model.UserNodeException, error) {
 	var out []model.UserNodeException
 	for rows.Next() {
 		var v model.UserNodeException
 		var createdBy sql.NullInt64
+		var startsAt sql.NullString
 		var expiresAt, ca string
-		if err := rows.Scan(&v.ID, &v.UserID, &v.NodeType, &v.NodeID, &v.Effect, &v.Reason, &expiresAt, &createdBy, &ca); err != nil {
+		if err := rows.Scan(&v.ID, &v.UserID, &v.NodeType, &v.NodeID, &v.Effect, &v.Reason, &v.Status, &startsAt, &expiresAt, &createdBy, &ca); err != nil {
 			return nil, err
+		}
+		if startsAt.Valid {
+			t := parseTime(startsAt.String)
+			v.StartsAt = &t
 		}
 		v.ExpiresAt = parseTime(expiresAt)
 		if createdBy.Valid {
@@ -762,6 +1074,14 @@ func scanUserNodeExceptions(rows *sql.Rows) ([]model.UserNodeException, error) {
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "unique constraint") || strings.Contains(text, "constraint failed")
 }
 
 // migratePlanRevisions upgrades databases created before the revision model:
@@ -834,6 +1154,54 @@ func (s *Store) migratePlanRevisions(ctx context.Context) error {
 			}
 		}
 		if _, err := s.db.ExecContext(ctx, `update subscription_plans set active_revision_id=?,revision=?,updated_at=? where id=?`, revisionID, revision, ts, item.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateUserNodeExceptionLifecycle upgrades the exception table to the
+// audited lifecycle: status (pending/active/expired/revoked), starts_at and
+// expiry_synced_at columns, one unique row per (user, node) and the indexes
+// the lifecycle worker scans. Legacy rows become active with no start window.
+func (s *Store) migrateUserNodeExceptionLifecycle(ctx context.Context) error {
+	for _, column := range []struct {
+		name string
+		sql  string
+	}{
+		{"status", `alter table user_node_exceptions add column status text not null default 'active'`},
+		{"starts_at", `alter table user_node_exceptions add column starts_at text`},
+		{"expiry_synced_at", `alter table user_node_exceptions add column expiry_synced_at text`},
+		{"change_id", `alter table user_node_exceptions add column change_id integer references access_changes(id) on delete set null`},
+	} {
+		if err := s.ensureColumn(ctx, "user_node_exceptions", column.name, column.sql); err != nil {
+			return err
+		}
+	}
+	// Dedupe overlapping rows before installing the unique key: keep the most
+	// recent row per (user, node) so allow/deny conflicts are never silently
+	// retained.
+	if _, err := s.db.ExecContext(ctx, `delete from user_node_exceptions where id not in (select max(id) from user_node_exceptions group by user_id,node_type,node_id)`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_user_node_exceptions_user_node on user_node_exceptions(user_id, node_type, node_id)`); err != nil {
+		return err
+	}
+	return nil
+}
+
+// migrateUserPlanBindingDeployTracking adds the columns the lifecycle worker
+// uses to claim bindings for access changes and to record removal sync.
+func (s *Store) migrateUserPlanBindingDeployTracking(ctx context.Context) error {
+	for _, column := range []struct {
+		name string
+		sql  string
+	}{
+		{"status", `alter table user_plan_bindings add column status text not null default 'active'`},
+		{"deployed_at", `alter table user_plan_bindings add column deployed_at text`},
+		{"expiry_synced_at", `alter table user_plan_bindings add column expiry_synced_at text`},
+	} {
+		if err := s.ensureColumn(ctx, "user_plan_bindings", column.name, column.sql); err != nil {
 			return err
 		}
 	}

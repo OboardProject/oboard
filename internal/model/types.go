@@ -439,9 +439,102 @@ type UserNodeException struct {
 	NodeID    int64                   `json:"node_id"`
 	Effect    UserNodeExceptionEffect `json:"effect"`
 	Reason    string                  `json:"reason"`
+	Status    UserNodeExceptionStatus `json:"status"`
+	StartsAt  *time.Time              `json:"starts_at,omitempty"`
 	ExpiresAt time.Time               `json:"expires_at"`
 	CreatedBy *int64                  `json:"created_by,omitempty"`
 	CreatedAt time.Time               `json:"created_at"`
+}
+
+// UserNodeExceptionStatus is the audited lifecycle of one exception. Allow
+// exceptions are created pending and become active only when their change is
+// activated (so the node never appears in a subscription before the servers
+// hold the credential); deny exceptions are active immediately so the node
+// disappears from subscriptions right away. Expired and revoked rows are kept
+// for the audit trail.
+type UserNodeExceptionStatus string
+
+const (
+	UserNodeExceptionPending UserNodeExceptionStatus = "pending"
+	UserNodeExceptionActive  UserNodeExceptionStatus = "active"
+	UserNodeExceptionExpired UserNodeExceptionStatus = "expired"
+	UserNodeExceptionRevoked UserNodeExceptionStatus = "revoked"
+)
+
+// AccessChangeType is the kind of authorization mutation one access change
+// carries through prepare/activate/finalize.
+type AccessChangeType string
+
+const (
+	AccessChangePlanPublish  AccessChangeType = "plan_publish"
+	AccessChangePlanRestore  AccessChangeType = "plan_restore"
+	AccessChangePlanDisable  AccessChangeType = "plan_disable"
+	AccessChangeUserBindings AccessChangeType = "user_bindings"
+	AccessChangeExceptions   AccessChangeType = "exceptions"
+)
+
+// AccessChangeStatus is the orchestration state machine. Prepare deploys the
+// old-union-new permission set, activation atomically switches the durable
+// authorization state (publish revision, enable plan, activate exceptions),
+// and finalize deploys the exact new set so removed credentials are pruned.
+type AccessChangeStatus string
+
+const (
+	AccessChangePreparing  AccessChangeStatus = "preparing"
+	AccessChangeActivating AccessChangeStatus = "activating"
+	AccessChangeFinalizing AccessChangeStatus = "finalizing"
+	AccessChangeFinalized  AccessChangeStatus = "finalized"
+	AccessChangeFailed     AccessChangeStatus = "failed"
+	AccessChangeCancelled  AccessChangeStatus = "cancelled"
+)
+
+// AccessChangeTargetStatus is the per-server phase state inside one change.
+type AccessChangeTargetStatus string
+
+const (
+	AccessChangeTargetPending   AccessChangeTargetStatus = "pending"
+	AccessChangeTargetPreparing AccessChangeTargetStatus = "preparing"
+	AccessChangeTargetPrepared  AccessChangeTargetStatus = "prepared"
+	AccessChangeTargetFinalizing AccessChangeTargetStatus = "finalizing"
+	AccessChangeTargetFinalized AccessChangeTargetStatus = "finalized"
+	AccessChangeTargetFailed    AccessChangeTargetStatus = "failed"
+)
+
+// AccessChange is one authorization mutation with a two-phase deployment. The
+// prepare/finalize projections are materialized at creation time so the
+// orchestration survives restarts and later plan edits without changing what
+// the change deploys.
+type AccessChange struct {
+	ID                       int64               `json:"id"`
+	ChangeType               AccessChangeType    `json:"change_type"`
+	SourcePlanID             int64               `json:"source_plan_id,omitempty"`
+	CandidateRevisionID      int64               `json:"candidate_revision_id,omitempty"`
+	ExpectedActiveRevisionID int64               `json:"expected_active_revision_id,omitempty"`
+	Status                   AccessChangeStatus  `json:"status"`
+	PreviewHash              string              `json:"preview_hash,omitempty"`
+	AffectedUserCount        int                 `json:"affected_user_count"`
+	ActivateAt               *time.Time          `json:"activate_at,omitempty"`
+	PayloadJSON              string              `json:"-"`
+	PrepareProjectionJSON    string              `json:"-"`
+	FinalizeProjectionJSON   string              `json:"-"`
+	Error                    string              `json:"error,omitempty"`
+	CreatedBy                *int64              `json:"created_by,omitempty"`
+	CreatedAt                time.Time           `json:"created_at"`
+	ActivatedAt              *time.Time          `json:"activated_at,omitempty"`
+	FinalizedAt              *time.Time          `json:"finalized_at,omitempty"`
+	FailedAt                 *time.Time          `json:"failed_at,omitempty"`
+	Targets                  []AccessChangeTarget `json:"targets,omitempty"`
+}
+
+// AccessChangeTarget tracks the per-server Agent tasks of one change phase.
+type AccessChangeTarget struct {
+	AccessChangeID int64                  `json:"access_change_id"`
+	ServerID       int64                  `json:"server_id"`
+	PrepareTaskID  int64                  `json:"prepare_task_id,omitempty"`
+	FinalizeTaskID int64                  `json:"finalize_task_id,omitempty"`
+	Status         AccessChangeTargetStatus `json:"status"`
+	Error          string                 `json:"error,omitempty"`
+	UpdatedAt      time.Time              `json:"updated_at"`
 }
 
 type ControllerBackup struct {
