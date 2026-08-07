@@ -7,8 +7,12 @@ export function isControllerUpdateInProgressStatus(status: string | undefined | 
   return status != null && CONTROLLER_UPDATE_IN_PROGRESS_STATUSES.includes(status)
 }
 
+const EXPECTED_DISCONNECT_STATUSES = [502, 503, 504]
+
 export function isExpectedControllerUpdateDisconnect(error: unknown): boolean {
   if (error instanceof TypeError) return true
+  const status = Number((error as any)?.status)
+  if (EXPECTED_DISCONNECT_STATUSES.includes(status)) return true
   const message = String((error as any)?.message || error || '').trim().toLowerCase()
   return EXPECTED_DISCONNECT_MARKERS.some(value => message.includes(value))
 }

@@ -892,6 +892,7 @@ const valueLabels: Record<string, string> = {
 type ToastKind = 'error' | 'success' | 'warning' | 'info'
 type ToastState = { id: number; kind: ToastKind; message: string } | null
 type ControllerUpdateInProgressChange = (value: boolean) => void
+const CONTROLLER_UPDATE_IN_PROGRESS_KEY = 'oboard.controller-update.in-progress'
 type DialogTone = 'default' | 'danger'
 type DialogChoice = { value: string; label: string }
 type DialogBase = { title: string; message?: React.ReactNode; confirmText?: string; cancelText?: string; tone?: DialogTone }
@@ -954,6 +955,12 @@ function apiErrorMessage(data: any, res: Response) {
   const detail = typeof data?.message === 'string' ? data.message.trim() : ''
   if (detail) return detail
   return localizeErrorMessage(data?.error || res.statusText)
+}
+
+function apiRequestError(data: any, res: Response) {
+  const error = new Error(apiErrorMessage(data, res))
+  ;(error as any).status = res.status
+  return error
 }
 
 function showToast(setToast: React.Dispatch<React.SetStateAction<ToastState>>, message: unknown, kind: ToastKind = 'error') {
@@ -1277,9 +1284,9 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
     if (!res.ok) {
       if (res.status === 401 && token && onUnauthorized) {
         if (!onUnauthorized(token)) throw new SupersededAuthRequestError()
-        throw new Error('登录已过期，请重新登录')
+        throw apiRequestError({ error: '登录已过期，请重新登录' }, res)
       }
-      throw new Error(apiErrorMessage(data, res))
+      throw apiRequestError(data, res)
     }
     return data
   }
@@ -1301,7 +1308,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
         throw new Error('登录已过期，请重新登录')
       }
       const v2Error = payload?.error && typeof payload.error === 'object' ? payload.error : null
-      throw new Error(apiErrorMessage({ error: v2Error?.message || payload?.error, message: payload?.message }, res))
+      throw apiRequestError({ error: v2Error?.message || payload?.error, message: payload?.message }, res)
     }
     return payload.data as T
   }
@@ -1309,7 +1316,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
     const res = await fetch(appPath('/api/v2/ui' + path), { credentials: 'same-origin', headers: authHeaders })
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
-      throw new Error(apiErrorMessage(data, res))
+      throw apiRequestError(data, res)
     }
     const disposition = res.headers.get('content-disposition') || ''
     const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || 'oboard-logs.zip'
@@ -1318,7 +1325,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
   async function upload<T = any>(path: string, body: FormData): Promise<T> {
     const res = await fetch(appPath('/api/v2/ui' + path), { method: 'POST', body, credentials: 'same-origin', headers: { ...authHeaders, ...csrfHeaders } })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(apiErrorMessage(data, res))
+    if (!res.ok) throw apiRequestError(data, res)
     return data
   }
   return { request, requestV2, download, upload }
@@ -1365,9 +1372,14 @@ function App() {
   activeTabRef.current = tab
   const [theme, setTheme] = useState<ThemeName>(() => normalizeTheme(localStorage.getItem('oboard.theme')))
   const [toast, setToast] = useState<ToastState>(null)
-  const [controllerUpdateInProgress, setControllerUpdateInProgress] = useState(false)
-  const controllerUpdateInProgressRef = useRef(false)
+  const [controllerUpdateInProgress, setControllerUpdateInProgress] = useState(() => sessionStorage.getItem(CONTROLLER_UPDATE_IN_PROGRESS_KEY) === '1')
+  const controllerUpdateInProgressRef = useRef(controllerUpdateInProgress)
   controllerUpdateInProgressRef.current = controllerUpdateInProgress
+  const handleControllerUpdateInProgressChange = (value: boolean) => {
+    setControllerUpdateInProgress(value)
+    if (value) sessionStorage.setItem(CONTROLLER_UPDATE_IN_PROGRESS_KEY, '1')
+    else sessionStorage.removeItem(CONTROLLER_UPDATE_IN_PROGRESS_KEY)
+  }
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<any>({})
   const [restoringSession, setRestoringSession] = useState(() => !sessionStorage.getItem('oboard.token'))
@@ -2090,7 +2102,7 @@ function App() {
             <div className="page-stage">
               <AnimatePresence initial={false} mode="popLayout">
                 <MotionPage key={tab}>
-                  {renderTab(tab, data, client, load, apply, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, realtimeRevision, realtimeResources, setControllerUpdateInProgress)}
+                  {renderTab(tab, data, client, load, apply, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange)}
                 </MotionPage>
               </AnimatePresence>
             </div>

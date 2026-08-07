@@ -21,6 +21,25 @@ describe('controller update pending toast', () => {
     expect(controllerUpdatePendingToast(false, new Error('Bad Gateway'))).toBeNull()
   })
 
+  it('recognizes gateway unavailability by HTTP status even when the message is generic', () => {
+    const error = new Error('操作失败，请稍后重试')
+    ;(error as any).status = 502
+    expect(controllerUpdatePendingToast(true, error)).toEqual({ message: CONTROLLER_UPDATE_PENDING_MESSAGE, kind: 'info' })
+    for (const status of [502, 503, 504]) {
+      const statusError = new Error('')
+      ;(statusError as any).status = status
+      expect(controllerUpdatePendingToast(true, statusError)).toEqual({ message: CONTROLLER_UPDATE_PENDING_MESSAGE, kind: 'info' })
+    }
+  })
+
+  it('does not treat other HTTP statuses as expected disconnects', () => {
+    for (const status of [401, 403, 500, 5024]) {
+      const error = new Error('操作失败，请稍后重试')
+      ;(error as any).status = status
+      expect(controllerUpdatePendingToast(true, error)).toBeNull()
+    }
+  })
+
   it('does not mask real errors during an update', () => {
     expect(controllerUpdatePendingToast(true, new Error('forbidden'))).toBeNull()
     expect(controllerUpdatePendingToast(true, new Error('subscription_age_policy must be optional or required'))).toBeNull()
