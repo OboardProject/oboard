@@ -1860,6 +1860,39 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = addGroups()
 		}
+		if err == nil {
+			var plans []model.SubscriptionPlan
+			plans, err = s.store.ListSubscriptionPlans(ctx)
+			if err == nil {
+				out["subscription_plans"] = plans
+			}
+		}
+		if err == nil {
+			var bindings []model.UserPlanBinding
+			bindings, err = s.store.ListActiveUserPlanBindings(ctx)
+			if err == nil {
+				out["user_plan_bindings"] = bindings
+			}
+		}
+	case "nodes":
+		if err = require(model.RoleOperator); err == nil {
+			err = addServers()
+		}
+		if err == nil {
+			var plans []model.SubscriptionPlan
+			plans, err = s.store.ListSubscriptionPlans(ctx)
+			if err == nil {
+				out["subscription_plans"] = plans
+			}
+		}
+	case "plans":
+		if err = require(model.RoleAdmin); err == nil {
+			var plans []model.SubscriptionPlan
+			plans, err = s.store.ListSubscriptionPlans(ctx)
+			if err == nil {
+				out["subscription_plans"] = plans
+			}
+		}
 	case "subscriptions":
 		if err = require(model.RoleViewer); err != nil {
 			break

@@ -102,3 +102,31 @@ func TestShadowReportReflectsLegacyUsers(t *testing.T) {
 		t.Fatalf("expected legacy user to diverge from empty plan: %#v", shadow)
 	}
 }
+
+func TestPageDataForPlanPages(t *testing.T) {
+	h, token := setupPlansAPITest(t)
+	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
+	serverID := int64(server["id"].(float64))
+	request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "alice", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{"name": "basic", "enabled": true}, http.StatusCreated)
+
+	nodesData := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=nodes", token, nil, http.StatusOK)
+	if _, ok := nodesData["servers"]; !ok {
+		t.Fatalf("nodes page-data missing servers: %#v", nodesData)
+	}
+	if _, ok := nodesData["subscription_plans"]; !ok {
+		t.Fatalf("nodes page-data missing subscription_plans: %#v", nodesData)
+	}
+	plansData := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=plans", token, nil, http.StatusOK)
+	if _, ok := plansData["subscription_plans"]; !ok {
+		t.Fatalf("plans page-data missing subscription_plans: %#v", plansData)
+	}
+	usersData := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=users", token, nil, http.StatusOK)
+	if _, ok := usersData["user_plan_bindings"]; !ok {
+		t.Fatalf("users page-data missing user_plan_bindings: %#v", usersData)
+	}
+	if _, ok := usersData["subscription_plans"]; !ok {
+		t.Fatalf("users page-data missing subscription_plans: %#v", usersData)
+	}
+}
