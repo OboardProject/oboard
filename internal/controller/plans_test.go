@@ -89,7 +89,7 @@ func TestSubscriptionPlansAndAssignmentAPI(t *testing.T) {
 		t.Fatalf("replace preview = %#v", preview)
 	}
 	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/nodes/sync", token, map[string]any{"op": "replace", "nodes": []map[string]any{}}, http.StatusOK)
-	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/nodes/publish", token, map[string]any{}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/publish", token, map[string]any{}, http.StatusOK)
 
 	// Removing a node that is no longer in the catalog (e.g. a deleted path)
 	// must still work so stale plan membership can be cleaned up.

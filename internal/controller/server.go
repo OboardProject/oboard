@@ -717,6 +717,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			NotificationMergeOffline    *bool              `json:"notification_server_merge_offline"`
 			RegistrationEnabled         *bool              `json:"registration_enabled"`
 			RegistrationDefaultGroupID  *int64             `json:"registration_default_group_id"`
+			AuthorizationMode           *string            `json:"authorization_mode"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -1085,6 +1086,20 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, settingRegistrationDefaultGroupID)
 		}
+		if req.AuthorizationMode != nil {
+			mode := model.AuthorizationMode(strings.ToLower(strings.TrimSpace(*req.AuthorizationMode)))
+			switch mode {
+			case model.AuthorizationModeLegacy, model.AuthorizationModeShadow, model.AuthorizationModePlan:
+			default:
+				fail(w, errors.New("authorization_mode must be legacy, shadow or plan"), http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), authorizationModeSetting, string(mode)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, AuthorizationModeSettingName)
+		}
 		if len(changed) > 0 {
 			auditReq(s, r, "update", "settings", strings.Join(changed, ","))
 		}
@@ -1109,11 +1124,12 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
 	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	for key, value := range items {
-		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID {
+		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == authorizationModeSetting {
 			continue
 		}
 		out[key] = value
 	}
+	out[AuthorizationModeSettingName] = string(s.authorizationMode(ctx))
 	if raw := strings.TrimSpace(items[settingRegistrationEnabled]); raw != "" {
 		out[settingRegistrationEnabled] = settingBool(items, settingRegistrationEnabled, false)
 	}
@@ -1978,7 +1994,11 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				if configErr != nil {
 					err = configErr
 				} else {
-					bindings := effectiveInboundUsersForRouting(config)
+					_, pathBindings, _, bindingsErr := s.runtimeAccessBindings(ctx, config)
+					if bindingsErr != nil {
+						err = bindingsErr
+						break
+					}
 					deployments, deploymentErr := s.store.ListSSHPasswordDeploymentsForUser(ctx, user.ID)
 					if deploymentErr != nil {
 						err = deploymentErr
@@ -1990,7 +2010,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 					}
 					accesses := make([]map[string]any, 0)
 					for _, server := range config.Servers {
-						plan, planErr := buildSSHInboundPlan(0, server, config, bindings, nil)
+						plan, planErr := buildSSHInboundPlan(0, server, config, pathBindings, nil)
 						if planErr != nil {
 							err = planErr
 							break
@@ -5421,7 +5441,7 @@ func effectiveProxyPathUsersForRouting(data store.FullRoutingConfig) []model.Pro
 	return core.EffectiveProxyPathUsers(data.ProxyPaths, data.Inbounds, data.Users, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
 }
 
-func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, users []model.User, groups []model.UserGroup, members []model.UserGroupMember, accountingUsers map[int64]bool) (map[int64]model.TrafficRuntimePolicy, error) {
+func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, users []model.User, groups []model.UserGroup, members []model.UserGroupMember, accountingUsers map[int64]bool, userPolicies map[int64]core.UserLimitPolicy) (map[int64]model.TrafficRuntimePolicy, error) {
 	settings, _ := s.store.ListSettings(ctx)
 	loc := trafficLocation(settings)
 	enforcement := trafficEnforcementMode(settings)
@@ -5437,7 +5457,10 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 		if accountingUsers != nil && !accountingUsers[user.ID] {
 			continue
 		}
-		limit := core.EffectiveUserLimitPolicy(user, groups, members)
+		limit, okLimit := userPolicies[user.ID]
+		if !okLimit {
+			limit = core.EffectiveUserLimitPolicy(user, groups, members)
+		}
 		periodKey, start, end := trafficWindow(time.Now(), limit.TrafficResetMode, limit.TrafficResetDay, loc)
 		period, err := s.store.EnsureTrafficPeriod(ctx, user.ID, periodKey, start, end, limit.TrafficLimitBytes)
 		if err != nil {
@@ -8850,11 +8873,15 @@ func (s *Server) revokeUserSessions(w http.ResponseWriter, r *http.Request, id i
 func (s *Server) withTrafficStatus(ctx context.Context, users []model.User) []model.User {
 	groups, _ := s.store.ListUserGroups(ctx)
 	members, _ := s.store.ListUserGroupMembers(ctx)
+	userPolicies, _ := s.userPlanPolicies(ctx, users)
 	settings, _ := s.store.ListSettings(ctx)
 	loc := trafficLocation(settings)
 	for i := range users {
 		users[i].Protected, _ = s.store.IsBootstrapAdmin(ctx, users[i].ID)
-		limit := core.EffectiveUserLimitPolicy(users[i], groups, members)
+		limit, okLimit := userPolicies[users[i].ID]
+		if !okLimit {
+			limit = core.EffectiveUserLimitPolicy(users[i], groups, members)
+		}
 		periodKey, start, end := trafficWindow(time.Now(), limit.TrafficResetMode, limit.TrafficResetDay, loc)
 		period, err := s.store.EnsureTrafficPeriod(ctx, users[i].ID, periodKey, start, end, limit.TrafficLimitBytes)
 		if err != nil {
@@ -10020,6 +10047,10 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 	if _, err := s.syncDNSInbounds(ctx, servers, in); err != nil {
 		return nil, 0, deploymentFail(400, err)
 	}
+	_, pathBindings, _, err := s.runtimeAccessBindings(ctx, data)
+	if err != nil {
+		return nil, 0, deploymentFail(500, err)
+	}
 	version, err := s.store.NextConfigVersion(ctx)
 	if err != nil {
 		return nil, 0, deploymentFail(500, err)
@@ -10098,7 +10129,7 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 		if err != nil {
 			return nil, 0, deploymentFail(400, err)
 		}
-		sshInboundPlan, err := buildSSHInboundPlan(version, server, data, effectiveInboundUsersForRouting(data), generated.TrafficPolicies)
+		sshInboundPlan, err := buildSSHInboundPlan(version, server, data, pathBindings, generated.TrafficPolicies)
 		if err != nil {
 			return nil, 0, deploymentFail(400, err)
 		}
@@ -10195,14 +10226,14 @@ func validateTrustedForwardDeploymentScope(selectedServerID int64, required map[
 // buildSSHInboundPlan turns the regular inbound permissions into a dedicated
 // user-facing SSH listener plan. It reuses the user's proxy password and never
 // exposes the panel login password.
-func buildSSHInboundPlan(version int64, server model.Server, data store.FullRoutingConfig, bindings []model.InboundUser, policies map[int64]model.TrafficRuntimePolicy) (model.SSHInboundPlan, error) {
+func buildSSHInboundPlan(version int64, server model.Server, data store.FullRoutingConfig, pathUsers []model.ProxyPathUser, policies map[int64]model.TrafficRuntimePolicy) (model.SSHInboundPlan, error) {
 	plan := model.SSHInboundPlan{Version: version, Inbounds: []model.SSHInbound{}}
 	users := make(map[int64][]model.User, len(data.Users))
 	for _, user := range core.ExpandDeviceUsers(data.Users, data.UserDevices) {
 		users[user.ID] = append(users[user.ID], user)
 	}
 	pathBound := map[int64][]int64{}
-	for _, binding := range effectiveProxyPathUsersForRouting(data) {
+	for _, binding := range pathUsers {
 		if binding.Enabled {
 			pathBound[binding.ProxyPathID] = append(pathBound[binding.ProxyPathID], binding.UserID)
 		}
@@ -10704,17 +10735,19 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 	if err != nil {
 		return generatedServerCoreConfig{}, err
 	}
-	bindings := effectiveInboundUsersForRouting(data)
-	pathBindings := effectiveProxyPathUsersForRouting(data)
+	bindings, pathBindings, userPolicies, err := s.runtimeAccessBindings(ctx, data)
+	if err != nil {
+		return generatedServerCoreConfig{}, err
+	}
 	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, bindings, pathBindings)
-	trafficPolicies, err := s.trafficRuntimePolicies(ctx, server.ID, data.Users, data.UserGroups, data.UserGroupMembers, accountingUsers)
+	trafficPolicies, err := s.trafficRuntimePolicies(ctx, server.ID, data.Users, data.UserGroups, data.UserGroupMembers, accountingUsers, userPolicies)
 	if err != nil {
 		return generatedServerCoreConfig{}, err
 	}
 	config, err := core.GenerateServerConfigWithOptions(server, inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
 		RoutingRules: data.RoutingRules, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
 		Servers: data.Servers, Inbounds: inbounds, WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
-		UserGroups: data.UserGroups, UserGroupMembers: data.UserGroupMembers, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
+		UserGroups: data.UserGroups, UserGroupMembers: data.UserGroupMembers, UserPolicies: userPolicies, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
 		PortLedger: ledger,
 	})
 	if err != nil {
@@ -11048,11 +11081,23 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	inboundUsers := core.EffectiveInboundUsers(in, []model.User{subscriptionUser}, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
-	proxyPathUsers := core.EffectiveProxyPathUsers(data.ProxyPaths, in, []model.User{subscriptionUser}, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
+	var snapshot *core.EffectiveAccessSnapshot
+	var effectiveNodes map[string]bool
+	var effectiveGroups map[string]string
+	pullPathUsers := effectiveProxyPathUsersForRouting(data)
+	if s.authorizationMode(r.Context()) == model.AuthorizationModePlan {
+		snapshot, err = s.buildAccessSnapshot(r.Context(), data)
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		effectiveNodes = snapshot.EffectiveNodeKeys(user.ID)
+		effectiveGroups = snapshot.EffectiveNodeGroups(user.ID)
+		pullPathUsers = snapshot.ProxyPathUserBindings()
+	}
 	subscriptionIdentity := sshPasswordDeploymentIdentityForUser(subscriptionUser)
 	for _, server := range servers {
-		plan, planErr := buildSSHInboundPlan(0, server, data, effectiveInboundUsersForRouting(data), nil)
+		plan, planErr := buildSSHInboundPlan(0, server, data, pullPathUsers, nil)
 		if planErr != nil {
 			fail(w, planErr, 500)
 			return
@@ -11075,7 +11120,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if profileID != 0 {
+	if effectiveNodes == nil && profileID != 0 {
 		filtered := assignments[:0]
 		for _, assignment := range assignments {
 			if assignment.ProfileID == profileID {
@@ -11084,22 +11129,28 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		}
 		assignments = filtered
 	}
-	sub, err := core.GenerateSubscriptionWithOptions(subscriptionUser, servers, in, core.SubscriptionOptions{
-		Format:                       format,
-		Profile:                      profile,
-		RequireAssignments:           profileID != 0,
-		Assignments:                  assignments,
-		InboundUsers:                 inboundUsers,
-		ProxyPathUsers:               proxyPathUsers,
-		ProxyPaths:                   data.ProxyPaths,
-		ProxyPathSteps:               data.ProxyPathSteps,
-		ProxyPathEgressResults:       data.ProxyPathEgressResults,
-		ExternalOutbounds:            data.ExternalOutbounds,
-		ExternalOutboundAccessGrants: data.ExternalOutboundAccessGrants,
-		UserGroups:                   data.UserGroups,
-		UserGroupMembers:             data.UserGroupMembers,
-		SSHServerHostKeys:            sshServerHostKeys,
-	})
+	opts := core.SubscriptionOptions{
+		Format:                 format,
+		ProxyPaths:             data.ProxyPaths,
+		ProxyPathSteps:         data.ProxyPathSteps,
+		ProxyPathEgressResults: data.ProxyPathEgressResults,
+		ExternalOutbounds:      data.ExternalOutbounds,
+		SSHServerHostKeys:      sshServerHostKeys,
+	}
+	if effectiveNodes != nil {
+		opts.EffectiveNodes = effectiveNodes
+		opts.EffectiveNodeGroups = effectiveGroups
+	} else {
+		opts.Profile = profile
+		opts.RequireAssignments = profileID != 0
+		opts.Assignments = assignments
+		opts.InboundUsers = core.EffectiveInboundUsers(in, []model.User{subscriptionUser}, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
+		opts.ProxyPathUsers = core.EffectiveProxyPathUsers(data.ProxyPaths, in, []model.User{subscriptionUser}, data.InboundUsers, data.UserGroups, data.UserGroupMembers, data.InboundAccessGrants)
+		opts.ExternalOutboundAccessGrants = data.ExternalOutboundAccessGrants
+		opts.UserGroups = data.UserGroups
+		opts.UserGroupMembers = data.UserGroupMembers
+	}
+	sub, err := core.GenerateSubscriptionWithOptions(subscriptionUser, servers, in, opts)
 	if err != nil {
 		s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, "subscription generation failed")
 		fail(w, err, 500)
@@ -11863,6 +11914,7 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 	users := access.Users
 	groups := access.Groups
 	members := access.Members
+	planPolicies, _ := s.userPlanPolicies(r.Context(), users)
 	userByID := map[int64]model.User{}
 	for _, u := range users {
 		userByID[u.ID] = u
@@ -11936,7 +11988,10 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 			fail(w, errors.New("user is not authorized for this inbound"), 403)
 			return
 		}
-		limit := core.EffectiveUserLimitPolicy(u, groups, members)
+		limit, okLimit := planPolicies[item.UserID]
+		if !okLimit {
+			limit = core.EffectiveUserLimitPolicy(u, groups, members)
+		}
 		reportedPeriodKey := strings.TrimSpace(item.PeriodKey)
 		if reportedPeriodKey == "" {
 			reportedPeriodKey = strings.TrimSpace(req.PeriodKey)
@@ -11961,7 +12016,7 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 	}
 	effectiveBindings := core.EffectiveInboundUsers(access.Inbounds, access.Users, access.InboundUsers, access.Groups, access.Members, access.Grants)
 	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, paths, steps, access.Inbounds, effectiveBindings, pathBindings)
-	policies, err := s.trafficRuntimePolicies(r.Context(), server.ID, users, groups, members, accountingUsers)
+	policies, err := s.trafficRuntimePolicies(r.Context(), server.ID, users, groups, members, accountingUsers, nil)
 	if err != nil {
 		fail(w, err, 500)
 		return

@@ -104,7 +104,15 @@ type ConfigOptions struct {
 	ProxyPathUsers    []model.ProxyPathUser
 	UserGroups        []model.UserGroup
 	UserGroupMembers  []model.UserGroupMember
-	TrafficPolicies   map[int64]model.TrafficRuntimePolicy
+	// AccessSnapshot, when non-nil, is the plan authorization source. It
+	// replaces InboundUsers/ProxyPathUsers/UserGroups/UserGroupMembers as the
+	// user-node relation for this configuration; config generation never reads
+	// legacy authorization tables on its own.
+	AccessSnapshot *EffectiveAccessSnapshot
+	// UserPolicies, when present, is the resolved speed/traffic policy per user
+	// from the plan model. It takes precedence over group-inherited limits.
+	UserPolicies    map[int64]UserLimitPolicy
+	TrafficPolicies map[int64]model.TrafficRuntimePolicy
 	// UserDevices is the active device projection from the Controller routing
 	// snapshot. A nil slice preserves the pure-Core user-level behaviour used by
 	// isolated configuration tests and import tooling.
@@ -494,6 +502,12 @@ func ValidatePortRange(start, end int) error {
 }
 
 func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbound, outbounds []model.Outbound, dnsState *DNSConfigState, users []model.User, opts ConfigOptions) (string, error) {
+	if opts.AccessSnapshot != nil {
+		opts.InboundUsers = opts.AccessSnapshot.InboundUserBindings()
+		opts.ProxyPathUsers = opts.AccessSnapshot.ProxyPathUserBindings()
+		opts.UserGroups = nil
+		opts.UserGroupMembers = nil
+	}
 	users = ExpandDeviceUsers(users, opts.UserDevices)
 	pathInboundByID := map[int64]model.Inbound{}
 	for _, inbound := range opts.Inbounds {
@@ -706,7 +720,10 @@ func runtimeLimitsForUsers(users []model.User, opts ConfigOptions) map[string]OB
 		if user.ID <= 0 || user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") {
 			continue
 		}
-		policy := EffectiveUserLimitPolicy(user, opts.UserGroups, opts.UserGroupMembers)
+		policy, okPolicy := opts.UserPolicies[user.ID]
+		if !okPolicy {
+			policy = EffectiveUserLimitPolicy(user, opts.UserGroups, opts.UserGroupMembers)
+		}
 		speed, traffic := policy.SpeedLimitMbps, policy.TrafficLimitBytes
 		limit := OBoardUserRuntimeLimit{
 			UserID:           user.ID,

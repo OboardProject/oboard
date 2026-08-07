@@ -308,10 +308,33 @@ const (
 	PlanNodeSourceRule     PlanNodeSourceType = "rule"
 )
 
+// AuthorizationMode controls which authorization source feeds the runtime
+// chain: subscription generation, Agent core configuration, SSH inbound plans,
+// connection presence/audit gates, and traffic policies.
+//
+//   - legacy: the legacy profile/assignment/group tables stay the only runtime
+//     source; plans are prepared as data only and never reported as active.
+//   - shadow: the runtime still uses the legacy source, while the plan
+//     snapshot is computed alongside and differences are reported to admins.
+//   - plan: the effective plan snapshot is the only runtime source; legacy
+//     write surfaces are read-only history.
+type AuthorizationMode string
+
+const (
+	AuthorizationModeLegacy AuthorizationMode = "legacy"
+	AuthorizationModeShadow AuthorizationMode = "shadow"
+	AuthorizationModePlan   AuthorizationMode = "plan"
+)
+
 // SubscriptionPlan is the single axis of node authorization: a plan owns a node
 // set plus the service limits of that subscription product. User groups no
 // longer grant nodes; a user's effective nodes come from the one active plan
 // binding combined with temporary per-user exceptions.
+//
+// Limits and the node set belong to revisions, not to the plan row itself.
+// SpeedLimitMbps/TrafficLimitBytes/TrafficResetMode/TrafficResetDay mirror the
+// current active revision for read APIs; every mutation goes through a draft
+// revision and is published atomically.
 type SubscriptionPlan struct {
 	ID                int64     `json:"id"`
 	Name              string    `json:"name"`
@@ -322,15 +345,58 @@ type SubscriptionPlan struct {
 	TrafficResetMode  string    `json:"traffic_reset_mode"`
 	TrafficResetDay   int       `json:"traffic_reset_day"`
 	Revision          int64     `json:"revision"`
-	ActiveRevision    int64     `json:"active_revision"`
-	DraftRevision     int64     `json:"draft_revision"`
+	ActiveRevisionID  int64     `json:"active_revision_id"`
+	DraftRevisionID   int64     `json:"draft_revision_id,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// PlanRevisionStatus is the lifecycle of one frozen plan revision. An active
+// revision is immutable; all changes land in a draft revision and become active
+// only through an explicit publish.
+type PlanRevisionStatus string
+
+const (
+	PlanRevisionDraft    PlanRevisionStatus = "draft"
+	PlanRevisionActive   PlanRevisionStatus = "active"
+	PlanRevisionArchived PlanRevisionStatus = "archived"
+)
+
+// SubscriptionPlanRevision is one frozen snapshot of a plan: its limits plus
+// the isolated node set in subscription_plan_revision_nodes. Historical
+// revisions are kept for inspection and rollback.
+type SubscriptionPlanRevision struct {
+	ID                int64              `json:"id"`
+	PlanID            int64              `json:"plan_id"`
+	Revision          int64              `json:"revision"`
+	Status            PlanRevisionStatus `json:"status"`
+	SpeedLimitMbps    int                `json:"speed_limit_mbps"`
+	TrafficLimitBytes int64              `json:"traffic_limit_bytes"`
+	TrafficResetMode  string             `json:"traffic_reset_mode"`
+	TrafficResetDay   int                `json:"traffic_reset_day"`
+	CreatedBy         *int64             `json:"created_by,omitempty"`
+	CreatedAt         time.Time          `json:"created_at"`
+	ActivatedAt       *time.Time         `json:"activated_at,omitempty"`
+}
+
+// SubscriptionPlanRevisionNode is one node of a frozen revision. Rows are
+// immutable after the revision is activated; only the draft revision's node set
+// can change.
+type SubscriptionPlanRevisionNode struct {
+	ID           int64              `json:"id"`
+	RevisionID   int64              `json:"revision_id"`
+	NodeType     AssignableNodeType `json:"node_type"`
+	NodeID       int64              `json:"node_id"`
+	DisplayGroup string             `json:"display_group"`
+	SourceType   PlanNodeSourceType `json:"source_type"`
+	SourceRuleID int64              `json:"source_rule_id,omitempty"`
+	CreatedAt    time.Time          `json:"created_at"`
 }
 
 type SubscriptionPlanNode struct {
 	ID           int64              `json:"id"`
 	PlanID       int64              `json:"plan_id"`
+	RevisionID   int64              `json:"revision_id,omitempty"`
 	NodeType     AssignableNodeType `json:"node_type"`
 	NodeID       int64              `json:"node_id"`
 	DisplayGroup string             `json:"display_group"`

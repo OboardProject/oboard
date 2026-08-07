@@ -29,6 +29,15 @@ type SubscriptionOptions struct {
 	UserGroups                   []model.UserGroup
 	UserGroupMembers             []model.UserGroupMember
 	SSHServerHostKeys            map[int64]string
+	// EffectiveNodes, when non-nil, is the plan authorization source: the node
+	// key set this user may use. It replaces Profile/Assignments/InboundUsers/
+	// ProxyPathUsers/ExternalOutboundAccessGrants filtering entirely, so
+	// subscription output and Agent configuration derive from the same
+	// EffectiveAccessSnapshot.
+	EffectiveNodes map[string]bool
+	// EffectiveNodeGroups maps node key to the display group from the granting
+	// plan node. Nodes without an explicit group keep the default group.
+	EffectiveNodeGroups map[string]string
 }
 
 type SubscriptionNode struct {
@@ -101,7 +110,16 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		configuredBranches := subscriptionBranchesForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps, 0, nil)
 		authorizedBranches := subscriptionBranchesForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps, user.ID, opts.ProxyPathUsers)
 		inboundAllowed := opts.InboundUsers == nil || subscriptionInboundAllowed(user.ID, inbound.ID, opts.InboundUsers)
-		if opts.ProxyPathUsers == nil && !inboundAllowed {
+		if opts.EffectiveNodes != nil {
+			planBranches := authorizedBranches[:0]
+			for _, path := range authorizedBranches {
+				if opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeProxyPath, path.ID)] {
+					planBranches = append(planBranches, path)
+				}
+			}
+			authorizedBranches = planBranches
+			inboundAllowed = opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeInbound, inbound.ID)]
+		} else if opts.ProxyPathUsers == nil && !inboundAllowed {
 			authorizedBranches = nil
 		}
 		if !inboundAllowed && len(authorizedBranches) == 0 {
@@ -126,6 +144,19 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		group := defaultGroup
 		if strings.TrimSpace(assignment.GroupName) != "" {
 			group = strings.TrimSpace(assignment.GroupName)
+		}
+		if opts.EffectiveNodes != nil && opts.EffectiveNodeGroups != nil {
+			for _, path := range authorizedBranches {
+				if g := strings.TrimSpace(opts.EffectiveNodeGroups[NodeKeyOf(model.AssignableNodeProxyPath, path.ID)]); g != "" {
+					group = g
+					break
+				}
+			}
+			if len(authorizedBranches) == 0 {
+				if g := strings.TrimSpace(opts.EffectiveNodeGroups[NodeKeyOf(model.AssignableNodeInbound, inbound.ID)]); g != "" {
+					group = g
+				}
+			}
 		}
 		if inbound.Protocol == model.ProtocolSSH {
 			hostKey := strings.TrimSpace(opts.SSHServerHostKeys[server.ID])
@@ -190,7 +221,11 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		if !external.Enabled || !external.ExposeToUsers {
 			continue
 		}
-		if !subscriptionExternalAllowed(user.ID, external.ID, opts.ExternalOutboundAccessGrants, opts.UserGroups, opts.UserGroupMembers) {
+		if opts.EffectiveNodes != nil {
+			if !opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID)] {
+				continue
+			}
+		} else if !subscriptionExternalAllowed(user.ID, external.ID, opts.ExternalOutboundAccessGrants, opts.UserGroups, opts.UserGroupMembers) {
 			continue
 		}
 		raw, err := externalOutboundSubscriptionRaw(external)
@@ -202,6 +237,11 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 			name = fmt.Sprintf("%s-%d", external.Protocol, external.ID)
 		}
 		group := defaultGroup
+		if opts.EffectiveNodes != nil && opts.EffectiveNodeGroups != nil {
+			if g := strings.TrimSpace(opts.EffectiveNodeGroups[NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID)]); g != "" {
+				group = g
+			}
+		}
 		raw["oboard_group"] = group
 		nodes = append(nodes, SubscriptionNode{Name: name, Group: group, Raw: raw})
 		nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameExternal, resourceID: external.ID, regionCode: external.EffectiveRegionCode})

@@ -17,8 +17,9 @@ import (
 )
 
 // planAssignmentData is the read-only snapshot the node catalog and plan APIs
-// are computed from. It mirrors the legacy authorization inputs plus the new
-// plan model, without changing how subscription generation reads them yet.
+// are computed from. The effective access snapshot is the single resolution
+// entry for user-node relations; the legacy authorization tables stay inputs to
+// shadow comparison and to legacy runtime mode only.
 type planAssignmentData struct {
 	users        []model.User
 	bindings     []model.UserPlanBinding
@@ -27,6 +28,8 @@ type planAssignmentData struct {
 	exceptions   []model.UserNodeException
 	config       store.FullRoutingConfig
 	serverOnline map[int64]bool
+	snapshot     *core.EffectiveAccessSnapshot
+	mode         model.AuthorizationMode
 }
 
 func (s *Server) loadPlanAssignmentData(ctx context.Context) (*planAssignmentData, error) {
@@ -34,7 +37,7 @@ func (s *Server) loadPlanAssignmentData(ctx context.Context) (*planAssignmentDat
 	if err != nil {
 		return nil, err
 	}
-	bindings, err := s.store.ListActiveUserPlanBindings(ctx)
+	bindings, err := s.store.ListEffectiveUserPlanBindings(ctx, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +61,7 @@ func (s *Server) loadPlanAssignmentData(ctx context.Context) (*planAssignmentDat
 	for _, server := range config.Servers {
 		serverOnline[server.ID] = server.Status == model.ServerOnline
 	}
-	return &planAssignmentData{
+	data := &planAssignmentData{
 		users:        users,
 		bindings:     bindings,
 		plans:        plans,
@@ -66,7 +69,21 @@ func (s *Server) loadPlanAssignmentData(ctx context.Context) (*planAssignmentDat
 		exceptions:   exceptions,
 		config:       config,
 		serverOnline: serverOnline,
-	}, nil
+		mode:         s.authorizationMode(ctx),
+	}
+	data.snapshot = core.BuildEffectiveAccessSnapshot(core.EffectiveAccessInput{
+		Users:             users,
+		Bindings:          bindings,
+		Plans:             plans,
+		PlanNodes:         planNodes,
+		Exceptions:        exceptions,
+		Paths:             config.ProxyPaths,
+		Steps:             config.ProxyPathSteps,
+		Inbounds:          config.Inbounds,
+		ExternalOutbounds: config.ExternalOutbounds,
+		Now:               time.Now(),
+	})
+	return data, nil
 }
 
 func (d *planAssignmentData) now() time.Time { return time.Now() }
@@ -83,86 +100,49 @@ func (d *planAssignmentData) planByID(id int64) *model.SubscriptionPlan {
 func (d *planAssignmentData) nodeKeySet(planID int64) map[string]bool {
 	out := map[string]bool{}
 	for _, pn := range d.planNodes {
-		if pn.PlanID == planID && pn.Enabled {
+		if pn.PlanID == planID {
 			out[core.NodeKeyOf(pn.NodeType, pn.NodeID)] = true
 		}
 	}
 	return out
 }
 
-// planMembership maps a node key to the plans that directly contain it.
+// planMembership maps a node key to the active plans that directly contain it.
 func (d *planAssignmentData) planMembership() map[string][]model.SubscriptionPlanNode {
 	out := map[string][]model.SubscriptionPlanNode{}
 	for _, pn := range d.planNodes {
-		if !pn.Enabled {
-			continue
-		}
 		key := core.NodeKeyOf(pn.NodeType, pn.NodeID)
 		out[key] = append(out[key], pn)
 	}
 	return out
 }
 
-// effectiveUsersByNode computes, per node key, the active users that can
-// actually use the node (plan membership plus exceptions with fixed priority),
-// plus raw exception counts.
-func (d *planAssignmentData) effectiveUsersByNode(now time.Time) (map[string]map[int64]bool, map[string]int, map[string]int) {
-	byNode := map[string]map[int64]bool{}
+// effectiveUsersByNode returns, per node key, the active users that can
+// actually use the node from the effective access snapshot, plus raw
+// allow/deny exception counts.
+func (d *planAssignmentData) effectiveUsersByNode() (map[string][]int64, map[string]int, map[string]int) {
 	allowCount := map[string]int{}
 	denyCount := map[string]int{}
-	active := map[int64]bool{}
-	for _, user := range d.users {
-		if user.Status == "active" {
-			active[user.ID] = true
-		}
-	}
-	bindingByUser := map[int64]*model.UserPlanBinding{}
-	for i := range d.bindings {
-		b := d.bindings[i]
-		bindingByUser[b.UserID] = &b
-	}
-	exceptionsByUser := map[int64][]model.UserNodeException{}
 	for _, ex := range d.exceptions {
-		exceptionsByUser[ex.UserID] = append(exceptionsByUser[ex.UserID], ex)
-	}
-	planNodesByPlan := map[int64][]model.SubscriptionPlanNode{}
-	for _, pn := range d.planNodes {
-		if pn.Enabled {
-			planNodesByPlan[pn.PlanID] = append(planNodesByPlan[pn.PlanID], pn)
-		}
-	}
-	for _, user := range d.users {
-		if !active[user.ID] {
+		if !ex.ExpiresAt.After(d.now()) {
 			continue
 		}
-		binding := bindingByUser[user.ID]
-		var plan *model.SubscriptionPlan
-		if binding != nil {
-			plan = d.planByID(binding.PlanID)
-		}
-		var planNodes []model.SubscriptionPlanNode
-		if binding != nil {
-			planNodes = planNodesByPlan[binding.PlanID]
-		}
-		for key := range core.UserEffectiveNodeSet(plan, planNodes, exceptionsByUser[user.ID], now) {
-			if byNode[key] == nil {
-				byNode[key] = map[int64]bool{}
-			}
-			byNode[key][user.ID] = true
-		}
-		for _, ex := range exceptionsByUser[user.ID] {
-			if !ex.ExpiresAt.After(now) {
-				continue
-			}
-			key := core.NodeKeyOf(ex.NodeType, ex.NodeID)
-			if ex.Effect == model.UserNodeExceptionAllow {
-				allowCount[key]++
-			} else {
-				denyCount[key]++
-			}
+		key := core.NodeKeyOf(ex.NodeType, ex.NodeID)
+		if ex.Effect == model.UserNodeExceptionAllow {
+			allowCount[key]++
+		} else {
+			denyCount[key]++
 		}
 	}
-	return byNode, allowCount, denyCount
+	return d.snapshot.NodeUsers, allowCount, denyCount
+}
+
+func (s *Server) runtimeAuthorizationMode(w http.ResponseWriter, r *http.Request) string {
+	data, err := s.loadPlanAssignmentData(r.Context())
+	if err != nil {
+		return string(model.AuthorizationModeLegacy)
+	}
+	return string(data.mode)
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +161,7 @@ type assignableNodeView struct {
 type assignableNodePlanView struct {
 	PlanID       int64  `json:"plan_id"`
 	Name         string `json:"name"`
-	DisplayGroup string `json:"display_group"`
+	DisplayGroup string `json:"display_group,omitempty"`
 }
 
 func (s *Server) assignableNodes(w http.ResponseWriter, r *http.Request) {
@@ -207,8 +187,7 @@ func (s *Server) assignableNodes(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	now := data.now()
-	byNode, allowCount, denyCount := data.effectiveUsersByNode(now)
+	byNode, allowCount, denyCount := data.effectiveUsersByNode()
 	membership := data.planMembership()
 	planByID := map[int64]*model.SubscriptionPlan{}
 	for i := range data.plans {
@@ -354,20 +333,20 @@ func (s *Server) assignableNodes(w http.ResponseWriter, r *http.Request) {
 	if end > total {
 		end = total
 	}
-	write(w, 200, map[string]any{"nodes": filtered[start:end], "total": total, "page": page, "page_size": pageSize})
+	write(w, 200, map[string]any{"nodes": filtered[start:end], "total": total, "page": page, "page_size": pageSize, "runtime_authorization_mode": data.mode})
 }
 
 type assignableNodeUserView struct {
 	UserID    int64      `json:"user_id"`
 	Username  string     `json:"username"`
 	Nickname  string     `json:"nickname,omitempty"`
-	Source    string     `json:"source"` // plan | exception_allow | exception_deny | excluded
+	Effective bool       `json:"effective"`
+	Source    string     `json:"source,omitempty"` // plan | exception_allow | exception_deny | excluded
 	PlanID    int64      `json:"plan_id,omitempty"`
 	PlanName  string     `json:"plan_name,omitempty"`
 	Effect    string     `json:"effect,omitempty"`
 	Reason    string     `json:"reason,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	Effective bool       `json:"effective"`
 }
 
 func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
@@ -376,21 +355,16 @@ func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := pathParts(r.URL.Path, "/api/v1/assignable-nodes/")
-	if len(parts) != 2 {
-		fail(w, errors.New("expected /api/v1/assignable-nodes/:type/:id"), 400)
+	if len(parts) < 2 {
+		fail(w, errors.New("expected /api/v1/assignable-nodes/:node_type/:node_id"), 404)
 		return
 	}
 	nodeType := model.AssignableNodeType(parts[0])
-	id, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
+	nodeID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || nodeID <= 0 {
 		fail(w, errors.New("invalid node id"), 400)
 		return
 	}
-	if id <= 0 {
-		fail(w, errors.New("invalid node id"), 400)
-		return
-	}
-	key := core.NodeKeyOf(nodeType, id)
 	data, err := s.loadPlanAssignmentData(r.Context())
 	if err != nil {
 		fail(w, err, 500)
@@ -409,6 +383,7 @@ func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	key := core.NodeKeyOf(nodeType, nodeID)
 	var node *core.AssignableNode
 	for i := range nodes {
 		if nodes[i].Key == key {
@@ -426,109 +401,66 @@ func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
 		p := data.plans[i]
 		planByID[p.ID] = &p
 	}
-	membership := data.planMembership()
-	planViews := make([]assignableNodePlanView, 0, len(membership[key]))
-	for _, pn := range membership[key] {
+	planViews := []assignableNodePlanView{}
+	for _, pn := range data.planMembership()[key] {
 		planViews = append(planViews, assignableNodePlanView{PlanID: pn.PlanID, Name: planByID[pn.PlanID].Name, DisplayGroup: pn.DisplayGroup})
 	}
 	sort.Slice(planViews, func(i, j int) bool { return planViews[i].PlanID < planViews[j].PlanID })
 
-	bindingByUser := map[int64]*model.UserPlanBinding{}
-	for i := range data.bindings {
-		b := data.bindings[i]
-		bindingByUser[b.UserID] = &b
-	}
-	exceptionsByUser := map[int64][]model.UserNodeException{}
-	nodeExceptions := []model.UserNodeException{}
-	for _, ex := range data.exceptions {
-		exceptionsByUser[ex.UserID] = append(exceptionsByUser[ex.UserID], ex)
-		if core.NodeKeyOf(ex.NodeType, ex.NodeID) == key {
-			nodeExceptions = append(nodeExceptions, ex)
-		}
-	}
-	planNodesByPlan := map[int64][]model.SubscriptionPlanNode{}
-	for _, pn := range data.planNodes {
-		if pn.Enabled {
-			planNodesByPlan[pn.PlanID] = append(planNodesByPlan[pn.PlanID], pn)
-		}
-	}
-	users := []assignableNodeUserView{}
+	userIDs := data.snapshot.NodeUsers[key]
+	userByID := map[int64]model.User{}
 	for _, user := range data.users {
-		if user.Status != "active" {
+		userByID[user.ID] = user
+	}
+	users := make([]assignableNodeUserView, 0, len(userIDs)+len(data.exceptions))
+	seen := map[int64]bool{}
+	for _, userID := range userIDs {
+		user, ok := userByID[userID]
+		if !ok {
 			continue
 		}
-		binding := bindingByUser[user.ID]
-		var plan *model.SubscriptionPlan
-		var planNodes []model.SubscriptionPlanNode
-		if binding != nil {
-			plan = planByID[binding.PlanID]
-			planNodes = planNodesByPlan[binding.PlanID]
-		}
-		effective := core.UserEffectiveNodeSet(plan, planNodes, exceptionsByUser[user.ID], now)[key]
-		view := assignableNodeUserView{UserID: user.ID, Username: user.Username, Nickname: user.Nickname, Effective: effective}
-		if !effective {
-			for _, ex := range exceptionsByUser[user.ID] {
-				if ex.ExpiresAt.After(now) && ex.Effect == model.UserNodeExceptionDeny && core.NodeKeyOf(ex.NodeType, ex.NodeID) == key {
-					view.Source = "exception_deny"
-					view.Effect = string(ex.Effect)
-					view.Reason = ex.Reason
-					expiry := ex.ExpiresAt
-					view.ExpiresAt = &expiry
-					break
-				}
-			}
-			if view.Source == "" {
-				for _, pn := range membership[key] {
-					if pn.PlanID == bindingPlanIDOf(binding) {
-						view.Source = "excluded"
-						view.PlanID = pn.PlanID
-						view.PlanName = planByID[pn.PlanID].Name
-						break
-					}
-				}
-			}
-			if view.Source == "" {
-				continue
-			}
-			users = append(users, view)
-			continue
-		}
-		for _, ex := range exceptionsByUser[user.ID] {
-			if ex.ExpiresAt.After(now) && ex.Effect == model.UserNodeExceptionAllow && core.NodeKeyOf(ex.NodeType, ex.NodeID) == key {
+		seen[userID] = true
+		view := assignableNodeUserView{UserID: userID, Username: user.Username, Nickname: user.Nickname, Effective: true, Source: "plan"}
+		if grant, ok := data.snapshot.UserNodes[userID][key]; ok {
+			if grant.Source == "exception_allow" {
 				view.Source = "exception_allow"
-				view.Effect = string(ex.Effect)
-				view.Reason = ex.Reason
-				expiry := ex.ExpiresAt
+				view.Effect = string(model.UserNodeExceptionAllow)
+				view.Reason = grant.Exception.Reason
+				expiry := grant.Exception.ExpiresAt
 				view.ExpiresAt = &expiry
-				break
+			} else {
+				view.PlanID = grant.PlanID
+				view.PlanName = grant.PlanName
 			}
 		}
-		if view.Source == "" {
-			view.Source = "plan"
-			if binding != nil {
-				view.PlanID = binding.PlanID
-				view.PlanName = planByID[binding.PlanID].Name
-			}
+		users = append(users, view)
+	}
+	for _, ex := range data.exceptions {
+		if ex.NodeType != nodeType || ex.NodeID != nodeID || !ex.ExpiresAt.After(now) {
+			continue
 		}
+		user, ok := userByID[ex.UserID]
+		if !ok || user.Status != "active" {
+			continue
+		}
+		if seen[ex.UserID] {
+			continue
+		}
+		view := assignableNodeUserView{UserID: ex.UserID, Username: user.Username, Nickname: user.Nickname, Effective: false, Source: "exception_deny", Effect: string(ex.Effect), Reason: ex.Reason}
+		expiry := ex.ExpiresAt
+		view.ExpiresAt = &expiry
 		users = append(users, view)
 	}
 	sort.SliceStable(users, func(i, j int) bool { return users[i].UserID < users[j].UserID })
 
 	activeExceptions := []model.UserNodeException{}
-	for _, ex := range nodeExceptions {
-		if ex.ExpiresAt.After(now) {
+	for _, ex := range data.exceptions {
+		if ex.NodeType == nodeType && ex.NodeID == nodeID && ex.ExpiresAt.After(now) {
 			activeExceptions = append(activeExceptions, ex)
 		}
 	}
 	sort.Slice(activeExceptions, func(i, j int) bool { return activeExceptions[i].ID < activeExceptions[j].ID })
-	write(w, 200, map[string]any{"node": node, "plans": planViews, "users": users, "exceptions": activeExceptions})
-}
-
-func bindingPlanIDOf(binding *model.UserPlanBinding) int64 {
-	if binding == nil {
-		return 0
-	}
-	return binding.PlanID
+	write(w, 200, map[string]any{"node": node, "plans": planViews, "users": users, "exceptions": activeExceptions, "runtime_authorization_mode": data.mode})
 }
 
 // ---------------------------------------------------------------------------
@@ -545,103 +477,111 @@ func (s *Server) subscriptionPlans(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if id != 0 {
-			plan, err := s.store.GetSubscriptionPlan(r.Context(), id)
-			if err != nil {
-				fail(w, err, 404)
-				return
-			}
-			nodes, err := s.store.ListPlanNodes(r.Context(), id)
-			if err != nil {
-				fail(w, err, 500)
-				return
-			}
-			members, err := s.store.ListUserPlanBindingsForPlan(r.Context(), id)
-			if err != nil {
-				fail(w, err, 500)
-				return
-			}
-			write(w, 200, map[string]any{"subscription_plan": plan, "nodes": nodes, "member_count": len(members)})
+			s.subscriptionPlanDetail(w, r, id)
 			return
 		}
-		plans, err := s.store.ListSubscriptionPlans(r.Context())
-		if err != nil {
-			fail(w, err, 500)
-			return
-		}
-		allNodes, err := s.store.ListAllPlanNodes(r.Context())
-		if err != nil {
-			fail(w, err, 500)
-			return
-		}
-		allBindings, err := s.store.ListActiveUserPlanBindings(r.Context())
-		if err != nil {
-			fail(w, err, 500)
-			return
-		}
-		nodeCount := map[int64]int{}
-		for _, pn := range allNodes {
-			nodeCount[pn.PlanID]++
-		}
-		memberCount := map[int64]int{}
-		for _, binding := range allBindings {
-			memberCount[binding.PlanID]++
-		}
-		views := make([]map[string]any, 0, len(plans))
-		for _, plan := range plans {
-			views = append(views, map[string]any{
-				"id":                  plan.ID,
-				"name":                plan.Name,
-				"description":         plan.Description,
-				"enabled":             plan.Enabled,
-				"speed_limit_mbps":    plan.SpeedLimitMbps,
-				"traffic_limit_bytes": plan.TrafficLimitBytes,
-				"traffic_reset_mode":  plan.TrafficResetMode,
-				"traffic_reset_day":   plan.TrafficResetDay,
-				"revision":            plan.Revision,
-				"active_revision":     plan.ActiveRevision,
-				"draft_revision":      plan.DraftRevision,
-				"node_count":          nodeCount[plan.ID],
-				"member_count":        memberCount[plan.ID],
-				"created_at":          plan.CreatedAt,
-				"updated_at":          plan.UpdatedAt,
-			})
-		}
-		write(w, 200, map[string]any{"subscription_plans": views})
+		s.subscriptionPlanList(w, r)
 	case http.MethodPost:
-		var req struct {
-			model.SubscriptionPlan
-			Nodes []planNodeRequest `json:"nodes"`
-		}
-		if !decode(w, r, &req) {
+		s.subscriptionPlanCreate(w, r)
+	case http.MethodPatch:
+		if id == 0 {
+			fail(w, errors.New("missing id"), 400)
 			return
 		}
-		if err := validateSubscriptionPlanFields(&req.SubscriptionPlan); err != nil {
-			fail(w, err, 400)
+		s.subscriptionPlanPatch(w, r, id)
+	case http.MethodDelete:
+		if id == 0 {
+			fail(w, errors.New("missing id"), 400)
 			return
 		}
-		req.Revision = 0
-		req.ActiveRevision = 0
-		req.DraftRevision = 0
-		if err := s.store.CreateSubscriptionPlan(r.Context(), &req.SubscriptionPlan); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if len(req.Nodes) > 0 {
-			nodes, err := s.validatePlanNodeRequests(r.Context(), req.Nodes, "", false)
-			if err != nil {
-				fail(w, err, 400)
-				return
-			}
-			if err := s.store.AddPlanNodes(r.Context(), req.ID, nodes); err != nil {
-				fail(w, err, 500)
-				return
-			}
-		}
-		auditReq(s, r, "create", "subscription-plan", fmt.Sprint(req.ID))
-		write(w, 201, map[string]any{"subscription_plan": req.SubscriptionPlan})
+		s.subscriptionPlanDelete(w, r, id)
 	default:
 		method(w)
 	}
+}
+
+func (s *Server) subscriptionPlanList(w http.ResponseWriter, r *http.Request) {
+	plans, err := s.store.ListSubscriptionPlans(r.Context())
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	allNodes, err := s.store.ListAllPlanNodes(r.Context())
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	allBindings, err := s.store.ListActiveUserPlanBindings(r.Context())
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	nodeCount := map[int64]int{}
+	for _, pn := range allNodes {
+		nodeCount[pn.PlanID]++
+	}
+	memberCount := map[int64]int{}
+	for _, binding := range allBindings {
+		memberCount[binding.PlanID]++
+	}
+	views := make([]map[string]any, 0, len(plans))
+	for _, plan := range plans {
+		views = append(views, map[string]any{
+			"id":                  plan.ID,
+			"name":                plan.Name,
+			"description":         plan.Description,
+			"enabled":             plan.Enabled,
+			"speed_limit_mbps":    plan.SpeedLimitMbps,
+			"traffic_limit_bytes": plan.TrafficLimitBytes,
+			"traffic_reset_mode":  plan.TrafficResetMode,
+			"traffic_reset_day":   plan.TrafficResetDay,
+			"revision":            plan.Revision,
+			"active_revision_id":  plan.ActiveRevisionID,
+			"draft_revision_id":   plan.DraftRevisionID,
+			"has_draft":           plan.DraftRevisionID != 0,
+			"node_count":          nodeCount[plan.ID],
+			"member_count":        memberCount[plan.ID],
+			"created_at":          plan.CreatedAt,
+			"updated_at":          plan.UpdatedAt,
+		})
+	}
+	write(w, 200, map[string]any{"subscription_plans": views, "runtime_authorization_mode": s.authorizationMode(r.Context())})
+}
+
+func (s *Server) subscriptionPlanDetail(w http.ResponseWriter, r *http.Request, id int64) {
+	plan, err := s.store.GetSubscriptionPlan(r.Context(), id)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	activeNodes, err := s.store.ListActivePlanNodes(r.Context(), id)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	draftNodes, err := s.store.ListDraftPlanNodes(r.Context(), id)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	revisions, err := s.store.ListPlanRevisions(r.Context(), id)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	members, err := s.store.ListUserPlanBindingsForPlan(r.Context(), id)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	write(w, 200, map[string]any{
+		"subscription_plan":          plan,
+		"nodes":                      activeNodes,
+		"draft_nodes":                draftNodes,
+		"revisions":                  revisions,
+		"member_count":               len(members),
+		"runtime_authorization_mode": s.authorizationMode(r.Context()),
+	})
 }
 
 type planNodeRequest struct {
@@ -650,36 +590,283 @@ type planNodeRequest struct {
 	DisplayGroup string                   `json:"display_group"`
 }
 
+func (s *Server) subscriptionPlanCreate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		model.SubscriptionPlan
+		Nodes []planNodeRequest `json:"nodes"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if err := validateSubscriptionPlanFields(&req.SubscriptionPlan); err != nil {
+		fail(w, err, 400)
+		return
+	}
+	req.Revision = 0
+	req.ActiveRevisionID = 0
+	req.DraftRevisionID = 0
+	nodes, err := s.validatePlanNodeRequests(r.Context(), req.Nodes, "", false)
+	if err != nil {
+		fail(w, err, 400)
+		return
+	}
+	if err := s.store.CreateSubscriptionPlan(r.Context(), &req.SubscriptionPlan, nodes); err != nil {
+		fail(w, err, 500)
+		return
+	}
+	auditReq(s, r, "create", "subscription-plan", fmt.Sprint(req.ID))
+	write(w, 201, map[string]any{"subscription_plan": req.SubscriptionPlan})
+}
+
+type planPatchRequest struct {
+	ExpectedRevision  int64   `json:"expected_revision"`
+	Name              *string `json:"name"`
+	Description       *string `json:"description"`
+	Enabled           *bool   `json:"enabled"`
+	SpeedLimitMbps    *int    `json:"speed_limit_mbps"`
+	TrafficLimitBytes *int64  `json:"traffic_limit_bytes"`
+	TrafficResetMode  *string `json:"traffic_reset_mode"`
+	TrafficResetDay   *int    `json:"traffic_reset_day"`
+}
+
+func (s *Server) subscriptionPlanPatch(w http.ResponseWriter, r *http.Request, id int64) {
+	var req planPatchRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	plan, err := s.store.GetSubscriptionPlan(r.Context(), id)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	expected := req.ExpectedRevision
+	if expected == 0 {
+		expected = plan.Revision
+	}
+	name, description := plan.Name, plan.Description
+	if req.Name != nil {
+		name = strings.TrimSpace(*req.Name)
+	}
+	if req.Description != nil {
+		description = strings.TrimSpace(*req.Description)
+	}
+	meta := model.SubscriptionPlan{Name: name, Description: description, Enabled: plan.Enabled}
+	if req.Enabled != nil {
+		meta.Enabled = *req.Enabled
+	}
+	if err := validateSubscriptionPlanFields(&meta); err != nil {
+		fail(w, err, 400)
+		return
+	}
+	if err := s.store.UpdateSubscriptionPlanMeta(r.Context(), id, expected, meta.Name, meta.Description, req.Enabled); err != nil {
+		fail(w, err, planWriteStatus(err))
+		return
+	}
+	if req.SpeedLimitMbps != nil || req.TrafficLimitBytes != nil || req.TrafficResetMode != nil || req.TrafficResetDay != nil {
+		speed, traffic, mode, day := plan.SpeedLimitMbps, plan.TrafficLimitBytes, plan.TrafficResetMode, plan.TrafficResetDay
+		if req.SpeedLimitMbps != nil {
+			speed = *req.SpeedLimitMbps
+		}
+		if req.TrafficLimitBytes != nil {
+			traffic = *req.TrafficLimitBytes
+		}
+		if req.TrafficResetMode != nil {
+			mode = normalizeControllerTrafficResetMode(*req.TrafficResetMode)
+		}
+		if req.TrafficResetDay != nil {
+			day = normalizeControllerTrafficResetDay(*req.TrafficResetDay)
+		}
+		if speed < 0 || traffic < 0 {
+			fail(w, errors.New("limits must be >= 0"), 400)
+			return
+		}
+		if _, err := s.store.UpdatePlanDraftLimits(r.Context(), id, 0, speed, traffic, mode, day); err != nil {
+			fail(w, err, planWriteStatus(err))
+			return
+		}
+	}
+	updated, err := s.store.GetSubscriptionPlan(r.Context(), id)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	auditReq(s, r, "patch", "subscription-plan", fmt.Sprint(id))
+	write(w, 200, map[string]any{"subscription_plan": updated})
+}
+
+func (s *Server) subscriptionPlanDelete(w http.ResponseWriter, r *http.Request, id int64) {
+	members, err := s.store.ListUserPlanBindingsForPlan(r.Context(), id)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	if len(members) > 0 {
+		fail(w, fmt.Errorf("subscription plan has %d bound users; disable and migrate them before deletion", len(members)), http.StatusConflict)
+		return
+	}
+	if err := s.store.DeleteSubscriptionPlan(r.Context(), id); err != nil {
+		fail(w, err, 500)
+		return
+	}
+	auditReq(s, r, "delete", "subscription-plan", fmt.Sprint(id))
+	write(w, 200, map[string]any{"deleted": true})
+}
+
 func (s *Server) subscriptionPlanSubroutes(w http.ResponseWriter, r *http.Request, id int64, parts []string) {
-	if len(parts) != 2 || parts[0] != "nodes" {
+	if len(parts) < 1 || len(parts) > 3 {
 		fail(w, errors.New("unknown subscription plan subroute"), 404)
 		return
 	}
-	switch parts[1] {
-	case "preview":
-		s.planNodesPreview(w, r, id)
-	case "sync":
-		s.planNodesSync(w, r, id)
+	switch parts[0] {
+	case "nodes":
+		if len(parts) != 2 {
+			fail(w, errors.New("unknown subscription plan subroute"), 404)
+			return
+		}
+		switch parts[1] {
+		case "preview":
+			s.planNodesPreview(w, r, id)
+		case "sync":
+			s.planNodesSync(w, r, id)
+		default:
+			fail(w, errors.New("unknown subscription plan subroute"), 404)
+		}
 	case "publish":
-		if r.Method != http.MethodPost {
+		if len(parts) != 1 || r.Method != http.MethodPost {
 			method(w)
 			return
 		}
-		if err := s.store.PublishPlanRevision(r.Context(), id); err != nil {
-			fail(w, err, 500)
+		s.planPublish(w, r, id)
+	case "clone":
+		if len(parts) != 1 || r.Method != http.MethodPost {
+			method(w)
 			return
 		}
-		auditReq(s, r, "publish", "subscription-plan", fmt.Sprint(id))
-		write(w, 200, map[string]any{"published": true})
+		s.planClone(w, r, id)
+	case "revisions":
+		s.planRevisions(w, r, id, parts[1:])
 	default:
 		fail(w, errors.New("unknown subscription plan subroute"), 404)
 	}
 }
 
+func planWriteStatus(err error) int {
+	if errors.Is(err, store.ErrPlanRevisionConflict) {
+		return http.StatusConflict
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
+
+func (s *Server) planPublish(w http.ResponseWriter, r *http.Request, id int64) {
+	var req struct {
+		ExpectedRevision int64 `json:"expected_revision"`
+	}
+	_ = decode(w, r, &req)
+	plan, err := s.store.GetSubscriptionPlan(r.Context(), id)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	expected := req.ExpectedRevision
+	if expected == 0 {
+		expected = plan.Revision
+	}
+	revisionID, err := s.store.PublishPlanRevision(r.Context(), id, expected)
+	if err != nil {
+		fail(w, err, planWriteStatus(err))
+		return
+	}
+	auditReq(s, r, "publish", "subscription-plan", fmt.Sprint(id))
+	write(w, 200, map[string]any{"published": true, "active_revision_id": revisionID})
+}
+
+func (s *Server) planClone(w http.ResponseWriter, r *http.Request, id int64) {
+	plan, err := s.store.GetSubscriptionPlan(r.Context(), id)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	newName := strings.TrimSpace(plan.Name) + " 副本"
+	clone, err := s.store.CloneSubscriptionPlan(r.Context(), id, newName)
+	if err != nil {
+		fail(w, err, planWriteStatus(err))
+		return
+	}
+	auditReq(s, r, "clone", "subscription-plan", fmt.Sprintf("%d->%d", id, clone.ID))
+	write(w, 201, map[string]any{"subscription_plan": clone})
+}
+
+func (s *Server) planRevisions(w http.ResponseWriter, r *http.Request, id int64, parts []string) {
+	if len(parts) == 0 {
+		if r.Method != http.MethodGet {
+			method(w)
+			return
+		}
+		revisions, err := s.store.ListPlanRevisions(r.Context(), id)
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		write(w, 200, map[string]any{"revisions": revisions})
+		return
+	}
+	revisionID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || revisionID <= 0 {
+		fail(w, errors.New("invalid revision id"), 400)
+		return
+	}
+	if len(parts) == 1 {
+		if r.Method != http.MethodGet {
+			method(w)
+			return
+		}
+		revision, err := s.store.GetPlanRevision(r.Context(), id, revisionID)
+		if err != nil {
+			fail(w, err, 404)
+			return
+		}
+		nodes, err := s.store.ListPlanRevisionNodes(r.Context(), revisionID)
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		write(w, 200, map[string]any{"revision": revision, "nodes": nodes})
+		return
+	}
+	if len(parts) == 2 && parts[1] == "restore" && r.Method == http.MethodPost {
+		var req struct {
+			ExpectedRevision int64 `json:"expected_revision"`
+		}
+		_ = decode(w, r, &req)
+		plan, err := s.store.GetSubscriptionPlan(r.Context(), id)
+		if err != nil {
+			fail(w, err, 404)
+			return
+		}
+		expected := req.ExpectedRevision
+		if expected == 0 {
+			expected = plan.Revision
+		}
+		draftID, err := s.store.RestorePlanRevision(r.Context(), id, revisionID, expected)
+		if err != nil {
+			fail(w, err, planWriteStatus(err))
+			return
+		}
+		auditReq(s, r, "restore", "subscription-plan-revision", fmt.Sprintf("%d:%d", id, revisionID))
+		write(w, 200, map[string]any{"restored": true, "draft_revision_id": draftID})
+		return
+	}
+	fail(w, errors.New("unknown subscription plan subroute"), 404)
+}
+
 type planNodesSyncRequest struct {
-	Op           string            `json:"op"` // add | remove | replace
-	Nodes        []planNodeRequest `json:"nodes"`
-	DisplayGroup string            `json:"display_group,omitempty"`
+	Op               string            `json:"op"` // add | remove | replace
+	Nodes            []planNodeRequest `json:"nodes"`
+	DisplayGroup     string            `json:"display_group,omitempty"`
+	ExpectedRevision int64             `json:"expected_revision"`
 }
 
 func (s *Server) planNodesPreview(w http.ResponseWriter, r *http.Request, id int64) {
@@ -695,12 +882,12 @@ func (s *Server) planNodesPreview(w http.ResponseWriter, r *http.Request, id int
 	if req.Op == "" {
 		req.Op = "add"
 	}
-	preview, err := s.computePlanNodesChange(r.Context(), id, req)
+	out, err := s.computePlanNodesChange(r.Context(), id, req)
 	if err != nil {
-		fail(w, err, http.StatusBadRequest)
+		fail(w, err, planWriteStatus(err))
 		return
 	}
-	write(w, 200, map[string]any{"preview": preview})
+	write(w, 200, out)
 }
 
 func (s *Server) planNodesSync(w http.ResponseWriter, r *http.Request, id int64) {
@@ -716,51 +903,61 @@ func (s *Server) planNodesSync(w http.ResponseWriter, r *http.Request, id int64)
 	if req.Op == "" {
 		req.Op = "add"
 	}
+	plan, err := s.store.GetSubscriptionPlan(r.Context(), id)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	expected := req.ExpectedRevision
+	if expected == 0 {
+		expected = plan.Revision
+	}
 	nodes, err := s.validatePlanNodeRequests(r.Context(), req.Nodes, req.DisplayGroup, req.Op == "remove")
 	if err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
-	switch req.Op {
-	case "add":
-		err = s.store.AddPlanNodes(r.Context(), id, nodes)
-	case "remove":
-		err = s.store.RemovePlanNodes(r.Context(), id, nodes)
-	case "replace":
-		err = s.store.ReplacePlanNodes(r.Context(), id, nodes)
-	default:
-		fail(w, errors.New("op must be add, remove, or replace"), 400)
-		return
-	}
-	if err != nil {
-		fail(w, err, 500)
+	if err := s.store.SyncPlanDraftNodes(r.Context(), id, expected, nodes, req.Op); err != nil {
+		fail(w, err, planWriteStatus(err))
 		return
 	}
 	auditReq(s, r, req.Op, "subscription-plan-nodes", fmt.Sprintf("%d:%d", id, len(nodes)))
-	plan, err := s.store.GetSubscriptionPlan(r.Context(), id)
+	updated, err := s.store.GetSubscriptionPlan(r.Context(), id)
 	if err != nil {
 		fail(w, err, 500)
 		return
 	}
-	write(w, 200, map[string]any{"subscription_plan": plan})
+	write(w, 200, map[string]any{"subscription_plan": updated, "revision": updated.Revision})
 }
 
-func (s *Server) computePlanNodesChange(ctx context.Context, id int64, req planNodesSyncRequest) (core.PlanChangePreview, error) {
+// computePlanNodesChange previews one draft node edit: the diff against the
+// current draft (or active when no draft exists), the active-vs-draft diff,
+// affected authentication servers, and the expected revision for optimistic
+// concurrency.
+func (s *Server) computePlanNodesChange(ctx context.Context, id int64, req planNodesSyncRequest) (map[string]any, error) {
 	nodes, err := s.validatePlanNodeRequests(ctx, req.Nodes, req.DisplayGroup, req.Op == "remove")
 	if err != nil {
-		return core.PlanChangePreview{}, err
+		return nil, err
 	}
 	data, err := s.loadPlanAssignmentData(ctx)
 	if err != nil {
-		return core.PlanChangePreview{}, err
+		return nil, err
 	}
 	plan := data.planByID(id)
 	if plan == nil {
-		return core.PlanChangePreview{}, errors.New("subscription plan not found")
+		return nil, sql.ErrNoRows
 	}
-	currentNodes, err := s.store.ListPlanNodes(ctx, id)
+	activeNodes, err := s.store.ListActivePlanNodes(ctx, id)
 	if err != nil {
-		return core.PlanChangePreview{}, err
+		return nil, err
+	}
+	draftNodes, err := s.store.ListDraftPlanNodes(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	currentNodes := draftNodes
+	if len(currentNodes) == 0 {
+		currentNodes = activeNodes
 	}
 	targetNodes := append([]model.SubscriptionPlanNode(nil), currentNodes...)
 	switch req.Op {
@@ -789,9 +986,48 @@ func (s *Server) computePlanNodesChange(ctx context.Context, id int64, req planN
 	case "replace":
 		targetNodes = nodes
 	default:
-		return core.PlanChangePreview{}, errors.New("op must be add, remove, or replace")
+		return nil, errors.New("op must be add, remove, or replace")
 	}
-	return core.PreviewPlanNodeChange(data.users, data.bindings, data.plans, data.planNodes, data.exceptions, id, targetNodes, data.config.ProxyPaths, data.config.ProxyPathSteps, data.config.Inbounds, data.serverOnline, data.now()), nil
+	preview := core.PreviewPlanNodeChange(data.users, data.bindings, data.plans, data.planNodes, data.exceptions, id, targetNodes, data.config.ProxyPaths, data.config.ProxyPathSteps, data.config.Inbounds, data.serverOnline, data.now())
+	out := map[string]any{
+		"preview":           preview,
+		"expected_revision": plan.Revision,
+		"draft_node_count":  len(targetNodes),
+	}
+	if len(draftNodes) > 0 {
+		added, removed, unchanged := nodeSetDiff(activeNodes, draftNodes)
+		out["active_vs_draft"] = map[string]any{"nodes_added": added, "nodes_removed": removed, "nodes_unchanged": unchanged}
+	}
+	return out, nil
+}
+
+func nodeSetDiff(from, to []model.SubscriptionPlanNode) ([]string, []string, int) {
+	fromKeys := map[string]bool{}
+	toKeys := map[string]bool{}
+	for _, pn := range from {
+		fromKeys[core.NodeKeyOf(pn.NodeType, pn.NodeID)] = true
+	}
+	for _, pn := range to {
+		toKeys[core.NodeKeyOf(pn.NodeType, pn.NodeID)] = true
+	}
+	added := []string{}
+	removed := []string{}
+	unchanged := 0
+	for key := range toKeys {
+		if fromKeys[key] {
+			unchanged++
+		} else {
+			added = append(added, key)
+		}
+	}
+	for key := range fromKeys {
+		if !toKeys[key] {
+			removed = append(removed, key)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	return added, removed, unchanged
 }
 
 func (s *Server) validatePlanNodeRequests(ctx context.Context, requests []planNodeRequest, defaultGroup string, forRemove bool) ([]model.SubscriptionPlanNode, error) {
@@ -873,9 +1109,11 @@ func validateSubscriptionPlanFields(v *model.SubscriptionPlan) error {
 // ---------------------------------------------------------------------------
 
 type userPlanAssignmentRequest struct {
-	UserIDs []int64 `json:"user_ids"`
-	PlanID  int64   `json:"plan_id"`
-	Deploy  bool    `json:"deploy"`
+	UserIDs   []int64 `json:"user_ids"`
+	PlanID    int64   `json:"plan_id"`
+	Deploy    bool    `json:"deploy"`
+	StartsAt  *string `json:"starts_at"`
+	ExpiresAt *string `json:"expires_at"`
 }
 
 func (s *Server) userPlanAssignment(w http.ResponseWriter, r *http.Request) {
@@ -900,6 +1138,17 @@ func (s *Server) userPlanAssignment(w http.ResponseWriter, r *http.Request) {
 	default:
 		fail(w, errors.New("expected /api/v1/users/plan-assignment/preview or /apply"), 404)
 	}
+}
+
+func (s *Server) parseAssignmentTime(raw *string) (*time.Time, error) {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(*raw))
+	if err != nil {
+		return nil, errors.New("starts_at/expires_at must use RFC3339")
+	}
+	return &t, nil
 }
 
 func (s *Server) planAssignmentPreview(w http.ResponseWriter, r *http.Request) {
@@ -936,7 +1185,31 @@ func (s *Server) planAssignmentPreview(w http.ResponseWriter, r *http.Request) {
 		selected = append(selected, user)
 	}
 	preview := core.PreviewPlanAssignment(selected, data.bindings, data.plans, data.planNodes, data.exceptions, targetPlan, targetNodes, data.config.ProxyPaths, data.config.ProxyPathSteps, data.config.Inbounds, data.serverOnline, data.now())
-	write(w, 200, map[string]any{"preview": preview})
+	out := map[string]any{"preview": preview, "runtime_authorization_mode": data.mode}
+	if data.mode == model.AuthorizationModeShadow {
+		out["shadow"] = s.shadowComparisonForUsers(r.Context(), data, selected)
+	}
+	write(w, 200, out)
+}
+
+// shadowComparisonForUsers compares the legacy and plan effective node sets for
+// the given users. It never affects runtime behavior.
+func (s *Server) shadowComparisonForUsers(ctx context.Context, data *planAssignmentData, selected []model.User) core.AccessShadowComparison {
+	if data.mode != model.AuthorizationModeShadow {
+		return core.AccessShadowComparison{}
+	}
+	legacy := core.LegacyAccessInput{
+		Inbounds:                     data.config.Inbounds,
+		InboundUsers:                 data.config.InboundUsers,
+		UserGroups:                   data.config.UserGroups,
+		UserGroupMembers:             data.config.UserGroupMembers,
+		InboundAccessGrants:          data.config.InboundAccessGrants,
+		ExternalOutbounds:            data.config.ExternalOutbounds,
+		ExternalOutboundAccessGrants: data.config.ExternalOutboundAccessGrants,
+		Paths:                        data.config.ProxyPaths,
+		Steps:                        data.config.ProxyPathSteps,
+	}
+	return core.CompareLegacyAndPlanAccess(selected, legacy, data.snapshot, 10)
 }
 
 func (s *Server) planAssignmentApply(w http.ResponseWriter, r *http.Request) {
@@ -947,6 +1220,20 @@ func (s *Server) planAssignmentApply(w http.ResponseWriter, r *http.Request) {
 	req.UserIDs = uniquePositiveIDs(req.UserIDs)
 	if len(req.UserIDs) == 0 {
 		fail(w, errors.New("user_ids required"), 400)
+		return
+	}
+	startsAt, err := s.parseAssignmentTime(req.StartsAt)
+	if err != nil {
+		fail(w, err, 400)
+		return
+	}
+	expiresAt, err := s.parseAssignmentTime(req.ExpiresAt)
+	if err != nil {
+		fail(w, err, 400)
+		return
+	}
+	if expiresAt != nil && startsAt != nil && !expiresAt.After(*startsAt) {
+		fail(w, errors.New("expires_at must be after starts_at"), 400)
 		return
 	}
 	data, err := s.loadPlanAssignmentData(r.Context())
@@ -983,22 +1270,42 @@ func (s *Server) planAssignmentApply(w http.ResponseWriter, r *http.Request) {
 	}
 	bindings := make([]model.UserPlanBinding, 0, len(req.UserIDs))
 	for _, userID := range req.UserIDs {
-		bindings = append(bindings, model.UserPlanBinding{UserID: userID, PlanID: req.PlanID, AssignedBy: assignedBy})
+		bindings = append(bindings, model.UserPlanBinding{UserID: userID, PlanID: req.PlanID, AssignedBy: assignedBy, StartsAt: startsAt, ExpiresAt: expiresAt})
 	}
 	if err := s.store.SetUserPlanBindings(r.Context(), bindings); err != nil {
 		fail(w, err, 500)
 		return
 	}
 	auditReq(s, r, "assign", "user-plan", fmt.Sprintf("users=%d plan=%d", len(req.UserIDs), req.PlanID))
-	queued := 0
+
+	mode := s.authorizationMode(r.Context())
+	out := map[string]any{"applied": true, "affected_users": len(selected), "affected_servers": preview.AffectedServers, "runtime_authorization_mode": mode}
+	if mode != model.AuthorizationModePlan {
+		// In legacy and shadow mode the runtime chain still reads the legacy
+		// tables, so a binding change is saved data only and never reported as
+		// production-active. Shadow mode additionally reports the comparison.
+		out["status"] = "saved_not_runtime_active"
+		if mode == model.AuthorizationModeShadow {
+			after, err := s.loadPlanAssignmentData(r.Context())
+			if err == nil {
+				out["shadow"] = s.shadowComparisonForUsers(r.Context(), after, selected)
+			}
+		}
+		write(w, 200, out)
+		return
+	}
 	if req.Deploy && len(preview.AffectedServers) > 0 {
-		queued, err = s.queueAccessSyncForServers(r.Context(), preview.AffectedServers, "plan_assignment")
+		queued, err := s.queueAccessSyncForServers(r.Context(), preview.AffectedServers, "plan_assignment")
 		if err != nil {
 			fail(w, err, 500)
 			return
 		}
+		out["queued_tasks"] = queued
+		out["status"] = "deployed"
+	} else {
+		out["status"] = "saved_not_runtime_active"
 	}
-	write(w, 200, map[string]any{"applied": true, "affected_users": len(selected), "queued_tasks": queued, "affected_servers": preview.AffectedServers})
+	write(w, 200, out)
 }
 
 func (s *Server) resolveAssignmentTarget(ctx context.Context, data *planAssignmentData, planID int64) (*model.SubscriptionPlan, []model.SubscriptionPlanNode, error) {
@@ -1012,7 +1319,7 @@ func (s *Server) resolveAssignmentTarget(ctx context.Context, data *planAssignme
 	if !plan.Enabled {
 		return nil, nil, errors.New("subscription plan is disabled")
 	}
-	nodes, err := s.store.ListPlanNodes(ctx, planID)
+	nodes, err := s.store.ListActivePlanNodes(ctx, planID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1021,9 +1328,8 @@ func (s *Server) resolveAssignmentTarget(ctx context.Context, data *planAssignme
 
 // queueAccessSyncForServers queues at most one apply_core_config per affected
 // authentication server with a shared configuration version. Config generation
-// still reads the legacy tables today, so unchanged servers are skipped; once
-// subscription generation switches to plan data, the same call becomes the
-// access-only sync described by the assignment plan.
+// reads the effective plan snapshot in plan mode, so this is the access-only
+// sync described by the assignment plan; in legacy mode callers skip it.
 func (s *Server) queueAccessSyncForServers(ctx context.Context, serverIDs []int64, reason string) (int, error) {
 	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
@@ -1112,7 +1418,7 @@ func (s *Server) userNodeExceptions(w http.ResponseWriter, r *http.Request) {
 				fail(w, sql.ErrNoRows, 404)
 				return
 			}
-			write(w, 200, map[string]any{"user_node_exception": item})
+			write(w, 200, map[string]any{"user_node_exception": item, "runtime_authorization_mode": s.authorizationMode(r.Context())})
 			return
 		}
 		userID := int64Query(r, "user_id", 0)
@@ -1134,7 +1440,7 @@ func (s *Server) userNodeExceptions(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		write(w, 200, map[string]any{"user_node_exceptions": items})
+		write(w, 200, map[string]any{"user_node_exceptions": items, "runtime_authorization_mode": s.authorizationMode(r.Context())})
 	case http.MethodPost:
 		var v model.UserNodeException
 		if !decode(w, r, &v) {
@@ -1152,7 +1458,7 @@ func (s *Server) userNodeExceptions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		auditReq(s, r, "create", "user-node-exception", fmt.Sprintf("%d:%s:%d", v.UserID, v.NodeType, v.NodeID))
-		write(w, 201, map[string]any{"user_node_exception": v})
+		write(w, 201, map[string]any{"user_node_exception": v, "runtime_authorization_mode": s.authorizationMode(r.Context())})
 	case http.MethodPatch:
 		if id == 0 {
 			fail(w, errors.New("missing id"), 400)
@@ -1189,8 +1495,8 @@ func (s *Server) userNodeExceptions(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		auditReq(s, r, "update", "user-node-exception", fmt.Sprint(id))
-		write(w, 200, map[string]any{"user_node_exception": v})
+		auditReq(s, r, "patch", "user-node-exception", fmt.Sprint(id))
+		write(w, 200, map[string]any{"user_node_exception": v, "runtime_authorization_mode": s.authorizationMode(r.Context())})
 	case http.MethodDelete:
 		if id == 0 {
 			fail(w, errors.New("missing id"), 400)
@@ -1201,7 +1507,7 @@ func (s *Server) userNodeExceptions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		auditReq(s, r, "delete", "user-node-exception", fmt.Sprint(id))
-		write(w, 200, map[string]any{"deleted": true})
+		write(w, 200, map[string]any{"deleted": true, "runtime_authorization_mode": s.authorizationMode(r.Context())})
 	default:
 		method(w)
 	}
@@ -1307,48 +1613,26 @@ func (s *Server) userEffectiveNodes(w http.ResponseWriter, r *http.Request, user
 	for _, node := range nodes {
 		nameByKey[node.Key] = node.Name
 	}
-	var binding *model.UserPlanBinding
-	for i := range data.bindings {
-		if data.bindings[i].UserID == userID {
-			binding = &data.bindings[i]
-			break
-		}
+	views := []userEffectiveNodeView{}
+	grants := data.snapshot.UserNodes[userID]
+	keys := make([]string, 0, len(grants))
+	for key := range grants {
+		keys = append(keys, key)
 	}
-	var plan *model.SubscriptionPlan
-	var planNodes []model.SubscriptionPlanNode
-	if binding != nil {
-		plan = data.planByID(binding.PlanID)
-		for _, pn := range data.planNodes {
-			if pn.PlanID == binding.PlanID && pn.Enabled {
-				planNodes = append(planNodes, pn)
-			}
+	sort.Strings(keys)
+	for _, key := range keys {
+		grant := grants[key]
+		view := userEffectiveNodeView{Key: key, NodeType: grant.NodeType, NodeID: grant.NodeID, Name: nameByKey[key], Source: grant.Source}
+		if grant.Source == "plan" {
+			view.PlanID = grant.PlanID
+			view.PlanName = grant.PlanName
+		} else if grant.Exception != nil {
+			view.Effect = grant.Exception.Effect
+			view.Reason = grant.Exception.Reason
+			expiry := grant.Exception.ExpiresAt
+			view.ExpiresAt = &expiry
 		}
-	}
-	exceptions := []model.UserNodeException{}
-	for _, ex := range data.exceptions {
-		if ex.UserID == userID {
-			exceptions = append(exceptions, ex)
-		}
-	}
-	sources := core.UserEffectiveNodeSources(binding, plan, planNodes, exceptions, data.now())
-	views := make([]userEffectiveNodeView, 0, len(sources))
-	for _, source := range sources {
-		view := userEffectiveNodeView{Key: source.Key, NodeType: source.NodeType, NodeID: source.NodeID, Name: nameByKey[source.Key], Source: source.Source}
-		if source.Source == "plan" && binding != nil {
-			view.PlanID = binding.PlanID
-			view.PlanName = planNameOrEmpty(data.planByID(binding.PlanID))
-		}
-		view.Effect = source.Effect
-		view.Reason = source.Reason
-		view.ExpiresAt = source.ExpiresAt
 		views = append(views, view)
 	}
-	write(w, 200, map[string]any{"user_id": userID, "nodes": views})
-}
-
-func planNameOrEmpty(plan *model.SubscriptionPlan) string {
-	if plan == nil {
-		return ""
-	}
-	return plan.Name
+	write(w, 200, map[string]any{"user_id": userID, "nodes": views, "runtime_authorization_mode": data.mode})
 }

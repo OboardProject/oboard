@@ -238,8 +238,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists server_offline_notices (server_id integer primary key references servers(id) on delete cascade, status text not null, since_at text not null, notify_at text not null, group_key text not null default '', notified integer not null default 0, updated_at text not null)`,
 		`create table if not exists subscription_profiles (id integer primary key autoincrement, name text not null unique, group_name text not null default 'default', description text not null default '', config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists subscription_assignments (id integer primary key autoincrement, profile_id integer not null references subscription_profiles(id) on delete cascade, user_id integer not null references users(id) on delete cascade, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, group_name text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
-		`create table if not exists subscription_plans (id integer primary key autoincrement, name text not null unique, description text not null default '', enabled integer not null default 1, speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, revision integer not null default 0, active_revision integer not null default 0, draft_revision integer not null default 0, created_at text not null, updated_at text not null)`,
-		`create table if not exists subscription_plan_nodes (id integer primary key autoincrement, plan_id integer not null references subscription_plans(id) on delete cascade, node_type text not null, node_id integer not null, display_group text not null default '', source_type text not null default 'explicit', source_rule_id integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(plan_id, node_type, node_id))`,
+		`create table if not exists subscription_plans (id integer primary key autoincrement, name text not null unique, description text not null default '', enabled integer not null default 1, revision integer not null default 0, active_revision_id integer references subscription_plan_revisions(id) on delete set null, draft_revision_id integer references subscription_plan_revisions(id) on delete set null, created_at text not null, updated_at text not null)`,
+		`create table if not exists subscription_plan_revisions (id integer primary key autoincrement, plan_id integer not null references subscription_plans(id) on delete cascade, revision integer not null, status text not null default 'draft', speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, created_by integer references users(id) on delete set null, created_at text not null, activated_at text, unique(plan_id, revision))`,
+		`create table if not exists subscription_plan_revision_nodes (id integer primary key autoincrement, revision_id integer not null references subscription_plan_revisions(id) on delete cascade, node_type text not null, node_id integer not null, display_group text not null default '', source_type text not null default 'explicit', source_rule_id integer not null default 0, created_at text not null, unique(revision_id, node_type, node_id))`,
 		`create table if not exists user_plan_bindings (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, plan_id integer not null references subscription_plans(id) on delete cascade, enabled integer not null default 1, starts_at text, expires_at text, assigned_by integer references users(id) on delete set null, created_at text not null, updated_at text not null)`,
 		`create table if not exists user_node_exceptions (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, node_type text not null, node_id integer not null, effect text not null, reason text not null, expires_at text not null, created_by integer references users(id) on delete set null, created_at text not null)`,
 		`create index if not exists idx_tasks_server_status on agent_tasks(server_id, status)`,
@@ -275,8 +276,10 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_subscription_assignments_profile on subscription_assignments(profile_id, enabled)`,
 		`create unique index if not exists idx_user_plan_bindings_active on user_plan_bindings(user_id) where enabled=1`,
 		`create index if not exists idx_user_plan_bindings_plan on user_plan_bindings(plan_id, enabled)`,
-		`create index if not exists idx_subscription_plan_nodes_plan on subscription_plan_nodes(plan_id, enabled)`,
-		`create index if not exists idx_subscription_plan_nodes_node on subscription_plan_nodes(node_type, node_id, enabled)`,
+		`create unique index if not exists idx_plan_revisions_one_active on subscription_plan_revisions(plan_id) where status='active'`,
+		`create unique index if not exists idx_plan_revisions_one_draft on subscription_plan_revisions(plan_id) where status='draft'`,
+		`create index if not exists idx_plan_revision_nodes_revision on subscription_plan_revision_nodes(revision_id)`,
+		`create index if not exists idx_plan_revision_nodes_node on subscription_plan_revision_nodes(node_type, node_id)`,
 		`create index if not exists idx_user_node_exceptions_user on user_node_exceptions(user_id, expires_at)`,
 		`create index if not exists idx_user_node_exceptions_node on user_node_exceptions(node_type, node_id, expires_at)`,
 		`create index if not exists idx_subscription_one_time_tokens_user on subscription_one_time_tokens(user_id)`,
@@ -532,6 +535,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.ensureSSHUserAliases(ctx); err != nil {
+		return err
+	}
+	if err := s.migratePlanRevisions(ctx); err != nil {
 		return err
 	}
 	return s.ensureDefaultDNSLists(ctx)
@@ -5285,6 +5291,10 @@ type FullRoutingConfig struct {
 	Users                        []model.User                        `json:"users"`
 	UserDevices                  []model.UserDevice                  `json:"user_devices"`
 	ProxyPathPortAllocations     []model.ProxyPathPortAllocation     `json:"proxy_path_port_allocations"`
+	SubscriptionPlans            []model.SubscriptionPlan            `json:"subscription_plans,omitempty"`
+	ActivePlanNodes              []model.SubscriptionPlanNode        `json:"active_plan_nodes,omitempty"`
+	PlanBindings                 []model.UserPlanBinding             `json:"plan_bindings,omitempty"`
+	UserNodeExceptions           []model.UserNodeException           `json:"user_node_exceptions,omitempty"`
 }
 
 func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, error) {
@@ -5364,7 +5374,23 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
-	return FullRoutingConfig{Servers: servers, Inbounds: in, InboundUsers: inboundUsers, UserGroups: groups, UserGroupMembers: members, InboundAccessGrants: grants, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ExternalOutboundAccessGrants: externalGrants, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, ProxyPathEgressResults: proxyPathEgressResults, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, UserDevices: userDevices, ProxyPathPortAllocations: portAllocations}, nil
+	plans, err := s.ListSubscriptionPlans(ctx)
+	if err != nil {
+		return FullRoutingConfig{}, err
+	}
+	activePlanNodes, err := s.ListAllPlanNodes(ctx)
+	if err != nil {
+		return FullRoutingConfig{}, err
+	}
+	planBindings, err := s.ListEffectiveUserPlanBindings(ctx, time.Now())
+	if err != nil {
+		return FullRoutingConfig{}, err
+	}
+	planExceptions, err := s.ListUserNodeExceptions(ctx)
+	if err != nil {
+		return FullRoutingConfig{}, err
+	}
+	return FullRoutingConfig{Servers: servers, Inbounds: in, InboundUsers: inboundUsers, UserGroups: groups, UserGroupMembers: members, InboundAccessGrants: grants, Outbounds: out, RoutingRules: rules, ExternalOutbounds: external, ExternalOutboundAccessGrants: externalGrants, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, ProxyPathEgressResults: proxyPathEgressResults, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, UserDevices: userDevices, ProxyPathPortAllocations: portAllocations, SubscriptionPlans: plans, ActivePlanNodes: activePlanNodes, PlanBindings: planBindings, UserNodeExceptions: planExceptions}, nil
 }
 
 func nullEmpty(v string) any {

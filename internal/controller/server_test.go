@@ -344,14 +344,14 @@ func TestTrafficRuntimePoliciesIncludeUnlimitedUsers(t *testing.T) {
 	if err := db.CreateUser(ctx, &user); err != nil {
 		t.Fatal(err)
 	}
-	filtered, err := srv.trafficRuntimePolicies(ctx, server.ID, []model.User{user}, nil, nil, map[int64]bool{})
+	filtered, err := srv.trafficRuntimePolicies(ctx, server.ID, []model.User{user}, nil, nil, map[int64]bool{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(filtered) != 0 {
 		t.Fatalf("non-accounting downstream server received user policy: %#v", filtered)
 	}
-	policies, err := srv.trafficRuntimePolicies(ctx, server.ID, []model.User{user}, nil, nil, nil)
+	policies, err := srv.trafficRuntimePolicies(ctx, server.ID, []model.User{user}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,11 +407,11 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policies, err := srv.trafficRuntimePolicies(ctx, server.ID, data.Users, data.UserGroups, data.UserGroupMembers, nil)
+	policies, err := srv.trafficRuntimePolicies(ctx, server.ID, data.Users, data.UserGroups, data.UserGroupMembers, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := buildSSHInboundPlan(2, *server, data, effectiveInboundUsersForRouting(data), policies)
+	plan, err := buildSSHInboundPlan(2, *server, data, effectiveProxyPathUsersForRouting(data), policies)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +457,7 @@ func TestSSHInboundPlanExpandsDeviceCredentialsPerRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := buildSSHInboundPlan(7, *server, data, effectiveInboundUsersForRouting(data), nil)
+	plan, err := buildSSHInboundPlan(7, *server, data, effectiveProxyPathUsersForRouting(data), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,7 +512,7 @@ func TestSSHInboundPlanListenFollowsDetectedFamilies(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			plan, err := buildSSHInboundPlan(2, server, data, effectiveInboundUsersForRouting(data), nil)
+			plan, err := buildSSHInboundPlan(2, server, data, effectiveProxyPathUsersForRouting(data), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -667,7 +667,7 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := buildSSHInboundPlan(0, *server, config, effectiveInboundUsersForRouting(config), nil)
+	plan, err := buildSSHInboundPlan(0, *server, config, effectiveProxyPathUsersForRouting(config), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
