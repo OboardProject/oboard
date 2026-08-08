@@ -2021,8 +2021,8 @@ function App() {
                     <svg viewBox="0 0 24 24"><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="18" x2="21" y2="18" /></svg>
                   </button>
                 )}
-                <div className="topbar-title-stage" aria-live="polite">
-                  <AnimatePresence initial={false} mode="sync">
+                <m.div className="topbar-title-stage" layout transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }} aria-live="polite">
+                  <AnimatePresence initial={false} mode="popLayout">
                     <m.div
                       key={tab}
                       className="topbar-title-layer"
@@ -2030,12 +2030,12 @@ function App() {
                       animate={{ opacity: 1, transition: { duration: 0.2, ease: [0.22, 1, 0.36, 1] } }}
                       exit={{ opacity: 0, transition: { duration: 0.16, ease: 'easeIn' } }}
                     >
-                      {current.group && <p className="eyebrow">{current.group}</p>}
+                      {Boolean(current.group) && <p className="eyebrow">{current.group}</p>}
                       <h1>{tabTitles[tab] || current.label}</h1>
-                      {tab !== 'audit' && current.desc && <p>{current.desc}</p>}
+                      {tab !== 'audit' && Boolean(current.desc) && <p>{current.desc}</p>}
                     </m.div>
                   </AnimatePresence>
-                </div>
+                </m.div>
               </div>
               <div className="topbar-actions">
                 {showDashboardAttention && (

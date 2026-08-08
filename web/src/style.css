@@ -7036,14 +7036,30 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   isolation: isolate;
   min-width: 0;
   flex: 1 1 auto;
-  display: grid;
+  display: block;
+  overflow: hidden;
+  will-change: height;
+  transition: height 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .topbar-title-layer {
-  grid-area: 1 / 1;
   min-width: 0;
   will-change: opacity;
 }
+
+.topbar-title-stage > .topbar-title-layer:not(:last-child) {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.topbar-title-stage > .topbar-title-layer:last-child {
+  position: relative;
+  z-index: 1;
+}
+
 .mobile-menu-toggle {
   display: none;
 }
