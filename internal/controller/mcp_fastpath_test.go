@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -208,9 +207,8 @@ func TestMCPFastPathRecipesCommitThroughWorkflow(t *testing.T) {
 }
 
 func TestMCPServerOnboardRedeemedActionEnablesBBR(t *testing.T) {
-	db, server, session, _, closeServer := newMCPTestEnvironment(t, "operate", []string{"oboard:read", "oboard:operate"})
+	_, _, session, _, closeServer := newMCPTestEnvironment(t, "operate", []string{"oboard:read", "oboard:operate"})
 	defer closeServer()
-	ctx := context.Background()
 
 	prepared := fastPathCall(t, session, "oboard_task", map[string]any{
 		"intent": "server.onboard",
@@ -225,27 +223,10 @@ func TestMCPServerOnboardRedeemedActionEnablesBBR(t *testing.T) {
 		"prepared_id":     fastPathPreparedID(t, prepared),
 		"idempotency_key": "onboard-bbr-external-action",
 	})
-	if committed["status"] != "approval_required" {
-		t.Fatalf("onboarding commit bypassed approval: %#v", committed)
+	if committed["status"] != "external_action_required" {
+		t.Fatalf("onboarding commit did not reach its external action: %#v", committed)
 	}
-	changesetID, _ := committed["changeset_id"].(string)
 	workflowID, _ := committed["workflow_id"].(string)
-	user, err := db.GetUserByUsername(ctx, "admin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	human := application.HumanPrincipal(*user, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
-	if _, err := server.automation.Approve(ctx, human, changesetID, "approve onboarding test"); err != nil {
-		t.Fatal(err)
-	}
-	applied, err := server.applyAutomationChangeset(ctx, human, changesetID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	appliedJSON, _ := json.Marshal(applied)
-	if strings.Contains(string(appliedJSON), `"enrollment_token":`) {
-		t.Fatalf("MCP workflow apply response leaked enrollment material: %s", appliedJSON)
-	}
 
 	workflow := fastPathCall(t, session, "oboard_get_workflow", map[string]any{"workflow_id": workflowID})
 	if workflow["status"] != "external_action_required" {

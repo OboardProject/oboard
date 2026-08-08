@@ -31,7 +31,7 @@ All persistent changes use OBoard Changesets and all execution uses the canonica
 
 Never claim that a requested change is complete until its Workflow reaches ` + "`succeeded`" + `. If a Workflow is ` + "`partially_succeeded`" + `, report exactly what completed and what failed. Report ` + "`failed`" + `, ` + "`cancelled`" + `, ` + "`expired`" + `, ` + "`superseded`" + `, ` + "`approval_required`" + `, and ` + "`external_action_required`" + ` states exactly.
 
-Respect the effective OAuth access level, the current human user's RBAC permissions, the resource boundary, the approval policy, and every returned authorization decision. Never broaden target IDs, substitute resources, or retry against a wider target after an authorization denial. An ` + "`oboard:operate`" + ` grant does not bypass approval.
+MCP inherits the current human user's live RBAC role. OAuth scopes and stored grant boundaries do not reduce or expand that role. Respect the approval policy and every returned authorization decision. Never broaden target IDs, substitute resources, or retry against a wider target after an authorization denial. Role inheritance does not bypass approval.
 
 OBoard MCP never provides arbitrary SSH access, shell execution, raw Agent tasks, raw REST calls, secret export, administrator deletion, validation bypass, destructive-operation bypass, or risk-4 auto-approval.
 

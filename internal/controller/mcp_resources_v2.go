@@ -29,10 +29,10 @@ type mcpResourceDef struct {
 
 func (s *Server) mcpResourceDefs() []mcpResourceDef {
 	return []mcpResourceDef{
-		{uri: "oboard://context/bootstrap", title: "Bootstrap Context", name: "Bootstrap context", description: "Return the minimal authenticated startup context for this MCP grant, including Controller compatibility information, effective access level, resource boundary summary, authorized capability groups, workflow invariants, and recommended first actions. Never includes secrets.", kind: "static"},
-		{uri: "oboard://auth/grant", title: "OAuth Grant", name: "OAuth grant", description: "Return the effective OAuth grant as evaluated for this request, including client identity, human user role, access level, resource boundary, approval profile, policy version, expiration and revocation state, and summarized capability denials. Never returns access tokens, refresh tokens, authorization codes, passwords, or credentials.", kind: "static"},
+		{uri: "oboard://context/bootstrap", title: "Bootstrap Context", name: "Bootstrap context", description: "Return the minimal authenticated startup context, including Controller compatibility information, the current inherited user role, authorized capability groups, workflow invariants, and recommended first actions. Never includes secrets.", kind: "static"},
+		{uri: "oboard://auth/grant", title: "OAuth Grant", name: "OAuth grant", description: "Return the effective OAuth grant as evaluated for this request, including client identity, the current inherited user role, compatibility access projections, approval profile, expiration and revocation state, and summarized capability denials. Never returns access tokens, refresh tokens, authorization codes, passwords, or credentials.", kind: "static"},
 		{uri: "oboard://system/version", title: "System Version", name: "System version", description: "Return Controller, API, MCP protocol, Agent protocol, build, and compatibility metadata.", kind: "static"},
-		{uri: "oboard://system/capabilities", title: "Authorized Capabilities", name: "Authorized capabilities", description: "Return only capabilities available to the current grant after access-level, RBAC, resource-boundary, execution, and policy evaluation.", kind: "static"},
+		{uri: "oboard://system/capabilities", title: "Authorized Capabilities", name: "Authorized capabilities", description: "Return only capabilities available through the current user's live RBAC role after execution and approval-policy evaluation.", kind: "static"},
 		{uri: "oboard://docs/guide", title: "MCP Guide", name: "MCP guide", description: "Return the Fast Path-first OBoard MCP workflow: prepare a normal task, commit its immutable prepared ID, and follow the canonical Workflow; capability discovery remains the advanced fallback.", kind: "docs"},
 		{uri: "oboard://docs/security", title: "MCP Security", name: "MCP security", description: "Return the OBoard MCP security invariants, including untrusted resource content, prohibited SSH and shell execution, prohibited raw Agent tasks, prohibited secret export, approval requirements, idempotency, revision checks, and one-time secret handling.", kind: "docs"},
 		{uri: "oboard://docs/workflows", title: "Workflow Semantics", name: "Workflow semantics", description: "Return the Changeset and Workflow state machines, terminal states, retry rules, cancellation rules, approval semantics, external-action behavior, and recovery guidance.", kind: "docs"},
@@ -453,7 +453,7 @@ func mcpDocsPayload(uri string) map[string]any {
 			"Commit always rechecks authorization, recipe version, plan integrity, resource revisions, and validation.",
 			"No SSH access, shell execution, raw Agent tasks, raw REST calls, or secret export.",
 			"No administrator deletion, validation bypass, destructive-operation bypass, or risk-4 auto-approval.",
-			"oboard:operate does not bypass approval, RBAC, or the resource boundary.",
+			"OAuth scopes do not reduce or expand the current user's role, and role inheritance never bypasses approval.",
 			"One-time onboarding material is returned at most once and never persisted or logged.",
 			"Never request, reveal, persist, or log passwords, private keys, or tokens.",
 		}}

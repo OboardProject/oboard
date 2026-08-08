@@ -240,9 +240,10 @@ type OAuthGrant struct {
 	UserID      int64  `json:"user_id"`
 	Username    string `json:"username,omitempty"`
 	PrincipalID string `json:"principal_id"`
-	// AccessLevel is the coarse MCP access level (read or operate). It is the
-	// single authorization source for MCP.
-	AccessLevel string `json:"access_level"`
+	// AccessLevel is a compatibility projection of EffectiveRole for clients
+	// that still display the coarse read/operate OAuth model.
+	AccessLevel   string `json:"access_level"`
+	EffectiveRole Role   `json:"effective_role,omitempty"`
 	// ResourceBoundaryJSON is the versioned ResourceBoundary. json.RawMessage
 	// keeps it an object on the wire so management UIs can render the boundary.
 	ResourceBoundaryJSON json.RawMessage       `json:"resource_boundary"`

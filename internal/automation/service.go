@@ -663,6 +663,13 @@ func (s *Service) policiesAllowAutomatic(ctx context.Context, item *model.Automa
 			return false, err
 		}
 		if policy.Mode == model.ApprovalDenied {
+			if oauthPrincipal {
+				// Legacy OAuth consent could persist a per-capability denial.
+				// OAuth MCP now inherits the user's live RBAC role, so the old
+				// denial can require human approval but cannot remove access.
+				automatic = false
+				continue
+			}
 			return false, fmt.Errorf("approval policy denies capability %q", operation.Capability)
 		}
 		if policy.Mode != model.ApprovalAutomatic || operation.RiskClass >= 4 && (oauthPrincipal || !policy.AllowRisk4) {

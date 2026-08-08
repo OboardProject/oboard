@@ -35,6 +35,7 @@ export interface OAuthGrant {
   user_id: number
   username?: string
   access_level: AccessLevel
+  effective_role?: 'admin' | 'operator' | 'viewer' | string
   resource_boundary?: ResourceBoundary
   approval_profile?: { auto_approve_risk: number } | null
   offline_access: boolean

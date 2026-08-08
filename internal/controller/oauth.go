@@ -196,6 +196,21 @@ func (s *Server) oauthGrants(w http.ResponseWriter, r *http.Request) {
 		v2HandleError(w, r, err)
 		return
 	}
+	for index := range items {
+		user, userErr := s.store.GetUser(r.Context(), items[index].UserID)
+		if userErr != nil {
+			continue
+		}
+		role, roleErr := s.store.EffectiveUserRole(r.Context(), *user)
+		if roleErr != nil {
+			continue
+		}
+		items[index].EffectiveRole = role
+		items[index].AccessLevel = string(mcpAccessLevelForRole(role))
+		if boundary, marshalErr := json.Marshal(s.oauthRoleBoundary(role)); marshalErr == nil {
+			items[index].ResourceBoundaryJSON = boundary
+		}
+	}
 	v2Write(w, r, http.StatusOK, items, map[string]any{"count": len(items)})
 }
 
@@ -399,23 +414,24 @@ func normalizeRequestedScopes(requested []string) (mcpauth.AccessLevel, bool, er
 	return level, offline, nil
 }
 
-// createOAuthGrantV2 creates the grant, its audit principal, approval profile,
-// and approval policies from the structured consent. The grant stores the
-// coarse access level and the versioned resource boundary; no fine-grained
-// scopes or resource filters are used for MCP authorization afterwards.
+// createOAuthGrantV2 creates an OAuth identity whose business permissions are
+// inherited from the consenting user's current role. OAuth scopes only control
+// protocol features such as offline refresh; they never reduce or expand RBAC.
 func (s *Server) createOAuthGrantV2(r *http.Request, user model.User, client model.OAuthClient, scopes []string) (*model.OAuthGrant, *model.APIPrincipal, error) {
-	accessLevel, offline, err := normalizeRequestedScopes(scopes)
+	_, offline, err := normalizeRequestedScopes(scopes)
 	if err != nil {
 		return nil, nil, err
 	}
-	boundary, allowCreate, err := s.oauthConsentBoundary(r, accessLevel)
+	role, err := s.store.EffectiveUserRole(r.Context(), user)
 	if err != nil {
 		return nil, nil, err
 	}
-	autoRisk, err := oauthAutoApproveRisk(r.Form.Get("auto_approve_risk"))
-	if err != nil {
-		return nil, nil, err
+	accessLevel := mcpAccessLevelForRole(role)
+	if accessLevel == "" {
+		return nil, nil, errors.New("the current role does not permit MCP access")
 	}
+	boundary := s.oauthRoleBoundary(role)
+	const autoRisk = 3
 	grantToken, err := security.RandomToken(18)
 	if err != nil {
 		return nil, nil, err
@@ -425,10 +441,6 @@ func (s *Server) createOAuthGrantV2(r *http.Request, user model.User, client mod
 		return nil, nil, err
 	}
 	profileToken, err := security.RandomToken(18)
-	if err != nil {
-		return nil, nil, err
-	}
-	role, err := s.store.EffectiveUserRole(r.Context(), user)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -458,18 +470,7 @@ func (s *Server) createOAuthGrantV2(r *http.Request, user model.User, client mod
 		if descriptor.RiskClass <= autoRisk && descriptor.RiskClass < 4 {
 			mode = model.ApprovalAutomatic
 		}
-		if descriptor.Name == "servers.onboard" && !allowCreate {
-			mode = model.ApprovalDenied
-		}
-		policyFilter := json.RawMessage(`{}`)
-		if boundary.Selection("server").Selection == mcpauth.SelectionSelected {
-			if encoded, marshalErr := json.Marshal(map[string]any{"server_ids": int64IDs(boundary.Selection("server").IDs)}); marshalErr == nil {
-				policyFilter = encoded
-			}
-		} else if boundary.Selection("server").Selection == mcpauth.SelectionNone {
-			policyFilter = json.RawMessage(`{"server_ids":[]}`)
-		}
-		policies = append(policies, model.ApprovalPolicy{ID: "pol_" + policyToken, PrincipalID: appPrincipal.ID, Capability: descriptor.Name, ResourceFilter: policyFilter, Mode: mode})
+		policies = append(policies, model.ApprovalPolicy{ID: "pol_" + policyToken, PrincipalID: appPrincipal.ID, Capability: descriptor.Name, ResourceFilter: json.RawMessage(`{}`), Mode: mode})
 	}
 	if err := s.store.CreateOAuthGrantV2(r.Context(), grant, appPrincipal, profile, policies); err != nil {
 		return nil, nil, err
@@ -477,115 +478,40 @@ func (s *Server) createOAuthGrantV2(r *http.Request, user model.User, client mod
 	return grant, appPrincipal, nil
 }
 
-func int64IDs(raw []string) []int64 {
-	out := []int64{}
-	for _, value := range raw {
-		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
-			out = append(out, parsed)
-		}
+func mcpAccessLevelForRole(role model.Role) mcpauth.AccessLevel {
+	if authorization.RoleRank(role) >= 2 {
+		return mcpauth.AccessOperate
 	}
-	return out
+	if authorization.RoleRank(role) >= 1 {
+		return mcpauth.AccessRead
+	}
+	return ""
 }
 
-// oauthConsentBoundary builds the versioned resource boundary from the consent
-// form. Server mode current (all existing, no future) is persisted as a
-// selected snapshot so a later-created server is not implicitly included.
-func (s *Server) oauthConsentBoundary(r *http.Request, accessLevel mcpauth.AccessLevel) (mcpauth.ResourceBoundary, bool, error) {
-	serverMode := strings.ToLower(strings.TrimSpace(r.Form.Get("server_mode")))
-	if serverMode == "" {
-		serverMode = "current"
-	}
-	if !slices.Contains([]string{"all", "current", "selected", "none"}, serverMode) {
-		return mcpauth.ResourceBoundary{}, false, errors.New("invalid server resource mode")
-	}
-	selected := []int64{}
-	seen := map[int64]bool{}
-	for _, raw := range r.Form["server_id"] {
-		id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
-		if err != nil || id <= 0 {
-			return mcpauth.ResourceBoundary{}, false, errors.New("invalid server resource id")
-		}
-		if !seen[id] {
-			seen[id] = true
-			selected = append(selected, id)
-		}
-	}
-	if serverMode == "selected" && len(selected) == 0 {
-		return mcpauth.ResourceBoundary{}, false, errors.New("selected server mode requires at least one server")
-	}
-	servers, err := s.store.ListServers(r.Context())
-	if err != nil {
-		return mcpauth.ResourceBoundary{}, false, err
-	}
-	existing := map[int64]bool{}
-	for _, server := range servers {
-		existing[server.ID] = true
-	}
-	for _, id := range selected {
-		if !existing[id] {
-			return mcpauth.ResourceBoundary{}, false, errors.New("selected server is not available")
-		}
-	}
-	slices.Sort(selected)
-	serverSelection := mcpauth.ResourceSelection{Selection: mcpauth.SelectionNone}
-	switch serverMode {
-	case "all":
-		serverSelection = mcpauth.ResourceSelection{Selection: mcpauth.SelectionAll, IncludeFuture: true}
-	case "current":
-		snapshot := make([]string, 0, len(servers))
-		for _, server := range servers {
-			snapshot = append(snapshot, strconv.FormatInt(server.ID, 10))
-		}
-		serverSelection = mcpauth.ResourceSelection{Selection: mcpauth.SelectionSelected, IDs: snapshot}
-	case "selected":
-		ids := make([]string, 0, len(selected))
-		for _, id := range selected {
-			ids = append(ids, strconv.FormatInt(id, 10))
-		}
-		serverSelection = mcpauth.ResourceSelection{Selection: mcpauth.SelectionSelected, IDs: ids}
-	}
-	allowCreate := r.Form.Get("allow_create_servers") == "1" && accessLevel == mcpauth.AccessOperate
-	serverSelection.AllowCreate = allowCreate
-	userMode := strings.ToLower(strings.TrimSpace(r.Form.Get("user_mode")))
-	if userMode == "" {
-		userMode = "none"
-	}
-	userSelection := mcpauth.ResourceSelection{Selection: mcpauth.SelectionNone}
-	if userMode == "all" {
-		userSelection = mcpauth.ResourceSelection{Selection: mcpauth.SelectionAll, IncludeFuture: true}
-	} else if userMode != "none" {
-		return mcpauth.ResourceBoundary{}, false, errors.New("invalid user resource mode")
+func (s *Server) oauthRoleBoundary(role model.Role) mcpauth.ResourceBoundary {
+	accessLevel := mcpAccessLevelForRole(role)
+	resources := map[string]mcpauth.ResourceSelection{}
+	for _, resourceType := range []string{"audit_incident", "certificate", "deployment", "external_outbound", "inbound", "proxy_path", "server", "subscription", "user", "workflow", "changeset"} {
+		resources[resourceType] = mcpauth.ResourceSelection{Selection: mcpauth.SelectionAll, IncludeFuture: true}
 	}
 	globalCapabilities := []string{}
-	for _, descriptor := range s.capabilities.ListMCP(application.Principal{AccessLevel: accessLevel, Role: model.RoleAdmin, Scopes: []string{"*"}}) {
+	principal := application.Principal{AccessLevel: accessLevel, Role: role, Scopes: []string{"*"}}
+	for _, descriptor := range s.capabilities.ListMCP(principal) {
+		if !s.capabilities.RBAC().Allows(role, descriptor.RBACPermission) {
+			continue
+		}
 		if len(descriptor.ResourceTypes) == 0 {
 			globalCapabilities = append(globalCapabilities, descriptor.Name)
+			continue
+		}
+		for _, resourceType := range descriptor.ResourceTypes {
+			resources[resourceType] = mcpauth.ResourceSelection{Selection: mcpauth.SelectionAll, IncludeFuture: true}
 		}
 	}
-	return mcpauth.ResourceBoundary{
-		Version: mcpauth.ResourceBoundaryVersion,
-		Resources: map[string]mcpauth.ResourceSelection{
-			"server":            serverSelection,
-			"user":              userSelection,
-			"proxy_path":        {Selection: mcpauth.SelectionAll, IncludeFuture: true},
-			"inbound":           {Selection: mcpauth.SelectionAll, IncludeFuture: true},
-			"external_outbound": {Selection: mcpauth.SelectionAll, IncludeFuture: true},
-			"deployment":        {Selection: mcpauth.SelectionAll, IncludeFuture: true},
-		},
-		GlobalCapabilities:    globalCapabilities,
-		DestructiveOperations: false,
-	}, allowCreate, nil
-}
-
-func oauthAutoApproveRisk(raw string) (int, error) {
-	if strings.TrimSpace(raw) == "" {
-		return 0, nil
-	}
-	value, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || value < 0 || value > 3 {
-		return 0, errors.New("auto_approve_risk must be between 0 and 3")
-	}
-	return value, nil
+	serverSelection := resources["server"]
+	serverSelection.AllowCreate = s.capabilities.RBAC().Allows(role, "servers.onboard")
+	resources["server"] = serverSelection
+	return mcpauth.ResourceBoundary{Version: mcpauth.ResourceBoundaryVersion, Resources: resources, GlobalCapabilities: globalCapabilities, DestructiveOperations: false}.Normalized()
 }
 
 func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request) {
@@ -664,7 +590,8 @@ func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, flow, 
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "user is no longer authorized")
 		return
 	}
-	if err := s.validateOAuthUserGrant(r.Context(), user, mcpauth.ParseAccessLevel(grant.AccessLevel).NormalizedScopes(grant.OfflineAccess)); err != nil {
+	effectiveRole, err := s.store.EffectiveUserRole(r.Context(), *user)
+	if err != nil || mcpAccessLevelForRole(effectiveRole) == "" {
 		s.auditOAuthEvent(r, &userID, "oauth_token_denied", "oauth_grant", grantID, map[string]any{"client_id": clientID, "flow": flow, "reason": "user_not_authorized"})
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "user is no longer authorized for the requested scopes")
 		return
@@ -698,7 +625,7 @@ func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, flow, 
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
-	scopes := mcpauth.ParseAccessLevel(grant.AccessLevel).NormalizedScopes(grant.OfflineAccess)
+	scopes := mcpAccessLevelForRole(effectiveRole).NormalizedScopes(grant.OfflineAccess)
 	response := map[string]any{"access_token": accessPlain, "token_type": "Bearer", "expires_in": int(oauthAccessTokenTTL.Seconds()), "scope": strings.Join(scopes, " "), "resource": resource}
 	if refreshPlain != "" {
 		response["refresh_token"] = refreshPlain
@@ -767,11 +694,17 @@ func (s *Server) authenticateOAuthToken(r *http.Request, raw string) (*model.API
 		return nil, sql.ErrNoRows
 	}
 	user, err := s.store.GetUser(r.Context(), token.UserID)
-	if err != nil || s.validateOAuthUserGrant(r.Context(), user, mcpauth.ParseAccessLevel(grant.AccessLevel).NormalizedScopes(grant.OfflineAccess)) != nil {
+	if err != nil || s.validateOAuthUserGrant(r.Context(), user, []string{"oboard:read"}) != nil {
 		return nil, sql.ErrNoRows
 	}
-	principal.Scopes = mcpauth.ParseAccessLevel(grant.AccessLevel).NormalizedScopes(grant.OfflineAccess)
-	principal.ResourceFilter = application.ResourceFilterFromBoundary(mcpauth.ParseBoundary(grant.ResourceBoundaryJSON))
+	effectiveRole, err := s.store.EffectiveUserRole(r.Context(), *user)
+	if err != nil {
+		return nil, sql.ErrNoRows
+	}
+	accessLevel := mcpAccessLevelForRole(effectiveRole)
+	boundary := s.oauthRoleBoundary(effectiveRole)
+	principal.Scopes = accessLevel.NormalizedScopes(grant.OfflineAccess)
+	principal.ResourceFilter = application.ResourceFilterFromBoundary(boundary)
 	principal.OAuthGrantID = grant.ID
 	return principal, nil
 }
@@ -784,15 +717,10 @@ func (s *Server) validateOAuthUserGrant(ctx context.Context, user *model.User, s
 	if err != nil {
 		return err
 	}
-	requested, offline, err := normalizeRequestedScopes(scopes)
-	if err != nil {
+	if _, _, err := normalizeRequestedScopes(scopes); err != nil {
 		return err
 	}
-	_ = offline
-	if requested == mcpauth.AccessOperate && authorization.RoleRank(role) < 2 {
-		return errors.New("the current role does not permit operate access")
-	}
-	if authorization.RoleRank(role) < 1 {
+	if mcpAccessLevelForRole(role) == "" {
 		return errors.New("the current role does not permit MCP access")
 	}
 	return nil

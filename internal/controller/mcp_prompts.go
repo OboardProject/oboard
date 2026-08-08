@@ -28,13 +28,13 @@ func (s *Server) mcpPromptDefs(principal application.Principal) []mcpPromptDef {
 	}
 	return []mcpPromptDef{
 		{
-			name: "oboard_permission_diagnosis", title: "Permission Diagnosis", description: "Explain the effective OAuth grant, RBAC restrictions, resource boundary, approval policy, authorized capabilities, and exact denial reasons.",
+			name: "oboard_permission_diagnosis", title: "Permission Diagnosis", description: "Explain the user's live inherited RBAC role, grant liveness, approval requirements, authorized capabilities, and exact denial reasons.",
 			build: func(_ map[string]string) string {
 				return `Read ` + "`oboard://auth/grant`" + `, ` + "`oboard://system/capabilities`" + `, and ` + "`oboard://context/bootstrap`" + `.
 
-Explain the effective OBoard MCP access level, human RBAC restrictions, resource boundary, approval policy, authorized capabilities, and denied capability groups.
+Explain the current user's inherited OBoard RBAC role, grant liveness, approval requirements, authorized capabilities, and denied capability groups. OAuth scopes do not reduce or expand the user's role, and role changes take effect immediately.
 
-For every denial, distinguish among ` + "`insufficient_scope`" + `, ` + "`role_denied`" + `, ` + "`resource_denied`" + `, ` + "`approval_required`" + `, ` + "`grant_revoked`" + `, and ` + "`client_metadata_invalid`" + `.
+For every denial, distinguish among ` + "`role_denied`" + `, ` + "`approval_required`" + `, ` + "`grant_revoked`" + `, and ` + "`client_metadata_invalid`" + `.
 
 Give the smallest exact remediation required for the user's current task. Never recommend broader access than the task requires. Never request or expose credentials, access tokens, refresh tokens, or other secrets.`
 			},

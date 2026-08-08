@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -75,7 +76,8 @@ func issueTestMCPToken(t *testing.T, db *store.Store, grant *model.OAuthGrant, p
 
 func newMCPTestEnvironment(t *testing.T, accessLevel string, scopes []string) (*store.Store, *Server, *mcp.ClientSession, *model.APIPrincipal, func()) {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	dbPath := filepath.Join(t.TempDir(), "oboard.sqlite")
+	db, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,8 +95,35 @@ func newMCPTestEnvironment(t *testing.T, accessLevel string, scopes []string) (*
 		db.Close()
 		t.Fatal(err)
 	}
+	if accessLevel == "read" || accessLevel == "operator" {
+		role := model.RoleViewer
+		if accessLevel == "operator" {
+			role = model.RoleOperator
+		}
+		member := &model.User{
+			Username: string(role) + "-" + randomTestID(), PasswordHash: "unused", Role: role, Status: "active",
+			ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "member-password", SubscriptionToken: "member-subscription",
+		}
+		if err := db.CreateUser(context.Background(), member); err != nil {
+			httpServer.Close()
+			db.Close()
+			t.Fatal(err)
+		}
+		user = member
+	}
 	client := testOAuthClient(t, db, "oc_"+randomTestID(), "MCP test client", []string{"http://127.0.0.1/callback"})
 	grant, principal := createTestGrant(t, server, *user, client, scopes)
+	if accessLevel == "legacy-read-admin" {
+		rawDB, openErr := sql.Open("sqlite", dbPath)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		_, updateErr := rawDB.ExecContext(context.Background(), `update oauth_grants set access_level='read',resource_boundary_v2_json='{"version":1,"resources":{"server":{"selection":"none"}}}' where id=?`, grant.ID)
+		_ = rawDB.Close()
+		if updateErr != nil {
+			t.Fatal(updateErr)
+		}
+	}
 	plain := "oba_test-token-" + randomTestID()
 	issueTestMCPToken(t, db, grant, principal, client, user.ID, httpServer.URL+"/mcp", plain)
 	httpClient := &http.Client{Transport: bearerTransport{token: plain, base: http.DefaultTransport}}
@@ -206,6 +235,60 @@ func TestMCPReadGrantDoesNotListOperateTools(t *testing.T) {
 	}
 }
 
+func TestMCPExistingReadGrantImmediatelyInheritsAdminRole(t *testing.T) {
+	_, _, session, _, closeServer := newMCPTestEnvironment(t, "legacy-read-admin", []string{"oboard:read"})
+	defer closeServer()
+
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name == "oboard_commit_task" {
+			return
+		}
+	}
+	t.Fatal("existing persisted read grant did not inherit the admin user's operate permission")
+}
+
+func TestMCPRoleDowngradeTakesEffectWithoutReauthorization(t *testing.T) {
+	db, _, session, principal, closeServer := newMCPTestEnvironment(t, "operator", []string{"oboard:read"})
+	defer closeServer()
+
+	hasTool := func(name string) bool {
+		tools, err := session.ListTools(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tool := range tools.Tools {
+			if tool.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasTool("oboard_commit_task") {
+		t.Fatal("operator did not inherit operate tools")
+	}
+	if principal.OwnerUserID == nil {
+		t.Fatal("OAuth principal is missing its owner")
+	}
+	user, err := db.GetUser(context.Background(), *principal.OwnerUserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user.Role = model.RoleViewer
+	if err := db.UpdateUser(context.Background(), user); err != nil {
+		t.Fatal(err)
+	}
+	if hasTool("oboard_commit_task") {
+		t.Fatal("write tools remained available after the user was downgraded to viewer")
+	}
+	if !hasTool("oboard_task") {
+		t.Fatal("read tools disappeared after the user was downgraded to viewer")
+	}
+}
+
 func TestMCPDiscoverReturnsGrantSummary(t *testing.T) {
 	db, _, session, principal, closeServer := newMCPTestEnvironment(t, "operate", []string{"oboard:read", "oboard:operate"})
 	defer closeServer()
@@ -302,7 +385,7 @@ func TestMCPAuthRejectsApiKeyAndSessionAndWrongAudience(t *testing.T) {
 	}
 }
 
-func TestMCPOperateScopeIsNeverSilentlyDowngraded(t *testing.T) {
+func TestMCPAdminInheritsOperateWhenClientRequestsReadScope(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -320,8 +403,7 @@ func TestMCPOperateScopeIsNeverSilentlyDowngraded(t *testing.T) {
 	}
 	client := testOAuthClient(t, db, "oc_operate", "Operate client", []string{"https://client.example/callback"})
 
-	// The client has NO allowed-scope ceiling; it may request operate.
-	grant, principal := createTestGrant(t, server, *user, client, []string{"oboard:read", "oboard:operate", "offline_access"})
+	grant, principal := createTestGrant(t, server, *user, client, []string{"oboard:read", "offline_access"})
 	if grant.AccessLevel != "operate" {
 		t.Fatalf("grant access level = %q, want operate", grant.AccessLevel)
 	}
@@ -350,9 +432,19 @@ func TestMCPOperateScopeIsNeverSilentlyDowngraded(t *testing.T) {
 	if persisted.IdentityType != "preregistered" {
 		t.Fatalf("client identity type = %q", persisted.IdentityType)
 	}
+	adminToken := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	listed := request(t, handler, http.MethodGet, "/api/v2/oauth-grants", adminToken, nil, http.StatusOK)
+	items, _ := listed["data"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("grant list data = %#v", listed["data"])
+	}
+	item, _ := items[0].(map[string]any)
+	if item["effective_role"] != "admin" || item["access_level"] != "operate" {
+		t.Fatalf("grant list did not project the current user role: %#v", item)
+	}
 }
 
-func TestOAuthViewerCannotObtainOperateGrant(t *testing.T) {
+func TestOAuthViewerInheritsReadWhenClientRequestsOperateScope(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -361,7 +453,8 @@ func TestOAuthViewerCannotObtainOperateGrant(t *testing.T) {
 	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
 		t.Fatal(err)
 	}
-	handler := newTestServer(db, "test-secret", "").Handler()
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
 	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	admin := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 	request(t, handler, http.MethodPost, "/api/v2/ui/users", admin, map[string]any{"username": "viewer", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
@@ -375,8 +468,15 @@ func TestOAuthViewerCannotObtainOperateGrant(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+viewer)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, req)
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("viewer operate authorization status=%d body=%s", response.Code, response.Body.String())
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "授权成功") {
+		t.Fatalf("viewer authorization status=%d body=%s", response.Code, response.Body.String())
+	}
+	grants, err := db.ListOAuthGrants(context.Background())
+	if err != nil || len(grants) != 1 {
+		t.Fatalf("grants=%#v err=%v", grants, err)
+	}
+	if grants[0].AccessLevel != "read" {
+		t.Fatalf("viewer grant access level=%q, want read", grants[0].AccessLevel)
 	}
 }
 
@@ -540,14 +640,14 @@ func TestMCPPlanValidateSubmitWorkflow(t *testing.T) {
 		"validation_digest":   planDigest,
 		"idempotency_key":     "submit-flow-test-001",
 		"reason":              "onboard PH from plan",
-		"approval_preference": "request_approval",
+		"approval_preference": "use_preapproval_if_available",
 	}})
 	if err != nil || submitResult.IsError {
 		t.Fatalf("submit error=%v result=%#v", err, submitResult)
 	}
 	submitJSON, _ := json.Marshal(submitResult.StructuredContent)
 	body := string(submitJSON)
-	for _, fragment := range []string{`"schema_version":"2"`, `"changeset_id":"chg_`, `"workflow_id":"wf_`, `"approval_required"`} {
+	for _, fragment := range []string{`"schema_version":"2"`, `"changeset_id":"chg_`, `"workflow_id":"wf_`, `"changeset_status":"succeeded"`} {
 		if !strings.Contains(body, fragment) {
 			t.Fatalf("submit output missing %q: %s", fragment, body)
 		}
@@ -557,8 +657,8 @@ func TestMCPPlanValidateSubmitWorkflow(t *testing.T) {
 	if err != nil || len(changesets) != 1 {
 		t.Fatalf("changesets=%#v err=%v", changesets, err)
 	}
-	if changesets[0].Status != model.ChangesetAwaitingApproval {
-		t.Fatalf("changeset status=%s, want awaiting_approval", changesets[0].Status)
+	if changesets[0].Status != model.ChangesetSucceeded {
+		t.Fatalf("changeset status=%s, want succeeded", changesets[0].Status)
 	}
 }
 
@@ -716,7 +816,7 @@ func TestOAuthAuthorizationCodePKCESingleUseAndCoarseScopes(t *testing.T) {
 	verifier := strings.Repeat("a", 43)
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-	form := url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {"oboard:read oboard:operate offline_access"}, "state": {"state-test"}, "resource": {"https://panel.example.com/mcp"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}, "decision": {"approve"}, "server_mode": {"all"}, "user_mode": {"all"}, "auto_approve_risk": {"2"}}
+	form := url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {"oboard:read offline_access"}, "state": {"state-test"}, "resource": {"https://panel.example.com/mcp"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}, "decision": {"approve"}}
 	authorize := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
 	authorize.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	authorize.Header.Set("Authorization", "Bearer "+sessionToken)
@@ -846,9 +946,14 @@ func TestOAuthConsentPageRendersWithPreview(t *testing.T) {
 		t.Fatalf("consent status=%d body=%s", response.Code, response.Body.String())
 	}
 	body := response.Body.String()
-	for _, fragment := range []string{"只读与分析", "管理操作（完整 MCP 权限）", "完整 MCP 权限不等于 OBoard 管理员权限", "允许创建新服务器", "实际能力预览", "auto_approve_risk", "servers.onboard"} {
+	for _, fragment := range []string{"继承当前账号权限", "继承管理员权限", "账号角色变更会立即生效", "Changeset", "Workflow", "实际能力预览", "servers.onboard"} {
 		if !strings.Contains(body, fragment) {
 			t.Fatalf("consent page missing %q", fragment)
+		}
+	}
+	for _, fragment := range []string{`name="access_level"`, `name="server_mode"`, `name="user_mode"`, `name="auto_approve_risk"`} {
+		if strings.Contains(body, fragment) {
+			t.Fatalf("consent page still contains secondary permission control %q", fragment)
 		}
 	}
 }

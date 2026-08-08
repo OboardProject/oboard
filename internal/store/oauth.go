@@ -127,8 +127,9 @@ func scanOAuthClient(scanner interface{ Scan(...any) error }) (*model.OAuthClien
 }
 
 // CreateOAuthGrantV2 creates the v2 grant, its audit principal, approval
-// profile, and per-capability approval policies in one transaction. Access
-// level and the versioned resource boundary are the authorization source.
+// profile, and per-capability approval policies in one transaction. Stored
+// access and boundary fields are compatibility projections; MCP authorization
+// derives from the owning user's current effective role.
 func (s *Store) CreateOAuthGrantV2(ctx context.Context, grant *model.OAuthGrant, principal *model.APIPrincipal, profile *model.OAuthApprovalProfile, policies []model.ApprovalPolicy) error {
 	principalScopes, err := json.Marshal(principal.Scopes)
 	if err != nil {
@@ -369,8 +370,8 @@ func (s *Store) AuthenticateMCPAccessToken(ctx context.Context, tokenHash, resou
 
 // AuthenticateOAuthAccessToken is the legacy REST-oriented resolver used by the
 // generic apiAuth path and older tests. It verifies the token, grant, client,
-// and user and returns the API principal with grant-derived scopes. MCP now
-// uses AuthenticateMCPAccessToken + ResolveActiveGrant instead.
+// and user and returns the API principal. MCP uses
+// AuthenticateMCPAccessToken + ResolveActiveGrant instead.
 func (s *Store) AuthenticateOAuthAccessToken(ctx context.Context, tokenHash string, at time.Time) (*model.APIPrincipal, *model.OAuthToken, *model.OAuthGrant, error) {
 	row := s.db.QueryRowContext(ctx, `select t.token_hash,t.grant_id,t.principal_id,t.client_id,t.user_id,t.resource,t.expires_at,t.revoked_at,t.created_at,p.id,p.owner_user_id,p.name,p.type,p.enabled,p.scopes_json,p.resource_filter_json,p.allowed_cidrs_json,p.rate_limit_per_minute,p.max_concurrency,p.expires_at,p.last_used_at,p.created_at,p.updated_at from oauth_access_tokens t join api_principals p on p.id=t.principal_id where t.token_hash=?`, tokenHash)
 	var token model.OAuthToken
@@ -417,13 +418,14 @@ func (s *Store) AuthenticateOAuthAccessToken(ctx context.Context, tokenHash stri
 // effective role of the owning user. It verifies client and user state so a
 // revoked client or disabled user immediately invalidates every token.
 func (s *Store) ResolveActiveGrant(ctx context.Context, grantID string, at time.Time) (*model.OAuthGrant, model.Role, bool, error) {
-	row := s.db.QueryRowContext(ctx, `select g.id,g.client_id,g.user_id,g.principal_id,g.access_level,g.resource_boundary_v2_json,g.approval_profile_id,p.auto_approve_risk,g.offline_access,g.policy_version,g.role_version,g.consent_version,g.status,g.expires_at,g.revoked_at,g.created_at,c.enabled,u.status from oauth_grants g join oauth_clients c on c.id=g.client_id join users u on u.id=g.user_id join oauth_approval_profiles p on p.id=g.approval_profile_id where g.id=?`, grantID)
+	row := s.db.QueryRowContext(ctx, `select g.id,g.client_id,g.user_id,g.principal_id,g.access_level,g.resource_boundary_v2_json,g.approval_profile_id,p.auto_approve_risk,g.offline_access,g.policy_version,g.role_version,g.consent_version,g.status,g.expires_at,g.revoked_at,g.created_at,c.enabled,u.status,u.role from oauth_grants g join oauth_clients c on c.id=g.client_id join users u on u.id=g.user_id join oauth_approval_profiles p on p.id=g.approval_profile_id where g.id=?`, grantID)
 	var grant model.OAuthGrant
 	var boundary, status, created string
 	var expires, revoked sql.NullString
 	var autoRisk, offline, clientEnabled int
 	var userStatus string
-	if err := row.Scan(&grant.ID, &grant.ClientID, &grant.UserID, &grant.PrincipalID, &grant.AccessLevel, &boundary, &grant.ApprovalProfileID, &autoRisk, &offline, &grant.PolicyVersion, &grant.RoleVersion, &grant.ConsentVersion, &status, &expires, &revoked, &created, &clientEnabled, &userStatus); err != nil {
+	var userRole model.Role
+	if err := row.Scan(&grant.ID, &grant.ClientID, &grant.UserID, &grant.PrincipalID, &grant.AccessLevel, &boundary, &grant.ApprovalProfileID, &autoRisk, &offline, &grant.PolicyVersion, &grant.RoleVersion, &grant.ConsentVersion, &status, &expires, &revoked, &created, &clientEnabled, &userStatus, &userRole); err != nil {
 		return nil, "", false, err
 	}
 	grant.OfflineAccess = offline != 0
@@ -436,7 +438,7 @@ func (s *Store) ResolveActiveGrant(ctx context.Context, grantID string, at time.
 	if grant.RevokedAt != nil || grant.Status != model.OAuthGrantActive || grant.ExpiresAt != nil && !grant.ExpiresAt.After(at) || clientEnabled == 0 || userStatus != "active" {
 		return nil, "", false, sql.ErrNoRows
 	}
-	user := model.User{ID: grant.UserID, Status: userStatus}
+	user := model.User{ID: grant.UserID, Status: userStatus, Role: userRole}
 	effectiveRole, err := s.EffectiveUserRole(ctx, user)
 	if err != nil {
 		return nil, "", false, err

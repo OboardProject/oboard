@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"context"
 	"html/template"
 	"net/http"
 	"slices"
@@ -9,15 +8,9 @@ import (
 	"strings"
 
 	"github.com/OboardProject/oboard/internal/application"
-	"github.com/OboardProject/oboard/internal/authorization"
 	"github.com/OboardProject/oboard/internal/mcpauth"
 	"github.com/OboardProject/oboard/internal/model"
 )
-
-type oauthConsentServer struct {
-	ID   int64
-	Name string
-}
 
 type consentPreviewItem struct {
 	Capability  string
@@ -27,13 +20,13 @@ type consentPreviewItem struct {
 	RiskClass   int
 }
 
-// oauthConsentPreview evaluates the capability catalog for the consenting user
-// at the requested access level so the page shows the real effective
-// capabilities and exact denial reasons instead of a guessed summary.
-func (s *Server) oauthConsentPreview(ctx context.Context, role model.Role, accessLevel mcpauth.AccessLevel, boundary mcpauth.ResourceBoundary) []consentPreviewItem {
+// oauthConsentPreview shows the capabilities inherited from the user's current
+// role. The preview is informational; it does not create a second permission
+// boundary.
+func (s *Server) oauthConsentPreview(role model.Role, accessLevel mcpauth.AccessLevel) []consentPreviewItem {
+	items := make([]consentPreviewItem, 0)
 	principal := application.Principal{AccessLevel: accessLevel, Role: role, Scopes: []string{"*"}}
-	items := make([]consentPreviewItem, 0, len(s.capabilities.List(application.Principal{Scopes: []string{"*"}})))
-	for _, descriptor := range s.capabilities.List(application.Principal{Scopes: []string{"*"}}) {
+	for _, descriptor := range s.capabilities.ListMCP(principal) {
 		if !descriptor.MCPEnabled {
 			continue
 		}
@@ -47,8 +40,6 @@ func (s *Server) oauthConsentPreview(ctx context.Context, role model.Role, acces
 			if descriptor.Executable {
 				if descriptor.RiskClass >= 4 {
 					item.Status, item.Reason = "requires_approval", "风险等级 4 永不自动审批"
-				} else if descriptor.RiskClass > 0 {
-					item.Status, item.Reason = "requires_approval", "需要审批"
 				} else {
 					item.Status = "allowed"
 				}
@@ -56,8 +47,6 @@ func (s *Server) oauthConsentPreview(ctx context.Context, role model.Role, acces
 				item.Status = "allowed"
 			}
 		}
-		_ = boundary
-		_ = principal
 		items = append(items, item)
 	}
 	slices.SortFunc(items, func(a, b consentPreviewItem) int {
@@ -70,70 +59,38 @@ func (s *Server) renderOAuthConsent(w http.ResponseWriter, r *http.Request, requ
 	user := currentUser(r)
 	role := model.RoleNone
 	if user != nil {
-		if effective, err := s.store.EffectiveUserRole(r.Context(), *user); err == nil {
-			role = effective
+		effective, err := s.store.EffectiveUserRole(r.Context(), *user)
+		if err != nil {
+			oauthError(w, http.StatusForbidden, "access_denied", "无法确认当前账号权限")
+			return
 		}
+		role = effective
 	}
-	accessLevel, offline, _ := normalizeRequestedScopes(request.Scope)
-	if r.Form.Has("access_level") {
-		if parsed := mcpauth.ParseAccessLevel(r.Form.Get("access_level")); parsed != "" {
-			accessLevel = parsed
-		}
-	} else if role == model.RoleAdmin || authorization.RoleRank(role) >= 2 {
-		accessLevel = mcpauth.AccessOperate
-	}
-	boundary, _, _ := s.oauthConsentBoundary(r, accessLevel)
+	_, offline, _ := normalizeRequestedScopes(request.Scope)
+	accessLevel := mcpAccessLevelForRole(role)
 	if user != nil {
-		// A GET renders with the requested level; if the user cannot grant it,
-		// the page must fail loudly instead of silently downgrading.
-		checkScope := request.Scope
-		if accessLevel == mcpauth.AccessOperate && !slices.Contains(checkScope, "oboard:operate") {
-			checkScope = append(slices.Clone(checkScope), "oboard:operate")
-		}
-		if err := s.validateOAuthUserGrant(r.Context(), user, checkScope); err != nil {
+		if err := s.validateOAuthUserGrant(r.Context(), user, request.Scope); err != nil {
 			oauthError(w, http.StatusForbidden, "access_denied", err.Error())
 			return
 		}
 	}
-	preview := s.oauthConsentPreview(r.Context(), role, accessLevel, boundary)
-	servers := []oauthConsentServer{}
-	if items, err := s.store.ListServers(r.Context()); err == nil {
-		for _, item := range items {
-			servers = append(servers, oauthConsentServer{ID: item.ID, Name: item.Name})
-		}
-	}
-	allowCreateServers := true
-	if r.Form.Has("allow_create_servers") {
-		allowCreateServers = r.Form.Get("allow_create_servers") == "1"
-	} else if r.Method == http.MethodPost {
-		allowCreateServers = false
-	}
-	userMode := strings.ToLower(strings.TrimSpace(r.Form.Get("user_mode")))
-	if userMode == "" {
-		userMode = "all"
-	}
-	autoRiskStr := "3"
-	if r.Form.Has("auto_approve_risk") {
-		if autoRisk, err := oauthAutoApproveRisk(r.Form.Get("auto_approve_risk")); err == nil {
-			autoRiskStr = strconv.Itoa(autoRisk)
-		}
+	permissionLabel := "继承只读权限"
+	if role == model.RoleAdmin {
+		permissionLabel = "继承管理员权限"
+	} else if role == model.RoleOperator {
+		permissionLabel = "继承操作员权限"
 	}
 	view := oauthConsentView{
-		ClientName:         client.Name,
-		ClientID:           client.ID,
-		RedirectURI:        request.RedirectURI,
-		MetadataSource:     s.clientMetadataSource(client),
-		Resource:           request.Resource,
-		Scopes:             request.Scope,
-		AccessLevel:        string(accessLevel),
-		OfflineAccess:      offline,
-		AllowCreateServers: allowCreateServers,
-		UserMode:           userMode,
-		Username:           "",
-		Servers:            servers,
-		AutoApproveRisk:    autoRiskStr,
-		Preview:            preview,
-		Hidden:             []map[string]string{{"Key": "client_id", "Value": request.ClientID}, {"Key": "redirect_uri", "Value": request.RedirectURI}, {"Key": "response_type", "Value": "code"}, {"Key": "scope", "Value": strings.Join(request.Scope, " ")}, {"Key": "state", "Value": request.State}, {"Key": "resource", "Value": request.Resource}, {"Key": "code_challenge", "Value": request.CodeChallenge}, {"Key": "code_challenge_method", "Value": "S256"}},
+		ClientName:      client.Name,
+		ClientID:        client.ID,
+		RedirectURI:     request.RedirectURI,
+		MetadataSource:  s.clientMetadataSource(client),
+		Resource:        request.Resource,
+		PermissionLabel: permissionLabel,
+		OfflineAccess:   offline,
+		Username:        "",
+		Preview:         s.oauthConsentPreview(role, accessLevel),
+		Hidden:          []map[string]string{{"Key": "client_id", "Value": request.ClientID}, {"Key": "redirect_uri", "Value": request.RedirectURI}, {"Key": "response_type", "Value": "code"}, {"Key": "scope", "Value": strings.Join(request.Scope, " ")}, {"Key": "state", "Value": request.State}, {"Key": "resource", "Value": request.Resource}, {"Key": "code_challenge", "Value": request.CodeChallenge}, {"Key": "code_challenge_method", "Value": "S256"}},
 	}
 	if user != nil {
 		view.Username = user.Username
@@ -165,19 +122,6 @@ h1{margin:0 0 10px;font-size:21px;font-weight:700;line-height:1.35}
 .row+.row{border-top:1px solid var(--border)}
 .row-label{margin-bottom:8px;font-size:11.5px;font-weight:700;letter-spacing:.02em;color:var(--text-muted)}
 .resource{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:12.5px;line-height:1.6;word-break:break-all;color:var(--text-secondary);background:var(--bg-inset);border:1px solid var(--border);border-radius:8px;padding:8px 10px}
-.level{display:flex;flex-direction:column;gap:8px}
-.level-option{border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;gap:10px;align-items:flex-start;cursor:pointer;transition:border-color .15s ease}
-.level-option:has(input:checked){border-color:var(--primary);box-shadow:0 0 0 1px var(--primary) inset}
-.level-option input{margin-top:3px}
-.level-option strong{display:block;font-size:13.5px;margin-bottom:4px}
-.level-option p{margin:0;color:var(--text-secondary);font-size:12px;line-height:1.6}
-.warn-note{margin-top:8px;padding:8px 10px;border-radius:6px;background:var(--warn-bg);color:var(--warn);font-size:12px;line-height:1.55}
-.field{display:grid;gap:7px;margin-top:10px}.field>span{font-size:12px;color:var(--text-secondary)}
-select,input[type=text]{width:100%;min-height:40px;padding:8px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--bg-inset);color:var(--text-primary);font:inherit}
-select:focus-visible,input:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
-.check{display:flex;align-items:flex-start;gap:9px;padding:6px 0;color:var(--text-secondary);line-height:1.5;cursor:pointer}.check input{width:17px;height:17px;margin:2px 0 0;flex:0 0 auto;cursor:pointer}
-.server-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px;max-height:160px;overflow-y:auto;padding:10px 12px;margin:8px 0 4px;background:var(--bg-inset);border:1px solid var(--border);border-radius:6px}
-.server-list .check{padding:3px 0}
 .preview{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;padding:2px 4px 2px 0}
 .preview-item{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;padding:8px 12px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border)}
 .preview-main{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto}
@@ -196,7 +140,7 @@ button.primary:hover{background:var(--primary-hover)}
 button.ghost{background:transparent;color:var(--text-primary);border-color:var(--border-strong)}
 button.ghost:hover{background:var(--primary-soft)}
 .foot{margin-top:20px;text-align:center;color:var(--text-muted);font-size:11.5px;line-height:1.7}
-@media(max-width:600px){body{padding:12px}.card{padding:22px 18px}.server-list{grid-template-columns:1fr}.preview-item{flex-direction:column;align-items:flex-start;gap:6px}.preview-main{width:100%;flex-direction:column;align-items:flex-start;gap:4px}.preview-desc{white-space:normal}.badge{max-width:100%;text-align:left}}
+@media(max-width:600px){body{padding:12px}.card{padding:22px 18px}.preview-item{flex-direction:column;align-items:flex-start;gap:6px}.preview-main{width:100%;flex-direction:column;align-items:flex-start;gap:4px}.preview-desc{white-space:normal}.badge{max-width:100%;text-align:left}}
 </style>
 </head>
 <body>
@@ -207,7 +151,7 @@ button.ghost:hover{background:var(--primary-soft)}
   </div>
   <p class="kicker">OAuth 授权</p>
   <h1>「{{.ClientName}}」请求访问</h1>
-  <p class="sub">该客户端申请以你的账号访问 OBoard MCP 资源。客户端名称、Logo 和描述由客户端提供，可能不可信，请根据 Client ID 与回调地址确认身份。后续操作仍受你的角色、资源边界与审批策略约束。</p>
+  <p class="sub">该客户端申请以你的账号访问 OBoard MCP 资源。客户端名称、Logo 和描述由客户端提供，可能不可信，请根据 Client ID 与回调地址确认身份。</p>
   <div class="panel">
     <div class="row">
       <div class="row-label">目标资源</div>
@@ -218,32 +162,15 @@ button.ghost:hover{background:var(--primary-soft)}
       <div class="resource">{{.ClientID}} · {{.RedirectURI}} · {{.MetadataSource}}</div>
     </div>
     <div class="row">
-      <div class="row-label">访问级别</div>
-      <div class="level">
-        <label class="level-option"><input type="radio" name="access_level" value="read"{{if eq .AccessLevel "read"}} checked{{end}}><span><strong>只读与分析</strong><p>允许客户端读取授权范围内的 OBoard 信息、发现能力、生成计划并验证计划。客户端不能提交 Changeset、启动或控制操作 Workflow。</p></span></label>
-        <label class="level-option"><input type="radio" name="access_level" value="operate"{{if eq .AccessLevel "operate"}} checked{{end}}><span><strong>管理操作（完整 MCP 权限）</strong><p>允许客户端执行当前 OBoard 用户有权执行、且位于所选资源范围内的全部 MCP 操作。所有写操作仍必须经过 Changeset、校验、版本检查和必要审批。此权限不会授予 SSH、Shell、原始 Agent Task、秘密导出、管理员删除或审批绕过能力。</p></span></label>
-      </div>
-      <p class="warn-note">完整 MCP 权限不等于 OBoard 管理员权限。请求 operate 时若你的角色不允许，本次授权会直接失败，不会静默降级为只读。</p>
+      <div class="row-label">继承当前账号权限</div>
+      <div class="resource">{{.PermissionLabel}}</div>
+      <p class="security-note">MCP 与当前账号使用同一套角色权限，不再单独限制读写或资源范围。账号角色变更会立即生效，无需重新授权。</p>
+      <p class="security-note">所有写操作仍通过 Changeset、版本校验、风险审批和 Workflow 执行，不会绕过现有安全规则。</p>
     </div>
-    <div class="row">
-      <div class="row-label">服务器范围</div>
-      <label class="field"><span>允许访问的服务器</span><select name="server_mode" onchange="var el=document.getElementById('server-list-box');if(el)el.style.display=this.value==='selected'?'grid':'none';"><option value="none"{{if eq .ServerMode "none"}} selected{{end}}>不允许访问服务器</option><option value="selected"{{if eq .ServerMode "selected"}} selected{{end}}>仅允许选中的服务器</option><option value="current"{{if eq .ServerMode "current"}} selected{{end}}>允许所有当前服务器</option><option value="all"{{if eq .ServerMode "all"}} selected{{end}}>允许所有当前及未来服务器</option></select></label>
-      {{if .Servers}}<div id="server-list-box" class="server-list" style="display:{{if eq .ServerMode "selected"}}grid{{else}}none{{end}};">{{range .Servers}}<label class="check"><input type="checkbox" name="server_id" value="{{.ID}}"><span>{{.Name}} · #{{.ID}}</span></label>{{end}}</div>{{end}}
-      <label class="check"><input type="checkbox" name="allow_create_servers" value="1"{{if .AllowCreateServers}} checked{{end}}><span>允许创建新服务器并签发一次性接入动作</span></label>
-    </div>
-    <div class="row">
-      <div class="row-label">用户范围</div>
-      <label class="field"><span>允许访问的用户相关资源</span><select name="user_mode"><option value="none"{{if eq .UserMode "none"}} selected{{end}}>不允许访问用户资源</option><option value="all"{{if eq .UserMode "all"}} selected{{end}}>允许当前及未来用户资源</option></select></label>
-    </div>
-    <div class="row">
-      <div class="row-label">刷新令牌</div>
-      <label class="check"><input type="checkbox" name="offline_access" value="1"{{if .OfflineAccess}} checked{{end}}><span>允许客户端在你离线时刷新访问令牌（offline_access）</span></label>
-    </div>
-    <div class="row">
-      <div class="row-label">自动审批</div>
-      <label class="field"><span>本 Grant 可自动批准的最高风险</span><select name="auto_approve_risk"><option value="0"{{if eq .AutoApproveRisk "0"}} selected{{end}}>不自动批准写操作</option><option value="2"{{if eq .AutoApproveRisk "2"}} selected{{end}}>Risk 2 · 普通变更</option><option value="3"{{if eq .AutoApproveRisk "3"}} selected{{end}}>Risk 3 · 受限范围内的部署</option></select></label>
-      <p class="security-note">风险等级 4 永不自动审批。审批策略不会授予新的能力，也不会扩大资源边界。</p>
-    </div>
+    {{if .OfflineAccess}}<div class="row">
+      <div class="row-label">离线访问</div>
+      <p class="security-note">客户端申请了刷新令牌，可在你离线时续期访问；吊销此授权后会立即失效。</p>
+    </div>{{end}}
     <div class="row">
       <div class="row-label">实际能力预览</div>
       <div class="preview">{{range .Preview}}<div class="preview-item"><div class="preview-main"><code class="preview-cap">{{.Capability}}</code><span class="preview-desc">{{.Description}}</span></div>{{if eq .Status "allowed"}}<span class="badge ok">可执行/可读</span>{{else if eq .Status "requires_approval"}}<span class="badge warn">需审批</span>{{else}}<span class="badge deny">{{.Reason}}</span>{{end}}</div>{{end}}</div>
@@ -259,11 +186,6 @@ button.ghost:hover{background:var(--primary-soft)}
 </body>
 </html>`
 	tmpl := template.Must(template.New("consent").Parse(page))
-	serverMode := strings.ToLower(strings.TrimSpace(r.Form.Get("server_mode")))
-	if serverMode == "" {
-		serverMode = "current"
-	}
-	view.ServerMode = serverMode
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = tmpl.Execute(w, view)
@@ -284,22 +206,16 @@ func (s *Server) clientMetadataSource(client *model.OAuthClient) string {
 }
 
 type oauthConsentView struct {
-	ClientName         string
-	ClientID           string
-	RedirectURI        string
-	MetadataSource     string
-	Resource           string
-	Scopes             []string
-	AccessLevel        string
-	OfflineAccess      bool
-	ServerMode         string
-	AllowCreateServers bool
-	UserMode           string
-	Username           string
-	Servers            []oauthConsentServer
-	AutoApproveRisk    string
-	Preview            []consentPreviewItem
-	Hidden             []map[string]string
+	ClientName      string
+	ClientID        string
+	RedirectURI     string
+	MetadataSource  string
+	Resource        string
+	PermissionLabel string
+	OfflineAccess   bool
+	Username        string
+	Preview         []consentPreviewItem
+	Hidden          []map[string]string
 }
 
 func (s *Server) renderOAuthSuccess(w http.ResponseWriter, r *http.Request, redirectURI, state, code, clientName string) {

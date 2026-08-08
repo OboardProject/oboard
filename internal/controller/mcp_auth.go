@@ -65,10 +65,11 @@ func (s *Server) mcpAuth(next http.Handler) http.Handler {
 				return
 			}
 		}
-		boundary := parseResourceBoundary(grant.ResourceBoundaryJSON)
+		accessLevel := mcpAccessLevelForRole(effectiveRole)
+		boundary := s.oauthRoleBoundary(effectiveRole)
 		grantPolicy := mcpauth.GrantPolicy{
 			GrantID: grant.ID, ClientID: grant.ClientID, UserID: strconv.FormatInt(grant.UserID, 10),
-			PrincipalID: grant.PrincipalID, AccessLevel: mcpauth.ParseAccessLevel(grant.AccessLevel),
+			PrincipalID: grant.PrincipalID, AccessLevel: accessLevel,
 			ResourceBoundary: boundary, ApprovalProfile: grant.ApprovalProfileID,
 			ApprovalMaxRisk: grantApprovalMaxRisk(grant), OfflineAccess: grant.OfflineAccess,
 			PolicyVersion: grant.PolicyVersion, RoleVersion: grant.RoleVersion,
@@ -100,10 +101,6 @@ func grantApprovalMaxRisk(grant *model.OAuthGrant) int {
 		return grant.ApprovalProfile.AutoApproveRisk
 	}
 	return 0
-}
-
-func parseResourceBoundary(raw []byte) mcpauth.ResourceBoundary {
-	return mcpauth.ParseBoundary(raw)
 }
 
 func bearerToken(authorization string) (string, bool) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/capability"
+	"github.com/OboardProject/oboard/internal/mcpauth"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
@@ -88,6 +89,28 @@ func TestMachineDeniedApprovalPolicyIsEnforced(t *testing.T) {
 	}
 	if stored.Status != model.ChangesetDraft {
 		t.Fatalf("denied Changeset status=%s", stored.Status)
+	}
+}
+
+func TestLegacyOAuthDeniedPolicyRequiresApprovalInsteadOfRemovingRoleAccess(t *testing.T) {
+	db := openAutomationTestStore(t)
+	principalModel := &model.APIPrincipal{ID: "oauth_legacy_denied", Name: "legacy OAuth", Type: model.APIPrincipalOAuth, Enabled: true, Scopes: []string{"servers:onboard"}, ResourceFilter: json.RawMessage([]byte("{}")), RateLimitPerMinute: 60, MaxConcurrency: 2}
+	if err := db.CreateAPIPrincipal(context.Background(), principalModel); err != nil {
+		t.Fatal(err)
+	}
+	principal := application.Principal{ID: principalModel.ID, Name: principalModel.Name, Type: principalModel.Type, Role: model.RoleAdmin, AccessLevel: mcpauth.AccessOperate, Scopes: principalModel.Scopes, ResourceFilter: principalModel.ResourceFilter}
+	service := NewService(db, capability.NewCatalog())
+	registerAutomationTestCapability(service)
+	if err := db.UpsertApprovalPolicy(context.Background(), &model.ApprovalPolicy{ID: "pol_oauth_legacy_denied", PrincipalID: principal.ID, Capability: "servers.onboard", ResourceFilter: json.RawMessage([]byte("{}")), Mode: model.ApprovalDenied}); err != nil {
+		t.Fatal(err)
+	}
+	item := createAutomationTestChangeset(t, service, principal, "legacy-oauth-denied", json.RawMessage([]byte("{}")))
+	validated, err := service.Validate(context.Background(), principal, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated.Status != model.ChangesetAwaitingApproval {
+		t.Fatalf("legacy OAuth denied policy status=%s, want awaiting approval", validated.Status)
 	}
 }
 
