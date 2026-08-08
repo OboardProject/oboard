@@ -88,6 +88,15 @@ export type GraphPathEdgeLabel = {
 
 export type GraphPathFocusState = 'active' | 'muted' | 'context'
 
+export type GraphFocusScope =
+  | { kind: 'paths'; pathIDs: readonly number[] }
+  | { kind: 'direct-entry'; entryID: number; serverID: number }
+
+export type GraphFocusItem = {
+  id: string
+  pathIDs?: readonly number[]
+}
+
 export function mergeGraphPathIDs(pathIDs: number[] | undefined, pathID: number) {
   return Array.from(new Set([...(pathIDs || []), pathID])).sort((left, right) => left - right)
 }
@@ -124,11 +133,21 @@ export function graphExpandedPathIDsByStep(paths: ProxyPath[], steps: ProxyPathS
   return pathIDsByStepID
 }
 
-export function graphPathFocusState(pathIDs: number[] | undefined, activePathIDs: number[]) {
+export function graphPathFocusState(pathIDs: readonly number[] | undefined, activePathIDs: readonly number[]) {
   if (!activePathIDs.length) return undefined
   if (!pathIDs?.length) return 'context' as const
   const active = new Set(activePathIDs)
   return pathIDs.some(pathID => active.has(pathID)) ? 'active' as const : 'muted' as const
+}
+
+export function graphFocusState(item: GraphFocusItem, scope: GraphFocusScope | undefined): GraphPathFocusState | undefined {
+  if (!scope) return undefined
+  if (scope.kind === 'paths') return graphPathFocusState(item.pathIDs, scope.pathIDs)
+  return item.id === `entry-${scope.entryID}`
+    || item.id === `server-${scope.serverID}`
+    || item.id === `belongs-${scope.entryID}`
+    ? 'active'
+    : 'muted'
 }
 
 function samePathIDs(left: number[], right: number[]) {

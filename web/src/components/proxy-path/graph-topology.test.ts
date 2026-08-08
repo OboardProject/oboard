@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './graph-topology'
+import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphFocusState, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './graph-topology'
 import type { ProxyPath, ProxyPathStep } from './types'
 
 const path = (id: number, inboundID = 10): ProxyPath => ({
@@ -117,5 +117,19 @@ describe('proxy graph shared topology', () => {
     expect(graphPathFocusState([1], [2])).toBe('muted')
     expect(graphPathFocusState([], [2])).toBe('context')
     expect(graphPathFocusState([1], [])).toBeUndefined()
+    expect(graphFocusState({ id: 'trunk', pathIDs: [1, 2] }, { kind: 'paths', pathIDs: [2] })).toBe('active')
+    expect(graphFocusState({ id: 'other-branch', pathIDs: [1] }, { kind: 'paths', pathIDs: [2] })).toBe('muted')
+  })
+
+  it('focuses only a direct entry, its owning server, and their belongs edge', () => {
+    const scope = { kind: 'direct-entry', entryID: 10, serverID: 20 } as const
+
+    expect(graphFocusState({ id: 'entry-10', pathIDs: [] }, scope)).toBe('active')
+    expect(graphFocusState({ id: 'server-20', pathIDs: [1, 2] }, scope)).toBe('active')
+    expect(graphFocusState({ id: 'belongs-10' }, scope)).toBe('active')
+    expect(graphFocusState({ id: 'entry-11', pathIDs: [1, 2] }, scope)).toBe('muted')
+    expect(graphFocusState({ id: 'proxy-server-step-101', pathIDs: [1] }, scope)).toBe('muted')
+    expect(graphFocusState({ id: 'proxy-edge-101', pathIDs: [1] }, scope)).toBe('muted')
+    expect(graphFocusState({ id: 'entry-10', pathIDs: [] }, undefined)).toBeUndefined()
   })
 })

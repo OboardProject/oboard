@@ -50,8 +50,8 @@ import {
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
 import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
 import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
-import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
-import type { GraphPathFocusState } from './components/proxy-path/graph-topology'
+import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphFocusState, graphPathEdgeLabels, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
+import type { GraphFocusScope, GraphPathFocusState } from './components/proxy-path/graph-topology'
 import { roundedOrthogonalPath, type GraphRect } from './components/proxy-path/graph-geometry'
 import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
 import './style.css'
@@ -8062,7 +8062,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const [entryServerQuery, setEntryServerQuery] = useState('')
   const [entryServerRegion, setEntryServerRegion] = useState('all')
   const [focusedPathID, setFocusedPathID] = useState(0)
-  const [hoveredPathIDs, setHoveredPathIDs] = useState<number[]>([])
+  const [hoveredGraphFocus, setHoveredGraphFocus] = useState<GraphFocusScope>()
   const [toolboxPosition, setToolboxPosition] = useState<GraphPosition>(() => loadGraphToolboxPosition())
   const [toolboxDragging, setToolboxDragging] = useState(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
@@ -8120,21 +8120,25 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   useEffect(() => { setNodes(builtFlow.nodes); setEdges(builtFlow.edges) }, [builtFlow])
   useEffect(() => {
     if (focusedPathID && !visibleProxyPaths.some(path => path.id === focusedPathID)) setFocusedPathID(0)
-    setHoveredPathIDs([])
+    setHoveredGraphFocus(undefined)
   }, [selected?.id, visibleProxyPaths.map(path => path.id).join(',')])
-  const activePathIDs = focusedPathID ? [focusedPathID] : hoveredPathIDs
-  const activePathKey = activePathIDs.join(',')
+  const activeGraphFocus = focusedPathID
+    ? { kind: 'paths', pathIDs: [focusedPathID] } as const
+    : hoveredGraphFocus
+  const activeGraphFocusKey = activeGraphFocus?.kind === 'paths'
+    ? `paths:${activeGraphFocus.pathIDs.join(',')}`
+    : activeGraphFocus ? `direct-entry:${activeGraphFocus.entryID}:${activeGraphFocus.serverID}` : ''
   const displayNodes = useMemo(() => {
-    if (!activePathIDs.length) return nodes
+    if (!activeGraphFocus) return nodes
     return nodes.map(node => {
       const pathIDs = (node.data?.pathIDs || []) as number[]
-      const focusState = graphPathFocusState(pathIDs, activePathIDs)!
+      const focusState = graphFocusState({ id: node.id, pathIDs }, activeGraphFocus)!
       return {
         ...node,
         className: `${node.className || ''} path-focus-${focusState}`.trim(),
       }
     })
-  }, [nodes, activePathKey])
+  }, [nodes, activeGraphFocusKey])
   const nodeRoutingGeometryKey = useMemo(() => nodes.map(node => [
     node.id,
     node.positionAbsolute?.x ?? node.position.x,
@@ -8154,7 +8158,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     return routedEdges.map(edge => {
       const data = edge.data as GraphTransportEdgeData | undefined
       const pathIDs = data?.pathIDs || []
-      const focusState = graphPathFocusState(pathIDs, activePathIDs)
+      const focusState = graphFocusState({ id: edge.id, pathIDs }, activeGraphFocus)
       const routingZIndex = data?.routingClass === 'primary' ? 2 : data?.routingClass === 'auxiliary' ? 1 : 0
       return {
         ...edge,
@@ -8163,7 +8167,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         data: data ? { ...data, focusState, onFocusPath: setFocusedPathID } : data,
       }
     })
-  }, [routedEdges, activePathKey])
+  }, [routedEdges, activeGraphFocusKey])
   useEffect(() => {
     if (!selectedServer && servers[0]) setSelectedServer(servers[0].id)
     if (selectedServer && !servers.some(s => s.id === selectedServer) && servers[0]) setSelectedServer(servers[0].id)
@@ -8356,7 +8360,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     const nextServerID = Number(value)
     if (!nextServerID || nextServerID === selected?.id) return
 	setFocusedPathID(0)
-	setHoveredPathIDs([])
+	setHoveredGraphFocus(undefined)
     const laidOut = autoLayoutProxyGraphPositions(data, nextServerID, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances)
     if (Object.keys(laidOut).length) {
       const next = { ...positions, ...laidOut }
@@ -9232,10 +9236,18 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   }
 	  const graphPathIDs = (item: Node | Edge) => ((item.data?.pathIDs || []) as number[])
 	  const previewGraphPaths = (item: Node | Edge) => {
-	    if (!focusedPathID) setHoveredPathIDs(graphPathIDs(item))
+	    if (focusedPathID) return
+	    const pathIDs = graphPathIDs(item)
+	    if (pathIDs.length) {
+	      setHoveredGraphFocus({ kind: 'paths', pathIDs })
+	      return
+	    }
+	    const entity = item.data?.entity as GraphEntity | undefined
+	    const entry = entity?.type === 'entry' ? entries.find(candidate => candidate.id === entity.id) : undefined
+	    setHoveredGraphFocus(entry ? { kind: 'direct-entry', entryID: entry.id, serverID: entry.server_id } : undefined)
 	  }
 	  const stopPreviewingGraphPaths = () => {
-	    if (!focusedPathID) setHoveredPathIDs([])
+	    if (!focusedPathID) setHoveredGraphFocus(undefined)
 	  }
 	  const onNodeClick = (_: React.MouseEvent, _node: Node) => {
 		  setGraphMenu(null)
@@ -9279,7 +9291,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const clearGraphSelection = () => {
 	    closeGraphMenu()
 	    setFocusedPathID(0)
-	    setHoveredPathIDs([])
+	    setHoveredGraphFocus(undefined)
 	  }
   const toggleInspector = () => {
     const next = !inspectorOpen
@@ -9415,7 +9427,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		      value={String(focusedPathID)}
 		      onChange={value => {
 		        setFocusedPathID(Number(value) || 0)
-		        setHoveredPathIDs([])
+		        setHoveredGraphFocus(undefined)
 		        setActiveGraphEntity(null)
 		      }}
 		      options={pathFocusOptions}
