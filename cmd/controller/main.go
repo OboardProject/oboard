@@ -110,6 +110,7 @@ func main() {
 	go app.StartCertificateRenewal(ctx)
 	go app.StartControllerUpdates(ctx)
 	go app.StartControllerBackups(ctx)
+	go app.StartDatabaseMaintenance(ctx)
 	go app.StartAccessChangeWorker(ctx)
 	go app.StartAccessLifecycleWorker(ctx)
 	srv := &http.Server{

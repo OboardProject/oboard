@@ -77,20 +77,21 @@ type trustedProxyState struct {
 type trustedProxyStateContextKey struct{}
 
 type Server struct {
-	store                   *store.Store
-	sessionSecret           string
-	staticDir               string
-	application             *application.Service
-	capabilities            *capability.Catalog
-	automation              *automation.Service
-	auditIntel              *auditintel.Service
-	auditReviews            *auditreview.Service
-	aiModelDiscoveries      *aiModelDiscoveryQueue
-	aiModelDiscoveryTimeout time.Duration
-	aiTests                 *aiTaskQueue[airpc.AITestRequest, aiTestResult]
-	aiTestTimeout           time.Duration
-	apiGateMu               sync.Mutex
-	apiInFlight             map[string]int
+	store                      *store.Store
+	sessionSecret              string
+	staticDir                  string
+	application                *application.Service
+	capabilities               *capability.Catalog
+	automation                 *automation.Service
+	auditIntel                 *auditintel.Service
+	auditReviews               *auditreview.Service
+	aiModelDiscoveries         *aiModelDiscoveryQueue
+	aiModelDiscoveryTimeout    time.Duration
+	aiTests                    *aiTaskQueue[airpc.AITestRequest, aiTestResult]
+	aiTestTimeout              time.Duration
+	apiGateMu                  sync.Mutex
+	apiInFlight                map[string]int
+	databaseMaintenanceStarted atomic.Bool
 	// basePath is the immutable startup fallback for direct test constructors.
 	// Runtime request handling reads basePaths instead.
 	basePath                      string

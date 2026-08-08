@@ -407,7 +407,7 @@ func TestConnectionAuditOnlineDeviceUsesStableIdentity(t *testing.T) {
 	}
 }
 
-func TestConnectionAuditPrunesReportsOutsideRetention(t *testing.T) {
+func TestConnectionAuditMaintenancePrunesReportsOutsideRetention(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
@@ -428,6 +428,9 @@ func TestConnectionAuditPrunesReportsOutsideRetention(t *testing.T) {
 		{ReportID: "current-audit", ServerID: server.ID, UserID: user.ID, SourceIP: "198.51.100.41", Network: "tcp", ConnectionCount: 1, ActivePeak: 1, StartedAt: nowTime.Add(-time.Minute), EndedAt: nowTime},
 	}
 	if _, err := s.AddConnectionAuditReports(ctx, reports); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RunMaintenance(ctx, nowTime); err != nil {
 		t.Fatal(err)
 	}
 	var count int

@@ -78,10 +78,6 @@ func (s *Store) AddConnectionAuditReports(ctx context.Context, reports []model.C
 		accepted = append(accepted, report.ReportID)
 		affectedUsers[report.UserID] = struct{}{}
 	}
-	cutoff := time.Now().UTC().Add(-connectionAuditRetention).Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `delete from connection_audit_reports where ended_at < ?`, cutoff); err != nil {
-		return nil, err
-	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -1264,9 +1260,6 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 			}
 			start = end
 		}
-	}
-	if _, err := tx.ExecContext(ctx, `delete from connection_probe_episodes where ended_at<?`, at.Add(-connectionAuditRetention).UTC().Format(time.RFC3339Nano)); err != nil {
-		return err
 	}
 	return tx.Commit()
 }

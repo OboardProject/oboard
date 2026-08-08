@@ -177,9 +177,6 @@ func (s *Store) authorizeSubscriptionPull(ctx context.Context, userID int64, cre
 		if state.TriggerRisk != nil {
 			decision.Risk = *state.TriggerRisk
 		}
-		if err := pruneSubscriptionAudits(ctx, tx, event.RequestedAt); err != nil {
-			return decision, err
-		}
 		return decision, tx.Commit()
 	}
 	if !options.AuditEnabled {
@@ -223,9 +220,6 @@ func (s *Store) authorizeSubscriptionPull(ctx context.Context, userID int64, cre
 		decision.RateLimited = true
 		decision.RetryAfter = retryAfter
 		decision.Access = state
-		if err := pruneSubscriptionAudits(ctx, tx, event.RequestedAt); err != nil {
-			return decision, err
-		}
 		return decision, tx.Commit()
 	}
 	if risk.HardBlock {
@@ -279,9 +273,6 @@ func (s *Store) authorizeSubscriptionPull(ctx context.Context, userID int64, cre
 		if _, err := tx.ExecContext(ctx, `update user_devices set last_subscription_at=?,updated_at=? where id=? and user_id=?`, event.RequestedAt.Format(time.RFC3339Nano), now(), deviceID, userID); err != nil {
 			return decision, err
 		}
-	}
-	if err := pruneSubscriptionAudits(ctx, tx, event.RequestedAt); err != nil {
-		return decision, err
 	}
 	return decision, tx.Commit()
 }
@@ -568,8 +559,7 @@ func consumeSubscriptionRateBuckets(ctx context.Context, tx *sql.Tx, event model
 			retryAfter = retry
 		}
 	}
-	_, err := tx.ExecContext(ctx, `delete from subscription_rate_buckets where updated_at<?`, event.RequestedAt.Add(-24*time.Hour).Format(time.RFC3339Nano))
-	return limited, retryAfter, err
+	return limited, retryAfter, nil
 }
 
 func consumeSubscriptionRateBucket(ctx context.Context, tx *sql.Tx, key string, capacity int, at time.Time) (bool, time.Duration, error) {
@@ -640,9 +630,6 @@ func (s *Store) addRejectedSubscriptionPullAudit(ctx context.Context, credential
 	if _, err := insertSubscriptionPullAudit(ctx, tx, event); err != nil {
 		return err
 	}
-	if err := pruneSubscriptionAudits(ctx, tx, event.RequestedAt); err != nil {
-		return err
-	}
 	return tx.Commit()
 }
 
@@ -657,11 +644,6 @@ func insertSubscriptionPullAudit(ctx context.Context, tx *sql.Tx, event model.Su
 		return 0, err
 	}
 	return res.LastInsertId()
-}
-
-func pruneSubscriptionAudits(ctx context.Context, tx *sql.Tx, at time.Time) error {
-	_, err := tx.ExecContext(ctx, `delete from subscription_pull_audits where requested_at<?`, at.UTC().Add(-subscriptionAuditRetention).Format(time.RFC3339Nano))
-	return err
 }
 
 func subscriptionEvaluationStart(state model.SubscriptionAccessState, fallback time.Time) string {
