@@ -15,6 +15,13 @@ Thumbs.db
 .vscode/
 *.code-workspace
 
+# --- Local AI agent configuration ---
+/.agents/
+/.claude/
+/.codex/
+/.opencode/
+/.pi/
+
 # --- Secrets / local env ---
 .env
 .env.*
