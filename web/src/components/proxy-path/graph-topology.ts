@@ -73,13 +73,6 @@ export function canonicalProxyPathStep(topology: SharedProxyPathTopology, step: 
   return topology.canonicalStepByID.get(step.id) || step
 }
 
-export type GraphRouteEdge = {
-  id: string
-  source: string
-  target: string
-  auxiliary?: boolean
-}
-
 export type GraphPathMembershipEdge = {
   id: string
   source: string
@@ -138,28 +131,4 @@ export function graphPathEdgeLabels(
     })
   })
   return labels
-}
-
-/** Assigns separate horizontal tracks to edges that fan out from one node. */
-export function graphBranchRouteOffsets(
-  edges: GraphRouteEdge[],
-  targetX: (nodeID: string) => number,
-  spacing = 20,
-  maxSpan = 180,
-) {
-  const offsets = new Map<string, number>()
-  const bySource = new Map<string, GraphRouteEdge[]>()
-  edges.forEach(edge => {
-    if (edge.auxiliary) return
-    bySource.set(edge.source, [...(bySource.get(edge.source) || []), edge])
-  })
-  bySource.forEach(sourceEdges => {
-    if (sourceEdges.length < 2) return
-    const ordered = sourceEdges.slice().sort((left, right) => (
-      targetX(left.target) - targetX(right.target) || left.target.localeCompare(right.target) || left.id.localeCompare(right.id)
-    ))
-    const routeSpacing = Math.min(spacing, maxSpan / (ordered.length - 1))
-    ordered.forEach((edge, index) => offsets.set(edge.id, (index - (ordered.length - 1) / 2) * routeSpacing))
-  })
-  return offsets
 }

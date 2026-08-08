@@ -7,10 +7,9 @@ import {
   normalizeTheme,
   toggleThemeWithTransition,
 } from './theme'
-import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, MarkerType, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getSmoothStepPath, getViewportForBounds, useNodes } from 'reactflow'
+import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, MarkerType, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getViewportForBounds } from 'reactflow'
 import type { EdgeProps, ReactFlowInstance } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { getSmartEdge, pathfindingJumpPointNoDiagonal, svgDrawSmoothLinePath } from '@tisoap/react-flow-smart-edge'
 import type {
   CertificateMode,
   DNSRecordTypes,
@@ -30,6 +29,8 @@ import type {
 import { TransportDialog } from './components/proxy-path/TransportDialog'
 import {
   GRAPH_ENTRY_NODE_WIDTH,
+  GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT,
+  GRAPH_LAYOUT_EXIT_NODE_HEIGHT,
   GRAPH_LAYER_SECONDARY_OFFSET_Y,
   GRAPH_LAYER_SIBLING_GAP,
   defaultEntryGraphPosition,
@@ -37,8 +38,7 @@ import {
   defaultServerGraphPosition,
   graphEntryHandleLeft,
   graphServerNodeWidth,
-  layoutGraphLanes,
-  minimizeGraphLayerCrossings,
+  layoutProxyGraphTopology,
   loadGraphDirectExitInstances,
   loadGraphPositions,
   loadGraphToolboxPosition,
@@ -50,8 +50,10 @@ import {
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
 import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
 import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
-import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphBranchRouteOffsets, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
+import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
 import type { GraphPathFocusState } from './components/proxy-path/graph-topology'
+import { roundedOrthogonalPath, type GraphRect } from './components/proxy-path/graph-geometry'
+import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
 import './style.css'
 import logo from './assets/logo.svg'
 import { 
@@ -8232,19 +8234,35 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       }
     })
   }, [nodes, activePathKey])
+  const nodeRoutingGeometryKey = useMemo(() => nodes.map(node => [
+    node.id,
+    node.positionAbsolute?.x ?? node.position.x,
+    node.positionAbsolute?.y ?? node.position.y,
+    node.width ?? numericNodeStyle(node, 'width') ?? '',
+    node.height ?? numericNodeStyle(node, 'height') ?? '',
+  ].join(':')).sort().join('|'), [nodes])
+  const edgeRoutingKey = useMemo(() => edges.map(edge => {
+    const data = edge.data as GraphTransportEdgeData | undefined
+    return [edge.id, edge.source, edge.target, edge.sourceHandle || '', edge.targetHandle || '', data?.routingClass || ''].join(':')
+  }).sort().join('|'), [edges])
+  const routedEdges = useMemo(
+    () => applyProxyGraphRouting(nodes, edges),
+    [nodeRoutingGeometryKey, edgeRoutingKey, edges],
+  )
   const displayEdges = useMemo(() => {
-    return edges.map(edge => {
+    return routedEdges.map(edge => {
       const data = edge.data as GraphTransportEdgeData | undefined
       const pathIDs = data?.pathIDs || []
       const focusState = graphPathFocusState(pathIDs, activePathIDs)
+      const routingZIndex = data?.routingClass === 'primary' ? 2 : data?.routingClass === 'auxiliary' ? 1 : 0
       return {
         ...edge,
         className: `${edge.className || ''}${focusState ? ` path-focus-${focusState}` : ''}`.trim(),
-        zIndex: focusState === 'active' ? 4 : focusState === 'context' ? 1 : 0,
+        zIndex: focusState === 'active' && data?.routingClass === 'primary' ? 4 : focusState === 'context' ? 1 : routingZIndex,
         data: data ? { ...data, focusState, onFocusPath: setFocusedPathID } : data,
       }
     })
-  }, [edges, activePathKey])
+  }, [routedEdges, activePathKey])
   useEffect(() => {
     if (!selectedServer && servers[0]) setSelectedServer(servers[0].id)
     if (selectedServer && !servers.some(s => s.id === selectedServer) && servers[0]) setSelectedServer(servers[0].id)
@@ -10719,19 +10737,74 @@ function ServerBranchTree({ data, server }: { data: any; server: Server }) {
 }
 
 type GraphTransportKind = 'direct' | 'warp' | 'singbox' | 'port_forward' | 'wireguard' | 'ssh'
-type GraphTransportEdgeData = {
+type GraphTransportEdgeData = GraphRoutingEdgeData & {
   entity?: GraphEntity
   kind: GraphTransportKind
   title: string
   detail?: string
   unhealthy?: boolean
-  routeOffset?: number
   pathIDs?: number[]
   pathLabel?: string
   pathLabelTitle?: string
   pathLabelID?: number
   focusState?: GraphPathFocusState
   onFocusPath?: (pathID: number) => void
+}
+
+function estimatedGraphNodeHeight(node: Node) {
+  if (node.id.startsWith('direct-exit-') || node.id.startsWith('warp-canvas-') || node.id.startsWith('proxy-warp-step-')) {
+    return GRAPH_LAYOUT_EXIT_NODE_HEIGHT
+  }
+  if (node.id.startsWith('entry-')) return 150
+  return GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT
+}
+
+function numericNodeStyle(node: Node, property: 'width' | 'height') {
+  const value = node.style?.[property]
+  if (typeof value === 'number') return value
+  const parsed = Number.parseFloat(String(value || ''))
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function routingRectForNode(node: Node): GraphRect {
+  const left = node.positionAbsolute?.x ?? node.position.x
+  const top = node.positionAbsolute?.y ?? node.position.y
+  const width = node.width ?? numericNodeStyle(node, 'width') ?? GRAPH_ENTRY_NODE_WIDTH
+  const height = node.height ?? numericNodeStyle(node, 'height') ?? estimatedGraphNodeHeight(node)
+  return { left, top, right: left + width, bottom: top + height }
+}
+
+function applyProxyGraphRouting(nodes: Node[], edges: Edge[]): Edge[] {
+  const input = {
+    nodes: nodes.map(node => ({ id: node.id, rect: routingRectForNode(node) })),
+    edges: edges.map(edge => {
+      const data = edge.data as GraphTransportEdgeData | undefined
+      return {
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        routingClass: data?.routingClass || 'auxiliary' as GraphRoutingClass,
+        pathIDs: data?.pathIDs || [],
+      }
+    }),
+  }
+  const result = routeProxyGraph(input)
+  if (import.meta.env.DEV && (
+    result.diagnostics.failedEdgeIDs.length
+    || result.diagnostics.nodeIntersectionEdgeIDs.length
+    || result.diagnostics.overlappingEdgePairs.length
+    || result.diagnostics.crossingPrimaryPairs.length
+  )) console.warn('[proxy-routing] graph invariant violation', result.diagnostics)
+  return edges.map(edge => {
+    const data = edge.data as GraphTransportEdgeData | undefined
+    const routingClass = data?.routingClass || 'auxiliary'
+    return {
+      ...edge,
+      type: 'proxyTransport',
+      zIndex: routingClass === 'primary' ? 2 : routingClass === 'auxiliary' ? 1 : 0,
+      data: data ? { ...data, route: result.routes[edge.id] } : data,
+    }
+  })
 }
 type GraphServerRole = {
   isRoot: boolean
@@ -10758,53 +10831,18 @@ type GraphEntryDetails = {
 
 function ProxyGraphEdge({
   id,
-  sourceX,
-  sourceY,
-  sourcePosition,
-  targetX,
-  targetY,
-  targetPosition,
   markerEnd,
   style,
   data,
 }: EdgeProps<GraphTransportEdgeData>) {
-  const graphNodes = useNodes()
-  const nodeGeometryKey = graphNodes.map(node => [
-    node.id,
-    node.positionAbsolute?.x ?? node.position.x,
-    node.positionAbsolute?.y ?? node.position.y,
-    node.width || 0,
-    node.height || 0,
-  ].join(':')).join('|')
-  const smartPath = useMemo(() => getSmartEdge({
-    sourceX,
-    sourceY,
-    sourcePosition,
-    targetX,
-    targetY,
-    targetPosition,
-    nodes: graphNodes,
-    options: {
-      gridRatio: 12,
-      nodePadding: 16,
-      drawEdge: svgDrawSmoothLinePath,
-      generatePath: pathfindingJumpPointNoDiagonal,
-    },
-  }), [nodeGeometryKey, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition])
-  const [fallbackPath, fallbackLabelX, fallbackLabelY] = getSmoothStepPath({
-    sourceX,
-    sourceY,
-    sourcePosition,
-    targetX,
-    targetY,
-    targetPosition,
-    borderRadius: 8,
-    offset: 24,
-    centerY: data?.routeOffset ? (sourceY + targetY) / 2 + data.routeOffset : undefined,
-  })
-  const path = smartPath?.svgPathString || fallbackPath
-  const labelX = smartPath?.edgeCenterX ?? fallbackLabelX
-  const labelY = smartPath?.edgeCenterY ?? fallbackLabelY
+  const points = data?.route?.points
+  if (!points || points.length < 2) {
+    if (import.meta.env.DEV) console.warn('[proxy-routing] failed to route edge', id)
+    return null
+  }
+  const path = roundedOrthogonalPath(points, 8)
+  const labelX = data.route?.labelPoint?.x
+  const labelY = data.route?.labelPoint?.y
   let phaseHash = 0
   for (let index = 0; index < id.length; index++) phaseHash = (phaseHash * 31 + id.charCodeAt(index)) >>> 0
   const phase = (phaseHash % 2400) / 1000
@@ -10821,7 +10859,7 @@ function ProxyGraphEdge({
         </circle>
       </g>
     )}
-    {data?.pathLabel && <EdgeLabelRenderer>
+    {data?.pathLabel && labelX !== undefined && labelY !== undefined && <EdgeLabelRenderer>
       {data.pathLabelID && data.onFocusPath
         ? <button
             type="button"
@@ -10995,16 +11033,22 @@ function graphTransportEdge(
   options: Partial<Edge> = {},
 ): Edge {
   const color = graphTransportColor(data.kind, data.unhealthy)
+  const routingClass = data.routingClass || 'primary'
   return {
     id,
     source,
     target,
     type: 'proxyTransport',
     animated: false,
-    className: `proxy-transport-edge transport-${data.kind}${data.unhealthy ? ' unhealthy-edge' : ''}`,
-    style: { stroke: color, strokeWidth: 2.8 },
+    className: `proxy-transport-edge routing-${routingClass} transport-${data.kind}${data.unhealthy ? ' unhealthy-edge' : ''}`,
+    style: {
+      stroke: color,
+      strokeWidth: 2.8,
+      ...(routingClass === 'auxiliary' ? { strokeDasharray: '6 5', opacity: 0.62 } : {}),
+    },
     markerEnd: { type: MarkerType.ArrowClosed, color, width: 18, height: 18 },
-    data,
+    zIndex: routingClass === 'primary' ? 2 : routingClass === 'auxiliary' ? 1 : 0,
+    data: { ...data, routingClass },
     ...options,
   }
 }
@@ -11162,16 +11206,21 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       sourceHandle: 'source-bottom',
       target: `server-${x.server_id}`,
       targetHandle: serverEntryTargetHandleID(x.id),
-      label: '所属主机',
-      type: 'smoothstep',
-      pathOptions: { borderRadius: 8, offset: 18 },
+      type: 'proxyTransport',
       animated: false,
       className: 'belongs-edge auxiliary-edge',
       style: { stroke: 'rgba(71, 85, 105, 0.42)', strokeWidth: 1.8, strokeDasharray: '5 5', pointerEvents: 'none' },
       labelStyle: { fill: 'var(--text-strong)', fontSize: 11, fontWeight: 700 },
       labelBgStyle: { fill: 'var(--surface-solid)', fillOpacity: 0.94 },
       labelBgPadding: [4, 2],
-      data: { auxiliary: true },
+      zIndex: 0,
+      data: {
+        kind: 'direct',
+        title: '所属主机',
+        pathLabel: '所属主机',
+        routingClass: 'belongs',
+        auxiliary: true,
+      } satisfies GraphTransportEdgeData,
     })
   })
   ;(data.external_outbounds || []).filter((x: ExternalOutbound) => importedIDs.has(x.id)).forEach((x: ExternalOutbound, i: number) => {
@@ -11292,12 +11341,13 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
           `proxy-path-${path.id}-${step.id}`,
           source,
           target,
-          {
+		  {
             entity: { type: 'proxy-path-step', id: step.id, path_id: path.id, label: `${path.name || `代理路径 ${path.id}`} / 第 ${step.position} 跳` },
             kind: transport.kind,
             title: transport.title,
             detail: index === 0 ? (path.name || root.name || `路径 ${path.id}`) : `第 ${step.position} 跳`,
 			pathIDs: [path.id],
+            routingClass: 'primary',
           },
           { sourceHandle, targetHandle: 'target-top', animated: path.enabled !== false },
 	      ) as Edge<GraphTransportEdgeData>
@@ -11312,12 +11362,13 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
         `proxy-path-direct-${path.id}`,
         source,
         directExitPathNodeID(path.id),
-        {
+	        {
           entity: { type: 'proxy-path', id: path.id, label: path.name || `${root.name || `入口 ${root.id}`} / 直接出口` },
           kind: 'direct',
           title: '直接出口',
           detail: path.name || root.name || `入口 ${root.id}`,
-		  pathIDs: [path.id],
+			  pathIDs: [path.id],
+              routingClass: 'primary',
         },
         { sourceHandle, targetHandle: 'target-top', animated: false },
       ))
@@ -11334,6 +11385,8 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       title: '端口转发',
       detail: `${x.listen_port} → ${x.target_port} · ${probeLabel}`,
       unhealthy: Boolean(probe && !probe.available),
+      routingClass: 'auxiliary',
+      auxiliary: true,
     }, { animated: x.enabled !== false, targetHandle: 'target-top' }))
   })
   ;(data.tunnels || []).forEach((x: Tunnel) => {
@@ -11344,6 +11397,8 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       kind,
       title: x.type === 'wireguard' ? 'WireGuard 组网' : 'SSH 隧道',
       detail: x.listen_port ? `本地端口 ${x.listen_port}` : (x.target_endpoint || x.name),
+      routingClass: 'auxiliary',
+      auxiliary: true,
     }, { animated: x.enabled !== false, targetHandle: 'target-top' }))
   })
   const pathLabels = graphPathEdgeLabels(
@@ -11365,20 +11420,9 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       pathLabelID: label.pathID,
     }
   })
-  const routeOffsets = graphBranchRouteOffsets(
-    edges.map(edge => ({ id: edge.id, source: edge.source, target: edge.target, auxiliary: Boolean(edge.data?.auxiliary) })),
-    targetID => {
-      const target = nodes.find(node => node.id === targetID)
-      const width = target?.width || Number.parseFloat(String(target?.style?.width || '')) || GRAPH_ENTRY_NODE_WIDTH
-      return (target?.position.x || 0) + width / 2
-    },
-  )
   return {
     nodes: nodes.map(node => ({ ...node, type: 'proxyGraphNode' })),
-    edges: edges.map(edge => {
-      const routeOffset = routeOffsets.get(edge.id)
-      return routeOffset === undefined ? edge : { ...edge, data: { ...edge.data, routeOffset } }
-    }),
+    edges,
   }
 }
 
@@ -11680,155 +11724,75 @@ function autoLayoutProxyGraphPositions(
   const entries: Inbound[] = data.inbounds || []
   const rootID = rootServerId || servers[0]?.id || 0
   if (!rootID) return {}
-
-  const inboundByID = new Map<number, Inbound>(entries.map(x => [x.id, x]))
-  const visibleServerIds = reachableServerIds(data, rootID)
-  const visibleImportedIDs = new Set<number>(canvasImportedIDs)
-  const layoutEdges = new Map<string, Set<string>>()
-  const addLayoutHop = (from: string, to: string) => {
-    if (!from || !to || from === to) return
-    if (!layoutEdges.has(from)) layoutEdges.set(from, new Set())
-    layoutEdges.get(from)!.add(to)
-  }
-
-  ;(data.port_forwards || []).forEach((x: PortForward) => {
-    if (x.enabled === false) return
-    addLayoutHop(`server-${x.source_server_id}`, `server-${x.target_server_id}`)
-  })
-  ;(data.tunnels || []).forEach((x: Tunnel) => {
-    if (x.enabled === false) return
-    addLayoutHop(`server-${x.source_server_id}`, `server-${x.target_server_id}`)
-  })
-
-  const stepsByPath = new Map<number, ProxyPathStep[]>()
-  ;(data.proxy_path_steps || []).forEach((step: ProxyPathStep) => {
-    const list = stepsByPath.get(step.path_id) || []
-    list.push(step)
-    stepsByPath.set(step.path_id, list)
-  })
-  const stepByID = new Map<number, ProxyPathStep>(((data.proxy_path_steps || []) as ProxyPathStep[]).map(step => [step.id, step]))
-  const pathByID = new Map<number, ProxyPath>(((data.proxy_paths || []) as ProxyPath[]).map(path => [path.id, path]))
-  const visiblePaths = ((data.proxy_paths || []) as ProxyPath[]).filter(path => {
-    const root = inboundByID.get(path.inbound_id)
-    return path.enabled !== false && root?.server_id === rootID
-  })
-  const sharedTopology = buildSharedProxyPathTopology(visiblePaths, data.proxy_path_steps || [])
-  const stepNodeID = (step: ProxyPathStep) => proxyPathStepNodeID(canonicalProxyPathStep(sharedTopology, step))
-
-  visiblePaths.forEach(path => {
-    const root = inboundByID.get(path.inbound_id)
-    if (!root) return
-    const branchSource = path.kind === 'direct' && path.branch_source_step_id
-      ? stepByID.get(path.branch_source_step_id)
-      : undefined
-    const branchSourcePath = branchSource ? pathByID.get(branchSource.path_id) : undefined
-    const collapsedSource = branchSource && branchSourcePath?.enabled !== false && branchSourcePath?.inbound_id === path.inbound_id
-      ? branchSource
-      : undefined
-    let previousNodeID = collapsedSource ? stepNodeID(collapsedSource) : `server-${root.server_id}`
-    const pathSteps = (stepsByPath.get(path.id) || []).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
-    if (!collapsedSource) pathSteps.forEach(step => {
-      const nextNodeID = stepNodeID(step)
-      if (!nextNodeID) return
-      addLayoutHop(previousNodeID, nextNodeID)
-      previousNodeID = nextNodeID
-    })
-    if (path.kind === 'direct') addLayoutHop(previousNodeID, directExitPathNodeID(path.id))
-  })
-
-  // Calculate hop depth across both controlled servers and imported proxies so
-  // mixed paths such as A -> SOCKS -> B stay in one vertical sequence.
   const rootNodeID = `server-${rootID}`
-	canvasDirectExitInstances
-	  .filter(instance => instance.root_server_id === rootID)
-	  .forEach(instance => addLayoutHop(rootNodeID, canvasDirectExitNodeID(instance)))
-	canvasWARPInstances
-	  .filter(instance => instance.root_server_id === rootID)
-	  .forEach(instance => addLayoutHop(rootNodeID, canvasWARPNodeID(instance)))
-  const depth = new Map<string, number>([[rootNodeID, 0]])
-  const queue = [rootNodeID]
-  while (queue.length) {
-    const cur = queue.shift()!
-    for (const next of layoutEdges.get(cur) || []) {
-      const nextDepth = (depth.get(cur) || 0) + 1
-      if (!depth.has(next) || nextDepth < (depth.get(next) || 0)) {
-        depth.set(next, nextDepth)
-        queue.push(next)
-      }
-    }
-  }
-  visibleServerIds.forEach(id => { if (!depth.has(`server-${id}`)) depth.set(`server-${id}`, id === rootID ? 0 : 1) })
-  visibleImportedIDs.forEach(id => { if (!depth.has(`imported-${id}`)) depth.set(`imported-${id}`, 1) })
-  canvasServerInstances.forEach(instance => depth.set(canvasServerNodeID(instance), 1))
-
-  const layers = new Map<number, string[]>()
-  Array.from(depth.entries())
-    .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
-    .forEach(([nodeID, d]) => {
-      const list = layers.get(d) || []
-      list.push(nodeID)
-      layers.set(d, list)
-    })
-
-  const CENTER_X = 760
-  const ORIGIN_Y = 300
-  const LAYER_GAP = 370
-  const positions: Record<string, GraphPosition> = {}
-  const nodeWidth = (nodeID: string) => {
-	if (nodeID.startsWith('direct-exit-path-') || nodeID.startsWith('direct-exit-canvas-') || nodeID.startsWith('proxy-warp-step-') || nodeID.startsWith('warp-canvas-')) return 220
-    if (nodeID.startsWith('proxy-imported-step-') || nodeID.startsWith('imported-')) return GRAPH_ENTRY_NODE_WIDTH
-    const serverID = graphNodeServerId(nodeID, data, canvasServerInstances)
-    if (!serverID) return GRAPH_ENTRY_NODE_WIDTH
-    if (!nodeID.startsWith('server-') && !nodeID.startsWith('canvas-server-')) return GRAPH_ENTRY_NODE_WIDTH
-    const entryCount = entries.filter(x => x.server_id === serverID && x.enabled !== false).length
-    return graphServerNodeWidth(Math.max(1, entryCount))
-  }
-  const nodeLabel = (nodeID: string) => {
-	if (nodeID.startsWith('direct-exit-path-') || nodeID.startsWith('direct-exit-canvas-')) return '直接出口'
-    const serverID = graphNodeServerId(nodeID, data, canvasServerInstances)
-    if (serverID) {
-      return servers.find(server => server.id === serverID)?.name || nodeID
-    }
-    const stepID = nodeID.startsWith('proxy-imported-step-') ? Number(nodeID.slice(20)) : 0
-    const step = stepID ? ((data.proxy_path_steps || []) as ProxyPathStep[]).find(item => item.id === stepID) : undefined
-    const importedID = step?.external_outbound_id || (nodeID.startsWith('imported-') ? Number(nodeID.slice(9)) : 0)
-    return (data.external_outbounds || []).find((outbound: ExternalOutbound) => outbound.id === importedID)?.name || nodeID
-  }
-
-  const layerEntries = Array.from(layers.entries()).sort((a, b) => a[0] - b[0])
-  const compareNodes = (a: string, b: string) => nodeLabel(a).localeCompare(nodeLabel(b), 'zh') || a.localeCompare(b)
-  const orderedLayers = minimizeGraphLayerCrossings(
-    layerEntries.map(([, nodeIDs]) => nodeIDs),
-    Array.from(layoutEdges.entries()).flatMap(([source, targets]) => Array.from(targets, target => ({ source, target }))),
-    compareNodes,
+  const flow = editableProxyFlow(
+    data,
+    {},
+    rootID,
+    canvasImportedIDs,
+    canvasServerInstances,
+    canvasDirectExitInstances,
+    canvasWARPInstances,
   )
+  const nodeByID = new Map(flow.nodes.map(node => [node.id, node]))
+  const primaryEdges = flow.edges.filter(edge => (edge.data as GraphTransportEdgeData | undefined)?.routingClass === 'primary')
+  const primaryNodeIDs = new Set<string>([rootNodeID])
+  primaryEdges.forEach(edge => {
+    primaryNodeIDs.add(edge.source)
+    primaryNodeIDs.add(edge.target)
+  })
+  const primaryNodes = Array.from(primaryNodeIDs).sort().flatMap(nodeID => {
+    const node = nodeByID.get(nodeID)
+    if (!node) return []
+    return [{
+      id: node.id,
+      width: node.width ?? numericNodeStyle(node, 'width') ?? GRAPH_ENTRY_NODE_WIDTH,
+      height: node.height ?? numericNodeStyle(node, 'height') ?? estimatedGraphNodeHeight(node),
+    }]
+  })
+  const layout = layoutProxyGraphTopology(
+    primaryNodes,
+    primaryEdges.map(edge => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      pathIDs: ((edge.data as GraphTransportEdgeData | undefined)?.pathIDs || []).slice().sort((left, right) => left - right),
+    })),
+    rootNodeID,
+  )
+  const positions: Record<string, GraphPosition> = { ...layout.positions }
 
-  const graphLayoutEdges = Array.from(layoutEdges.entries())
-    .flatMap(([source, targets]) => Array.from(targets, target => ({ source, target })))
-  const orderedLayerNodes = orderedLayers.map(ordered => ordered.map(nodeID => ({
-    id: nodeID,
-    width: nodeWidth(nodeID),
-    terminal: !(layoutEdges.get(nodeID)?.size),
-  })))
-  const lanePositions = layoutGraphLanes(orderedLayerNodes, graphLayoutEdges, CENTER_X, ORIGIN_Y, LAYER_GAP)
-  orderedLayerNodes.forEach(layer => {
-    layer.forEach(({ id: nodeID, width }) => {
-      const nodePosition = lanePositions[nodeID]
-      positions[nodeID] = nodePosition
-      const serverID = graphNodeServerId(nodeID, data, canvasServerInstances)
-      if (!serverID) return
-      const serverEntries = entries
-        .filter(x => x.server_id === serverID && x.enabled !== false)
-        .slice()
-        .sort((a, b) => (a.port - b.port) || (a.id - b.id))
-      if (!nodeID.startsWith('server-')) return
-      serverEntries.forEach((entry, entryIndex) => {
-        if (entry.server_id !== rootID) return
-        positions[`entry-${entry.id}`] = defaultEntryGraphPosition(nodePosition, entryIndex, Math.max(1, serverEntries.length), width)
-      })
+  const primaryRight = primaryNodes.length
+    ? Math.max(...primaryNodes.map(node => positions[node.id].x + node.width))
+    : 760 + GRAPH_ENTRY_NODE_WIDTH / 2
+  const infrastructure = flow.nodes
+    .filter(node => !primaryNodeIDs.has(node.id) && !node.id.startsWith('entry-'))
+    .slice()
+    .sort((left, right) => left.id.localeCompare(right.id))
+  const infrastructureStartX = primaryRight + 240
+  const infrastructureColumns = 3
+  const infrastructureColumnWidth = GRAPH_ENTRY_NODE_WIDTH + 80
+  const infrastructureRowHeight = GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT + 64
+  infrastructure.forEach((node, index) => {
+    positions[node.id] = snapGraphPosition({
+      x: infrastructureStartX + (index % infrastructureColumns) * infrastructureColumnWidth,
+      y: 300 + Math.floor(index / infrastructureColumns) * infrastructureRowHeight,
     })
   })
 
+  const rootEntries = entries
+    .filter(entry => entry.server_id === rootID && entry.enabled !== false)
+    .slice()
+    .sort((left, right) => left.port - right.port || left.id - right.id)
+  const rootPosition = positions[rootNodeID]
+  if (rootPosition) rootEntries.forEach((entry, index) => {
+    positions[`entry-${entry.id}`] = defaultEntryGraphPosition(
+      rootPosition,
+      index,
+      Math.max(1, rootEntries.length),
+      primaryNodes.find(node => node.id === rootNodeID)?.width || GRAPH_ENTRY_NODE_WIDTH,
+    )
+  })
   return positions
 }
 

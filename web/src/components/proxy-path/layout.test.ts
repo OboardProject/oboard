@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { GRAPH_ENTRY_NODE_WIDTH, defaultEntryGraphPosition, graphEntryHandleLeft, graphServerNodeWidth, layoutGraphLanes, minimizeGraphLayerCrossings } from './layout'
+import { GRAPH_ENTRY_NODE_WIDTH, defaultEntryGraphPosition, graphEntryHandleLeft, graphServerNodeWidth, layoutProxyGraphTopology, minimizeGraphLayerCrossings } from './layout'
 
 describe('proxy graph server layout', () => {
   it('keeps server cards fixed width regardless of inbound count', () => {
@@ -46,106 +46,32 @@ describe('proxy graph server layout', () => {
     expect(layers[2]).toEqual(['right-child', 'left-child'])
   })
 
-  it('keeps the primary continuation in its parent lane', () => {
-    const positions = layoutGraphLanes(
-      [
-        [{ id: 'root', width: 260, terminal: false }],
-        [
-          { id: 'main', width: 260, terminal: false },
-          { id: 'branch', width: 260, terminal: false },
-        ],
-        [
-          { id: 'main-child', width: 260, terminal: true },
-          { id: 'branch-child', width: 260, terminal: true },
-        ],
-      ],
-      [
-        { source: 'root', target: 'main' },
-        { source: 'root', target: 'branch' },
-        { source: 'main', target: 'main-child' },
-        { source: 'branch', target: 'branch-child' },
-      ],
-      760,
-      300,
-      370,
+  it('keeps every primary sibling on one rank without wrapping', () => {
+    const children = Array.from({ length: 20 }, (_, index) => ({ id: `child-${index}`, width: 260, height: 220 }))
+    const result = layoutProxyGraphTopology(
+      [{ id: 'root', width: 260, height: 220 }, ...children],
+      children.map((child, index) => ({ id: `edge-${index}`, source: 'root', target: child.id, pathIDs: [index + 1] })),
+      'root',
     )
-
-    expect(positions.root.x).toBe(positions.main.x)
-    expect(positions.main.x).toBe(positions['main-child'].x)
-    expect(positions.branch.x).toBe(positions['branch-child'].x)
-    expect(positions.branch.x).toBeGreaterThan(positions.main.x)
+    const childY = children.map(child => result.positions[child.id].y)
+    expect(new Set(childY).size).toBe(1)
+    expect(result.bands['child-19'].left).toBeGreaterThan(result.bands['child-0'].right)
+    expect(result.layerChannels[0].bottom - result.layerChannels[0].top).toBeGreaterThan(120)
   })
 
-  it('keeps chain nodes on the upper row and packs terminal exits below', () => {
-    const positions = layoutGraphLanes(
-      [
-        [{ id: 'root', width: 260, terminal: false }],
-        [
-          { id: 'exit-1', width: 260, terminal: true },
-          { id: 'relay-a', width: 260, terminal: false },
-          { id: 'exit-2', width: 260, terminal: true },
-          { id: 'relay-b', width: 260, terminal: false },
-          { id: 'exit-3', width: 260, terminal: true },
-        ],
-        [
-          { id: 'leaf-a', width: 260, terminal: true },
-          { id: 'leaf-b', width: 260, terminal: true },
-        ],
-      ],
-      [
-        { source: 'root', target: 'exit-1' },
-        { source: 'root', target: 'relay-a' },
-        { source: 'root', target: 'exit-2' },
-        { source: 'root', target: 'relay-b' },
-        { source: 'root', target: 'exit-3' },
-        { source: 'relay-a', target: 'leaf-a' },
-        { source: 'relay-b', target: 'leaf-b' },
-      ],
-      760,
-      300,
-      370,
-    )
-
-    expect(positions['relay-a'].y).toBe(670)
-    expect(positions['relay-b'].y).toBe(670)
-    expect(positions['exit-1'].y).toBe(860)
-    expect(positions['exit-2'].y).toBe(860)
-    expect(positions['exit-3'].y).toBe(860)
-    expect(positions['leaf-a'].y).toBe(1230)
-    expect(positions['leaf-b'].y).toBe(1230)
-    expect(positions['relay-b'].x).toBeGreaterThan(positions['relay-a'].x)
-    expect(positions['exit-2'].x).toBeGreaterThan(positions['exit-1'].x)
-    expect(positions['exit-3'].x).toBeGreaterThan(positions['exit-2'].x)
-  })
-
-  it('splits all-terminal wide layers contiguously with a half-column offset', () => {
-    const children = Array.from({ length: 6 }, (_, index) => ({
-      id: `child-${index + 1}`,
-      width: 260,
-      terminal: true,
-    }))
-    const positions = layoutGraphLanes(
-      [
-        [{ id: 'root', width: 260, terminal: false }],
-        children,
-      ],
-      children.map(child => ({ source: 'root', target: child.id })),
-      760,
-      300,
-      370,
-    )
-
-    const upper = children.slice(0, 3).map(child => positions[child.id])
-    const lower = children.slice(3).map(child => positions[child.id])
-    expect(upper.every(position => position.y === 670)).toBe(true)
-    expect(lower.every(position => position.y === 860)).toBe(true)
-    expect(upper.map(position => position.x)).toEqual(upper.map(position => position.x).slice().sort((left, right) => left - right))
-    expect(lower.map(position => position.x)).toEqual(lower.map(position => position.x).slice().sort((left, right) => left - right))
-    const upperCenters = upper.map(position => position.x + 130)
-    const lowerCenters = lower.map(position => position.x + 130)
-    expect(lowerCenters.every(center => !upperCenters.includes(center))).toBe(true)
-    const singleRowWidth = 6 * 260 + 5 * 100
-    const compactWidth = Math.max(...children.map(child => positions[child.id].x + 260)) - Math.min(...children.map(child => positions[child.id].x))
-    expect(compactWidth).toBeLessThan(singleRowWidth)
+  it('uses longest-path ranks and subtree bands deterministically', () => {
+    const nodes = ['root', 'a', 'b', 'c', 'd'].map(id => ({ id, width: 260, height: 220 }))
+    const edges = [
+      { id: 'root-a', source: 'root', target: 'a', pathIDs: [1, 2] },
+      { id: 'a-b', source: 'a', target: 'b', pathIDs: [1] },
+      { id: 'a-c', source: 'a', target: 'c', pathIDs: [2] },
+      { id: 'b-d', source: 'b', target: 'd', pathIDs: [1] },
+    ]
+    const first = layoutProxyGraphTopology(nodes, edges, 'root')
+    const second = layoutProxyGraphTopology(nodes, edges, 'root')
+    expect(first).toEqual(second)
+    expect(first.ranks).toMatchObject({ root: 0, a: 1, b: 2, c: 2, d: 3 })
+    expect(first.bands.b.right).toBeLessThan(first.bands.c.left)
+    expect(first.positions.root.x + 130).toBe(first.bands.root.centerX)
   })
 })

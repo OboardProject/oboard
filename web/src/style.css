@@ -10973,7 +10973,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .flow .react-flow__edge .proxy-edge-casing {
   fill: none;
   stroke: var(--surface-solid);
-  stroke-width: 7px;
+  stroke-width: 5px;
   stroke-linecap: round;
   stroke-linejoin: round;
   opacity: .94;
@@ -11461,6 +11461,12 @@ button.proxy-edge-label:hover { transform: none; border-color: var(--primary); b
 }
 .flow .react-flow__edge[data-auxiliary="true"] .react-flow__edge-path {
   pointer-events: none;
+}
+.flow .react-flow__edge.routing-auxiliary {
+  opacity: .62;
+}
+.flow .react-flow__edge.routing-auxiliary .react-flow__edge-path {
+  stroke-dasharray: 6 5;
 }
 .flow .react-flow__edge.belongs-edge {
   pointer-events: none;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphBranchRouteOffsets, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './graph-topology'
+import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './graph-topology'
 import type { ProxyPath, ProxyPathStep } from './types'
 
 const path = (id: number, inboundID = 10): ProxyPath => ({
@@ -56,29 +56,22 @@ describe('proxy graph shared topology', () => {
     expect(canonicalProxyPathStep(topology, right).id).toBe(101)
   })
 
-  it('keeps route offsets stable in visual target order', () => {
-    const offsets = graphBranchRouteOffsets([
-      { id: 'right', source: 'shared', target: 'warp' },
-      { id: 'left', source: 'shared', target: 'hytron' },
-      { id: 'other', source: 'other', target: 'leaf' },
-    ], nodeID => ({ hytron: 100, warp: 500, leaf: 0 }[nodeID] || 0))
+  it('merges multiple nested shared prefixes and splits only at membership changes', () => {
+    const steps = [
+      step(101, 1, 1, 20), step(102, 1, 2, 30), step(103, 1, 3, 40),
+      step(201, 2, 1, 20), step(202, 2, 2, 30), step(203, 2, 3, 50),
+      step(301, 3, 1, 20), step(302, 3, 2, 60), step(303, 3, 3, 70),
+      step(401, 4, 1, 20), step(402, 4, 2, 60), step(403, 4, 3, 80),
+    ]
+    const topology = buildSharedProxyPathTopology([path(1), path(2), path(3), path(4)], steps)
 
-    expect(offsets.get('left')).toBe(-10)
-    expect(offsets.get('right')).toBe(10)
-    expect(offsets.has('other')).toBe(false)
-  })
-
-  it('bounds route tracks when one shared node has many branches', () => {
-    const edges = Array.from({ length: 47 }, (_, index) => ({
-      id: `edge-${index}`,
-      source: 'shared',
-      target: `target-${index}`,
-    }))
-    const offsets = graphBranchRouteOffsets(edges, nodeID => Number(nodeID.slice(7)))
-    const values = Array.from(offsets.values())
-
-    expect(Math.min(...values)).toBe(-90)
-    expect(Math.max(...values)).toBe(90)
+    expect(topology.stepsByCanonicalID.get(101)?.map(item => item.path_id)).toEqual([1, 2, 3, 4])
+    expect(topology.stepsByCanonicalID.get(102)?.map(item => item.path_id)).toEqual([1, 2])
+    expect(topology.stepsByCanonicalID.get(302)?.map(item => item.path_id)).toEqual([3, 4])
+    expect(canonicalProxyPathStep(topology, steps[4]).id).toBe(102)
+    expect(canonicalProxyPathStep(topology, steps[10]).id).toBe(302)
+    expect(canonicalProxyPathStep(topology, steps[2]).id).toBe(103)
+    expect(canonicalProxyPathStep(topology, steps[5]).id).toBe(203)
   })
 
   it('keeps shared edge path membership sorted and unique', () => {
