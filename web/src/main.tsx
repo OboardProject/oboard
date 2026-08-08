@@ -55,6 +55,7 @@ import type { GraphFocusScope, GraphPathFocusState } from './components/proxy-pa
 import { roundedOrthogonalPath, type GraphRect } from './components/proxy-path/graph-geometry'
 import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
 import './style.css'
+import { Badge } from './components/ui/badge'
 import logo from './assets/logo.svg'
 import { 
   LayoutDashboard, Server as ServerIcon, Workflow, Users as UsersIcon, Link as LinkIcon, 
@@ -7295,8 +7296,67 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
   const isOnline = server.status.toLowerCase() === 'online';
   const timeIssue = getServerTimeIssue(server)
 
+  if (layout === 'list') {
+    const memPercent = server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0
+    return (
+      <MotionCard tag="article" className="server-card server-list-row" hoverEffect={false}>
+        <div className="server-list-identity">
+          <RegionFlag code={serverRegionCode(server)} size={24} />
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <strong className="server-list-name">{server.name || `server-${server.id}`}</strong>
+              <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', display: 'flex', gap: 6, alignItems: 'center', marginTop: 1 }}>
+              <span>#{server.id}</span>
+              <span>·</span>
+              <span>{regionLabel(serverRegionCode(server))}</span>
+              {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
+              {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>时间异常</Badge>}
+            </div>
+          </div>
+        </div>
+
+        <div className="server-list-metric-item">
+          <span className="server-list-metric-label">CPU / 内存</span>
+          <div className="server-list-metric-value">
+            <span style={{ fontWeight: 600 }}>{Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
+            <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>{serverMemoryLabel(server)} ({memPercent}%)</span>
+          </div>
+        </div>
+
+        <div className="server-list-metric-item">
+          <span className="server-list-metric-label">实时速率 / 本周期</span>
+          <div className="server-list-metric-value" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span>⬇ <strong>{formatByteRate(server.network_download_bps || 0)}</strong></span>
+            <span>⬆ <strong>{formatByteRate(server.network_upload_bps || 0)}</strong></span>
+            <span className="muted" style={{ fontSize: 11 }}>{formatBytes((server.traffic_upload_bytes || 0) + (server.traffic_download_bytes || 0))}</span>
+          </div>
+        </div>
+
+        <div className="server-list-metric-item">
+          <span className="server-list-metric-label">公网延时</span>
+          {server.connectivity_probe_enabled ? (
+            <button type="button" className="ghost server-list-latency-btn" onClick={() => onAction('connectivity-details', server)} title="查看 SLA 详情">
+              <strong style={{ fontSize: 13 }}>{server.connectivity_status === 'available' ? `${server.connectivity_latency_ms || 0} ms` : '—'}</strong>
+              <Badge variant={server.connectivity_status === 'available' ? 'success' : 'secondary'} style={{ fontSize: 10, padding: '0 4px' }}>
+                {server.connectivity_status === 'available' ? '可用' : '不可用'}
+              </Badge>
+            </button>
+          ) : (
+            <span className="muted" style={{ fontSize: 12 }}>未配置</span>
+          )}
+        </div>
+
+        <div className="server-list-actions">
+          <ServerActionsDropdown server={server} role={role} onAction={onAction} />
+        </div>
+      </MotionCard>
+    )
+  }
+
   return (
-    <MotionCard tag="article" className={`server-card${layout === 'list' ? ' server-list-card' : ''}`} hoverEffect={false}>
+    <MotionCard tag="article" className="server-card" hoverEffect={false}>
       {/* Header */}
       <div className="server-card-head">
         <div className="server-card-title">

@@ -1462,55 +1462,69 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .server-filter-empty button { min-height: 32px; }
 
-.server-card.server-list-card {
-  display: grid;
-  grid-template-columns: minmax(200px, 0.72fr) minmax(0, 3fr);
-  align-items: stretch;
+.server-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.server-card.server-list-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  box-shadow: none;
+  min-height: 56px;
+  flex-wrap: wrap;
+}
+
+.server-list-identity {
+  display: flex;
+  align-items: center;
   gap: 10px;
-  padding-block: 12px;
+  min-width: 180px;
 }
 
-.server-list-card .server-card-head {
-  align-items: flex-start;
-  padding: 2px 12px 2px 0;
-  border-right: 1px solid var(--border);
-  border-bottom: 0;
+.server-list-name {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text-strong);
 }
 
-.server-list-card .server-meta {
-  grid-template-columns: minmax(150px, 0.7fr) minmax(260px, 1.35fr) minmax(210px, 1fr) !important;
-  align-items: stretch;
+.server-list-metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.server-list-card .server-meta > div {
-  grid-column: auto !important;
-  height: 100%;
-  padding-block: 7px;
-  box-sizing: border-box;
+.server-list-metric-label {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
-.server-list-card .server-meta > .server-telemetry,
-.server-list-card .server-meta > .server-connectivity {
-  gap: 5px;
+.server-list-metric-value {
+  font-size: 13px;
+  color: var(--text-primary);
 }
 
-.server-list-card .server-chart-wrap,
-.server-list-card .server-mini-chart,
-.server-list-card .server-chart-empty {
-  height: 44px;
+.server-list-latency-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  height: auto;
+  border-radius: var(--radius-sm);
 }
 
-@media (max-width: 1180px) {
-  .server-card.server-list-card {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .server-list-card .server-card-head {
-    align-items: center;
-    padding: 0 0 7px;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
+.server-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 @media (max-width: 720px) {
