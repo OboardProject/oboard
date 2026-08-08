@@ -4,9 +4,10 @@ import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
 import { Input } from '../components/ui/input'
-import { Plus, Trash2, RefreshCw, RotateCcw, Ban, Copy, X, Eye } from 'lucide-react'
+import { Plus, Trash2, RefreshCw, RotateCcw, Ban, Copy, X, Eye, Edit3 } from 'lucide-react'
 import { FormField, TrafficLimitInput } from '../components/ui/form-field'
 import { PlanNodeOrderingPanel, type OrderingPlan } from '../components/node-ordering/PlanNodeOrderingPanel'
+import { Skeleton } from '../components/ui/skeleton'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -111,11 +112,14 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
   const [plans, setPlans] = React.useState<Plan[]>(data.subscription_plans || [])
   const [selectedID, setSelectedID] = React.useState<number>(0)
   const [detail, setDetail] = React.useState<any>(null)
+  const [detailLoading, setDetailLoading] = React.useState(false)
   const [detailError, setDetailError] = React.useState('')
   const [tab, setTab] = React.useState<'overview' | 'nodes' | 'ordering' | 'history'>('overview')
   const [createOpen, setCreateOpen] = React.useState(false)
   const [createDraft, setCreateDraft] = React.useState({ name: '', description: '', enabled: true, speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'monthly', traffic_reset_day: 1 })
   const [createNodes, setCreateNodes] = React.useState<PlanNode[]>([])
+  const [editOpen, setEditOpen] = React.useState(false)
+  const [editDraft, setEditDraft] = React.useState({ name: '', description: '', enabled: true, speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'monthly', traffic_reset_day: 1 })
   const [pickerQuery, setPickerQuery] = React.useState('')
   const [pickerResults, setPickerResults] = React.useState<CatalogNode[]>([])
   const [pickerBusy, setPickerBusy] = React.useState(false)
@@ -138,19 +142,28 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
 
   const loadDetail = React.useCallback(async (id: number) => {
     setDetailError('')
+    setDetailLoading(true)
     try {
-      const res = await client.request<any>(`/subscription-plans/${id}`)
-      setDetail(res)
-      setWorkingSettings(res.subscription_plan)
-      setWorkingNodes((res.latest_nodes || []).map((n: any) => ({ node_type: n.node_type, node_id: n.node_id, display_group: n.display_group || '', name: nodeNames[nodeKey(n)] })))
-      setNodePreview(null)
-      const catalog = await client.request<{ nodes: CatalogNode[] }>('/assignable-nodes?page=1&page_size=200')
+      const [res, catalog] = await Promise.all([
+        client.request<any>(`/subscription-plans/${id}`),
+        client.request<{ nodes: CatalogNode[] }>('/assignable-nodes?page=1&page_size=200'),
+      ])
       const names: Record<string, string> = {}
       for (const n of catalog.nodes || []) names[`${n.type}:${n.id}`] = n.name
       setNodeNames(names)
-      setWorkingNodes(list => list.map(n => ({ ...n, name: names[nodeKey(n)] || n.name })))
+      setDetail(res)
+      setWorkingSettings(res.subscription_plan)
+      setWorkingNodes((res.latest_nodes || []).map((n: any) => ({
+        node_type: n.node_type,
+        node_id: n.node_id,
+        display_group: n.display_group || '',
+        name: names[`${n.node_type}:${n.node_id}`] || `${n.node_type}:${n.node_id}`,
+      })))
+      setNodePreview(null)
     } catch (e: any) {
       setDetailError(e?.message || String(e))
+    } finally {
+      setDetailLoading(false)
     }
   }, [client])
 
@@ -185,6 +198,20 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     setPickerResults([])
     setCreateOpen(true)
     void runPickerSearch('')
+  }
+
+  const openEdit = () => {
+    if (!plan) return
+    setEditDraft({
+      name: plan.name || '',
+      description: plan.description || '',
+      enabled: plan.enabled ?? true,
+      speed_limit_mbps: plan.speed_limit_mbps || 0,
+      traffic_limit_bytes: plan.traffic_limit_bytes || 0,
+      traffic_reset_mode: plan.traffic_reset_mode || 'monthly',
+      traffic_reset_day: plan.traffic_reset_day || 1,
+    })
+    setEditOpen(true)
   }
 
   const runPickerSearch = async (query: string) => {
@@ -230,7 +257,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
   }
 
   const saveSettings = async () => {
-    if (!detail || !workingSettings) return
+    if (!detail || !editDraft) return
     setSaveBusy(true)
     setMessage('')
     try {
@@ -238,15 +265,16 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
         method: 'PATCH',
         body: JSON.stringify({
           expected_revision: detail.subscription_plan.lock_version || detail.subscription_plan.revision,
-          name: workingSettings.name,
-          description: workingSettings.description,
-          enabled: workingSettings.enabled,
-          speed_limit_mbps: workingSettings.speed_limit_mbps,
-          traffic_limit_bytes: workingSettings.traffic_limit_bytes,
-          traffic_reset_mode: workingSettings.traffic_reset_mode,
-          traffic_reset_day: workingSettings.traffic_reset_day,
+          name: editDraft.name,
+          description: editDraft.description,
+          enabled: editDraft.enabled,
+          speed_limit_mbps: editDraft.speed_limit_mbps,
+          traffic_limit_bytes: editDraft.traffic_limit_bytes,
+          traffic_reset_mode: editDraft.traffic_reset_mode,
+          traffic_reset_day: editDraft.traffic_reset_day,
         }),
       })
+      setEditOpen(false)
       await loadDetail(selectedID)
       await refreshPlans()
       notify?.('方案信息已保存', 'success')
@@ -263,7 +291,6 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     setNodeBusy(true)
     setMessage('')
     try {
-      const plan = detail.subscription_plan as Plan
       const res = await client.request<{ preview: any; expected_lock_version: number; base_revision_id: number; node_count: number }>(`/subscription-plans/${selectedID}/nodes/preview`, {
         method: 'POST',
         body: JSON.stringify({ op: 'replace', nodes: workingNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id, display_group: n.display_group || '' })) }),
@@ -408,7 +435,6 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     latest_revision_id: plan.latest_revision_id,
     pending_revision_id: plan.pending_revision_id,
   } : null
-  // picker dialog mode: 'create' for new plans, 'nodes' for the nodes tab
   const [pickerPlanMode, setPickerPlanMode] = React.useState<'create' | 'nodes'>('create')
   const [pickerOpen, setPickerOpen] = React.useState(false)
 
@@ -442,7 +468,9 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                   <td>{p.node_count ?? '—'}</td>
                   <td>{p.speed_limit_mbps > 0 ? `${p.speed_limit_mbps} Mbps` : '不限'}</td>
                   <td>{fmtBytes(p.traffic_limit_bytes)}</td>
-                  <td style={{ textAlign: 'right' }}><Button variant="outline" size="sm" onClick={() => selectPlan(p.id)}>打开</Button></td>
+                  <td style={{ textAlign: 'right' }}>
+                    <Button variant="outline" size="sm" onClick={() => selectPlan(p.id)}>打开</Button>
+                  </td>
                 </tr>
               ))}
               {plans.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 24 }}>还没有方案，点击“新建方案”开始。</td></tr>}
@@ -453,8 +481,38 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
         {detailError && <p style={{ color: 'var(--color-danger)' }}>{detailError}</p>}
         {message && <p style={{ color: message.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{message}</p>}
 
-        {plan && detail && (
-          <div className="card-custom" style={{ padding: 16 }}>
+        {detailLoading && selectedID > 0 && (
+          <div className="card-custom animate-page-in" style={{ padding: 16 }}>
+            <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <Skeleton className="skeleton-line" style={{ width: 140, height: 24, marginBottom: 6 }} />
+                <Skeleton className="skeleton-line" style={{ width: 260, height: 16 }} />
+              </div>
+              <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+                <Skeleton className="skeleton-line" style={{ width: 88, height: 32 }} />
+                <Skeleton className="skeleton-line" style={{ width: 64, height: 32 }} />
+                <Skeleton className="skeleton-line" style={{ width: 64, height: 32 }} />
+              </div>
+            </div>
+            <div className="section-toolbar" style={{ gap: 4, marginTop: 10 }}>
+              <Skeleton className="skeleton-line" style={{ width: 56, height: 28 }} />
+              <Skeleton className="skeleton-line" style={{ width: 56, height: 28 }} />
+              <Skeleton className="skeleton-line" style={{ width: 56, height: 28 }} />
+              <Skeleton className="skeleton-line" style={{ width: 80, height: 28 }} />
+            </div>
+            <div className="plan-info-grid" style={{ marginTop: 14 }}>
+              {[1, 2, 3, 4, 5, 6].map(i => (
+                <div key={i} className="plan-info-item">
+                  <Skeleton className="skeleton-line" style={{ width: '40%', height: 14 }} />
+                  <Skeleton className="skeleton-line" style={{ width: '75%', height: 20 }} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!detailLoading && plan && detail && (
+          <div className="card-custom animate-plan-detail-in" style={{ padding: 16 }}>
             <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
               <div>
                 <h3 style={{ margin: 0 }}>{plan.name}</h3>
@@ -465,6 +523,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                 </p>
               </div>
               <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+                <Button variant="outline" size="sm" onClick={openEdit}><Edit3 size={14} /> 修改方案</Button>
                 <Button variant="outline" size="sm" onClick={() => void clonePlan()}><Copy size={14} /> 复制</Button>
                 {plan.enabled && <Button variant="outline" size="sm" onClick={() => void disablePlan()}><Ban size={14} /> 停用</Button>}
               </div>
@@ -475,40 +534,59 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
               ))}
             </div>
 
-            {tab === 'overview' && workingSettings && (
-              <form className="form settings-form" style={{ marginTop: 12 }} onSubmit={e => { e.preventDefault(); void saveSettings() }}>
-                <FormField label="名称" required>
-                  <Input value={workingSettings.name} onChange={e => setWorkingSettings(d => d ? { ...d, name: e.target.value } : d)} placeholder="例如：标准方案" />
-                </FormField>
-                <FormField label="描述" hint="仅管理端可见的备注。">
-                  <Input value={workingSettings.description} onChange={e => setWorkingSettings(d => d ? { ...d, description: e.target.value } : d)} placeholder="可选" />
-                </FormField>
-                <FormField label="速度上限" hint="0 表示不限速。">
-                  <div className="input-with-unit"><Input type="number" min={0} value={workingSettings.speed_limit_mbps} onChange={e => setWorkingSettings(d => d ? { ...d, speed_limit_mbps: Number(e.target.value) } : d)} /><span>Mbps</span></div>
-                </FormField>
-                <FormField label="流量额度" hint="0 表示不限量，按重置周期统计。">
-                  <TrafficLimitInput bytes={workingSettings.traffic_limit_bytes} onChange={v => setWorkingSettings(d => d ? { ...d, traffic_limit_bytes: v } : d)} />
-                </FormField>
-                <FormField label="重置方式" hint="每月重置会按重置日清空已用流量。">
-                  <Select value={workingSettings.traffic_reset_mode} onChange={e => setWorkingSettings(d => d ? { ...d, traffic_reset_mode: e.target.value } : d)}>
-                    <option value="monthly">每月重置</option><option value="never">不重置</option>
-                  </Select>
-                </FormField>
-                <FormField label="重置日" hint="1–31；仅重置方式为每月重置时生效。">
-                  <div className="input-with-unit"><Input type="number" min={1} max={31} disabled={workingSettings.traffic_reset_mode !== 'monthly'} value={workingSettings.traffic_reset_day} onChange={e => setWorkingSettings(d => d ? { ...d, traffic_reset_day: Number(e.target.value) } : d)} /><span>日</span></div>
-                </FormField>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-                    <input type="checkbox" checked={workingSettings.enabled} onChange={e => setWorkingSettings(d => d ? { ...d, enabled: e.target.checked } : d)} />
-                    启用方案
-                  </label>
-                  <Button size="sm" type="submit" busy={saveBusy} disabled={applying} style={{ marginLeft: 'auto' }}>保存信息</Button>
+            {tab === 'overview' && (
+              <div className="animate-page-in" style={{ marginTop: 12 }}>
+                <div className="plan-info-grid">
+                  <div className="plan-info-item">
+                    <span className="label">方案名称</span>
+                    <span className="value">{plan.name}</span>
+                  </div>
+                  <div className="plan-info-item">
+                    <span className="label">状态</span>
+                    <span className="value">
+                      <Badge variant={plan.enabled ? 'success' : 'secondary'}>{plan.enabled ? '启用' : '已停用'}</Badge>
+                      {plan.pending_revision_id ? <Badge variant="warning" style={{ marginLeft: 4 }}>正在应用</Badge> : null}
+                    </span>
+                  </div>
+                  <div className="plan-info-item">
+                    <span className="label">速度上限</span>
+                    <span className="value">{plan.speed_limit_mbps > 0 ? `${plan.speed_limit_mbps} Mbps` : '不限速'}</span>
+                  </div>
+                  <div className="plan-info-item">
+                    <span className="label">流量额度</span>
+                    <span className="value">{fmtBytes(plan.traffic_limit_bytes)}</span>
+                  </div>
+                  <div className="plan-info-item">
+                    <span className="label">重置方式</span>
+                    <span className="value">
+                      {plan.traffic_reset_mode === 'monthly' ? `每月重置（第 ${plan.traffic_reset_day} 日）` : '不重置'}
+                    </span>
+                  </div>
+                  <div className="plan-info-item">
+                    <span className="label">版本状态</span>
+                    <span className="value">
+                      V{plan.latest_version_no || '—'}
+                      <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>
+                        {plan.current_revision_id === plan.latest_revision_id && !plan.pending_revision_id ? '（当前生效）' : ''}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="plan-info-item" style={{ gridColumn: '1 / -1' }}>
+                    <span className="label">描述</span>
+                    <span className="value" style={{ fontWeight: 400, color: plan.description ? 'var(--text-strong)' : 'var(--muted)' }}>
+                      {plan.description || '无备注说明'}
+                    </span>
+                  </div>
                 </div>
-              </form>
+
+                <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button onClick={openEdit}><Edit3 size={14} /> 修改方案信息</Button>
+                </div>
+              </div>
             )}
 
             {tab === 'nodes' && (
-              <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className="animate-page-in" style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {applying && <p style={{ color: 'var(--color-warning)', margin: 0 }}>有方案版本正在应用，应用完成前不能保存新的节点版本。</p>}
                 <div className="section-toolbar">
                   <div><h3 style={{ margin: 0 }}>节点集合（{workingNodes.length}）</h3><p className="muted">基于最新保存版本编辑；保存后创建不可变新版本，节点变化会走两阶段下发。</p></div>
@@ -550,13 +628,13 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
             )}
 
             {tab === 'ordering' && orderingPlan && (
-              <div style={{ marginTop: 12 }}>
+              <div className="animate-page-in" style={{ marginTop: 12 }}>
                 <PlanNodeOrderingPanel plan={orderingPlan} data={data} client={client} notify={notify} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
               </div>
             )}
 
             {tab === 'history' && (
-              <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div className="animate-page-in" style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <div>
                   <h3 style={{ marginTop: 0 }}>版本历史</h3>
                   <table className="user-data-table" style={{ width: '100%' }}>
@@ -683,6 +761,50 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
         </div>
       </Dialog>
 
+      <Dialog isOpen={editOpen} onClose={() => setEditOpen(false)} title={`修改方案：${plan?.name || ''}`} size="lg">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <p className="muted" style={{ margin: 0 }}>修改方案的基础配置信息。保存后会更新方案配置。</p>
+          <form id="edit-plan-form" className="form" onSubmit={e => { e.preventDefault(); void saveSettings() }}>
+            <FormField label="名称" required>
+              <Input value={editDraft.name} onChange={e => setEditDraft(d => ({ ...d, name: e.target.value }))} placeholder="例如：标准方案" />
+            </FormField>
+            <FormField label="描述" hint="仅管理端可见的备注。">
+              <Input value={editDraft.description} onChange={e => setEditDraft(d => ({ ...d, description: e.target.value }))} placeholder="可选" />
+            </FormField>
+            <FormField label="速度上限" hint="0 表示不限速。">
+              <div className="input-with-unit">
+                <Input type="number" min={0} value={editDraft.speed_limit_mbps} onChange={e => setEditDraft(d => ({ ...d, speed_limit_mbps: Number(e.target.value) }))} />
+                <span>Mbps</span>
+              </div>
+            </FormField>
+            <FormField label="流量额度" hint="0 表示不限量，按重置周期统计。">
+              <TrafficLimitInput bytes={editDraft.traffic_limit_bytes} onChange={v => setEditDraft(d => ({ ...d, traffic_limit_bytes: v }))} />
+            </FormField>
+            <FormField label="重置方式" hint="每月重置会按重置日清空已用流量。">
+              <Select value={editDraft.traffic_reset_mode} onChange={e => setEditDraft(d => ({ ...d, traffic_reset_mode: e.target.value }))}>
+                <option value="monthly">每月重置</option>
+                <option value="never">不重置</option>
+              </Select>
+            </FormField>
+            <FormField label="重置日" hint="1–31；仅重置方式为每月重置时生效。">
+              <div className="input-with-unit">
+                <Input type="number" min={1} max={31} disabled={editDraft.traffic_reset_mode !== 'monthly'} value={editDraft.traffic_reset_day} onChange={e => setEditDraft(d => ({ ...d, traffic_reset_day: Number(e.target.value) }))} />
+                <span>日</span>
+              </div>
+            </FormField>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginTop: 4 }}>
+              <input type="checkbox" id="edit-plan-enabled" checked={editDraft.enabled} onChange={e => setEditDraft(d => ({ ...d, enabled: e.target.checked }))} />
+              <label htmlFor="edit-plan-enabled">启用方案</label>
+            </div>
+          </form>
+          {message && <p style={{ color: 'var(--color-danger)' }}>{message}</p>}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>取消</Button>
+            <Button disabled={!editDraft.name.trim()} busy={saveBusy} type="submit" form="edit-plan-form">保存修改</Button>
+          </div>
+        </div>
+      </Dialog>
+
       <Dialog isOpen={pickerOpen} onClose={() => setPickerOpen(false)} title="添加节点" size="lg">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -740,3 +862,4 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     </div>
   )
 }
+
