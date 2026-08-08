@@ -42,6 +42,11 @@ func (s *Store) GetExternalAction(ctx context.Context, id string) (*ExternalActi
 	return scanExternalAction(row)
 }
 
+func (s *Store) FindExternalActionByWorkflow(ctx context.Context, workflowID string) (*ExternalAction, error) {
+	row := s.db.QueryRowContext(ctx, `select id,grant_id,workflow_id,kind,payload_encrypted,expires_at,consumed_at,created_at from automation_external_actions where workflow_id=? order by created_at desc limit 1`, workflowID)
+	return scanExternalAction(row)
+}
+
 // ConsumeExternalAction returns the payload of an unconsumed, unexpired action
 // exactly once and marks it consumed in the same transaction. The encrypted
 // payload is deleted after the read so a replayed call cannot recover it.

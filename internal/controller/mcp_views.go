@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strings"
 
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/capability"
@@ -163,6 +164,29 @@ func (s *Server) mcpDiscoverData(ctx context.Context, includeDenied, includeSche
 		"workflow_rules":          map[string]any{"write_via_changeset": true, "ssh_supported": false, "shell_supported": false, "admin_deletion_supported": false, "risk4_auto_approval": false},
 		"limits":                  map[string]any{"max_changeset_operations": 64, "changeset_ttl_seconds": 1800, "plan_ttl_seconds": 1800},
 		"recommended_actions":     []string{"Read oboard://auth/grant before planning a change"},
+	}
+}
+
+func (s *Server) mcpDiscoverCompactData(ctx context.Context) map[string]any {
+	principal, _ := mcpPrincipal(ctx)
+	groups := map[string]bool{}
+	for _, descriptor := range s.capabilities.ListMCP(principal) {
+		group, _, _ := strings.Cut(descriptor.Name, ".")
+		groups[group] = true
+	}
+	capabilityGroups := make([]string, 0, len(groups))
+	for group := range groups {
+		capabilityGroups = append(capabilityGroups, group)
+	}
+	sort.Strings(capabilityGroups)
+	recipes := []string{}
+	for _, recipe := range s.mcpRecipes() {
+		recipes = append(recipes, recipe.ID)
+	}
+	return map[string]any{
+		"primary_tool": "oboard_task", "recipes": recipes, "capability_groups": capabilityGroups,
+		"fallback_tools": []string{"oboard_get_capability_schema", "oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_submit_changeset"},
+		"workflow_rules": map[string]any{"write_via_changeset": true, "execution_via_workflow": true, "ssh_supported": false},
 	}
 }
 

@@ -157,7 +157,8 @@ func (s *Server) mcpBootstrapContext(ctx context.Context) (map[string]any, error
 		"controller":               map[string]any{"name": "OBoard", "version": version.Version, "base_path": s.basePathState().Current},
 		"principal":                map[string]any{"name": principal.Name, "client": principal.ClientName, "grant_id": principal.GrantID, "access_level": principal.AccessLevel, "scopes": principal.Scopes},
 		"inventory":                map[string]any{"servers_total": servers, "servers_online": online},
-		"workflow_rules":           map[string]any{"write_via_changeset": true, "ssh_supported": false, "shell_supported": false, "admin_deletion_supported": false, "risk4_auto_approval": false},
-		"recommended_next_actions": []string{"Read oboard://auth/grant and oboard://system/capabilities before planning a change"},
+		"fast_path":                map[string]any{"primary_tool": "oboard_task", "commit_tool": "oboard_commit_task", "advanced_tools_only_after": "fallback_required"},
+		"workflow_rules":           map[string]any{"write_via_changeset": true, "execution_via_workflow": true, "ssh_supported": false, "shell_supported": false, "admin_deletion_supported": false, "risk4_auto_approval": false},
+		"recommended_next_actions": []string{"For a normal request, call oboard_task directly with the user's goal"},
 	}, nil
 }

@@ -119,12 +119,14 @@ func randomTestID() string {
 }
 
 var finalToolNames = []string{
+	"oboard_task", "oboard_commit_task",
 	"oboard_discover", "oboard_get_capability_schema",
 	"oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_submit_changeset",
 	"oboard_get_changeset", "oboard_get_workflow", "oboard_cancel_workflow", "oboard_retry_workflow_step", "oboard_redeem_external_action",
 }
 
 var readToolNames = []string{
+	"oboard_task",
 	"oboard_discover", "oboard_get_capability_schema",
 	"oboard_plan_desired_state", "oboard_validate_desired_state",
 	"oboard_get_changeset", "oboard_get_workflow",
@@ -148,6 +150,16 @@ func TestMCPOperateGrantListsOnlyFinalTools(t *testing.T) {
 	for _, name := range finalToolNames {
 		if _, ok := byName[name]; !ok {
 			t.Fatalf("tools/list is missing %q", name)
+		}
+	}
+	if alwaysLoad, ok := byName["oboard_task"].Meta["anthropic/alwaysLoad"].(bool); !ok || !alwaysLoad {
+		t.Fatalf("oboard_task must advertise anthropic/alwaysLoad: %#v", byName["oboard_task"].Meta)
+	}
+	for name, tool := range byName {
+		if name != "oboard_task" && tool.Meta != nil {
+			if _, ok := tool.Meta["anthropic/alwaysLoad"]; ok {
+				t.Fatalf("tool %q must not advertise anthropic/alwaysLoad", name)
+			}
 		}
 	}
 	for name, tool := range byName {
@@ -187,7 +199,7 @@ func TestMCPReadGrantDoesNotListOperateTools(t *testing.T) {
 			t.Fatalf("read grant tools/list is missing %q", name)
 		}
 	}
-	for _, name := range []string{"oboard_submit_changeset", "oboard_cancel_workflow", "oboard_retry_workflow_step", "oboard_redeem_external_action"} {
+	for _, name := range []string{"oboard_commit_task", "oboard_submit_changeset", "oboard_cancel_workflow", "oboard_retry_workflow_step", "oboard_redeem_external_action"} {
 		if _, ok := byName[name]; ok {
 			t.Fatalf("read grant must not list %q", name)
 		}
@@ -198,7 +210,7 @@ func TestMCPDiscoverReturnsGrantSummary(t *testing.T) {
 	db, _, session, principal, closeServer := newMCPTestEnvironment(t, "operate", []string{"oboard:read", "oboard:operate"})
 	defer closeServer()
 
-	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_discover", Arguments: map[string]any{"include_denied": true}})
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_discover", Arguments: map[string]any{"include_denied": true, "detail_level": "full"}})
 	if err != nil || result.IsError {
 		t.Fatalf("discover error=%v result=%#v", err, result)
 	}
@@ -843,10 +855,13 @@ func TestOAuthConsentPageRendersWithPreview(t *testing.T) {
 
 func TestMCPServerInstructionsStatic(t *testing.T) {
 	instructions := mcpServerInstructions
-	for _, fragment := range []string{"oboard://context/bootstrap", "oboard://auth/grant", "Changeset", "Workflow", "one-time", "approval", "Never request, reveal, persist, repeat, or log"} {
+	for _, fragment := range []string{"oboard_task", "oboard_commit_task", "fallback_required", "Changeset", "Workflow", "one-time", "approval", "Never perform SSH", "Never request, reveal, persist, repeat, or log"} {
 		if !strings.Contains(instructions, fragment) {
 			t.Fatalf("instructions missing %q", fragment)
 		}
+	}
+	if strings.Index(instructions, "oboard_task") > strings.Index(instructions, "Treat every tool result") {
+		t.Fatal("Fast Path guidance must precede general safety detail")
 	}
 }
 

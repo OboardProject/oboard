@@ -258,6 +258,7 @@ func defaultDescriptors() []Descriptor {
 		sensitive      []string
 	}{
 		{"servers.onboard", "servers:onboard", 2, true, DataInternal, nil},
+		{"servers.update", "servers:write", 2, true, DataInternal, nil},
 		{"subscriptions.resume", "subscriptions:resume", 2, true, DataInternal, nil},
 		{"subscriptions.custom_paths.set_alias", "subscriptions:manage", 2, true, DataSensitive, []string{"alias"}},
 		{"subscriptions.custom_paths.set_policy", "subscriptions:manage", 2, true, DataInternal, nil},
@@ -288,6 +289,8 @@ func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRe
 		return serverRefsFromIDs
 	case "servers.onboard":
 		return serverOnboardRefs
+	case "servers.update":
+		return serverUpdateRefs
 	default:
 		return noRefs
 	}
@@ -308,15 +311,30 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 	case "servers.onboard":
 		serverInput := closedObject(map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "region_code": stringValue, "ip_stack": stringValue, "listen_ip": stringValue, "listen_mode": stringValue, "entry_address": stringValue, "port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"}, "udp_inbound_mode": stringValue, "mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"}, "bbr_enabled": boolValue})
 		return schemaObject(map[string]any{"server": serverInput, "issue_enrollment_token": boolValue}, "server"), simpleOutput(map[string]any{"server": serverInput, "enrollment_expires_at": stringValue, "enrollment_token": stringValue}), "servers.allow_create"
+	case "servers.update":
+		changes := closedObject(map[string]any{
+			"name": stringValue, "entry_address": stringValue, "entry_ip_mode": stringValue,
+			"region_mode": stringValue, "region_code": stringValue, "listen_ip": stringValue,
+			"listen_mode": stringValue, "ip_stack": stringValue, "udp_inbound_mode": stringValue,
+			"mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"},
+			"mtu_probe_host": stringValue, "mtu_probe_port": map[string]any{"type": "integer"},
+			"mtu_overhead_bytes": map[string]any{"type": "integer"}, "bbr_enabled": boolValue,
+			"port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"},
+			"internal_port_range_start": map[string]any{"type": "integer"}, "internal_port_range_end": map[string]any{"type": "integer"},
+			"connection_audit_enabled": boolValue, "time_correction_mode": stringValue,
+			"offline_notify_enabled": boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
+		})
+		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "deployments.apply":
 		return schemaObject(map[string]any{"server_ids": idArray(1, 100), "reason": map[string]any{"type": "string", "maxLength": 500}}, "server_ids"), simpleOutput(map[string]any{"deployment": closedObject(map[string]any{"config_version": map[string]any{"type": "integer"}, "server_ids": idArray(0, 100), "status": stringValue})}), "server_ids"
 	case "topology.reuse_inbound":
 		source := closedObject(map[string]any{"inbound_id": positiveID, "step_id": positiveID})
 		return schemaObject(map[string]any{"sources": map[string]any{"type": "array", "minItems": 1, "maxItems": 64, "items": source}, "target_server_id": positiveID, "target_kind": stringValue, "target_inbound_id": positiveID, "chain_protocol": stringValue, "chain_method": stringValue, "reality_handshake_server": stringValue, "reality_handshake_port": map[string]any{"type": "integer"}, "transport_mode": stringValue, "tunnel_type": stringValue, "ssh_port": map[string]any{"type": "integer"}, "persistent_keepalive": map[string]any{"type": "integer"}, "copy_mode": stringValue, "branch_path_id": positiveID}, "sources", "target_server_id", "target_kind"), simpleOutput(map[string]any{"result_path_count": map[string]any{"type": "integer"}, "affected_server_ids": idArray(0, 100), "requires_deployment": boolValue}), "server_ids"
 	case "topology.write":
-		path := closedObject(map[string]any{"kind": stringValue, "name": stringValue, "name_mode": stringValue, "name_template": stringArray(0, 16), "inbound_id": positiveID, "exit_region_mode": stringValue, "exit_region_code": stringValue, "enabled": boolValue})
-		step := closedObject(map[string]any{"node_type": stringValue, "transport_mode": stringValue, "processing_role": boolValue, "server_id": positiveID, "inbound_id": positiveID, "external_outbound_id": positiveID, "tunnel_type": stringValue})
-		return schemaObject(map[string]any{"path": path, "steps": map[string]any{"type": "array", "minItems": 1, "maxItems": 5, "items": step}}, "path", "steps"), simpleOutput(map[string]any{"proxy_path": path, "proxy_path_steps": map[string]any{"type": "array", "items": step}, "requires_deployment": boolValue}), "server_ids"
+		namePart := closedObject(map[string]any{"kind": stringValue, "value": stringValue}, "kind")
+		path := closedObject(map[string]any{"kind": stringValue, "name": stringValue, "name_mode": stringValue, "name_template": map[string]any{"type": "array", "maxItems": 16, "items": namePart}, "inbound_id": positiveID, "exit_region_mode": stringValue, "exit_region_code": stringValue, "enabled": boolValue})
+		step := closedObject(map[string]any{"node_type": stringValue, "transport_mode": stringValue, "processing_role": boolValue, "server_id": positiveID, "inbound_id": positiveID, "external_outbound_id": positiveID, "tunnel_type": stringValue, "ssh_port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535}, "persistent_keepalive": map[string]any{"type": "integer", "minimum": 0, "maximum": 65535}})
+		return schemaObject(map[string]any{"path": path, "steps": map[string]any{"type": "array", "minItems": 0, "maxItems": 5, "items": step}}, "path", "steps"), simpleOutput(map[string]any{"proxy_path": path, "proxy_path_steps": map[string]any{"type": "array", "items": step}, "requires_deployment": boolValue}), "server_ids"
 	default:
 		return schemaObject(nil), schemaObject(nil), ""
 	}

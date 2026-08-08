@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
-	"net/http/httptest"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -468,7 +467,7 @@ func (s *Server) apiV2Changeset(w http.ResponseWriter, r *http.Request) {
 		}
 		item, err = s.automation.Approve(r.Context(), principal, id, request.Comment)
 	case "apply":
-		item, err = s.automation.Apply(r.Context(), principal, id)
+		item, err = s.applyAutomationChangeset(r.Context(), principal, id)
 	default:
 		v2Error(w, r, http.StatusNotFound, "not_found", "Changeset 操作不存在")
 		return
@@ -685,6 +684,7 @@ func (s *Server) newServicePrincipal(owner model.User, name string, scopes []str
 }
 
 func (s *Server) registerAutomationHandlers() {
+	s.registerServerUpdateOperation()
 	s.automation.RegisterValidator("subscriptions.custom_paths.set_alias", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		var request struct {
 			UserID int64  `json:"user_id"`
@@ -1138,15 +1138,48 @@ type topologyWriteOperation struct {
 }
 
 func decodeTopologyWriteOperation(input json.RawMessage) (topologyWriteOperation, error) {
-	var request topologyWriteOperation
-	if err := strictAutomationInput(input, &request); err != nil {
-		return request, err
+	type highLevelStep struct {
+		NodeType            model.ProxyPathStepNodeType      `json:"node_type"`
+		TransportMode       model.ProxyPathStepTransportMode `json:"transport_mode"`
+		ProcessingRole      bool                             `json:"processing_role"`
+		ServerID            *int64                           `json:"server_id,omitempty"`
+		InboundID           *int64                           `json:"inbound_id,omitempty"`
+		ExternalOutboundID  *int64                           `json:"external_outbound_id,omitempty"`
+		TunnelType          string                           `json:"tunnel_type,omitempty"`
+		SSHPort             int                              `json:"ssh_port,omitempty"`
+		PersistentKeepalive *int                             `json:"persistent_keepalive,omitempty"`
 	}
-	if request.Path.ID != 0 || request.Path.InboundID <= 0 || len(request.Steps) == 0 || len(request.Steps) > 5 {
-		return request, errors.New("topology.write requires a new path and between 1 and 5 ordered steps")
+	var wire struct {
+		Path  model.ProxyPath `json:"path"`
+		Steps []highLevelStep `json:"steps"`
+	}
+	if err := strictAutomationInput(input, &wire); err != nil {
+		return topologyWriteOperation{}, err
+	}
+	request := topologyWriteOperation{Path: wire.Path, Steps: make([]model.ProxyPathStep, 0, len(wire.Steps))}
+	for _, value := range wire.Steps {
+		step := model.ProxyPathStep{NodeType: value.NodeType, TransportMode: value.TransportMode, ProcessingRole: value.ProcessingRole, ServerID: value.ServerID, InboundID: value.InboundID, ExternalOutboundID: value.ExternalOutboundID}
+		if step.TransportMode == model.ProxyPathTransportTunnel {
+			config := map[string]any{"type": strings.ToLower(strings.TrimSpace(value.TunnelType))}
+			if config["type"] == "" {
+				config["type"] = string(model.TunnelTypeSSH)
+			}
+			if value.SSHPort > 0 {
+				config["ssh_port"] = value.SSHPort
+			}
+			if value.PersistentKeepalive != nil {
+				config["persistent_keepalive"] = *value.PersistentKeepalive
+			}
+			encoded, _ := json.Marshal(config)
+			step.ConfigJSON = string(encoded)
+		}
+		request.Steps = append(request.Steps, step)
+	}
+	if request.Path.ID != 0 || request.Path.InboundID <= 0 || len(request.Steps) > 5 || request.Path.Kind != model.ProxyPathKindDirect && len(request.Steps) == 0 {
+		return request, errors.New("topology.write requires a new direct path or a new chain with between 1 and 5 ordered steps")
 	}
 	for _, step := range request.Steps {
-		if step.ID != 0 || step.PathID != 0 || strings.TrimSpace(step.ConfigJSON) != "" && strings.TrimSpace(step.ConfigJSON) != "{}" {
+		if step.ID != 0 || step.PathID != 0 {
 			return request, errors.New("topology.write accepts only high-level steps without IDs or raw config_json")
 		}
 	}
@@ -1273,32 +1306,32 @@ func proxyPathPlanServerIDs(plan model.ProxyPathPlan) []int64 {
 }
 
 func (s *Server) runDeploymentOperation(ctx context.Context, principal application.Principal, serverID int64) (any, error) {
-	body, _ := json.Marshal(map[string]int64{"server_id": serverID})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/deployments/apply", bytes.NewReader(body)).WithContext(ctx)
-	if principal.UserID != nil {
-		if user, err := s.store.GetUser(ctx, *principal.UserID); err == nil {
-			request = request.WithContext(context.WithValue(request.Context(), userKey, user))
+	if serverID > 0 && !principal.AllowsInt64("server_ids", serverID) {
+		return nil, errors.New("deployment target is outside the authorized resource boundary")
+	}
+	if serverID == 0 {
+		servers, err := s.store.ListServers(ctx)
+		if err != nil {
+			return nil, err
 		}
-	}
-	request = request.WithContext(context.WithValue(request.Context(), claimsKey, security.TokenClaims{Role: string(model.RoleAdmin)}))
-	recorder := httptest.NewRecorder()
-	s.applyDeployment(recorder, request)
-	var response map[string]any
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		return nil, errors.New("deployment pipeline returned an invalid response")
-	}
-	if recorder.Code < 200 || recorder.Code >= 300 {
-		return nil, fmt.Errorf("deployment validation failed: %v", response["error"])
-	}
-	taskIDs := []any{}
-	if tasks, ok := response["tasks"].([]any); ok {
-		for _, raw := range tasks {
-			if task, ok := raw.(map[string]any); ok {
-				taskIDs = append(taskIDs, task["id"])
+		for _, server := range servers {
+			if !principal.AllowsInt64("server_ids", server.ID) {
+				return nil, errors.New("deployment target set is outside the authorized resource boundary")
 			}
 		}
 	}
-	return map[string]any{"config_version": response["config_version"], "task_ids": taskIDs, "summary": response["summary"]}, nil
+	tasks, version, err := s.deployConfiguration(ctx, serverID, false)
+	if err != nil {
+		return nil, err
+	}
+	taskIDs := make([]int64, 0, len(tasks))
+	for _, task := range tasks {
+		if !principal.AllowsInt64("server_ids", task.ServerID) {
+			return nil, errors.New("deployment expanded outside the authorized resource boundary")
+		}
+		taskIDs = append(taskIDs, task.ID)
+	}
+	return map[string]any{"config_version": version, "task_ids": taskIDs, "summary": taskSummary(tasks)}, nil
 }
 
 func decodeV2(w http.ResponseWriter, r *http.Request, output any) bool {

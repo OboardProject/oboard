@@ -3099,30 +3099,18 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		// Automatic region is Agent telemetry. Panel edits may select auto or a
 		// manual region, but cannot replace the last detected value.
 		v.DetectedRegionCode = current.DetectedRegionCode
-		if err := validateServer(&v); err != nil {
-			fail(w, err, 400)
-			return
-		}
-		if portPolicyChanged(*current, v) {
-			allocations, err := s.store.ListProxyPathPortAllocations(r.Context())
-			if err != nil {
-				fail(w, err, 500)
-				return
-			}
-			inbounds, err := s.store.ListInbounds(r.Context())
-			if err != nil {
-				fail(w, err, 500)
-				return
-			}
-			preview := core.PreviewServerPortPolicyChange(*current, v, allocations, inbounds)
-			if preview.RequiresMigration() {
+		if err := s.validateServerUpdateCandidate(r.Context(), *current, &v); err != nil {
+			var migration *serverPortMigrationRequiredError
+			if errors.As(err, &migration) {
 				write(w, http.StatusConflict, map[string]any{
 					"error":   "port_migration_required",
-					"message": serverPortPolicyConflictMessage(preview),
-					"preview": preview,
+					"message": migration.Error(),
+					"preview": migration.Preview,
 				})
 				return
 			}
+			fail(w, err, 400)
+			return
 		}
 		if err := s.store.UpdateServer(r.Context(), &v); err != nil {
 			fail(w, err, 500)

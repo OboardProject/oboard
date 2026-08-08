@@ -56,6 +56,14 @@ func (s *Store) FindAutomationWorkflowByIdempotency(ctx context.Context, princip
 	return s.GetAutomationWorkflow(ctx, id)
 }
 
+func (s *Store) FindAutomationWorkflowByChangeset(ctx context.Context, changesetID string) (*model.AutomationWorkflow, error) {
+	var id string
+	if err := s.db.QueryRowContext(ctx, `select id from automation_workflows where changeset_id=? order by created_at desc limit 1`, changesetID).Scan(&id); err != nil {
+		return nil, err
+	}
+	return s.GetAutomationWorkflow(ctx, id)
+}
+
 func (s *Store) UpdateAutomationWorkflow(ctx context.Context, item *model.AutomationWorkflow) error {
 	result, err := s.db.ExecContext(ctx, `update automation_workflows set status=?,changeset_id=?,current_step=?,affected_resources_json=?,next_action_json=?,error_code=?,error_message=?,updated_at=?,completed_at=? where id=? and principal_id=?`, item.Status, nullString(item.ChangesetID), item.CurrentStep, normalizedJSONArray(item.AffectedResources), normalizedJSONObject(item.NextAction), item.ErrorCode, item.ErrorMessage, now(), timePtrString(item.CompletedAt), item.ID, item.PrincipalID)
 	if err != nil {

@@ -500,6 +500,40 @@ func (s *Service) synchronizeWorkflow(ctx context.Context, item *model.Automatio
 	return item, nil
 }
 
+func (s *Service) RequireWorkflowExternalAction(ctx context.Context, principal application.Principal, id string, changeset *model.AutomationChangeset) (*model.AutomationWorkflow, error) {
+	item, err := s.store.GetAutomationWorkflow(ctx, strings.TrimSpace(id))
+	if err != nil || item.PrincipalID != principal.ID && !(principal.Interactive && principal.Role == model.RoleAdmin) {
+		return nil, sql.ErrNoRows
+	}
+	if changeset == nil || changeset.ID != item.ChangesetID || changeset.Status != model.ChangesetSucceeded || len(item.Steps) == 0 {
+		return nil, errors.New("workflow cannot require an external action for this changeset")
+	}
+	nextAction := workflowNextAction(changeset, true)
+	step := &item.Steps[0]
+	step.Status, step.NextAction, step.Retryable, step.ErrorCode, step.FinishedAt = "external_action_required", nextAction, false, "", nil
+	item.Status, item.CurrentStep, item.NextAction, item.CompletedAt = model.WorkflowExternalActionRequired, "external_install", nextAction, nil
+	item.ErrorCode, item.ErrorMessage = "", ""
+	if serverID := workflowExternalServerID(nextAction); serverID > 0 {
+		var affected []map[string]any
+		_ = json.Unmarshal(item.AffectedResources, &affected)
+		found := false
+		for _, resource := range affected {
+			if resource["type"] == "server" && fmt.Sprint(resource["id"]) == fmt.Sprint(serverID) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			affected = append(affected, map[string]any{"type": "server", "id": serverID})
+			item.AffectedResources = mustJSON(affected)
+		}
+	}
+	if err := s.store.UpdateAutomationWorkflowAndStep(ctx, item, step); err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
 func (s *Service) CancelWorkflow(ctx context.Context, principal application.Principal, id string) (*model.AutomationWorkflow, error) {
 	item, err := s.GetWorkflow(ctx, principal, id)
 	if err != nil {

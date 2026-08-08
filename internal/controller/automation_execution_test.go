@@ -142,6 +142,32 @@ func TestDeploymentOperationReturnsOnlyPublicSummary(t *testing.T) {
 	}
 }
 
+func TestDeploymentOperationChecksCompleteScopeBeforeMutation(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	allowed := &model.Server{Name: "allowed", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline}
+	denied := &model.Server{Name: "denied", ListenIP: "0.0.0.0", PortRangeStart: 12000, PortRangeEnd: 13000, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, allowed); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateServer(ctx, denied); err != nil {
+		t.Fatal(err)
+	}
+	filter, _ := json.Marshal(application.ResourceFilter{Servers: &application.ResourceSelection{Mode: "selected", IDs: []int64{allowed.ID}}})
+	principal := application.Principal{ID: "limited", ResourceFilter: filter}
+	if _, err := server.runDeploymentOperation(ctx, principal, 0); err == nil || !strings.Contains(err.Error(), "authorized resource boundary") {
+		t.Fatalf("full deployment boundary error=%v", err)
+	}
+	tasks, err := db.ListTasks(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("rejected deployment created tasks: %#v", tasks)
+	}
+}
+
 func TestServerOnboardingEnrollmentTokenIsReturnedOnlyOnce(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")

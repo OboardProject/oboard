@@ -565,11 +565,12 @@ func (s *Server) oauthConsentBoundary(r *http.Request, accessLevel mcpauth.Acces
 	return mcpauth.ResourceBoundary{
 		Version: mcpauth.ResourceBoundaryVersion,
 		Resources: map[string]mcpauth.ResourceSelection{
-			"server":     serverSelection,
-			"user":       userSelection,
-			"proxy_path": {Selection: mcpauth.SelectionAll, IncludeFuture: true},
-			"inbound":    {Selection: mcpauth.SelectionAll, IncludeFuture: true},
-			"deployment": {Selection: mcpauth.SelectionAll, IncludeFuture: true},
+			"server":            serverSelection,
+			"user":              userSelection,
+			"proxy_path":        {Selection: mcpauth.SelectionAll, IncludeFuture: true},
+			"inbound":           {Selection: mcpauth.SelectionAll, IncludeFuture: true},
+			"external_outbound": {Selection: mcpauth.SelectionAll, IncludeFuture: true},
+			"deployment":        {Selection: mcpauth.SelectionAll, IncludeFuture: true},
 		},
 		GlobalCapabilities:    globalCapabilities,
 		DestructiveOperations: false,

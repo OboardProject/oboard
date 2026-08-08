@@ -44,6 +44,12 @@ type mcpDesiredStatePlan struct {
 }
 
 func (s *Server) registerMCPTools(server *mcp.Server, principal application.Principal) {
+	if s.grantAllowsAccess(principal, mcpauth.AccessRead) {
+		s.addMCPTaskTool(server, principal)
+	}
+	if s.grantAllowsOperate(principal) {
+		s.addMCPCommitTaskTool(server, principal)
+	}
 	s.addMCPDiscoverTool(server, principal)
 	s.addMCPGetCapabilitySchemaTool(server, principal)
 	if s.grantAllowsAccess(principal, mcpauth.AccessRead) {
@@ -61,21 +67,28 @@ func (s *Server) registerMCPTools(server *mcp.Server, principal application.Prin
 }
 
 type mcpDiscoverInput struct {
-	IncludeDenied          *bool `json:"include_denied,omitempty" jsonschema:"Include capabilities denied by this grant, defaults to true"`
-	IncludeSchemaSummaries *bool `json:"include_schema_summaries,omitempty" jsonschema:"Include strict capability schema summaries, defaults to false"`
+	IncludeDenied          *bool  `json:"include_denied,omitempty" jsonschema:"Include capabilities denied by this grant in full detail mode, defaults to false"`
+	IncludeSchemaSummaries *bool  `json:"include_schema_summaries,omitempty" jsonschema:"Include strict capability schema summaries, defaults to false"`
+	DetailLevel            string `json:"detail_level,omitempty"`
 }
 
 func (s *Server) addMCPDiscoverTool(server *mcp.Server, principal application.Principal) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "oboard_discover", Title: "Discover OBoard", Description: "Return the effective OBoard MCP grant, authorized capability catalog, visible resource and prompt groups, workflow rules, limits, and recommended next actions for the current authenticated request.",
-		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"include_denied": map[string]any{"type": "boolean", "default": true}, "include_schema_summaries": map[string]any{"type": "boolean", "default": false}})),
+		Name: "oboard_discover", Title: "Discover OBoard", Description: "ADVANCED / FALLBACK TOOL. Routine OBoard operations should use oboard_task first. Return a compact recipe and capability-group index by default; request detail_level=full only when Fast Path returned fallback_required.",
+		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"include_denied": map[string]any{"type": "boolean", "default": false}, "include_schema_summaries": map[string]any{"type": "boolean", "default": false}, "detail_level": map[string]any{"type": "string", "enum": []string{"compact", "full"}, "default": "compact"}})),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotations(true, true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpDiscoverInput) (*mcp.CallToolResult, any, error) {
 		decision := s.evaluatorForRead(ctx)
 		if !decision.Allowed {
 			return mcpFailureResult(decision, ""), nil, nil
 		}
-		data := s.mcpDiscoverData(ctx, boolPtrDefault(input.IncludeDenied, true), boolPtrDefault(input.IncludeSchemaSummaries, false))
+		detail := strings.ToLower(strings.TrimSpace(input.DetailLevel))
+		var data map[string]any
+		if detail == "full" {
+			data = s.mcpDiscoverData(ctx, boolPtrDefault(input.IncludeDenied, false), boolPtrDefault(input.IncludeSchemaSummaries, false))
+		} else {
+			data = s.mcpDiscoverCompactData(ctx)
+		}
 		s.recordToolCall(ctx, principal, "discover", input, "succeeded", capability.DataInternal)
 		return &mcp.CallToolResult{}, newToolEnvelope("succeeded", "", data), nil
 	})
@@ -105,7 +118,7 @@ type mcpCapabilitySchemaInput struct {
 
 func (s *Server) addMCPGetCapabilitySchemaTool(server *mcp.Server, principal application.Principal) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "oboard_get_capability_schema", Title: "Get Capability Schema", Description: "Return the strict authorized descriptor, JSON Schema 2020-12 input contract, output contract, resource-resolution rules, risk class, approval requirements, and examples for one OBoard capability.",
+		Name: "oboard_get_capability_schema", Title: "Get Capability Schema", Description: "ADVANCED / FALLBACK TOOL. Routine OBoard operations should use oboard_task first. Return one authorized capability's strict schema after Fast Path reports fallback_required.",
 		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"capability_id": map[string]any{"type": "string", "minLength": 1}}, "capability_id")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotations(true, true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpCapabilitySchemaInput) (*mcp.CallToolResult, any, error) {
@@ -158,7 +171,7 @@ type mcpTargetRef struct {
 
 func (s *Server) addMCPPlanDesiredStateTool(server *mcp.Server, principal application.Principal) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "oboard_plan_desired_state", Title: "Plan Desired State", Description: "Build a non-persistent desired-state plan for one authorized OBoard capability. Resolve target resources, read current revisions, calculate expected changes and blast radius, and report required approvals without applying or persisting the change.",
+		Name: "oboard_plan_desired_state", Title: "Plan Desired State", Description: "ADVANCED / FALLBACK TOOL. Routine OBoard operations should use oboard_task first. Build a non-persistent desired-state plan for one authorized capability when no Fast Path recipe applies.",
 		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
 			"capability_id":      map[string]any{"type": "string"},
 			"goal":               map[string]any{"type": "string", "minLength": 1, "maxLength": 4000},
@@ -243,7 +256,7 @@ type mcpValidateDesiredStateInput struct {
 
 func (s *Server) addMCPValidateDesiredStateTool(server *mcp.Server, principal application.Principal) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "oboard_validate_desired_state", Title: "Validate Desired State", Description: "Validate a desired-state plan against the current authorized state, capability schema, resource boundary, revisions, invariants, conflicts, risk policy, and approval requirements without applying the change.",
+		Name: "oboard_validate_desired_state", Title: "Validate Desired State", Description: "ADVANCED / FALLBACK TOOL. Routine OBoard operations should use oboard_task first. Validate a client-carried desired-state plan when Fast Path cannot represent the operation.",
 		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
 			"plan":              map[string]any{"type": "object"},
 			"plan_digest":       map[string]any{"type": "string", "minLength": 1},
@@ -348,7 +361,7 @@ type mcpSubmitChangesetInput struct {
 
 func (s *Server) addMCPSubmitChangesetTool(server *mcp.Server, principal application.Principal) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "oboard_submit_changeset", Title: "Submit Changeset", Description: "Submit a previously validated desired-state plan as an idempotent Changeset and create its persistent Workflow. This tool never bypasses RBAC, resource boundaries, validation, revision checks, or required approval.",
+		Name: "oboard_submit_changeset", Title: "Submit Changeset", Description: "ADVANCED / FALLBACK TOOL. Routine OBoard operations should use oboard_task then oboard_commit_task. Submit a client-carried validated plan through the same Changeset and Workflow service used by Fast Path.",
 		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
 			"validated_plan":      map[string]any{"type": "object"},
 			"validation_digest":   map[string]any{"type": "string", "minLength": 1},
@@ -381,20 +394,32 @@ func (s *Server) submitMCPChangeset(ctx context.Context, principal application.P
 			return envelope, errors.New(decision.Reason)
 		}
 	}
-	mode := strings.TrimSpace(input.ApprovalPreference)
+	result, err := s.submitPreparedOperations(ctx, principal, plan.Operations, plan.ExpectedRevisions, input.Reason, input.IdempotencyKey, input.ApprovalPreference)
+	if err == nil {
+		s.recordToolCall(ctx, principal, "changesets.submit", input, result.Status, capability.DataInternal)
+	}
+	return result, err
+}
+
+func (s *Server) submitPreparedOperations(ctx context.Context, principal application.Principal, planOperations []mcpOperationRef, expectedRevisions map[string]string, reason, idempotencyKey, approvalPreference string) (*ToolEnvelope, error) {
+	mode := strings.TrimSpace(approvalPreference)
 	if mode == "" {
 		mode = "request_approval"
 	}
 	if mode != "request_approval" && mode != "use_preapproval_if_available" {
 		return nil, errors.New("approval_preference must be request_approval or use_preapproval_if_available")
 	}
-	base, err := json.Marshal(plan.ExpectedRevisions)
+	base, err := json.Marshal(expectedRevisions)
 	if err != nil {
 		return nil, err
 	}
-	operations := make([]automation.OperationRequest, 0, len(plan.Operations))
+	operations := make([]automation.OperationRequest, 0, len(planOperations))
 	kind := "changeset"
-	for _, operation := range plan.Operations {
+	for _, operation := range planOperations {
+		decision := s.authorizePlanOperation(ctx, operation.Capability, operation.Input)
+		if !decision.Allowed {
+			return errorEnvelope("", decision, "", ""), errors.New(decision.Reason)
+		}
 		rawInput, marshalErr := json.Marshal(operation.Input)
 		if marshalErr != nil {
 			return nil, marshalErr
@@ -406,7 +431,7 @@ func (s *Server) submitMCPChangeset(ctx context.Context, principal application.P
 			kind = "deployment"
 		}
 	}
-	item, err := s.automation.Create(ctx, principal, automation.CreateRequest{Reason: input.Reason, IdempotencyKey: input.IdempotencyKey, BaseRevisions: base, AutoApply: mode == "use_preapproval_if_available", Operations: operations})
+	item, err := s.automation.Create(ctx, principal, automation.CreateRequest{Reason: reason, IdempotencyKey: idempotencyKey, BaseRevisions: base, AutoApply: mode == "use_preapproval_if_available", Operations: operations})
 	if err != nil {
 		return nil, err
 	}
@@ -416,14 +441,18 @@ func (s *Server) submitMCPChangeset(ctx context.Context, principal application.P
 	if err != nil {
 		return nil, err
 	}
-	workflowKeySum := sha256.Sum256([]byte(principal.ID + "\x00" + input.IdempotencyKey))
+	workflowKeySum := sha256.Sum256([]byte(principal.ID + "\x00" + idempotencyKey))
 	externalActionPending := s.planHasExternalAction(item)
-	workflow, err := s.automation.StartWorkflow(ctx, principal, automation.StartWorkflowRequest{Kind: kind, Reason: input.Reason, IdempotencyKey: "submit:" + hex.EncodeToString(workflowKeySum[:16]), ChangesetID: item.ID, ExternalAction: externalActionPending})
+	workflow, err := s.automation.StartWorkflow(ctx, principal, automation.StartWorkflowRequest{Kind: kind, Reason: reason, IdempotencyKey: "submit:" + hex.EncodeToString(workflowKeySum[:16]), ChangesetID: item.ID, ExternalAction: externalActionPending})
+	if err != nil {
+		return nil, err
+	}
+	workflow, err = s.automation.GetWorkflow(ctx, principal, workflow.ID)
 	if err != nil {
 		return nil, err
 	}
 	actionID := ""
-	if externalActionPending {
+	if s.planHasExternalAction(item) {
 		actionID, err = s.storeOneTimeExternalAction(ctx, principal, workflow, item)
 		if err != nil {
 			return nil, err
@@ -442,7 +471,6 @@ func (s *Server) submitMCPChangeset(ctx context.Context, principal application.P
 	} else if workflow.Status == model.WorkflowApprovalRequired {
 		result.NextAction = map[string]any{"type": "open_approval", "changeset_id": item.ID}
 	}
-	s.recordToolCall(ctx, principal, "changesets.submit", input, status, capability.DataInternal)
 	return result, nil
 }
 
@@ -465,6 +493,9 @@ func (s *Server) planHasExternalAction(item *model.AutomationChangeset) bool {
 // changeset result, stores it encrypted, and returns the action ID. The secret
 // never enters the workflow, resources, or logs.
 func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal application.Principal, workflow *model.AutomationWorkflow, item *model.AutomationChangeset) (string, error) {
+	if existing, err := s.store.FindExternalActionByWorkflow(ctx, workflow.ID); err == nil && existing.GrantID == principal.GrantID && existing.ConsumedAt == nil && existing.ExpiresAt.After(time.Now().UTC()) {
+		return existing.ID, nil
+	}
 	var result struct {
 		Operations []map[string]any `json:"operations"`
 	}
@@ -477,6 +508,10 @@ func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal appli
 		if token == "" || server == nil {
 			continue
 		}
+		installBBR := "0"
+		if enabled, _ := server["bbr_enabled"].(bool); enabled {
+			installBBR = "1"
+		}
 		base, err := s.publicBaseURL(ctx)
 		if err != nil {
 			return "", err
@@ -484,7 +519,7 @@ func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal appli
 		action := map[string]any{
 			"type": "execute_on_target", "title": "安装 OBoard Agent",
 			"command":     "curl -fsSL " + shellSingleQuote(strings.TrimRight(base, "/")+"/install/agent.sh") + ` | env OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" OBOARD_INSTALL_BBR="${OBOARD_INSTALL_BBR:-0}" sh`,
-			"environment": map[string]any{"OBOARD_ENROLL_TOKEN": token, "OBOARD_INSTALL_BBR": fmt.Sprint(server["bbr_enabled"])},
+			"environment": map[string]any{"OBOARD_ENROLL_TOKEN": token, "OBOARD_INSTALL_BBR": installBBR},
 			"expires_at":  operation["enrollment_expires_at"],
 			"sensitive":   true, "must_not_log": true,
 			"completion_condition": map[string]any{"resource_uri": fmt.Sprintf("oboard://servers/%v/health", server["id"]), "field": "agent_connected", "equals": true},
@@ -508,6 +543,9 @@ func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal appli
 		}
 		actionID := "ext_" + id
 		if err := s.store.CreateExternalAction(ctx, &store.ExternalAction{ID: actionID, GrantID: principal.GrantID, WorkflowID: workflow.ID, Kind: "execute_on_target", Payload: encrypted, ExpiresAt: expiresAt}); err != nil {
+			if existing, findErr := s.store.FindExternalActionByWorkflow(ctx, workflow.ID); findErr == nil && existing.GrantID == principal.GrantID && existing.ConsumedAt == nil && existing.ExpiresAt.After(time.Now().UTC()) {
+				return existing.ID, nil
+			}
 			return "", err
 		}
 		return actionID, nil
@@ -536,12 +574,13 @@ func (s *Server) addMCPGetChangesetTool(server *mcp.Server, principal applicatio
 
 type mcpWorkflowIDInput struct {
 	WorkflowID string `json:"workflow_id"`
+	Detail     string `json:"detail,omitempty"`
 }
 
 func (s *Server) addMCPGetWorkflowTool(server *mcp.Server, principal application.Principal) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "oboard_get_workflow", Title: "Get Workflow", Description: "Return one authorized persistent Workflow with its exact state, next action, approvals, affected resources, retryability, external-action status, and redacted step results.",
-		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"workflow_id": map[string]any{"type": "string", "minLength": 1}}, "workflow_id")),
+		Name: "oboard_get_workflow", Title: "Get Workflow", Description: "Return a compact authorized Workflow status by default. Use detail=full only for recovery or debugging. Workflow is the canonical execution state; do not infer completion from Changeset creation.",
+		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"workflow_id": map[string]any{"type": "string", "minLength": 1}, "detail": map[string]any{"type": "string", "enum": []string{"compact", "full"}, "default": "compact"}}, "workflow_id")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotations(true, true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpWorkflowIDInput) (*mcp.CallToolResult, any, error) {
 		item, err := s.automation.GetWorkflow(ctx, principal, strings.TrimSpace(input.WorkflowID))
@@ -549,8 +588,41 @@ func (s *Server) addMCPGetWorkflowTool(server *mcp.Server, principal application
 			return mcpPlainFailureResult("", "workflow not found"), nil, nil
 		}
 		s.recordToolCall(ctx, principal, "workflows.get", input, "succeeded", capability.DataInternal)
-		return &mcp.CallToolResult{}, newToolEnvelope(workflowResultStatus(item.Status), "", item), nil
+		data := any(workflowResourceSummary(item))
+		if strings.EqualFold(strings.TrimSpace(input.Detail), "full") {
+			data = workflowResourceView(item)
+		}
+		if prepared, findErr := s.store.FindMCPPreparedPlanByWorkflow(ctx, item.ID, principal.ID, principal.GrantID); findErr == nil {
+			metricResult := newToolEnvelope(workflowResultStatus(item.Status), "", map[string]any{"intent": prepared.RecipeID, "recipe_version": prepared.RecipeVersion})
+			metricResult.WorkflowID = item.ID
+			metricResult.ChangesetID = item.ChangesetID
+			s.recordFastPathMetric(ctx, principal, metricResult, "workflow", 0)
+		}
+		envelope := newToolEnvelope(workflowResultStatus(item.Status), "", data)
+		if actionID, actionErr := s.ensureWorkflowExternalAction(ctx, principal, item); actionErr != nil {
+			return mcpPlainFailureResult("", "workflow external action is unavailable"), nil, nil
+		} else if actionID != "" {
+			envelope.NextAction = map[string]any{"type": "redeem_external_action", "action_id": actionID, "workflow_id": item.ID, "sensitive": true, "must_not_log": true}
+		}
+		return &mcp.CallToolResult{}, envelope, nil
 	})
+}
+
+func (s *Server) ensureWorkflowExternalAction(ctx context.Context, principal application.Principal, workflow *model.AutomationWorkflow) (string, error) {
+	if workflow == nil || workflow.Status != model.WorkflowExternalActionRequired || workflow.ChangesetID == "" {
+		return "", nil
+	}
+	if existing, err := s.store.FindExternalActionByWorkflow(ctx, workflow.ID); err == nil && existing.GrantID == principal.GrantID && existing.ConsumedAt == nil && existing.ExpiresAt.After(time.Now().UTC()) {
+		return existing.ID, nil
+	}
+	changeset, err := s.automation.Get(ctx, workflow.ChangesetID)
+	if err != nil || changeset.PrincipalID != principal.ID {
+		return "", err
+	}
+	if !s.planHasExternalAction(changeset) {
+		return "", nil
+	}
+	return s.storeOneTimeExternalAction(ctx, principal, workflow, changeset)
 }
 
 type mcpCancelWorkflowInput struct {

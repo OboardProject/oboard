@@ -54,6 +54,10 @@ func serverOnboardRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, e
 	return nil, nil
 }
 
+func serverUpdateRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
+	return refsFromSingleID(ctx, input, "server_id", "server")
+}
+
 func topologyWriteRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
 	object, err := canonicalMap(input)
 	if err != nil {
@@ -181,9 +185,6 @@ func refsFromSingleID(_ context.Context, input any, field, resourceType string) 
 }
 
 func canonicalMap(input any) (map[string]any, error) {
-	if object, ok := input.(map[string]any); ok {
-		return object, nil
-	}
 	encoded, err := json.Marshal(input)
 	if err != nil {
 		return nil, err

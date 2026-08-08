@@ -1,0 +1,4 @@
+interface:
+  display_name: "OBoard"
+  short_description: "Use the OBoard MCP Fast Path efficiently"
+  default_prompt: "Use $oboard to complete this OBoard operation through the MCP Fast Path."
