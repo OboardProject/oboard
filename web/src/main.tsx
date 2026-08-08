@@ -101,7 +101,7 @@ import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServ
 import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
 import { controllerUpdatePendingToast, isControllerUpdateInProgressStatus, isExpectedControllerUpdateDisconnect } from './controller-update'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
-import { buildSlaTimeline } from './connectivity-sla'
+import { connectivityBucketTone as backendConnectivityBucketTone, connectivityRequestPath, connectivitySlaDisplay, formatConnectivityDuration, type ConnectivityResponse, type ConnectivityWindowKey } from './connectivity-sla'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
   automationConnectArtifacts,
@@ -6265,7 +6265,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [dnsServer, setDNSServer] = useState<Server | null>(null)
   const [detailServer, setDetailServer] = useState<Server | null>(null)
   const [timeDetailServer, setTimeDetailServer] = useState<Server | null>(null)
-  const [connectivityServer, setConnectivityServer] = useState<{ server: Server; samples: ServerMetricSample[] } | null>(null)
+  const [connectivityServer, setConnectivityServer] = useState<{ server: Server } | null>(null)
   const [view, setView] = useState<'grid' | 'list'>('grid')
   const [serverQuery, setServerQuery] = useState('')
   const [serverStatusFilter, setServerStatusFilter] = useState<ServerStatusFilter>('all')
@@ -6551,7 +6551,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const handleServerAction = async (type: string, s: Server) => {
     if (type === 'details') setDetailServer(s)
     else if (type === 'time-details') setTimeDetailServer(s)
-    else if (type === 'connectivity-details') setConnectivityServer({ server: s, samples: metricsByServer.get(Number(s.id)) || [] })
+    else if (type === 'connectivity-details') setConnectivityServer({ server: s })
     else if (type === 'edit') setEditServer(s)
     else if (type === 'mtu') setMtuServer(s)
     else if (type === 'dns') setDNSServer(s)
@@ -6686,7 +6686,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       }}
       onClose={() => setTimeDetailServer(null)}
     />}</AnimatePresence>
-    <AnimatePresence>{connectivityServer && <ServerConnectivityDialog server={connectivityServer.server} initialSamples={connectivityServer.samples} client={client} onClose={() => setConnectivityServer(null)} />}</AnimatePresence>
+    <AnimatePresence>{connectivityServer && <ServerConnectivityDialog server={connectivityServer.server} client={client} onClose={() => setConnectivityServer(null)} />}</AnimatePresence>
     <AnimatePresence>{agentConfigServer && <AgentConfigDialog server={agentConfigServer} controllerURL={effectiveControllerURL(data)} onCancel={() => setAgentConfigServer(null)} onSubmit={cfg => syncAgentConfig(agentConfigServer, cfg)} />}</AnimatePresence>
     <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} token={installTarget.token} controllerURL={effectiveControllerURL(data)} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
@@ -7678,265 +7678,157 @@ function ServerTimeDetailDialog({ server, role = 'viewer', onEnableAuto, onClose
 
 let connectivityGradientSeq = 0
 
-function connectivitySlaTone(rate: number) {
+function connectivitySlaTone(rate: number | null | undefined) {
+  if (rate == null) return 'fair'
   if (rate >= 99.9) return 'great'
   if (rate >= 99) return 'fair'
   return 'poor'
 }
 
-function connectivityBucketTone(ratio: number | null) {
-  if (ratio === null) return 'none'
-  if (ratio >= 0.995) return 'great'
-  if (ratio >= 0.9) return 'good'
-  if (ratio >= 0.5) return 'fair'
-  if (ratio > 0) return 'poor'
-  return 'down'
-}
-
-function formatSLAWindowDuration(ms: number) {
-  if (!Number.isFinite(ms) || ms <= 0) return '—'
-  const totalMinutes = Math.round(ms / 60000)
-  if (totalMinutes < 60) return `${totalMinutes} 分钟`
-  const hours = Math.floor(totalMinutes / 60)
-  const minutes = totalMinutes % 60
-  return minutes ? `${hours} 小时 ${minutes} 分` : `${hours} 小时`
-}
-
-function ServerConnectivityDialog({ server, initialSamples, client, onClose }: { server: Server; initialSamples: ServerMetricSample[]; client: any; onClose: () => void }) {
-  const [samples, setSamples] = useState<ServerMetricSample[]>(initialSamples)
+function ServerConnectivityDialog({ server, client, onClose }: { server: Server; client: any; onClose: () => void }) {
+  const [windowKey, setWindowKey] = useState<ConnectivityWindowKey>('24h')
+  const [response, setResponse] = useState<ConnectivityResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
-  const gradientId = `connectivity-latency-gradient-${++connectivityGradientSeq}`
-  const connectivityTone = server.connectivity_status === 'available' ? 'great' : server.connectivity_status === 'unavailable' ? 'poor' : 'fair'
-  const connectivityLabel = server.connectivity_status === 'available' ? '可用' : server.connectivity_status === 'unavailable' ? '不可用' : '等待检测'
+  const requestSequence = useRef(0)
+  const gradientId = useMemo(() => `connectivity-latency-gradient-${++connectivityGradientSeq}`, [])
 
-  const loadSamples = async () => {
+  const loadConnectivity = async (key: ConnectivityWindowKey) => {
+    const sequence = ++requestSequence.current
+    setResponse(current => current?.window.key === key ? current : null)
     setLoading(true)
     setLoadError('')
     try {
-      const res = await client.request(`/servers/${server.id}/metrics?limit=1440`)
-      setSamples((res.server_metrics || []) as ServerMetricSample[])
+      const result = await client.request(connectivityRequestPath(server.id, key)) as ConnectivityResponse
+      if (sequence === requestSequence.current) setResponse(result)
     } catch (error: any) {
-      setLoadError(localizeErrorMessage(error?.message || error))
+      if (sequence === requestSequence.current) setLoadError(localizeErrorMessage(error?.message || error))
     } finally {
-      setLoading(false)
+      if (sequence === requestSequence.current) setLoading(false)
     }
   }
-  useEffect(() => { void loadSamples() }, [])
 
-  const probes = useMemo(() => buildSlaTimeline(samples, server), [samples, server])
+  useEffect(() => {
+    void loadConnectivity(windowKey)
+    return () => { requestSequence.current++ }
+  }, [windowKey, server.id])
 
-  const stats = useMemo(() => {
-    const total = probes.length
-    const available = probes.reduce((sum, sample) => sum + (sample.connectivity_available ? 1 : 0), 0)
-    const unavailable = total - available
-    const offlineCount = probes.reduce((sum, sample) => sum + (sample.offline_synthetic ? 1 : 0), 0)
-    const latencies = probes.filter(sample => sample.connectivity_available && Number(sample.connectivity_latency_ms) > 0).map(sample => Number(sample.connectivity_latency_ms))
-    const avgLatency = latencies.length ? latencies.reduce((sum, value) => sum + value, 0) / latencies.length : 0
-    const minLatency = latencies.length ? Math.min(...latencies) : 0
-    const maxLatency = latencies.length ? Math.max(...latencies) : 0
-    const runs: { startMs: number; endMs: number }[] = []
-    let runStart = 0
-    let runEnd = 0
-    for (const sample of probes) {
-      const at = Date.parse(sample.sampled_at)
-      if (!sample.connectivity_available) {
-        if (!runStart || at - runStart > 3 * 60_000) {
-          if (runStart) runs.push({ startMs: runStart, endMs: runEnd })
-          runStart = at
-        }
-        runEnd = at
-      } else if (runStart) {
-        runs.push({ startMs: runStart, endMs: runEnd })
-        runStart = 0
-      }
-    }
-    if (runStart) runs.push({ startMs: runStart, endMs: runEnd })
-    return {
-      total,
-      available,
-      unavailable,
-      offlineCount,
-      slaRate: total ? (available / total) * 100 : 0,
-      avgLatency,
-      minLatency,
-      maxLatency,
-      runs,
-      longestOutageMs: runs.reduce((longest, run) => Math.max(longest, run.endMs - run.startMs), 0),
-    }
-  }, [probes])
-  const recentOutages = stats.runs.slice(-5).reverse()
-
-  const hourlyBuckets = useMemo(() => {
-    const now = new Date()
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours() - 23, 0, 0, 0)
-    const startMs = start.getTime()
-    const counts = new Map<number, { count: number; available: number }>()
-    for (const sample of probes) {
-      const index = Math.floor((Date.parse(sample.sampled_at) - startMs) / 3_600_000)
-      if (index < 0 || index >= 24) continue
-      const bucket = counts.get(index) || { count: 0, available: 0 }
-      bucket.count += 1
-      if (sample.connectivity_available) bucket.available += 1
-      counts.set(index, bucket)
-    }
-    return Array.from({ length: 24 }, (_, index) => {
-      const bucket = counts.get(index)
-      const hour = new Date(startMs + index * 3_600_000)
-      const pad = (n: number) => String(n).padStart(2, '0')
-      return {
-        timeMs: hour.getTime(),
-        dateLabel: `${pad(hour.getMonth() + 1)}-${pad(hour.getDate())} ${pad(hour.getHours())}:00`,
-        hourLabel: `${pad(hour.getHours())}:00`,
-        count: bucket?.count || 0,
-        available: bucket?.available || 0,
-        ratio: bucket?.count ? bucket.available / bucket.count : null,
-      }
-    })
-  }, [probes])
-
-  const windowLabel = useMemo(() => {
-    if (probes.length < 2) return '暂无数据'
-    const hours = (Date.parse(probes[probes.length - 1].sampled_at) - Date.parse(probes[0].sampled_at)) / 3_600_000
-    if (hours >= 23) return '近 24 小时'
-    if (hours >= 11) return '近 12 小时'
-    if (hours >= 5) return '近 6 小时'
-    return `近 ${Math.max(1, Math.round(hours))} 小时`
-  }, [probes])
-
-  const latencyValues = probes.filter(sample => sample.connectivity_available).map(sample => Number(sample.connectivity_latency_ms || 0))
+  const currentStatusLabels: Record<ConnectivityResponse['current']['status'], string> = {
+    available: '可用',
+    unavailable: '公网不可用',
+    offline: '服务器离线',
+    disabled: '检测已关闭',
+    pending: '等待首次检测',
+  }
+  const currentStatus = response?.current.status || (server.connectivity_probe_enabled ? 'pending' : 'disabled')
+  const currentTone = currentStatus === 'available' ? 'great' : currentStatus === 'unavailable' || currentStatus === 'offline' ? 'poor' : 'fair'
+  const slaTone = connectivitySlaTone(response?.summary.sla_percent)
+  const latencyValues = response?.latency_points.map(point => Number(point.avg_ms)) || []
   const latencyMax = Math.max(1, ...latencyValues)
   const latencyPolyline = telemetryPolyline(latencyValues, 480, 110, latencyMax)
   const latencyArea = latencyValues.length >= 2 ? `M0,110 ${latencyPolyline} L480,110 Z` : ''
-
-  if (probes.length === 0) {
-    return <MotionDialogPanel onCancel={onClose} className="connectivity-dialog">
-      <header className="dialog-head connectivity-head">
-        <div className="connectivity-title">
-          <span className={`connectivity-head-icon ${connectivityTone}`}><Activity size={17} aria-hidden="true" /></span>
-          <div><h2>公网可访问性</h2><p>{server.name || `服务器 #${server.id}`} · cp.cloudflare.com · 每分钟检测</p></div>
-        </div>
-        <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
-      </header>
-      <div className="dialog-body connectivity-body">
-        <div className="connectivity-empty">
-          {loading
-            ? <><Loader2 size={18} className="spin" /><strong>正在加载检测数据</strong></>
-            : <><strong>暂无检测数据</strong><span>启用公网可访问性检测后，每分钟会记录一次公网连接与延迟。</span></>}
-        </div>
-      </div>
-      <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
-    </MotionDialogPanel>
+  const buckets = response?.buckets || []
+  const firstBucket = buckets[0]
+  const midBucket = buckets[Math.floor(buckets.length / 2)]
+  const lastBucket = buckets[buckets.length - 1]
+  const windowLabels: Record<ConnectivityWindowKey, string> = { '24h': '24 小时', '7d': '7 天', '30d': '30 天' }
+  const causeLabels: Record<string, string> = { probe_failed: '公网探测失败', server_offline: '服务器离线', mixed: '公网异常 / 服务器离线' }
+  const formatLatency = (value: number | null | undefined) => value == null ? '—' : `${Math.round(value)} ms`
+  const bucketTitle = (bucket: ConnectivityResponse['buckets'][number]) => {
+    const observed = bucket.available_seconds + bucket.unavailable_seconds
+    const coverage = observed + bucket.unknown_seconds > 0 ? observed / (observed + bucket.unknown_seconds) * 100 : 0
+    return `${formatTableTime(bucket.start_at)} 至 ${formatTableTime(bucket.end_at)} · SLA ${connectivitySlaDisplay(bucket.sla_percent)} · 可用 ${formatConnectivityDuration(bucket.available_seconds)} · 不可用 ${formatConnectivityDuration(bucket.unavailable_seconds)} · 未观测 ${formatConnectivityDuration(bucket.unknown_seconds)} · 覆盖率 ${coverage.toFixed(1)}%`
   }
-
-  const slaTone = connectivitySlaTone(stats.slaRate)
-  const ringRadius = 34
-  const ringLength = 2 * Math.PI * ringRadius
-  const slaFormatted = stats.slaRate.toFixed(2)
-  const firstBucket = hourlyBuckets[0]
-  const midBucket = hourlyBuckets[12]
-  const lastBucket = hourlyBuckets[23]
 
   return <MotionDialogPanel onCancel={onClose} className="connectivity-dialog">
     <header className="dialog-head connectivity-head">
       <div className="connectivity-title">
-        <span className={`connectivity-head-icon ${connectivityTone}`}><Activity size={17} aria-hidden="true" /></span>
+        <span className={`connectivity-head-icon ${currentTone}`}><Activity size={17} aria-hidden="true" /></span>
         <div>
-          <h2>公网可访问性</h2>
+          <h2>SLA（公网可用率）</h2>
           <p>{server.name || `服务器 #${server.id}`} · cp.cloudflare.com · 每分钟检测</p>
         </div>
       </div>
       <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
     <div className="dialog-body connectivity-body">
-      <div className="connectivity-hero">
-        <div className={`connectivity-sla-bar-card ${slaTone}`} role="img" aria-label={`统计期 SLA ${stats.slaRate.toFixed(2)}%`}>
-          <div className="connectivity-sla-bar-head">
-            <div className="connectivity-sla-value-block">
-              <span className="sla-rate-number">{slaFormatted}%</span>
-              <span className="sla-rate-label">SLA</span>
-            </div>
-            <div className="connectivity-hero-status-row">
-              <span className={`connectivity-status-chip ${connectivityTone}`}><i aria-hidden="true" />{connectivityLabel}</span>
-              <span className="connectivity-current-latency">{server.connectivity_status === 'available' ? `${server.connectivity_latency_ms || 0} ms` : '—'}</span>
-            </div>
-          </div>
-          <div className="connectivity-sla-progress-track">
-            <div
-              className={`connectivity-sla-progress-fill ${slaTone}`}
-              style={{ width: `${Math.min(100, Math.max(0, stats.slaRate))}%` }}
-            />
-          </div>
-          <dl className="connectivity-hero-grid">
-            <div><dt>统计窗口</dt><dd>{windowLabel}</dd></div>
-            <div><dt>最近检测</dt><dd>{server.connectivity_checked_at ? formatTableTime(server.connectivity_checked_at) : '—'}</dd></div>
-            <div><dt>检测目标</dt><dd>cp.cloudflare.com</dd></div>
-            <div><dt>数据更新</dt><dd>{server.telemetry_updated_at ? formatTableTime(server.telemetry_updated_at) : '—'}</dd></div>
-          </dl>
-          {loadError && <p className="danger-text">{loadError}</p>}
-        </div>
+      <div className="connectivity-window-switch" role="radiogroup" aria-label="统计时间范围">
+        {(['24h', '7d', '30d'] as ConnectivityWindowKey[]).map(key => <button key={key} type="button" role="radio" aria-checked={windowKey === key} className={windowKey === key ? 'active' : ''} onClick={() => setWindowKey(key)} disabled={loading && windowKey === key}>{windowLabels[key]}</button>)}
       </div>
 
-      <section className="connectivity-section">
-        <div className="connectivity-section-head"><Activity size={14} aria-hidden="true" /><h3>24 小时可用性</h3><span className="connectivity-section-note">每小时聚合</span></div>
-        <div className="connectivity-hour-strip" role="img" aria-label="近 24 小时每小时可用率">
-          {hourlyBuckets.map(bucket => (
-            <span key={bucket.timeMs} className={`connectivity-hour-cell ${connectivityBucketTone(bucket.ratio)}`} title={bucket.count ? (bucket.available === 0 ? `${bucket.dateLabel} · 不可用` : `${bucket.dateLabel} · SLA ${((bucket.available / bucket.count) * 100).toFixed(1)}% · ${bucket.available}/${bucket.count} 次`) : `${bucket.dateLabel} · 无数据`} aria-label={bucket.count ? `${bucket.dateLabel} 可用率 ${((bucket.available / bucket.count) * 100).toFixed(1)}%` : `${bucket.dateLabel} 无数据`} />
-          ))}
-        </div>
-        <div className="connectivity-hour-axis"><span>{firstBucket.hourLabel}</span><span>{midBucket.hourLabel}</span><span>{lastBucket.hourLabel}</span></div>
-        <div className="connectivity-hour-legend"><span><i className="great" />正常</span><span><i className="fair" />波动</span><span><i className="poor" />不可用</span><span><i className="none" />无数据</span></div>
-      </section>
+      {loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载公网可用率</strong></div>
+        : loadError && !response ? <div className="connectivity-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载公网可用率</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => void loadConnectivity(windowKey)}>重试</button></div>
+        : response ? <>
+          <div className="connectivity-hero">
+            <div className={`connectivity-sla-bar-card ${slaTone}`} role="img" aria-label={`统计期 SLA ${connectivitySlaDisplay(response.summary.sla_percent)}`}>
+              <div className="connectivity-sla-bar-head">
+                <div className="connectivity-sla-value-block"><span className="sla-rate-number">{connectivitySlaDisplay(response.summary.sla_percent)}</span><span className="sla-rate-label">公网 SLA</span></div>
+                <div className="connectivity-hero-status-row"><span className={`connectivity-status-chip ${currentTone}`}><i aria-hidden="true" />{currentStatusLabels[currentStatus]}</span><span className="connectivity-current-latency">{currentStatus === 'available' ? formatLatency(response.current.latency_ms) : '—'}</span></div>
+              </div>
+              <div className="connectivity-sla-progress-track" aria-hidden="true">{response.summary.sla_percent != null && <div className={`connectivity-sla-progress-fill ${slaTone}`} style={{ width: `${Math.min(100, Math.max(0, response.summary.sla_percent))}%` }} />}</div>
+              <dl className="connectivity-hero-grid">
+                <div><dt>统计窗口</dt><dd>近 {windowLabels[windowKey]}</dd></div>
+                <div><dt>统计覆盖率</dt><dd>{response.summary.coverage_percent.toFixed(1)}%</dd></div>
+                <div><dt>最近检测</dt><dd>{response.current.checked_at ? formatTableTime(response.current.checked_at) : '—'}</dd></div>
+                <div><dt>可信数据起点</dt><dd>{response.data_start_at ? formatTableTime(response.data_start_at) : '暂无'}</dd></div>
+              </dl>
+              {response.summary.coverage_percent < 99.999 && <div className="connectivity-coverage-note"><Info size={13} aria-hidden="true" /><span>统计覆盖率 {response.summary.coverage_percent.toFixed(1)}%{response.data_start_at ? `，完整统计自 ${formatTableTime(response.data_start_at)} 开始` : '，当前窗口存在未观测时段'}</span></div>}
+              {loadError && <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} /><span>{loadError}</span></div>}
+            </div>
+          </div>
 
-      <section className="connectivity-section">
-        <div className="connectivity-section-head"><Gauge size={14} aria-hidden="true" /><h3>延迟走势</h3><span className="connectivity-section-note">{Math.round(stats.avgLatency)} ms 平均</span></div>
-        {latencyValues.length < 2
-          ? <div className="server-chart-empty">等待更多数据</div>
-          : <div className="connectivity-latency-chart">
-              <svg viewBox="0 0 480 110" preserveAspectRatio="none" role="img" aria-label="近期公网延迟走势">
-                <defs>
-                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" className="connectivity-gradient-stop-top" />
-                    <stop offset="100%" className="connectivity-gradient-stop-bottom" />
-                  </linearGradient>
-                </defs>
-                <line x1="0" y1="36.67" x2="480" y2="36.67" className="connectivity-latency-grid" />
-                <line x1="0" y1="73.33" x2="480" y2="73.33" className="connectivity-latency-grid" />
-                <path d={latencyArea} fill={`url(#${gradientId})`} />
-                <polyline points={latencyPolyline} className="connectivity-latency-line" vectorEffect="non-scaling-stroke" />
+          <section className="connectivity-section">
+            <div className="connectivity-section-head"><Activity size={14} aria-hidden="true" /><h3>公网可用时间线</h3><span className="connectivity-section-note">{buckets.length} 个时间段</span></div>
+            <div className="connectivity-hour-strip" style={{ gridTemplateColumns: `repeat(${Math.max(1, buckets.length)}, minmax(0, 1fr))` }} role="img" aria-label={`近 ${windowLabels[windowKey]}公网可用率分段`}>
+              {buckets.map(bucket => {
+                const observed = bucket.available_seconds + bucket.unavailable_seconds
+                return <span key={bucket.start_at} className={`connectivity-hour-cell ${backendConnectivityBucketTone(bucket.sla_percent, bucket.unknown_seconds, observed)}`} title={bucketTitle(bucket)} aria-label={bucketTitle(bucket)} />
+              })}
+            </div>
+            {firstBucket && midBucket && lastBucket && <div className="connectivity-hour-axis"><span>{formatTableTime(firstBucket.start_at)}</span><span>{formatTableTime(midBucket.start_at)}</span><span>{formatTableTime(lastBucket.end_at)}</span></div>}
+            <div className="connectivity-hour-legend"><span><i className="great" />正常</span><span><i className="fair" />波动</span><span><i className="poor" />不可用</span><span><i className="none" />无数据</span></div>
+          </section>
+
+          <section className="connectivity-section">
+            <div className="connectivity-section-head"><Gauge size={14} aria-hidden="true" /><h3>公网探测延迟</h3><span className="connectivity-section-note">{formatLatency(response.latency.avg_ms)} 平均</span></div>
+            {latencyValues.length < 2 ? <div className="server-chart-empty">暂无足够的成功探测数据</div> : <div className="connectivity-latency-chart">
+              <svg viewBox="0 0 480 110" preserveAspectRatio="none" role="img" aria-label="公网 HTTPS 探测延迟走势">
+                <defs><linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" className="connectivity-gradient-stop-top" /><stop offset="100%" className="connectivity-gradient-stop-bottom" /></linearGradient></defs>
+                <line x1="0" y1="36.67" x2="480" y2="36.67" className="connectivity-latency-grid" /><line x1="0" y1="73.33" x2="480" y2="73.33" className="connectivity-latency-grid" />
+                <path d={latencyArea} fill={`url(#${gradientId})`} /><polyline points={latencyPolyline} className="connectivity-latency-line" vectorEffect="non-scaling-stroke" />
               </svg>
-              <span className="connectivity-latency-scale high" aria-hidden="true">{Math.round(latencyMax * 2 / 3)} ms</span>
-              <span className="connectivity-latency-scale low" aria-hidden="true">{Math.round(latencyMax / 3)} ms</span>
+              <span className="connectivity-latency-scale high" aria-hidden="true">{Math.round(latencyMax * 2 / 3)} ms</span><span className="connectivity-latency-scale low" aria-hidden="true">{Math.round(latencyMax / 3)} ms</span>
             </div>}
-      </section>
+          </section>
 
-      <section className="connectivity-section">
-        <div className="connectivity-section-head"><Database size={14} aria-hidden="true" /><h3>检测统计</h3><span className="connectivity-section-note">{stats.offlineCount ? `${stats.total} 次记录（离线计入 ${stats.offlineCount} 分钟）` : `${stats.total} 次检测`}</span></div>
-        <div className="connectivity-stats">
-          <div className="connectivity-stat ok"><strong>{stats.available}</strong><span>可用</span></div>
-          <div className="connectivity-stat danger"><strong>{stats.unavailable}</strong><span>不可用</span></div>
-          <div className="connectivity-stat"><strong>{Math.round(stats.avgLatency)} ms</strong><span>平均延迟</span></div>
-          <div className="connectivity-stat"><strong>{Math.round(stats.minLatency)} ms</strong><span>最低延迟</span></div>
-          <div className="connectivity-stat"><strong>{Math.round(stats.maxLatency)} ms</strong><span>最高延迟</span></div>
-          <div className="connectivity-stat"><strong>{stats.runs.length}</strong><span>中断次数</span></div>
-          <div className="connectivity-stat"><strong>{formatSLAWindowDuration(stats.longestOutageMs)}</strong><span>最长中断</span></div>
-          <div className="connectivity-stat"><strong>{stats.total ? `${((stats.unavailable / stats.total) * 100).toFixed(1)}%` : '0%'}</strong><span>不可用占比</span></div>
-        </div>
-      </section>
+          <section className="connectivity-section">
+            <div className="connectivity-section-head"><Database size={14} aria-hidden="true" /><h3>检测统计</h3><span className="connectivity-section-note">{response.probes.total} 次实际探测</span></div>
+            <div className="connectivity-stats">
+              <div className="connectivity-stat ok"><strong>{formatConnectivityDuration(response.summary.available_seconds)}</strong><span>可用时长</span></div>
+              <div className="connectivity-stat danger"><strong>{formatConnectivityDuration(response.summary.unavailable_seconds)}</strong><span>不可用时长</span></div>
+              <div className="connectivity-stat"><strong>{formatConnectivityDuration(response.summary.unknown_seconds)}</strong><span>未知 / 未观测</span></div>
+              <div className="connectivity-stat"><strong>{response.summary.coverage_percent.toFixed(1)}%</strong><span>统计覆盖率</span></div>
+              <div className="connectivity-stat"><strong>{response.summary.outage_count}</strong><span>中断次数</span></div>
+              <div className="connectivity-stat"><strong>{formatConnectivityDuration(response.summary.longest_outage_seconds)}</strong><span>最长中断</span></div>
+              <div className="connectivity-stat"><strong>{response.probes.total}</strong><span>实际探测次数</span></div>
+              <div className="connectivity-stat ok"><strong>{response.probes.available}</strong><span>成功探测</span></div>
+              <div className="connectivity-stat danger"><strong>{response.probes.failed}</strong><span>失败探测</span></div>
+              <div className="connectivity-stat"><strong>{formatLatency(response.latency.avg_ms)}</strong><span>平均延迟</span></div>
+              <div className="connectivity-stat"><strong>{formatLatency(response.latency.min_ms)}</strong><span>最低延迟</span></div>
+              <div className="connectivity-stat"><strong>{formatLatency(response.latency.max_ms)}</strong><span>最高延迟</span></div>
+              <div className="connectivity-stat"><strong>{formatLatency(response.latency.p95_ms)}</strong><span>P95 延迟</span></div>
+            </div>
+          </section>
 
-      {recentOutages.length > 0 && <section className="connectivity-section">
-        <div className="connectivity-section-head"><AlertTriangle size={14} aria-hidden="true" /><h3>最近中断</h3></div>
-        <ul className="connectivity-outages">
-          {recentOutages.map((run, index) => (
-            <li key={`${run.startMs}-${index}`}><span>{formatTableTime(new Date(run.startMs).toISOString())} 至 {formatTableTime(new Date(run.endMs).toISOString())}</span><strong>{formatSLAWindowDuration(run.endMs - run.startMs)}</strong></li>
-          ))}
-        </ul>
-      </section>}
+          {response.outages.length > 0 && <section className="connectivity-section">
+            <div className="connectivity-section-head"><AlertTriangle size={14} aria-hidden="true" /><h3>最近中断</h3></div>
+            <ul className="connectivity-outages">{response.outages.map((outage, index) => <li key={`${outage.started_at}-${index}`}><span>{formatTableTime(outage.started_at)} 至 {outage.ended_at ? formatTableTime(outage.ended_at) : '持续中'} · {causeLabels[outage.cause] || '公网异常'}{outage.started_before_window ? ' · 开始于窗口前' : ''}</span><strong>{formatConnectivityDuration(outage.duration_seconds)}</strong></li>)}</ul>
+          </section>}
+
+          <div className="connectivity-explanation"><Info size={14} aria-hidden="true" /><p><strong>SLA 仅按公网可用时间计算，延迟不参与 SLA。</strong> 延迟表示该服务器从自身公网出口访问 cp.cloudflare.com 的 HTTPS 探测耗时；检测目标统一，但它不是所有服务器的“统一网络延迟”，也不是 Controller 与 Agent 之间的网络延迟。</p></div>
+        </> : null}
     </div>
-    <footer className="dialog-actions">
-      <button type="button" className="ghost" onClick={() => void loadSamples()} disabled={loading} aria-label="刷新数据"><RefreshCw size={14} className={loading ? 'spin' : ''} />刷新</button>
-      <button type="button" onClick={onClose}>关闭</button>
-    </footer>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => void loadConnectivity(windowKey)} disabled={loading} aria-label="刷新数据"><RefreshCw size={14} className={loading ? 'spin' : ''} />刷新</button><button type="button" onClick={onClose}>关闭</button></footer>
   </MotionDialogPanel>
 }
 

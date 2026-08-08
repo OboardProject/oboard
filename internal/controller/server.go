@@ -2987,6 +2987,10 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		write(w, 200, map[string]any{"server_metrics": items})
 		return
 	}
+	if len(parts) == 2 && parts[1] == "connectivity" {
+		s.serverConnectivity(w, r, id)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "mtu-detect" {
 		s.serverMTUDetect(w, r, id)
 		return

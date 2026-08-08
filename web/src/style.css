@@ -7807,7 +7807,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .connectivity-dialog {
-  width: min(680px, 100%);
+  width: min(760px, 100%);
   max-height: min(90vh, 860px);
 }
 
@@ -7847,6 +7847,30 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   display: grid;
   gap: 14px;
   background: var(--surface-2);
+}
+
+.connectivity-window-switch {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+}
+.connectivity-window-switch button {
+  min-width: 0;
+  min-height: 32px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+}
+.connectivity-window-switch button.active {
+  color: var(--text-strong);
+  background: var(--surface-solid);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 .connectivity-hero {
@@ -7920,6 +7944,26 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .connectivity-sla-progress-fill.great { background: var(--success); }
 .connectivity-sla-progress-fill.fair { background: var(--warning); }
 .connectivity-sla-progress-fill.poor { background: var(--danger); }
+
+.connectivity-coverage-note,
+.connectivity-explanation {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+.connectivity-coverage-note svg,
+.connectivity-explanation svg { flex: 0 0 auto; margin-top: 1px; }
+.connectivity-explanation {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+}
+.connectivity-explanation p { margin: 0; overflow-wrap: anywhere; }
+.connectivity-explanation strong { color: var(--text-secondary); }
 
 .connectivity-hero-info {
   min-width: 0;
@@ -8012,9 +8056,11 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .connectivity-hour-axis {
   display: flex;
   justify-content: space-between;
+  gap: 8px;
   color: var(--muted);
   font-size: 9px;
 }
+.connectivity-hour-axis span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .connectivity-hour-legend {
   display: flex;
   flex-wrap: wrap;
@@ -8124,6 +8170,8 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .connectivity-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .connectivity-hour-strip { gap: 2px; }
   .connectivity-hour-cell { height: 22px; }
+  .connectivity-section { padding: 12px; }
+  .connectivity-hour-axis span:nth-child(2) { display: none; }
 }
 
 

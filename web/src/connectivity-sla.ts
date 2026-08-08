@@ -1,62 +1,78 @@
-// SLA timeline for the public-connectivity view. The Agent records one metric
-// sample per heartbeat (~10-20s) while connected, so a gap between samples
-// means the server stopped reporting: that time must count as downtime for SLA
-// purposes instead of showing "no data".
+export type ConnectivityWindowKey = '24h' | '7d' | '30d'
 
-export type ConnectivitySample = {
-  connectivity_available?: boolean
-  connectivity_latency_ms?: number
-  sampled_at: string
+export type ConnectivityWindow = {
+  key: ConnectivityWindowKey
+  from: string
+  to: string
+  bucket_seconds: number
 }
 
-export type ConnectivityTimelineSample<T extends ConnectivitySample = ConnectivitySample> = T & {
-  offline_synthetic: boolean
+export type ConnectivityBucket = {
+  start_at: string
+  end_at: string
+  sla_percent: number | null
+  available_seconds: number
+  unavailable_seconds: number
+  unknown_seconds: number
+  avg_latency_ms: number | null
 }
 
-export const OFFLINE_SAMPLE_STEP_MS = 60_000
-
-export function serverOfflineThresholdMs(server: { offline_after_seconds?: number }): number {
-  const seconds = Number(server.offline_after_seconds)
-  return (Number.isFinite(seconds) && seconds > 0 ? seconds : 120) * 1000
+export type ConnectivityResponse = {
+  server_id: number
+  window: ConnectivityWindow
+  summary: {
+    sla_percent: number | null
+    available_seconds: number
+    unavailable_seconds: number
+    unknown_seconds: number
+    observed_seconds: number
+    coverage_percent: number
+    outage_count: number
+    longest_outage_seconds: number
+  }
+  probes: { total: number; available: number; failed: number }
+  latency: {
+    avg_ms: number | null
+    min_ms: number | null
+    max_ms: number | null
+    p95_ms: number | null
+    successful_probe_count: number
+  }
+  current: {
+    status: 'available' | 'unavailable' | 'offline' | 'disabled' | 'pending'
+    latency_ms: number
+    checked_at: string | null
+    error: string
+  }
+  buckets: ConnectivityBucket[]
+  latency_points: { at: string; avg_ms: number; min_ms: number; max_ms: number; count: number }[]
+  outages: { started_at: string; ended_at: string | null; duration_seconds: number; cause: string; started_before_window: boolean }[]
+  data_start_at: string | null
 }
 
-export function buildSlaTimeline<T extends ConnectivitySample>(
-  samples: T[],
-  server: { status?: string; offline_after_seconds?: number; connectivity_probe_enabled?: boolean },
-  nowMs = Date.now(),
-): ConnectivityTimelineSample<T>[] {
-  const sorted = samples
-    .filter((sample): sample is T & { connectivity_available: boolean } => sample.connectivity_available !== undefined)
-    .map(sample => ({ ...sample, offline_synthetic: false }))
-    .sort((a, b) => Date.parse(a.sampled_at) - Date.parse(b.sampled_at))
-  if (sorted.length === 0 && server.connectivity_probe_enabled === false) return sorted
-  const reporting = samples.slice().sort((a, b) => Date.parse(a.sampled_at) - Date.parse(b.sampled_at))
-  if (reporting.length === 0) return sorted
+export function connectivityRequestPath(serverID: number | string, window: ConnectivityWindowKey = '24h') {
+  return `/servers/${serverID}/connectivity?window=${window}`
+}
 
-  const thresholdMs = serverOfflineThresholdMs(server)
-  const windows: { startMs: number; endMs: number }[] = []
-  for (let i = 1; i < reporting.length; i++) {
-    const prevMs = Date.parse(reporting[i - 1].sampled_at)
-    const nextMs = Date.parse(reporting[i].sampled_at)
-    if (nextMs - prevMs > thresholdMs) windows.push({ startMs: prevMs, endMs: nextMs })
-  }
-  const lastMs = Date.parse(reporting[reporting.length - 1].sampled_at)
-  if (String(server.status || '').toLowerCase() === 'offline' || nowMs - lastMs > thresholdMs) {
-    windows.push({ startMs: lastMs, endMs: nowMs })
-  }
-  if (windows.length === 0) return sorted
+export function connectivitySlaDisplay(value: number | null | undefined) {
+  return value == null || !Number.isFinite(Number(value)) ? '—' : `${Number(value).toFixed(2)}%`
+}
 
-  const synthetic: ConnectivityTimelineSample<T>[] = []
-  for (const window of windows) {
-    for (let atMs = window.startMs + thresholdMs; atMs < window.endMs; atMs += OFFLINE_SAMPLE_STEP_MS) {
-      synthetic.push({
-        ...reporting[0],
-        connectivity_available: false,
-        connectivity_latency_ms: 0,
-        sampled_at: new Date(atMs).toISOString(),
-        offline_synthetic: true,
-      })
-    }
-  }
-  return [...sorted, ...synthetic].sort((a, b) => Date.parse(a.sampled_at) - Date.parse(b.sampled_at))
+export function connectivityBucketTone(slaPercent: number | null, unknownSeconds: number, observedSeconds: number) {
+  if (observedSeconds <= 0 || slaPercent == null) return 'none'
+  if (slaPercent >= 99.5) return 'great'
+  if (slaPercent >= 90) return 'good'
+  if (slaPercent >= 50) return 'fair'
+  if (slaPercent > 0) return 'poor'
+  return unknownSeconds > observedSeconds ? 'poor' : 'down'
+}
+
+export function formatConnectivityDuration(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—'
+  if (seconds < 60) return `${Math.round(seconds)} 秒`
+  const totalMinutes = Math.round(seconds / 60)
+  if (totalMinutes < 60) return `${totalMinutes} 分钟`
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  return minutes ? `${hours} 小时 ${minutes} 分` : `${hours} 小时`
 }
