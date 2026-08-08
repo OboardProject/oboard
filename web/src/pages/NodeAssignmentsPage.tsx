@@ -195,8 +195,6 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
       <div className="panel-body">
         {toast && <p style={{ margin: '0 0 8px', color: 'var(--color-success, #16a34a)' }}>{toast}</p>}
         <>
-            <p className="muted">可分配节点目录由代理链路、导入节点与独立入口统一汇总；右键节点或点击行内「⋯」选择范围后，可加入方案或批量创建用户临时例外。</p>
-
         <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
           <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索名称 / 服务器 / 协议 / 地区" style={{ maxWidth: 260 }} />
           <Button variant="outline" size="sm" onClick={() => setFiltersOpen(v => !v)}><Filter size={14} /> 筛选</Button>
