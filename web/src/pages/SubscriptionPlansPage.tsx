@@ -565,9 +565,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
 
   return (
     <div className="panel subscription-plans-panel">
-      <div className="panel-head"><h2>套餐</h2></div>
       <div className="panel-body">
-        <p className="muted">套餐定义节点的可分配集合与速度/流量限额。每次保存都会创建一个不可变版本：排序修改立即生效，节点或限额变化先进入待应用状态，再由“准备 → 激活 → 收尾”两阶段下发。</p>
 
         <div className="section-toolbar">
           <div><h3>套餐列表</h3><p className="muted">共 {plans.length} 个套餐。</p></div>

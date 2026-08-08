@@ -68,8 +68,10 @@ export function NodeOrderTemplatesPage({ data, client, notify }: { data: any; cl
 
   return (
     <div className="panel node-template-panel">
-      <div className="panel-head template-page-head"><div><h2>排序模板</h2><p className="muted">模板保存可复用规则；方案使用独立快照。</p></div><Button onClick={() => openEditor()}><FilePlus2 size={15} /> 新建模板</Button></div>
       <div className="panel-body">
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+          <Button onClick={() => openEditor()}><FilePlus2 size={15} /> 新建模板</Button>
+        </div>
         {error && <p className="danger-text" role="alert">{error}</p>}
         {loading ? <p className="muted">正在加载排序模板...</p> : (
           <div className="card-custom" style={{ overflow: 'auto' }}><table className="user-data-table template-list-table"><thead><tr><th>模板名称</th><th>排序类型</th><th>新节点处理</th><th>版本</th><th>使用方案</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>

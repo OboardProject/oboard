@@ -201,9 +201,6 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
 
   return (
     <div className="panel node-assignments-panel">
-      <div className="panel-head" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <h2 style={{ margin: 0 }}>全部节点</h2>
-      </div>
       <div className="panel-body">
         {toast && <p style={{ margin: '0 0 8px', color: 'var(--color-success, #16a34a)' }}>{toast}</p>}
         <>

@@ -2051,9 +2051,7 @@ function App() {
                       animate={{ opacity: 1, transition: { duration: 0.2, ease: [0.22, 1, 0.36, 1] } }}
                       exit={{ opacity: 0, transition: { duration: 0.16, ease: 'easeIn' } }}
                     >
-                      {Boolean(current.group) && <p className="eyebrow">{current.group}</p>}
                       <h1>{tabTitles[tab] || current.label}</h1>
-                      {tab !== 'audit' && Boolean(current.desc) && <p>{current.desc}</p>}
                     </m.div>
                   </AnimatePresence>
                 </m.div>
