@@ -597,7 +597,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
                     <h4 style={{ margin: '6px 0' }}>待排节点（{unplacedNodes.length}）</h4>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {unplacedNodes.map(node => (
-                        <div key={node.key} className="card-custom" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px' }}>
+                        <div key={node.key} className="sortable-row" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, padding: '6px 12px', minHeight: 38, borderRadius: 'var(--radius-md)', background: 'var(--surface-solid)', border: '1px solid var(--border)' }}>
                           <span style={{ flex: 1, fontSize: 13 }}>{node.name} <Badge variant="outline">待排</Badge></span>
                           <Button variant="outline" size="sm" onClick={() => appendUnplaced(node.key)}>追加到末尾</Button>
                         </div>
@@ -687,15 +687,27 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
   )
 }
 
+function regionFlagEmoji(code?: string) {
+  const value = String(code || '').toUpperCase()
+  if (!/^[A-Z]{2}$/.test(value)) return '🌐'
+  const offset = 127397
+  return String.fromCodePoint(...value.split('').map(char => char.charCodeAt(0) + offset))
+}
+
 function RegionOrderEditor({ list, onChange }: { list: string[]; onChange: (list: string[]) => void }) {
-  if (list.length === 0) return <p className="muted">未配置自定义顺序。</p>
+  if (list.length === 0) return <p className="muted" style={{ margin: '8px 0' }}>未配置自定义顺序。</p>
   return (
     <SortableList items={list} onReorder={onChange} renderRow={(code, index) => (
       <>
-        <span style={{ flex: 1, fontSize: 13, fontFamily: 'var(--font-mono)' }}>{code}</span>
-        <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => onChange(moveItem(list, index, -1))} aria-label={`上移 ${code}`}><ChevronUp size={14} /></Button>
-        <Button variant="ghost" size="icon" disabled={index === list.length - 1} onClick={() => onChange(moveItem(list, index, 1))} aria-label={`下移 ${code}`}><ChevronDown size={14} /></Button>
-        <Button variant="ghost" size="icon" onClick={() => onChange(list.filter(c => c !== code))} aria-label={`移除 ${code}`}><Trash2 size={14} /></Button>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Badge variant="outline" style={{ fontFamily: 'var(--font-mono)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px' }}>
+            <span>{regionFlagEmoji(code)}</span>
+            <strong>{code}</strong>
+          </Badge>
+        </div>
+        <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => onChange(moveItem(list, index, -1))} aria-label={`上移 ${code}`} title="上移" style={{ width: 28, height: 28 }}><ChevronUp size={14} /></Button>
+        <Button variant="ghost" size="icon" disabled={index === list.length - 1} onClick={() => onChange(moveItem(list, index, 1))} aria-label={`下移 ${code}`} title="下移" style={{ width: 28, height: 28 }}><ChevronDown size={14} /></Button>
+        <Button variant="ghost" size="icon" onClick={() => onChange(list.filter(c => c !== code))} aria-label={`移除 ${code}`} title="移除" style={{ width: 28, height: 28, color: 'var(--color-danger)' }}><Trash2 size={14} /></Button>
       </>
     )} />
   )
@@ -721,7 +733,7 @@ function SortableList({ items, onReorder, renderRow }: {
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
       <SortableContext items={items} strategy={verticalListSortingStrategy}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {items.map((item, index) => (
             <SortableRow key={item} id={item}>{renderRow(item, index)}</SortableRow>
           ))}
@@ -736,12 +748,17 @@ function SortableRow({ id, children }: { id: string; children: React.ReactNode }
   return (
     <div
       ref={setNodeRef}
-      className="card-custom"
+      className="sortable-row"
       style={{
         display: 'flex',
+        flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
-        padding: '6px 10px',
+        gap: 8,
+        padding: '6px 12px',
+        minHeight: 38,
+        borderRadius: 'var(--radius-md)',
+        background: 'var(--surface-solid)',
+        border: '1px solid var(--border)',
         transform: CSS.Transform.toString(transform),
         transition,
         opacity: isDragging ? 0.6 : 1,
