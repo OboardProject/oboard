@@ -28,6 +28,7 @@ type planAssignmentData struct {
 	exceptions   []model.UserNodeException
 	config       store.FullRoutingConfig
 	serverOnline map[int64]bool
+	nodeMetadata map[string]model.AssignableNodeMetadata
 	snapshot     *core.EffectiveAccessSnapshot
 }
 
@@ -56,6 +57,10 @@ func (s *Server) loadPlanAssignmentData(ctx context.Context) (*planAssignmentDat
 	if err != nil {
 		return nil, err
 	}
+	nodeMetadata, err := s.store.ListNodeMetadata(ctx)
+	if err != nil {
+		return nil, err
+	}
 	serverOnline := make(map[int64]bool, len(config.Servers))
 	for _, server := range config.Servers {
 		serverOnline[server.ID] = server.Status == model.ServerOnline
@@ -68,6 +73,7 @@ func (s *Server) loadPlanAssignmentData(ctx context.Context) (*planAssignmentDat
 		exceptions:   exceptions,
 		config:       config,
 		serverOnline: serverOnline,
+		nodeMetadata: nodeMetadata,
 	}
 	data.snapshot = core.BuildEffectiveAccessSnapshot(core.EffectiveAccessInput{
 		Users:             users,
@@ -149,9 +155,12 @@ type assignableNodeView struct {
 }
 
 type assignableNodePlanView struct {
-	PlanID       int64  `json:"plan_id"`
-	Name         string `json:"name"`
-	DisplayGroup string `json:"display_group,omitempty"`
+	PlanID                 int64   `json:"plan_id"`
+	Name                   string  `json:"name"`
+	DisplayGroup           string  `json:"display_group,omitempty"`
+	DisplayName            string  `json:"display_name"`
+	DisplayNameOverride    *string `json:"display_name_override"`
+	HasDisplayNameOverride bool    `json:"has_display_name_override"`
 }
 
 func (s *Server) assignableNodes(w http.ResponseWriter, r *http.Request) {
@@ -172,6 +181,7 @@ func (s *Server) assignableNodes(w http.ResponseWriter, r *http.Request) {
 		EgressResults:     data.config.ProxyPathEgressResults,
 		ExternalOutbounds: data.config.ExternalOutbounds,
 		ServerOnline:      data.serverOnline,
+		NodeMetadata:      data.nodeMetadata,
 	})
 	if err != nil {
 		fail(w, err, 500)
@@ -237,6 +247,7 @@ func (s *Server) assignableNodes(w http.ResponseWriter, r *http.Request) {
 		if query != "" {
 			haystack := strings.ToLower(strings.Join([]string{
 				node.Name,
+				node.SourceName,
 				node.EntryServerName,
 				string(node.EntryProtocol),
 				strings.Join(node.PathSummary, " "),
@@ -255,7 +266,7 @@ func (s *Server) assignableNodes(w http.ResponseWriter, r *http.Request) {
 			DenyExceptions:  denyCount[node.Key],
 		}
 		for _, pn := range plans {
-			view.Plans = append(view.Plans, assignableNodePlanView{PlanID: pn.PlanID, Name: planByID[pn.PlanID].Name, DisplayGroup: pn.DisplayGroup})
+			view.Plans = append(view.Plans, planViewForNode(planByID[pn.PlanID], pn, node.EffectiveGlobalName))
 		}
 		sort.Slice(view.Plans, func(i, j int) bool { return view.Plans[i].PlanID < view.Plans[j].PlanID })
 		filtered = append(filtered, view)
@@ -340,11 +351,15 @@ type assignableNodeUserView struct {
 }
 
 func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
+	parts := pathParts(r.URL.Path, "/api/v1/assignable-nodes/")
+	if len(parts) == 3 && parts[2] == "metadata" {
+		s.assignableNodeMetadataUpdate(w, r, parts[0], parts[1])
+		return
+	}
 	if r.Method != http.MethodGet {
 		method(w)
 		return
 	}
-	parts := pathParts(r.URL.Path, "/api/v1/assignable-nodes/")
 	if len(parts) < 2 {
 		fail(w, errors.New("expected /api/v1/assignable-nodes/:node_type/:node_id"), 404)
 		return
@@ -368,6 +383,7 @@ func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
 		EgressResults:     data.config.ProxyPathEgressResults,
 		ExternalOutbounds: data.config.ExternalOutbounds,
 		ServerOnline:      data.serverOnline,
+		NodeMetadata:      data.nodeMetadata,
 	})
 	if err != nil {
 		fail(w, err, 500)
@@ -393,7 +409,7 @@ func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	planViews := []assignableNodePlanView{}
 	for _, pn := range data.planMembership()[key] {
-		planViews = append(planViews, assignableNodePlanView{PlanID: pn.PlanID, Name: planByID[pn.PlanID].Name, DisplayGroup: pn.DisplayGroup})
+		planViews = append(planViews, planViewForNode(planByID[pn.PlanID], pn, node.EffectiveGlobalName))
 	}
 	sort.Slice(planViews, func(i, j int) bool { return planViews[i].PlanID < planViews[j].PlanID })
 
@@ -451,6 +467,19 @@ func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(activeExceptions, func(i, j int) bool { return activeExceptions[i].ID < activeExceptions[j].ID })
 	write(w, 200, map[string]any{"node": node, "plans": planViews, "users": users, "exceptions": activeExceptions, "runtime_authorization_mode": s.authorizationMode(r.Context())})
+}
+
+func planViewForNode(plan *model.SubscriptionPlan, node model.SubscriptionPlanNode, globalName string) assignableNodePlanView {
+	view := assignableNodePlanView{PlanID: node.PlanID, DisplayGroup: node.DisplayGroup, DisplayName: core.ResolveEffectiveNodeName(globalName, nil, node.DisplayNameOverride)}
+	if plan != nil {
+		view.Name = plan.Name
+	}
+	if node.DisplayNameOverride != nil {
+		value := *node.DisplayNameOverride
+		view.DisplayNameOverride = &value
+		view.HasDisplayNameOverride = true
+	}
+	return view
 }
 
 // ---------------------------------------------------------------------------
@@ -803,6 +832,14 @@ func (s *Server) subscriptionPlanSubroutes(w http.ResponseWriter, r *http.Reques
 			fail(w, errors.New("unknown subscription plan subroute"), 404)
 		}
 	case "ordering":
+		if len(parts) == 2 && parts[1] == "apply-template" {
+			if r.Method != http.MethodPost {
+				method(w)
+				return
+			}
+			s.planOrderingApplyTemplate(w, r, id)
+			return
+		}
 		if len(parts) == 2 && parts[1] == "versions" {
 			if r.Method != http.MethodPost {
 				method(w)
@@ -824,6 +861,12 @@ func (s *Server) subscriptionPlanSubroutes(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		s.planOrdering(w, r, id)
+	case "node-presentation":
+		if len(parts) == 2 && parts[1] == "versions" && r.Method == http.MethodPost {
+			s.planNodePresentationVersionCreate(w, r, id)
+			return
+		}
+		method(w)
 	case "publish":
 		if len(parts) != 1 || r.Method != http.MethodPost {
 			method(w)
@@ -988,8 +1031,11 @@ func (s *Server) planRevisions(w http.ResponseWriter, r *http.Request, id int64,
 				TrafficResetMode:  &mode,
 				TrafficResetDay:   &day,
 			},
-			Nodes:         &store.PlanNodesMutation{Op: "replace", Nodes: histNodes},
-			Ordering:      &store.PlanOrderingMutation{Policy: historical.NodeOrderPolicy, ManualOrder: manualOrderFromNodes(histNodes)},
+			Nodes: &store.PlanNodesMutation{Op: "replace", Nodes: histNodes, ReplaceSnapshot: true},
+			Ordering: &store.PlanOrderingMutation{
+				Policy: historical.NodeOrderPolicy, ManualOrder: manualOrderFromNodes(histNodes),
+				SetTemplateProvenance: true, OrderTemplateID: historical.OrderTemplateID, OrderTemplateRevision: historical.OrderTemplateRevision,
+			},
 			ChangeKind:    model.PlanChangeKindRestore,
 			ChangeSummary: strings.TrimSpace(req.ChangeSummary),
 		})
@@ -1121,10 +1167,20 @@ func (s *Server) planNodesApply(w http.ResponseWriter, r *http.Request, id int64
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
+	baseID := req.BaseRevisionID
+	if baseID == 0 {
+		baseID = plan.LatestRevisionID
+	}
+	orderingMutation, _, err := s.planNodePlacement(r.Context(), id, baseID, req.Op, nodes)
+	if err != nil {
+		fail(w, err, 400)
+		return
+	}
 	result, err := s.store.CreatePlanVersion(r.Context(), id, store.PlanVersionMutation{
-		BaseRevisionID:      req.BaseRevisionID,
+		BaseRevisionID:      baseID,
 		ExpectedLockVersion: expected,
 		Nodes:               &store.PlanNodesMutation{Op: req.Op, Nodes: nodes},
+		Ordering:            orderingMutation,
 		ChangeKind:          model.PlanChangeKindNodes,
 		ChangeSummary:       strings.TrimSpace(req.ChangeSummary),
 	})
@@ -1220,18 +1276,131 @@ func (s *Server) computePlanNodesChange(ctx context.Context, id int64, req planN
 		return nil, errors.New("op must be add, remove, or replace")
 	}
 	preview := core.PreviewPlanNodeChange(data.users, data.bindings, data.plans, data.planNodes, data.exceptions, id, targetNodes, data.config.ProxyPaths, data.config.ProxyPathSteps, data.config.Inbounds, data.serverOnline, data.now())
+	_, orderingPreview, err := s.planNodePlacement(ctx, id, plan.LatestRevisionID, req.Op, nodes)
+	if err != nil {
+		return nil, err
+	}
 	out := map[string]any{
 		"preview":               preview,
 		"expected_revision":     plan.LockVersion,
 		"expected_lock_version": plan.LockVersion,
 		"base_revision_id":      plan.LatestRevisionID,
 		"node_count":            len(targetNodes),
+		"ordering_preview":      orderingPreview,
 	}
 	if plan.LatestRevisionID != plan.CurrentRevisionID {
 		added, removed, unchanged := nodeSetDiff(activeNodes, latestNodes)
 		out["current_vs_latest"] = map[string]any{"nodes_added": added, "nodes_removed": removed, "nodes_unchanged": unchanged}
 	}
 	return out, nil
+}
+
+type planNodeOrderingPreview struct {
+	Nodes           []orderingNodeView         `json:"nodes"`
+	AddedCount      int                        `json:"added_count"`
+	PendingCount    int                        `json:"pending_count"`
+	Warnings        []core.OrderingWarning     `json:"warnings"`
+	InsertionDetail []core.AutoPlacementDetail `json:"insertion_details"`
+}
+
+func (s *Server) planNodePlacement(ctx context.Context, planID, baseRevisionID int64, op string, requested []model.SubscriptionPlanNode) (*store.PlanOrderingMutation, *planNodeOrderingPreview, error) {
+	revision, baseNodes, err := s.store.GetPlanRevisionOrdering(ctx, planID, baseRevisionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	candidateNodes, err := store.PreviewPlanNodesMutation(baseNodes, store.PlanNodesMutation{Op: op, Nodes: requested})
+	if err != nil {
+		return nil, nil, err
+	}
+	config, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	nameOptions, err := s.orderingNameOptions(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	baseOrdered, err := core.BuildOrderingNodes(baseNodes, config.Servers, config.Inbounds, config.ProxyPaths, config.ProxyPathSteps, config.ProxyPathEgressResults, config.ExternalOutbounds, revision.NodeOrderPolicy, nameOptions)
+	if err != nil {
+		return nil, nil, err
+	}
+	candidateOrdered, err := core.BuildOrderingNodes(candidateNodes, config.Servers, config.Inbounds, config.ProxyPaths, config.ProxyPathSteps, config.ProxyPathEgressResults, config.ExternalOutbounds, revision.NodeOrderPolicy, nameOptions)
+	if err != nil {
+		return nil, nil, err
+	}
+	baseKeys := map[string]bool{}
+	candidateKeys := map[string]bool{}
+	byCandidateKey := map[string]core.SubscriptionNode{}
+	for _, node := range baseOrdered {
+		baseKeys[node.Key] = true
+	}
+	for _, node := range candidateOrdered {
+		candidateKeys[node.Key] = true
+		byCandidateKey[node.Key] = node
+	}
+	added := []core.SubscriptionNode{}
+	existing := []core.SubscriptionNode{}
+	existingPending := []core.SubscriptionNode{}
+	positioned := map[string]bool{}
+	for _, node := range baseNodes {
+		if node.SortPosition != nil {
+			positioned[core.NodeKeyOf(node.NodeType, node.NodeID)] = true
+		}
+	}
+	for _, node := range baseOrdered {
+		if candidateKeys[node.Key] {
+			if positioned[node.Key] {
+				existing = append(existing, byCandidateKey[node.Key])
+			} else {
+				existingPending = append(existingPending, byCandidateKey[node.Key])
+			}
+		}
+	}
+	for _, node := range candidateOrdered {
+		if !baseKeys[node.Key] {
+			added = append(added, node)
+		}
+	}
+	preview := &planNodeOrderingPreview{AddedCount: len(added)}
+	var orderingMutation *store.PlanOrderingMutation
+	finalOrder := candidateOrdered
+	if revision.NodeOrderPolicy.Mode == model.SubscriptionNodeOrderManual {
+		placement := core.AutoPlaceNewManualNodes(existing, added, revision.NodeOrderPolicy)
+		for _, node := range existingPending {
+			placement.PendingNodeKeys = append(placement.PendingNodeKeys, node.Key)
+			placement.Details = append(placement.Details, core.AutoPlacementDetail{
+				NodeKey: node.Key,
+				Reason:  "existing_pending",
+			})
+		}
+		preview.PendingCount = len(placement.PendingNodeKeys)
+		preview.Warnings = placement.Warnings
+		preview.InsertionDetail = placement.Details
+		positions := map[string]int{}
+		for index, key := range placement.OrderedNodeKeys {
+			positions[key] = index
+		}
+		for i := range candidateNodes {
+			key := core.NodeKeyOf(candidateNodes[i].NodeType, candidateNodes[i].NodeID)
+			if position, ok := positions[key]; ok {
+				value := position
+				candidateNodes[i].SortPosition = &value
+			} else {
+				candidateNodes[i].SortPosition = nil
+			}
+		}
+		finalOrder, err = core.BuildOrderingNodes(candidateNodes, config.Servers, config.Inbounds, config.ProxyPaths, config.ProxyPathSteps, config.ProxyPathEgressResults, config.ExternalOutbounds, revision.NodeOrderPolicy, nameOptions)
+		if err != nil {
+			return nil, nil, err
+		}
+		orderingMutation = &store.PlanOrderingMutation{Policy: revision.NodeOrderPolicy, ManualOrder: placement.OrderedNodeKeys}
+	}
+	views, _, viewWarnings := s.orderingNodeViews(ctx, config, finalOrder, revision.NodeOrderPolicy.Mode == model.SubscriptionNodeOrderManual)
+	preview.Nodes = views
+	for _, warning := range viewWarnings {
+		preview.Warnings = append(preview.Warnings, core.OrderingWarning{Code: "node_warning", Message: warning, Count: 1})
+	}
+	return orderingMutation, preview, nil
 }
 
 func nodeSetDiff(from, to []model.SubscriptionPlanNode) ([]string, []string, int) {

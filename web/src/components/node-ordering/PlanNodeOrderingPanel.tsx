@@ -21,6 +21,9 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, GripVertical, MoveDown, MoveUp, Plus, RefreshCw, Save, Sparkles, Trash2 } from 'lucide-react'
+import { Dialog } from '../ui/dialog'
+import { ApplyOrderTemplateDialog, type OrderTemplateSummary } from './ApplyOrderTemplateDialog'
+import type { TemplatePolicy } from './NodeOrderTemplateEditor'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -41,6 +44,8 @@ type OrderingPolicy = {
   entry_region_order_mode: string
   entry_region_order: string[]
   entry_order: string[]
+  new_node_placement: 'by_template' | 'append' | 'pending'
+  unmatched_placement: 'append' | 'pending'
 }
 
 type OrderingNode = {
@@ -77,6 +82,11 @@ type OrderingState = {
   nodes: OrderingNode[]
   unplaced_count: number
   warnings: string[]
+  order_template_id?: number
+  order_template_revision?: number
+  order_template?: OrderTemplateSummary
+  template_update_available?: boolean
+  template_archived?: boolean
 }
 
 const MODE_LABELS: Record<string, string> = {
@@ -90,13 +100,39 @@ const MODES = ['exit_region', 'entry', 'manual'] as const
 
 function emptyPolicy(mode: string): OrderingPolicy {
   return {
-    version: 1,
+    version: 2,
     mode,
     manual_seed: 'exit_region',
     exit_region_order: [],
     entry_region_order_mode: 'inherit_exit',
     entry_region_order: [],
     entry_order: [],
+    new_node_placement: 'by_template',
+    unmatched_placement: 'append',
+  }
+}
+
+function normalizeOrderingPolicy(policy: OrderingPolicy): OrderingPolicy {
+  return {
+    ...policy,
+    exit_region_order: policy.exit_region_order || [],
+    entry_region_order: policy.entry_region_order || [],
+    entry_order: policy.entry_order || [],
+    new_node_placement: policy.new_node_placement || 'pending',
+    unmatched_placement: policy.unmatched_placement || 'pending',
+  }
+}
+
+function templatePolicyFromOrdering(policy: OrderingPolicy): TemplatePolicy {
+  return {
+    version: 1,
+    base_mode: policy.mode === 'entry' || (policy.mode === 'manual' && policy.manual_seed === 'entry') ? 'entry' : 'exit_region',
+    exit_region_order: policy.exit_region_order || [],
+    entry_region_order_mode: policy.entry_region_order_mode === 'custom' ? 'custom' : 'inherit_exit',
+    entry_region_order: policy.entry_region_order || [],
+    entry_order: policy.entry_order || [],
+    new_node_placement: policy.new_node_placement || 'pending',
+    unmatched_placement: policy.unmatched_placement || 'pending',
   }
 }
 
@@ -131,6 +167,10 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
   const [previewUnplaced, setPreviewUnplaced] = React.useState(0)
   const [regionInput, setRegionInput] = React.useState('')
   const [previewing, setPreviewing] = React.useState(false)
+  const [applyTemplateOpen, setApplyTemplateOpen] = React.useState(false)
+  const [saveTemplateOpen, setSaveTemplateOpen] = React.useState(false)
+  const [templateName, setTemplateName] = React.useState('')
+  const [templateDescription, setTemplateDescription] = React.useState('')
 
   const loadOrdering = React.useCallback(async () => {
     setLoading(true)
@@ -139,7 +179,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
       // Defaults to the latest saved version: the editor's working base.
       const res = await client.request<OrderingState>(`/subscription-plans/${plan.id}/ordering`)
       setState(res)
-      setWorkingPolicy(JSON.parse(JSON.stringify(res.policy)))
+      setWorkingPolicy(normalizeOrderingPolicy(JSON.parse(JSON.stringify(res.policy))))
       const placed = (res.nodes || []).filter(n => n.manual_position !== undefined).sort((a, b) => (a.manual_position ?? 0) - (b.manual_position ?? 0))
       setManualOrder(placed.map(n => n.key))
       setPreviewNodes(null)
@@ -158,11 +198,18 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
 
   const setMode = (mode: string) => {
     if (!workingPolicy) return
+    const previousMode = workingPolicy.mode
     const next: OrderingPolicy = {
       ...workingPolicy,
-      version: 1,
+      version: 2,
       mode,
-      manual_seed: workingPolicy.manual_seed || 'exit_region',
+      manual_seed: mode === 'manual' && (previousMode === 'exit_region' || previousMode === 'entry') ? previousMode : workingPolicy.manual_seed || 'exit_region',
+      new_node_placement: workingPolicy.new_node_placement || 'pending',
+      unmatched_placement: workingPolicy.unmatched_placement || 'pending',
+    }
+    if (mode === 'manual' && previousMode !== 'manual') {
+      setManualOrder((state?.nodes || []).slice().sort((a, b) => a.effective_position - b.effective_position).map(node => node.key))
+      notify?.('已进入自定义排序；以后新增节点仍按当前规则处理', 'success')
     }
     setWorkingPolicy(next)
     setPreviewNodes(null)
@@ -330,6 +377,54 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
     }
   }
 
+  const applyTemplate = async (template: OrderTemplateSummary, applyMode: 'preserve_manual' | 'rebuild') => {
+    if (!state) return
+    setBusy(true)
+    setError('')
+    try {
+      const result = await client.request<{ no_change?: boolean }>(`/subscription-plans/${plan.id}/ordering/apply-template`, {
+        method: 'POST',
+        body: JSON.stringify({
+          template_id: template.id,
+          template_revision: template.revision,
+          base_revision_id: state.base_revision_id,
+          expected_lock_version: state.lock_version,
+          apply_mode: applyMode,
+          change_summary: `应用模板「${template.name}」r${template.revision}`,
+        }),
+      })
+      notify?.(result.no_change ? '排序规则没有变化' : `已应用「${template.name}」r${template.revision}`, result.no_change ? 'warning' : 'success')
+      setApplyTemplateOpen(false)
+      await loadOrdering()
+      onSaved?.()
+    } catch (reason: any) {
+      const message = reason?.message || String(reason)
+      setError(message.includes('409') || message.includes('conflict') ? '方案或模板已被其他操作更新，请重新加载后重试。' : message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const saveRuleAsTemplate = async () => {
+    if (!workingPolicy || !templateName.trim()) return
+    setBusy(true)
+    setError('')
+    try {
+      await client.request('/node-order-templates', {
+        method: 'POST',
+        body: JSON.stringify({ name: templateName.trim(), description: templateDescription.trim(), policy: templatePolicyFromOrdering(workingPolicy) }),
+      })
+      notify?.('排序规则已另存为模板', 'success')
+      setSaveTemplateOpen(false)
+      setTemplateName('')
+      setTemplateDescription('')
+    } catch (reason: any) {
+      setError(reason?.message || String(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const placedKeys = new Set(manualOrder)
   const isManual = workingPolicy?.mode === 'manual'
   const unplacedNodes = isManual ? (state?.nodes || []).filter(n => !placedKeys.has(n.key)) : []
@@ -362,6 +457,27 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
 
       {state && workingPolicy && !loading && !state.read_only && (
         <>
+          <div className="plan-order-template-status">
+            <div>
+              <span className="muted">当前排序</span>
+              <strong>{MODE_LABELS[workingPolicy.mode] || workingPolicy.mode}</strong>
+            </div>
+            <div>
+              <span className="muted">来源模板</span>
+              <strong>{state.order_template?.name || '未使用模板'}</strong>
+              {state.order_template_id && <small>方案快照 r{state.order_template_revision || 0}{state.order_template ? ` · 最新 r${state.order_template.revision}` : ''}</small>}
+            </div>
+            <div>
+              <span className="muted">新增节点</span>
+              <strong>{{ by_template: '按模板自动插入', append: '追加到末尾', pending: '进入待排区' }[workingPolicy.new_node_placement || 'pending']}</strong>
+            </div>
+            <div className="plan-order-template-actions">
+              {state.template_update_available && <Badge variant="warning">模板有更新</Badge>}
+              {state.template_archived && <Badge variant="secondary">模板已归档</Badge>}
+              <Button variant="outline" size="sm" onClick={() => setApplyTemplateOpen(true)}>应用模板</Button>
+              <Button variant="ghost" size="sm" onClick={() => setSaveTemplateOpen(true)}>另存规则为模板</Button>
+            </div>
+          </div>
           <div>
             <h3 style={{ marginTop: 0 }}>排序模式</h3>
             <div className="section-toolbar" style={{ gap: 8 }}>
@@ -450,7 +566,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
                   <Button variant="outline" size="sm" busy={previewing} onClick={() => void generateManualSeed()}><Sparkles size={14} /> 按规则生成手动顺序</Button>
                   <Button variant="ghost" size="sm" onClick={appendAllUnplaced}><MoveDown size={14} /> 把待排节点追加到末尾</Button>
                 </div>
-                <p className="muted" style={{ marginTop: 8 }}>按住手柄拖拽调整顺序，也可使用上移、下移、移到顶部、移到底部按钮；新加入套餐的节点不会自动插入已有顺序。</p>
+                <p className="muted" style={{ marginTop: 8 }}>按住手柄拖拽调整顺序，也可使用上移、下移、移到顶部、移到底部按钮。已有节点的人工相对顺序会被保留。</p>
                 <div style={{ marginTop: 8 }}>
                   {manualOrder.length === 0 ? (
                     <p className="muted">尚未放置节点，点击“按规则生成手动顺序”开始。</p>
@@ -491,6 +607,25 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
                 )}
               </div>
             </>
+          )}
+
+          {workingPolicy.mode === 'manual' && (
+            <div className="manual-placement-settings">
+              <h3>新增节点处理</h3>
+              <div className="template-radio-list" role="radiogroup" aria-label="新增节点处理方式">
+                <label><input type="radio" name="plan-new-placement" checked={workingPolicy.new_node_placement === 'by_template'} onChange={() => setWorkingPolicy({ ...workingPolicy, version: 2, new_node_placement: 'by_template' })} /> 按当前规则自动插入</label>
+                <label><input type="radio" name="plan-new-placement" checked={workingPolicy.new_node_placement === 'append'} onChange={() => setWorkingPolicy({ ...workingPolicy, version: 2, new_node_placement: 'append' })} /> 追加到末尾</label>
+                <label><input type="radio" name="plan-new-placement" checked={workingPolicy.new_node_placement === 'pending'} onChange={() => setWorkingPolicy({ ...workingPolicy, version: 2, new_node_placement: 'pending' })} /> 进入待排区</label>
+              </div>
+              {workingPolicy.new_node_placement === 'by_template' && (
+                <label className="template-unmatched">无法识别的新节点
+                  <Select value={workingPolicy.unmatched_placement || 'append'} onChange={event => setWorkingPolicy({ ...workingPolicy, version: 2, unmatched_placement: event.target.value as 'append' | 'pending' })}>
+                    <option value="append">追加到已排序节点末尾</option>
+                    <option value="pending">进入待排区</option>
+                  </Select>
+                </label>
+              )}
+            </div>
           )}
 
           <div className="section-toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
@@ -538,6 +673,16 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
           </div>
         </div>
       )}
+
+      <ApplyOrderTemplateDialog open={applyTemplateOpen} planID={plan.id} hasManualOrder={workingPolicy?.mode === 'manual'} client={client} busy={busy} onClose={() => setApplyTemplateOpen(false)} onApply={applyTemplate} />
+      <Dialog isOpen={saveTemplateOpen} onClose={() => setSaveTemplateOpen(false)} title="另存规则为模板" size="sm">
+        <div className="save-template-dialog">
+          <p className="muted">只保存地区、入口和新节点处理规则，不包含当前逐节点人工顺序。</p>
+          <label><span>模板名称</span><Input value={templateName} onChange={event => setTemplateName(event.target.value)} maxLength={100} autoFocus /></label>
+          <label><span>描述</span><Input value={templateDescription} onChange={event => setTemplateDescription(event.target.value)} maxLength={500} /></label>
+          <div className="dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => setSaveTemplateOpen(false)}>取消</Button><Button busy={busy} disabled={!templateName.trim()} onClick={() => void saveRuleAsTemplate()}><Save size={14} /> 保存模板</Button></div>
+        </div>
+      </Dialog>
     </div>
   )
 }

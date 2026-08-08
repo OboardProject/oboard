@@ -29,6 +29,8 @@ type SubscriptionOptions struct {
 	// NodeOrderPositions maps node key to the revision's manual sort position
 	// (0-based, present only in manual mode).
 	NodeOrderPositions map[string]int
+	GlobalNodeNames    map[string]*string
+	PlanNodeNames      map[string]*string
 }
 
 type SubscriptionNode struct {
@@ -36,8 +38,12 @@ type SubscriptionNode struct {
 	NodeType model.AssignableNodeType `json:"node_type"`
 	NodeID   int64                    `json:"node_id"`
 
-	Name  string `json:"name"`
-	Group string `json:"group"`
+	Name                string  `json:"name"`
+	Group               string  `json:"group"`
+	SourceName          string  `json:"source_name,omitempty"`
+	GlobalName          string  `json:"global_name,omitempty"`
+	PlanNameOverride    *string `json:"plan_name_override,omitempty"`
+	HasPlanNameOverride bool    `json:"has_plan_name_override"`
 
 	EntryKey       string `json:"entry_key"`
 	EntryInboundID int64  `json:"entry_inbound_id"`
@@ -212,6 +218,16 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameExternal, resourceID: external.ID, regionCode: external.EffectiveRegionCode})
 	}
 	resolveSubscriptionNodeNames(nodes, nameRefs)
+	for i := range nodes {
+		nodes[i].SourceName = nodes[i].Name
+		nodes[i].GlobalName = ResolveEffectiveNodeName(nodes[i].SourceName, opts.GlobalNodeNames[nodes[i].Key], nil)
+		if value, ok := opts.PlanNodeNames[nodes[i].Key]; ok && value != nil {
+			nodes[i].PlanNameOverride = value
+			nodes[i].HasPlanNameOverride = true
+		}
+		nodes[i].Name = ResolveEffectiveNodeName(nodes[i].SourceName, opts.GlobalNodeNames[nodes[i].Key], opts.PlanNodeNames[nodes[i].Key])
+	}
+	disambiguateEffectiveSubscriptionNodeNames(nodes)
 	for _, ref := range nameRefs {
 		nodes[ref.index].Name = RegionFlagEmoji(ref.regionCode) + " " + nodes[ref.index].Name
 		nodes[ref.index].Raw["tag"] = nodes[ref.index].Name
@@ -221,6 +237,40 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		policy = model.DefaultSubscriptionNodeOrderPolicy()
 	}
 	return OrderSubscriptionNodes(nodes, policy), nil
+}
+
+func disambiguateEffectiveSubscriptionNodeNames(nodes []SubscriptionNode) {
+	counts := map[string]int{}
+	for _, node := range nodes {
+		counts[node.Name]++
+	}
+	used := map[string]bool{}
+	for _, node := range nodes {
+		if counts[node.Name] == 1 {
+			used[node.Name] = true
+		}
+	}
+	indexes := make([]int, 0, len(nodes))
+	for i := range nodes {
+		if counts[nodes[i].Name] > 1 {
+			indexes = append(indexes, i)
+		}
+	}
+	sort.Slice(indexes, func(i, j int) bool { return nodes[indexes[i]].Key < nodes[indexes[j]].Key })
+	next := map[string]int{}
+	for _, index := range indexes {
+		base := nodes[index].Name
+		for {
+			next[base]++
+			candidate := fmt.Sprintf("%s%s%02d", base, proxyPathNameSeparator, next[base])
+			if used[candidate] {
+				continue
+			}
+			nodes[index].Name = candidate
+			used[candidate] = true
+			break
+		}
+	}
 }
 
 func nodeGroupFor(groups map[string]string, key, fallback string) string {

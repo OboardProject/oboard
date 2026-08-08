@@ -21,6 +21,14 @@ export function Dialog({
 }: DialogProps) {
   const shouldReduceMotion = useReducedMotion()
   const easeOut = [0.22, 1, 0.36, 1] as const
+  const dialogRef = React.useRef<HTMLDivElement>(null)
+  const previousFocusRef = React.useRef<HTMLElement | null>(null)
+  const onCloseRef = React.useRef(onClose)
+  const titleID = React.useId()
+
+  React.useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
 
   React.useEffect(() => {
     if (isOpen) {
@@ -30,6 +38,49 @@ export function Dialog({
     }
     return () => {
       document.body.style.overflow = ""
+    }
+  }, [isOpen])
+
+  React.useEffect(() => {
+    if (!isOpen) return
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const dialog = dialogRef.current
+    const focusableSelector = 'button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+    const activeElement = document.activeElement instanceof HTMLElement && dialog?.contains(document.activeElement) ? document.activeElement : null
+    const initialFocus = activeElement || dialog?.querySelector<HTMLElement>('[autofocus]') || dialog?.querySelector<HTMLElement>(focusableSelector) || dialog
+    initialFocus?.focus()
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const root = dialog?.closest('.dialog-root')
+      const roots = Array.from(document.querySelectorAll('.dialog-root'))
+      if (!root || roots[roots.length - 1] !== root) return
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCloseRef.current()
+        return
+      }
+      if (event.key !== 'Tab' || !dialog) return
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector)).filter(element => element.getClientRects().length > 0)
+      if (focusable.length === 0) {
+        event.preventDefault()
+        dialog.focus()
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      const previous = previousFocusRef.current
+      if (previous?.isConnected) previous.focus()
     }
   }, [isOpen])
 
@@ -55,9 +106,12 @@ export function Dialog({
           />
 
           <m.div
+            ref={dialogRef}
             className={`relative w-full rounded-2xl bg-popover text-foreground border border-border/80 shadow-2xl flex flex-col max-h-[90vh] ${isCompact ? "p-4 gap-3" : "p-6"} ${sizeClasses[size]} ${className}`}
             role="dialog"
             aria-modal="true"
+            aria-labelledby={title ? titleID : undefined}
+            tabIndex={-1}
             initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.98 }}
             animate={shouldReduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
             exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.985 }}
@@ -65,7 +119,7 @@ export function Dialog({
           >
             {title && (
               <div className={`flex items-center justify-between gap-3 ${isCompact ? "" : "border-b border-border pb-4 mb-4"}`}>
-                <h3 className={`${isCompact ? "text-base" : "text-lg"} font-bold leading-snug tracking-tight text-foreground`}>
+                <h3 id={titleID} className={`${isCompact ? "text-base" : "text-lg"} font-bold leading-snug tracking-tight text-foreground`}>
                   {title}
                 </h3>
                 <button

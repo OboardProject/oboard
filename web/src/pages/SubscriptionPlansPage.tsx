@@ -8,6 +8,7 @@ import { Plus, Trash2, RefreshCw, RotateCcw, Ban, Copy, X, Eye, Edit3 } from 'lu
 import { FormField, TrafficLimitInput } from '../components/ui/form-field'
 import { PlanNodeOrderingPanel, type OrderingPlan } from '../components/node-ordering/PlanNodeOrderingPanel'
 import { Skeleton } from '../components/ui/skeleton'
+import { PlanNodeNameDialog, type PlanNameNode } from '../components/node-assignment/PlanNodeNameDialog'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -34,7 +35,17 @@ type Plan = {
   updated_at?: string
 }
 
-type PlanNode = { node_type: string; node_id: number; display_group?: string; name?: string }
+type PlanNode = {
+  node_type: string
+  node_id: number
+  display_group?: string
+  name?: string
+  source_name?: string
+  global_name?: string
+  display_name_override?: string | null
+  exit_region?: string
+  entry_server_name?: string
+}
 type Revision = { id: number; revision: number; version_no: number; status: string; change_kind?: string; change_summary?: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; activated_at?: string; created_at: string }
 type AccessChange = {
   id: number
@@ -51,7 +62,32 @@ type AccessChange = {
   targets: { server_id: number; prepare_task_id?: number; finalize_task_id?: number; status: string; error?: string }[]
 }
 
-type CatalogNode = { type: string; id: number; key: string; name: string; entry_server_name?: string; entry_protocol?: string; exit_region?: string; status: string }
+type CatalogNode = {
+  type: string
+  id: number
+  key: string
+  name: string
+  source_name?: string
+  effective_global_name?: string
+  entry_server_name?: string
+  entry_protocol?: string
+  exit_region?: string
+  status: string
+}
+
+type NodeChangePreview = {
+  preview: any
+  expected_lock_version: number
+  base_revision_id: number
+  node_count: number
+  ordering_preview?: {
+    nodes: any[]
+    added_count: number
+    pending_count: number
+    warnings: any[]
+    insertion_details: any[]
+  }
+}
 
 const changeTypeLabels: Record<string, string> = {
   plan_publish: '套餐发布',
@@ -73,6 +109,7 @@ const changeKindLabels: Record<string, string> = {
   settings: '套餐设置',
   nodes: '节点调整',
   ordering: '排序调整',
+  presentation: '展示调整',
   mixed: '综合调整',
   restore: '版本恢复',
   clone: '复制',
@@ -136,7 +173,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
   const [workingSettings, setWorkingSettings] = React.useState<Plan | null>(null)
   const [workingNodes, setWorkingNodes] = React.useState<PlanNode[]>([])
   const [nodeNames, setNodeNames] = React.useState<Record<string, string>>({})
-  const [nodePreview, setNodePreview] = React.useState<{ preview: any; expected_lock_version: number; base_revision_id: number; node_count: number } | null>(null)
+  const [nodePreview, setNodePreview] = React.useState<NodeChangePreview | null>(null)
   const [nodeBusy, setNodeBusy] = React.useState(false)
   const [nodeApplyBusy, setNodeApplyBusy] = React.useState(false)
   const [saveBusy, setSaveBusy] = React.useState(false)
@@ -144,6 +181,9 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
   const [message, setMessage] = React.useState('')
   const [viewRevision, setViewRevision] = React.useState<any>(null)
   const [viewBusy, setViewBusy] = React.useState(false)
+  const [nameNode, setNameNode] = React.useState<PlanNameNode | null>(null)
+  const [nameBusy, setNameBusy] = React.useState(false)
+  const [nameError, setNameError] = React.useState('')
 
   const refreshPlans = async () => {
     const res = await client.request<{ subscription_plans: Plan[] }>('/subscription-plans')
@@ -159,16 +199,30 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
         client.request<{ nodes: CatalogNode[] }>('/assignable-nodes?page=1&page_size=200'),
       ])
       const names: Record<string, string> = {}
-      for (const n of catalog.nodes || []) names[`${n.type}:${n.id}`] = n.name
+      const catalogByKey = new Map<string, CatalogNode>()
+      for (const n of catalog.nodes || []) {
+        names[`${n.type}:${n.id}`] = n.effective_global_name || n.name
+        catalogByKey.set(`${n.type}:${n.id}`, n)
+      }
       setNodeNames(names)
       setDetail(res)
       setWorkingSettings(res.subscription_plan)
-      setWorkingNodes((res.latest_nodes || []).map((n: any) => ({
-        node_type: n.node_type,
-        node_id: n.node_id,
-        display_group: n.display_group || '',
-        name: names[`${n.node_type}:${n.node_id}`] || `${n.node_type}:${n.node_id}`,
-      })))
+      setWorkingNodes((res.latest_nodes || []).map((n: any) => {
+        const key = `${n.node_type}:${n.node_id}`
+        const catalogNode = catalogByKey.get(key)
+        const globalName = catalogNode?.effective_global_name || catalogNode?.name || key
+        return {
+          node_type: n.node_type,
+          node_id: n.node_id,
+          display_group: n.display_group || '',
+          display_name_override: n.display_name_override ?? null,
+          name: n.display_name_override || globalName,
+          global_name: globalName,
+          source_name: catalogNode?.source_name || globalName,
+          exit_region: catalogNode?.exit_region,
+          entry_server_name: catalogNode?.entry_server_name,
+        }
+      }))
       setNodePreview(null)
     } catch (e: any) {
       setDetailError(e?.message || String(e))
@@ -251,13 +305,13 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     if (pickerPlanMode === 'create') {
       setCreateNodes(list => {
         const exists = list.some(x => x.node_type === n.type && x.node_id === n.id)
-        return exists ? list.filter(x => !(x.node_type === n.type && x.node_id === n.id)) : [...list, { node_type: n.type, node_id: n.id, name: n.name }]
+        return exists ? list.filter(x => !(x.node_type === n.type && x.node_id === n.id)) : [...list, { node_type: n.type, node_id: n.id, name: n.name, global_name: n.effective_global_name || n.name, source_name: n.source_name || n.name, exit_region: n.exit_region, entry_server_name: n.entry_server_name }]
       })
       return
     }
     setWorkingNodes(list => {
       const exists = list.some(x => x.node_type === n.type && x.node_id === n.id)
-      return exists ? list.filter(x => !(x.node_type === n.type && x.node_id === n.id)) : [...list, { node_type: n.type, node_id: n.id, display_group: '', name: n.name }]
+      return exists ? list.filter(x => !(x.node_type === n.type && x.node_id === n.id)) : [...list, { node_type: n.type, node_id: n.id, display_group: '', name: n.name, global_name: n.effective_global_name || n.name, source_name: n.source_name || n.name, exit_region: n.exit_region, entry_server_name: n.entry_server_name }]
     })
     setNodePreview(null)
   }
@@ -310,7 +364,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     setNodeBusy(true)
     setMessage('')
     try {
-      const res = await client.request<{ preview: any; expected_lock_version: number; base_revision_id: number; node_count: number }>(`/subscription-plans/${selectedID}/nodes/preview`, {
+      const res = await client.request<NodeChangePreview>(`/subscription-plans/${selectedID}/nodes/preview`, {
         method: 'POST',
         body: JSON.stringify({ op: 'replace', nodes: workingNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id, display_group: n.display_group || '' })) }),
       })
@@ -353,6 +407,43 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
       setMessage(err.includes('conflict') || err.includes('409') ? '保存失败：套餐已发生变化（冲突），请重新加载后重试' : '保存失败：' + err)
     } finally {
       setNodeApplyBusy(false)
+    }
+  }
+
+  const editPlanNodeName = (node: PlanNode) => {
+    setNameError('')
+    setNameNode({
+      key: nodeKey(node),
+      effective_name: node.name || nodeKey(node),
+      global_name: node.global_name || node.name || nodeKey(node),
+      source_name: node.source_name || node.global_name || node.name || nodeKey(node),
+      display_name_override: node.display_name_override,
+    })
+  }
+
+  const savePlanNodeName = async (displayNameOverride: string | null, targetNode: PlanNameNode | null = nameNode) => {
+    if (!detail || !targetNode) return
+    setNameBusy(true)
+    setNameError('')
+    try {
+      const result = await client.request<{ no_change?: boolean }>(`/subscription-plans/${selectedID}/node-presentation/versions`, {
+        method: 'POST',
+        body: JSON.stringify({
+          base_revision_id: detail.subscription_plan.latest_revision_id,
+          expected_lock_version: detail.subscription_plan.lock_version,
+          nodes: [{ node_key: targetNode.key, display_name_override: displayNameOverride }],
+          change_summary: displayNameOverride == null ? '恢复节点继承全局名称' : '修改方案内节点名称',
+        }),
+      })
+      notify?.(result.no_change ? '节点名称没有变化' : displayNameOverride == null ? '已恢复继承全局名称' : '方案内节点名称已保存', result.no_change ? 'warning' : 'success')
+      setNameNode(null)
+      await loadDetail(selectedID)
+      await refreshPlans()
+    } catch (reason: any) {
+      const error = reason?.message || String(reason)
+      setNameError(error.includes('409') || error.includes('conflict') ? '方案已被其他操作更新，请重新加载后再试。' : error)
+    } finally {
+      setNameBusy(false)
     }
   }
 
@@ -456,6 +547,13 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
   } : null
   const [pickerPlanMode, setPickerPlanMode] = React.useState<'create' | 'nodes'>('create')
   const [pickerOpen, setPickerOpen] = React.useState(false)
+  const latestNodeKeys = new Set<string>((detail?.latest_nodes || []).map((node: any) => `${node.node_type}:${node.node_id}`))
+  const pendingAddedNodes = workingNodes.filter(node => !latestNodeKeys.has(nodeKey(node)))
+  const pendingRegionCounts = pendingAddedNodes.reduce<Record<string, number>>((counts, node) => {
+    const region = node.exit_region || '未知'
+    counts[region] = (counts[region] || 0) + 1
+    return counts
+  }, {})
 
   return (
     <div className="panel subscription-plans-panel">
@@ -615,24 +713,33 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                     <div><h3 style={{ margin: 0 }}>节点集合（{workingNodes.length}）</h3><p className="muted">基于最新保存版本编辑；保存后创建不可变新版本，节点变化会走两阶段下发。</p></div>
                     <Button variant="outline" size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }} disabled={applying}><Plus size={14} /> 添加节点</Button>
                   </div>
-                  <table className="user-data-table" style={{ width: '100%' }}>
-                    <thead><tr><th>节点</th><th>类型</th><th>分组</th><th style={{ textAlign: 'right' }}>操作</th></tr></thead>
+                  <div className="card-custom plan-node-table-wrap">
+                  <table className="user-data-table plan-node-table" style={{ width: '100%' }}>
+                    <thead><tr><th>节点</th><th>全局名称</th><th>方案内名称</th><th>入口</th><th>出口</th><th>分组</th><th style={{ textAlign: 'right' }}>操作</th></tr></thead>
                     <tbody>
                       {workingNodes.map(n => (
                         <tr key={nodeKey(n)}>
-                          <td style={{ fontWeight: 600 }}>{n.name || nodeKey(n)}</td>
-                          <td className="muted" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{n.node_type}</td>
+                          <td><strong>{n.name || nodeKey(n)}</strong><small className="muted">{n.source_name && n.source_name !== n.name ? `来源：${n.source_name}` : nodeKey(n)}</small></td>
+                          <td>{n.global_name || n.name || nodeKey(n)}</td>
+                          <td>
+                            <div className="plan-node-name-row"><span>{n.display_name_override || n.global_name || n.name || nodeKey(n)}</span><Badge variant={n.display_name_override != null ? 'secondary' : 'outline'}>{n.display_name_override != null ? '方案独立' : '继承全局'}</Badge></div>
+                          </td>
+                          <td className="muted">{n.entry_server_name || '—'}</td>
+                          <td className="muted">{n.exit_region || '—'}</td>
                           <td>
                             <Input value={n.display_group || ''} onChange={e => { setWorkingNodes(list => list.map(x => nodeKey(x) === nodeKey(n) ? { ...x, display_group: e.target.value } : x)); setNodePreview(null) }} placeholder="展示分组（可选）" style={{ maxWidth: 160 }} />
                           </td>
-                          <td style={{ textAlign: 'right' }}>
-                            <Button variant="ghost" size="sm" onClick={() => { setWorkingNodes(list => list.filter(x => nodeKey(x) !== nodeKey(n))); setNodePreview(null) }}><Trash2 size={14} /></Button>
+                          <td className="table-actions" style={{ textAlign: 'right' }}>
+                            <Button variant="ghost" size="icon" onClick={() => editPlanNodeName(n)} aria-label={`编辑 ${n.name || nodeKey(n)} 的方案内名称`} title="编辑方案内名称"><Edit3 size={14} /></Button>
+                            {n.display_name_override != null && <Button variant="ghost" size="icon" disabled={nameBusy} onClick={() => void savePlanNodeName(null, { key: nodeKey(n), effective_name: n.name || nodeKey(n), global_name: n.global_name || n.name || nodeKey(n), source_name: n.source_name || n.global_name || n.name || nodeKey(n), display_name_override: n.display_name_override })} aria-label={`恢复 ${n.name || nodeKey(n)} 的全局名称`} title="恢复全局名称"><RotateCcw size={14} /></Button>}
+                            <Button variant="ghost" size="icon" onClick={() => { setWorkingNodes(list => list.filter(x => nodeKey(x) !== nodeKey(n))); setNodePreview(null) }} aria-label={`移除 ${n.name || nodeKey(n)}`} title="移出方案"><Trash2 size={14} /></Button>
                           </td>
                         </tr>
                       ))}
-                      {workingNodes.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 16 }}>节点集合为空</td></tr>}
+                      {workingNodes.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 16 }}>节点集合为空</td></tr>}
                     </tbody>
                   </table>
+                  </div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <Button size="sm" variant="outline" busy={nodeBusy} onClick={() => void runNodePreview()} disabled={applying}><RefreshCw size={14} /> 预览影响</Button>
                     {nodePreview && (
@@ -643,9 +750,21 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                     )}
                   </div>
                   {nodePreview && (
-                    <p className="muted" style={{ margin: 0 }}>
-                      新版本将为 {nodePreview.node_count} 个节点 · 新增 {nodePreview.preview?.nodes_added?.length || 0} · 移除 {nodePreview.preview?.nodes_removed?.length || 0} · 不变 {nodePreview.preview?.nodes_unchanged || 0} · 受影响用户 {nodePreview.preview?.users_affected || 0} · 任务 {nodePreview.preview?.task_count || 0}
-                    </p>
+                    <div className="node-membership-preview">
+                      <p className="muted" style={{ margin: 0 }}>新版本将为 {nodePreview.node_count} 个节点 · 新增 {nodePreview.preview?.nodes_added?.length || 0} · 移除 {nodePreview.preview?.nodes_removed?.length || 0} · 不变 {nodePreview.preview?.nodes_unchanged || 0} · 受影响用户 {nodePreview.preview?.users_affected || 0} · 任务 {nodePreview.preview?.task_count || 0}</p>
+                      {nodePreview.ordering_preview && (
+                        <>
+                          <div className="membership-region-summary">
+                            <Badge variant="outline">新增 {nodePreview.ordering_preview.added_count || 0}</Badge>
+                            <Badge variant={nodePreview.ordering_preview.pending_count > 0 ? 'warning' : 'success'}>待排 {nodePreview.ordering_preview.pending_count || 0}</Badge>
+                          </div>
+                          {(nodePreview.ordering_preview.warnings || []).map((warning: any, index: number) => <p key={index} className="muted">{warning.message || String(warning)}</p>)}
+                          <div className="membership-order-preview-list">
+                            {(nodePreview.ordering_preview.nodes || []).map((node: any, index: number) => <div key={node.key}><span>{index + 1}</span><strong>{node.name}</strong><span>{node.exit_region || '未知'}</span></div>)}
+                          </div>
+                        </>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
@@ -836,13 +955,20 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
 
       <Dialog isOpen={pickerOpen} onClose={() => setPickerOpen(false)} title="添加节点" size="lg">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {pickerPlanMode === 'nodes' && pendingAddedNodes.length > 0 && (
+            <div className="membership-picker-summary" role="status">
+              <strong>本次新增 {pendingAddedNodes.length} 个节点</strong>
+              <div>{Object.entries(pendingRegionCounts).sort(([a], [b]) => a.localeCompare(b)).map(([region, count]) => <Badge key={region} variant="outline">{region} {count}</Badge>)}</div>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8 }}>
             <Input value={pickerQuery} onChange={e => setPickerQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void runPickerSearch(pickerQuery) }} placeholder="搜索节点..." />
             <Button variant="outline" size="sm" style={{ whiteSpace: 'nowrap' }} busy={pickerBusy} onClick={() => void runPickerSearch(pickerQuery)}>搜索</Button>
           </div>
           <div className="card-custom" style={{ maxHeight: 320, overflow: 'auto' }}>
             {pickerResults.map(n => {
-              const exists = workingNodes.some(x => nodeKey(x) === n.key)
+              const targetNodes = pickerPlanMode === 'create' ? createNodes : workingNodes
+              const exists = targetNodes.some(x => nodeKey(x) === n.key)
               return (
                 <label key={n.key} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 8px', cursor: 'pointer' }}>
                   <input type="checkbox" checked={exists} onChange={() => togglePickerNode(n)} />
@@ -855,10 +981,12 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button variant="outline" onClick={() => setPickerOpen(false)}>关闭</Button>
-            <Button onClick={() => setPickerOpen(false)}>完成</Button>
+            <Button onClick={() => setPickerOpen(false)}>{pickerPlanMode === 'nodes' && pendingAddedNodes.length > 0 ? `完成（新增 ${pendingAddedNodes.length}）` : '完成'}</Button>
           </div>
         </div>
       </Dialog>
+
+      <PlanNodeNameDialog node={nameNode} busy={nameBusy} error={nameError} onClose={() => setNameNode(null)} onSave={value => savePlanNodeName(value)} />
 
       <Dialog isOpen={viewRevision !== null} onClose={() => setViewRevision(null)} title={viewRevision ? `V${viewRevision.revision?.version_no || viewRevision.revision?.revision || ''} 详情` : ''} size="lg">
         {viewRevision && (
@@ -873,7 +1001,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                 <tbody>
                   {(viewRevision.nodes || []).map((n: any) => (
                     <tr key={`${n.node_type}:${n.node_id}`}>
-                      <td style={{ fontWeight: 600 }}>{nodeNames[`${n.node_type}:${n.node_id}`] || `${n.node_type}:${n.node_id}`}</td>
+                      <td style={{ fontWeight: 600 }}>{n.display_name_override || nodeNames[`${n.node_type}:${n.node_id}`] || `${n.node_type}:${n.node_id}`}</td>
                       <td className="muted" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{n.node_type}</td>
                       <td className="muted">{n.display_group || '—'}</td>
                     </tr>

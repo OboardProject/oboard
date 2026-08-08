@@ -347,6 +347,7 @@ const (
 	PlanChangeKindSettings             = "settings"
 	PlanChangeKindNodes                = "nodes"
 	PlanChangeKindOrdering             = "ordering"
+	PlanChangeKindPresentation         = "presentation"
 	PlanChangeKindMixed                = "mixed"
 	PlanChangeKindRestore              = "restore"
 	PlanChangeKindClone                = "clone"
@@ -357,38 +358,41 @@ const (
 // the isolated node set in subscription_plan_revision_nodes. Versions are
 // never updated after creation; editing always creates the next version.
 type SubscriptionPlanRevision struct {
-	ID                 int64                       `json:"id"`
-	PlanID             int64                       `json:"plan_id"`
-	VersionNo          int64                       `json:"version_no"`
-	BasedOnRevisionID  int64                       `json:"based_on_revision_id,omitempty"`
-	ChangeKind         string                      `json:"change_kind,omitempty"`
-	ChangeSummary      string                      `json:"change_summary,omitempty"`
-	ActivationChangeID *int64                      `json:"activation_change_id,omitempty"`
-	Revision           int64                       `json:"revision"`
-	Status             PlanRevisionStatus          `json:"status"`
-	SpeedLimitMbps     int                         `json:"speed_limit_mbps"`
-	TrafficLimitBytes  int64                       `json:"traffic_limit_bytes"`
-	TrafficResetMode   string                      `json:"traffic_reset_mode"`
-	TrafficResetDay    int                         `json:"traffic_reset_day"`
-	NodeOrderPolicy    SubscriptionNodeOrderPolicy `json:"node_order_policy,omitempty"`
-	CreatedBy          *int64                      `json:"created_by,omitempty"`
-	CreatedAt          time.Time                   `json:"created_at"`
-	ActivatedAt        *time.Time                  `json:"activated_at,omitempty"`
+	ID                    int64                       `json:"id"`
+	PlanID                int64                       `json:"plan_id"`
+	VersionNo             int64                       `json:"version_no"`
+	BasedOnRevisionID     int64                       `json:"based_on_revision_id,omitempty"`
+	ChangeKind            string                      `json:"change_kind,omitempty"`
+	ChangeSummary         string                      `json:"change_summary,omitempty"`
+	ActivationChangeID    *int64                      `json:"activation_change_id,omitempty"`
+	Revision              int64                       `json:"revision"`
+	Status                PlanRevisionStatus          `json:"status"`
+	SpeedLimitMbps        int                         `json:"speed_limit_mbps"`
+	TrafficLimitBytes     int64                       `json:"traffic_limit_bytes"`
+	TrafficResetMode      string                      `json:"traffic_reset_mode"`
+	TrafficResetDay       int                         `json:"traffic_reset_day"`
+	NodeOrderPolicy       SubscriptionNodeOrderPolicy `json:"node_order_policy,omitempty"`
+	OrderTemplateID       *int64                      `json:"order_template_id,omitempty"`
+	OrderTemplateRevision int64                       `json:"order_template_revision"`
+	CreatedBy             *int64                      `json:"created_by,omitempty"`
+	CreatedAt             time.Time                   `json:"created_at"`
+	ActivatedAt           *time.Time                  `json:"activated_at,omitempty"`
 }
 
 // SubscriptionPlanRevisionNode is one node of a frozen revision. Rows are
 // immutable after the revision is activated; only the draft revision's node set
 // can change.
 type SubscriptionPlanRevisionNode struct {
-	ID           int64              `json:"id"`
-	RevisionID   int64              `json:"revision_id"`
-	NodeType     AssignableNodeType `json:"node_type"`
-	NodeID       int64              `json:"node_id"`
-	DisplayGroup string             `json:"display_group"`
-	SourceType   PlanNodeSourceType `json:"source_type"`
-	SourceRuleID int64              `json:"source_rule_id,omitempty"`
-	SortPosition *int               `json:"sort_position,omitempty"`
-	CreatedAt    time.Time          `json:"created_at"`
+	ID                  int64              `json:"id"`
+	RevisionID          int64              `json:"revision_id"`
+	NodeType            AssignableNodeType `json:"node_type"`
+	NodeID              int64              `json:"node_id"`
+	DisplayGroup        string             `json:"display_group"`
+	SourceType          PlanNodeSourceType `json:"source_type"`
+	SourceRuleID        int64              `json:"source_rule_id,omitempty"`
+	SortPosition        *int               `json:"sort_position,omitempty"`
+	DisplayNameOverride *string            `json:"display_name_override,omitempty"`
+	CreatedAt           time.Time          `json:"created_at"`
 }
 
 // SubscriptionNodeOrderMode controls how a plan revision's nodes are ordered in
@@ -413,13 +417,21 @@ const (
 
 const (
 	// SubscriptionNodeOrderVersion is the current policy snapshot version.
-	SubscriptionNodeOrderVersion = 1
+	SubscriptionNodeOrderVersion = 2
 	// SubscriptionNodeEntryRegionOrderInheritExit makes the entry region order
 	// follow the exit region order.
 	SubscriptionNodeEntryRegionOrderInheritExit = "inherit_exit"
 	// SubscriptionNodeEntryRegionOrderCustom uses the explicit entry region
 	// order list.
 	SubscriptionNodeEntryRegionOrderCustom = "custom"
+)
+
+type SubscriptionNodePlacement string
+
+const (
+	SubscriptionNodePlacementByTemplate SubscriptionNodePlacement = "by_template"
+	SubscriptionNodePlacementAppend     SubscriptionNodePlacement = "append"
+	SubscriptionNodePlacementPending    SubscriptionNodePlacement = "pending"
 )
 
 // SubscriptionNodeOrderPolicy is a versioned JSON snapshot stored on each plan
@@ -433,19 +445,23 @@ type SubscriptionNodeOrderPolicy struct {
 	EntryRegionOrderMode string                    `json:"entry_region_order_mode"`
 	EntryRegionOrder     []string                  `json:"entry_region_order"`
 	EntryOrder           []string                  `json:"entry_order"`
+	NewNodePlacement     SubscriptionNodePlacement `json:"new_node_placement,omitempty"`
+	UnmatchedPlacement   SubscriptionNodePlacement `json:"unmatched_placement,omitempty"`
 }
 
 // DefaultSubscriptionNodeOrderPolicy returns the migration default used for
 // existing revisions: legacy ordering with an exit-region manual seed.
 func DefaultSubscriptionNodeOrderPolicy() SubscriptionNodeOrderPolicy {
 	return SubscriptionNodeOrderPolicy{
-		Version:              SubscriptionNodeOrderVersion,
+		Version:              1,
 		Mode:                 SubscriptionNodeOrderLegacyGroupName,
 		ManualSeed:           SubscriptionNodeOrderExitRegion,
 		ExitRegionOrder:      []string{},
 		EntryRegionOrderMode: SubscriptionNodeEntryRegionOrderInheritExit,
 		EntryRegionOrder:     []string{},
 		EntryOrder:           []string{},
+		NewNodePlacement:     SubscriptionNodePlacementPending,
+		UnmatchedPlacement:   SubscriptionNodePlacementPending,
 	}
 }
 
@@ -467,22 +483,61 @@ func NewSubscriptionNodeOrderPolicy() SubscriptionNodeOrderPolicy {
 		EntryRegionOrderMode: SubscriptionNodeEntryRegionOrderInheritExit,
 		EntryRegionOrder:     []string{},
 		EntryOrder:           []string{},
+		NewNodePlacement:     SubscriptionNodePlacementByTemplate,
+		UnmatchedPlacement:   SubscriptionNodePlacementAppend,
 	}
 }
 
 type SubscriptionPlanNode struct {
-	ID           int64              `json:"id"`
-	PlanID       int64              `json:"plan_id"`
-	RevisionID   int64              `json:"revision_id,omitempty"`
-	NodeType     AssignableNodeType `json:"node_type"`
-	NodeID       int64              `json:"node_id"`
-	DisplayGroup string             `json:"display_group"`
-	SourceType   PlanNodeSourceType `json:"source_type"`
-	SourceRuleID int64              `json:"source_rule_id,omitempty"`
-	SortPosition *int               `json:"sort_position,omitempty"`
-	Enabled      bool               `json:"enabled"`
-	CreatedAt    time.Time          `json:"created_at"`
-	UpdatedAt    time.Time          `json:"updated_at"`
+	ID                  int64              `json:"id"`
+	PlanID              int64              `json:"plan_id"`
+	RevisionID          int64              `json:"revision_id,omitempty"`
+	NodeType            AssignableNodeType `json:"node_type"`
+	NodeID              int64              `json:"node_id"`
+	DisplayGroup        string             `json:"display_group"`
+	SourceType          PlanNodeSourceType `json:"source_type"`
+	SourceRuleID        int64              `json:"source_rule_id,omitempty"`
+	SortPosition        *int               `json:"sort_position,omitempty"`
+	DisplayNameOverride *string            `json:"display_name_override,omitempty"`
+	Enabled             bool               `json:"enabled"`
+	CreatedAt           time.Time          `json:"created_at"`
+	UpdatedAt           time.Time          `json:"updated_at"`
+}
+
+type AssignableNodeMetadata struct {
+	NodeType            AssignableNodeType `json:"node_type"`
+	NodeID              int64              `json:"node_id"`
+	DisplayNameOverride *string            `json:"display_name_override"`
+	LockVersion         int64              `json:"lock_version"`
+	CreatedBy           *int64             `json:"created_by,omitempty"`
+	UpdatedBy           *int64             `json:"updated_by,omitempty"`
+	CreatedAt           time.Time          `json:"created_at"`
+	UpdatedAt           time.Time          `json:"updated_at"`
+}
+
+type NodeOrderTemplatePolicy struct {
+	Version              int                       `json:"version"`
+	BaseMode             SubscriptionNodeOrderMode `json:"base_mode"`
+	ExitRegionOrder      []string                  `json:"exit_region_order"`
+	EntryRegionOrderMode string                    `json:"entry_region_order_mode"`
+	EntryRegionOrder     []string                  `json:"entry_region_order"`
+	EntryOrder           []string                  `json:"entry_order"`
+	NewNodePlacement     SubscriptionNodePlacement `json:"new_node_placement"`
+	UnmatchedPlacement   SubscriptionNodePlacement `json:"unmatched_placement"`
+}
+
+type NodeOrderTemplate struct {
+	ID          int64                   `json:"id"`
+	Name        string                  `json:"name"`
+	Description string                  `json:"description"`
+	Enabled     bool                    `json:"enabled"`
+	Revision    int64                   `json:"revision"`
+	Policy      NodeOrderTemplatePolicy `json:"policy"`
+	CreatedBy   *int64                  `json:"created_by,omitempty"`
+	UpdatedBy   *int64                  `json:"updated_by,omitempty"`
+	CreatedAt   time.Time               `json:"created_at"`
+	UpdatedAt   time.Time               `json:"updated_at"`
+	UsageCount  int                     `json:"usage_count"`
 }
 
 // UserPlanBinding attaches one plan to a user. At most one enabled binding may

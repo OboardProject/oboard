@@ -27,6 +27,11 @@ type AssignableNode struct {
 	ID                     int64                      `json:"id"`
 	Key                    string                     `json:"key"`
 	Name                   string                     `json:"name"`
+	SourceName             string                     `json:"source_name"`
+	GlobalNameOverride     *string                    `json:"global_name_override"`
+	HasGlobalNameOverride  bool                       `json:"has_global_name_override"`
+	EffectiveGlobalName    string                     `json:"effective_global_name"`
+	MetadataLockVersion    int64                      `json:"metadata_lock_version"`
 	EntryKey               string                     `json:"entry_key,omitempty"`
 	EntryServerID          int64                      `json:"entry_server_id,omitempty"`
 	EntryServerName        string                     `json:"entry_server_name,omitempty"`
@@ -56,6 +61,7 @@ type AssignableNodeCatalogInput struct {
 	// ServerOnline marks servers that are currently online. A nil map treats
 	// every server as online.
 	ServerOnline map[int64]bool
+	NodeMetadata map[string]model.AssignableNodeMetadata
 }
 
 // BuildAssignableNodeCatalog enumerates every client-visible node:
@@ -207,7 +213,6 @@ func BuildAssignableNodeCatalog(input AssignableNodeCatalogInput) ([]AssignableN
 
 	resolveSubscriptionNodeNames(nameNodes, nameRefs)
 	for i := range drafts {
-		drafts[i].node.Name = RegionFlagEmoji(drafts[i].regionCode) + " " + drafts[i].name
 		drafts[i].node.Key = NodeKeyOf(drafts[i].node.Type, drafts[i].node.ID)
 		applyTopology(&drafts[i].node)
 	}
@@ -218,10 +223,22 @@ func BuildAssignableNodeCatalog(input AssignableNodeCatalogInput) ([]AssignableN
 	for i := range drafts {
 		for _, ref := range nameRefs {
 			if ref.resourceID == drafts[i].node.ID && ref.kind == subscriptionNodeNameStandalone && drafts[i].node.Type == model.AssignableNodeInbound {
-				drafts[i].node.Name = RegionFlagEmoji(drafts[i].regionCode) + " " + nameNodes[ref.index].Name
+				drafts[i].name = nameNodes[ref.index].Name
 				break
 			}
 		}
+		drafts[i].node.SourceName = drafts[i].name
+		metadata, ok := input.NodeMetadata[drafts[i].node.Key]
+		if ok {
+			drafts[i].node.MetadataLockVersion = metadata.LockVersion
+		}
+		if ok && metadata.DisplayNameOverride != nil {
+			value := *metadata.DisplayNameOverride
+			drafts[i].node.GlobalNameOverride = &value
+			drafts[i].node.HasGlobalNameOverride = true
+		}
+		drafts[i].node.EffectiveGlobalName = ResolveEffectiveNodeName(drafts[i].name, drafts[i].node.GlobalNameOverride, nil)
+		drafts[i].node.Name = RegionFlagEmoji(drafts[i].regionCode) + " " + drafts[i].node.EffectiveGlobalName
 	}
 
 	sort.SliceStable(drafts, func(i, j int) bool {

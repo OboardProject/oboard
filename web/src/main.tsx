@@ -130,6 +130,7 @@ import {
 } from './dns-bulk'
 import { NodeAssignmentsPage } from './pages/NodeAssignmentsPage'
 import { SubscriptionPlansPage } from './pages/SubscriptionPlansPage'
+import { NodeOrderTemplatesPage } from './pages/NodeOrderTemplatesPage'
 import { UserPlanDialog } from './pages/UserPlanDialog'
 
 const appBasePath = (() => {
@@ -703,7 +704,8 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   routing: { label: '分流规则', desc: '为任意服务器配置分流规则、直连、链路或导入节点。', group: '流量' },
   'external-outbounds': { label: '导入节点', desc: '导入第三方 SS、SOCKS、VLESS 等节点。', group: '流量' },
   users: { label: '用户与分组', desc: '用户与分组', group: '访问控制' },
-  nodes: { label: '节点分配', desc: '可分配节点目录：筛选、分组、套餐归属、有效用户与例外。', group: '访问控制' },
+  nodes: { label: '全部节点', desc: '节点目录、全局名称、方案归属、有效用户与例外。', group: '节点管理' },
+  'node-order-templates': { label: '排序模板', desc: '管理可复用的出口地区与入口排序规则。', group: '节点管理' },
   plans: { label: '套餐', desc: '套餐节点、排序、限额、版本历史与两阶段部署。', group: '访问控制' },
   dns: { label: 'DNS 设置', desc: '为服务器选择解析服务并检查解析速度。', group: '网络' },
   'dns-records': { label: '域名解析', desc: '管理云服务商账号和域名解析记录。', group: '网络' },
@@ -722,7 +724,8 @@ const navGroups = [
   { label: '基础设施', tabs: ['servers'] },
   { label: '代理链路', tabs: ['proxy-paths'] },
   { label: '网络', tabs: ['dns', 'dns-records'] },
-  { label: '访问控制', tabs: ['users', 'nodes', 'plans', 'subscriptions'] },
+  { label: '访问控制', tabs: ['users', 'plans', 'subscriptions'] },
+  { label: '节点管理', tabs: ['nodes', 'node-order-templates'] },
   { label: '', tabs: ['notifications'] },
   { label: '运维审计', tabs: ['tasks', 'audit'] },
   { label: '系统', tabs: ['automation', 'settings'] },
@@ -734,7 +737,7 @@ const tabMinimumRole: Record<string, Role> = {
   account: 'none', dashboard: 'operator', tasks: 'operator', audit: 'operator',
   servers: 'operator', 'proxy-paths': 'operator',
   users: 'admin', subscriptions: 'viewer', notifications: 'viewer', automation: 'admin', settings: 'admin',
-  nodes: 'operator', plans: 'admin',
+  nodes: 'operator', plans: 'admin', 'node-order-templates': 'admin',
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
 }
 
@@ -742,7 +745,7 @@ const preloadTabsByRole: Record<Role, string[]> = {
   none: ['account'],
   viewer: ['subscriptions', 'account', 'notifications'],
   operator: ['subscriptions', 'servers', 'proxy-paths', 'tasks', 'audit', 'mtu'],
-  admin: ['servers', 'proxy-paths', 'users', 'nodes', 'plans', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
+  admin: ['servers', 'proxy-paths', 'users', 'nodes', 'node-order-templates', 'plans', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
 }
 
 const realtimeResourcePages: Record<string, string[]> = {
@@ -2462,6 +2465,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'external-outbounds') return <ExternalOutbounds data={data} client={client} load={load} />
   if (tab === 'users') return <UserManagement data={data} client={client} load={load} />
   if (tab === 'nodes') return <NodeAssignmentsPage data={data} client={client} load={load} />
+  if (tab === 'node-order-templates') return <NodeOrderTemplatesPage data={data} client={client} notify={notify} />
   if (tab === 'plans') return <SubscriptionPlansPage data={data} client={client} load={load} notify={notify} />
   if (tab === 'dns') return <DNS data={data} client={client} load={load} notify={notify} />
   if (tab === 'dns-records') return <ManagedDNSSettings data={data} client={client} load={load} notify={notify} />

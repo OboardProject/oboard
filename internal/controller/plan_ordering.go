@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -53,13 +54,18 @@ func (s *Server) planOrderingGet(w http.ResponseWriter, r *http.Request, id int6
 		fail(w, err, 500)
 		return
 	}
-	ordered, err := core.BuildOrderingNodes(nodes, config.Servers, config.Inbounds, config.ProxyPaths, config.ProxyPathSteps, config.ProxyPathEgressResults, config.ExternalOutbounds, revision.NodeOrderPolicy)
+	nameOptions, err := s.orderingNameOptions(r.Context())
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	ordered, err := core.BuildOrderingNodes(nodes, config.Servers, config.Inbounds, config.ProxyPaths, config.ProxyPathSteps, config.ProxyPathEgressResults, config.ExternalOutbounds, revision.NodeOrderPolicy, nameOptions)
 	if err != nil {
 		fail(w, err, 500)
 		return
 	}
 	views, unplaced, warnings := s.orderingNodeViews(r.Context(), config, ordered, revision.NodeOrderPolicy.Mode == model.SubscriptionNodeOrderManual)
-	write(w, 200, map[string]any{
+	response := map[string]any{
 		"plan_id":                    plan.ID,
 		"lock_version":               plan.LockVersion,
 		"base_revision_id":           plan.LatestRevisionID,
@@ -74,7 +80,19 @@ func (s *Server) planOrderingGet(w http.ResponseWriter, r *http.Request, id int6
 		"unplaced_count":             unplaced,
 		"warnings":                   warnings,
 		"runtime_authorization_mode": s.authorizationMode(r.Context()),
-	})
+		"order_template_id":          revision.OrderTemplateID,
+		"order_template_revision":    revision.OrderTemplateRevision,
+	}
+	if revision.OrderTemplateID != nil {
+		if template, templateErr := s.store.GetNodeOrderTemplate(r.Context(), *revision.OrderTemplateID); templateErr == nil {
+			response["order_template"] = template
+			response["template_update_available"] = revision.OrderTemplateRevision < template.Revision
+			response["template_archived"] = !template.Enabled
+		} else if errors.Is(templateErr, sql.ErrNoRows) {
+			response["template_archived"] = true
+		}
+	}
+	write(w, 200, response)
 }
 
 // planOrderingRevisionID resolves the editor's target revision. Empty or
@@ -124,23 +142,27 @@ func parseRevisionID(raw string) (int64, error) {
 }
 
 type orderingNodeView struct {
-	Key               string                   `json:"key"`
-	NodeType          model.AssignableNodeType `json:"node_type"`
-	NodeID            int64                    `json:"node_id"`
-	Name              string                   `json:"name"`
-	Group             string                   `json:"group"`
-	EntryKey          string                   `json:"entry_key,omitempty"`
-	EntryName         string                   `json:"entry_name,omitempty"`
-	EntryProtocol     string                   `json:"entry_protocol,omitempty"`
-	EntryPort         int                      `json:"entry_port,omitempty"`
-	EntryServerID     int64                    `json:"entry_server_id,omitempty"`
-	EntryRegion       string                   `json:"entry_region,omitempty"`
-	ExitServerID      int64                    `json:"exit_server_id,omitempty"`
-	ExitRegion        string                   `json:"exit_region,omitempty"`
-	ManualPosition    *int                     `json:"manual_position,omitempty"`
-	EffectivePosition int                      `json:"effective_position"`
-	Renderable        bool                     `json:"renderable"`
-	Warning           string                   `json:"warning,omitempty"`
+	Key                 string                   `json:"key"`
+	NodeType            model.AssignableNodeType `json:"node_type"`
+	NodeID              int64                    `json:"node_id"`
+	Name                string                   `json:"name"`
+	SourceName          string                   `json:"source_name"`
+	GlobalName          string                   `json:"global_name"`
+	PlanNameOverride    *string                  `json:"plan_name_override"`
+	HasPlanNameOverride bool                     `json:"has_plan_name_override"`
+	Group               string                   `json:"group"`
+	EntryKey            string                   `json:"entry_key,omitempty"`
+	EntryName           string                   `json:"entry_name,omitempty"`
+	EntryProtocol       string                   `json:"entry_protocol,omitempty"`
+	EntryPort           int                      `json:"entry_port,omitempty"`
+	EntryServerID       int64                    `json:"entry_server_id,omitempty"`
+	EntryRegion         string                   `json:"entry_region,omitempty"`
+	ExitServerID        int64                    `json:"exit_server_id,omitempty"`
+	ExitRegion          string                   `json:"exit_region,omitempty"`
+	ManualPosition      *int                     `json:"manual_position,omitempty"`
+	EffectivePosition   int                      `json:"effective_position"`
+	Renderable          bool                     `json:"renderable"`
+	Warning             string                   `json:"warning,omitempty"`
 }
 
 func (s *Server) orderingNodeViews(ctx context.Context, config store.FullRoutingConfig, ordered []core.SubscriptionNode, countUnplaced bool) ([]orderingNodeView, int, []string) {
@@ -154,18 +176,22 @@ func (s *Server) orderingNodeViews(ctx context.Context, config store.FullRouting
 	warnings := []string{}
 	for position, node := range ordered {
 		view := orderingNodeView{
-			Key:               node.Key,
-			NodeType:          node.NodeType,
-			NodeID:            node.NodeID,
-			Name:              node.Name,
-			Group:             node.Group,
-			EntryKey:          node.EntryKey,
-			EntryServerID:     node.EntryServerID,
-			EntryRegion:       node.EntryRegion,
-			ExitServerID:      node.ExitServerID,
-			ExitRegion:        node.ExitRegion,
-			EffectivePosition: position,
-			Renderable:        renderable[node.Key],
+			Key:                 node.Key,
+			NodeType:            node.NodeType,
+			NodeID:              node.NodeID,
+			Name:                node.Name,
+			SourceName:          node.SourceName,
+			GlobalName:          node.GlobalName,
+			PlanNameOverride:    node.PlanNameOverride,
+			HasPlanNameOverride: node.HasPlanNameOverride,
+			Group:               node.Group,
+			EntryKey:            node.EntryKey,
+			EntryServerID:       node.EntryServerID,
+			EntryRegion:         node.EntryRegion,
+			ExitServerID:        node.ExitServerID,
+			ExitRegion:          node.ExitRegion,
+			EffectivePosition:   position,
+			Renderable:          renderable[node.Key],
 		}
 		if node.Inbound.ID != 0 {
 			view.EntryName = node.Inbound.Name
@@ -342,6 +368,181 @@ func normalizeManualOrder(list []string) []string {
 	return out
 }
 
+func (s *Server) planOrderingApplyTemplate(w http.ResponseWriter, r *http.Request, planID int64) {
+	var req struct {
+		TemplateID          int64  `json:"template_id"`
+		TemplateRevision    int64  `json:"template_revision"`
+		BaseRevisionID      int64  `json:"base_revision_id"`
+		ExpectedLockVersion int64  `json:"expected_lock_version"`
+		ApplyMode           string `json:"apply_mode"`
+		ChangeSummary       string `json:"change_summary"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.TemplateID <= 0 || req.TemplateRevision <= 0 || req.BaseRevisionID <= 0 || req.ExpectedLockVersion <= 0 {
+		fail(w, errors.New("template_id, template_revision, base_revision_id and expected_lock_version are required"), 400)
+		return
+	}
+	template, err := s.store.GetNodeOrderTemplate(r.Context(), req.TemplateID)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	if !template.Enabled {
+		fail(w, errors.New("node order template is archived"), 400)
+		return
+	}
+	if req.TemplateRevision != template.Revision {
+		fail(w, store.ErrNodeOrderTemplateConflict, 409)
+		return
+	}
+	if req.ApplyMode != "preserve_manual" && req.ApplyMode != "rebuild" {
+		fail(w, errors.New("apply_mode must be preserve_manual or rebuild"), 400)
+		return
+	}
+	plan, err := s.store.GetSubscriptionPlan(r.Context(), planID)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	baseID := req.BaseRevisionID
+	if baseID == 0 {
+		baseID = plan.LatestRevisionID
+	}
+	revision, nodes, err := s.store.GetPlanRevisionOrdering(r.Context(), planID, baseID)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	policy := core.SubscriptionPolicyFromTemplate(template.Policy, template.Policy.BaseMode)
+	manualOrder := []string{}
+	if req.ApplyMode == "preserve_manual" {
+		config, loadErr := s.store.FullRoutingConfigData(r.Context())
+		if loadErr != nil {
+			fail(w, loadErr, 500)
+			return
+		}
+		nameOptions, loadErr := s.orderingNameOptions(r.Context())
+		if loadErr != nil {
+			fail(w, loadErr, 500)
+			return
+		}
+		currentOrder, loadErr := core.BuildOrderingNodes(nodes, config.Servers, config.Inbounds, config.ProxyPaths, config.ProxyPathSteps, config.ProxyPathEgressResults, config.ExternalOutbounds, revision.NodeOrderPolicy, nameOptions)
+		if loadErr != nil {
+			fail(w, loadErr, 500)
+			return
+		}
+		positioned := map[string]bool{}
+		if revision.NodeOrderPolicy.Mode == model.SubscriptionNodeOrderManual {
+			for _, node := range nodes {
+				if node.SortPosition != nil {
+					positioned[core.NodeKeyOf(node.NodeType, node.NodeID)] = true
+				}
+			}
+		}
+		for _, node := range currentOrder {
+			if revision.NodeOrderPolicy.Mode != model.SubscriptionNodeOrderManual || positioned[node.Key] {
+				manualOrder = append(manualOrder, node.Key)
+			}
+		}
+		policy.Mode = model.SubscriptionNodeOrderManual
+	}
+	summary := strings.TrimSpace(req.ChangeSummary)
+	if summary == "" {
+		summary = fmt.Sprintf("应用模板「%s」r%d", template.Name, template.Revision)
+	}
+	templateID := template.ID
+	result, err := s.store.CreatePlanVersion(r.Context(), planID, store.PlanVersionMutation{
+		BaseRevisionID: baseID, ExpectedLockVersion: req.ExpectedLockVersion,
+		Ordering: &store.PlanOrderingMutation{
+			Policy: policy, ManualOrder: manualOrder, ClearManualPositions: req.ApplyMode == "rebuild",
+			SetTemplateProvenance: true, OrderTemplateID: &templateID, OrderTemplateRevision: template.Revision,
+		},
+		ChangeKind: model.PlanChangeKindOrdering, ChangeSummary: summary, CreatedBy: requestActorID(r),
+	})
+	if err != nil {
+		s.planVersionConflict(w, err, planID)
+		return
+	}
+	auditReq(s, r, "ordering.apply_template", "subscription-plan", fmt.Sprintf("plan=%d template=%d revision=%d mode=%s", planID, template.ID, template.Revision, req.ApplyMode))
+	write(w, 200, map[string]any{"revision": result.Revision, "no_change": result.NoChange, "effective_immediately": true, "lock_version": result.LockVersion, "latest_revision_id": result.LatestRevisionID})
+}
+
+func (s *Server) planNodePresentationVersionCreate(w http.ResponseWriter, r *http.Request, planID int64) {
+	var req struct {
+		BaseRevisionID      int64 `json:"base_revision_id"`
+		ExpectedLockVersion int64 `json:"expected_lock_version"`
+		Nodes               []struct {
+			NodeKey             string          `json:"node_key"`
+			DisplayNameOverride json.RawMessage `json:"display_name_override"`
+		} `json:"nodes"`
+		ChangeSummary string `json:"change_summary"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.BaseRevisionID <= 0 || req.ExpectedLockVersion <= 0 || len(req.Nodes) == 0 {
+		fail(w, errors.New("base_revision_id, expected_lock_version and nodes are required"), 400)
+		return
+	}
+	_, baseNodes, err := s.store.GetPlanRevisionOrdering(r.Context(), planID, req.BaseRevisionID)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	valid := map[string]bool{}
+	for _, node := range baseNodes {
+		valid[core.NodeKeyOf(node.NodeType, node.NodeID)] = true
+	}
+	overrides := map[string]*string{}
+	for _, item := range req.Nodes {
+		key := strings.TrimSpace(item.NodeKey)
+		if !valid[key] {
+			fail(w, fmt.Errorf("node %s is not in the base revision", key), 400)
+			return
+		}
+		if item.DisplayNameOverride == nil {
+			fail(w, errors.New("display_name_override is required"), 400)
+			return
+		}
+		if string(item.DisplayNameOverride) == "null" {
+			overrides[key] = nil
+			continue
+		}
+		var value string
+		if err := json.Unmarshal(item.DisplayNameOverride, &value); err != nil {
+			fail(w, errors.New("display_name_override must be a string or null"), 400)
+			return
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			overrides[key] = nil
+			continue
+		}
+		if len([]rune(value)) > 100 {
+			fail(w, errors.New("display_name_override is too long"), 400)
+			return
+		}
+		overrides[key] = &value
+	}
+	summary := strings.TrimSpace(req.ChangeSummary)
+	if summary == "" {
+		summary = fmt.Sprintf("修改 %d 个方案内节点名称", len(overrides))
+	}
+	result, err := s.store.CreatePlanVersion(r.Context(), planID, store.PlanVersionMutation{
+		BaseRevisionID: req.BaseRevisionID, ExpectedLockVersion: req.ExpectedLockVersion,
+		NodePresentation: &store.PlanNodePresentationMutation{DisplayNameOverrides: overrides},
+		ChangeKind:       model.PlanChangeKindPresentation, ChangeSummary: summary, CreatedBy: requestActorID(r),
+	})
+	if err != nil {
+		s.planVersionConflict(w, err, planID)
+		return
+	}
+	auditReq(s, r, "node_presentation.update", "subscription-plan", fmt.Sprintf("plan=%d nodes=%d", planID, len(overrides)))
+	write(w, 200, map[string]any{"revision": result.Revision, "no_change": result.NoChange, "effective_immediately": true, "lock_version": result.LockVersion, "latest_revision_id": result.LatestRevisionID})
+}
+
 // planVersionConflict writes the 409 plan_version_conflict response with the
 // current lock version and latest revision so the UI can prompt a reload.
 func (s *Server) planVersionConflict(w http.ResponseWriter, err error, planID int64) {
@@ -420,7 +621,12 @@ func (s *Server) planOrderingPreview(w http.ResponseWriter, r *http.Request, id 
 		fail(w, err, 500)
 		return
 	}
-	ordered, err := core.BuildOrderingNodes(nodes, config.Servers, config.Inbounds, config.ProxyPaths, config.ProxyPathSteps, config.ProxyPathEgressResults, config.ExternalOutbounds, policy)
+	nameOptions, err := s.orderingNameOptions(r.Context())
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	ordered, err := core.BuildOrderingNodes(nodes, config.Servers, config.Inbounds, config.ProxyPaths, config.ProxyPathSteps, config.ProxyPathEgressResults, config.ExternalOutbounds, policy, nameOptions)
 	if err != nil {
 		fail(w, err, 500)
 		return
@@ -436,6 +642,20 @@ func (s *Server) planOrderingPreview(w http.ResponseWriter, r *http.Request, id 
 		"warnings":                   warnings,
 		"runtime_authorization_mode": s.authorizationMode(r.Context()),
 	})
+}
+
+func (s *Server) orderingNameOptions(ctx context.Context) (core.OrderingNameOptions, error) {
+	metadata, err := s.store.ListNodeMetadata(ctx)
+	if err != nil {
+		return core.OrderingNameOptions{}, err
+	}
+	names := map[string]*string{}
+	for key, item := range metadata {
+		if item.DisplayNameOverride != nil {
+			names[key] = item.DisplayNameOverride
+		}
+	}
+	return core.OrderingNameOptions{GlobalNodeNames: names}, nil
 }
 
 func manualPositionsForKeys(nodes []model.SubscriptionPlanNode, manualOrder []string) (map[string]int, error) {

@@ -288,6 +288,121 @@ func TestValidateSubscriptionNodeOrderPolicy(t *testing.T) {
 	}
 }
 
+func TestResolveEffectiveNodeName(t *testing.T) {
+	global := "日本 01"
+	plan := "VIP 日本"
+	if got := ResolveEffectiveNodeName("Tokyo-01", nil, nil); got != "Tokyo-01" {
+		t.Fatalf("source only = %q", got)
+	}
+	if got := ResolveEffectiveNodeName("Tokyo-01", &global, nil); got != global {
+		t.Fatalf("global = %q", got)
+	}
+	if got := ResolveEffectiveNodeName("Tokyo-01", &global, &plan); got != plan {
+		t.Fatalf("plan = %q", got)
+	}
+	if got := ResolveEffectiveNodeName("Tokyo-01", &global, nil); got != "日本 01" {
+		t.Fatalf("cleared plan must inherit latest global = %q", got)
+	}
+}
+
+func TestAutoPlaceNewManualNodesPreservesExistingOrder(t *testing.T) {
+	policy := model.NewSubscriptionNodeOrderPolicy()
+	policy.Mode = model.SubscriptionNodeOrderManual
+	policy.ManualSeed = model.SubscriptionNodeOrderExitRegion
+	policy.ExitRegionOrder = []string{"JP", "KR", "HK", "SG", "US"}
+	existing := []SubscriptionNode{
+		orderTestNode("US-01", "US-01", "", "inbound:1", 1, 1, "US", "US", nil),
+		orderTestNode("JP-01", "JP-01", "", "inbound:1", 1, 1, "JP", "JP", nil),
+		orderTestNode("JP-02", "JP-02", "", "inbound:1", 1, 1, "JP", "JP", nil),
+		orderTestNode("HK-01", "HK-01", "", "inbound:1", 1, 1, "HK", "HK", nil),
+		orderTestNode("SG-01", "SG-01", "", "inbound:1", 1, 1, "SG", "SG", nil),
+	}
+	added := []SubscriptionNode{
+		orderTestNode("SG-02", "SG-02", "", "inbound:1", 1, 1, "SG", "SG", nil),
+		orderTestNode("KR-01", "KR-01", "", "inbound:1", 1, 1, "KR", "KR", nil),
+		orderTestNode("JP-03", "JP-03", "", "inbound:1", 1, 1, "JP", "JP", nil),
+	}
+	result := AutoPlaceNewManualNodes(existing, added, policy)
+	want := []string{"US-01", "JP-01", "JP-02", "JP-03", "KR-01", "HK-01", "SG-01", "SG-02"}
+	if !equalStrings(result.OrderedNodeKeys, want) {
+		t.Fatalf("auto placement = %v, want %v", result.OrderedNodeKeys, want)
+	}
+	existingAfter := []string{}
+	existingKeys := map[string]bool{}
+	for _, node := range existing {
+		existingKeys[node.Key] = true
+	}
+	for _, key := range result.OrderedNodeKeys {
+		if existingKeys[key] {
+			existingAfter = append(existingAfter, key)
+		}
+	}
+	if !equalStrings(existingAfter, keysOf(existing)) {
+		t.Fatalf("existing relative order changed: %v", existingAfter)
+	}
+}
+
+func TestAutoPlaceNewManualNodesPlacementPolicies(t *testing.T) {
+	base := model.NewSubscriptionNodeOrderPolicy()
+	base.Mode = model.SubscriptionNodeOrderManual
+	base.ExitRegionOrder = []string{"JP"}
+	existing := []SubscriptionNode{orderTestNode("old", "old", "", "inbound:1", 1, 1, "JP", "JP", nil)}
+	added := []SubscriptionNode{orderTestNode("new", "new", "", "", 0, 0, "", "", nil)}
+
+	appendPolicy := base
+	appendPolicy.NewNodePlacement = model.SubscriptionNodePlacementAppend
+	if got := AutoPlaceNewManualNodes(existing, added, appendPolicy); !equalStrings(got.OrderedNodeKeys, []string{"old", "new"}) || len(got.PendingNodeKeys) != 0 {
+		t.Fatalf("append result = %#v", got)
+	}
+	pendingPolicy := base
+	pendingPolicy.NewNodePlacement = model.SubscriptionNodePlacementPending
+	if got := AutoPlaceNewManualNodes(existing, added, pendingPolicy); !equalStrings(got.OrderedNodeKeys, []string{"old"}) || !equalStrings(got.PendingNodeKeys, []string{"new"}) {
+		t.Fatalf("pending result = %#v", got)
+	}
+	unmatchedPolicy := base
+	unmatchedPolicy.NewNodePlacement = model.SubscriptionNodePlacementByTemplate
+	unmatchedPolicy.UnmatchedPlacement = model.SubscriptionNodePlacementPending
+	if got := AutoPlaceNewManualNodes(existing, added, unmatchedPolicy); len(got.Warnings) != 1 || !equalStrings(got.PendingNodeKeys, []string{"new"}) {
+		t.Fatalf("unmatched result = %#v", got)
+	}
+}
+
+func TestAutoPlaceNewManualNodesUsesSuccessorAndEntryBuckets(t *testing.T) {
+	exitPolicy := model.NewSubscriptionNodeOrderPolicy()
+	exitPolicy.Mode = model.SubscriptionNodeOrderManual
+	exitPolicy.ManualSeed = model.SubscriptionNodeOrderExitRegion
+	exitPolicy.ExitRegionOrder = []string{"JP", "HK"}
+	existing := []SubscriptionNode{orderTestNode("hk", "hk", "", "inbound:2", 2, 2, "HK", "HK", nil)}
+	added := []SubscriptionNode{orderTestNode("jp", "jp", "", "inbound:1", 1, 1, "JP", "JP", nil)}
+	if got := AutoPlaceNewManualNodes(existing, added, exitPolicy); !equalStrings(got.OrderedNodeKeys, []string{"jp", "hk"}) || got.Details[0].Reason != "insert_before_successor_bucket" {
+		t.Fatalf("successor insertion = %#v", got)
+	}
+
+	entryPolicy := model.NewSubscriptionNodeOrderPolicy()
+	entryPolicy.Mode = model.SubscriptionNodeOrderManual
+	entryPolicy.ManualSeed = model.SubscriptionNodeOrderEntry
+	entryPolicy.EntryRegionOrderMode = model.SubscriptionNodeEntryRegionOrderCustom
+	entryPolicy.EntryRegionOrder = []string{"JP", "HK"}
+	existing = []SubscriptionNode{
+		orderTestNode("hk", "hk", "", "inbound:3", 3, 3, "HK", "HK", nil),
+		orderTestNode("jp-a", "jp-a", "", "inbound:1", 1, 1, "JP", "JP", nil),
+	}
+	added = []SubscriptionNode{orderTestNode("jp-new", "jp-new", "", "inbound:2", 2, 2, "JP", "JP", nil)}
+	if got := AutoPlaceNewManualNodes(existing, added, entryPolicy); !equalStrings(got.OrderedNodeKeys, []string{"hk", "jp-a", "jp-new"}) {
+		t.Fatalf("entry-region fallback insertion = %#v", got)
+	}
+}
+
+func TestValidateLegacyManualPlacementDefaultsPending(t *testing.T) {
+	policy, err := ValidateSubscriptionNodeOrderPolicy(model.SubscriptionNodeOrderPolicy{Version: 1, Mode: model.SubscriptionNodeOrderManual})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.NewNodePlacement != model.SubscriptionNodePlacementPending || policy.UnmatchedPlacement != model.SubscriptionNodePlacementPending {
+		t.Fatalf("legacy placement defaults = %#v", policy)
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

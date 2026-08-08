@@ -14,6 +14,7 @@ import (
 // must be "inbound:<id>". The returned policy is the canonical snapshot.
 func ValidateSubscriptionNodeOrderPolicy(policy model.SubscriptionNodeOrderPolicy) (model.SubscriptionNodeOrderPolicy, error) {
 	out := policy
+	originalVersion := out.Version
 	out.Version = model.SubscriptionNodeOrderVersion
 	switch out.Mode {
 	case "", model.SubscriptionNodeOrderLegacyGroupName, model.SubscriptionNodeOrderExitRegion, model.SubscriptionNodeOrderEntry, model.SubscriptionNodeOrderManual:
@@ -67,7 +68,80 @@ func ValidateSubscriptionNodeOrderPolicy(policy model.SubscriptionNodeOrderPolic
 		entries = append(entries, key)
 	}
 	out.EntryOrder = entries
+	if out.NewNodePlacement == "" {
+		if originalVersion <= 1 {
+			out.NewNodePlacement = model.SubscriptionNodePlacementPending
+		} else {
+			out.NewNodePlacement = model.SubscriptionNodePlacementByTemplate
+		}
+	}
+	if out.UnmatchedPlacement == "" {
+		if originalVersion <= 1 {
+			out.UnmatchedPlacement = model.SubscriptionNodePlacementPending
+		} else {
+			out.UnmatchedPlacement = model.SubscriptionNodePlacementAppend
+		}
+	}
+	if err := validateNodePlacement(out.NewNodePlacement, true); err != nil {
+		return out, err
+	}
+	if err := validateNodePlacement(out.UnmatchedPlacement, false); err != nil {
+		return out, err
+	}
 	return out, nil
+}
+
+func validateNodePlacement(value model.SubscriptionNodePlacement, allowTemplate bool) error {
+	switch value {
+	case model.SubscriptionNodePlacementAppend, model.SubscriptionNodePlacementPending:
+		return nil
+	case model.SubscriptionNodePlacementByTemplate:
+		if allowTemplate {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid node placement %q", value)
+}
+
+func ValidateNodeOrderTemplatePolicy(policy model.NodeOrderTemplatePolicy) (model.NodeOrderTemplatePolicy, error) {
+	out := policy
+	if out.Version == 0 {
+		out.Version = 1
+	}
+	if out.Version != 1 {
+		return out, fmt.Errorf("invalid template policy version %d", out.Version)
+	}
+	if out.BaseMode != model.SubscriptionNodeOrderExitRegion && out.BaseMode != model.SubscriptionNodeOrderEntry {
+		return out, fmt.Errorf("invalid template base_mode %q", out.BaseMode)
+	}
+	planPolicy, err := ValidateSubscriptionNodeOrderPolicy(SubscriptionPolicyFromTemplate(out, out.BaseMode))
+	if err != nil {
+		return out, err
+	}
+	out.ExitRegionOrder = planPolicy.ExitRegionOrder
+	out.EntryRegionOrderMode = planPolicy.EntryRegionOrderMode
+	out.EntryRegionOrder = planPolicy.EntryRegionOrder
+	out.EntryOrder = planPolicy.EntryOrder
+	out.NewNodePlacement = planPolicy.NewNodePlacement
+	out.UnmatchedPlacement = planPolicy.UnmatchedPlacement
+	return out, nil
+}
+
+func SubscriptionPolicyFromTemplate(template model.NodeOrderTemplatePolicy, mode model.SubscriptionNodeOrderMode) model.SubscriptionNodeOrderPolicy {
+	if mode == "" {
+		mode = template.BaseMode
+	}
+	return model.SubscriptionNodeOrderPolicy{
+		Version:              model.SubscriptionNodeOrderVersion,
+		Mode:                 mode,
+		ManualSeed:           template.BaseMode,
+		ExitRegionOrder:      append([]string(nil), template.ExitRegionOrder...),
+		EntryRegionOrderMode: template.EntryRegionOrderMode,
+		EntryRegionOrder:     append([]string(nil), template.EntryRegionOrder...),
+		EntryOrder:           append([]string(nil), template.EntryOrder...),
+		NewNodePlacement:     template.NewNodePlacement,
+		UnmatchedPlacement:   template.UnmatchedPlacement,
+	}
 }
 
 func normalizeRegionOrderList(list []string) ([]string, error) {
@@ -258,6 +332,209 @@ type rankedSubscriptionNode struct {
 	rank subscriptionOrderRank
 }
 
+type OrderingWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Count   int    `json:"count"`
+}
+
+type AutoPlacementDetail struct {
+	NodeKey string `json:"node_key"`
+	Bucket  string `json:"bucket"`
+	Reason  string `json:"reason"`
+}
+
+type AutoPlacementResult struct {
+	OrderedNodeKeys []string              `json:"ordered_node_keys"`
+	PendingNodeKeys []string              `json:"pending_node_keys"`
+	Warnings        []OrderingWarning     `json:"warnings"`
+	Details         []AutoPlacementDetail `json:"details"`
+}
+
+type placementBucket struct {
+	key     string
+	rank    int
+	matched bool
+}
+
+func AutoPlaceNewManualNodes(existing, added []SubscriptionNode, policy model.SubscriptionNodeOrderPolicy) AutoPlacementResult {
+	normalized, err := ValidateSubscriptionNodeOrderPolicy(policy)
+	if err != nil {
+		normalized = model.NewSubscriptionNodeOrderPolicy()
+		normalized.Mode = model.SubscriptionNodeOrderManual
+	}
+	result := AutoPlacementResult{OrderedNodeKeys: make([]string, 0, len(existing)+len(added))}
+	for _, node := range existing {
+		result.OrderedNodeKeys = append(result.OrderedNodeKeys, node.Key)
+	}
+	if len(added) == 0 {
+		return result
+	}
+	seedPolicy := normalized
+	seedPolicy.Mode = normalized.ManualSeed
+	if seedPolicy.Mode != model.SubscriptionNodeOrderEntry {
+		seedPolicy.Mode = model.SubscriptionNodeOrderExitRegion
+	}
+	orderedAdded := OrderSubscriptionNodes(added, seedPolicy)
+	if normalized.NewNodePlacement == model.SubscriptionNodePlacementPending {
+		for _, node := range orderedAdded {
+			result.PendingNodeKeys = append(result.PendingNodeKeys, node.Key)
+			result.Details = append(result.Details, AutoPlacementDetail{NodeKey: node.Key, Bucket: placementBucketFor(node, normalized).key, Reason: "pending_by_policy"})
+		}
+		return result
+	}
+	if normalized.NewNodePlacement == model.SubscriptionNodePlacementAppend {
+		for _, node := range orderedAdded {
+			result.OrderedNodeKeys = append(result.OrderedNodeKeys, node.Key)
+			result.Details = append(result.Details, AutoPlacementDetail{NodeKey: node.Key, Bucket: placementBucketFor(node, normalized).key, Reason: "append_by_policy"})
+		}
+		return result
+	}
+
+	nodesByKey := map[string]SubscriptionNode{}
+	for _, node := range existing {
+		nodesByKey[node.Key] = node
+	}
+	groups := map[string][]SubscriptionNode{}
+	buckets := map[string]placementBucket{}
+	unmatched := []SubscriptionNode{}
+	for _, node := range orderedAdded {
+		bucket := placementBucketFor(node, normalized)
+		if !bucket.matched {
+			unmatched = append(unmatched, node)
+			continue
+		}
+		groups[bucket.key] = append(groups[bucket.key], node)
+		buckets[bucket.key] = bucket
+	}
+	groupKeys := make([]string, 0, len(groups))
+	for key := range groups {
+		groupKeys = append(groupKeys, key)
+	}
+	sort.Slice(groupKeys, func(i, j int) bool {
+		if buckets[groupKeys[i]].rank == buckets[groupKeys[j]].rank {
+			return groupKeys[i] < groupKeys[j]
+		}
+		return buckets[groupKeys[i]].rank < buckets[groupKeys[j]].rank
+	})
+	for _, groupKey := range groupKeys {
+		bucket := buckets[groupKey]
+		insertAt, reason := manualBucketInsertionIndex(result.OrderedNodeKeys, nodesByKey, bucket, normalized)
+		keys := make([]string, 0, len(groups[groupKey]))
+		for _, node := range groups[groupKey] {
+			keys = append(keys, node.Key)
+			nodesByKey[node.Key] = node
+			result.Details = append(result.Details, AutoPlacementDetail{NodeKey: node.Key, Bucket: bucket.key, Reason: reason})
+		}
+		result.OrderedNodeKeys = insertStrings(result.OrderedNodeKeys, insertAt, keys)
+	}
+	if len(unmatched) > 0 {
+		if normalized.UnmatchedPlacement == model.SubscriptionNodePlacementPending {
+			for _, node := range unmatched {
+				result.PendingNodeKeys = append(result.PendingNodeKeys, node.Key)
+				result.Details = append(result.Details, AutoPlacementDetail{NodeKey: node.Key, Bucket: placementBucketFor(node, normalized).key, Reason: "unmatched_pending"})
+			}
+		} else {
+			for _, node := range unmatched {
+				result.OrderedNodeKeys = append(result.OrderedNodeKeys, node.Key)
+				result.Details = append(result.Details, AutoPlacementDetail{NodeKey: node.Key, Bucket: placementBucketFor(node, normalized).key, Reason: "unmatched_append"})
+			}
+		}
+		result.Warnings = append(result.Warnings, OrderingWarning{Code: "unmatched_nodes", Count: len(unmatched), Message: fmt.Sprintf("%d 个节点无法匹配模板", len(unmatched))})
+	}
+	return result
+}
+
+func placementBucketFor(node SubscriptionNode, policy model.SubscriptionNodeOrderPolicy) placementBucket {
+	mode := policy.ManualSeed
+	if mode == model.SubscriptionNodeOrderEntry {
+		region := NormalizeRegionCode(node.EntryRegion)
+		regionOrder := policy.ExitRegionOrder
+		if policy.EntryRegionOrderMode == model.SubscriptionNodeEntryRegionOrderCustom {
+			regionOrder = policy.EntryRegionOrder
+		}
+		regionRanks := buildRegionRank(regionOrder)
+		regionRank, regionMatched := regionRanks[region]
+		exactRank, exactMatched := -1, false
+		for index, key := range policy.EntryOrder {
+			if key == node.EntryKey {
+				exactRank, exactMatched = index, true
+				break
+			}
+		}
+		matched := regionMatched || exactMatched
+		rank := regionRank*100000 + 50000
+		if !regionMatched {
+			rank = len(regionOrder)*100000 + 50000
+		}
+		if exactMatched {
+			rank = regionRank*100000 + exactRank
+			if !regionMatched {
+				rank = len(regionOrder)*100000 + exactRank
+			}
+		}
+		key := "entry:" + region + ":" + node.EntryKey
+		if regionMatched && !exactMatched {
+			// Unlisted entries still belong to their listed region. Treat them as
+			// one deterministic tail bucket so future nodes stay inside that
+			// region without inventing an order based on display names.
+			rank = regionRank*100000 + 99999
+			key = "entry-region:" + region + ":unlisted"
+		}
+		return placementBucket{key: key, rank: rank, matched: matched && node.EntryKey != ""}
+	}
+	region := NormalizeRegionCode(node.ExitRegion)
+	ranks := buildRegionRank(policy.ExitRegionOrder)
+	rank, ok := ranks[region]
+	return placementBucket{key: "exit:" + region, rank: rank, matched: ok && region != ""}
+}
+
+func SubscriptionNodeTemplateBucket(node SubscriptionNode, policy model.SubscriptionNodeOrderPolicy) (string, bool) {
+	bucket := placementBucketFor(node, policy)
+	return bucket.key, bucket.matched
+}
+
+func manualBucketInsertionIndex(order []string, nodes map[string]SubscriptionNode, target placementBucket, policy model.SubscriptionNodeOrderPolicy) (int, string) {
+	lastSame := -1
+	predecessorIndex, predecessorRank := -1, -1
+	successorIndex, successorRank := -1, int(^uint(0)>>1)
+	for index, key := range order {
+		bucket := placementBucketFor(nodes[key], policy)
+		if !bucket.matched {
+			continue
+		}
+		if bucket.key == target.key {
+			lastSame = index
+		}
+		if bucket.rank < target.rank && bucket.rank >= predecessorRank {
+			predecessorRank = bucket.rank
+			predecessorIndex = index
+		}
+		if bucket.rank > target.rank && bucket.rank < successorRank {
+			successorRank = bucket.rank
+			successorIndex = index
+		}
+	}
+	if lastSame >= 0 {
+		return lastSame + 1, "insert_after_same_bucket"
+	}
+	if predecessorIndex >= 0 {
+		return predecessorIndex + 1, "insert_after_predecessor_bucket"
+	}
+	if successorIndex >= 0 {
+		return successorIndex, "insert_before_successor_bucket"
+	}
+	return len(order), "append_without_anchor"
+}
+
+func insertStrings(input []string, at int, values []string) []string {
+	out := make([]string, 0, len(input)+len(values))
+	out = append(out, input[:at]...)
+	out = append(out, values...)
+	out = append(out, input[at:]...)
+	return out
+}
+
 func orderManualTail(ranked []rankedSubscriptionNode, seedMode model.SubscriptionNodeOrderMode) []rankedSubscriptionNode {
 	placedCount := 0
 	for _, item := range ranked {
@@ -351,7 +628,12 @@ func BuildOrderingNodes(
 	egressResults []model.ProxyPathEgressResult,
 	externals []model.ExternalOutbound,
 	policy model.SubscriptionNodeOrderPolicy,
+	nameOptions ...OrderingNameOptions,
 ) ([]SubscriptionNode, error) {
+	names := OrderingNameOptions{}
+	if len(nameOptions) > 0 {
+		names = nameOptions[0]
+	}
 	topologies, resolvedPaths, resolvedExternals, err := ResolveAssignableNodeTopologies(AssignableNodeCatalogInput{
 		Servers:           servers,
 		Inbounds:          inbounds,
@@ -479,11 +761,31 @@ func BuildOrderingNodes(
 		}
 	}
 	resolveSubscriptionNodeNames(nodes, nameRefs)
+	planNames := map[string]*string{}
+	for _, planNode := range planNodes {
+		if planNode.DisplayNameOverride != nil {
+			planNames[NodeKeyOf(planNode.NodeType, planNode.NodeID)] = planNode.DisplayNameOverride
+		}
+	}
+	for i := range nodes {
+		nodes[i].SourceName = nodes[i].Name
+		nodes[i].GlobalName = ResolveEffectiveNodeName(nodes[i].SourceName, names.GlobalNodeNames[nodes[i].Key], nil)
+		if value := planNames[nodes[i].Key]; value != nil {
+			nodes[i].PlanNameOverride = value
+			nodes[i].HasPlanNameOverride = true
+		}
+		nodes[i].Name = ResolveEffectiveNodeName(nodes[i].SourceName, names.GlobalNodeNames[nodes[i].Key], planNames[nodes[i].Key])
+	}
+	disambiguateEffectiveSubscriptionNodeNames(nodes)
 	for _, ref := range nameRefs {
 		nodes[ref.index].Name = RegionFlagEmoji(ref.regionCode) + " " + nodes[ref.index].Name
 		nodes[ref.index].Raw["tag"] = nodes[ref.index].Name
 	}
 	return OrderSubscriptionNodes(nodes, policy), nil
+}
+
+type OrderingNameOptions struct {
+	GlobalNodeNames map[string]*string
 }
 
 func applyTopologyToSubscriptionNode(node *SubscriptionNode, topo AssignableNodeTopology, ok bool) {

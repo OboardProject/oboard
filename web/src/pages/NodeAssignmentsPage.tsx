@@ -7,12 +7,18 @@ import { Input } from '../components/ui/input'
 import { NodeScopeMenu, type NodeScopeRequest, type ScopeNode } from '../components/node-assignment/NodeScopeMenu'
 import { NodeScopeActionDialog } from '../components/node-assignment/NodeScopeActionDialog'
 import { AssignPlanUsersDialog } from '../components/node-assignment/AssignPlanUsersDialog'
-import { X, Filter, RefreshCw, MoreHorizontal, Users } from 'lucide-react'
+import { NodeRenameDialog, type RenameNode } from '../components/node-assignment/NodeRenameDialog'
+import { X, Filter, RefreshCw, MoreHorizontal, Users, Pencil } from 'lucide-react'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
 type CatalogNode = ScopeNode & {
   name: string
+  source_name: string
+  global_name_override?: string | null
+  has_global_name_override: boolean
+  effective_global_name: string
+  metadata_lock_version: number
   entry_server_name?: string
   entry_protocol?: string
   entry_port?: number
@@ -20,7 +26,7 @@ type CatalogNode = ScopeNode & {
   enabled: boolean
   status: 'ok' | 'offline' | 'disabled'
   group?: string
-  plans: { plan_id: number; name: string; display_group?: string }[]
+  plans: { plan_id: number; name: string; display_group?: string; display_name: string; has_display_name_override: boolean }[]
   effective_users: number
   allow_exceptions: number
   deny_exceptions: number
@@ -75,6 +81,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
   const [assignOpen, setAssignOpen] = React.useState(false)
   const [users, setUsers] = React.useState<any[] | null>(null)
   const [showType, setShowType] = React.useState(false)
+  const [renameNode, setRenameNode] = React.useState<CatalogNode | null>(null)
 
   const servers = data.servers || []
   const plans = data.subscription_plans || []
@@ -190,7 +197,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
   return (
     <div className="panel node-assignments-panel">
       <div className="panel-head" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <h2 style={{ margin: 0 }}>节点分配</h2>
+        <h2 style={{ margin: 0 }}>全部节点</h2>
       </div>
       <div className="panel-body">
         {toast && <p style={{ margin: '0 0 8px', color: 'var(--color-success, #16a34a)' }}>{toast}</p>}
@@ -314,6 +321,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
                   <td><input type="checkbox" checked={Boolean(selected[n.key])} onChange={e => setSelected(s => ({ ...s, [n.key]: e.target.checked }))} aria-label={`选择 ${n.name}`} /></td>
                   <td className="node-name-cell">
                     <span style={{ fontWeight: 600, display: 'inline-block', whiteSpace: 'normal', wordBreak: 'break-word' }}>{n.name}</span>
+                    {n.has_global_name_override && <span className="muted" style={{ display: 'block', fontSize: 12 }}>来源：{n.source_name} · 全局别名</span>}
                     {n.group ? <span className="muted" style={{ display: 'block', fontSize: 12, fontWeight: 400 }}>{n.group}</span> : null}
                   </td>
                   {showType && <td><Badge variant="secondary">{nodeTypeLabel(n.type)}</Badge></td>}
@@ -334,6 +342,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
                     {n.allow_exceptions === 0 && n.deny_exceptions === 0 && <span className="muted">—</span>}
                   </td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    {isAdmin && <Button variant="ghost" size="icon" onClick={() => setRenameNode(n)} aria-label={`重命名 ${n.name}`} title="修改全局名称"><Pencil size={15} /></Button>}
                     <Button variant="outline" size="sm" onClick={() => void openDetail(n)}>详情</Button>
                     <Button variant="ghost" size="icon" onClick={e => {
                       const rect = e.currentTarget.getBoundingClientRect()
@@ -370,6 +379,9 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div className="form" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
               <div><span className="muted">类型</span><div>{nodeTypeLabel(detail.node?.type)}</div></div>
+              <div><span className="muted">全局名称</span><div>{detail.node?.effective_global_name || detail.node?.name}</div></div>
+              <div><span className="muted">来源名称</span><div>{detail.node?.source_name || '—'}</div></div>
+              <div><span className="muted">稳定标识</span><div><code>{detail.node?.key}</code></div></div>
               <div><span className="muted">入口</span><div>{detail.node?.entry_server_name || '—'}</div></div>
               <div><span className="muted">协议</span><div style={{ fontFamily: 'var(--font-mono)' }}>{detail.node?.entry_protocol || '—'}</div></div>
               <div><span className="muted">出口地区</span><div>{detail.node?.exit_region || '—'}</div></div>
@@ -379,7 +391,11 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
             <div>
               <h3 style={{ marginTop: 0 }}>所属套餐</h3>
               {detail.plans?.length === 0 ? <p className="muted">未分配任何套餐</p> : detail.plans?.map((p: any) => (
-                <Badge key={p.plan_id} variant="outline" style={{ marginRight: 6 }}>{p.name}{p.display_group ? ` · ${p.display_group}` : ''}</Badge>
+                <div key={p.plan_id} className="node-plan-name-row">
+                  <strong>{p.name}</strong>
+                  <span>{p.display_name}</span>
+                  <Badge variant={p.has_display_name_override ? 'secondary' : 'outline'}>{p.has_display_name_override ? '方案独立' : '继承全局'}</Badge>
+                </div>
               ))}
             </div>
             <div>
@@ -444,6 +460,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
         onClose={() => setAssignOpen(false)}
         onDone={refresh}
       />
+      <NodeRenameDialog node={renameNode as RenameNode | null} client={client} onClose={() => setRenameNode(null)} onSaved={async () => { await refresh(); notify('全局节点名称已更新', 'success') }} />
     </div>
   )
 }

@@ -272,6 +272,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/assignable-nodes", s.auth(s.assignableNodes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/assignable-nodes/", s.auth(s.assignableNodeDetail, model.RoleOperator))
 	mux.HandleFunc("/api/v1/assignable-node-scopes/preview", s.auth(s.assignableNodeScopePreview, model.RoleOperator))
+	mux.HandleFunc("/api/v1/node-order-templates", s.auth(s.nodeOrderTemplates, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/node-order-templates/", s.auth(s.nodeOrderTemplates, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/subscription-plans", s.auth(s.subscriptionPlans, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/subscription-plans/", s.auth(s.subscriptionPlans, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/users/plan-assignment", s.auth(s.userPlanAssignment, model.RoleAdmin))
@@ -1843,6 +1845,20 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 	case "plans":
 		if err = require(model.RoleAdmin); err == nil {
+			var plans []model.SubscriptionPlan
+			plans, err = s.store.ListSubscriptionPlans(ctx)
+			if err == nil {
+				out["subscription_plans"] = plans
+			}
+		}
+	case "node-order-templates":
+		if err = require(model.RoleAdmin); err == nil {
+			err = addServers()
+		}
+		if err == nil {
+			out["inbounds"], err = s.store.ListInbounds(ctx)
+		}
+		if err == nil {
 			var plans []model.SubscriptionPlan
 			plans, err = s.store.ListSubscriptionPlans(ctx)
 			if err == nil {
@@ -10134,10 +10150,21 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	effectiveNodes := snapshot.EffectiveNodeKeys(user.ID)
 	effectiveGroups := snapshot.EffectiveNodeGroups(user.ID)
-	orderPolicy, orderPositions, err := s.store.GetEffectiveSubscriptionNodeOrdering(r.Context(), user.ID, time.Now())
+	orderPolicy, orderPositions, planNodeNames, err := s.store.GetEffectiveSubscriptionNodePresentation(r.Context(), user.ID, time.Now())
 	if err != nil {
 		fail(w, err, 500)
 		return
+	}
+	nodeMetadata, err := s.store.ListNodeMetadata(r.Context())
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	globalNodeNames := map[string]*string{}
+	for key, metadata := range nodeMetadata {
+		if metadata.DisplayNameOverride != nil {
+			globalNodeNames[key] = metadata.DisplayNameOverride
+		}
 	}
 	pullPathUsers := snapshot.ProxyPathUserBindings()
 	subscriptionIdentity := sshPasswordDeploymentIdentityForUser(subscriptionUser)
@@ -10176,6 +10203,8 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		EffectiveNodeGroups:    effectiveGroups,
 		NodeOrderPolicy:        model.SubscriptionNodeOrderPolicy{},
 		NodeOrderPositions:     orderPositions,
+		GlobalNodeNames:        globalNodeNames,
+		PlanNodeNames:          planNodeNames,
 	}
 	if orderPolicy != nil {
 		opts.NodeOrderPolicy = *orderPolicy

@@ -18,7 +18,7 @@ func TestGenerateSubscriptionWithPlanNodesAndGroups(t *testing.T) {
 			{ID: 102, ServerID: 2, Name: "sg-ss", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: `{}`, Enabled: true},
 		},
 		SubscriptionOptions{
-			EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inboundID): true},
+			EffectiveNodes:      map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inboundID): true},
 			EffectiveNodeGroups: map[string]string{NodeKeyOf(model.AssignableNodeInbound, inboundID): "香港"},
 		},
 	)
@@ -49,6 +49,45 @@ func TestGenerateSubscriptionWithPlanNodesAndGroups(t *testing.T) {
 	}
 	if len(parsed.Outbounds) != 2 {
 		t.Fatalf("outbounds = %d, want direct + assigned node", len(parsed.Outbounds))
+	}
+}
+
+func TestRenderedSubscriptionUsesEffectiveNodeNamePrecedence(t *testing.T) {
+	user := model.User{ID: 9, Username: "name-user", Status: "active", ProxyUUID: "22222222-2222-4222-8222-222222222222", ProxyPassword: "pass-b"}
+	server := model.Server{ID: 1, Name: "Tokyo-01", PublicIPv4: "203.0.113.9", RegionMode: "manual", RegionCode: "JP"}
+	inbound := model.Inbound{ID: 21, ServerID: server.ID, Name: "Tokyo-01", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	key := NodeKeyOf(model.AssignableNodeInbound, inbound.ID)
+	globalName := "日本 01"
+	planName := "VIP 日本"
+	tests := []struct {
+		name       string
+		global     map[string]*string
+		plan       map[string]*string
+		want       string
+		planScoped bool
+	}{
+		{name: "source", want: "Tokyo-01"},
+		{name: "global", global: map[string]*string{key: &globalName}, want: globalName},
+		{name: "plan", global: map[string]*string{key: &globalName}, plan: map[string]*string{key: &planName}, want: planName, planScoped: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			opts := SubscriptionOptions{EffectiveNodes: map[string]bool{key: true}, GlobalNodeNames: test.global, PlanNodeNames: test.plan}
+			nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(nodes) != 1 || !strings.Contains(nodes[0].Name, test.want) || nodes[0].HasPlanNameOverride != test.planScoped {
+				t.Fatalf("effective node = %#v", nodes)
+			}
+			body, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(body, test.want) {
+				t.Fatalf("subscription body does not contain %q: %s", test.want, body)
+			}
+		})
 	}
 }
 
@@ -359,10 +398,10 @@ func TestSubscriptionNamesAvoidPathsAndDisambiguateImportedNodes(t *testing.T) {
 	}
 	nodes, err := BuildSubscriptionNodes(user, servers, inbounds, SubscriptionOptions{
 		EffectiveNodes: map[string]bool{
-			NodeKeyOf(model.AssignableNodeInbound, 1):      true,
-			NodeKeyOf(model.AssignableNodeInbound, 2):      true,
-			NodeKeyOf(model.AssignableNodeInbound, 3):      true,
-			NodeKeyOf(model.AssignableNodeProxyPath, 10):   true,
+			NodeKeyOf(model.AssignableNodeInbound, 1):           true,
+			NodeKeyOf(model.AssignableNodeInbound, 2):           true,
+			NodeKeyOf(model.AssignableNodeInbound, 3):           true,
+			NodeKeyOf(model.AssignableNodeProxyPath, 10):        true,
 			NodeKeyOf(model.AssignableNodeExternalOutbound, 20): true,
 			NodeKeyOf(model.AssignableNodeExternalOutbound, 30): true,
 			NodeKeyOf(model.AssignableNodeExternalOutbound, 40): true,
@@ -437,9 +476,9 @@ func TestGenerateClashMetaSubscription(t *testing.T) {
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{"tls":{"enabled":true,"server_name":"example.com"}}`, Enabled: true}},
 		SubscriptionOptions{
-			Format:               model.SubscriptionFormatClashMeta,
-			EffectiveNodes:       map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true},
-			EffectiveNodeGroups:  map[string]string{NodeKeyOf(model.AssignableNodeInbound, 1): "自动选择"},
+			Format:              model.SubscriptionFormatClashMeta,
+			EffectiveNodes:      map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true},
+			EffectiveNodeGroups: map[string]string{NodeKeyOf(model.AssignableNodeInbound, 1): "自动选择"},
 		},
 	)
 	if err != nil {
@@ -458,9 +497,9 @@ func TestSubscriptionFormatUsesRequestOption(t *testing.T) {
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
 		SubscriptionOptions{
-			Format:               model.SubscriptionFormatClashMeta,
-			EffectiveNodes:       map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true},
-			EffectiveNodeGroups:  map[string]string{NodeKeyOf(model.AssignableNodeInbound, 1): "自动选择"},
+			Format:              model.SubscriptionFormatClashMeta,
+			EffectiveNodes:      map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true},
+			EffectiveNodeGroups: map[string]string{NodeKeyOf(model.AssignableNodeInbound, 1): "自动选择"},
 		},
 	)
 	if err != nil {
