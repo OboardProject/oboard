@@ -13,6 +13,9 @@ go -C "$CONTROLLER_DIR" mod verify
 echo "==> Verifying pinned IP geolocation databases"
 "$CONTROLLER_DIR/scripts/fetch-ip2region.sh" "$BUILD_DIR/geoip"
 
+echo "==> Generating client skill packs"
+"$CONTROLLER_DIR/scripts/sync-client-skills.sh" write
+
 echo "==> Testing Controller"
 OBOARD_TEST_GEOIP_DIR="$BUILD_DIR/geoip" go -C "$CONTROLLER_DIR" test ./...
 
