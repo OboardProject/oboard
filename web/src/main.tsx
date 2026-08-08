@@ -1954,6 +1954,7 @@ function App() {
           {currentRole === 'admin' && <ControllerUpdatePrompt
             key={token}
             client={client}
+            tab={tab}
             notify={(message: string, tone?: ToastKind) => showToast(setToast, message, tone)}
             realtimeStatus={realtimeStatus}
             realtimeRevision={realtimeRevision}
@@ -3616,7 +3617,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   </section>
 }
 
-function ControllerUpdatePrompt({ client, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
+function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const [snapshot, setSnapshot] = useState<ControllerUpdateStatus | null>(null)
   const [dismissed, setDismissed] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -3625,6 +3626,12 @@ function ControllerUpdatePrompt({ client, notify, realtimeStatus, realtimeRevisi
   const [connectionInterrupted, setConnectionInterrupted] = useState(false)
   const [working, setWorking] = useState(false)
   const targetBuildRef = useRef('')
+
+  useEffect(() => {
+    if (tab === 'settings') {
+      setDismissed(true)
+    }
+  }, [tab])
 
   const applyStatus = (result: ControllerUpdateStatus) => {
     setSnapshot(result)
@@ -3712,7 +3719,7 @@ function ControllerUpdatePrompt({ client, notify, realtimeStatus, realtimeRevisi
     }
   }
 
-  const visible = Boolean(snapshot?.update_available) && !dismissed && !working
+  const visible = Boolean(snapshot?.update_available) && !dismissed && !working && tab !== 'settings'
 
   useEffect(() => {
     if (!visible || !snapshot?.auto_update_enabled || dialogOpen) return
