@@ -230,11 +230,10 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 		}
 		item.SourceSubnetCount = len(subnetsByUser[item.UserID])
 		item.SharedSourceIPCount = len(sharedIPsByUser[item.UserID])
-		reports, loadErr := s.listConnectionAuditReportsForRisk(ctx, item.UserID, nowTime.Add(-connectionAuditRetention), 50000)
+		selectedReports, loadErr := s.listConnectionAuditReportsForRisk(ctx, item.UserID, nowTime.Add(-time.Duration(windowHours)*time.Hour), 50000)
 		if loadErr != nil {
 			return overview, loadErr
 		}
-		selectedReports := connectionAuditReportsSince(reports, nowTime.Add(-time.Duration(windowHours)*time.Hour))
 		item.SourceRegionCount = connectionAuditDistinctCountries(selectedReports)
 		episodes, loadErr := s.listConnectionProbeEpisodes(ctx, item.UserID, nowTime.Add(-time.Duration(windowHours)*time.Hour), 200)
 		if loadErr != nil {
@@ -256,7 +255,11 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 			item.RiskWindowStartedAt = &startedAt
 			item.RiskWindowEndedAt = &endedAt
 		}
-		evaluateConnectionAuditRisk(item, selectedReports, reports, presence, episodes, policy, strongest, sharedRoutes, nowTime)
+		robustZ, loadErr := s.connectionAuditRobustZ(ctx, item.UserID, nowTime)
+		if loadErr != nil {
+			return overview, loadErr
+		}
+		evaluateConnectionAuditRisk(item, selectedReports, robustZ, presence, episodes, policy, strongest, sharedRoutes, nowTime)
 		overview.TotalConnections += item.ConnectionCount
 		if item.RiskScore >= 55 {
 			overview.ElevatedRiskCount++
@@ -274,7 +277,8 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 }
 
 func (s *Store) ConnectionAuditUserDetail(ctx context.Context, userID int64, windowHours int, policy model.AuditPolicy) (model.ConnectionAuditUserDetail, error) {
-	overview, err := s.ConnectionAuditOverview(ctx, windowHours, true, policy)
+	nowTime := time.Now().UTC()
+	summary, err := s.ConnectionAuditUserRisk(ctx, userID, windowHours, policy, nowTime)
 	if err != nil {
 		return model.ConnectionAuditUserDetail{}, err
 	}
@@ -282,18 +286,14 @@ func (s *Store) ConnectionAuditUserDetail(ctx context.Context, userID int64, win
 		Sources: []model.ConnectionAuditDimension{}, Destinations: []model.ConnectionAuditDimension{},
 		Outbounds: []model.ConnectionAuditDimension{}, Servers: []model.ConnectionAuditDimension{}, Recent: []model.ConnectionAuditReport{}, RiskEvents: []model.ConnectionAuditRiskEvent{}, ProbeEpisodes: []model.ConnectionProbeEpisode{}, Presence: []model.ConnectionPresenceEvent{},
 	}
-	found := false
-	for _, item := range overview.Users {
-		if item.UserID == userID {
-			detail.Summary = item
-			found = true
-			break
-		}
+	detail.Summary = *summary
+	if windowHours < 1 {
+		windowHours = 24
 	}
-	if !found {
-		return detail, sql.ErrNoRows
+	if windowHours > 30*24 {
+		windowHours = 30 * 24
 	}
-	since := time.Now().UTC().Add(-time.Duration(overview.WindowHours) * time.Hour).Format(time.RFC3339Nano)
+	since := nowTime.Add(-time.Duration(windowHours) * time.Hour).Format(time.RFC3339Nano)
 	detail.Sources, err = s.connectionAuditDimensions(ctx, `select source_ip,source_ip,trim(case when coalesce(max(source_province),'')<>'' then max(source_province) else coalesce(max(source_country),'') end||case when coalesce(max(source_city),'')='' then '' else ' / '||max(source_city) end||case when coalesce(max(source_isp),'')='' then '' else ' / '||max(source_isp) end),sum(connection_count),max(active_peak),max(ended_at) from connection_audit_reports where user_id=? and ended_at>=? group by source_ip order by sum(connection_count) desc limit 20`, userID, since)
 	if err != nil {
 		return detail, err
@@ -318,7 +318,7 @@ func (s *Store) ConnectionAuditUserDetail(ctx context.Context, userID int64, win
 	if err != nil {
 		return detail, err
 	}
-	sharedRoutes, err := s.connectionAuditSharedRouteUsers(ctx, time.Now().UTC().Add(-connectionAuditRiskWindow))
+	sharedRoutes, err := s.connectionAuditSharedRouteUsers(ctx, nowTime.Add(-connectionAuditRiskWindow))
 	if err != nil {
 		return detail, err
 	}
@@ -331,7 +331,7 @@ func (s *Store) ConnectionAuditUserDetail(ctx context.Context, userID int64, win
 	if err != nil {
 		return detail, err
 	}
-	detail.Presence, err = s.ListConnectionPresenceForUser(ctx, userID, time.Now().UTC().Add(-connectionAuditPresenceTCP))
+	detail.Presence, err = s.ListConnectionPresenceForUser(ctx, userID, nowTime.Add(-connectionAuditPresenceTCP))
 	return detail, err
 }
 
@@ -381,11 +381,35 @@ func (s *Store) ConnectionAuditUserRisk(ctx context.Context, userID int64, windo
 	if err != nil {
 		return nil, err
 	}
-	reports, err := s.listConnectionAuditReportsForRisk(ctx, userID, at.Add(-connectionAuditRetention), 50000)
+	reports, err := s.listConnectionAuditReportsForRisk(ctx, userID, since, 50000)
 	if err != nil {
 		return nil, err
 	}
-	selected := connectionAuditReportsSince(reports, since)
+	if item.ReportCount == 0 && len(presence) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	selected := reports
+	subnets := map[string]struct{}{}
+	for _, report := range selected {
+		if subnet := auditSubnet(report.SourceIP); subnet != "" {
+			subnets[subnet] = struct{}{}
+		}
+	}
+	item.SourceSubnetCount = len(subnets)
+	if err := s.db.QueryRowContext(ctx, `select count(*) from (
+		select r.source_ip from connection_audit_reports r
+		where r.user_id=? and r.ended_at>=? and exists(
+			select 1 from connection_audit_reports shared where shared.source_ip=r.source_ip and shared.user_id<>r.user_id and shared.ended_at>=?
+		) group by r.source_ip
+	)`, userID, sinceText, sinceText).Scan(&item.SharedSourceIPCount); err != nil {
+		return nil, err
+	}
+	for _, event := range presence {
+		item.ActiveConnectionCount += event.ActiveConnections
+		if event.At.After(item.LastSeenAt) {
+			item.LastSeenAt = event.At
+		}
+	}
 	episodes, err := s.listConnectionProbeEpisodes(ctx, userID, since, 100)
 	if err != nil {
 		return nil, err
@@ -413,7 +437,11 @@ func (s *Store) ConnectionAuditUserRisk(ctx context.Context, userID int64, windo
 	if item.ReportCount > 0 {
 		item.SourceRegionCount = connectionAuditDistinctCountries(selected)
 	}
-	evaluateConnectionAuditRisk(&item, selected, reports, presence, episodes, policy, strongest, sharedRoutes, at)
+	robustZ, err := s.connectionAuditRobustZ(ctx, userID, at)
+	if err != nil {
+		return nil, err
+	}
+	evaluateConnectionAuditRisk(&item, selected, robustZ, presence, episodes, policy, strongest, sharedRoutes, at)
 	return &item, nil
 }
 
@@ -437,6 +465,13 @@ func (s *Store) connectionAuditDimensions(ctx context.Context, query string, arg
 }
 
 func (s *Store) listRecentConnectionAudits(ctx context.Context, userID int64, since string, limit int) ([]model.ConnectionAuditReport, error) {
+	return s.listConnectionAuditsByTime(ctx, userID, "ended_at", since, limit)
+}
+
+func (s *Store) listConnectionAuditsByTime(ctx context.Context, userID int64, timeColumn, since string, limit int) ([]model.ConnectionAuditReport, error) {
+	if timeColumn != "ended_at" && timeColumn != "started_at" {
+		return nil, fmt.Errorf("unsupported connection audit time column %q", timeColumn)
+	}
 	rows, err := s.db.QueryContext(ctx, `select
 		report_id,server_id,user_id,inbound_id,path_id,device_id_hash,credential_epoch,client_instance_id_hash,
 		source_ip,route_id,source_geo_code,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,
@@ -444,7 +479,7 @@ func (s *Store) listRecentConnectionAudits(ctx context.Context, userID int64, si
 		upload_bytes,download_bytes,payload_first_at,payload_last_at,duration_le_1s_count,duration_le_5s_count,duration_le_20s_count,duration_gt_20s_count,
 		probe_state,internal_probe,presence_sequence,active_peak,active_at_end,collection_generation,bucket_capacity,dropped_bucket_count,
 		collection_started_at,collection_ended_at,started_at,ended_at,created_at
-		from connection_audit_reports where user_id=? and ended_at>=? order by ended_at desc limit ?`, userID, since, limit)
+		from connection_audit_reports where user_id=? and `+timeColumn+`>=? order by `+timeColumn+` desc limit ?`, userID, since, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -766,7 +801,7 @@ func auditSubnet(raw string) string {
 	return netip.PrefixFrom(ip, bits).Masked().String()
 }
 
-func evaluateConnectionAuditRisk(item *model.ConnectionAuditUserSummary, selectedReports, historicalReports []model.ConnectionAuditReport, presence []model.ConnectionPresenceEvent, episodes []model.ConnectionProbeEpisode, policy model.AuditPolicy, strongest *model.ConnectionAuditRiskEvent, sharedRoutes map[string]int, at time.Time) {
+func evaluateConnectionAuditRisk(item *model.ConnectionAuditUserSummary, selectedReports []model.ConnectionAuditReport, robustZ float64, presence []model.ConnectionPresenceEvent, episodes []model.ConnectionProbeEpisode, policy model.AuditPolicy, strongest *model.ConnectionAuditRiskEvent, sharedRoutes map[string]int, at time.Time) {
 	if item == nil {
 		return
 	}
@@ -815,7 +850,7 @@ func evaluateConnectionAuditRisk(item *model.ConnectionAuditUserSummary, selecte
 		item.RiskSignals = append(item.RiskSignals, fmt.Sprintf("排除测速后 10 秒节点扇出达到 %d", item.NodeFanout))
 		item.EvidenceCategories = append(item.EvidenceCategories, "node_fanout")
 	}
-	item.RobustZ = connectionAuditRobustZ(historicalReports, at)
+	item.RobustZ = robustZ
 	anomalyNorm := clampFloat((item.RobustZ-6)/6, 0, 1)
 	if anomalyNorm > 0 {
 		item.RiskSignals = append(item.RiskSignals, fmt.Sprintf("连接行为相对 28 天同时段基线异常（Robust Z %.1f）", item.RobustZ))
@@ -871,14 +906,11 @@ func (s *Store) listConnectionAuditReportsForRisk(ctx context.Context, userID in
 	return s.listRecentConnectionAudits(ctx, userID, since.UTC().Format(time.RFC3339Nano), limit)
 }
 
-func connectionAuditReportsSince(reports []model.ConnectionAuditReport, since time.Time) []model.ConnectionAuditReport {
-	out := make([]model.ConnectionAuditReport, 0, len(reports))
-	for _, report := range reports {
-		if !report.EndedAt.Before(since) {
-			out = append(out, report)
-		}
+func (s *Store) listConnectionAuditReportsStartedSince(ctx context.Context, userID int64, since time.Time, limit int) ([]model.ConnectionAuditReport, error) {
+	if limit < 1 {
+		limit = 10000
 	}
-	return out
+	return s.listConnectionAuditsByTime(ctx, userID, "started_at", since.UTC().Format(time.RFC3339Nano), limit)
 }
 
 func (s *Store) connectionAuditSharedRouteUsers(ctx context.Context, since time.Time) (map[string]int, error) {
@@ -1129,33 +1161,39 @@ func connectionAuditNonProbeActivePeak(reports []model.ConnectionAuditReport) in
 	return peak
 }
 
-func connectionAuditRobustZ(reports []model.ConnectionAuditReport, at time.Time) float64 {
-	currentStart := time.Date(at.Year(), at.Month(), at.Day(), at.Hour(), 0, 0, 0, at.Location())
-	currentEnd := currentStart.Add(time.Hour)
-	current := 0.0
-	historyByHour := map[time.Time]float64{}
-	for _, report := range reports {
-		if report.InternalProbe || report.ProbeState == "confirmed" || report.ProbeState == "candidate" || report.DroppedBucketCount > 0 {
-			continue
-		}
-		started := report.StartedAt.In(at.Location())
-		value := float64(report.ConnectionCount)
-		if !started.Before(currentStart) && started.Before(currentEnd) {
-			current += value
-			continue
-		}
-		if started.Before(currentStart.Add(-28*24*time.Hour)) || !started.Before(currentStart) || started.Weekday() != at.Weekday() || started.Hour() != at.Hour() {
-			continue
-		}
-		bucket := time.Date(started.Year(), started.Month(), started.Day(), started.Hour(), 0, 0, 0, at.Location())
-		historyByHour[bucket] += value
+func (s *Store) connectionAuditRobustZ(ctx context.Context, userID int64, at time.Time) (float64, error) {
+	at = at.UTC()
+	currentStart := time.Date(at.Year(), at.Month(), at.Day(), at.Hour(), 0, 0, 0, time.UTC)
+	rows, err := s.db.QueryContext(ctx, `select strftime('%Y-%m-%dT%H:00:00Z',started_at) as hour_bucket,coalesce(sum(connection_count),0)
+		from connection_audit_reports
+		where user_id=? and started_at>=? and started_at<? and internal_probe=0 and probe_state not in ('confirmed','candidate') and dropped_bucket_count=0
+		group by hour_bucket`, userID, currentStart.Add(-28*24*time.Hour).Format(time.RFC3339Nano), currentStart.Add(time.Hour).Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, err
 	}
-	history := make([]float64, 0, len(historyByHour))
-	for _, value := range historyByHour {
-		history = append(history, value)
+	defer rows.Close()
+	current := 0.0
+	history := []float64{}
+	for rows.Next() {
+		var rawBucket string
+		var value float64
+		if err := rows.Scan(&rawBucket, &value); err != nil {
+			return 0, err
+		}
+		bucket := parseTime(rawBucket)
+		if bucket.Equal(currentStart) {
+			current = value
+			continue
+		}
+		if bucket.Before(currentStart) && bucket.Weekday() == at.Weekday() && bucket.Hour() == at.Hour() {
+			history = append(history, value)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
 	}
 	if len(history) < 3 {
-		return 0
+		return 0, nil
 	}
 	median := medianAuditValues(history)
 	deviations := make([]float64, 0, len(history))
@@ -1165,9 +1203,9 @@ func connectionAuditRobustZ(reports []model.ConnectionAuditReport, at time.Time)
 	mad := medianAuditValues(deviations)
 	robustZ := (current - median) / (1.4826*mad + math.Max(1, 0.1*median))
 	if robustZ < 0 {
-		return 0
+		return 0, nil
 	}
-	return math.Round(robustZ*10) / 10
+	return math.Round(robustZ*10) / 10, nil
 }
 
 func medianAuditValues(values []float64) float64 {
@@ -1207,24 +1245,21 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 		return nil
 	}
 	cutoff := at.Add(-10*time.Minute - connectionAuditProbeWindow)
-	reports, err := s.listConnectionAuditReportsForRisk(ctx, userID, at.Add(-24*time.Hour), 50000)
+	assignedNodes, err := s.connectionAuditAssignedNodes(ctx, userID, at.Add(-24*time.Hour))
+	if err != nil {
+		return err
+	}
+	reports, err := s.listConnectionAuditReportsStartedSince(ctx, userID, cutoff, 50000)
 	if err != nil {
 		return err
 	}
 	byIdentity := map[string][]model.ConnectionAuditReport{}
-	assignedNodes := map[string]map[string]struct{}{}
 	for _, report := range reports {
 		if report.InternalProbe {
 			continue
 		}
 		key := connectionAuditReportIdentity(report).key()
-		if assignedNodes[key] == nil {
-			assignedNodes[key] = map[string]struct{}{}
-		}
-		assignedNodes[key][connectionAuditNode(report)] = struct{}{}
-		if !report.StartedAt.Before(cutoff) {
-			byIdentity[key] = append(byIdentity[key], report)
-		}
+		byIdentity[key] = append(byIdentity[key], report)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1262,6 +1297,33 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 		}
 	}
 	return tx.Commit()
+}
+
+func (s *Store) connectionAuditAssignedNodes(ctx context.Context, userID int64, since time.Time) (map[string]map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `select distinct device_id_hash,source_ip,server_id,coalesce(inbound_id,0),outbound_tag
+		from connection_audit_reports where user_id=? and ended_at>=? and internal_probe=0`, userID, since.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	assignedNodes := map[string]map[string]struct{}{}
+	for rows.Next() {
+		var report model.ConnectionAuditReport
+		var inboundID int64
+		report.UserID = userID
+		if err := rows.Scan(&report.DeviceIDHash, &report.SourceIP, &report.ServerID, &inboundID, &report.OutboundTag); err != nil {
+			return nil, err
+		}
+		if inboundID != 0 {
+			report.InboundID = &inboundID
+		}
+		key := connectionAuditReportIdentity(report).key()
+		if assignedNodes[key] == nil {
+			assignedNodes[key] = map[string]struct{}{}
+		}
+		assignedNodes[key][connectionAuditNode(report)] = struct{}{}
+	}
+	return assignedNodes, rows.Err()
 }
 
 func connectionProbeCandidateThreshold(assigned int) int {
