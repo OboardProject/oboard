@@ -1,6 +1,8 @@
 package mcpauth
 
 import (
+	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 )
@@ -134,4 +136,61 @@ func (b ResourceBoundary) Selection(resourceType string) ResourceSelection {
 		return ResourceSelection{Selection: SelectionNone}
 	}
 	return sel
+}
+
+// ParseBoundary parses and normalizes a versioned resource boundary from JSON.
+// Invalid or missing input returns an empty boundary (everything denied).
+func ParseBoundary(raw []byte) ResourceBoundary {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ResourceBoundary{Version: ResourceBoundaryVersion, Resources: map[string]ResourceSelection{}}
+	}
+	var boundary ResourceBoundary
+	if err := json.Unmarshal(raw, &boundary); err != nil {
+		return ResourceBoundary{Version: ResourceBoundaryVersion, Resources: map[string]ResourceSelection{}}
+	}
+	return boundary.Normalized()
+}
+
+// LegacyResourceFilterJSON converts a versioned boundary into the legacy
+// application resource-filter JSON shape consumed by REST/service-account
+// handlers. It exists only for compatibility; MCP authorization never reads it.
+func LegacyResourceFilterJSON(boundary ResourceBoundary) json.RawMessage {
+	ids := func(selection ResourceSelection) []int64 {
+		out := []int64{}
+		for _, raw := range selection.IDs {
+			var value int64
+			if _, err := fmt.Sscan(raw, &value); err == nil {
+				out = append(out, value)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	selection := func(resourceType string) map[string]any {
+		sel, ok := boundary.Resources[resourceType]
+		if !ok {
+			return nil
+		}
+		mode := sel.Selection
+		if mode != SelectionAll && mode != SelectionNone {
+			mode = SelectionSelected
+		}
+		return map[string]any{"mode": mode, "ids": ids(sel), "allow_create": sel.AllowCreate}
+	}
+	filter := map[string]any{}
+	if servers := selection("server"); servers != nil {
+		filter["servers"] = servers
+	}
+	if users := selection("user"); users != nil {
+		filter["users"] = users
+	}
+	if paths := selection("proxy_path"); paths != nil {
+		filter["proxy_paths"] = paths
+	}
+	filter["destructive_operations"] = boundary.DestructiveOperations
+	encoded, err := json.Marshal(filter)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return encoded
 }

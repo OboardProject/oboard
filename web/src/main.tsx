@@ -73,6 +73,7 @@ import { Toast } from './components/ui/toast'
 import { Dialog } from './components/ui/dialog'
 import { FormField, TrafficLimitInput } from './components/ui/form-field'
 import { TableSkeleton, CardSkeleton, DashboardSkeleton } from './components/ui/skeleton'
+import { MCPAccessPage } from './features/mcp/MCPAccessPage'
 import { AnimatePresence, LazyMotion, domAnimation, m, motion, useReducedMotion } from 'motion/react'
 import { MotionPage, MotionDialogPanel, MotionList, MotionCard } from './components/ui/motion'
 import { CustomSelect } from './components/ui/CustomSelect'
@@ -2877,9 +2878,8 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
   const [view, setView] = useState<'access' | 'changes' | 'ai'>('access')
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState('')
-  const [snapshot, setSnapshot] = useState<any>({ principals: [], oauth: [], grants: [], policies: [], changesets: [], providers: [], audits: [], capabilities: [] })
+  const [snapshot, setSnapshot] = useState<any>({ principals: [], policies: [], changesets: [], providers: [], audits: [], capabilities: [] })
   const [serviceDialogOpen, setServiceDialogOpen] = useState(false)
-  const [oauthDialogOpen, setOAuthDialogOpen] = useState(false)
   const [policyDialogOpen, setPolicyDialogOpen] = useState(false)
   const [connectDialogOpen, setConnectDialogOpen] = useState(false)
   const [serviceTokenDialogOpen, setServiceTokenDialogOpen] = useState(false)
@@ -2888,11 +2888,9 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
   const [connectToken, setConnectToken] = useState<{ value: string; expiresAt: string } | null>(null)
   const [controllerURL, setControllerURL] = useState(() => data?.settings?.controller_url || '')
   const [editingServiceID, setEditingServiceID] = useState('')
-  const [editingOAuthID, setEditingOAuthID] = useState('')
   const [editingProviderID, setEditingProviderID] = useState('')
   const [providerDialogOpen, setProviderDialogOpen] = useState(false)
   const [serviceDraft, setServiceDraft] = useState({ name: '', scopes: [] as string[], cidrs: '', serverIDs: '', userIDs: '', rate: 60, concurrency: 4 })
-  const [oauthDraft, setOAuthDraft] = useState({ name: '', redirects: 'http://127.0.0.1/callback' })
   const [providerDraft, setProviderDraft] = useState({ name: '', baseURL: 'https://api.openai.com/v1', model: '', apiFormat: 'chat_completions' as AIProviderFormat, apiKey: '', tokenAmount: '100', tokenUnit: 'K' as TokenDisplayUnit, allowRawAudit: false })
   const [providerModels, setProviderModels] = useState<string[]>([])
   const [providerModelsLoaded, setProviderModelsLoaded] = useState(false)
@@ -2920,12 +2918,12 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
   const refresh = async () => {
     setLoading(true)
     try {
-      const [principals, oauth, policies, grants, changesets, providers, audits, capabilities, settings] = await Promise.all([
-        client.requestV2('/api-principals'), client.requestV2('/oauth-clients'), client.requestV2('/approval-policies'),
-        client.requestV2('/oauth-grants'), client.requestV2('/changesets'), client.requestV2('/ai/providers'), client.requestV2('/tool-audits'), client.requestV2('/capabilities'),
+      const [principals, policies, changesets, providers, audits, capabilities, settings] = await Promise.all([
+        client.requestV2('/api-principals'), client.requestV2('/approval-policies'),
+        client.requestV2('/changesets'), client.requestV2('/ai/providers'), client.requestV2('/tool-audits'), client.requestV2('/capabilities'),
         client.request('/settings')
       ])
-      setSnapshot({ principals, oauth, grants, policies, changesets, providers, audits, capabilities })
+      setSnapshot({ principals, policies, changesets, providers, audits, capabilities })
       setControllerURL(settings?.settings?.controller_url || '')
       setPolicyDraft(current => ({
         ...current,
@@ -3004,51 +3002,6 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
       if (editingServiceID === principal.id) setServiceDialogOpen(false)
       await refresh()
       notify?.('Service Account 已删除', 'success')
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
-  }
-  const openOAuthDialog = (clientItem?: any) => {
-    setEditingOAuthID(clientItem?.id || '')
-    setOAuthDraft(clientItem ? { name: clientItem.name, redirects: (clientItem.redirect_uris || []).join('\n') } : { name: '', redirects: 'http://127.0.0.1/callback' })
-    setOAuthDialogOpen(true)
-  }
-  const saveOAuth = async (event: React.FormEvent) => {
-    event.preventDefault()
-    setWorking(editingOAuthID ? 'oauth-update' : 'oauth-create')
-    try {
-      await client.requestV2(editingOAuthID ? `/oauth-clients/${editingOAuthID}` : '/oauth-clients', { method: editingOAuthID ? 'PATCH' : 'POST', body: JSON.stringify(editingOAuthID
-        ? { client_name: oauthDraft.name, redirect_uris: splitValues(oauthDraft.redirects), enabled: snapshot.oauth.find((item: any) => item.id === editingOAuthID)?.enabled !== false }
-        : { client_name: oauthDraft.name, redirect_uris: splitValues(oauthDraft.redirects) }) })
-      setOAuthDialogOpen(false)
-      await refresh()
-      notify?.(editingOAuthID ? 'OAuth Client 已更新' : 'OAuth Client 已创建', 'success')
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
-  }
-  const toggleOAuth = async (clientItem: any) => {
-    setWorking(`oauth-${clientItem.id}`)
-    try {
-      await client.requestV2(`/oauth-clients/${clientItem.id}`, { method: 'PATCH', body: JSON.stringify({ client_name: clientItem.name, redirect_uris: clientItem.redirect_uris, enabled: !clientItem.enabled }) })
-      await refresh()
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
-  }
-  const deleteOAuth = async (clientItem: any) => {
-    const confirmed = await dialogs.confirm({ title: `删除 ${clientItem.name}？`, message: '已签发的授权码和访问令牌会立即失效，此操作不能撤销。', confirmText: '删除', tone: 'danger' })
-    if (!confirmed) return
-    setWorking(`oauth-delete-${clientItem.id}`)
-    try {
-      await client.requestV2(`/oauth-clients/${clientItem.id}`, { method: 'DELETE' })
-      if (editingOAuthID === clientItem.id) setOAuthDialogOpen(false)
-      await refresh()
-      notify?.('OAuth Client 已删除', 'success')
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
-  }
-  const revokeOAuthGrant = async (grant: any) => {
-    const confirmed = await dialogs.confirm({ title: '撤销这个 OAuth Grant？', message: '该授权的 Access Token 和 Refresh Token 会立即失效，且不会影响同一客户端的其他授权。', confirmText: '撤销授权', tone: 'danger' })
-    if (!confirmed) return
-    setWorking(`grant-revoke-${grant.id}`)
-    try {
-      await client.requestV2(`/oauth-grants/${grant.id}`, { method: 'DELETE' })
-      await refresh()
-      notify?.('OAuth Grant 已撤销', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const savePolicy = async (event: React.FormEvent) => {
@@ -3197,12 +3150,6 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
   const publicControllerURL = normalizeAutomationControllerURL(controllerURL)
   const connectArtifacts = automationConnectArtifacts(connectClient, publicControllerURL, { risk2: connectRisk2 })
   const connectReady = true
-  const grantResourceSummary = (value: any) => {
-    const filter = typeof value === 'string' ? (() => { try { return JSON.parse(value) } catch { return {} } })() : (value || {})
-    const servers = filter.servers || {}
-    const serverText = servers.mode === 'selected' ? (servers.ids?.length ? `服务器 ${servers.ids.join(', ')}` : '未选择服务器') : servers.mode === 'none' ? '无服务器' : '全部服务器'
-    return `${serverText}${servers.allow_create ? '，允许创建' : ''}`
-  }
   const editingProvider = snapshot.providers.find((item: any) => item.id === editingProviderID)
   const providerTokenLimit = tokenDisplayToLimit(providerDraft.tokenAmount, providerDraft.tokenUnit)
   const canFetchProviderModels = Boolean(providerDraft.baseURL.trim() && (providerDraft.apiKey.trim() || editingProvider?.has_credential))
@@ -3253,26 +3200,8 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
         <div className="settings-card-head automation-section-head"><div><h3>Service Account</h3><p className="muted">仅供受控的 `/api/v2` 自动化使用，不可用于 MCP。</p></div><button type="button" onClick={() => openServiceDialog()}><Plus size={14} />新建</button></div>
         <div className="automation-list">{serviceAccounts.length ? serviceAccounts.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span></div><span>{automationScopeSummary(item.scopes)}</span><small>{item.allowed_cidrs?.length ? item.allowed_cidrs.join(', ') : '任意来源'} · {item.rate_limit_per_minute}/分钟 · 并发 {item.max_concurrency}</small></div><div><button className="ghost icon-button" onClick={() => openServiceDialog(item)} title="编辑" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void issueToken(item)} disabled={!item.enabled} title={item.enabled ? '签发 API Token' : '启用后才能签发 Token'} aria-label={item.enabled ? `为 ${item.name} 签发 API Token` : '启用后才能签发 Token'}><KeyRound size={15} /></button><button className="ghost icon-button" onClick={() => void togglePrincipal(item)} title={item.enabled ? '禁用' : '启用'} aria-label={item.enabled ? '禁用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deletePrincipal(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><KeyRound size={20} /><span>还没有 Service Account</span><button type="button" className="ghost" onClick={() => openServiceDialog()}>新建凭据</button></div>}</div>
       </section>
-      <section className="settings-card">
-        <div className="settings-card-head automation-section-head"><div><h3>OAuth 2.1 Client</h3><p className="muted">供远程 MCP 使用 PKCE S256 授权。</p></div><button type="button" onClick={() => openOAuthDialog()}><Plus size={14} />注册</button></div>
-        <div className="automation-list">{snapshot.oauth.length ? snapshot.oauth.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span>{item.identity_type === 'cimd' && <span className="automation-state">CIMD</span>}</div><span>{item.identity_type === 'cimd' && item.metadata_uri ? `CIMD · ${item.metadata_uri}` : '预注册客户端'}</span><small>{item.redirect_uris.join(', ')}</small></div><div><button className="ghost icon-button" onClick={() => openOAuthDialog(item)} title="编辑" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void toggleOAuth(item)} title={item.enabled ? '禁用' : '启用'} aria-label={item.enabled ? '禁用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deleteOAuth(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><Globe size={20} /><span>还没有 OAuth Client</span><button type="button" className="ghost" onClick={() => openOAuthDialog()}>注册客户端</button></div>}</div>
-      </section>
       </div>
-      <section className="settings-card automation-wide automation-grants">
-        <div className="settings-card-head automation-section-head"><div><h3>OAuth Grant</h3><p className="muted">每次用户授权都是独立 Grant；撤销后该 Grant 的访问和刷新令牌立即失效。</p></div></div>
-        <div className="automation-list">{snapshot.grants.length ? snapshot.grants.map((grant: any) => {
-          const revoked = Boolean(grant.revoked_at)
-          const approvalRisk = Math.min(3, Math.max(0, Number(grant.approval_profile?.auto_approve_risk || 0)))
-          return <div className="automation-row" key={grant.id}>
-            <div>
-              <div className="automation-row-title"><strong>{grant.client_name || grant.client_id}</strong><span className={`automation-state ${revoked ? '' : 'is-enabled'}`}>{revoked ? '已撤销' : '有效'}</span><span className="automation-state">{grant.access_level === 'operate' ? '管理操作' : '只读'}</span>{grant.offline_access && <span className="automation-state">可离线刷新</span>}</div>
-              <span>{grant.username || `用户 ${grant.user_id}`} · {grantResourceSummary(grant.resource_boundary ? { servers: grant.resource_boundary.resources?.server } : grant.resource_filter)}</span>
-              <small>策略 v{grant.policy_version || 1} · 角色 v{grant.role_version || 1} · 自动审批风险 ≤ {approvalRisk} · 最近使用 {grant.last_used_at ? formatTableTime(grant.last_used_at) : '暂无'}</small>
-            </div>
-            <div><button type="button" className="ghost icon-button danger-text" disabled={revoked || working === `grant-revoke-${grant.id}`} onClick={() => void revokeOAuthGrant(grant)} title={revoked ? '授权已撤销' : '撤销授权'} aria-label={`撤销 ${grant.client_name || grant.id}`}><Trash2 size={15} /></button></div>
-          </div>
-        }) : <div className="automation-empty"><ShieldCheck size={20} /><span>暂无 OAuth Grant。客户端首次登录并完成同意后会显示在这里。</span></div>}</div>
-      </section>
+      <MCPAccessPage requestV2={client.requestV2} notify={notify} confirm={dialogs.confirm} />
     </>}
     {view === 'changes' && <div className="automation-grid">
       <section className="settings-card">
@@ -3347,16 +3276,6 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
         </form>
       </div>
       <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setServiceDialogOpen(false)}>取消</button><button type="submit" form="service-account-form" disabled={Boolean(working) || !serviceDraft.name.trim() || !serviceDraft.scopes.length}>{editingServiceID ? '保存' : '创建'}</button></footer>
-    </MotionDialogPanel>}</AnimatePresence>
-    <AnimatePresence>{oauthDialogOpen && <MotionDialogPanel onCancel={() => setOAuthDialogOpen(false)} className="automation-dialog">
-      <header className="dialog-head"><div><h2>{editingOAuthID ? '编辑 OAuth Client' : '注册 OAuth Client'}</h2><p className="muted">客户端仅保存身份、回调地址与启用状态；可申请的权限在授权时由用户决定。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => setOAuthDialogOpen(false)} aria-label="关闭" title="关闭"><XIcon /></button></header>
-      <div className="dialog-body">
-        <form id="oauth-client-form" className="form automation-dialog-form" onSubmit={saveOAuth}>
-          <FormField label="名称" required><input autoFocus required value={oauthDraft.name} onChange={event => setOAuthDraft({ ...oauthDraft, name: event.target.value })} placeholder="例如：Hermes MCP" /></FormField>
-          <FormField label="回调地址" required hint="每行一个完整地址。"><textarea required rows={2} value={oauthDraft.redirects} onChange={event => setOAuthDraft({ ...oauthDraft, redirects: event.target.value })} /></FormField>
-        </form>
-      </div>
-      <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setOAuthDialogOpen(false)}>取消</button><button type="submit" form="oauth-client-form" disabled={Boolean(working) || !oauthDraft.name.trim() || !oauthDraft.redirects.trim()}>{editingOAuthID ? '保存' : '注册'}</button></footer>
     </MotionDialogPanel>}</AnimatePresence>
     <AnimatePresence>{policyDialogOpen && <MotionDialogPanel onCancel={() => setPolicyDialogOpen(false)} className="automation-dialog automation-policy-dialog">
       <header className="dialog-head"><div><h2>配置审批策略</h2><p className="muted">每项执行能力独立决定人工审批、自动批准或拒绝。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => setPolicyDialogOpen(false)} aria-label="关闭" title="关闭"><XIcon /></button></header>

@@ -241,28 +241,23 @@ type OAuthGrant struct {
 	Username    string `json:"username,omitempty"`
 	PrincipalID string `json:"principal_id"`
 	// AccessLevel is the coarse MCP access level (read or operate). It is the
-	// single authorization source for MCP; legacy scopes below are snapshots
-	// only.
+	// single authorization source for MCP.
 	AccessLevel string `json:"access_level"`
-	// ResourceBoundaryJSON is the versioned ResourceBoundary. It replaces the
-	// legacy ResourceFilter for MCP authorization.
-	ResourceBoundaryJSON []byte `json:"resource_boundary"`
-	// Scopes and ResourceFilter remain only as migration/audit snapshots and
-	// are never read for MCP authorization.
-	Scopes            []string              `json:"scopes"`
-	ResourceFilter    json.RawMessage       `json:"resource_filter"`
-	ApprovalProfileID string                `json:"approval_profile_id"`
-	ApprovalProfile   *OAuthApprovalProfile `json:"approval_profile,omitempty"`
-	OfflineAccess     bool                  `json:"offline_access"`
-	PolicyVersion     int                   `json:"policy_version"`
-	RoleVersion       int                   `json:"role_version"`
-	ConsentVersion    int                   `json:"consent_version"`
-	Status            OAuthGrantStatus      `json:"status"`
-	CreatedAt         time.Time             `json:"created_at"`
-	ExpiresAt         *time.Time            `json:"expires_at,omitempty"`
-	LastUsedAt        *time.Time            `json:"last_used_at,omitempty"`
-	RevokedAt         *time.Time            `json:"revoked_at,omitempty"`
-	RevokeReason      string                `json:"revoke_reason,omitempty"`
+	// ResourceBoundaryJSON is the versioned ResourceBoundary. json.RawMessage
+	// keeps it an object on the wire so management UIs can render the boundary.
+	ResourceBoundaryJSON json.RawMessage       `json:"resource_boundary"`
+	ApprovalProfileID    string                `json:"approval_profile_id"`
+	ApprovalProfile      *OAuthApprovalProfile `json:"approval_profile,omitempty"`
+	OfflineAccess        bool                  `json:"offline_access"`
+	PolicyVersion        int                   `json:"policy_version"`
+	RoleVersion          int                   `json:"role_version"`
+	ConsentVersion       int                   `json:"consent_version"`
+	Status               OAuthGrantStatus      `json:"status"`
+	CreatedAt            time.Time             `json:"created_at"`
+	ExpiresAt            *time.Time            `json:"expires_at,omitempty"`
+	LastUsedAt           *time.Time            `json:"last_used_at,omitempty"`
+	RevokedAt            *time.Time            `json:"revoked_at,omitempty"`
+	RevokeReason         string                `json:"revoke_reason,omitempty"`
 }
 
 type OAuthAuthorizationCode struct {

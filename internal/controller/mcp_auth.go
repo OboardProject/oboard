@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/netip"
@@ -104,13 +103,7 @@ func grantApprovalMaxRisk(grant *model.OAuthGrant) int {
 }
 
 func parseResourceBoundary(raw []byte) mcpauth.ResourceBoundary {
-	var boundary mcpauth.ResourceBoundary
-	if len(raw) > 0 && string(raw) != "null" {
-		if err := json.Unmarshal(raw, &boundary); err == nil {
-			return boundary.Normalized()
-		}
-	}
-	return mcpauth.ResourceBoundary{Version: mcpauth.ResourceBoundaryVersion, Resources: map[string]mcpauth.ResourceSelection{}}
+	return mcpauth.ParseBoundary(raw)
 }
 
 func bearerToken(authorization string) (string, bool) {

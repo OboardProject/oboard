@@ -441,7 +441,6 @@ func (s *Server) createOAuthGrantV2(r *http.Request, user model.User, client mod
 	grant := &model.OAuthGrant{
 		ID: "grt_" + grantToken, ClientID: client.ID, ClientName: client.Name, UserID: user.ID, Username: user.Username,
 		PrincipalID: appPrincipal.ID, AccessLevel: string(accessLevel), ResourceBoundaryJSON: boundaryJSON,
-		Scopes: accessLevel.NormalizedScopes(offline), ResourceFilter: appPrincipal.ResourceFilter,
 		ApprovalProfileID: profile.ID, OfflineAccess: offline, PolicyVersion: 1, RoleVersion: 1,
 		ConsentVersion: 2, Status: model.OAuthGrantActive,
 	}
@@ -770,8 +769,8 @@ func (s *Server) authenticateOAuthToken(r *http.Request, raw string) (*model.API
 	if err != nil || s.validateOAuthUserGrant(r.Context(), user, mcpauth.ParseAccessLevel(grant.AccessLevel).NormalizedScopes(grant.OfflineAccess)) != nil {
 		return nil, sql.ErrNoRows
 	}
-	principal.Scopes = slices.Clone(grant.Scopes)
-	principal.ResourceFilter = append(json.RawMessage(nil), grant.ResourceFilter...)
+	principal.Scopes = mcpauth.ParseAccessLevel(grant.AccessLevel).NormalizedScopes(grant.OfflineAccess)
+	principal.ResourceFilter = application.ResourceFilterFromBoundary(mcpauth.ParseBoundary(grant.ResourceBoundaryJSON))
 	principal.OAuthGrantID = grant.ID
 	return principal, nil
 }

@@ -29,6 +29,15 @@ func (s *Store) MigrateOAuthV2(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, `select value from app_settings where key=?`, oauthV2MigrationSetting).Scan(&done); err == nil && strings.TrimSpace(done) == "1" {
 		return nil
 	}
+	// The legacy scopes_json column is dropped by a later table rebuild. On a
+	// database that never carried it there is nothing to migrate.
+	hasLegacyColumn, err := s.tableHasColumn(ctx, "oauth_grants", "scopes_json")
+	if err != nil {
+		return err
+	}
+	if !hasLegacyColumn {
+		return s.setOAuthV2MigrationDone(ctx)
+	}
 	rows, err := s.db.QueryContext(ctx, `select id,coalesce(scopes_json,'[]'),coalesce(access_level,'') from oauth_grants`)
 	if err != nil {
 		return err
@@ -51,7 +60,6 @@ func (s *Store) MigrateOAuthV2(ctx context.Context) error {
 		return err
 	}
 	at := time.Now().UTC()
-	migrated := 0
 	for _, item := range grants {
 		scopes := []string{}
 		_ = json.Unmarshal([]byte(item.scopesJSON), &scopes)
@@ -69,13 +77,14 @@ func (s *Store) MigrateOAuthV2(ctx context.Context) error {
 		if err := s.markGrantMigrated(ctx, item.id, suggested, at); err != nil {
 			return err
 		}
-		migrated++
 	}
-	if _, err := s.db.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at`, oauthV2MigrationSetting, "1", at.UTC().Format(time.RFC3339Nano)); err != nil {
-		return err
-	}
-	_ = migrated
-	return nil
+	return s.setOAuthV2MigrationDone(ctx)
+}
+
+func (s *Store) setOAuthV2MigrationDone(ctx context.Context) error {
+	at := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at`, oauthV2MigrationSetting, "1", at.UTC().Format(time.RFC3339Nano))
+	return err
 }
 
 func grantHasWriteScope(scopes []string) bool {

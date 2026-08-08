@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/mcpauth"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -169,8 +170,7 @@ func (s *Store) CreateOAuthGrantV2(ctx context.Context, grant *model.OAuthGrant,
 	if grant.ConsentVersion == 0 {
 		grant.ConsentVersion = 1
 	}
-	scopesJSON, _ := json.Marshal(grant.Scopes)
-	if _, err := tx.ExecContext(ctx, `insert into oauth_grants(id,client_id,user_id,principal_id,access_level,resource_boundary_v2_json,scopes_json,resource_filter_json,approval_profile_id,offline_access,policy_version,role_version,consent_version,status,expires_at,revoked_at,revoke_reason,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, grant.ID, grant.ClientID, grant.UserID, principal.ID, grant.AccessLevel, string(boundary), string(scopesJSON), normalizedJSONObject(grant.ResourceFilter), profile.ID, boolInt(grant.OfflineAccess), grant.PolicyVersion, grant.RoleVersion, grant.ConsentVersion, status, timePtrString(grant.ExpiresAt), timePtrString(grant.RevokedAt), grant.RevokeReason, ts); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into oauth_grants(id,client_id,user_id,principal_id,access_level,resource_boundary_v2_json,approval_profile_id,offline_access,policy_version,role_version,consent_version,status,expires_at,revoked_at,revoke_reason,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, grant.ID, grant.ClientID, grant.UserID, principal.ID, grant.AccessLevel, string(boundary), profile.ID, boolInt(grant.OfflineAccess), grant.PolicyVersion, grant.RoleVersion, grant.ConsentVersion, status, timePtrString(grant.ExpiresAt), timePtrString(grant.RevokedAt), grant.RevokeReason, ts); err != nil {
 		return err
 	}
 	for index := range policies {
@@ -200,11 +200,11 @@ func (s *Store) CreateOAuthGrant(ctx context.Context, grant *model.OAuthGrant, p
 }
 
 func (s *Store) GetOAuthGrant(ctx context.Context, id string) (*model.OAuthGrant, error) {
-	return scanOAuthGrant(s.db.QueryRowContext(ctx, `select g.id,g.client_id,c.name,g.user_id,u.username,g.principal_id,g.access_level,g.resource_boundary_v2_json,g.scopes_json,g.resource_filter_json,g.approval_profile_id,g.offline_access,g.policy_version,g.role_version,g.consent_version,g.status,g.expires_at,g.last_used_at,g.revoked_at,g.revoke_reason,g.created_at,p.id,p.name,p.auto_approve_risk,p.created_at,p.updated_at from oauth_grants g join oauth_clients c on c.id=g.client_id join users u on u.id=g.user_id join oauth_approval_profiles p on p.id=g.approval_profile_id where g.id=?`, id))
+	return scanOAuthGrant(s.db.QueryRowContext(ctx, `select g.id,g.client_id,c.name,g.user_id,u.username,g.principal_id,g.access_level,g.resource_boundary_v2_json,g.approval_profile_id,g.offline_access,g.policy_version,g.role_version,g.consent_version,g.status,g.expires_at,g.last_used_at,g.revoked_at,g.revoke_reason,g.created_at,p.id,p.name,p.auto_approve_risk,p.created_at,p.updated_at from oauth_grants g join oauth_clients c on c.id=g.client_id join users u on u.id=g.user_id join oauth_approval_profiles p on p.id=g.approval_profile_id where g.id=?`, id))
 }
 
 func (s *Store) ListOAuthGrants(ctx context.Context) ([]model.OAuthGrant, error) {
-	rows, err := s.db.QueryContext(ctx, `select g.id,g.client_id,c.name,g.user_id,u.username,g.principal_id,g.access_level,g.resource_boundary_v2_json,g.scopes_json,g.resource_filter_json,g.approval_profile_id,g.offline_access,g.policy_version,g.role_version,g.consent_version,g.status,g.expires_at,g.last_used_at,g.revoked_at,g.revoke_reason,g.created_at,p.id,p.name,p.auto_approve_risk,p.created_at,p.updated_at from oauth_grants g join oauth_clients c on c.id=g.client_id join users u on u.id=g.user_id join oauth_approval_profiles p on p.id=g.approval_profile_id order by g.created_at desc`)
+	rows, err := s.db.QueryContext(ctx, `select g.id,g.client_id,c.name,g.user_id,u.username,g.principal_id,g.access_level,g.resource_boundary_v2_json,g.approval_profile_id,g.offline_access,g.policy_version,g.role_version,g.consent_version,g.status,g.expires_at,g.last_used_at,g.revoked_at,g.revoke_reason,g.created_at,p.id,p.name,p.auto_approve_risk,p.created_at,p.updated_at from oauth_grants g join oauth_clients c on c.id=g.client_id join users u on u.id=g.user_id join oauth_approval_profiles p on p.id=g.approval_profile_id order by g.created_at desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -222,16 +222,14 @@ func (s *Store) ListOAuthGrants(ctx context.Context) ([]model.OAuthGrant, error)
 
 func scanOAuthGrant(scanner interface{ Scan(...any) error }) (*model.OAuthGrant, error) {
 	var item model.OAuthGrant
-	var boundary, scopes, filter, created, profileCreated, profileUpdated string
+	var boundary, created, profileCreated, profileUpdated string
 	var expires, lastUsed, revoked sql.NullString
 	var offline int
 	profile := &model.OAuthApprovalProfile{}
-	if err := scanner.Scan(&item.ID, &item.ClientID, &item.ClientName, &item.UserID, &item.Username, &item.PrincipalID, &item.AccessLevel, &boundary, &scopes, &filter, &item.ApprovalProfileID, &offline, &item.PolicyVersion, &item.RoleVersion, &item.ConsentVersion, &item.Status, &expires, &lastUsed, &revoked, &item.RevokeReason, &created, &profile.ID, &profile.Name, &profile.AutoApproveRisk, &profileCreated, &profileUpdated); err != nil {
+	if err := scanner.Scan(&item.ID, &item.ClientID, &item.ClientName, &item.UserID, &item.Username, &item.PrincipalID, &item.AccessLevel, &boundary, &item.ApprovalProfileID, &offline, &item.PolicyVersion, &item.RoleVersion, &item.ConsentVersion, &item.Status, &expires, &lastUsed, &revoked, &item.RevokeReason, &created, &profile.ID, &profile.Name, &profile.AutoApproveRisk, &profileCreated, &profileUpdated); err != nil {
 		return nil, err
 	}
 	item.ResourceBoundaryJSON = []byte(boundary)
-	_ = json.Unmarshal([]byte(scopes), &item.Scopes)
-	item.ResourceFilter = json.RawMessage(filter)
 	item.OfflineAccess = offline != 0
 	item.ExpiresAt, item.LastUsedAt, item.RevokedAt = nullableTime(expires), nullableTime(lastUsed), nullableTime(revoked)
 	item.CreatedAt = parseTime(created)
@@ -304,9 +302,7 @@ func (s *Store) MarkOAuthGrantNeedsReconsent(ctx context.Context, id string, at 
 
 func (s *Store) CreateOAuthAuthorizationCode(ctx context.Context, item *model.OAuthAuthorizationCode) error {
 	ts := now()
-	// scopes_json is kept only for legacy DB compatibility and always written
-	// empty; authorization now comes exclusively from the grant.
-	_, err := s.db.ExecContext(ctx, `insert into oauth_authorization_codes(code_hash,grant_id,client_id,user_id,principal_id,redirect_uri,scopes_json,resource,code_challenge,expires_at,created_at) values(?,?,?,?,?,?,?,?,?,?,?)`, item.CodeHash, item.GrantID, item.ClientID, item.UserID, item.PrincipalID, item.RedirectURI, "[]", item.Resource, item.CodeChallenge, item.ExpiresAt.UTC().Format(time.RFC3339Nano), ts)
+	_, err := s.db.ExecContext(ctx, `insert into oauth_authorization_codes(code_hash,grant_id,client_id,user_id,principal_id,redirect_uri,resource,code_challenge,expires_at,created_at) values(?,?,?,?,?,?,?,?,?,?)`, item.CodeHash, item.GrantID, item.ClientID, item.UserID, item.PrincipalID, item.RedirectURI, item.Resource, item.CodeChallenge, item.ExpiresAt.UTC().Format(time.RFC3339Nano), ts)
 	if err == nil {
 		item.CreatedAt = parseTime(ts)
 	}
@@ -341,13 +337,11 @@ func (s *Store) CreateOAuthTokens(ctx context.Context, access, refresh *model.OA
 	}
 	defer tx.Rollback()
 	ts := now()
-	// scopes_json is kept only for legacy DB compatibility and always written
-	// empty; the grant is the sole authorization source.
-	if _, err := tx.ExecContext(ctx, `insert into oauth_access_tokens(token_hash,grant_id,principal_id,client_id,user_id,scopes_json,resource,expires_at,created_at) values(?,?,?,?,?,?,?,?,?)`, access.TokenHash, access.GrantID, access.PrincipalID, access.ClientID, access.UserID, "[]", access.Resource, access.ExpiresAt.UTC().Format(time.RFC3339Nano), ts); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into oauth_access_tokens(token_hash,grant_id,principal_id,client_id,user_id,resource,expires_at,created_at) values(?,?,?,?,?,?,?,?)`, access.TokenHash, access.GrantID, access.PrincipalID, access.ClientID, access.UserID, access.Resource, access.ExpiresAt.UTC().Format(time.RFC3339Nano), ts); err != nil {
 		return err
 	}
 	if refresh != nil {
-		if _, err := tx.ExecContext(ctx, `insert into oauth_refresh_tokens(token_hash,family_id,grant_id,parent_token_hash,principal_id,client_id,user_id,scopes_json,resource,expires_at,created_at) values(?,?,?,?,?,?,?,?,?,?,?)`, refresh.TokenHash, refresh.FamilyID, refresh.GrantID, refresh.ParentTokenHash, refresh.PrincipalID, refresh.ClientID, refresh.UserID, "[]", refresh.Resource, refresh.ExpiresAt.UTC().Format(time.RFC3339Nano), ts); err != nil {
+		if _, err := tx.ExecContext(ctx, `insert into oauth_refresh_tokens(token_hash,family_id,grant_id,parent_token_hash,principal_id,client_id,user_id,resource,expires_at,created_at) values(?,?,?,?,?,?,?,?,?,?)`, refresh.TokenHash, refresh.FamilyID, refresh.GrantID, refresh.ParentTokenHash, refresh.PrincipalID, refresh.ClientID, refresh.UserID, refresh.Resource, refresh.ExpiresAt.UTC().Format(time.RFC3339Nano), ts); err != nil {
 			return err
 		}
 	}
@@ -408,8 +402,11 @@ func (s *Store) AuthenticateOAuthAccessToken(ctx context.Context, tokenHash stri
 	if err != nil || grant.PrincipalID != principal.ID || grant.ClientID != token.ClientID || grant.UserID != token.UserID || grant.RevokedAt != nil || grant.Status != model.OAuthGrantActive || grant.ExpiresAt != nil && !grant.ExpiresAt.After(at) {
 		return nil, nil, nil, sql.ErrNoRows
 	}
-	principal.Scopes = append([]string(nil), grant.Scopes...)
-	principal.ResourceFilter = append(json.RawMessage(nil), grant.ResourceFilter...)
+	// MCP authorization derives everything from the grant; the API principal
+	// row keeps only a projection for audit identity and rate limiting.
+	level := mcpauth.ParseAccessLevel(grant.AccessLevel)
+	principal.Scopes = level.NormalizedScopes(grant.OfflineAccess)
+	principal.ResourceFilter = mcpauth.LegacyResourceFilterJSON(mcpauth.ParseBoundary(grant.ResourceBoundaryJSON))
 	_, _ = s.db.ExecContext(ctx, `update api_principals set last_used_at=? where id=?`, at.UTC().Format(time.RFC3339Nano), principal.ID)
 	_, _ = s.db.ExecContext(ctx, `update oauth_grants set last_used_at=? where id=?`, at.UTC().Format(time.RFC3339Nano), grant.ID)
 	grant.LastUsedAt = &at
