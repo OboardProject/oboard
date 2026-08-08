@@ -2910,11 +2910,13 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var input struct {
 			model.Server
-			MTUMode              *model.MTUMode            `json:"mtu_mode"`
-			BBREnabled           *bool                     `json:"bbr_enabled"`
-			TimeCorrectionMode   *model.TimeCorrectionMode `json:"time_correction_mode"`
-			OfflineNotifyEnabled *bool                     `json:"offline_notify_enabled"`
-			OfflineAfterSeconds  *int                      `json:"offline_after_seconds"`
+			MTUMode                  *model.MTUMode            `json:"mtu_mode"`
+			BBREnabled               *bool                     `json:"bbr_enabled"`
+			TimeCorrectionMode       *model.TimeCorrectionMode `json:"time_correction_mode"`
+			ConnectivityProbeEnabled *bool                     `json:"connectivity_probe_enabled"`
+			ConnectionAuditEnabled   *bool                     `json:"connection_audit_enabled"`
+			OfflineNotifyEnabled     *bool                     `json:"offline_notify_enabled"`
+			OfflineAfterSeconds      *int                      `json:"offline_after_seconds"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -2940,6 +2942,16 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			v.TimeCorrectionMode = defaultTimeMode
 		} else {
 			v.TimeCorrectionMode = *input.TimeCorrectionMode
+		}
+		if input.ConnectivityProbeEnabled == nil {
+			v.ConnectivityProbeEnabled = true
+		} else {
+			v.ConnectivityProbeEnabled = *input.ConnectivityProbeEnabled
+		}
+		if input.ConnectionAuditEnabled == nil {
+			v.ConnectionAuditEnabled = settingBool(settings, settingConnectionAuditEnabled, true)
+		} else {
+			v.ConnectionAuditEnabled = *input.ConnectionAuditEnabled
 		}
 		if input.OfflineNotifyEnabled == nil {
 			v.OfflineNotifyEnabled = true
