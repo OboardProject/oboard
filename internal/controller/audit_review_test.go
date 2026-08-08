@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/aiprovider"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
@@ -34,9 +35,19 @@ func TestAuditAIReviewsAreAdminOnlyAndIdempotent(t *testing.T) {
 	provider := request(t, handler, http.MethodPost, "/api/v2/ai/providers", adminToken, map[string]any{
 		"name": "local", "base_url": "http://127.0.0.1:11434/v1", "model": "test", "api_key": "secret", "enabled": true,
 	}, http.StatusCreated)["data"].(map[string]any)
-	if err := db.UpdateAIProviderCapability(context.Background(), provider["id"].(string), &model.AIProviderCapability{
+	storedProvider, err := db.GetAIProvider(context.Background(), provider["id"].(string))
+	if err != nil || len(storedProvider.Endpoints) != 1 {
+		t.Fatalf("provider endpoints=%#v err=%v", storedProvider, err)
+	}
+	endpoint := storedProvider.Endpoints[0]
+	capability := &model.AIProviderCapability{
 		ProviderProfileVersion:  model.AuditProviderProfileVersion,
+		ProviderID:              storedProvider.ID,
+		EndpointID:              endpoint.ID,
+		APIStyle:                endpoint.APIStyle,
 		Model:                   "test",
+		ConfigDigest:            aiprovider.ConfigDigest(aiprovider.RuntimeEndpoint{ID: endpoint.ID, BaseURL: endpoint.BaseURL, APIStyle: aiprovider.APIStyle(endpoint.APIStyle), AuthMode: endpoint.AuthMode}, "test"),
+		TestedAt:                time.Now().UTC(),
 		AuditGrade:              model.AuditProviderGradeA,
 		StructuredOutput:        model.AuditProviderStructuredJSONSchema,
 		OutputMode:              model.AuditOutputModeStrictSchema,
@@ -44,7 +55,8 @@ func TestAuditAIReviewsAreAdminOnlyAndIdempotent(t *testing.T) {
 		UsageSupported:          true,
 		FinishReasonSupported:   true,
 		MaxVerifiedOutputTokens: 4096,
-	}); err != nil {
+	}
+	if err := db.UpsertAIProviderEndpointCapability(context.Background(), capability); err != nil {
 		t.Fatal(err)
 	}
 	body := map[string]any{

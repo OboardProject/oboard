@@ -11,14 +11,38 @@ type LeaseRequest struct {
 }
 
 type Provider struct {
-	ID            string                      `json:"id"`
-	Name          string                      `json:"name"`
-	BaseURL       string                      `json:"base_url"`
-	Model         string                      `json:"model"`
-	APIFormat     string                      `json:"api_format"`
-	APIKey        string                      `json:"api_key"`
-	AllowRawAudit bool                        `json:"allow_raw_audit"`
-	Capability    *model.AIProviderCapability `json:"capability,omitempty"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	ProviderKind    string            `json:"provider_kind"`
+	Model           string            `json:"model"`
+	RoutingStrategy string            `json:"routing_strategy"`
+	AllowRawAudit   bool              `json:"allow_raw_audit"`
+	Endpoints       []RuntimeEndpoint `json:"endpoints"`
+
+	BaseURL    string                      `json:"base_url,omitempty"`
+	APIFormat  string                      `json:"api_format,omitempty"`
+	APIKey     string                      `json:"api_key,omitempty"`
+	Capability *model.AIProviderCapability `json:"capability,omitempty"`
+}
+
+type RuntimeEndpoint struct {
+	ID                  string                      `json:"id"`
+	Name                string                      `json:"name"`
+	BaseURL             string                      `json:"base_url"`
+	APIStyle            string                      `json:"api_style"`
+	AuthMode            string                      `json:"auth_mode"`
+	Credential          string                      `json:"credential"`
+	AnthropicVersion    string                      `json:"anthropic_version,omitempty"`
+	Headers             map[string]string           `json:"headers,omitempty"`
+	ModelsPath          string                      `json:"models_path,omitempty"`
+	GeneratePath        string                      `json:"generate_path,omitempty"`
+	ModelOverride       string                      `json:"model_override,omitempty"`
+	Priority            int                         `json:"priority"`
+	Enabled             bool                        `json:"enabled"`
+	TimeoutMS           int                         `json:"timeout_ms"`
+	MaxRetries          int                         `json:"max_retries"`
+	AllowPrivateNetwork bool                        `json:"allow_private_network"`
+	Capability          *model.AIProviderCapability `json:"capability,omitempty"`
 }
 
 type LeaseResponse struct {
@@ -31,6 +55,22 @@ type CompleteRequest struct {
 	Output       json.RawMessage `json:"output"`
 	InputTokens  int64           `json:"input_tokens"`
 	OutputTokens int64           `json:"output_tokens"`
+	Route        *RouteEvidence  `json:"route,omitempty"`
+}
+
+type RouteEvidence struct {
+	ProviderID               string `json:"provider_id"`
+	EndpointID               string `json:"endpoint_id"`
+	APIStyle                 string `json:"api_style"`
+	Model                    string `json:"model"`
+	CapabilityProfileVersion string `json:"capability_profile_version"`
+	CapabilityConfigDigest   string `json:"capability_config_digest"`
+	AttemptCount             int    `json:"attempt_count"`
+	ProviderRequestID        string `json:"provider_request_id,omitempty"`
+	InputTokens              int64  `json:"input_tokens"`
+	OutputTokens             int64  `json:"output_tokens"`
+	FinishReason             string `json:"finish_reason"`
+	LatencyMS                int64  `json:"latency_ms"`
 }
 
 type FailRequest struct {
@@ -57,10 +97,12 @@ type ModelDiscoveryLeaseRequest struct {
 }
 
 type ModelDiscoveryRequest struct {
-	ID        string `json:"id"`
-	BaseURL   string `json:"base_url"`
-	APIFormat string `json:"api_format"`
-	APIKey    string `json:"api_key"`
+	ID         string          `json:"id"`
+	ProviderID string          `json:"provider_id,omitempty"`
+	Endpoint   RuntimeEndpoint `json:"endpoint"`
+	BaseURL    string          `json:"base_url"`
+	APIFormat  string          `json:"api_format"`
+	APIKey     string          `json:"api_key"`
 }
 
 type ModelDiscoveryLeaseResponse struct {
@@ -82,13 +124,15 @@ type AITestLeaseRequest struct {
 }
 
 type AITestRequest struct {
-	ID         string `json:"id"`
-	ProviderID string `json:"provider_id,omitempty"`
-	Name       string `json:"name,omitempty"`
-	BaseURL    string `json:"base_url"`
-	APIFormat  string `json:"api_format"`
-	APIKey     string `json:"api_key"`
-	Model      string `json:"model"`
+	ID           string          `json:"id"`
+	ProviderID   string          `json:"provider_id,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	BaseURL      string          `json:"base_url"`
+	APIFormat    string          `json:"api_format"`
+	APIKey       string          `json:"api_key"`
+	Model        string          `json:"model"`
+	ProviderKind string          `json:"provider_kind,omitempty"`
+	Endpoint     RuntimeEndpoint `json:"endpoint"`
 }
 
 type AITestLeaseResponse struct {
@@ -97,6 +141,8 @@ type AITestLeaseResponse struct {
 
 type AITestCompleteRequest struct {
 	WorkerID     string                      `json:"worker_id"`
+	OK           bool                        `json:"ok"`
+	Error        string                      `json:"error,omitempty"`
 	RequestJSON  string                      `json:"request_json"`
 	ResponseJSON string                      `json:"response_json"`
 	StatusCode   int                         `json:"status_code"`

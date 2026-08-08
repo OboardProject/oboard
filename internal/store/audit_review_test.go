@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,9 @@ func TestAuditReviewRetryCancellationAndDailyBudget(t *testing.T) {
 	}
 	provider := &model.AIProvider{ID: "provider", Name: "provider", BaseURL: "http://127.0.0.1", Model: "model", CredentialEncrypted: "encrypted", Enabled: true, DailyTokenLimit: 10}
 	if err := db.CreateAIProvider(ctx, provider); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateAIProviderEndpoint(ctx, &model.AIProviderEndpoint{ID: "endpoint", ProviderID: provider.ID, Name: "Primary", BaseURL: "https://api.example.com/v1", APIStyle: "openai_responses", AuthMode: "none", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -66,8 +70,13 @@ func TestAuditReviewRetryCancellationAndDailyBudget(t *testing.T) {
 	if err != nil || leased.ID != budgetJob.ID {
 		t.Fatalf("budget job lease=%#v err=%v", leased, err)
 	}
-	if _, err := db.CompleteAuditReviewJob(ctx, "budget-worker", budgetJob.ID, json.RawMessage(`{"verdict":"normal"}`), 8, 3); err != nil {
+	route := json.RawMessage(`{"provider_id":"provider","endpoint_id":"endpoint","api_style":"openai_responses","model":"model"}`)
+	if _, err := db.CompleteAuditReviewJob(ctx, "budget-worker", budgetJob.ID, json.RawMessage(`{"verdict":"normal"}`), 8, 3, route); err != nil {
 		t.Fatal(err)
+	}
+	jobs, err = db.ListAuditReviewJobs(ctx, budgetReview.ID, false)
+	if err != nil || len(jobs) != 1 || !json.Valid(jobs[0].Route) || !strings.Contains(string(jobs[0].Route), `"endpoint_id":"endpoint"`) {
+		t.Fatalf("route evidence was not returned with job: jobs=%#v err=%v", jobs, err)
 	}
 	blockedReview, blockedJob := auditReviewFixture(actor.ID, provider.ID, "blocked", "blocked-job")
 	if err := db.CreateAuditReview(ctx, blockedReview, nil, []model.AuditReviewJob{blockedJob}); err != nil {
@@ -91,6 +100,9 @@ func TestAuditReviewJobPersistsErrorDetail(t *testing.T) {
 	}
 	provider := &model.AIProvider{ID: "provider", Name: "provider", BaseURL: "http://127.0.0.1", Model: "model", CredentialEncrypted: "encrypted", Enabled: true}
 	if err := db.CreateAIProvider(ctx, provider); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateAIProviderEndpoint(ctx, &model.AIProviderEndpoint{ID: "endpoint", ProviderID: provider.ID, Name: "Primary", BaseURL: "https://api.example.com/v1", APIStyle: "openai_responses", AuthMode: "none", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	review, job := auditReviewFixture(actor.ID, provider.ID, "detail", "detail-job")

@@ -65,7 +65,7 @@ func TestAIProviderModelDiscoveryUsesDraftAndStoredCredentials(t *testing.T) {
 					workerErr <- err
 					return
 				}
-				if lease.Request == nil || lease.Request.APIKey != testCase.wantKey || lease.Request.BaseURL != "http://127.0.0.1:11434/v1" {
+				if lease.Request == nil || lease.Request.Endpoint.Credential != testCase.wantKey || lease.Request.Endpoint.BaseURL != "http://127.0.0.1:11434/v1" {
 					workerErr <- fmt.Errorf("unexpected lease: %#v", lease.Request)
 					return
 				}

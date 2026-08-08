@@ -149,11 +149,47 @@ func (s *Store) ListAuditReviewJobs(ctx context.Context, reviewID string, includ
 		}
 		items = append(items, *item)
 	}
-	return items, rows.Err()
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	routes, err := s.auditReviewRoutes(ctx, reviewID)
+	if err != nil {
+		return nil, err
+	}
+	for index := range items {
+		items[index].Route = routes[items[index].ID]
+	}
+	return items, nil
 }
 
 func (s *Store) GetAuditReviewJob(ctx context.Context, reviewID, jobID string) (*model.AuditReviewJob, error) {
-	return scanAuditReviewJob(s.db.QueryRowContext(ctx, `select id,review_id,provider_id,stage,position,kind,status,input_json,output_json,error,error_detail,attempts,input_tokens,output_tokens,lease_owner,lease_until,created_at,updated_at,completed_at from ai_audit_review_jobs where review_id=? and id=?`, reviewID, jobID))
+	item, err := scanAuditReviewJob(s.db.QueryRowContext(ctx, `select id,review_id,provider_id,stage,position,kind,status,input_json,output_json,error,error_detail,attempts,input_tokens,output_tokens,lease_owner,lease_until,created_at,updated_at,completed_at from ai_audit_review_jobs where review_id=? and id=?`, reviewID, jobID))
+	if err != nil {
+		return nil, err
+	}
+	var route string
+	if s.db.QueryRowContext(ctx, `select route_json from ai_audit_review_routes where job_id=?`, jobID).Scan(&route) == nil {
+		item.Route = json.RawMessage(route)
+	}
+	return item, nil
+}
+
+func (s *Store) auditReviewRoutes(ctx context.Context, reviewID string) (map[string]json.RawMessage, error) {
+	rows, err := s.db.QueryContext(ctx, `select r.job_id,r.route_json from ai_audit_review_routes r join ai_audit_review_jobs j on j.id=r.job_id where j.review_id=?`, reviewID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	routes := map[string]json.RawMessage{}
+	for rows.Next() {
+		var jobID string
+		var route string
+		if err := rows.Scan(&jobID, &route); err != nil {
+			return nil, err
+		}
+		routes[jobID] = json.RawMessage(route)
+	}
+	return routes, rows.Err()
 }
 
 func (s *Store) GetAuditReviewJobByID(ctx context.Context, jobID string) (*model.AuditReviewJob, error) {
@@ -186,7 +222,7 @@ func (s *Store) LeaseAuditReviewJob(ctx context.Context, owner string, at time.T
 	defer tx.Rollback()
 	var id string
 	err = tx.QueryRowContext(ctx, `select j.id from ai_audit_review_jobs j join ai_audit_reviews r on r.id=j.review_id join ai_providers p on p.id=j.provider_id
-		where r.status in ('queued','running') and p.enabled=1 and p.credential_encrypted<>'' and (j.status='pending' or (j.status='running' and j.lease_until<?))
+		where r.status in ('queued','running') and p.enabled=1 and exists(select 1 from ai_provider_endpoints e where e.provider_id=p.id and e.enabled=1 and (e.auth_mode='none' or e.credential_encrypted<>'')) and (j.status='pending' or (j.status='running' and j.lease_until<?))
 		and (p.daily_token_limit<=0 or coalesce((select sum(x.input_tokens+x.output_tokens) from ai_audit_review_jobs x where x.provider_id=p.id and x.completed_at>=?),0)<p.daily_token_limit)
 		order by j.stage,j.created_at,j.position limit 1`, cutoff, dayStart).Scan(&id)
 	if err != nil {
@@ -204,7 +240,7 @@ func (s *Store) LeaseAuditReviewJob(ctx context.Context, owner string, at time.T
 	if err != nil {
 		return nil, nil, err
 	}
-	provider, err := scanAIProvider(tx.QueryRowContext(ctx, `select id,name,base_url,model,api_format,credential_encrypted,enabled,allow_raw_audit,daily_token_limit,capability_json,last_used_at,created_at,updated_at from ai_providers where id=?`, job.ProviderID))
+	provider, err := scanAIProvider(tx.QueryRowContext(ctx, aiProviderSelect+` where id=?`, job.ProviderID))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -214,10 +250,14 @@ func (s *Store) LeaseAuditReviewJob(ctx context.Context, owner string, at time.T
 	if err := tx.Commit(); err != nil {
 		return nil, nil, err
 	}
+	provider, err = s.GetAIProvider(ctx, job.ProviderID)
+	if err != nil {
+		return nil, nil, err
+	}
 	return job, provider, nil
 }
 
-func (s *Store) CompleteAuditReviewJob(ctx context.Context, owner, jobID string, output json.RawMessage, inputTokens, outputTokens int64) (*model.AuditReviewJob, error) {
+func (s *Store) CompleteAuditReviewJob(ctx context.Context, owner, jobID string, output json.RawMessage, inputTokens, outputTokens int64, route json.RawMessage) (*model.AuditReviewJob, error) {
 	ts := now()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -240,6 +280,11 @@ func (s *Store) CompleteAuditReviewJob(ctx context.Context, owner, jobID string,
 	}
 	if _, err := tx.ExecContext(ctx, `update ai_providers set last_used_at=?,updated_at=? where id=?`, ts, ts, providerID); err != nil {
 		return nil, err
+	}
+	if len(route) > 0 {
+		if _, err := tx.ExecContext(ctx, `insert into ai_audit_review_routes(job_id,route_json,created_at) values(?,?,?) on conflict(job_id) do update set route_json=excluded.route_json`, jobID, normalizedJSONObject(route), ts); err != nil {
+			return nil, err
+		}
 	}
 	job, err := scanAuditReviewJob(tx.QueryRowContext(ctx, `select id,review_id,provider_id,stage,position,kind,status,input_json,output_json,error,error_detail,attempts,input_tokens,output_tokens,lease_owner,lease_until,created_at,updated_at,completed_at from ai_audit_review_jobs where id=?`, jobID))
 	if err != nil {

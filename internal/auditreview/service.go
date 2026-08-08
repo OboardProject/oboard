@@ -58,7 +58,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (*model.Aud
 	if !provider.Enabled || !provider.HasCredential {
 		return nil, errors.New("AI Provider 未启用或缺少凭据")
 	}
-	if !auditCapabilityAllowed(provider.Capability) {
+	if !auditCapabilityAllowed(provider) {
 		return nil, errors.New("该 AI Provider 尚未通过审计就绪测试或能力等级不足（需要 A/B 级），请先在 AI Provider 页面运行“审计就绪测试”")
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
@@ -143,11 +143,17 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (*model.Aud
 	return s.store.GetAuditReview(ctx, review.ID)
 }
 
-func auditCapabilityAllowed(capability *model.AIProviderCapability) bool {
-	if capability == nil {
+func auditCapabilityAllowed(provider *model.AIProvider) bool {
+	if provider == nil {
 		return false
 	}
-	return capability.AuditGrade == model.AuditProviderGradeA || capability.AuditGrade == model.AuditProviderGradeB
+	for _, endpoint := range provider.Endpoints {
+		capability := endpoint.Capability
+		if endpoint.Enabled && capability != nil && (capability.AuditGrade == model.AuditProviderGradeA || capability.AuditGrade == model.AuditProviderGradeB) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) buildEvidence(ctx context.Context, review *model.AuditReview, routing store.FullRoutingConfig, data model.AuditReviewData, raw bool) ([]model.AuditReviewEvidence, error) {
@@ -330,7 +336,7 @@ func (s *Service) Advance(ctx context.Context, reviewID string) error {
 	if err != nil {
 		return err
 	}
-	engine, err := s.engineSummary(ctx, review.ID, provider)
+	engine, err := s.engineSummary(ctx, review.ID, provider, nil)
 	if err != nil {
 		return err
 	}
@@ -394,7 +400,7 @@ func (s *Service) synthesisInputs(review *model.AuditReview, jobs []model.AuditR
 // engineSummary computes the deterministic engine header for a review from the
 // stored evidence packs: the highest overall risk among subjects wins and its
 // quality values and methodology versions become authoritative for the report.
-func (s *Service) engineSummary(ctx context.Context, reviewID string, provider *model.AIProvider) (auditcontract.EngineSummary, error) {
+func (s *Service) engineSummary(ctx context.Context, reviewID string, provider *model.AIProvider, routeCapability *model.AIProviderCapability) (auditcontract.EngineSummary, error) {
 	evidence, _, err := s.store.ListAuditReviewEvidence(ctx, reviewID, 0, 10000)
 	if err != nil {
 		return auditcontract.EngineSummary{}, err
@@ -445,11 +451,25 @@ func (s *Service) engineSummary(ctx context.Context, reviewID string, provider *
 	if !found {
 		return auditcontract.EngineSummary{}, errors.New("审查没有可用证据包")
 	}
-	if provider != nil && provider.Capability != nil {
-		summary.ProviderGrade = provider.Capability.AuditGrade
-		summary.StructuredOutput = provider.Capability.StructuredOutput
-		summary.OutputMode = provider.Capability.OutputMode
-		summary.Model = provider.Model
+	if routeCapability != nil {
+		summary.ProviderProfileVersion = routeCapability.ProviderProfileVersion
+		summary.ProviderGrade = routeCapability.AuditGrade
+		summary.StructuredOutput = routeCapability.StructuredOutput
+		summary.OutputMode = routeCapability.OutputMode
+		summary.Model = routeCapability.Model
+	} else if provider != nil {
+		for _, endpoint := range provider.Endpoints {
+			capability := endpoint.Capability
+			if !endpoint.Enabled || capability == nil || (capability.AuditGrade != model.AuditProviderGradeA && capability.AuditGrade != model.AuditProviderGradeB) {
+				continue
+			}
+			summary.ProviderProfileVersion = capability.ProviderProfileVersion
+			summary.ProviderGrade = capability.AuditGrade
+			summary.StructuredOutput = capability.StructuredOutput
+			summary.OutputMode = capability.OutputMode
+			summary.Model = capability.Model
+			break
+		}
 	}
 	return summary, nil
 }
@@ -458,6 +478,10 @@ func (s *Service) engineSummary(ctx context.Context, reviewID string, provider *
 // the stored evidence. Finding jobs are checked against their own evidence
 // pack; synthesis jobs are checked against the recomputed engine summary.
 func (s *Service) ValidateReport(ctx context.Context, reviewID string, job *model.AuditReviewJob, output json.RawMessage) error {
+	return s.ValidateReportWithCapability(ctx, reviewID, job, output, nil)
+}
+
+func (s *Service) ValidateReportWithCapability(ctx context.Context, reviewID string, job *model.AuditReviewJob, output json.RawMessage, routeCapability *model.AIProviderCapability) error {
 	if job == nil || len(output) == 0 {
 		return errors.New("AI 审查输出无效")
 	}
@@ -471,7 +495,7 @@ func (s *Service) ValidateReport(ctx context.Context, reviewID string, job *mode
 		if err != nil {
 			return err
 		}
-		engine, err := s.engineSummary(ctx, reviewID, provider)
+		engine, err := s.engineSummary(ctx, reviewID, provider, routeCapability)
 		if err != nil {
 			return err
 		}

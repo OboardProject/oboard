@@ -1,5 +1,32 @@
 export type TokenDisplayUnit = 'Token' | 'K' | 'M'
 
+export type AIProviderKind = 'openai' | 'anthropic' | 'custom'
+export type AIAPIStyle = 'openai_responses' | 'openai_chat_completions' | 'anthropic_messages'
+export type AIAuthMode = 'bearer' | 'x_api_key' | 'none'
+
+export type AIEndpointTemplate = {
+  name: string
+  baseURL: string
+  apiStyle: AIAPIStyle | ''
+  authMode: AIAuthMode
+  anthropicVersion: string
+}
+
+export function providerEndpointTemplate(kind: AIProviderKind): AIEndpointTemplate {
+  if (kind === 'anthropic') {
+    return { name: 'Native Claude', baseURL: 'https://api.anthropic.com/v1', apiStyle: 'anthropic_messages', authMode: 'x_api_key', anthropicVersion: '2023-06-01' }
+  }
+  return { name: kind === 'custom' ? 'Primary' : 'OpenAI Responses', baseURL: kind === 'custom' ? '' : 'https://api.openai.com/v1', apiStyle: kind === 'custom' ? '' : 'openai_responses', authMode: 'bearer', anthropicVersion: '' }
+}
+
+export function apiStyleLabel(style: AIAPIStyle): string {
+  return ({ openai_responses: 'OpenAI Responses', openai_chat_completions: 'OpenAI Chat Completions', anthropic_messages: 'Anthropic Messages' } as Record<AIAPIStyle, string>)[style]
+}
+
+export function authModeLabel(mode: AIAuthMode): string {
+  return ({ bearer: 'Bearer', x_api_key: 'x-api-key', none: '不认证' } as Record<AIAuthMode, string>)[mode]
+}
+
 const tokenUnitMultipliers: Record<TokenDisplayUnit, number> = {
   Token: 1,
   K: 1_000,

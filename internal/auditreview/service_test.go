@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/aiprovider"
 	"github.com/OboardProject/oboard/internal/auditcontract"
 	"github.com/OboardProject/oboard/internal/auditintel"
 	"github.com/OboardProject/oboard/internal/model"
@@ -174,7 +175,22 @@ func testCapabilityFixture() *model.AIProviderCapability {
 }
 
 func testProviderFixture() *model.AIProvider {
-	return &model.AIProvider{ID: "provider", Name: "provider", BaseURL: "http://127.0.0.1", Model: "model", CredentialEncrypted: "encrypted", Enabled: true, Capability: testCapabilityFixture()}
+	return &model.AIProvider{ID: "provider", Name: "provider", ProviderKind: "openai", DefaultModel: "model", RoutingStrategy: "ordered_failover", Enabled: true}
+}
+
+func createTestProviderEndpoint(t *testing.T, ctx context.Context, db *store.Store, provider *model.AIProvider, capability *model.AIProviderCapability) {
+	t.Helper()
+	endpoint := &model.AIProviderEndpoint{ID: "endpoint", ProviderID: provider.ID, Name: "Primary", BaseURL: "https://api.example.com/v1", APIStyle: string(aiprovider.APIStyleOpenAIResponses), AuthMode: aiprovider.AuthModeNone, Enabled: true}
+	if err := db.CreateAIProviderEndpoint(ctx, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if capability != nil {
+		capability.ProviderID, capability.EndpointID, capability.APIStyle = provider.ID, endpoint.ID, endpoint.APIStyle
+		capability.ConfigDigest = aiprovider.ConfigDigest(aiprovider.RuntimeEndpoint{ID: endpoint.ID, BaseURL: endpoint.BaseURL, APIStyle: aiprovider.APIStyle(endpoint.APIStyle), AuthMode: endpoint.AuthMode}, provider.DefaultModel)
+		if err := db.UpsertAIProviderEndpointCapability(ctx, capability); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestCreateRequiresAuditReadyProvider(t *testing.T) {
@@ -188,6 +204,7 @@ func TestCreateRequiresAuditReadyProvider(t *testing.T) {
 	if err := db.CreateAIProvider(ctx, provider); err != nil {
 		t.Fatal(err)
 	}
+	createTestProviderEndpoint(t, ctx, db, provider, nil)
 	service := testService(db)
 	nowTime := time.Date(2026, 8, 3, 8, 0, 0, 0, time.UTC)
 	request := CreateRequest{RequestID: "request-1", ProviderID: provider.ID, RequestedBy: actor.ID, Scope: model.AuditReviewScope{Users: model.AuditReviewSelector{Mode: "all"}, Servers: model.AuditReviewSelector{Mode: "all"}}, EvidenceTypes: []string{"subscription"}, WindowStart: nowTime.Add(-time.Hour), WindowEnd: nowTime}
@@ -196,7 +213,10 @@ func TestCreateRequiresAuditReadyProvider(t *testing.T) {
 	}
 	capability := testCapabilityFixture()
 	capability.AuditGrade = model.AuditProviderGradeC
-	if err := db.UpdateAIProviderCapability(ctx, provider.ID, capability); err != nil {
+	createCapability := capability
+	createCapability.ProviderID, createCapability.EndpointID, createCapability.APIStyle = provider.ID, "endpoint", string(aiprovider.APIStyleOpenAIResponses)
+	createCapability.ConfigDigest = aiprovider.ConfigDigest(aiprovider.RuntimeEndpoint{ID: "endpoint", BaseURL: "https://api.example.com/v1", APIStyle: aiprovider.APIStyleOpenAIResponses, AuthMode: aiprovider.AuthModeNone}, "model")
+	if err := db.UpsertAIProviderEndpointCapability(ctx, createCapability); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.Create(ctx, request); err == nil || !strings.Contains(err.Error(), "审计就绪测试") {
@@ -215,6 +235,7 @@ func TestCreateIsIdempotentAndValidatesWindow(t *testing.T) {
 	if err := db.CreateAIProvider(ctx, provider); err != nil {
 		t.Fatal(err)
 	}
+	createTestProviderEndpoint(t, ctx, db, provider, testCapabilityFixture())
 	nowTime := time.Date(2026, 8, 3, 8, 0, 0, 0, time.UTC)
 	service := testService(db)
 	service.now = func() time.Time { return nowTime }
@@ -351,6 +372,7 @@ func TestValidateReportEnforcesEngineValues(t *testing.T) {
 	if err := db.CreateAIProvider(ctx, provider); err != nil {
 		t.Fatal(err)
 	}
+	createTestProviderEndpoint(t, ctx, db, provider, testCapabilityFixture())
 	review := &model.AuditReview{ID: "review-1", RequestID: "request-1", ProviderID: provider.ID, RequestedBy: actor.ID, Status: "running", PrivacyMode: "raw", EvidenceTypes: []string{"connection"}, WindowStartedAt: time.Date(2026, 8, 3, 7, 0, 0, 0, time.UTC), WindowEndedAt: time.Date(2026, 8, 3, 8, 0, 0, 0, time.UTC), SnapshotAt: time.Date(2026, 8, 3, 8, 0, 0, 0, time.UTC)}
 	pack := packFixture("user:2", 78, 0.84, 0.94)
 	packJSON, _ := json.Marshal(pack)

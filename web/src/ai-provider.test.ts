@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatTokenLimit, tokenDisplayToLimit, tokenLimitToDisplay } from './ai-provider'
+import { formatTokenLimit, providerEndpointTemplate, tokenDisplayToLimit, tokenLimitToDisplay } from './ai-provider'
 
 describe('AI Provider token limit display', () => {
   it('selects a compact unit without losing precision', () => {
@@ -27,5 +27,19 @@ describe('AI Provider token limit display', () => {
 
   it('formats the stored integer with grouping separators', () => {
     expect(formatTokenLimit(1_500_000)).toBe('1,500,000 Token')
+  })
+})
+
+describe('AI Provider vendor templates', () => {
+  it('prefers Responses with Bearer for OpenAI', () => {
+    expect(providerEndpointTemplate('openai')).toMatchObject({ apiStyle: 'openai_responses', authMode: 'bearer', baseURL: 'https://api.openai.com/v1' })
+  })
+
+  it('uses native Messages with x-api-key for Claude', () => {
+    expect(providerEndpointTemplate('anthropic')).toMatchObject({ apiStyle: 'anthropic_messages', authMode: 'x_api_key', baseURL: 'https://api.anthropic.com/v1', anthropicVersion: '2023-06-01' })
+  })
+
+  it('requires an explicit API style for Custom providers', () => {
+    expect(providerEndpointTemplate('custom')).toMatchObject({ apiStyle: '', baseURL: '' })
   })
 })

@@ -117,6 +117,17 @@ func (q *aiTaskQueue[Request, Result]) finish(id, workerID string, result Result
 	return entry.request, nil
 }
 
+func (q *aiTaskQueue[Request, Result]) activeRequest(id, workerID string) (Request, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	entry, ok := q.active[id]
+	if !ok || entry.workerID != workerID {
+		var zero Request
+		return zero, errAIModelDiscoveryMissing
+	}
+	return entry.request, nil
+}
+
 func (q *aiTaskQueue[Request, Result]) cancel(id string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -191,37 +202,27 @@ func (s *Server) apiV2AIProviderModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		ProviderID string `json:"provider_id"`
-		BaseURL    string `json:"base_url"`
-		APIKey     string `json:"api_key"`
-		APIFormat  string `json:"api_format"`
+		ProviderID   string             `json:"provider_id"`
+		EndpointID   string             `json:"endpoint_id"`
+		ProviderKind string             `json:"provider_kind"`
+		Endpoint     *aiEndpointRequest `json:"endpoint"`
+		BaseURL      string             `json:"base_url"`
+		APIKey       string             `json:"api_key"`
+		APIFormat    string             `json:"api_format"`
 	}
 	if !decodeV2(w, r, &request) {
 		return
 	}
-	baseURL, err := normalizeAIProviderBaseURL(request.BaseURL)
+	_, endpoint, err := s.resolveAIRequestEndpoint(r.Context(), request.ProviderID, request.EndpointID, request.ProviderKind, request.Endpoint, request.BaseURL, request.APIFormat, request.APIKey)
 	if err != nil {
-		v2Error(w, r, http.StatusBadRequest, "invalid_provider_url", "Base URL 必须是有效的 HTTPS 版本根端点；本机服务可使用 HTTP loopback 地址")
+		v2Error(w, r, http.StatusBadRequest, "invalid_provider_endpoint", err.Error())
 		return
 	}
-	credential := strings.TrimSpace(request.APIKey)
-	if credential == "" && strings.TrimSpace(request.ProviderID) != "" {
-		provider, loadErr := s.store.GetAIProvider(r.Context(), strings.TrimSpace(request.ProviderID))
-		if loadErr != nil || provider.CredentialEncrypted == "" {
-			v2Error(w, r, http.StatusBadRequest, "provider_credential_missing", "该 Provider 没有可用的 API Key")
-			return
-		}
-		credential, err = security.DecryptSecret(s.sessionSecret, "ai-provider-credential:"+provider.ID, provider.CredentialEncrypted)
-		if err != nil {
-			v2HandleError(w, r, err)
-			return
-		}
-	}
-	if credential == "" {
+	if endpoint.AuthMode != "none" && endpoint.Credential == "" {
 		v2Error(w, r, http.StatusBadRequest, "provider_credential_missing", "请先填写 API Key")
 		return
 	}
-	if len(credential) > aiProviderCredentialLimit {
+	if len(endpoint.Credential) > aiProviderCredentialLimit {
 		v2Error(w, r, http.StatusBadRequest, "provider_credential_invalid", "API Key 长度无效")
 		return
 	}
@@ -231,7 +232,7 @@ func (s *Server) apiV2AIProviderModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	requestID := "aim_" + random
-	entry, err := s.aiModelDiscoveries.submit(airpc.ModelDiscoveryRequest{ID: requestID, BaseURL: baseURL, APIFormat: normalizeAIProviderFormat(request.APIFormat), APIKey: credential}, requestID)
+	entry, err := s.aiModelDiscoveries.submit(airpc.ModelDiscoveryRequest{ID: requestID, ProviderID: request.ProviderID, Endpoint: endpoint}, requestID)
 	if errors.Is(err, errAIModelDiscoveryBusy) {
 		v2Error(w, r, http.StatusTooManyRequests, "provider_models_busy", "模型拉取请求较多，请稍后重试")
 		return

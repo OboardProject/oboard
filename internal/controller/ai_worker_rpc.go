@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/aiprovider"
 	"github.com/OboardProject/oboard/internal/airpc"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
@@ -147,7 +148,7 @@ func (s *Server) aiRPCLease(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if provider == nil || provider.Capability == nil || (provider.Capability.AuditGrade != model.AuditProviderGradeA && provider.Capability.AuditGrade != model.AuditProviderGradeB) {
+	if provider == nil || !providerHasAuditEndpoint(provider) {
 		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "provider 未通过审计就绪测试（需要 A/B 级能力）", nil)
 		http.Error(w, "provider capability is not audit-ready", http.StatusConflict)
 		return
@@ -163,13 +164,43 @@ func (s *Server) aiRPCLease(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "provider raw audit authorization was revoked", http.StatusConflict)
 		return
 	}
-	credential, err := security.DecryptSecret(s.sessionSecret, "ai-provider-credential:"+provider.ID, provider.CredentialEncrypted)
+	runtimeEndpoints, err := s.runtimeAIEndpoints(provider)
 	if err != nil {
 		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "provider credential cannot be decrypted", nil)
 		http.Error(w, "provider credential cannot be decrypted", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, airpc.LeaseResponse{Job: job, Provider: &airpc.Provider{ID: provider.ID, Name: provider.Name, BaseURL: provider.BaseURL, Model: provider.Model, APIFormat: provider.APIFormat, APIKey: credential, AllowRawAudit: provider.AllowRawAudit, Capability: provider.Capability}})
+	writeJSON(w, http.StatusOK, airpc.LeaseResponse{Job: job, Provider: &airpc.Provider{ID: provider.ID, Name: provider.Name, ProviderKind: provider.ProviderKind, Model: provider.DefaultModel, RoutingStrategy: provider.RoutingStrategy, AllowRawAudit: provider.AllowRawAudit, Endpoints: runtimeEndpoints}})
+}
+
+func providerHasAuditEndpoint(provider *model.AIProvider) bool {
+	for _, endpoint := range provider.Endpoints {
+		capability := endpoint.Capability
+		if endpoint.Enabled && capability != nil && (capability.AuditGrade == model.AuditProviderGradeA || capability.AuditGrade == model.AuditProviderGradeB) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) runtimeAIEndpoints(provider *model.AIProvider) ([]airpc.RuntimeEndpoint, error) {
+	endpoints := make([]airpc.RuntimeEndpoint, 0, len(provider.Endpoints))
+	for _, endpoint := range provider.Endpoints {
+		credential := ""
+		var err error
+		if endpoint.CredentialEncrypted != "" {
+			credential, err = security.DecryptSecret(s.sessionSecret, "ai-provider-endpoint-credential:"+endpoint.ID, endpoint.CredentialEncrypted)
+			if err != nil {
+				return nil, err
+			}
+		}
+		headers := map[string]string{}
+		if err := json.Unmarshal([]byte(endpoint.HeadersJSON), &headers); err != nil {
+			return nil, err
+		}
+		endpoints = append(endpoints, airpc.RuntimeEndpoint{ID: endpoint.ID, Name: endpoint.Name, BaseURL: endpoint.BaseURL, APIStyle: endpoint.APIStyle, AuthMode: endpoint.AuthMode, Credential: credential, AnthropicVersion: endpoint.AnthropicVersion, Headers: headers, ModelsPath: endpoint.ModelsPath, GeneratePath: endpoint.GeneratePath, ModelOverride: endpoint.ModelOverride, Priority: endpoint.Priority, Enabled: endpoint.Enabled, TimeoutMS: endpoint.TimeoutMS, MaxRetries: endpoint.MaxRetries, AllowPrivateNetwork: endpoint.AllowPrivateNetwork, Capability: endpoint.Capability})
+	}
+	return endpoints, nil
 }
 
 func (s *Server) aiRPCJob(w http.ResponseWriter, r *http.Request) {
@@ -197,15 +228,30 @@ func (s *Server) aiRPCJob(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid AI output", http.StatusBadRequest)
 			return
 		}
-		if err := s.auditReviews.ValidateReport(r.Context(), job.ReviewID, job, request.Output); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
 		if strings.TrimSpace(request.WorkerID) == "" || request.InputTokens < 0 || request.OutputTokens < 0 || request.InputTokens > 100_000_000 || request.OutputTokens > 100_000_000 {
 			http.Error(w, "invalid AI usage", http.StatusBadRequest)
 			return
 		}
-		if _, err := s.store.CompleteAuditReviewJob(r.Context(), request.WorkerID, parts[0], request.Output, request.InputTokens, request.OutputTokens); err != nil {
+		if request.Route == nil || request.Route.ProviderID != job.ProviderID || request.Route.EndpointID == "" || request.Route.APIStyle == "" || request.Route.Model == "" || request.Route.CapabilityProfileVersion != model.AuditProviderProfileVersion || request.Route.CapabilityConfigDigest == "" || request.Route.AttemptCount < 1 || request.Route.AttemptCount > 100 || request.Route.InputTokens != request.InputTokens || request.Route.OutputTokens != request.OutputTokens || request.Route.LatencyMS < 0 || request.Route.LatencyMS > int64((10*time.Minute)/time.Millisecond) || len(request.Route.ProviderRequestID) > 512 {
+			http.Error(w, "invalid AI route evidence", http.StatusBadRequest)
+			return
+		}
+		provider, err := s.store.GetAIProvider(r.Context(), job.ProviderID)
+		if err != nil {
+			http.Error(w, "AI route provider cannot be loaded", http.StatusBadRequest)
+			return
+		}
+		capability, err := validateAuditRouteEvidence(provider, request.Route)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.auditReviews.ValidateReportWithCapability(r.Context(), job.ReviewID, job, request.Output, capability); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		routeJSON, _ := json.Marshal(request.Route)
+		if _, err := s.store.CompleteAuditReviewJob(r.Context(), request.WorkerID, parts[0], request.Output, request.InputTokens, request.OutputTokens, routeJSON); err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
@@ -234,6 +280,27 @@ func (s *Server) aiRPCJob(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func validateAuditRouteEvidence(provider *model.AIProvider, route *airpc.RouteEvidence) (*model.AIProviderCapability, error) {
+	if provider == nil || route == nil || provider.ID != route.ProviderID {
+		return nil, errors.New("invalid AI route evidence")
+	}
+	for _, endpoint := range provider.Endpoints {
+		if endpoint.ID != route.EndpointID {
+			continue
+		}
+		capability := endpoint.Capability
+		expectedModel := provider.DefaultModel
+		if endpoint.ModelOverride != "" {
+			expectedModel = endpoint.ModelOverride
+		}
+		if !endpoint.Enabled || endpoint.APIStyle != route.APIStyle || route.Model != expectedModel || capability == nil || capability.ProviderProfileVersion != route.CapabilityProfileVersion || capability.ProviderID != provider.ID || capability.EndpointID != endpoint.ID || capability.APIStyle != endpoint.APIStyle || capability.Model != route.Model || capability.ConfigDigest != route.CapabilityConfigDigest || (capability.AuditGrade != model.AuditProviderGradeA && capability.AuditGrade != model.AuditProviderGradeB) {
+			return nil, errors.New("stale or ineligible AI route evidence")
+		}
+		return capability, nil
+	}
+	return nil, errors.New("AI route endpoint does not belong to provider")
 }
 
 func decodeInternalJSON(w http.ResponseWriter, r *http.Request, output any) bool {
@@ -285,7 +352,8 @@ func (s *Server) aiRPCAITestResult(w http.ResponseWriter, r *http.Request) {
 		}
 		request.RequestJSON = strings.TrimSpace(request.RequestJSON)
 		request.ResponseJSON = strings.TrimSpace(request.ResponseJSON)
-		if strings.TrimSpace(request.WorkerID) == "" || request.StatusCode < 100 || request.StatusCode > 599 || request.DurationMS < 0 || request.DurationMS > 3_600_000 || len(request.RequestJSON) > aiTestRawJSONLimit || len(request.ResponseJSON) > aiTestRawJSONLimit || len(request.Content) > 500 {
+		request.Error = strings.TrimSpace(request.Error)
+		if strings.TrimSpace(request.WorkerID) == "" || (request.StatusCode != 0 && (request.StatusCode < 100 || request.StatusCode > 599)) || request.DurationMS < 0 || request.DurationMS > 3_600_000 || len(request.Error) > 1000 || len(request.RequestJSON) > aiTestRawJSONLimit || len(request.ResponseJSON) > aiTestRawJSONLimit || len(request.Content) > 500 {
 			http.Error(w, "invalid AI provider test result", http.StatusBadRequest)
 			return
 		}
@@ -293,17 +361,27 @@ func (s *Server) aiRPCAITestResult(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		result := aiTestResult{ok: true, requestJSON: request.RequestJSON, responseJSON: request.ResponseJSON, statusCode: request.StatusCode, durationMS: request.DurationMS, content: request.Content, capability: request.Capability}
-		requested, err := s.aiTests.finish(parts[0], request.WorkerID, result)
+		result := aiTestResult{ok: request.OK, requestJSON: request.RequestJSON, responseJSON: request.ResponseJSON, statusCode: request.StatusCode, durationMS: request.DurationMS, content: request.Content, detail: request.Error, capability: request.Capability}
+		requested, err := s.aiTests.activeRequest(parts[0], request.WorkerID)
 		if err != nil {
 			http.Error(w, "AI provider test request is no longer active", http.StatusConflict)
 			return
 		}
-		if request.Capability != nil && requested.ProviderID != "" {
-			if err := s.store.UpdateAIProviderCapability(r.Context(), requested.ProviderID, request.Capability); err != nil && !errors.Is(err, sql.ErrNoRows) {
-				http.Error(w, "AI provider capability cannot be stored", http.StatusInternalServerError)
+		if request.Capability != nil {
+			if err := validateAITestTarget(requested, request.Capability); err != nil {
+				http.Error(w, "AI provider capability target mismatch", http.StatusBadRequest)
 				return
 			}
+			if requested.ProviderID != "" {
+				if err := s.store.UpsertAIProviderEndpointCapability(r.Context(), request.Capability); err != nil && !errors.Is(err, sql.ErrNoRows) {
+					http.Error(w, "AI provider capability cannot be stored", http.StatusInternalServerError)
+					return
+				}
+			}
+		}
+		if _, err := s.aiTests.finish(parts[0], request.WorkerID, result); err != nil {
+			http.Error(w, "AI provider test request is no longer active", http.StatusConflict)
+			return
 		}
 		recordAITestLog(requested, result)
 		w.WriteHeader(http.StatusNoContent)
@@ -329,4 +407,31 @@ func (s *Server) aiRPCAITestResult(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func validateAITestTarget(request airpc.AITestRequest, capability *model.AIProviderCapability) error {
+	if capability == nil {
+		return nil
+	}
+	providerID := request.ProviderID
+	if providerID == "" {
+		providerID = "draft:" + request.ID
+	}
+	endpoint := aiprovider.RuntimeEndpoint{
+		ID:                  request.Endpoint.ID,
+		ProviderID:          providerID,
+		BaseURL:             request.Endpoint.BaseURL,
+		APIStyle:            aiprovider.APIStyle(request.Endpoint.APIStyle),
+		AuthMode:            request.Endpoint.AuthMode,
+		AnthropicVersion:    request.Endpoint.AnthropicVersion,
+		Headers:             request.Endpoint.Headers,
+		ModelsPath:          request.Endpoint.ModelsPath,
+		GeneratePath:        request.Endpoint.GeneratePath,
+		ModelOverride:       request.Endpoint.ModelOverride,
+		AllowPrivateNetwork: request.Endpoint.AllowPrivateNetwork,
+	}
+	if capability.ProviderID != providerID || capability.EndpointID != request.Endpoint.ID || capability.APIStyle != request.Endpoint.APIStyle || capability.Model != request.Model || capability.ConfigDigest != aiprovider.ConfigDigest(endpoint, request.Model) {
+		return errors.New("AI provider capability target mismatch")
+	}
+	return nil
 }

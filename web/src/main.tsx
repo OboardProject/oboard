@@ -108,7 +108,7 @@ import {
   normalizeAutomationControllerURL,
   type AutomationConnectClient,
 } from './automation-connect'
-import { formatTokenLimit, tokenDisplayToLimit, tokenLimitToDisplay, type TokenDisplayUnit } from './ai-provider'
+import { ProviderEditor } from './components/ai-provider/ProviderEditor'
 import { auditHealthScoreTone, normalizeAuditHealthScore } from './ai-audit-score'
 import { getDashboardAttention, type DashboardAttention } from './dashboard-attention'
 import {
@@ -120,7 +120,6 @@ import {
   type TaskGroup,
 } from './task-groups'
 
-type AIProviderFormat = 'chat_completions' | 'responses'
 import {
   failedDNSBulkServerIDs,
   hasDNSBulkPatch,
@@ -278,19 +277,6 @@ type AuditReviewSelector = { mode: 'all' | 'selected'; ids: number[] }
 type AuditReviewScope = { users: AuditReviewSelector; servers: AuditReviewSelector }
 type AuditReviewRiskLevel = 'low' | 'medium' | 'high' | 'critical' | 'unknown'
 type AuditReviewVerdict = 'normal' | 'attention' | 'high_risk' | 'insufficient_evidence'
-type AIProviderCapability = {
-  provider_profile_version: string
-  model: string
-  tested_at: string
-  audit_grade: 'A' | 'B' | 'C' | 'unusable'
-  structured_output: string
-  output_mode: string
-  schema_success_rate: number
-  usage_supported: boolean
-  finish_reason_supported: boolean
-  max_verified_output_tokens: number
-  note?: string
-}
 type AuditReviewReport = {
   schema_version: string
   executive: { verdict: AuditReviewVerdict; risk_score: number; health_score: number; evidence_confidence: number; one_line_conclusion: string }
@@ -316,7 +302,7 @@ type AuditReview = {
   final_output?: AuditReviewReport; error?: string; created_at: string; updated_at: string; completed_at?: string
 }
 type AuditReviewEvidence = { ref: string; review_id: string; kind: string; user_id?: number; server_id?: number; payload: unknown; created_at: string }
-type AuditReviewJob = { id: string; review_id: string; provider_id: string; stage: number; position: number; kind: string; status: string; input?: unknown; output?: unknown; error?: string; error_detail?: unknown; attempts: number; input_tokens: number; output_tokens: number; created_at: string; updated_at: string; completed_at?: string }
+type AuditReviewJob = { id: string; review_id: string; provider_id: string; stage: number; position: number; kind: string; status: string; input?: unknown; output?: unknown; error?: string; error_detail?: unknown; route?: unknown; attempts: number; input_tokens: number; output_tokens: number; created_at: string; updated_at: string; completed_at?: string }
 type LimitMode = 'inherit' | 'unlimited' | 'custom'
 type SessionUser = Pick<User, 'id' | 'username' | 'nickname' | 'role' | 'status' | 'totp_enabled' | 'passkey_count'>
 type UserDraft = { username: string; nickname: string; password?: string; role: Role; status: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; speed_limit_mode: LimitMode; traffic_limit_mode: LimitMode }
@@ -2920,16 +2906,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
   const [connectToken, setConnectToken] = useState<{ value: string; expiresAt: string } | null>(null)
   const [controllerURL, setControllerURL] = useState(() => data?.settings?.controller_url || '')
   const [editingServiceID, setEditingServiceID] = useState('')
-  const [editingProviderID, setEditingProviderID] = useState('')
-  const [providerDialogOpen, setProviderDialogOpen] = useState(false)
   const [serviceDraft, setServiceDraft] = useState({ name: '', scopes: [] as string[], cidrs: '', serverIDs: '', userIDs: '', rate: 60, concurrency: 4 })
-  const [providerDraft, setProviderDraft] = useState({ name: '', baseURL: 'https://api.openai.com/v1', model: '', apiFormat: 'chat_completions' as AIProviderFormat, apiKey: '', tokenAmount: '100', tokenUnit: 'K' as TokenDisplayUnit, allowRawAudit: false })
-  const [providerModels, setProviderModels] = useState<string[]>([])
-  const [providerModelsLoaded, setProviderModelsLoaded] = useState(false)
-  const [providerModelsLoading, setProviderModelsLoading] = useState(false)
-  const [providerTest, setProviderTest] = useState<any>(null)
-  const [providerTestLoading, setProviderTestLoading] = useState(false)
-  const [providerTestOpen, setProviderTestOpen] = useState(false)
   const [aiRawLogOpen, setAiRawLogOpen] = useState(false)
   const [policyDraft, setPolicyDraft] = useState({ principalID: '', capability: '', mode: 'required', allowRisk4: false, serverIDs: '', userIDs: '' })
 
@@ -3054,137 +3031,10 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
       notify?.(action === 'approve' ? '变更集已批准' : action === 'apply' ? '变更集已执行' : '变更集已校验', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
-  const editProvider = (provider: any) => {
-    const tokenDisplay = tokenLimitToDisplay(provider.daily_token_limit || 0)
-    setEditingProviderID(provider.id)
-    setProviderDraft({ name: provider.name, baseURL: provider.base_url, model: provider.model, apiFormat: provider.api_format === 'responses' ? 'responses' : 'chat_completions', apiKey: '', tokenAmount: tokenDisplay.amount, tokenUnit: tokenDisplay.unit, allowRawAudit: Boolean(provider.allow_raw_audit) })
-    setProviderModels([])
-    setProviderModelsLoaded(false)
-    setProviderDialogOpen(true)
-  }
-  const openProviderDialog = () => {
-    resetProviderDraft()
-    setProviderDialogOpen(true)
-  }
-  const closeProviderDialog = () => {
-    if (working) return
-    resetProviderDraft()
-    setProviderDialogOpen(false)
-  }
-  const resetProviderDraft = () => {
-    setEditingProviderID('')
-    setProviderDraft({ name: '', baseURL: 'https://api.openai.com/v1', model: '', apiFormat: 'chat_completions', apiKey: '', tokenAmount: '100', tokenUnit: 'K', allowRawAudit: false })
-    setProviderModels([])
-    setProviderModelsLoaded(false)
-  }
-  const clearProviderModels = () => {
-    setProviderModels([])
-    setProviderModelsLoaded(false)
-  }
-  const fetchProviderModels = async () => {
-    const editingProvider = snapshot.providers.find((item: any) => item.id === editingProviderID)
-    if (!providerDraft.baseURL.trim() || (!providerDraft.apiKey.trim() && !editingProvider?.has_credential)) {
-      notify?.('请先填写 Base URL 和 API Key', 'error')
-      return
-    }
-    setProviderModelsLoading(true)
-    try {
-      const payload: Record<string, string> = { base_url: providerDraft.baseURL, api_format: providerDraft.apiFormat }
-      if (editingProviderID) payload.provider_id = editingProviderID
-      if (providerDraft.apiKey.trim()) payload.api_key = providerDraft.apiKey
-      const result = await client.requestV2('/ai/provider-models', { method: 'POST', body: JSON.stringify(payload) })
-      const models = Array.isArray(result?.models) ? result.models.filter((item: unknown): item is string => typeof item === 'string') : []
-      setProviderModels(models)
-      setProviderModelsLoaded(true)
-      notify?.(`已拉取 ${models.length} 个模型`, 'success')
-    } catch (error: any) {
-      clearProviderModels()
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setProviderModelsLoading(false)
-    }
-  }
-  const testProviderConfig = async (payload: Record<string, string>) => {
-    setProviderTest(null)
-    setProviderTestOpen(true)
-    setProviderTestLoading(true)
-    try {
-      const result = await client.requestV2('/ai/provider-test', { method: 'POST', body: JSON.stringify(payload) })
-      setProviderTest(result)
-    } catch (error: any) {
-      setProviderTest({ ok: false, message: localizeErrorMessage(error?.message || error) })
-    } finally {
-      setProviderTestLoading(false)
-    }
-  }
-  const testProviderDraft = () => {
-    if (!providerDraft.baseURL.trim() || !providerDraft.model.trim()) {
-      notify?.('请先填写 Base URL 和模型 ID', 'error')
-      return
-    }
-    const editingProvider = snapshot.providers.find((item: any) => item.id === editingProviderID)
-    if (!providerDraft.apiKey.trim() && !editingProvider?.has_credential) {
-      notify?.('请先填写 API Key', 'error')
-      return
-    }
-    const payload: Record<string, string> = { base_url: providerDraft.baseURL, api_format: providerDraft.apiFormat, model: providerDraft.model }
-    if (editingProviderID) payload.provider_id = editingProviderID
-    if (providerDraft.apiKey.trim()) payload.api_key = providerDraft.apiKey
-    void testProviderConfig(payload)
-  }
-  const testProviderStored = (item: any) => {
-    if (!item.has_credential) {
-      notify?.('该 Provider 没有可用的 API Key，请先编辑并配置 Key', 'error')
-      return
-    }
-    void testProviderConfig({ provider_id: item.id, base_url: item.base_url, api_format: item.api_format, model: item.model })
-  }
-  const saveProvider = async (event: React.FormEvent) => {
-    event.preventDefault()
-    const updating = Boolean(editingProviderID)
-    const dailyTokenLimit = tokenDisplayToLimit(providerDraft.tokenAmount, providerDraft.tokenUnit)
-    if (dailyTokenLimit === null) {
-      notify?.('Token 上限必须能换算为整数 Token，最多保留三位小数', 'error')
-      return
-    }
-    setWorking(updating ? 'provider-update' : 'provider-create')
-    try {
-      const payload: Record<string, unknown> = { name: providerDraft.name, base_url: providerDraft.baseURL, model: providerDraft.model, api_format: providerDraft.apiFormat, allow_raw_audit: providerDraft.allowRawAudit, daily_token_limit: dailyTokenLimit }
-      if (!editingProviderID || providerDraft.apiKey.trim()) payload.api_key = providerDraft.apiKey
-      if (!editingProviderID) payload.enabled = true
-      await client.requestV2(editingProviderID ? `/ai/providers/${editingProviderID}` : '/ai/providers', { method: editingProviderID ? 'PATCH' : 'POST', body: JSON.stringify(payload) })
-      resetProviderDraft()
-      setProviderDialogOpen(false)
-      await refresh()
-      notify?.(updating ? 'AI Provider 已更新' : 'AI Provider 已保存', 'success')
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
-  }
-  const toggleProvider = async (provider: any) => {
-    setWorking(`provider-${provider.id}`)
-    try {
-      await client.requestV2(`/ai/providers/${provider.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: !provider.enabled }) })
-      await refresh()
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
-  }
-  const deleteProvider = async (provider: any) => {
-    const confirmed = await dialogs.confirm({ title: `删除 ${provider.name}？`, message: '已产生审查记录的 Provider 不能删除，只能停用。', confirmText: '删除', tone: 'danger' })
-    if (!confirmed) return
-    setWorking(`provider-delete-${provider.id}`)
-    try {
-      await client.requestV2(`/ai/providers/${provider.id}`, { method: 'DELETE' })
-      if (editingProviderID === provider.id) resetProviderDraft()
-      await refresh()
-      notify?.('AI Provider 已删除', 'success')
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
-  }
-
   const serviceAccounts = snapshot.principals.filter((item: any) => item.type === 'service_account')
   const publicControllerURL = normalizeAutomationControllerURL(controllerURL)
   const connectArtifacts = automationConnectArtifacts(connectClient, publicControllerURL, { risk2: connectRisk2 })
   const connectReady = true
-  const editingProvider = snapshot.providers.find((item: any) => item.id === editingProviderID)
-  const providerTokenLimit = tokenDisplayToLimit(providerDraft.tokenAmount, providerDraft.tokenUnit)
-  const canFetchProviderModels = Boolean(providerDraft.baseURL.trim() && (providerDraft.apiKey.trim() || editingProvider?.has_credential))
   const executableCapabilities: AutomationCapability[] = snapshot.capabilities.filter((item: any) => item.executable)
   const capabilities: AutomationCapability[] = snapshot.capabilities
   const eligiblePolicyCapabilities = (principalID: string) => {
@@ -3253,12 +3103,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
         <div className="table-wrap"><table><thead><tr><th>时间</th><th>主体</th><th>能力</th><th>来源</th><th>结果</th></tr></thead><tbody>{snapshot.audits.map((item: any) => <tr key={item.id}><td>{formatTableTime(item.created_at)}</td><td>{item.client_name || item.principal_id}</td><td>{item.capability}</td><td>{item.source_ip || '本机'}</td><td>{item.result}</td></tr>)}</tbody></table></div>
       </section>
     </div>}
-    {view === 'ai' && <div className="automation-grid">
-      <section className="settings-card automation-wide">
-        <div className="settings-card-head"><div><h3>AI Provider</h3><p className="muted">供审计台的人工 AI 审查使用，默认发送脱敏的历史审计快照。</p></div><div className="section-actions"><button type="button" className="ghost" onClick={() => setAiRawLogOpen(true)}><ClipboardList size={15} /><span>原始日志</span></button><button type="button" className="ghost" onClick={openProviderDialog}><Plus size={15} /><span>添加 Provider</span></button></div></div>
-        <div className="automation-list">{snapshot.providers.length ? snapshot.providers.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span><span className={`ai-provider-grade grade-${String(item.capability?.audit_grade || 'none').toLowerCase()}`}>{item.capability?.audit_grade ? providerGradeLabel(item.capability.audit_grade) : '未测试'}</span></div><span>{item.model} · {item.base_url}</span><small>{item.api_format === 'responses' ? 'Responses' : 'Chat Completions'} · {item.daily_token_limit ? `每日 ${formatTokenLimit(item.daily_token_limit)}` : '不设日限额'} · {item.allow_raw_audit ? '原始字段已授权' : '脱敏模式'} · {item.has_credential ? 'Key 已配置' : '缺少 Key'}</small></div><div><button className="ghost icon-button" disabled={!item.has_credential} onClick={() => testProviderStored(item)} title="运行审计就绪测试" aria-label={`测试 ${item.name}`}><Send size={15} /></button><button className="ghost icon-button" onClick={() => editProvider(item)} title="编辑或轮换 Key" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void toggleProvider(item)} title={item.enabled ? '停用' : '启用'} aria-label={item.enabled ? '停用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deleteProvider(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><Bot size={20} /><span>还没有 AI Provider</span></div>}</div>
-      </section>
-    </div>}
+    {view === 'ai' && <div className="automation-grid"><ProviderEditor providers={snapshot.providers} requestV2={client.requestV2} refresh={refresh} notify={notify} confirm={dialogs.confirm} onOpenLogs={() => setAiRawLogOpen(true)} /></div>}
     <AnimatePresence>{connectDialogOpen && <MotionDialogPanel onCancel={closeConnectDialog} className="automation-dialog automation-connect-dialog">
       <header className="dialog-head"><div><h2>接入 MCP 客户端</h2><p className="muted">使用当前主控公开地址生成用户级配置。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={closeConnectDialog} aria-label="关闭" title="关闭"><XIcon /></button></header>
       <div className="dialog-body automation-connect-body">
@@ -3336,78 +3181,8 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
       </div>
       <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setPolicyDialogOpen(false)}>取消</button><button type="submit" form="approval-policy-form" disabled={Boolean(working) || !policyDraft.capability}>保存策略</button></footer>
     </MotionDialogPanel>}</AnimatePresence>
-    <AnimatePresence>{providerDialogOpen && <MotionDialogPanel onCancel={closeProviderDialog} className="automation-dialog">
-      <header className="dialog-head"><div><h2>{editingProviderID ? '编辑 AI Provider' : '新建 AI Provider'}</h2><p className="muted">供审计台的人工 AI 审查使用，默认发送脱敏的历史审计快照。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={closeProviderDialog} aria-label="关闭" title="关闭"><XIcon /></button></header>
-      <div className="dialog-body">
-        <form id="ai-provider-form" className="form automation-dialog-form" onSubmit={saveProvider}>
-          <FormField label="名称" required><input autoFocus required value={providerDraft.name} onChange={event => setProviderDraft({ ...providerDraft, name: event.target.value })} placeholder="例如：OpenAI" /></FormField>
-          <FormField label="OpenAI 兼容 API Base URL" required hint="填写版本根端点，例如 https://api.openai.com/v1；系统会在其后请求 /models 以及所选 API 的调用端点。"><input required value={providerDraft.baseURL} onChange={event => { setProviderDraft({ ...providerDraft, baseURL: event.target.value }); clearProviderModels() }} /></FormField>
-          <FormField label="API 格式" hint="兼容层/中转一般选择 Chat Completions；OpenAI 原生 Responses API 选择 Responses。实际审查默认请求严格 JSON Schema 输出，中转不支持时会自动降级为 json_object，再降级为纯文本提示词。"><Select value={providerDraft.apiFormat} onChange={event => { setProviderDraft({ ...providerDraft, apiFormat: event.target.value as AIProviderFormat }); clearProviderModels() }}><option value="chat_completions">Chat Completions（/chat/completions）</option><option value="responses">Responses（/responses）</option></Select></FormField>
-          <FormField label="API Key" required={!editingProviderID} hint={editingProviderID ? '留空保留当前 Key' : undefined}><input required={!editingProviderID} type="password" autoComplete="new-password" value={providerDraft.apiKey} onChange={event => { setProviderDraft({ ...providerDraft, apiKey: event.target.value }); clearProviderModels() }} /></FormField>
-          <FormField label="模型" required>
-            <div className="ai-provider-model-control">
-              <SearchableCombobox required ariaLabel="模型" value={providerDraft.model} options={providerModels} placeholder="输入或选择模型 ID" onChange={model => setProviderDraft({ ...providerDraft, model })} />
-              <button type="button" className="ghost icon-button" disabled={!canFetchProviderModels || providerModelsLoading} onClick={() => void fetchProviderModels()} title="拉取可用模型" aria-label="拉取可用模型"><RefreshCw size={16} className={providerModelsLoading ? 'spin' : ''} /></button>
-            </div>
-            {providerModelsLoaded && <small className="ai-provider-model-status">已加载 {providerModels.length} 个模型</small>}
-          </FormField>
-          <FormField label="每日 Token 上限" hint="0 表示不设日限额。">
-            <div className="token-limit-input">
-              <input inputMode="decimal" required value={providerDraft.tokenAmount} aria-invalid={providerTokenLimit === null || undefined} onChange={event => setProviderDraft({ ...providerDraft, tokenAmount: event.target.value })} />
-              <Select variant="segmented" value={providerDraft.tokenUnit} onChange={event => setProviderDraft({ ...providerDraft, tokenUnit: event.target.value as TokenDisplayUnit })}><option value="Token">Token</option><option value="K">K</option><option value="M">M</option></Select>
-            </div>
-            <small className={providerTokenLimit === null ? 'field-error' : 'ai-provider-token-preview'}>{providerTokenLimit === null ? '请输入最多三位小数且可精确换算的额度' : providerTokenLimit === 0 ? '不设日限额' : `每日 ${formatTokenLimit(providerTokenLimit)}`}</small>
-          </FormField>
-          <label className="toggle-line"><input type="checkbox" checked={providerDraft.allowRawAudit} onChange={event => setProviderDraft({ ...providerDraft, allowRawAudit: event.target.checked })} /><span>允许发送原始审计字段</span></label>
-        </form>
-      </div>
-      <footer className="dialog-actions"><button type="button" className="ghost" onClick={closeProviderDialog}>取消</button><button type="button" className="ghost" disabled={providerTestLoading || !providerDraft.baseURL.trim() || !providerDraft.model.trim() || (!providerDraft.apiKey.trim() && !(snapshot.providers.find((item: any) => item.id === editingProviderID)?.has_credential))} onClick={testProviderDraft}><Send size={15} />{providerTestLoading ? '测试中...' : '测试连接'}</button><button type="submit" form="ai-provider-form" disabled={Boolean(working) || !providerDraft.name.trim() || !providerDraft.baseURL.trim() || !providerDraft.model.trim() || (!editingProviderID && !providerDraft.apiKey.trim())}>{editingProviderID ? '保存修改' : '创建 Provider'}</button></footer>
-    </MotionDialogPanel>}</AnimatePresence>
-    <AnimatePresence>{providerTestOpen && <AIProviderTestResultDialog result={providerTest} loading={providerTestLoading} onClose={() => { setProviderTestOpen(false); setProviderTest(null) }} />}</AnimatePresence>
     <AnimatePresence>{aiRawLogOpen && <AIProviderRawLogDialog client={client} onClose={() => setAiRawLogOpen(false)} />}</AnimatePresence>
   </Panel>
-}
-
-function AIProviderTestResultDialog({ result, loading, onClose }: { result: any; loading?: boolean; onClose: () => void }) {
-  const ok = Boolean(result?.ok)
-  const requestJSON = typeof result?.request_json === 'string' ? result.request_json : ''
-  const responseJSON = typeof result?.response_json === 'string' ? result.response_json : ''
-  const duration = typeof result?.duration_ms === 'number' ? result.duration_ms : null
-  const capability = result?.capability as AIProviderCapability | undefined
-  return <MotionDialogPanel onCancel={onClose} className="notification-raw-log-dialog ai-test-result-dialog">
-    <header className="dialog-head">
-      <div>
-        <h2>AI Provider 审计就绪测试</h2>
-        <p className="muted">依次验证认证、结构化输出、中文报告长度、截断识别与 Usage 返回；原始请求与响应已自动脱敏。</p>
-      </div>
-      <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
-    </header>
-    <div className="dialog-body">
-      {loading ? <div className="ai-test-loading"><Loader2 size={18} className="spin" /><span>正在发送测试请求，请稍候…</span></div> : <>
-      <div className={`ai-test-banner ${ok ? 'is-ok' : 'is-failed'}`}>{ok ? <Check size={16} /> : <AlertTriangle size={16} />}<strong>{ok ? '测试通过' : '测试失败'}</strong><span>{String(result?.message || '')}</span></div>
-      {capability ? <div className="ai-test-capability">
-        <span className={`ai-provider-grade grade-${String(capability.audit_grade).toLowerCase()}`}>{providerGradeLabel(capability.audit_grade)}</span>
-        <span>输出模式：{capability.output_mode === 'strict_schema' ? '严格 JSON Schema' : capability.output_mode === 'json_object' ? 'JSON Object + 本地校验修复' : '仅文本'}</span>
-        <span>Schema 成功率 {Math.round((Number(capability.schema_success_rate) || 0) * 100)}%</span>
-        <span>Usage {capability.usage_supported ? '支持' : '不支持'} · 停止原因 {capability.finish_reason_supported ? '支持' : '不支持'}</span>
-        {capability.note ? <span className="muted">{capability.note}</span> : null}
-      </div> : null}
-      <div className="ai-test-meta">
-        <span>HTTP {result?.status_code ?? '—'}</span>
-        <span>{duration === null ? '—' : `${duration} ms`}</span>
-        {result?.content ? <span className="ai-test-content">模型返回：{String(result.content)}</span> : null}
-      </div>
-      {requestJSON ? <><div className="ai-test-section-title">原始请求 <CopyBlock value={requestJSON} /></div><pre className="notification-raw-log-output">{requestJSON}</pre></> : null}
-      {responseJSON ? <><div className="ai-test-section-title">原始响应 <CopyBlock value={responseJSON} /></div><pre className="notification-raw-log-output">{responseJSON}</pre></> : null}
-      {!requestJSON && !responseJSON ? <div className="notification-raw-log-empty">没有可用的原始请求或响应（请求可能未到达 Provider）。</div> : null}
-      </>}
-    </div>
-    <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
-  </MotionDialogPanel>
-}
-
-function providerGradeLabel(grade: string) {
-  return ({ A: 'A 级 · 严格 Schema 稳定', B: 'B 级 · JSON Object 可用', C: 'C 级 · 仅文本（不能用于正式审计）', unusable: '不可用' } as Record<string, string>)[grade] || grade
 }
 
 function AIProviderRawLogDialog({ client, onClose }: { client: ReturnType<typeof api>; onClose: () => void }) {
@@ -5607,6 +5382,10 @@ function localDateTimeValue(date: Date) {
   return local.toISOString().slice(0, 16)
 }
 
+function aiProviderAuditReady(provider: any) {
+  return Boolean(provider?.enabled && provider?.endpoints?.some((endpoint: any) => endpoint.enabled && (endpoint.auth_mode === 'none' || endpoint.has_credential) && (endpoint.capability?.audit_grade === 'A' || endpoint.capability?.audit_grade === 'B')))
+}
+
 function AIAuditReviews({ data, client, notify }: any) {
   const dialogs = useDialogs()
   const [providers, setProviders] = useState<any[]>([])
@@ -5631,7 +5410,7 @@ function AIAuditReviews({ data, client, notify }: any) {
       const [providerItems, response] = await Promise.all([client.requestV2('/ai/providers'), client.request('/audit/ai-reviews?limit=100')])
       setProviders(providerItems || [])
       setReviews(response.ai_audit_reviews || [])
-      setDraft(current => ({ ...current, providerID: current.providerID || providerItems.find((item: any) => item.enabled && item.has_credential)?.id || '' }))
+      setDraft(current => ({ ...current, providerID: current.providerID && providerItems.some((item: any) => item.id === current.providerID && aiProviderAuditReady(item)) ? current.providerID : providerItems.find(aiProviderAuditReady)?.id || '' }))
     } catch (error: any) {
       if (!quiet) notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -5739,9 +5518,9 @@ function AIAuditReviews({ data, client, notify }: any) {
   return <div className="ai-review-workspace">
     <div className="ai-review-head">
       <div><strong>综合行为审查</strong><span>基于已保存的审计历史生成建议，不发起节点探测或自动处置。</span></div>
-      <div><button type="button" className="ghost icon-button" onClick={() => void refresh()} disabled={loadingReviews} title="刷新" aria-label="刷新 AI 审查"><RefreshCw size={15} className={loadingReviews ? 'spin' : ''} /></button><button type="button" onClick={() => setCreateOpen(true)} disabled={!providers.some(item => item.enabled && item.has_credential)}><Plus size={15} />新建审查</button></div>
+      <div><button type="button" className="ghost icon-button" onClick={() => void refresh()} disabled={loadingReviews} title="刷新" aria-label="刷新 AI 审查"><RefreshCw size={15} className={loadingReviews ? 'spin' : ''} /></button><button type="button" onClick={() => setCreateOpen(true)} disabled={!providers.some(aiProviderAuditReady)}><Plus size={15} />新建审查</button></div>
     </div>
-    {!providers.some(item => item.enabled && item.has_credential) && <div className="audit-paused-notice"><Bot size={16} /><span>请先在自动化页面配置并启用 AI Provider。</span></div>}
+    {!providers.some(aiProviderAuditReady) && <div className="audit-paused-notice"><Bot size={16} /><span>请先配置至少一个通过 A/B 级测试的 Endpoint。</span></div>}
     {loadingReviews && !reviews.length ? <TableSkeleton /> : !reviews.length ? <div className="automation-empty"><Bot size={22} /><span>暂无 AI 审查记录</span></div> : <div className="ai-review-list">{reviews.map(review => {
       const report = review.final_output
       const reportVerdict = report?.executive?.verdict
@@ -5757,7 +5536,7 @@ function AIAuditReviews({ data, client, notify }: any) {
     <AnimatePresence>{createOpen && <MotionDialogPanel onCancel={() => setCreateOpen(false)} className="ai-review-create-dialog">
       <header className="dialog-head"><div><h2>新建 AI 审查</h2><p className="muted">指定对象、历史时间与审查维度。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => setCreateOpen(false)} aria-label="关闭" title="关闭"><XIcon /></button></header>
       <div className="dialog-body"><form id="ai-review-create-form" className="form ai-review-create-form" onSubmit={createReview}>
-        <FormField label="AI Provider" required><Select value={draft.providerID} onChange={event => setDraft({ ...draft, providerID: event.target.value })}>{providers.filter(item => item.enabled && item.has_credential).map(item => <option key={item.id} value={item.id}>{item.name} · {item.model}</option>)}</Select>{selectedProvider?.allow_raw_audit && <small className="ai-review-privacy-warning">该 Provider 已获授权发送原始审计字段</small>}</FormField>
+        <FormField label="AI Provider" required><Select value={draft.providerID} onChange={event => setDraft({ ...draft, providerID: event.target.value })}>{providers.filter(aiProviderAuditReady).map(item => <option key={item.id} value={item.id}>{item.name} · {item.default_model}</option>)}</Select>{selectedProvider?.allow_raw_audit && <small className="ai-review-privacy-warning">该 Provider 已获授权发送原始审计字段</small>}</FormField>
         <div className="ai-review-scope-grid">
           <section><div><strong>用户范围</strong><Select variant="segmented" value={draft.userMode} onChange={event => setDraft({ ...draft, userMode: event.target.value as 'all' | 'selected' })}><option value="all">全部用户</option><option value="selected">指定用户</option></Select></div>{draft.userMode === 'selected' && <SearchableMultiSelect value={draft.userIDs} onChange={userIDs => setDraft({ ...draft, userIDs })} options={users.map(user => ({ value: String(user.id), label: user.nickname || user.username, keywords: `${user.username} ${user.id}` }))} placeholder="选择用户" searchPlaceholder="搜索用户" />}</section>
           <section><div><strong>服务器范围</strong><Select variant="segmented" value={draft.serverMode} onChange={event => setDraft({ ...draft, serverMode: event.target.value as 'all' | 'selected' })}><option value="all">全部服务器</option><option value="selected">指定服务器</option></Select></div>{draft.serverMode === 'selected' && <SearchableMultiSelect value={draft.serverIDs} onChange={serverIDs => setDraft({ ...draft, serverIDs })} options={servers.map(server => ({ value: String(server.id), label: server.name, keywords: `${server.id} ${server.public_ipv4 || ''} ${server.public_ipv6 || ''} ${server.interface_ipv6 || ''}` }))} placeholder="选择服务器" searchPlaceholder="搜索服务器" />}</section>
@@ -5783,7 +5562,7 @@ function AuditReviewDetailDialog({ detail, evidence, evidenceTotal, client, work
       const response = await client.request(`/audit/ai-reviews/${detail.review.id}/jobs/${job.id}`)
       const item: AuditReviewJob = response.job
       const log = item.error_detail ? JSON.stringify(item.error_detail, null, 2) : ''
-      await dialogs.alert({ title: `任务阶段 ${item.stage + 1} · #${item.position + 1}${item.error ? '（失败）' : ''}`, message: <div className="ai-review-raw-grid">{log ? <section><strong>Provider 原始日志</strong><CopyBlock value={log} /></section> : null}{item.error ? <section><strong>错误信息</strong><CopyBlock value={item.error} /></section> : null}<section><strong>输入</strong><CopyBlock value={JSON.stringify(item.input || {}, null, 2)} /></section><section><strong>输出</strong><CopyBlock value={JSON.stringify(item.output || {}, null, 2)} /></section></div> })
+      await dialogs.alert({ title: `任务阶段 ${item.stage + 1} · #${item.position + 1}${item.error ? '（失败）' : ''}`, message: <div className="ai-review-raw-grid">{item.route ? <section><strong>Route Evidence</strong><CopyBlock value={JSON.stringify(item.route, null, 2)} /></section> : null}{log ? <section><strong>Provider 原始日志</strong><CopyBlock value={log} /></section> : null}{item.error ? <section><strong>错误信息</strong><CopyBlock value={item.error} /></section> : null}<section><strong>输入</strong><CopyBlock value={JSON.stringify(item.input || {}, null, 2)} /></section><section><strong>输出</strong><CopyBlock value={JSON.stringify(item.output || {}, null, 2)} /></section></div> })
     } catch (error: any) {
       await dialogs.alert({ title: '无法读取任务', message: localizeErrorMessage(error?.message || error) })
     }

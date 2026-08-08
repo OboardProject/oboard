@@ -13,7 +13,7 @@ const (
 	AuditEvidenceSchemaVersion        = "audit-evidence-v2"
 	AuditUserFindingSchemaVersion     = "audit-user-finding-v1"
 	AuditReportSchemaVersion          = "audit-report-v2"
-	AuditProviderProfileVersion       = "provider-profile-v1"
+	AuditProviderProfileVersion       = "provider-profile-v2"
 	AuditScoringVersion               = "deterministic-v2"
 	AuditBaselineVersion              = "feature-snapshot-v1"
 	AuditPromptFindingVersion         = "audit-finding-v1"
@@ -90,6 +90,7 @@ type AuditReviewJob struct {
 	Attempts     int             `json:"attempts"`
 	InputTokens  int64           `json:"input_tokens"`
 	OutputTokens int64           `json:"output_tokens"`
+	Route        json.RawMessage `json:"route,omitempty"`
 	LeaseOwner   string          `json:"-"`
 	LeaseUntil   *time.Time      `json:"-"`
 	CreatedAt    time.Time       `json:"created_at"`
@@ -103,17 +104,28 @@ type AuditReviewJob struct {
 // local validation and one repair), C (text only, excluded from formal audits)
 // and unusable (could not return a stable usable result).
 type AIProviderCapability struct {
-	ProviderProfileVersion  string    `json:"provider_profile_version"`
-	Model                   string    `json:"model"`
-	TestedAt                time.Time `json:"tested_at"`
-	AuditGrade              string    `json:"audit_grade"`
-	StructuredOutput        string    `json:"structured_output"`
-	OutputMode              string    `json:"output_mode"`
-	SchemaSuccessRate       float64   `json:"schema_success_rate"`
-	UsageSupported          bool      `json:"usage_supported"`
-	FinishReasonSupported   bool      `json:"finish_reason_supported"`
-	MaxVerifiedOutputTokens int       `json:"max_verified_output_tokens"`
-	Note                    string    `json:"note,omitempty"`
+	ProviderProfileVersion     string    `json:"provider_profile_version"`
+	ProviderID                 string    `json:"provider_id"`
+	EndpointID                 string    `json:"endpoint_id"`
+	APIStyle                   string    `json:"api_style"`
+	Model                      string    `json:"model"`
+	ConfigDigest               string    `json:"config_digest"`
+	TestedAt                   time.Time `json:"tested_at"`
+	ConnectivityOK             bool      `json:"connectivity_ok"`
+	AuthenticationOK           bool      `json:"authentication_ok"`
+	ModelsSupported            bool      `json:"models_supported"`
+	AuditGrade                 string    `json:"audit_grade"`
+	StructuredOutput           string    `json:"structured_output"`
+	OutputMode                 string    `json:"output_mode"`
+	SchemaSuccessRate          float64   `json:"schema_success_rate"`
+	UsageSupported             bool      `json:"usage_supported"`
+	FinishReasonSupported      bool      `json:"finish_reason_supported"`
+	StreamingSupported         bool      `json:"streaming_supported"`
+	ProviderRequestIDSupported bool      `json:"provider_request_id_supported"`
+	MaxVerifiedOutputTokens    int       `json:"max_verified_output_tokens"`
+	LatencyMS                  int64     `json:"latency_ms"`
+	Notes                      []string  `json:"notes,omitempty"`
+	Note                       string    `json:"note,omitempty"`
 }
 
 // AuditEvidencePack is the immutable, versioned deterministic input handed to

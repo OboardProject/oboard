@@ -82,6 +82,9 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.MigrateAIProvidersV2(context.Background(), *secret); err != nil {
+		log.Fatalf("migrate AI providers: %v", err)
+	}
 	if *autoAdmin {
 		if err := ensureFirstAdmin(context.Background(), db, *adminUsername, *adminPassword); err != nil {
 			log.Fatal(err)

@@ -290,19 +290,50 @@ type OAuthToken struct {
 }
 
 type AIProvider struct {
+	ID              string               `json:"id"`
+	Name            string               `json:"name"`
+	ProviderKind    string               `json:"provider_kind"`
+	DefaultModel    string               `json:"default_model"`
+	RoutingStrategy string               `json:"routing_strategy"`
+	Enabled         bool                 `json:"enabled"`
+	AllowRawAudit   bool                 `json:"allow_raw_audit"`
+	DailyTokenLimit int64                `json:"daily_token_limit"`
+	Endpoints       []AIProviderEndpoint `json:"endpoints,omitempty"`
+	HasCredential   bool                 `json:"has_credential"`
+	CreatedAt       time.Time            `json:"created_at"`
+	UpdatedAt       time.Time            `json:"updated_at"`
+	LastUsedAt      *time.Time           `json:"last_used_at,omitempty"`
+
+	// Legacy columns remain migration inputs for one release and are never
+	// returned as credentials or used as the V2 runtime source of truth.
+	BaseURL             string                `json:"base_url,omitempty"`
+	Model               string                `json:"model,omitempty"`
+	APIFormat           string                `json:"api_format,omitempty"`
+	Capability          *AIProviderCapability `json:"capability,omitempty"`
+	CredentialEncrypted string                `json:"-"`
+}
+
+type AIProviderEndpoint struct {
 	ID                  string                `json:"id"`
+	ProviderID          string                `json:"provider_id"`
 	Name                string                `json:"name"`
 	BaseURL             string                `json:"base_url"`
-	Model               string                `json:"model"`
-	APIFormat           string                `json:"api_format"`
+	APIStyle            string                `json:"api_style"`
+	AuthMode            string                `json:"auth_mode"`
+	AnthropicVersion    string                `json:"anthropic_version,omitempty"`
+	HeadersJSON         string                `json:"headers_json"`
+	ModelsPath          string                `json:"models_path,omitempty"`
+	GeneratePath        string                `json:"generate_path,omitempty"`
+	ModelOverride       string                `json:"model_override,omitempty"`
+	Priority            int                   `json:"priority"`
 	Enabled             bool                  `json:"enabled"`
-	AllowRawAudit       bool                  `json:"allow_raw_audit"`
-	DailyTokenLimit     int64                 `json:"daily_token_limit"`
-	Capability          *AIProviderCapability `json:"capability,omitempty"`
+	TimeoutMS           int                   `json:"timeout_ms"`
+	MaxRetries          int                   `json:"max_retries"`
+	AllowPrivateNetwork bool                  `json:"allow_private_network"`
 	HasCredential       bool                  `json:"has_credential"`
+	Capability          *AIProviderCapability `json:"capability,omitempty"`
 	CreatedAt           time.Time             `json:"created_at"`
 	UpdatedAt           time.Time             `json:"updated_at"`
-	LastUsedAt          *time.Time            `json:"last_used_at,omitempty"`
 	CredentialEncrypted string                `json:"-"`
 }
 

@@ -63,11 +63,11 @@ func TestAIProviderTestUsesDraftAndStoredCredentials(t *testing.T) {
 					workerErr <- err
 					return
 				}
-				if lease.Request == nil || lease.Request.APIKey != testCase.wantKey || lease.Request.BaseURL != "http://127.0.0.1:11434/v1" || lease.Request.Model != "manual" {
+				if lease.Request == nil || lease.Request.Endpoint.Credential != testCase.wantKey || lease.Request.Endpoint.BaseURL != "http://127.0.0.1:11434/v1" || lease.Request.Model != "manual" {
 					workerErr <- fmt.Errorf("unexpected lease: %#v", lease.Request)
 					return
 				}
-				workerErr <- testRPCJSON(workerClient, "/v1/ai-test/"+lease.Request.ID+"/complete", airpc.AITestCompleteRequest{WorkerID: "worker-test-1", RequestJSON: `{"model":"manual"}`, ResponseJSON: `{"choices":[{"message":{"content":"ok"}}]}`, StatusCode: 200, DurationMS: 123, Content: "ok"}, nil)
+				workerErr <- testRPCJSON(workerClient, "/v1/ai-test/"+lease.Request.ID+"/complete", airpc.AITestCompleteRequest{WorkerID: "worker-test-1", OK: true, RequestJSON: `{"model":"manual"}`, ResponseJSON: `{"choices":[{"message":{"content":"ok"}}]}`, StatusCode: 200, DurationMS: 123, Content: "ok"}, nil)
 			}()
 			response := request(t, handler, http.MethodPost, "/api/v2/ai/provider-test", token, testCase.requestBody, http.StatusOK)
 			if err := <-workerErr; err != nil {

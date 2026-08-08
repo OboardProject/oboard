@@ -50,59 +50,6 @@ func (s *Server) registerAPIV2Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v2/tool-audits", s.auth(s.apiV2ToolAudits, model.RoleAdmin))
 }
 
-func (s *Server) apiV2AIProviders(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		items, err := s.store.ListAIProviders(r.Context())
-		if err != nil {
-			v2HandleError(w, r, err)
-			return
-		}
-		v2Write(w, r, http.StatusOK, items, map[string]any{"count": len(items)})
-	case http.MethodPost:
-		var request struct {
-			Name            string `json:"name"`
-			BaseURL         string `json:"base_url"`
-			Model           string `json:"model"`
-			APIFormat       string `json:"api_format"`
-			APIKey          string `json:"api_key"`
-			Enabled         bool   `json:"enabled"`
-			AllowRawAudit   bool   `json:"allow_raw_audit"`
-			DailyTokenLimit int64  `json:"daily_token_limit"`
-		}
-		if !decodeV2(w, r, &request) {
-			return
-		}
-		request.Name, request.Model, request.APIKey = strings.TrimSpace(request.Name), strings.TrimSpace(request.Model), strings.TrimSpace(request.APIKey)
-		baseURL, err := normalizeAIProviderBaseURL(request.BaseURL)
-		request.BaseURL = baseURL
-		if request.Name == "" || request.Model == "" || request.APIKey == "" || err != nil || request.DailyTokenLimit < 0 {
-			v2Error(w, r, http.StatusBadRequest, "invalid_provider", "AI Provider 配置无效")
-			return
-		}
-		random, err := security.RandomToken(18)
-		if err != nil {
-			v2HandleError(w, r, err)
-			return
-		}
-		id := "aip_" + random
-		encrypted, err := security.EncryptSecret(s.sessionSecret, "ai-provider-credential:"+id, request.APIKey)
-		if err != nil {
-			v2HandleError(w, r, err)
-			return
-		}
-		item := &model.AIProvider{ID: id, Name: request.Name, BaseURL: request.BaseURL, Model: request.Model, APIFormat: normalizeAIProviderFormat(request.APIFormat), CredentialEncrypted: encrypted, Enabled: request.Enabled, AllowRawAudit: request.AllowRawAudit, DailyTokenLimit: request.DailyTokenLimit}
-		if err := s.store.CreateAIProvider(r.Context(), item); err != nil {
-			v2HandleError(w, r, err)
-			return
-		}
-		item.CredentialEncrypted = ""
-		v2Write(w, r, http.StatusCreated, item, nil)
-	default:
-		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
-	}
-}
-
 func (s *Server) apiV2AuditIncidents(w http.ResponseWriter, r *http.Request) {
 	principal, _ := apiPrincipal(r)
 	if !principal.HasScope("audit:read") {

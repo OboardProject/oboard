@@ -235,12 +235,18 @@ func TestAutomationAdminCanDisableAndRotateCredentials(t *testing.T) {
 		"name": "local", "base_url": "http://127.0.0.1:11434/v1", "model": "test", "api_key": "first-key", "enabled": true,
 	}, http.StatusCreated)["data"].(map[string]any)
 	providerID := provider["id"].(string)
-	request(t, handler, http.MethodPatch, "/api/v2/ai/providers/"+providerID, token, map[string]any{"api_key": "second-key", "enabled": false}, http.StatusOK)
+	endpointID := provider["endpoints"].([]any)[0].(map[string]any)["id"].(string)
+	request(t, handler, http.MethodPatch, "/api/v2/ai/providers/"+providerID+"/endpoints/"+endpointID, token, map[string]any{"api_key": "second-key"}, http.StatusOK)
+	request(t, handler, http.MethodPatch, "/api/v2/ai/providers/"+providerID, token, map[string]any{"enabled": false}, http.StatusOK)
 	storedProvider, err := db.GetAIProvider(context.Background(), providerID)
 	if err != nil || storedProvider.Enabled {
 		t.Fatalf("AI Provider disable failed: %#v err=%v", storedProvider, err)
 	}
-	plain, err := security.DecryptSecret("test-secret", "ai-provider-credential:"+providerID, storedProvider.CredentialEncrypted)
+	storedEndpoint, err := db.GetAIProviderEndpoint(context.Background(), providerID, endpointID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := security.DecryptSecret("test-secret", "ai-provider-endpoint-credential:"+endpointID, storedEndpoint.CredentialEncrypted)
 	if err != nil || plain != "second-key" {
 		t.Fatalf("AI Provider credential rotation failed: value=%q err=%v", plain, err)
 	}
