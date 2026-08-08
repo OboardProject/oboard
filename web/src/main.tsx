@@ -3195,13 +3195,17 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
         <div><strong>MCP 客户端</strong><span>仅通过 OAuth 登录；Service Account 仅用于受控的 `/api/v2` 自动化。</span></div>
         <button type="button" onClick={() => openConnectDialog()}><Cable size={15} />接入客户端</button>
       </div>
-      <div className="automation-grid">
-      <section className="settings-card">
-        <div className="settings-card-head automation-section-head"><div><h3>Service Account</h3><p className="muted">仅供受控的 `/api/v2` 自动化使用，不可用于 MCP。</p></div><button type="button" onClick={() => openServiceDialog()}><Plus size={14} />新建</button></div>
-        <div className="automation-list">{serviceAccounts.length ? serviceAccounts.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span></div><span>{automationScopeSummary(item.scopes)}</span><small>{item.allowed_cidrs?.length ? item.allowed_cidrs.join(', ') : '任意来源'} · {item.rate_limit_per_minute}/分钟 · 并发 {item.max_concurrency}</small></div><div><button className="ghost icon-button" onClick={() => openServiceDialog(item)} title="编辑" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void issueToken(item)} disabled={!item.enabled} title={item.enabled ? '签发 API Token' : '启用后才能签发 Token'} aria-label={item.enabled ? `为 ${item.name} 签发 API Token` : '启用后才能签发 Token'}><KeyRound size={15} /></button><button className="ghost icon-button" onClick={() => void togglePrincipal(item)} title={item.enabled ? '禁用' : '启用'} aria-label={item.enabled ? '禁用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deletePrincipal(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><KeyRound size={20} /><span>还没有 Service Account</span><button type="button" className="ghost" onClick={() => openServiceDialog()}>新建凭据</button></div>}</div>
-      </section>
-      </div>
-      <MCPAccessPage requestV2={client.requestV2} notify={notify} confirm={dialogs.confirm} />
+      <MCPAccessPage
+        requestV2={client.requestV2}
+        notify={notify}
+        confirm={dialogs.confirm}
+        serviceAccountSection={
+          <section className="settings-card">
+            <div className="settings-card-head automation-section-head"><div><h3>Service Account</h3><p className="muted">仅供受控的 `/api/v2` 自动化使用，不可用于 MCP。</p></div><button type="button" onClick={() => openServiceDialog()}><Plus size={14} />新建</button></div>
+            <div className="automation-list">{serviceAccounts.length ? serviceAccounts.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span></div><span>{automationScopeSummary(item.scopes)}</span><small>{item.allowed_cidrs?.length ? item.allowed_cidrs.join(', ') : '任意来源'} · {item.rate_limit_per_minute}/分钟 · 并发 {item.max_concurrency}</small></div><div><button className="ghost icon-button" onClick={() => openServiceDialog(item)} title="编辑" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void issueToken(item)} disabled={!item.enabled} title={item.enabled ? '签发 API Token' : '启用后才能签发 Token'} aria-label={item.enabled ? `为 ${item.name} 签发 API Token` : '启用后才能签发 Token'}><KeyRound size={15} /></button><button className="ghost icon-button" onClick={() => void togglePrincipal(item)} title={item.enabled ? '禁用' : '启用'} aria-label={item.enabled ? '禁用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deletePrincipal(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><KeyRound size={20} /><span>还没有 Service Account</span><button type="button" className="ghost" onClick={() => openServiceDialog()}>新建凭据</button></div>}</div>
+          </section>
+        }
+      />
     </>}
     {view === 'changes' && <div className="automation-grid">
       <section className="settings-card">
