@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/authorization"
 	"github.com/OboardProject/oboard/internal/mcpauth"
 	"github.com/OboardProject/oboard/internal/model"
 )
@@ -74,11 +75,22 @@ func (s *Server) renderOAuthConsent(w http.ResponseWriter, r *http.Request, requ
 		}
 	}
 	accessLevel, offline, _ := normalizeRequestedScopes(request.Scope)
+	if r.Form.Has("access_level") {
+		if parsed := mcpauth.ParseAccessLevel(r.Form.Get("access_level")); parsed != "" {
+			accessLevel = parsed
+		}
+	} else if role == model.RoleAdmin || authorization.RoleRank(role) >= 2 {
+		accessLevel = mcpauth.AccessOperate
+	}
 	boundary, _, _ := s.oauthConsentBoundary(r, accessLevel)
 	if user != nil {
 		// A GET renders with the requested level; if the user cannot grant it,
 		// the page must fail loudly instead of silently downgrading.
-		if err := s.validateOAuthUserGrant(r.Context(), user, request.Scope); err != nil {
+		checkScope := request.Scope
+		if accessLevel == mcpauth.AccessOperate && !slices.Contains(checkScope, "oboard:operate") {
+			checkScope = append(slices.Clone(checkScope), "oboard:operate")
+		}
+		if err := s.validateOAuthUserGrant(r.Context(), user, checkScope); err != nil {
 			oauthError(w, http.StatusForbidden, "access_denied", err.Error())
 			return
 		}
