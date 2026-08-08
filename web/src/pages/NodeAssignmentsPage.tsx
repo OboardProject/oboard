@@ -8,7 +8,7 @@ import { NodeScopeMenu, type NodeScopeRequest, type ScopeNode } from '../compone
 import { NodeScopeActionDialog } from '../components/node-assignment/NodeScopeActionDialog'
 import { AssignPlanUsersDialog } from '../components/node-assignment/AssignPlanUsersDialog'
 import { NodeRenameDialog, type RenameNode } from '../components/node-assignment/NodeRenameDialog'
-import { X, Filter, RefreshCw, MoreHorizontal, Users, Pencil } from 'lucide-react'
+import { X, Filter, RefreshCw, MoreHorizontal, Users, Pencil, Settings } from 'lucide-react'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -82,6 +82,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
   const [users, setUsers] = React.useState<any[] | null>(null)
   const [showType, setShowType] = React.useState(false)
   const [renameNode, setRenameNode] = React.useState<CatalogNode | null>(null)
+  const [batchDialogOpen, setBatchDialogOpen] = React.useState(false)
 
   const servers = data.servers || []
   const plans = data.subscription_plans || []
@@ -168,12 +169,16 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
       })
       if (res.no_change) {
         setSyncMessage('节点没有变化')
+        notify('节点没有变化', 'warning')
       } else if (res.access_change_id) {
         setSyncMessage(`已保存，正在应用变更 #${res.access_change_id}`)
+        notify(`已保存，正在应用变更 #${res.access_change_id}`, 'success')
       } else {
         setSyncMessage('已保存为新版本')
+        notify('已保存为新版本', 'success')
       }
       setSelected({})
+      setBatchDialogOpen(false)
       await refresh()
     } catch (e: any) {
       setSyncMessage('操作失败：' + (e?.message || String(e)))
@@ -220,11 +225,22 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
               💡 勾选列表节点可开启批量设置
             </span>
           )}
+          {isAdmin && selectedCount > 0 && (
+            <>
+              <Button variant="default" size="sm" onClick={() => { setSyncMessage(''); setBatchDialogOpen(true) }} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <Settings size={14} />
+                批量设置（已选 {selectedCount} 个节点）
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setSelected({})} style={{ fontSize: 12 }}>
+                取消选择
+              </Button>
+            </>
+          )}
           <span className="muted" style={{ marginLeft: 'auto' }}>共 {total} 个节点</span>
         </div>
 
         {filtersOpen && (
-          <div className="form" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
+          <div className="form" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', marginTop: 8 }}>
             <Select value={entryServerID} onChange={e => setEntryServerID(Number(e.target.value))}>
               <option value={0}>入口服务器：全部</option>
               {servers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -270,28 +286,6 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
               <option value={100}>每页 100</option>
               <option value={200}>每页 200</option>
             </Select>
-          </div>
-        )}
-
-        {isAdmin && selectedCount > 0 && (
-          <div className="node-batch-action-bar">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Badge variant="default" style={{ fontSize: 12, padding: '3px 8px' }}>批量设置</Badge>
-              <strong style={{ fontSize: 13, color: 'var(--text-strong)' }}>已选择 {selectedCount} 个节点</strong>
-              <Button variant="ghost" size="sm" onClick={() => setSelected({})} style={{ height: 26, fontSize: 12, padding: '0 8px' }}>取消选择</Button>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <Select value={syncPlanID} onChange={e => setSyncPlanID(Number(e.target.value))} style={{ minWidth: 160 }} aria-label="选择套餐">
-                <option value={0}>选择目标套餐</option>
-                {plans.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </Select>
-              <Select value={syncOp} onChange={e => setSyncOp(e.target.value as 'add' | 'remove' | 'replace')} aria-label="操作类型">
-                <option value="add">加入套餐</option>
-                <option value="remove">从套餐移除</option>
-                <option value="replace">替换套餐节点</option>
-              </Select>
-              <Button size="sm" disabled={!syncPlanID || syncBusy} onClick={() => void runSync()}>{syncBusy ? '保存中...' : '保存到套餐'}</Button>
-            </div>
           </div>
         )}
 
@@ -461,6 +455,41 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
         onDone={refresh}
       />
       <NodeRenameDialog node={renameNode as RenameNode | null} client={client} onClose={() => setRenameNode(null)} onSaved={async () => { await refresh(); notify('全局节点名称已更新', 'success') }} />
+
+      <Dialog isOpen={batchDialogOpen} onClose={() => setBatchDialogOpen(false)} title={`批量设置节点套餐（已选 ${selectedCount} 个节点）`} size="default">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <p className="muted" style={{ margin: 0 }}>为当前已选中的 {selectedCount} 个节点批量分配或调整套餐。</p>
+          {selectedCount > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', maxHeight: 120, overflow: 'auto', padding: 8, background: 'var(--bg-subtle)', borderRadius: 'var(--radius-md)' }}>
+              {nodes.filter(n => selected[n.key]).map(n => (
+                <Badge key={n.key} variant="secondary">{n.name}</Badge>
+              ))}
+            </div>
+          )}
+          <div className="form">
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, fontWeight: 500 }}>
+              <span>目标套餐</span>
+              <Select value={syncPlanID} onChange={e => setSyncPlanID(Number(e.target.value))}>
+                <option value={0}>选择目标套餐</option>
+                {plans.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </Select>
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, fontWeight: 500 }}>
+              <span>批量操作</span>
+              <Select value={syncOp} onChange={e => setSyncOp(e.target.value as 'add' | 'remove' | 'replace')}>
+                <option value="add">加入套餐</option>
+                <option value="remove">从套餐移除</option>
+                <option value="replace">替换套餐节点</option>
+              </Select>
+            </label>
+          </div>
+          {syncMessage && <p style={{ margin: 0, color: syncMessage.startsWith('操作失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)', fontSize: 13 }}>{syncMessage}</p>}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+            <Button variant="outline" onClick={() => setBatchDialogOpen(false)}>取消</Button>
+            <Button disabled={!syncPlanID || syncBusy} busy={syncBusy} onClick={() => void runSync()}>{syncBusy ? '保存中...' : '保存到套餐'}</Button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   )
 }
