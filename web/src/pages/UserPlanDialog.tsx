@@ -72,7 +72,7 @@ export function UserPlanDialog({ user, binding, plans, client, load, onClose }: 
   React.useEffect(() => { void reload() }, [])
 
   const runPreview = async () => {
-    if (!planID) { setMessage('请先选择方案'); return }
+    if (!planID) { setMessage('请先选择套餐'); return }
     setPreviewBusy(true)
     setMessage('')
     try {
@@ -89,7 +89,7 @@ export function UserPlanDialog({ user, binding, plans, client, load, onClose }: 
   }
 
   const applyAssignment = async () => {
-    if (!planID) { setMessage('请先选择方案'); return }
+    if (!planID) { setMessage('请先选择套餐'); return }
     setApplyBusy(true)
     setMessage('')
     try {
@@ -160,11 +160,11 @@ export function UserPlanDialog({ user, binding, plans, client, load, onClose }: 
   const currentPlan = plans.find(p => p.id === (binding?.plan_id || 0))
 
   return (
-    <Dialog isOpen onClose={onClose} title={`方案与例外：${user.username}`} size="xl">
+    <Dialog isOpen onClose={onClose} title={`套餐与例外：${user.username}`} size="xl">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
           <div className="card-custom" style={{ padding: 14 }}>
-            <h3 style={{ marginTop: 0 }}>当前方案</h3>
+            <h3 style={{ marginTop: 0 }}>当前套餐</h3>
             {currentPlan ? (
               <div>
                 <Badge variant={currentPlan.enabled ? 'success' : 'secondary'}>{currentPlan.name}</Badge>
@@ -172,7 +172,7 @@ export function UserPlanDialog({ user, binding, plans, client, load, onClose }: 
                   状态：{binding?.status || 'active'} · 开始 {fmtDate(binding?.starts_at)} · 到期 {fmtDate(binding?.expires_at)}
                 </div>
               </div>
-            ) : <p className="muted">未绑定方案</p>}
+            ) : <p className="muted">未绑定套餐</p>}
           </div>
           <div className="card-custom" style={{ padding: 14 }}>
             <h3 style={{ marginTop: 0 }}>有效节点（{nodes.length}）</h3>
@@ -180,7 +180,7 @@ export function UserPlanDialog({ user, binding, plans, client, load, onClose }: 
               {nodes.map(n => (
                 <div key={n.key} style={{ fontSize: 13, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                   <span style={{ fontWeight: 600 }}>{n.name || n.key}</span>
-                  {n.source === 'plan' && <Badge variant="secondary">{n.plan_name || '方案'}</Badge>}
+                  {n.source === 'plan' && <Badge variant="secondary">{n.plan_name || '套餐'}</Badge>}
                   {n.source === 'exception_allow' && <Badge variant="success">允许</Badge>}
                 </div>
               ))}
@@ -190,10 +190,10 @@ export function UserPlanDialog({ user, binding, plans, client, load, onClose }: 
         </div>
 
         <div className="card-custom" style={{ padding: 14 }}>
-          <h3 style={{ marginTop: 0 }}>更换方案</h3>
+          <h3 style={{ marginTop: 0 }}>更换套餐</h3>
           <div className="form" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
             <Select value={planID} onChange={e => setPlanID(Number(e.target.value))}>
-              <option value={0}>选择方案</option>
+              <option value={0}>选择套餐</option>
               {plans.filter(p => p.enabled).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </Select>
             <Input type="datetime-local" value={startsAt} onChange={e => setStartsAt(e.target.value)} aria-label="生效时间" title="生效时间" />

@@ -54,9 +54,9 @@ type AccessChange = {
 type CatalogNode = { type: string; id: number; key: string; name: string; entry_server_name?: string; entry_protocol?: string; exit_region?: string; status: string }
 
 const changeTypeLabels: Record<string, string> = {
-  plan_publish: '方案发布',
+  plan_publish: '套餐发布',
   plan_restore: '版本回滚',
-  plan_disable: '方案停用',
+  plan_disable: '套餐停用',
   user_bindings: '用户换绑',
   exceptions: '节点例外',
 }
@@ -70,7 +70,7 @@ const changeStatusLabels: Record<string, { label: string; variant: 'secondary' |
 }
 const changeKindLabels: Record<string, string> = {
   create: '创建',
-  settings: '方案设置',
+  settings: '套餐设置',
   nodes: '节点调整',
   ordering: '排序调整',
   mixed: '综合调整',
@@ -97,6 +97,15 @@ function fmtBytes(v: number) {
 function fmtDate(v?: string) {
   if (!v) return '—'
   return new Date(v).toLocaleString()
+}
+
+function resetModeLabel(mode: string, day: number) {
+  switch (mode) {
+    case 'month_day': return `每月 ${day || 1} 日`
+    case 'anniversary_month': return '循环每月（从用户获得套餐时起算）'
+    case 'never': return '不重置'
+    default: return '自然月'
+  }
 }
 
 function revisionStatus(r: Revision, plan: Plan) {
@@ -254,13 +263,13 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
   }
 
   const createPlan = async () => {
-    if (!createDraft.name.trim()) { setMessage('请输入方案名称'); return }
+    if (!createDraft.name.trim()) { setMessage('请输入套餐名称'); return }
     setMessage('')
     try {
       await client.request('/subscription-plans', { method: 'POST', body: JSON.stringify({ ...createDraft, nodes: createNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id })) }) })
       setCreateOpen(false)
       await refreshPlans()
-      notify?.('方案已创建', 'success')
+      notify?.('套餐已创建', 'success')
     } catch (e: any) {
       setMessage('创建失败：' + (e?.message || String(e)))
     }
@@ -287,10 +296,10 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
       setEditOpen(false)
       await loadDetail(selectedID)
       await refreshPlans()
-      notify?.('方案信息已保存', 'success')
+      notify?.('套餐信息已保存', 'success')
     } catch (e: any) {
       const err = e?.message || String(e)
-      setMessage(err.includes('conflict') || err.includes('409') ? '保存失败：方案已发生变化（冲突），请重新加载后重试' : '保存失败：' + err)
+      setMessage(err.includes('conflict') || err.includes('409') ? '保存失败：套餐已发生变化（冲突），请重新加载后重试' : '保存失败：' + err)
     } finally {
       setSaveBusy(false)
     }
@@ -325,7 +334,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
           nodes: workingNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id, display_group: n.display_group || '' })),
           base_revision_id: nodePreview.base_revision_id,
           expected_lock_version: nodePreview.expected_lock_version,
-          change_summary: '调整方案节点集合',
+          change_summary: '调整套餐节点集合',
         }),
       })
       setNodePreview(null)
@@ -341,7 +350,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
       await loadChanges()
     } catch (e: any) {
       const err = e?.message || String(e)
-      setMessage(err.includes('conflict') || err.includes('409') ? '保存失败：方案已发生变化（冲突），请重新加载后重试' : '保存失败：' + err)
+      setMessage(err.includes('conflict') || err.includes('409') ? '保存失败：套餐已发生变化（冲突），请重新加载后重试' : '保存失败：' + err)
     } finally {
       setNodeApplyBusy(false)
     }
@@ -359,7 +368,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
         await loadChanges()
         notify?.(`停用已开始（变更 #${res.access_change_id}）`, 'success')
       } else {
-        notify?.('方案已停用', 'success')
+        notify?.('套餐已停用', 'success')
       }
       await loadDetail(selectedID)
       await refreshPlans()
@@ -397,7 +406,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
       await refreshPlans()
     } catch (e: any) {
       const err = e?.message || String(e)
-      setMessage(err.includes('conflict') || err.includes('409') ? '回滚失败：方案已发生变化（冲突），请重新加载后重试' : '回滚失败：' + err)
+      setMessage(err.includes('conflict') || err.includes('409') ? '回滚失败：套餐已发生变化（冲突），请重新加载后重试' : '回滚失败：' + err)
     }
   }
 
@@ -450,13 +459,13 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
 
   return (
     <div className="panel subscription-plans-panel">
-      <div className="panel-head"><h2>订阅方案</h2></div>
+      <div className="panel-head"><h2>套餐</h2></div>
       <div className="panel-body">
-        <p className="muted">方案定义节点的可分配集合与速度/流量限额。每次保存都会创建一个不可变版本：排序修改立即生效，节点或限额变化先进入待应用状态，再由“准备 → 激活 → 收尾”两阶段下发。</p>
+        <p className="muted">套餐定义节点的可分配集合与速度/流量限额。每次保存都会创建一个不可变版本：排序修改立即生效，节点或限额变化先进入待应用状态，再由“准备 → 激活 → 收尾”两阶段下发。</p>
 
         <div className="section-toolbar">
-          <div><h3>方案列表</h3><p className="muted">共 {plans.length} 个方案。</p></div>
-          <Button onClick={openCreate}><Plus size={14} /> 新建方案</Button>
+          <div><h3>套餐列表</h3><p className="muted">共 {plans.length} 个套餐。</p></div>
+          <Button onClick={openCreate}><Plus size={14} /> 新建套餐</Button>
         </div>
 
         <div className="card-custom" style={{ overflow: 'auto', marginBottom: 16 }}>
@@ -483,13 +492,13 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                   </td>
                 </tr>
               ))}
-              {plans.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 24 }}>还没有方案，点击“新建方案”开始。</td></tr>}
+              {plans.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 24 }}>还没有套餐，点击“新建套餐”开始。</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
 
-      <Dialog isOpen={detailOpen && selectedID > 0} onClose={closeDetail} title={plan ? `方案详情：${plan.name}` : '方案详情'} size="xl">
+      <Dialog isOpen={detailOpen && selectedID > 0} onClose={closeDetail} title={plan ? `套餐详情：${plan.name}` : '套餐详情'} size="xl">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxHeight: 'calc(85vh - 80px)', overflow: 'auto', paddingRight: 4 }}>
           {detailError && <p style={{ color: 'var(--color-danger)', margin: 0 }}>{detailError}</p>}
           {message && <p style={{ color: message.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)', margin: 0 }}>{message}</p>}
@@ -536,7 +545,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                   </p>
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-                  <Button variant="outline" size="sm" onClick={openEdit}><Edit3 size={14} /> 修改方案</Button>
+                  <Button variant="outline" size="sm" onClick={openEdit}><Edit3 size={14} /> 修改套餐</Button>
                   <Button variant="outline" size="sm" onClick={() => void clonePlan()}><Copy size={14} /> 复制</Button>
                   {plan.enabled && <Button variant="outline" size="sm" onClick={() => void disablePlan()}><Ban size={14} /> 停用</Button>}
                 </div>
@@ -552,7 +561,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                 <div className="animate-page-in" style={{ marginTop: 8 }}>
                   <div className="plan-info-grid">
                     <div className="plan-info-item">
-                      <span className="label">方案名称</span>
+                      <span className="label">套餐名称</span>
                       <span className="value">{plan.name}</span>
                     </div>
                     <div className="plan-info-item">
@@ -573,7 +582,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                     <div className="plan-info-item">
                       <span className="label">重置方式</span>
                       <span className="value">
-                        {plan.traffic_reset_mode === 'monthly' ? `每月重置（第 ${plan.traffic_reset_day} 日）` : '不重置'}
+                        {resetModeLabel(plan.traffic_reset_mode, plan.traffic_reset_day)}
                       </span>
                     </div>
                     <div className="plan-info-item">
@@ -594,14 +603,14 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                   </div>
 
                   <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
-                    <Button onClick={openEdit}><Edit3 size={14} /> 修改方案信息</Button>
+                    <Button onClick={openEdit}><Edit3 size={14} /> 修改套餐信息</Button>
                   </div>
                 </div>
               )}
 
               {tab === 'nodes' && (
                 <div className="animate-page-in" style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {applying && <p style={{ color: 'var(--color-warning)', margin: 0 }}>有方案版本正在应用，应用完成前不能保存新的节点版本。</p>}
+                  {applying && <p style={{ color: 'var(--color-warning)', margin: 0 }}>有套餐版本正在应用，应用完成前不能保存新的节点版本。</p>}
                   <div className="section-toolbar">
                     <div><h3 style={{ margin: 0 }}>节点集合（{workingNodes.length}）</h3><p className="muted">基于最新保存版本编辑；保存后创建不可变新版本，节点变化会走两阶段下发。</p></div>
                     <Button variant="outline" size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }} disabled={applying}><Plus size={14} /> 添加节点</Button>
@@ -678,7 +687,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
 
                   <div>
                     <div className="section-toolbar">
-                      <div><h3 style={{ margin: 0 }}>部署变更</h3><p className="muted">方案相关的两阶段下发记录。</p></div>
+                      <div><h3 style={{ margin: 0 }}>部署变更</h3><p className="muted">套餐相关的两阶段下发记录。</p></div>
                       <Button variant="ghost" size="sm" onClick={() => void loadChanges()}><RefreshCw size={14} /></Button>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 360, overflow: 'auto', marginTop: 8 }}>
@@ -717,11 +726,11 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
         </div>
       </Dialog>
 
-      <Dialog isOpen={createOpen} onClose={() => setCreateOpen(false)} title="新建方案" size="lg">
+      <Dialog isOpen={createOpen} onClose={() => setCreateOpen(false)} title="新建套餐" size="lg">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <p className="muted" style={{ margin: 0 }}>方案定义可分配节点与速度/流量限额；创建后保存为第一个版本 V1。</p>
+          <p className="muted" style={{ margin: 0 }}>套餐定义可分配节点与速度/流量限额；创建后保存为第一个版本 V1。</p>
           <form id="create-plan-form" className="form" onSubmit={e => { e.preventDefault(); void createPlan() }}>
-            <FormField label="名称" required><Input value={createDraft.name} onChange={e => setCreateDraft(d => ({ ...d, name: e.target.value }))} placeholder="例如：标准方案" /></FormField>
+            <FormField label="名称" required><Input value={createDraft.name} onChange={e => setCreateDraft(d => ({ ...d, name: e.target.value }))} placeholder="例如：标准套餐" /></FormField>
             <FormField label="描述"><Input value={createDraft.description} onChange={e => setCreateDraft(d => ({ ...d, description: e.target.value }))} placeholder="可选" /></FormField>
             <FormField label="速度上限" hint="0 表示不限速。">
               <div className="input-with-unit"><Input type="number" min={0} value={createDraft.speed_limit_mbps} onChange={e => setCreateDraft(d => ({ ...d, speed_limit_mbps: Number(e.target.value) }))} /><span>Mbps</span></div>
@@ -729,16 +738,19 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
             <FormField label="流量额度" hint="0 表示不限量。"><TrafficLimitInput bytes={createDraft.traffic_limit_bytes} onChange={v => setCreateDraft(d => ({ ...d, traffic_limit_bytes: v }))} /></FormField>
             <FormField label="重置方式">
               <Select value={createDraft.traffic_reset_mode} onChange={e => setCreateDraft(d => ({ ...d, traffic_reset_mode: e.target.value }))}>
-                <option value="monthly">每月重置</option><option value="never">不重置</option>
+                <option value="monthly">自然月</option>
+                <option value="month_day">每月指定日</option>
+                <option value="anniversary_month">循环每月（按获得套餐时间）</option>
+                <option value="never">不重置</option>
               </Select>
             </FormField>
-            <FormField label="重置日">
+            {createDraft.traffic_reset_mode === 'month_day' && <FormField label="重置日" hint="短月使用当月最后一天。">
               <div className="input-with-unit"><Input type="number" min={1} max={31} value={createDraft.traffic_reset_day} onChange={e => setCreateDraft(d => ({ ...d, traffic_reset_day: Number(e.target.value) }))} /><span>日</span></div>
-            </FormField>
+            </FormField>}
           </form>
           <div>
             <div className="section-toolbar">
-              <div><h3 style={{ margin: 0 }}>初始节点（{createNodes.length}）</h3><p className="muted">选择该方案可分配的节点；可留空，创建后继续添加。</p></div>
+              <div><h3 style={{ margin: 0 }}>初始节点（{createNodes.length}）</h3><p className="muted">选择该套餐可分配的节点；可留空，创建后继续添加。</p></div>
             </div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
               <Input value={pickerQuery} onChange={e => setPickerQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void runPickerSearch(pickerQuery) }} placeholder="搜索节点名称、协议或地区" />
@@ -771,17 +783,17 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
           {message && <p style={{ color: 'var(--color-danger)' }}>{message}</p>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>取消</Button>
-            <Button disabled={!createDraft.name.trim()} type="submit" form="create-plan-form">创建方案</Button>
+            <Button disabled={!createDraft.name.trim()} type="submit" form="create-plan-form">创建套餐</Button>
           </div>
         </div>
       </Dialog>
 
-      <Dialog isOpen={editOpen} onClose={() => setEditOpen(false)} title={`修改方案：${plan?.name || ''}`} size="lg">
+      <Dialog isOpen={editOpen} onClose={() => setEditOpen(false)} title={`修改套餐：${plan?.name || ''}`} size="lg">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <p className="muted" style={{ margin: 0 }}>修改方案的基础配置信息。保存后会更新方案配置。</p>
+          <p className="muted" style={{ margin: 0 }}>修改套餐的基础配置信息。保存后会更新套餐配置。</p>
           <form id="edit-plan-form" className="form" onSubmit={e => { e.preventDefault(); void saveSettings() }}>
             <FormField label="名称" required>
-              <Input value={editDraft.name} onChange={e => setEditDraft(d => ({ ...d, name: e.target.value }))} placeholder="例如：标准方案" />
+              <Input value={editDraft.name} onChange={e => setEditDraft(d => ({ ...d, name: e.target.value }))} placeholder="例如：标准套餐" />
             </FormField>
             <FormField label="描述" hint="仅管理端可见的备注。">
               <Input value={editDraft.description} onChange={e => setEditDraft(d => ({ ...d, description: e.target.value }))} placeholder="可选" />
@@ -795,21 +807,23 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
             <FormField label="流量额度" hint="0 表示不限量，按重置周期统计。">
               <TrafficLimitInput bytes={editDraft.traffic_limit_bytes} onChange={v => setEditDraft(d => ({ ...d, traffic_limit_bytes: v }))} />
             </FormField>
-            <FormField label="重置方式" hint="每月重置会按重置日清空已用流量。">
+            <FormField label="重置方式" hint="循环每月按用户获得套餐的日期和时刻计算。">
               <Select value={editDraft.traffic_reset_mode} onChange={e => setEditDraft(d => ({ ...d, traffic_reset_mode: e.target.value }))}>
-                <option value="monthly">每月重置</option>
+                <option value="monthly">自然月</option>
+                <option value="month_day">每月指定日</option>
+                <option value="anniversary_month">循环每月（按获得套餐时间）</option>
                 <option value="never">不重置</option>
               </Select>
             </FormField>
-            <FormField label="重置日" hint="1–31；仅重置方式为每月重置时生效。">
+            {editDraft.traffic_reset_mode === 'month_day' && <FormField label="重置日" hint="1–31；短月使用当月最后一天。">
               <div className="input-with-unit">
-                <Input type="number" min={1} max={31} disabled={editDraft.traffic_reset_mode !== 'monthly'} value={editDraft.traffic_reset_day} onChange={e => setEditDraft(d => ({ ...d, traffic_reset_day: Number(e.target.value) }))} />
+                <Input type="number" min={1} max={31} value={editDraft.traffic_reset_day} onChange={e => setEditDraft(d => ({ ...d, traffic_reset_day: Number(e.target.value) }))} />
                 <span>日</span>
               </div>
-            </FormField>
+            </FormField>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginTop: 4 }}>
               <input type="checkbox" id="edit-plan-enabled" checked={editDraft.enabled} onChange={e => setEditDraft(d => ({ ...d, enabled: e.target.checked }))} />
-              <label htmlFor="edit-plan-enabled">启用方案</label>
+              <label htmlFor="edit-plan-enabled">启用套餐</label>
             </div>
           </form>
           {message && <p style={{ color: 'var(--color-danger)' }}>{message}</p>}
@@ -877,4 +891,3 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     </div>
   )
 }
-

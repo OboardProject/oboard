@@ -199,9 +199,17 @@ func TestEffectiveUserPolicyPrecedence(t *testing.T) {
 	}
 
 	// Explicit user override wins over the plan.
-	bob := model.User{ID: 2, Username: "bob", Status: "active", SpeedLimitMbps: 500, TrafficResetMode: "month_day", TrafficResetDay: 15}
+	bob := model.User{ID: 2, Username: "bob", Status: "active", SpeedLimitMbps: 500}
 	snap = BuildEffectiveAccessSnapshot(EffectiveAccessInput{Users: []model.User{bob}, Bindings: []model.UserPlanBinding{{UserID: 2, PlanID: 1, Enabled: true}}, Plans: []model.SubscriptionPlan{plan}, Now: now})
-	if p := snap.UserPolicies[2]; p.Source != "user_override" || p.SpeedLimitMbps != 500 || p.TrafficResetDay != 15 {
+	if p := snap.UserPolicies[2]; p.Source != "user_override" || p.SpeedLimitMbps != 500 || p.TrafficResetDay != 1 {
 		t.Fatalf("override policy = %#v", p)
+	}
+
+	// Each personal field resolves independently; -1 explicitly disables only
+	// that limit while the other field can still inherit the plan.
+	carol := model.User{ID: 3, Username: "carol", Status: "active", SpeedLimitMbps: -1}
+	snap = BuildEffectiveAccessSnapshot(EffectiveAccessInput{Users: []model.User{carol}, Bindings: []model.UserPlanBinding{{UserID: 3, PlanID: 1, Enabled: true}}, Plans: []model.SubscriptionPlan{plan}, Now: now})
+	if p := snap.UserPolicies[3]; p.SpeedLimitMbps != 0 || p.TrafficLimitBytes != 1<<30 {
+		t.Fatalf("independent unlimited override = %#v", p)
 	}
 }

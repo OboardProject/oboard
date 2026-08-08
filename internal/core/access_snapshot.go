@@ -12,12 +12,12 @@ import (
 // plan authorization model. Precedence: explicit user override > active plan
 // limits > system defaults.
 type EffectiveUserPolicy struct {
-	SpeedLimitMbps    int
-	TrafficLimitBytes int64
-	TrafficResetMode  string
-	TrafficResetDay   int
+	SpeedLimitMbps     int
+	TrafficLimitBytes  int64
+	TrafficResetMode   string
+	TrafficResetDay    int
 	TrafficResetAnchor time.Time
-	Source            string // user_override | plan | user | default
+	Source             string // user_override | plan | user | default
 }
 
 // EffectiveNodeGrant explains why one user can use one node in the plan model.
@@ -322,10 +322,10 @@ func (s *EffectiveAccessSnapshot) ProxyPathUserBindings() []model.ProxyPathUser 
 
 // UserLimitPolicy is the resolved speed/traffic policy for one user.
 type UserLimitPolicy struct {
-	SpeedLimitMbps    int
-	TrafficLimitBytes int64
-	TrafficResetMode  string
-	TrafficResetDay   int
+	SpeedLimitMbps     int
+	TrafficLimitBytes  int64
+	TrafficResetMode   string
+	TrafficResetDay    int
 	TrafficResetAnchor time.Time
 }
 

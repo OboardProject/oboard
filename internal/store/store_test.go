@@ -958,12 +958,11 @@ func TestStoreCRUDAndDashboard(t *testing.T) {
 	if err := s.CreateInbound(ctx, inbound); err != nil {
 		t.Fatal(err)
 	}
-	group := &model.UserGroup{Name: "vip", Description: "fast users", Enabled: true, SpeedLimitMbps: 200, TrafficLimitBytes: 1 << 30}
+	group := &model.UserGroup{Name: "vip", Description: "fast users", Enabled: true}
 	if err := s.CreateUserGroup(ctx, group); err != nil {
 		t.Fatal(err)
 	}
-	group.SpeedLimitMbps = 100
-	group.TrafficLimitBytes = 512 << 20
+	group.Description = "updated users"
 	if err := s.UpdateUserGroup(ctx, group); err != nil {
 		t.Fatal(err)
 	}
@@ -971,8 +970,8 @@ func TestStoreCRUDAndDashboard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if storedGroup.SpeedLimitMbps != 100 || storedGroup.TrafficLimitBytes != 512<<20 {
-		t.Fatalf("user group limits not persisted: %#v", storedGroup)
+	if storedGroup.Description != "updated users" {
+		t.Fatalf("user group fields not persisted: %#v", storedGroup)
 	}
 	syncedAt := time.Now().UTC()
 	if err := s.UpdateInboundDNSSyncResult(ctx, inbound.ID, "A 已新建", "", &syncedAt); err != nil {

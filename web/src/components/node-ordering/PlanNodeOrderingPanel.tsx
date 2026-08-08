@@ -324,7 +324,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
       onSaved?.()
     } catch (e: any) {
       const message = e?.message || String(e)
-      setError(message.includes('conflict') || message.includes('409') ? '方案已发生变化（版本冲突），请重新加载后重试' : message)
+      setError(message.includes('conflict') || message.includes('409') ? '套餐已发生变化（版本冲突），请重新加载后重试' : message)
     } finally {
       setBusy(false)
     }
@@ -356,7 +356,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
       {loading && <p className="muted">正在加载排序状态...</p>}
       {applying && (
         <p style={{ color: 'var(--color-warning)', margin: 0 }}>
-          有方案版本正在应用，应用完成前不能保存新的排序版本。
+          有套餐版本正在应用，应用完成前不能保存新的排序版本。
         </p>
       )}
 
@@ -375,7 +375,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
               ))}
             </div>
             {workingPolicy.mode === 'legacy_group_name' && (
-              <p className="muted" style={{ marginTop: 8 }}>当前方案使用兼容排序（分组 → 名称）。切换到出口地区、入口或手动排序后，订阅节点顺序将发生变化。</p>
+              <p className="muted" style={{ marginTop: 8 }}>当前套餐使用兼容排序（分组 → 名称）。切换到出口地区、入口或手动排序后，订阅节点顺序将发生变化。</p>
             )}
           </div>
 
@@ -450,7 +450,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
                   <Button variant="outline" size="sm" busy={previewing} onClick={() => void generateManualSeed()}><Sparkles size={14} /> 按规则生成手动顺序</Button>
                   <Button variant="ghost" size="sm" onClick={appendAllUnplaced}><MoveDown size={14} /> 把待排节点追加到末尾</Button>
                 </div>
-                <p className="muted" style={{ marginTop: 8 }}>按住手柄拖拽调整顺序，也可使用上移、下移、移到顶部、移到底部按钮；新加入方案的节点不会自动插入已有顺序。</p>
+                <p className="muted" style={{ marginTop: 8 }}>按住手柄拖拽调整顺序，也可使用上移、下移、移到顶部、移到底部按钮；新加入套餐的节点不会自动插入已有顺序。</p>
                 <div style={{ marginTop: 8 }}>
                   {manualOrder.length === 0 ? (
                     <p className="muted">尚未放置节点，点击“按规则生成手动顺序”开始。</p>

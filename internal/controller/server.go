@@ -4962,7 +4962,10 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 		if !okLimit {
 			limit = defaultUserLimitPolicy(user)
 		}
-		periodKey, start, end := trafficWindow(time.Now(), limit.TrafficResetMode, limit.TrafficResetDay, loc)
+		periodKey, start, end, err := s.resolvedTrafficWindow(ctx, user.ID, time.Now(), limit, loc)
+		if err != nil {
+			return nil, err
+		}
 		period, err := s.store.EnsureTrafficPeriod(ctx, user.ID, periodKey, start, end, limit.TrafficLimitBytes)
 		if err != nil {
 			return nil, err
@@ -4972,7 +4975,14 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 		if err != nil {
 			return nil, err
 		}
-		policies[user.ID] = model.TrafficRuntimePolicy{UserID: user.ID, Billable: true, SpeedLimitMbps: limit.SpeedLimitMbps, TrafficLimitBytes: limit.TrafficLimitBytes, UsedBaselineBytes: used, LeaseBytes: lease.RemainingBytes, ResetLeaseBytes: lease.ResetBytes, LeaseEnforced: limit.TrafficLimitBytes > 0, PeriodKey: periodKey, PeriodStart: start.UTC().Format(time.RFC3339Nano), PeriodEnd: end.UTC().Format(time.RFC3339Nano), ResetMode: limit.TrafficResetMode, ResetDay: limit.TrafficResetDay, Timezone: tz, QuotaState: period.State, EnforcementMode: enforcement}
+		policy := model.TrafficRuntimePolicy{UserID: user.ID, Billable: true, SpeedLimitMbps: limit.SpeedLimitMbps, TrafficLimitBytes: limit.TrafficLimitBytes, UsedBaselineBytes: used, LeaseBytes: lease.RemainingBytes, ResetLeaseBytes: lease.ResetBytes, LeaseEnforced: limit.TrafficLimitBytes > 0, PeriodKey: periodKey, PeriodStart: start.UTC().Format(time.RFC3339Nano), PeriodEnd: end.UTC().Format(time.RFC3339Nano), ResetMode: limit.TrafficResetMode, ResetDay: limit.TrafficResetDay, Timezone: tz, QuotaState: period.State, EnforcementMode: enforcement}
+		if !limit.TrafficResetAnchor.IsZero() {
+			policy.ResetAnchor = limit.TrafficResetAnchor.UTC().Format(time.RFC3339Nano)
+		}
+		if previous, ok := s.store.PreviousTrafficPeriodKey(ctx, user.ID, periodKey); ok {
+			policy.PreviousPeriodKey = previous
+		}
+		policies[user.ID] = policy
 	}
 	_ = serverID
 	return policies, nil
@@ -4992,11 +5002,6 @@ func validateUserGroup(v *model.UserGroup) error {
 	default:
 		return fmt.Errorf("invalid user group role %q", v.Role)
 	}
-	if v.SpeedLimitMbps < 0 || v.TrafficLimitBytes < 0 {
-		return errors.New("user group limits must be >= 0")
-	}
-	v.TrafficResetMode = normalizeControllerTrafficResetMode(v.TrafficResetMode)
-	v.TrafficResetDay = normalizeControllerTrafficResetDay(v.TrafficResetDay)
 	return nil
 }
 
@@ -5007,20 +5012,18 @@ func mergeUserGroupPatch(v *model.UserGroup, current *model.UserGroup) {
 	if v.Role == "" {
 		v.Role = current.Role
 	}
-	if v.TrafficResetMode == "" {
-		v.TrafficResetMode = current.TrafficResetMode
-	}
-	if v.TrafficResetDay == 0 {
-		v.TrafficResetDay = current.TrafficResetDay
-	}
 }
 
 func normalizeControllerTrafficResetMode(mode string) string {
 	switch strings.TrimSpace(strings.ToLower(mode)) {
 	case "month_day", "day", "custom_day":
-		return "month_day"
+		return model.TrafficResetMonthDay
+	case model.TrafficResetAnniversaryMonth:
+		return model.TrafficResetAnniversaryMonth
+	case model.TrafficResetNever:
+		return model.TrafficResetNever
 	default:
-		return "monthly"
+		return model.TrafficResetMonthly
 	}
 }
 
@@ -5055,14 +5058,29 @@ func trafficEnforcementMode(settings map[string]string) string {
 	}
 }
 
-func trafficWindow(now time.Time, mode string, day int, loc *time.Location) (string, time.Time, time.Time) {
+func trafficWindow(now time.Time, mode string, day int, anchor time.Time, loc *time.Location) (string, time.Time, time.Time) {
 	if loc == nil {
 		loc = time.FixedZone("Asia/Shanghai", 8*3600)
 	}
 	n := now.In(loc)
 	mode = normalizeControllerTrafficResetMode(mode)
 	day = normalizeControllerTrafficResetDay(day)
-	if mode == "monthly" {
+	if mode == model.TrafficResetNever {
+		if anchor.IsZero() {
+			anchor = n
+		}
+		start := anchor.In(loc)
+		end := time.Date(9999, time.December, 31, 23, 59, 59, 0, loc)
+		return start.UTC().Format(time.RFC3339Nano), start, end
+	}
+	if mode == model.TrafficResetAnniversaryMonth {
+		if anchor.IsZero() {
+			anchor = n
+		}
+		start, end := anniversaryTrafficWindow(n, anchor.In(loc), loc)
+		return start.UTC().Format(time.RFC3339Nano), start, end
+	}
+	if mode == model.TrafficResetMonthly {
 		start := time.Date(n.Year(), n.Month(), 1, 0, 0, 0, 0, loc)
 		end := start.AddDate(0, 1, 0)
 		return start.Format("2006-01-02"), start, end
@@ -5078,24 +5096,81 @@ func trafficWindow(now time.Time, mode string, day int, loc *time.Location) (str
 	return start.Format("2006-01-02"), start, end
 }
 
-func trafficWindowForPeriodKey(now time.Time, periodKey, mode string, day int, loc *time.Location) (string, time.Time, time.Time, error) {
+func (s *Server) resolvedTrafficWindow(ctx context.Context, userID int64, at time.Time, limit core.UserLimitPolicy, loc *time.Location) (string, time.Time, time.Time, error) {
+	periodKey, start, end := trafficWindow(at, limit.TrafficResetMode, limit.TrafficResetDay, limit.TrafficResetAnchor, loc)
+	resolved, changed, err := s.store.ResolveTrafficPeriodKey(ctx, userID, periodKey)
+	if err != nil {
+		return "", time.Time{}, time.Time{}, err
+	}
+	if !changed && !strings.Contains(resolved, "#migration-") {
+		return periodKey, start, end, nil
+	}
+	period, err := s.store.GetTrafficPeriod(ctx, userID, resolved)
+	if err != nil {
+		return "", time.Time{}, time.Time{}, err
+	}
+	return resolved, period.StartedAt, period.EndsAt, nil
+}
+
+func trafficWindowForPeriodKey(now time.Time, periodKey, mode string, day int, anchor time.Time, loc *time.Location) (string, time.Time, time.Time, error) {
 	periodKey = strings.TrimSpace(periodKey)
 	if periodKey == "" {
-		key, start, end := trafficWindow(now, mode, day, loc)
+		key, start, end := trafficWindow(now, mode, day, anchor, loc)
 		return key, start, end, nil
 	}
 	if loc == nil {
 		loc = time.FixedZone("Asia/Shanghai", 8*3600)
 	}
+	mode = normalizeControllerTrafficResetMode(mode)
+	if mode == model.TrafficResetAnniversaryMonth || mode == model.TrafficResetNever {
+		parsed, err := time.Parse(time.RFC3339Nano, periodKey)
+		if err != nil {
+			return "", time.Time{}, time.Time{}, errors.New("traffic period_key must use RFC3339Nano for anchored reset cycles")
+		}
+		if anchor.IsZero() {
+			return "", time.Time{}, time.Time{}, errors.New("traffic reset anchor is required")
+		}
+		if mode == model.TrafficResetNever {
+			key, start, end := trafficWindow(parsed, mode, day, anchor, loc)
+			if key != periodKey {
+				return "", time.Time{}, time.Time{}, errors.New("traffic period_key does not match the user reset anchor")
+			}
+			return key, start, end, nil
+		}
+		start, end := anniversaryTrafficWindow(parsed.In(loc).Add(time.Nanosecond), anchor.In(loc), loc)
+		if !start.UTC().Equal(parsed.UTC()) {
+			return "", time.Time{}, time.Time{}, errors.New("traffic period_key does not match the user reset cycle")
+		}
+		return periodKey, start, end, nil
+	}
 	parsed, err := time.ParseInLocation("2006-01-02", periodKey, loc)
 	if err != nil {
 		return "", time.Time{}, time.Time{}, errors.New("traffic period_key must use YYYY-MM-DD")
 	}
-	key, start, end := trafficWindow(parsed.Add(12*time.Hour), mode, day, loc)
+	key, start, end := trafficWindow(parsed.Add(12*time.Hour), mode, day, time.Time{}, loc)
 	if key != periodKey {
 		return "", time.Time{}, time.Time{}, errors.New("traffic period_key does not match the user reset cycle")
 	}
 	return key, start, end, nil
+}
+
+func anniversaryTrafficWindow(now, anchor time.Time, loc *time.Location) (time.Time, time.Time) {
+	if now.Before(anchor) {
+		return anchor, anniversaryBoundary(anchor, 1, loc)
+	}
+	months := (now.Year()-anchor.Year())*12 + int(now.Month()-anchor.Month())
+	start := anniversaryBoundary(anchor, months, loc)
+	if now.Before(start) {
+		months--
+		start = anniversaryBoundary(anchor, months, loc)
+	}
+	return start, anniversaryBoundary(anchor, months+1, loc)
+}
+
+func anniversaryBoundary(anchor time.Time, months int, loc *time.Location) time.Time {
+	monthStart := time.Date(anchor.Year(), anchor.Month()+time.Month(months), 1, anchor.Hour(), anchor.Minute(), anchor.Second(), anchor.Nanosecond(), loc)
+	day := clampedMonthDay(monthStart.Year(), monthStart.Month(), anchor.Day())
+	return time.Date(monthStart.Year(), monthStart.Month(), day, anchor.Hour(), anchor.Minute(), anchor.Second(), anchor.Nanosecond(), loc)
 }
 
 func clampedMonthDay(year int, month time.Month, day int) int {
@@ -8071,7 +8146,10 @@ func (s *Server) withTrafficStatus(ctx context.Context, users []model.User) []mo
 		if !okLimit {
 			limit = defaultUserLimitPolicy(users[i])
 		}
-		periodKey, start, end := trafficWindow(time.Now(), limit.TrafficResetMode, limit.TrafficResetDay, loc)
+		periodKey, start, end, err := s.resolvedTrafficWindow(ctx, users[i].ID, time.Now(), limit, loc)
+		if err != nil {
+			continue
+		}
 		period, err := s.store.EnsureTrafficPeriod(ctx, users[i].ID, periodKey, start, end, limit.TrafficLimitBytes)
 		if err != nil {
 			continue
@@ -8233,8 +8311,8 @@ func validateUser(u *model.User) error {
 	if u.ProxyUUID != "" && !security.ValidUUID(u.ProxyUUID) {
 		return errors.New("proxy_uuid must be a valid UUID")
 	}
-	if u.SpeedLimitMbps < 0 || u.TrafficLimitBytes < 0 || u.TrafficUsedBytes < 0 || u.DeviceLimit < 0 {
-		return errors.New("limits, device limit, and traffic counters must be >= 0")
+	if u.SpeedLimitMbps < -1 || u.TrafficLimitBytes < -1 || u.TrafficUsedBytes < 0 || u.DeviceLimit < 0 {
+		return errors.New("personal limits must be -1, 0, or positive; device limit and traffic counters must be >= 0")
 	}
 	u.TrafficResetMode = normalizeControllerTrafficResetMode(u.TrafficResetMode)
 	u.TrafficResetDay = normalizeControllerTrafficResetDay(u.TrafficResetDay)
@@ -10487,7 +10565,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				h.ConnectivityError = ""
 			}
 			settings, _ := s.store.ListSettings(ctx)
-			_, start, end := trafficWindow(time.Now(), current.TrafficResetMode, current.TrafficResetDay, trafficLocation(settings))
+			_, start, end := trafficWindow(time.Now(), current.TrafficResetMode, current.TrafficResetDay, time.Time{}, trafficLocation(settings))
 			window := model.ServerTrafficWindow{Key: start.Format("2006-01-02"), Start: start, End: end}
 			old, next, err := s.store.UpsertHealthTransition(ctx, h, window)
 			if err == nil {
@@ -10913,10 +10991,29 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 		if reportedPeriodKey == "" {
 			reportedPeriodKey = strings.TrimSpace(req.PeriodKey)
 		}
-		periodKey, start, end, err := trafficWindowForPeriodKey(time.Now(), reportedPeriodKey, limit.TrafficResetMode, limit.TrafficResetDay, loc)
-		if err != nil {
-			fail(w, err, 400)
+		resolvedFromTransition := false
+		if resolved, changed, resolveErr := s.store.ResolveTrafficPeriodKey(r.Context(), item.UserID, reportedPeriodKey); resolveErr != nil {
+			fail(w, resolveErr, 500)
 			return
+		} else if changed {
+			reportedPeriodKey = resolved
+			resolvedFromTransition = true
+		}
+		periodKey, start, end := reportedPeriodKey, time.Time{}, time.Time{}
+		if resolvedFromTransition || strings.Contains(reportedPeriodKey, "#migration-") {
+			storedPeriod, periodErr := s.store.GetTrafficPeriod(r.Context(), item.UserID, reportedPeriodKey)
+			if periodErr != nil {
+				fail(w, periodErr, 400)
+				return
+			}
+			start, end = storedPeriod.StartedAt, storedPeriod.EndsAt
+		} else {
+			var windowErr error
+			periodKey, start, end, windowErr = trafficWindowForPeriodKey(time.Now(), reportedPeriodKey, limit.TrafficResetMode, limit.TrafficResetDay, limit.TrafficResetAnchor, loc)
+			if windowErr != nil {
+				fail(w, windowErr, 400)
+				return
+			}
 		}
 		started := parseReportTime(item.StartedAt)
 		ended := parseReportTime(item.EndedAt)

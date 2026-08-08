@@ -74,7 +74,7 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
   }, [open, defaultPlanID])
 
   const runPreview = async () => {
-    if (!planID) { setMessage('请先选择方案'); return }
+    if (!planID) { setMessage('请先选择套餐'); return }
     if (userIDs.size === 0) { setMessage('请先选择用户'); return }
     setPreviewBusy(true)
     setMessage('')
@@ -113,8 +113,8 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
         }),
       })
       notify?.(res.status === 'scheduled'
-        ? `已排定方案分配：变更 #${res.access_change_id}，将于 ${fmtDate(res.activate_at)} 生效`
-        : `已提交方案分配：变更 #${res.access_change_id}（${res.status}），排队 ${res.queued_tasks} 个任务`, 'success')
+        ? `已排定套餐分配：变更 #${res.access_change_id}，将于 ${fmtDate(res.activate_at)} 生效`
+        : `已提交套餐分配：变更 #${res.access_change_id}（${res.status}），排队 ${res.queued_tasks} 个任务`, 'success')
       setPreview(null)
       await onDone()
     } catch (e: any) {
@@ -125,12 +125,12 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
   }
 
   return (
-    <Dialog isOpen={open} onClose={onClose} title="将此方案分配给用户" size="lg">
+    <Dialog isOpen={open} onClose={onClose} title="将此套餐分配给用户" size="lg">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <p className="muted" style={{ margin: 0 }}>批量把用户绑定到方案。每个用户最多绑定一个有效方案；绑定通过 access-change 两阶段生效。</p>
+        <p className="muted" style={{ margin: 0 }}>批量把用户绑定到套餐。每个用户最多绑定一个有效套餐；绑定通过 access-change 两阶段生效。</p>
         <div className="section-toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <Select value={planID} onChange={e => setPlanID(Number(e.target.value))} style={{ minWidth: 200 }} aria-label="选择方案">
-            <option value={0}>选择方案</option>
+          <Select value={planID} onChange={e => setPlanID(Number(e.target.value))} style={{ minWidth: 200 }} aria-label="选择套餐">
+            <option value={0}>选择套餐</option>
             {plans.map(p => <option key={p.id} value={p.id}>{p.name}{p.enabled === false ? '（已停用）' : ''}</option>)}
           </Select>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>

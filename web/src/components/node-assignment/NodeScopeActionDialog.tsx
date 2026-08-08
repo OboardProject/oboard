@@ -127,7 +127,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
   }, [open, loadScope])
 
   const runPlanPreview = async () => {
-    if (!preview || !planID) { setPlanMessage('请先选择方案'); return }
+    if (!preview || !planID) { setPlanMessage('请先选择套餐'); return }
     setPlanBusy(true)
     setPlanMessage('')
     try {
@@ -169,7 +169,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
       await onDone()
     } catch (e: any) {
       const message = e?.message || String(e)
-      setPlanMessage(message.includes('conflict') || message.includes('409') ? '方案已发生变化（冲突），请重新预览后重试' : '操作失败：' + message)
+      setPlanMessage(message.includes('conflict') || message.includes('409') ? '套餐已发生变化（冲突），请重新预览后重试' : '操作失败：' + message)
     } finally {
       setPlanApplyBusy(false)
     }
@@ -256,16 +256,16 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
             </div>
 
             <div className="card-custom" style={{ padding: 12 }}>
-              <h3 style={{ marginTop: 0 }}>方案节点</h3>
+              <h3 style={{ marginTop: 0 }}>套餐节点</h3>
               <div className="section-toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
-                <Select value={planID} onChange={e => setPlanID(Number(e.target.value))} style={{ minWidth: 160 }} aria-label="选择方案">
-                  <option value={0}>选择方案</option>
+                <Select value={planID} onChange={e => setPlanID(Number(e.target.value))} style={{ minWidth: 160 }} aria-label="选择套餐">
+                  <option value={0}>选择套餐</option>
                   {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </Select>
                 <Select value={planOp} onChange={e => setPlanOp(e.target.value as 'add' | 'remove' | 'replace')} aria-label="操作类型">
-                  <option value="add">加入方案</option>
-                  <option value="remove">从方案移除</option>
-                  <option value="replace">替换方案节点</option>
+                  <option value="add">加入套餐</option>
+                  <option value="remove">从套餐移除</option>
+                  <option value="replace">替换套餐节点</option>
                 </Select>
                 {planOp !== 'remove' && (
                   <Input value={displayGroup} onChange={e => setDisplayGroup(e.target.value)} placeholder="展示分组（可选）" style={{ maxWidth: 180 }} />

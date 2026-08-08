@@ -1208,14 +1208,14 @@ func TestAgentInstallDirectoryPersistence(t *testing.T) {
 
 func TestTrafficWindowForPeriodKey(t *testing.T) {
 	loc := time.FixedZone("Asia/Shanghai", 8*60*60)
-	key, start, end, err := trafficWindowForPeriodKey(time.Now(), "2026-02-28", "month_day", 31, loc)
+	key, start, end, err := trafficWindowForPeriodKey(time.Now(), "2026-02-28", "month_day", 31, time.Time{}, loc)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if key != "2026-02-28" || start.Format("2006-01-02") != key || end.Format("2006-01-02") != "2026-03-31" {
 		t.Fatalf("unexpected clamped period: key=%s start=%s end=%s", key, start, end)
 	}
-	if _, _, _, err := trafficWindowForPeriodKey(time.Now(), "2026-02-27", "month_day", 31, loc); err == nil {
+	if _, _, _, err := trafficWindowForPeriodKey(time.Now(), "2026-02-27", "month_day", 31, time.Time{}, loc); err == nil {
 		t.Fatal("period key outside the reset cycle should be rejected")
 	}
 }
@@ -1321,11 +1321,11 @@ func TestControllerFormalAPI(t *testing.T) {
 	if len(pageUsers) == 0 || pageUsers[0].(map[string]any)["traffic_period_key"] == nil || pageUsers[0].(map[string]any)["traffic_quota_state"] != "active" {
 		t.Fatalf("users page missing current traffic period status: %#v", usersPage)
 	}
-	createdGroup := request(t, h, http.MethodPost, "/api/v2/ui/user-groups", token, map[string]any{"name": "vip", "description": "VIP", "enabled": true, "speed_limit_mbps": 200, "traffic_limit_bytes": 1073741824}, http.StatusCreated)
+	createdGroup := request(t, h, http.MethodPost, "/api/v2/ui/user-groups", token, map[string]any{"name": "vip", "description": "VIP", "enabled": true}, http.StatusCreated)
 	groupID := int64(createdGroup["user_group"].(map[string]any)["id"].(float64))
-	patchedGroup := request(t, h, http.MethodPatch, "/api/v2/ui/user-groups/"+itoa(groupID), token, map[string]any{"speed_limit_mbps": 100, "traffic_limit_bytes": 536870912}, http.StatusOK)
-	if patchedGroup["user_group"].(map[string]any)["speed_limit_mbps"].(float64) != 100 {
-		t.Fatalf("user group limit patch missing: %#v", patchedGroup)
+	patchedGroup := request(t, h, http.MethodPatch, "/api/v2/ui/user-groups/"+itoa(groupID), token, map[string]any{"description": "VIP users"}, http.StatusOK)
+	if _, exists := patchedGroup["user_group"].(map[string]any)["speed_limit_mbps"]; exists {
+		t.Fatalf("user group still exposes traffic limits: %#v", patchedGroup)
 	}
 	patchedUser := request(t, h, http.MethodPatch, "/api/v2/ui/users/"+itoa(userID), token, map[string]any{"speed_limit_mbps": 50, "traffic_limit_bytes": 268435456}, http.StatusOK)
 	if patchedUser["user"].(map[string]any)["speed_limit_mbps"].(float64) != 50 {

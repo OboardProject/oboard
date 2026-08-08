@@ -633,7 +633,11 @@ func (s *Server) activateAccessChange(ctx context.Context, change *model.AccessC
 		if plan.CurrentRevisionID == change.CandidateRevisionID {
 			return nil
 		}
-		if err := s.store.ActivatePlanVersionGuarded(ctx, change.SourcePlanID, change.ExpectedActiveRevisionID, change.CandidateRevisionID, change.ID); err != nil {
+		migrations, err := s.planTrafficPeriodMigrations(ctx, change.SourcePlanID, change.ExpectedActiveRevisionID, change.CandidateRevisionID)
+		if err != nil {
+			return err
+		}
+		if err := s.store.ActivatePlanVersionGuarded(ctx, change.SourcePlanID, change.ExpectedActiveRevisionID, change.CandidateRevisionID, change.ID, migrations); err != nil {
 			return err
 		}
 	case model.AccessChangePlanDisable:
@@ -657,6 +661,64 @@ func (s *Server) activateAccessChange(ctx context.Context, change *model.AccessC
 		return fmt.Errorf("unknown access change type %q", change.ChangeType)
 	}
 	return nil
+}
+
+func (s *Server) planTrafficPeriodMigrations(ctx context.Context, planID, currentRevisionID, candidateRevisionID int64) ([]store.TrafficPeriodMigration, error) {
+	if currentRevisionID == 0 || candidateRevisionID == 0 {
+		return nil, nil
+	}
+	current, err := s.store.GetPlanRevision(ctx, planID, currentRevisionID)
+	if err != nil {
+		return nil, err
+	}
+	candidate, err := s.store.GetPlanRevision(ctx, planID, candidateRevisionID)
+	if err != nil {
+		return nil, err
+	}
+	if current.TrafficResetMode == candidate.TrafficResetMode && current.TrafficResetDay == candidate.TrafficResetDay {
+		return nil, nil
+	}
+	bindings, err := s.store.ListUserPlanBindingsForPlan(ctx, planID)
+	if err != nil {
+		return nil, err
+	}
+	users, err := s.store.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	usersByID := make(map[int64]model.User, len(users))
+	for _, user := range users {
+		usersByID[user.ID] = user
+	}
+	settings, _ := s.store.ListSettings(ctx)
+	loc := trafficLocation(settings)
+	now := time.Now()
+	migrations := make([]store.TrafficPeriodMigration, 0, len(bindings))
+	for _, binding := range bindings {
+		if binding.StartsAt != nil && binding.StartsAt.After(now) || binding.ExpiresAt != nil && !binding.ExpiresAt.After(now) {
+			continue
+		}
+		user, ok := usersByID[binding.UserID]
+		if !ok || user.Status != "active" || user.TrafficLimitBytes != 0 {
+			continue
+		}
+		anchor := binding.CreatedAt
+		if binding.TrafficResetAnchorAt != nil {
+			anchor = *binding.TrafficResetAnchorAt
+		}
+		oldKey, _, _ := trafficWindow(now, current.TrafficResetMode, current.TrafficResetDay, anchor, loc)
+		if resolved, _, resolveErr := s.store.ResolveTrafficPeriodKey(ctx, user.ID, oldKey); resolveErr != nil {
+			return nil, resolveErr
+		} else {
+			oldKey = resolved
+		}
+		newKey, newStart, newEnd := trafficWindow(now, candidate.TrafficResetMode, candidate.TrafficResetDay, anchor, loc)
+		if oldKey == newKey {
+			continue
+		}
+		migrations = append(migrations, store.TrafficPeriodMigration{UserID: user.ID, SourcePeriodKey: oldKey, TargetPeriodKey: newKey, TargetStart: newStart, TargetEnd: newEnd, TrafficLimit: candidate.TrafficLimitBytes})
+	}
+	return migrations, nil
 }
 
 func (s *Server) markAccessChangeFailed(ctx context.Context, change *model.AccessChange, message string) {

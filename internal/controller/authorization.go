@@ -27,7 +27,6 @@ func (s *Server) buildAccessSnapshot(ctx context.Context, data store.FullRouting
 	}), nil
 }
 
-
 // authorizationMode reports the runtime authorization source. The legacy
 // authorization tables are removed, so runtime is always plan-based.
 func (s *Server) authorizationMode(ctx context.Context) string {
@@ -48,9 +47,17 @@ func (s *Server) runtimeAccessBindings(ctx context.Context, data store.FullRouti
 // defaultUserLimitPolicy derives a policy from the user's own fields when no
 // plan binding is effective. Group inheritance is removed.
 func defaultUserLimitPolicy(u model.User) core.UserLimitPolicy {
+	speed := u.SpeedLimitMbps
+	traffic := u.TrafficLimitBytes
+	if speed < 0 {
+		speed = 0
+	}
+	if traffic < 0 {
+		traffic = 0
+	}
 	return core.UserLimitPolicy{
-		SpeedLimitMbps:    u.SpeedLimitMbps,
-		TrafficLimitBytes: u.TrafficLimitBytes,
+		SpeedLimitMbps:    speed,
+		TrafficLimitBytes: traffic,
 		TrafficResetMode:  normalizeControllerTrafficResetMode(u.TrafficResetMode),
 		TrafficResetDay:   normalizeControllerTrafficResetDay(u.TrafficResetDay),
 	}

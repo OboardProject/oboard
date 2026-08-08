@@ -153,7 +153,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
       const plan = await client.request<{ subscription_plan?: { lock_version: number; latest_revision_id: number } }>(`/subscription-plans/${syncPlanID}`)
       const lockVersion = plan.subscription_plan?.lock_version || 0
       const baseRevisionID = plan.subscription_plan?.latest_revision_id || 0
-      if (!lockVersion || !baseRevisionID) throw new Error('无法获取方案版本信息，请刷新后重试')
+      if (!lockVersion || !baseRevisionID) throw new Error('无法获取套餐版本信息，请刷新后重试')
       const nodeRefs = nodes.filter(n => selected[n.key]).map(n => ({ node_type: n.type, node_id: n.id }))
       const res = await client.request<{ access_change_id?: number; no_change?: boolean }>(`/subscription-plans/${syncPlanID}/nodes/apply`, {
         method: 'POST',
@@ -205,7 +205,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
           </label>
           {isAdmin && (
             <Button variant="outline" size="sm" onClick={() => { setAssignOpen(true); void ensureUsers() }}>
-              <Users size={14} /> 将此方案分配给用户
+              <Users size={14} /> 将此套餐分配给用户
             </Button>
           )}
           <span className="muted" style={{ marginLeft: 'auto' }}>共 {total} 个节点</span>
@@ -234,7 +234,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
               {Object.entries(statusLabels).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </Select>
             <Select value={planID} onChange={e => setPlanID(Number(e.target.value))}>
-              <option value={0}>方案：全部</option>
+              <option value={0}>套餐：全部</option>
               {plans.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </Select>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
@@ -273,7 +273,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
                 <th>所属服务器</th>
                 <th>协议</th>
                 <th>状态</th>
-                <th>所属方案</th>
+                <th>所属套餐</th>
                 <th>有效用户</th>
                 <th>例外</th>
                 <th style={{ textAlign: 'right' }}>操作</th>
@@ -328,19 +328,19 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
           {isAdmin && selectedCount > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexWrap: 'wrap' }}>
               <span className="muted">已选 {selectedCount} 个节点</span>
-              <Select value={syncPlanID} onChange={e => setSyncPlanID(Number(e.target.value))} style={{ minWidth: 160 }} aria-label="选择方案">
-                <option value={0}>选择方案</option>
+              <Select value={syncPlanID} onChange={e => setSyncPlanID(Number(e.target.value))} style={{ minWidth: 160 }} aria-label="选择套餐">
+                <option value={0}>选择套餐</option>
                 {plans.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </Select>
               <Select value={syncOp} onChange={e => setSyncOp(e.target.value as 'add' | 'remove' | 'replace')} aria-label="操作类型">
-                <option value="add">加入方案</option>
-                <option value="remove">从方案移除</option>
-                <option value="replace">替换方案节点</option>
+                <option value="add">加入套餐</option>
+                <option value="remove">从套餐移除</option>
+                <option value="replace">替换套餐节点</option>
               </Select>
-              <Button size="sm" disabled={!syncPlanID || syncBusy} onClick={() => void runSync()}>{syncBusy ? '保存中...' : '保存到方案'}</Button>
+              <Button size="sm" disabled={!syncPlanID || syncBusy} onClick={() => void runSync()}>{syncBusy ? '保存中...' : '保存到套餐'}</Button>
             </div>
           )}
-          {!isAdmin && <span className="muted" style={{ marginLeft: 'auto' }}>方案修改、临时例外与方案分配需要管理员权限。</span>}
+          {!isAdmin && <span className="muted" style={{ marginLeft: 'auto' }}>套餐修改、临时例外与套餐分配需要管理员权限。</span>}
         </div>
             {syncMessage && <p style={{ marginTop: 8, color: syncMessage.startsWith('操作失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{syncMessage}</p>}
           </>
@@ -358,8 +358,8 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
               <div><span className="muted">路径</span><div>{(detail.node?.path_summary || []).join(' → ') || '—'}</div></div>
             </div>
             <div>
-              <h3 style={{ marginTop: 0 }}>所属方案</h3>
-              {detail.plans?.length === 0 ? <p className="muted">未分配任何方案</p> : detail.plans?.map((p: any) => (
+              <h3 style={{ marginTop: 0 }}>所属套餐</h3>
+              {detail.plans?.length === 0 ? <p className="muted">未分配任何套餐</p> : detail.plans?.map((p: any) => (
                 <Badge key={p.plan_id} variant="outline" style={{ marginRight: 6 }}>{p.name}{p.display_group ? ` · ${p.display_group}` : ''}</Badge>
               ))}
             </div>
@@ -375,7 +375,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
                         <td>
                           {u.source === 'exception_allow' && <Badge variant="success">允许例外</Badge>}
                           {u.source === 'exception_deny' && <Badge variant="destructive">拒绝例外</Badge>}
-                          {u.source === 'plan' && <Badge variant="secondary">{u.plan_name || '方案'}</Badge>}
+                          {u.source === 'plan' && <Badge variant="secondary">{u.plan_name || '套餐'}</Badge>}
                         </td>
                         <td className="muted">{u.reason || '—'}</td>
                         <td className="muted">{u.expires_at ? new Date(u.expires_at).toLocaleString() : '—'}</td>

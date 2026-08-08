@@ -672,7 +672,12 @@ func (s *Server) subscriptionPlanPatch(w http.ResponseWriter, r *http.Request, i
 			traffic = *req.TrafficLimitBytes
 		}
 		if req.TrafficResetMode != nil {
-			mode = normalizeControllerTrafficResetMode(*req.TrafficResetMode)
+			var modeErr error
+			mode, modeErr = normalizePlanTrafficResetMode(*req.TrafficResetMode)
+			if modeErr != nil {
+				fail(w, modeErr, 400)
+				return
+			}
 		}
 		if req.TrafficResetDay != nil {
 			day = normalizeControllerTrafficResetDay(*req.TrafficResetDay)
@@ -1327,9 +1332,28 @@ func validateSubscriptionPlanFields(v *model.SubscriptionPlan) error {
 		return errors.New("traffic_limit_bytes must be >= 0")
 	}
 	v.Name = strings.TrimSpace(v.Name)
-	v.TrafficResetMode = normalizeControllerTrafficResetMode(v.TrafficResetMode)
+	mode, err := normalizePlanTrafficResetMode(v.TrafficResetMode)
+	if err != nil {
+		return err
+	}
+	v.TrafficResetMode = mode
 	v.TrafficResetDay = normalizeControllerTrafficResetDay(v.TrafficResetDay)
 	return nil
+}
+
+func normalizePlanTrafficResetMode(mode string) (string, error) {
+	switch strings.TrimSpace(strings.ToLower(mode)) {
+	case "", model.TrafficResetMonthly:
+		return model.TrafficResetMonthly, nil
+	case "month_day", "day", "custom_day":
+		return model.TrafficResetMonthDay, nil
+	case model.TrafficResetAnniversaryMonth:
+		return model.TrafficResetAnniversaryMonth, nil
+	case model.TrafficResetNever:
+		return model.TrafficResetNever, nil
+	default:
+		return "", fmt.Errorf("traffic_reset_mode must be monthly, month_day, anniversary_month, or never")
+	}
 }
 
 // ---------------------------------------------------------------------------

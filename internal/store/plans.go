@@ -1000,7 +1000,16 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 // the plan still points at the exact versions the access change was prepared
 // against. The pending pointer is cleared and the revision is marked
 // activated. It returns ErrPlanRevisionConflict when the plan moved on.
-func (s *Store) ActivatePlanVersionGuarded(ctx context.Context, planID, expectedCurrentRevisionID, candidateRevisionID, accessChangeID int64) error {
+type TrafficPeriodMigration struct {
+	UserID          int64
+	SourcePeriodKey string
+	TargetPeriodKey string
+	TargetStart     time.Time
+	TargetEnd       time.Time
+	TrafficLimit    int64
+}
+
+func (s *Store) ActivatePlanVersionGuarded(ctx context.Context, planID, expectedCurrentRevisionID, candidateRevisionID, accessChangeID int64, migrations []TrafficPeriodMigration) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1017,6 +1026,11 @@ func (s *Store) ActivatePlanVersionGuarded(ctx context.Context, planID, expected
 		return ErrPlanRevisionConflict
 	}
 	ts := now()
+	for _, migration := range migrations {
+		if err := migrateTrafficPeriodTx(ctx, tx, migration, ts); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `update subscription_plans set current_revision_id=?,pending_revision_id=null,lock_version=lock_version+1,updated_at=? where id=?`, candidateRevisionID, ts, planID); err != nil {
 		return err
 	}
@@ -1024,6 +1038,108 @@ func (s *Store) ActivatePlanVersionGuarded(ctx context.Context, planID, expected
 		return err
 	}
 	return tx.Commit()
+}
+
+func migrateTrafficPeriodTx(ctx context.Context, tx *sql.Tx, migration TrafficPeriodMigration, ts string) error {
+	if migration.UserID <= 0 || migration.SourcePeriodKey == "" || migration.TargetPeriodKey == "" || migration.SourcePeriodKey == migration.TargetPeriodKey {
+		return nil
+	}
+	targetKey, err := resolveTrafficPeriodKeyTx(ctx, tx, migration.UserID, migration.TargetPeriodKey)
+	if err != nil {
+		return err
+	}
+	if targetKey == migration.SourcePeriodKey {
+		token := strings.NewReplacer("-", "", ":", "", ".", "", "Z", "", "+", "").Replace(ts)
+		targetKey = migration.TargetPeriodKey + "#migration-" + token
+	}
+	aliases, err := trafficPeriodAliasesTx(ctx, tx, migration.UserID, migration.SourcePeriodKey)
+	if err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `insert or ignore into traffic_period_transitions(user_id,source_period_key,target_period_key,created_at) values(?,?,?,?)`, migration.UserID, migration.SourcePeriodKey, targetKey, ts)
+	if err != nil {
+		return err
+	}
+	inserted, err := res.RowsAffected()
+	if err != nil || inserted == 0 {
+		return err
+	}
+	for _, alias := range aliases {
+		if _, err := tx.ExecContext(ctx, `update traffic_period_transitions set target_period_key=? where user_id=? and source_period_key=?`, targetKey, migration.UserID, alias); err != nil {
+			return err
+		}
+	}
+	var upload, download int64
+	err = tx.QueryRowContext(ctx, `select upload_bytes,download_bytes from traffic_periods where user_id=? and period_key=?`, migration.UserID, migration.SourcePeriodKey).Scan(&upload, &download)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	var existingUpload, existingDownload int64
+	err = tx.QueryRowContext(ctx, `select upload_bytes,download_bytes from traffic_periods where user_id=? and period_key=?`, migration.UserID, targetKey).Scan(&existingUpload, &existingDownload)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	totalUpload, totalDownload := existingUpload+upload, existingDownload+download
+	state := periodState(totalUpload+totalDownload, migration.TrafficLimit)
+	_, err = tx.ExecContext(ctx, `insert into traffic_periods(user_id,period_key,started_at,ends_at,upload_bytes,download_bytes,traffic_limit_bytes,state,updated_at) values(?,?,?,?,?,?,?,?,?)
+		on conflict(user_id,period_key) do update set upload_bytes=upload_bytes+excluded.upload_bytes,download_bytes=download_bytes+excluded.download_bytes,traffic_limit_bytes=excluded.traffic_limit_bytes,state=case when excluded.traffic_limit_bytes>0 and upload_bytes+download_bytes+excluded.upload_bytes+excluded.download_bytes>=excluded.traffic_limit_bytes then 'quota_exceeded' else 'active' end,updated_at=excluded.updated_at`, migration.UserID, targetKey, migration.TargetStart.UTC().Format(time.RFC3339Nano), migration.TargetEnd.UTC().Format(time.RFC3339Nano), upload, download, migration.TrafficLimit, state, ts)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `update traffic_periods set upload_bytes=0,download_bytes=0,state='active',updated_at=? where user_id=? and period_key=?`, ts, migration.UserID, migration.SourcePeriodKey); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `update users set traffic_used_bytes=?,updated_at=? where id=?`, totalUpload+totalDownload, ts, migration.UserID)
+	return err
+}
+
+func resolveTrafficPeriodKeyTx(ctx context.Context, tx *sql.Tx, userID int64, periodKey string) (string, error) {
+	current := periodKey
+	for range 16 {
+		var next string
+		err := tx.QueryRowContext(ctx, `select target_period_key from traffic_period_transitions where user_id=? and source_period_key=?`, userID, current).Scan(&next)
+		if errors.Is(err, sql.ErrNoRows) {
+			return current, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if next == "" || next == current {
+			return current, nil
+		}
+		current = next
+	}
+	return "", errors.New("traffic period transition chain is too deep")
+}
+
+func trafficPeriodAliasesTx(ctx context.Context, tx *sql.Tx, userID int64, targetPeriodKey string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `select source_period_key from traffic_period_transitions where user_id=?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	var candidates []string
+	for rows.Next() {
+		var source string
+		if err := rows.Scan(&source); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		candidates = append(candidates, source)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	aliases := make([]string, 0, len(candidates))
+	for _, source := range candidates {
+		resolved, err := resolveTrafficPeriodKeyTx(ctx, tx, userID, source)
+		if err != nil {
+			return nil, err
+		}
+		if resolved == targetPeriodKey {
+			aliases = append(aliases, source)
+		}
+	}
+	return aliases, nil
 }
 
 // SetPlanRevisionActivationChange links an access change to a pending

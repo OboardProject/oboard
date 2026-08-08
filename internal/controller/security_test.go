@@ -527,6 +527,8 @@ func TestPageDataIncludesMinimalCurrentUser(t *testing.T) {
 	}
 	h := newTestServer(db, "test-secret", "").Handler()
 	request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=dashboard", token, nil, http.StatusForbidden)
+	request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=plans", token, nil, http.StatusForbidden)
+	request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans", token, nil, http.StatusForbidden)
 	page := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=account", token, nil, http.StatusOK)
 	current := page["current_user"].(map[string]any)
 	if current["username"] != "viewer" || current["role"] != "viewer" {

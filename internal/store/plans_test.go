@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,7 +132,7 @@ func TestSubscriptionPlanCRUDAndNodeVersions(t *testing.T) {
 	}
 
 	// Activation advances the current pointer and clears pending.
-	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, created.Revision.ID, 7); err != nil {
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, created.Revision.ID, 7, nil); err != nil {
 		t.Fatal(err)
 	}
 	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
@@ -159,7 +160,7 @@ func TestSubscriptionPlanCRUDAndNodeVersions(t *testing.T) {
 	}
 	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
 	removedID := plan.PendingRevisionID
-	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, removedID, 8); err != nil {
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, removedID, 8, nil); err != nil {
 		t.Fatal(err)
 	}
 	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
@@ -193,7 +194,7 @@ func TestSubscriptionPlanCRUDAndNodeVersions(t *testing.T) {
 
 	// Restore creates a new version based on a historical revision.
 	historical := revisions[0]
-	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, plan.PendingRevisionID, 8); err != nil {
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, plan.PendingRevisionID, 8, nil); err != nil {
 		t.Fatal(err)
 	}
 	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
@@ -219,7 +220,7 @@ func TestSubscriptionPlanCRUDAndNodeVersions(t *testing.T) {
 
 	// Re-adding an existing node in the same mutation is idempotent.
 	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
-	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, plan.PendingRevisionID, 8); err != nil {
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, plan.PendingRevisionID, 8, nil); err != nil {
 		t.Fatal(err)
 	}
 	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
@@ -402,17 +403,17 @@ func TestPlanVersionActivationConflictKeepsCurrent(t *testing.T) {
 	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
 	currentBefore := plan.CurrentRevisionID
 	// Wrong current or wrong pending both conflict and keep the plan intact.
-	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID+1, created.Revision.ID, 1); !errors.Is(err, ErrPlanRevisionConflict) {
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID+1, created.Revision.ID, 1, nil); !errors.Is(err, ErrPlanRevisionConflict) {
 		t.Fatalf("stale current err = %v", err)
 	}
-	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, 99999, 1); !errors.Is(err, ErrPlanRevisionConflict) {
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, 99999, 1, nil); !errors.Is(err, ErrPlanRevisionConflict) {
 		t.Fatalf("stale pending err = %v", err)
 	}
 	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
 	if plan.CurrentRevisionID != currentBefore || plan.PendingRevisionID == 0 {
 		t.Fatalf("conflicting activation mutated plan: %#v", plan)
 	}
-	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, created.Revision.ID, 9); err != nil {
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, created.Revision.ID, 9, nil); err != nil {
 		t.Fatal(err)
 	}
 	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
@@ -460,12 +461,79 @@ func TestPlanDraftLimits(t *testing.T) {
 	if versionRev.SpeedLimitMbps != 200 || versionRev.TrafficResetDay != 15 {
 		t.Fatalf("version revision = %#v", versionRev)
 	}
-	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, got.CurrentRevisionID, created.Revision.ID, 3); err != nil {
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, got.CurrentRevisionID, created.Revision.ID, 3, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.GetSubscriptionPlan(ctx, plan.ID)
 	if got.SpeedLimitMbps != 200 || got.TrafficResetMode != "month_day" {
 		t.Fatalf("plan limits after activation = %#v", got)
+	}
+}
+
+func TestPlanActivationMergesTrafficIntoExistingTargetPeriod(t *testing.T) {
+	ctx := context.Background()
+	s := openPlansTestStore(t)
+	createPlanTestUser(t, s, 1, "alice")
+	plan := &model.SubscriptionPlan{Name: "period-migration", Enabled: true, TrafficLimitBytes: 1000, TrafficResetMode: "monthly", TrafficResetDay: 1}
+	if err := s.CreateSubscriptionPlan(ctx, plan, nil); err != nil {
+		t.Fatal(err)
+	}
+	mode := "anniversary_month"
+	created, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Settings:            &PlanSettingsMutation{TrafficResetMode: &mode},
+		ChangeKind:          model.PlanChangeKindSettings,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := time.Now().UTC()
+	if _, err := s.db.ExecContext(ctx, `insert into traffic_periods(user_id,period_key,started_at,ends_at,upload_bytes,download_bytes,traffic_limit_bytes,state,updated_at) values(1,'old',?,?,100,50,1000,'active',?),(1,'new',?,?,20,30,1000,'active',?)`, ts.Add(-time.Hour).Format(time.RFC3339Nano), ts.Add(time.Hour).Format(time.RFC3339Nano), now(), ts.Add(-time.Hour).Format(time.RFC3339Nano), ts.Add(time.Hour).Format(time.RFC3339Nano), now()); err != nil {
+		t.Fatal(err)
+	}
+	migration := TrafficPeriodMigration{UserID: 1, SourcePeriodKey: "old", TargetPeriodKey: "new", TargetStart: ts.Add(-time.Hour), TargetEnd: ts.Add(time.Hour), TrafficLimit: 180}
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, created.Revision.ID, 3, []TrafficPeriodMigration{migration}); err != nil {
+		t.Fatal(err)
+	}
+	period, err := s.GetTrafficPeriod(ctx, 1, "new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if period.Upload != 120 || period.Download != 80 || period.State != "quota_exceeded" {
+		t.Fatalf("merged period = %#v", period)
+	}
+	user, err := s.GetUser(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.TrafficUsedBytes != 200 {
+		t.Fatalf("traffic_used_bytes = %d, want 200", user.TrafficUsedBytes)
+	}
+	source, err := s.GetTrafficPeriod(ctx, 1, "old")
+	if err != nil || source.Upload != 0 || source.Download != 0 {
+		t.Fatalf("source period was not moved: %#v err=%v", source, err)
+	}
+	resolved, changed, err := s.ResolveTrafficPeriodKey(ctx, 1, "old")
+	if err != nil || !changed || resolved != "new" {
+		t.Fatalf("resolved period = %q changed=%v err=%v", resolved, changed, err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateTrafficPeriodTx(ctx, tx, TrafficPeriodMigration{UserID: 1, SourcePeriodKey: "new", TargetPeriodKey: "old", TargetStart: ts.Add(-time.Hour), TargetEnd: ts.Add(time.Hour), TrafficLimit: 180}, now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	resolved, changed, err = s.ResolveTrafficPeriodKey(ctx, 1, "old")
+	if err != nil || !changed || !strings.Contains(resolved, "#migration-") {
+		t.Fatalf("switch-back resolution = %q changed=%v err=%v", resolved, changed, err)
+	}
+	switchBack, err := s.GetTrafficPeriod(ctx, 1, resolved)
+	if err != nil || switchBack.Upload != 120 || switchBack.Download != 80 {
+		t.Fatalf("switch-back period = %#v err=%v", switchBack, err)
 	}
 }
 

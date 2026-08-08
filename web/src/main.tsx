@@ -71,7 +71,7 @@ import { Input } from './components/ui/input'
 import { Select } from './components/ui/select'
 import { Toast } from './components/ui/toast'
 import { Dialog } from './components/ui/dialog'
-import { FormField, TrafficLimitInput } from './components/ui/form-field'
+import { FormField } from './components/ui/form-field'
 import { TableSkeleton, CardSkeleton, DashboardSkeleton } from './components/ui/skeleton'
 import { MCPAccessPage } from './features/mcp/MCPAccessPage'
 import { AnimatePresence, LazyMotion, domAnimation, m, motion, useReducedMotion } from 'motion/react'
@@ -191,7 +191,7 @@ type AccessSubjectType = 'user' | 'group'
 type AccessScopeType = 'global' | 'server' | 'inbound' | 'proxy_path'
 type SubscriptionCustomPathPolicy = 'inherit' | 'allow' | 'deny'
 type SubscriptionCustomPathMode = 'disabled' | 'selective' | 'enabled'
-type UserGroup = { id: number; name: string; description: string; role: Role; system_key?: string; enabled: boolean; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; subscription_custom_path_policy?: SubscriptionCustomPathPolicy }
+type UserGroup = { id: number; name: string; description: string; role: Role; system_key?: string; enabled: boolean; subscription_custom_path_policy?: SubscriptionCustomPathPolicy }
 type UserGroupMember = { id: number; group_id: number; user_id: number; enabled: boolean }
 type InboundAccessGrant = { id: number; subject_type: AccessSubjectType; subject_id: number; scope_type: AccessScopeType; server_id?: number; inbound_id?: number; proxy_path_id?: number; enabled: boolean }
 type Outbound = { id: number; server_id: number; next_server_id?: number; name: string; protocol: Protocol; target_address: string; target_port: number; config_json: string; enabled: boolean }
@@ -314,10 +314,10 @@ type AuditReview = {
 }
 type AuditReviewEvidence = { ref: string; review_id: string; kind: string; user_id?: number; server_id?: number; payload: unknown; created_at: string }
 type AuditReviewJob = { id: string; review_id: string; provider_id: string; stage: number; position: number; kind: string; status: string; input?: unknown; output?: unknown; error?: string; error_detail?: unknown; attempts: number; input_tokens: number; output_tokens: number; created_at: string; updated_at: string; completed_at?: string }
-type LimitMode = 'inherit' | 'custom'
+type LimitMode = 'inherit' | 'unlimited' | 'custom'
 type SessionUser = Pick<User, 'id' | 'username' | 'nickname' | 'role' | 'status' | 'totp_enabled' | 'passkey_count'>
-type UserDraft = { username: string; nickname: string; password?: string; role: Role; status: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; limit_mode: LimitMode }
-type UserGroupDraft = { name: string; description: string; role: Role; enabled: boolean; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number }
+type UserDraft = { username: string; nickname: string; password?: string; role: Role; status: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; speed_limit_mode: LimitMode; traffic_limit_mode: LimitMode }
+type UserGroupDraft = { name: string; description: string; role: Role; enabled: boolean }
 
 const protocols: Protocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'ssh']
 const proxyProtocols: Exclude<Protocol, 'ssh'>[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru']
@@ -714,8 +714,8 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   routing: { label: '分流规则', desc: '为任意服务器配置分流规则、直连、链路或导入节点。', group: '流量' },
   'external-outbounds': { label: '导入节点', desc: '导入第三方 SS、SOCKS、VLESS 等节点。', group: '流量' },
   users: { label: '用户与分组', desc: '用户与分组', group: '访问控制' },
-  nodes: { label: '节点分配', desc: '可分配节点目录：筛选、分组、方案归属、有效用户与例外。', group: '访问控制' },
-  plans: { label: '订阅方案', desc: '方案节点、排序、限额、版本历史与两阶段部署。', group: '访问控制' },
+  nodes: { label: '节点分配', desc: '可分配节点目录：筛选、分组、套餐归属、有效用户与例外。', group: '访问控制' },
+  plans: { label: '套餐', desc: '套餐节点、排序、限额、版本历史与两阶段部署。', group: '访问控制' },
   dns: { label: 'DNS 设置', desc: '为服务器选择解析服务并检查解析速度。', group: '网络' },
   'dns-records': { label: '域名解析', desc: '管理云服务商账号和域名解析记录。', group: '网络' },
   mtu: { label: 'MTU', desc: '检测路径 MTU、给出建议并可由 Agent 应用。', group: '网络' },
@@ -10422,8 +10422,8 @@ function planGrantedUserIDsForEntry(data: any, entry: Inbound): Set<number> {
 
 function inboundAccessSummary(data: any, entry: Inbound) {
   const count = planGrantedUserIDsForEntry(data, entry).size
-  if (!count) return '方案未授权用户'
-  return `${count} 个方案用户`
+  if (!count) return '套餐未授权用户'
+  return `${count} 个套餐用户`
 }
 
 function latestInboundProbeSummary(data: any, inboundID: number) {
@@ -11795,34 +11795,35 @@ function ExternalOutbounds({ data, client, load }: any) {
 }
 
 function defaultUserDraft(): UserDraft {
-  return { username: 'user1', nickname: '', password: 'change-me-123', role: 'viewer', status: 'active', speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'monthly', traffic_reset_day: 1, limit_mode: 'inherit' }
+  return { username: 'user1', nickname: '', password: 'change-me-123', role: 'viewer', status: 'active', speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'monthly', traffic_reset_day: 1, speed_limit_mode: 'inherit', traffic_limit_mode: 'inherit' }
 }
 
 function userToDraft(user: User): UserDraft {
-  return { username: user.username, nickname: user.nickname || '', role: user.role, status: user.status, speed_limit_mbps: user.speed_limit_mbps || 0, traffic_limit_bytes: user.traffic_limit_bytes || 0, traffic_reset_mode: user.traffic_reset_mode || 'monthly', traffic_reset_day: user.traffic_reset_day || 1, limit_mode: userLimitMode(user) }
+  return { username: user.username, nickname: user.nickname || '', role: user.role, status: user.status, speed_limit_mbps: user.speed_limit_mbps > 0 ? user.speed_limit_mbps : 0, traffic_limit_bytes: user.traffic_limit_bytes > 0 ? user.traffic_limit_bytes : 0, traffic_reset_mode: user.traffic_reset_mode || 'monthly', traffic_reset_day: user.traffic_reset_day || 1, speed_limit_mode: user.speed_limit_mbps < 0 ? 'unlimited' : user.speed_limit_mbps > 0 ? 'custom' : 'inherit', traffic_limit_mode: user.traffic_limit_bytes < 0 ? 'unlimited' : user.traffic_limit_bytes > 0 ? 'custom' : 'inherit' }
 }
 
 function userDraftPayload(draft: UserDraft, includePassword: boolean) {
-  const custom = draft.limit_mode === 'custom'
+  const speed = draft.speed_limit_mode === 'unlimited' ? -1 : draft.speed_limit_mode === 'custom' ? Number(draft.speed_limit_mbps || 0) : 0
+  const traffic = draft.traffic_limit_mode === 'unlimited' ? -1 : draft.traffic_limit_mode === 'custom' ? Number(draft.traffic_limit_bytes || 0) : 0
   return {
     username: draft.username.trim(),
     nickname: draft.nickname.trim(),
     role: draft.role,
     status: draft.status,
-    speed_limit_mbps: custom ? Number(draft.speed_limit_mbps || 0) : 0,
-    traffic_limit_bytes: custom ? Number(draft.traffic_limit_bytes || 0) : 0,
-    traffic_reset_mode: custom ? (draft.traffic_reset_mode || 'monthly') : 'monthly',
-    traffic_reset_day: custom ? Number(draft.traffic_reset_day || 1) : 1,
+    speed_limit_mbps: speed,
+    traffic_limit_bytes: traffic,
+    traffic_reset_mode: draft.traffic_limit_mode === 'custom' ? (draft.traffic_reset_mode || 'monthly') : 'monthly',
+    traffic_reset_day: draft.traffic_limit_mode === 'custom' ? Number(draft.traffic_reset_day || 1) : 1,
     ...(includePassword ? { password: draft.password || '' } : {}),
   }
 }
 
 function defaultUserGroupDraft(): UserGroupDraft {
-  return { name: 'group-1', description: '', role: 'viewer', enabled: true, speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'monthly', traffic_reset_day: 1 }
+  return { name: 'group-1', description: '', role: 'viewer', enabled: true }
 }
 
 function groupToDraft(group: UserGroup): UserGroupDraft {
-  return { name: group.name, description: group.description || '', role: group.role || 'viewer', enabled: group.enabled !== false, speed_limit_mbps: group.speed_limit_mbps || 0, traffic_limit_bytes: group.traffic_limit_bytes || 0, traffic_reset_mode: group.traffic_reset_mode || 'monthly', traffic_reset_day: group.traffic_reset_day || 1 }
+  return { name: group.name, description: group.description || '', role: group.role || 'viewer', enabled: group.enabled !== false }
 }
 
 function CopySubscriptionButton({ user }: { user: User }) {
@@ -12117,7 +12118,7 @@ function UserManagement({ data, client, load }: any) {
           <thead>
             <tr style={{ borderBottom: '1.5px solid var(--border-color)', color: 'var(--text-muted)' }}>
               <th className="user-col-user" style={{ fontWeight: 600 }}>用户</th>
-              <th className="user-col-plan" style={{ fontWeight: 600 }}>方案</th>
+              <th className="user-col-plan" style={{ fontWeight: 600 }}>套餐</th>
               <th className="user-col-limit" style={{ fontWeight: 600 }}>限速</th>
               <th className="user-col-groups" style={{ fontWeight: 600 }}>所属组</th>
               <th className="user-col-traffic" style={{ fontWeight: 600 }}>流量配额</th>
@@ -12164,12 +12165,12 @@ function UserManagement({ data, client, load }: any) {
                       {usr.traffic_quota_state && <span className="user-table-period">{trafficQuotaLabel(usr.traffic_quota_state)}{usr.traffic_period_end ? ` · ${formatDate(usr.traffic_period_end)}` : ''}</span>}
                     </div>
                   </td>
-                  <td className="user-col-plan" data-label="方案">
+                  <td className="user-col-plan" data-label="套餐">
                     {userPlan ? (
                       <span className="badge-custom badge-muted user-table-group" style={{ fontWeight: 500 }} title={planBinding.expires_at ? `到期 ${formatDate(planBinding.expires_at)}` : '长期有效'}>
                         {userPlan.name}{planBinding.starts_at ? ' · 待生效' : ''}
                       </span>
-                    ) : <span className="muted" style={{ fontSize: 12 }}>无方案</span>}
+                    ) : <span className="muted" style={{ fontSize: 12 }}>无套餐</span>}
                   </td>
                   <td className="user-col-limit" data-label="限速" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
                     {speedLimitText}
@@ -12208,8 +12209,8 @@ function UserManagement({ data, client, load }: any) {
                       <button 
                         onClick={() => setPlanUser(usr)}
                         className="btn-custom btn-secondary user-row-icon-button" 
-                        title="方案与例外"
-                        aria-label={`方案与例外 ${usr.username}`}
+                        title="套餐与例外"
+                        aria-label={`套餐与例外 ${usr.username}`}
                       >
                         <Layers size={14} />
                       </button>
@@ -12258,7 +12259,7 @@ function UserGroupsPanel({ data, onCreateGroup, onEditGroup, onManageMembers, on
     <div className="section-toolbar user-groups-heading">
       <div>
         <div className="user-groups-title"><h3>用户分组</h3><span>{groups.length}</span></div>
-        <p className="muted">统一设置成员的入口权限、速度和流量额度。</p>
+        <p className="muted">统一设置成员的后台权限；限速和流量由套餐或用户个人设置决定。</p>
       </div>
       <button onClick={onCreateGroup}><Plus size={16} />新建分组</button>
     </div>
@@ -12274,9 +12275,6 @@ function UserGroupsPanel({ data, onCreateGroup, onEditGroup, onManageMembers, on
             </div>
             <div className="user-group-policies">
               <div><span><Shield size={14} />权限</span><strong>{sessionRoleLabel(group.role)}</strong></div>
-              <div><span><Gauge size={14} />速度</span><strong>{formatSpeedLimit(group.speed_limit_mbps || 0)}</strong></div>
-              <div><span><Database size={14} />流量</span><strong>{formatTrafficLimit(group.traffic_limit_bytes || 0)}</strong></div>
-              <div><span><CalendarDays size={14} />重置</span><strong>{trafficResetSummary(group)}</strong></div>
             </div>
             <div className="user-group-actions">
               <button className="ghost user-group-member-toggle" onClick={() => onManageMembers(group)}>
@@ -12351,18 +12349,26 @@ function UserPasswordDialog({ user, onCancel, onSubmit }: { user: User; onCancel
 
 function UserLimitFields({ draft, setDraft }: { draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>> }) {
   return <>
-    <FormField label="限速策略" hint="可跟随用户组或单独设置。">
-      <Select variant="segmented" value={draft.limit_mode} onChange={e => setDraft({ ...draft, limit_mode: e.target.value as LimitMode })}>
-        <option value="inherit">跟随用户组</option>
-        <option value="custom">单独设置</option>
+    <FormField label="限速策略" hint="个人设置优先于套餐。">
+      <Select variant="segmented" value={draft.speed_limit_mode} onChange={e => { const mode = e.target.value as LimitMode; setDraft({ ...draft, speed_limit_mode: mode, speed_limit_mbps: mode === 'custom' && draft.speed_limit_mbps <= 0 ? 10 : draft.speed_limit_mbps }) }}>
+        <option value="inherit">跟随套餐</option>
+        <option value="unlimited">不限速</option>
+        <option value="custom">自定义</option>
       </Select>
     </FormField>
-    {draft.limit_mode === 'custom' && <>
-      <FormField label="用户限速" hint="0 表示不限速。">
-        <input type="number" min={0} value={draft.speed_limit_mbps} onChange={e => setDraft({ ...draft, speed_limit_mbps: Number(e.target.value) })} placeholder="Mbps" />
-      </FormField>
-      <FormField label="用户流量额度" hint="0 表示不限量。">
-        <input type="number" min={0} value={draft.traffic_limit_bytes} onChange={e => setDraft({ ...draft, traffic_limit_bytes: Number(e.target.value) })} placeholder="字节" />
+    {draft.speed_limit_mode === 'custom' && <FormField label="用户限速">
+      <div className="input-with-unit"><input type="number" min={1} value={draft.speed_limit_mbps} onChange={e => setDraft({ ...draft, speed_limit_mbps: Number(e.target.value) })} /><span>Mbps</span></div>
+    </FormField>}
+    <FormField label="流量策略" hint="个人设置优先于套餐。">
+      <Select variant="segmented" value={draft.traffic_limit_mode} onChange={e => { const mode = e.target.value as LimitMode; setDraft({ ...draft, traffic_limit_mode: mode, traffic_limit_bytes: mode === 'custom' && draft.traffic_limit_bytes <= 0 ? 1073741824 : draft.traffic_limit_bytes }) }}>
+        <option value="inherit">跟随套餐</option>
+        <option value="unlimited">不限量</option>
+        <option value="custom">自定义</option>
+      </Select>
+    </FormField>
+    {draft.traffic_limit_mode === 'custom' && <>
+      <FormField label="用户流量额度">
+        <input type="number" min={1} value={draft.traffic_limit_bytes} onChange={e => setDraft({ ...draft, traffic_limit_bytes: Number(e.target.value) })} placeholder="字节" />
       </FormField>
       <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={(patch) => setDraft({ ...draft, ...patch })} />
     </>}
@@ -12448,16 +12454,13 @@ function UserGroupFields({ draft, setDraft }: { draft: UserGroupDraft; setDraft:
     <FormField label="后台权限" hint="成员继承该组权限。"><Select variant="segmented" value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Role })}><option value="viewer">普通用户</option><option value="operator">操作员</option><option value="admin">管理员</option></Select></FormField>
     <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => setDraft({ ...draft, enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">停用</option></Select></FormField>
     <FormField className="user-group-description-field" label="备注"><input value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} placeholder="可选" /></FormField>
-    <FormField label="速度上限" hint="0 表示不限速"><div className="input-with-unit"><input type="number" min={0} value={draft.speed_limit_mbps} onChange={e => setDraft({ ...draft, speed_limit_mbps: Number(e.target.value) })} /><span>Mbps</span></div></FormField>
-    <FormField label="流量额度" hint="0 表示不限量"><TrafficLimitInput bytes={draft.traffic_limit_bytes} onChange={(traffic_limit_bytes) => setDraft({ ...draft, traffic_limit_bytes })} /></FormField>
-    <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={(patch) => setDraft({ ...draft, ...patch })} />
   </div>
 }
 
 function UserGroupCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: UserGroupDraft; setDraft: React.Dispatch<React.SetStateAction<UserGroupDraft>>; onCancel: () => void; onSubmit: () => Promise<void> }) {
   return <MotionDialogPanel onCancel={onCancel} className="user-group-dialog user-form-dialog">
       <header className="dialog-head">
-        <div><h2 id="user-group-create-title">新建用户组</h2><p className="muted">设置成员共用的权限和额度。</p></div>
+        <div><h2 id="user-group-create-title">新建用户组</h2><p className="muted">设置成员共用的后台权限。</p></div>
         <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
       <div className="dialog-body"><UserGroupFields draft={draft} setDraft={setDraft} /></div>
@@ -13549,7 +13552,7 @@ function Subscriptions({ data, client, load, notify }: any) {
             <div className="sub-section-head">
               <div>
                 <h3><Lock size={16} />SSH 受限代理</h3>
-                <p className="muted">使用用户代理密码认证，并向支持 SSH 的订阅客户端分发。Agent 仅开放本地/动态转发。授权用户由订阅方案中的 SSH 入口节点决定。</p>
+                <p className="muted">使用用户代理密码认证，并向支持 SSH 的订阅客户端分发。Agent 仅开放本地/动态转发。授权用户由套餐中的 SSH 入口节点决定。</p>
               </div>
             </div>
             <div className="sub-user-table">
@@ -14975,43 +14978,17 @@ function formatDate(v: string) {
 function trafficQuotaLabel(v?: string) {
   return v === 'quota_exceeded' ? '已达量暂停' : '正常'
 }
-function userLimitMode(user: Pick<User, 'speed_limit_mbps' | 'traffic_limit_bytes'>): LimitMode {
-  return (user.speed_limit_mbps || user.traffic_limit_bytes) ? 'custom' : 'inherit'
-}
-function enabledGroupsForUser(data: any, userID: number) {
-  const groups: UserGroup[] = data.user_groups || []
-  const members: UserGroupMember[] = data.user_group_members || []
-  const groupByID = new Map(groups.filter(g => g.enabled !== false).map(g => [g.id, g]))
-  return members
-    .filter(m => m.user_id === userID && m.enabled !== false)
-    .map(m => groupByID.get(m.group_id))
-    .filter(Boolean) as UserGroup[]
-}
-function strictestPositive(values: number[]) {
-  const positives = values.filter(v => Number(v) > 0)
-  return positives.length ? Math.min(...positives) : 0
-}
 function effectiveUserLimits(data: any, user: User) {
-  const groups = enabledGroupsForUser(data, user.id)
-  const inheritedSpeed = strictestPositive(groups.map(g => g.speed_limit_mbps || 0))
-  const inheritedTraffic = strictestPositive(groups.map(g => g.traffic_limit_bytes || 0))
-  const userSpeed = user.speed_limit_mbps || 0
-  const userTraffic = user.traffic_limit_bytes || 0
-  const speed = userSpeed > 0 ? userSpeed : inheritedSpeed
-  const traffic = userTraffic > 0 ? userTraffic : inheritedTraffic
-  const source = userSpeed > 0 || userTraffic > 0 ? '用户单独设置' : groups.length && (inheritedSpeed || inheritedTraffic) ? '跟随用户组' : '不限速'
-  return { speed, traffic, source, groups }
+  const binding = (data.user_plan_bindings || []).find((item: any) => item.user_id === user.id && item.enabled !== false)
+  const plan = binding ? (data.subscription_plans || []).find((item: any) => item.id === binding.plan_id && item.enabled !== false) : null
+  const speed = user.speed_limit_mbps < 0 ? 0 : user.speed_limit_mbps > 0 ? user.speed_limit_mbps : Number(plan?.speed_limit_mbps || 0)
+  const traffic = user.traffic_limit_bytes < 0 ? 0 : user.traffic_limit_bytes > 0 ? user.traffic_limit_bytes : Number(plan?.traffic_limit_bytes || 0)
+  const source = user.speed_limit_mbps !== 0 || user.traffic_limit_bytes !== 0 ? '用户单独设置' : plan ? `跟随套餐 ${plan.name}` : '未设置套餐'
+  return { speed, traffic, source }
 }
 function userLimitSummary(data: any, user: User) {
   const limits = effectiveUserLimits(data, user)
-  const groupText = limits.groups.length ? ` · ${limits.groups.map(g => g.name).join('、')}` : ''
-  return `${limits.source} · ${formatSpeedLimit(limits.speed)} · ${formatTrafficLimit(limits.traffic)}${groupText}`
-}
-function groupLimitSummary(group: Pick<UserGroup, 'speed_limit_mbps' | 'traffic_limit_bytes'>) {
-  return `${formatSpeedLimit(group.speed_limit_mbps || 0)} · ${formatTrafficLimit(group.traffic_limit_bytes || 0)}`
-}
-function trafficResetSummary(item: Pick<UserGroup, 'traffic_reset_mode' | 'traffic_reset_day'> | Pick<User, 'traffic_reset_mode' | 'traffic_reset_day'>) {
-  return (item.traffic_reset_mode || 'monthly') === 'month_day' ? `每月 ${item.traffic_reset_day || 1} 日重置` : '自然月重置'
+  return `${limits.source} · ${formatSpeedLimit(limits.speed)} · ${formatTrafficLimit(limits.traffic)}`
 }
 
 function describeAuditLog(log: AuditLog, data: any) {

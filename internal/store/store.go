@@ -215,6 +215,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists audit_logs (id integer primary key autoincrement, actor_id integer references users(id) on delete set null, action text not null, target text not null, detail text not null, ip text not null, created_at text not null)`,
 		`create table if not exists traffic_stats (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, user_id integer references users(id) on delete cascade, inbound_id integer references inbounds(id) on delete set null, upload_bytes integer not null, download_bytes integer not null, created_at text not null)`,
 		`create table if not exists traffic_periods (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, period_key text not null, started_at text not null, ends_at text not null, upload_bytes integer not null default 0, download_bytes integer not null default 0, traffic_limit_bytes integer not null default 0, state text not null default 'active', updated_at text not null, unique(user_id,period_key))`,
+		`create table if not exists traffic_period_transitions (user_id integer not null references users(id) on delete cascade, source_period_key text not null, target_period_key text not null, created_at text not null, primary key(user_id,source_period_key))`,
 		`create table if not exists traffic_reports (report_id text primary key, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, inbound_id integer references inbounds(id) on delete set null, path_id integer references proxy_paths(id) on delete set null, period_key text not null, upload_bytes integer not null, download_bytes integer not null, started_at text not null, ended_at text not null, created_at text not null)`,
 		`create table if not exists connection_audit_reports (report_id text primary key, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, inbound_id integer references inbounds(id) on delete set null, path_id integer references proxy_paths(id) on delete set null, device_id_hash text not null default '', credential_epoch integer not null default 0, client_instance_id_hash text not null default '', source_ip text not null, route_id text not null default '', source_geo_code text not null default '', source_country_code text not null default '', source_country text not null default '', source_province text not null default '', source_city text not null default '', source_isp text not null default '', geo_database_revision text not null default '', network text not null, destination text not null default '', destination_port integer not null default 0, outbound_tag text not null default '', outbound_type text not null default '', connection_count integer not null, closed_count integer not null default 0, duration_total_ms integer not null default 0, duration_max_ms integer not null default 0, upload_bytes integer not null default 0, download_bytes integer not null default 0, payload_first_at text, payload_last_at text, duration_le_1s_count integer not null default 0, duration_le_5s_count integer not null default 0, duration_le_20s_count integer not null default 0, duration_gt_20s_count integer not null default 0, probe_state text not null default '', internal_probe integer not null default 0, presence_sequence integer not null default 0, active_peak integer not null default 0, active_at_end integer not null default 0, collection_generation integer not null default 0, bucket_capacity integer not null default 1, dropped_bucket_count integer not null default 0, collection_started_at text not null, collection_ended_at text not null, started_at text not null, ended_at text not null, created_at text not null)`,
 		`create table if not exists connection_presence_events (agent_id text not null, sequence integer not null, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, inbound_id integer not null default 0, path_id integer not null default 0, device_id_hash text not null default '', credential_epoch integer not null default 0, source_ip text not null, route_id text not null default '', network text not null, event text not null, state text not null, active_connections integer not null default 0, meaningful integer not null default 0, payload_last_at text, event_at text not null, created_at text not null, primary key(agent_id,sequence))`,
@@ -251,6 +252,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_connection_audit_source_time on connection_audit_reports(source_ip, ended_at desc)`,
 		`create index if not exists idx_connection_audit_time on connection_audit_reports(ended_at desc)`,
 		`create index if not exists idx_traffic_periods_user on traffic_periods(user_id, period_key)`,
+		`create index if not exists idx_traffic_period_transitions_target on traffic_period_transitions(user_id,target_period_key)`,
 		`create index if not exists idx_traffic_leases_server on traffic_leases(server_id, period_key)`,
 		`create index if not exists idx_server_metric_samples_server_time on server_metric_samples(server_id, sampled_at desc)`,
 		`create index if not exists idx_user_group_members_group on user_group_members(group_id, enabled)`,
@@ -4997,6 +4999,33 @@ func (s *Store) GetTrafficPeriod(ctx context.Context, userID int64, periodKey st
 	p.EndsAt = parseTime(end)
 	p.UpdatedAt = parseTime(updated)
 	return p, nil
+}
+
+func (s *Store) ResolveTrafficPeriodKey(ctx context.Context, userID int64, periodKey string) (string, bool, error) {
+	current := periodKey
+	changed := false
+	for range 16 {
+		var next string
+		err := s.db.QueryRowContext(ctx, `select target_period_key from traffic_period_transitions where user_id=? and source_period_key=?`, userID, current).Scan(&next)
+		if errors.Is(err, sql.ErrNoRows) {
+			return current, changed, nil
+		}
+		if err != nil {
+			return "", false, err
+		}
+		if next == "" || next == current {
+			return current, changed, nil
+		}
+		current = next
+		changed = true
+	}
+	return "", false, errors.New("traffic period transition chain is too deep")
+}
+
+func (s *Store) PreviousTrafficPeriodKey(ctx context.Context, userID int64, targetPeriodKey string) (string, bool) {
+	var source string
+	err := s.db.QueryRowContext(ctx, `select source_period_key from traffic_period_transitions where user_id=? and target_period_key=? order by created_at desc limit 1`, userID, targetPeriodKey).Scan(&source)
+	return source, err == nil && source != ""
 }
 
 func (s *Store) EnsureTrafficPeriod(ctx context.Context, userID int64, periodKey string, start, end time.Time, limit int64) (model.TrafficPeriod, error) {
