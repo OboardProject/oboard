@@ -50,7 +50,7 @@ import {
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
 import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
 import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
-import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
+import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
 import type { GraphPathFocusState } from './components/proxy-path/graph-topology'
 import { roundedOrthogonalPath, type GraphRect } from './components/proxy-path/graph-geometry'
 import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
@@ -10981,6 +10981,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const sourcePath = source ? pathByID.get(source.path_id) : undefined
     if (source && sourcePath?.enabled !== false && sourcePath?.inbound_id === path.inbound_id) collapsedDirectSourceByPath.set(path.id, source)
   })
+  const expandedPathIDsByStep = graphExpandedPathIDsByStep(visiblePaths, data.proxy_path_steps || [])
   const sharedTopology = buildSharedProxyPathTopology(visiblePaths, data.proxy_path_steps || [])
   const stepNodeID = (step: ProxyPathStep) => proxyPathStepNodeID(canonicalProxyPathStep(sharedTopology, step))
   const pathDisplayName = (pathID: number) => {
@@ -10995,7 +10996,10 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     if (root) pathIDsByServer.set(root.server_id, mergeGraphPathIDs(pathIDsByServer.get(root.server_id), path.id))
     ;(stepsByPath.get(path.id) || []).forEach(step => {
       const serverID = graphStepServerID(step, inboundByID)
-      if (serverID) pathIDsByServer.set(serverID, mergeGraphPathIDs(pathIDsByServer.get(serverID), path.id))
+      if (!serverID) return
+      ;(expandedPathIDsByStep.get(step.id) || [path.id]).forEach(pathID => {
+        pathIDsByServer.set(serverID, mergeGraphPathIDs(pathIDsByServer.get(serverID), pathID))
+      })
     })
   })
   const serverRoles = new Map<number, GraphServerRole>()
@@ -11142,8 +11146,8 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       const canonicalPath = pathByID.get(canonicalStep.path_id) || path
       const canonicalPathSteps = (stepsByPath.get(canonicalPath.id) || []).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
       const sharedSteps = sharedTopology.stepsByCanonicalID.get(canonicalStep.id) || [canonicalStep]
-      const sharedCount = sharedSteps.length
-      const sharedPathIDs = Array.from(new Set(sharedSteps.map(member => member.path_id))).sort((left, right) => left - right)
+      const sharedPathIDs = Array.from(new Set(sharedSteps.flatMap(member => expandedPathIDsByStep.get(member.id) || [member.path_id]))).sort((left, right) => left - right)
+      const sharedCount = sharedPathIDs.length
       const sharedTerminal = sharedSteps.every(member => {
         const memberSteps = stepsByPath.get(member.path_id) || []
         return member === memberSteps[memberSteps.length - 1]
@@ -11184,7 +11188,8 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
         ? stepNodeID(pathSteps[pathSteps.length - 1])
         : `server-${root.server_id}`
     const sourcePosition = positions[sourceNodeID] || nodes.find(node => node.id === sourceNodeID)?.position || defaultServerGraphPosition(index)
-    const exitServerID = pathSteps.length ? graphStepServerID(pathSteps[pathSteps.length - 1], inboundByID) : root.server_id
+    const exitStep = collapsedSource || pathSteps[pathSteps.length - 1]
+    const exitServerID = exitStep ? graphStepServerID(exitStep, inboundByID) : root.server_id
     const exitServer = (data.servers || []).find((server: Server) => server.id === exitServerID) as Server | undefined
     const id = directExitPathNodeID(path.id)
     const position = positions[id] || { x: sourcePosition.x + 20, y: sourcePosition.y + 250 }
@@ -11235,8 +11240,12 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       const transport = proxyPathTransportPresentation(step)
       const sharedEdgeKey = `${source}\u001f${target}\u001f${transport.kind}`
 	    const existingEdge = renderedPathEdges.get(sharedEdgeKey)
+      const stepPathIDs = expandedPathIDsByStep.get(step.id) || [path.id]
       if (existingEdge) {
-        existingEdge.data = { ...existingEdge.data!, pathIDs: mergeGraphPathIDs(existingEdge.data?.pathIDs, path.id) }
+        existingEdge.data = {
+          ...existingEdge.data!,
+          pathIDs: stepPathIDs.reduce((pathIDs, pathID) => mergeGraphPathIDs(pathIDs, pathID), existingEdge.data?.pathIDs),
+        }
       } else {
 	      const edge = graphTransportEdge(
           `proxy-path-${path.id}-${step.id}`,
@@ -11247,7 +11256,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
             kind: transport.kind,
             title: transport.title,
             detail: index === 0 ? (path.name || root.name || `路径 ${path.id}`) : `第 ${step.position} 跳`,
-			pathIDs: [path.id],
+			pathIDs: stepPathIDs,
             routingClass: 'primary',
           },
           { sourceHandle, targetHandle: 'target-top', animated: path.enabled !== false },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './graph-topology'
+import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphPathEdgeLabels, graphPathFocusState, mergeGraphPathIDs } from './graph-topology'
 import type { ProxyPath, ProxyPathStep } from './types'
 
 const path = (id: number, inboundID = 10): ProxyPath => ({
@@ -12,6 +12,12 @@ const path = (id: number, inboundID = 10): ProxyPath => ({
   exit_region_mode: 'auto',
   exit_region_code: '',
   enabled: true,
+})
+
+const directPath = (id: number, branchSourceStepID: number, inboundID = 10): ProxyPath => ({
+  ...path(id, inboundID),
+  kind: 'direct',
+  branch_source_step_id: branchSourceStepID,
 })
 
 const step = (id: number, pathID: number, position: number, serverID: number, configJSON = '{}'): ProxyPathStep => ({
@@ -76,6 +82,20 @@ describe('proxy graph shared topology', () => {
 
   it('keeps shared edge path membership sorted and unique', () => {
     expect(mergeGraphPathIDs(mergeGraphPathIDs([9, 2], 5), 2)).toEqual([2, 5, 9])
+  })
+
+  it('includes a branched direct exit in every step through its source prefix', () => {
+    const parentSteps = [step(101, 1, 1, 20), step(102, 1, 2, 30), step(103, 1, 3, 40)]
+    const memberships = graphExpandedPathIDsByStep(
+      [path(1), directPath(2, 102), directPath(3, 103, 11)],
+      parentSteps,
+    )
+
+    expect(memberships.get(101)).toEqual([1, 2])
+    expect(memberships.get(102)).toEqual([1, 2])
+    expect(memberships.get(103)).toEqual([1])
+    expect(graphPathFocusState(memberships.get(101), [2])).toBe('active')
+    expect(graphPathFocusState(memberships.get(103), [2])).toBe('muted')
   })
 
   it('labels a shared trunk and each branch only where membership changes', () => {

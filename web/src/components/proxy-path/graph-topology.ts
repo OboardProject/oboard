@@ -92,6 +92,38 @@ export function mergeGraphPathIDs(pathIDs: number[] | undefined, pathID: number)
   return Array.from(new Set([...(pathIDs || []), pathID])).sort((left, right) => left - right)
 }
 
+/**
+ * Expands a direct branch's membership through the parent path prefix ending
+ * at branch_source_step_id. The graph still renders the parent semantic edges
+ * once, while focus and labels recognize that the direct exit traverses them.
+ */
+export function graphExpandedPathIDsByStep(paths: ProxyPath[], steps: ProxyPathStep[]) {
+  const visiblePathByID = new Map(paths.filter(path => path.enabled !== false).map(path => [path.id, path]))
+  const stepByID = new Map(steps.map(step => [step.id, step]))
+  const stepsByPath = new Map<number, ProxyPathStep[]>()
+  steps.forEach(step => {
+    if (!visiblePathByID.has(step.path_id)) return
+    stepsByPath.set(step.path_id, [...(stepsByPath.get(step.path_id) || []), step])
+  })
+  stepsByPath.forEach(pathSteps => pathSteps.sort((left, right) => left.position - right.position || left.id - right.id))
+
+  const pathIDsByStepID = new Map<number, number[]>()
+  stepsByPath.forEach(pathSteps => pathSteps.forEach(step => pathIDsByStepID.set(step.id, [step.path_id])))
+  Array.from(visiblePathByID.values()).sort((left, right) => left.id - right.id).forEach(path => {
+    if (path.kind !== 'direct' || !path.branch_source_step_id) return
+    const source = stepByID.get(path.branch_source_step_id)
+    const sourcePath = source ? visiblePathByID.get(source.path_id) : undefined
+    if (!source || !sourcePath || sourcePath.inbound_id !== path.inbound_id) return
+    const sourceSteps = stepsByPath.get(source.path_id) || []
+    const sourceIndex = sourceSteps.findIndex(step => step.id === source.id)
+    if (sourceIndex < 0) return
+    sourceSteps.slice(0, sourceIndex + 1).forEach(step => {
+      pathIDsByStepID.set(step.id, mergeGraphPathIDs(pathIDsByStepID.get(step.id), path.id))
+    })
+  })
+  return pathIDsByStepID
+}
+
 export function graphPathFocusState(pathIDs: number[] | undefined, activePathIDs: number[]) {
   if (!activePathIDs.length) return undefined
   if (!pathIDs?.length) return 'context' as const
