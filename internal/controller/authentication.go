@@ -70,9 +70,6 @@ func (s *Server) finishUserLogin(w http.ResponseWriter, r *http.Request, user *m
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &user.ID, Action: auditAction, Target: "user", Detail: user.Username, IP: clientIP(r)})
-	if user.Role == model.RoleAdmin {
-		s.TriggerControllerUpdateCheck(r.Context())
-	}
 	write(w, http.StatusOK, payload)
 }
 

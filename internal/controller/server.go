@@ -118,12 +118,14 @@ type Server struct {
 	controllerBackupDir           string
 	controllerRuntimeStatePath    string
 	controllerListenAddress       string
-	controllerUpdatesConfigured   bool
-	controllerUpdateMu            sync.Mutex
 	controllerUpdateRunMu         sync.Mutex
+	controllerUpdateScheduleMu    sync.Mutex
+	controllerLastScheduledCheck  time.Time
 	controllerUpdateWatchMu       sync.Mutex
 	controllerUpdateWatching      bool
-	controllerLastLoginCheck      time.Time
+	controllerActivityMu          sync.Mutex
+	controllerActiveRequests      int
+	controllerLastActivity        time.Time
 	backupManager                 *backup.Manager
 	backupConfigured              bool
 	backupMu                      sync.Mutex
@@ -226,6 +228,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/controller-update/channel", s.auth(s.controllerUpdateChannel, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/install", s.auth(s.controllerUpdateInstall, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/cancel", s.auth(s.controllerUpdateCancel, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/controller-update/activity", s.auth(s.controllerUpdateActivity, model.RoleNone))
 	mux.HandleFunc("/api/v1/backups", s.auth(s.controllerBackups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups/settings", s.auth(s.controllerBackupSettings, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups/settings/test", s.auth(s.controllerBackupTestDestination, model.RoleAdmin))
@@ -683,34 +686,35 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		write(w, 200, map[string]any{"settings": s.publicSettings(r.Context(), items), "reverse_proxy_status": s.reverseProxyStatus(r)})
 	case http.MethodPost, http.MethodPatch:
 		var req struct {
-			ControllerURL               *string            `json:"controller_url"`
-			BasePath                    *string            `json:"base_path"`
-			CertificateAutoMatch        *bool              `json:"certificate_auto_match_enabled"`
-			CertificatePreference       *string            `json:"certificate_default_preference"`
-			CertificateAutoIssueCA      *string            `json:"certificate_auto_issue_acme_ca"`
-			CertificateAutoIssueEAB     *int64             `json:"certificate_auto_issue_google_eab_credential_id"`
-			SubscriptionAgePolicy       *string            `json:"subscription_age_policy"`
-			SubscriptionCustomPathMode  *string            `json:"subscription_custom_path_mode"`
-			AuditPolicy                 *model.AuditPolicy `json:"audit_policy"`
-			AuditEnabled                *bool              `json:"audit_enabled"`
-			SubscriptionAuditEnabled    *bool              `json:"subscription_audit_enabled"`
-			ConnectionAuditEnabled      *bool              `json:"connection_audit_enabled"`
-			AuditAction                 *string            `json:"audit_action"`
-			TrafficTimezone             *string            `json:"traffic_timezone"`
-			TrafficEnforcementMode      *string            `json:"traffic_enforcement_mode"`
-			ControllerLogMaxMB          *int               `json:"controller_log_max_mb"`
-			ControllerLogBackups        *int               `json:"controller_log_backups"`
-			ControllerAutoUpdate        *bool              `json:"controller_auto_update_enabled"`
-			ServerDefaultMTUMode        *string            `json:"server_default_mtu_mode"`
-			ServerDefaultBBREnabled     *bool              `json:"server_default_bbr_enabled"`
-			ServerDefaultTimeCorrection *string            `json:"server_default_time_correction_mode"`
-			TimeCheckNTPServers         []string           `json:"time_check_ntp_servers"`
-			TrustedProxyCIDRs           *[]string          `json:"trusted_proxy_cidrs"`
-			NotificationOfflineAfter    *int               `json:"notification_server_offline_after_seconds"`
-			NotificationOnlineAfter     *int               `json:"notification_server_online_after_seconds"`
-			NotificationMergeOffline    *bool              `json:"notification_server_merge_offline"`
-			RegistrationEnabled         *bool              `json:"registration_enabled"`
-			RegistrationDefaultGroupID  *int64             `json:"registration_default_group_id"`
+			ControllerURL                *string            `json:"controller_url"`
+			BasePath                     *string            `json:"base_path"`
+			CertificateAutoMatch         *bool              `json:"certificate_auto_match_enabled"`
+			CertificatePreference        *string            `json:"certificate_default_preference"`
+			CertificateAutoIssueCA       *string            `json:"certificate_auto_issue_acme_ca"`
+			CertificateAutoIssueEAB      *int64             `json:"certificate_auto_issue_google_eab_credential_id"`
+			SubscriptionAgePolicy        *string            `json:"subscription_age_policy"`
+			SubscriptionCustomPathMode   *string            `json:"subscription_custom_path_mode"`
+			AuditPolicy                  *model.AuditPolicy `json:"audit_policy"`
+			AuditEnabled                 *bool              `json:"audit_enabled"`
+			SubscriptionAuditEnabled     *bool              `json:"subscription_audit_enabled"`
+			ConnectionAuditEnabled       *bool              `json:"connection_audit_enabled"`
+			AuditAction                  *string            `json:"audit_action"`
+			TrafficTimezone              *string            `json:"traffic_timezone"`
+			TrafficEnforcementMode       *string            `json:"traffic_enforcement_mode"`
+			ControllerLogMaxMB           *int               `json:"controller_log_max_mb"`
+			ControllerLogBackups         *int               `json:"controller_log_backups"`
+			ControllerAutoUpdate         *bool              `json:"controller_auto_update_enabled"`
+			ControllerAutoUpdateInterval *int               `json:"controller_auto_update_interval_hours"`
+			ServerDefaultMTUMode         *string            `json:"server_default_mtu_mode"`
+			ServerDefaultBBREnabled      *bool              `json:"server_default_bbr_enabled"`
+			ServerDefaultTimeCorrection  *string            `json:"server_default_time_correction_mode"`
+			TimeCheckNTPServers          []string           `json:"time_check_ntp_servers"`
+			TrustedProxyCIDRs            *[]string          `json:"trusted_proxy_cidrs"`
+			NotificationOfflineAfter     *int               `json:"notification_server_offline_after_seconds"`
+			NotificationOnlineAfter      *int               `json:"notification_server_online_after_seconds"`
+			NotificationMergeOffline     *bool              `json:"notification_server_merge_offline"`
+			RegistrationEnabled          *bool              `json:"registration_enabled"`
+			RegistrationDefaultGroupID   *int64             `json:"registration_default_group_id"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -965,6 +969,17 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, controllerAutoUpdateSetting)
 		}
+		if req.ControllerAutoUpdateInterval != nil {
+			if !validControllerUpdateInterval(*req.ControllerAutoUpdateInterval) {
+				fail(w, errors.New("controller_auto_update_interval_hours must be 1, 6, 12 or 24"), http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), controllerAutoUpdateIntervalSetting, strconv.Itoa(*req.ControllerAutoUpdateInterval)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, controllerAutoUpdateIntervalSetting)
+		}
 		if req.ServerDefaultMTUMode != nil {
 			mode := model.MTUMode(strings.ToLower(strings.TrimSpace(*req.ServerDefaultMTUMode)))
 			switch mode {
@@ -1101,13 +1116,15 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	for key, value := range items {
-		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID {
+		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID {
 			continue
 		}
 		out[key] = value
 	}
+	out[controllerAutoUpdateSetting] = settingBool(items, controllerAutoUpdateSetting, false)
+	out[controllerAutoUpdateIntervalSetting] = controllerUpdateIntervalHours(items)
 	if raw := strings.TrimSpace(items[settingRegistrationEnabled]); raw != "" {
 		out[settingRegistrationEnabled] = settingBool(items, settingRegistrationEnabled, false)
 	}
@@ -2611,6 +2628,13 @@ func (s *Server) auth(next http.HandlerFunc, min model.Role) http.HandlerFunc {
 		ctx := context.WithValue(r.Context(), claimsKey, claims)
 		ctx = context.WithValue(ctx, userKey, u)
 		ctx = context.WithValue(ctx, sessionTokenKey, token)
+		if strings.HasSuffix(r.URL.Path, "/events") {
+			s.noteControllerPanelActivity()
+			next(w, r.WithContext(ctx))
+			return
+		}
+		s.beginControllerPanelRequest()
+		defer s.endControllerPanelRequest()
 		next(w, r.WithContext(ctx))
 	}
 }

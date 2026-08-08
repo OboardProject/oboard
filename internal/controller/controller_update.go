@@ -20,16 +20,17 @@ import (
 )
 
 const (
-	controllerAutoUpdateSetting  = "controller_auto_update_enabled"
-	controllerBackupSetting      = "controller_update_backup_path"
-	controllerUpdateErrorSetting = "controller_update_controller_error"
-	controllerUpdateCheckPeriod  = 24 * time.Hour
-	controllerLoginCheckDedup    = 15 * time.Minute
-	controllerBackupRetention    = 7
+	controllerAutoUpdateSetting          = "controller_auto_update_enabled"
+	controllerAutoUpdateIntervalSetting  = "controller_auto_update_interval_hours"
+	controllerBackupSetting              = "controller_update_backup_path"
+	controllerUpdateErrorSetting         = "controller_update_controller_error"
+	controllerUpdateSchedulerPeriod      = time.Minute
+	controllerUpdatePanelIdlePeriod      = 5 * time.Minute
+	controllerUpdateDefaultIntervalHours = 24
+	controllerBackupRetention            = 7
 )
 
 func (s *Server) ConfigureControllerUpdates(dbPath, listenAddress string) {
-	s.controllerUpdatesConfigured = true
 	s.controllerListenAddress = listenAddress
 	s.controllerRuntimeStatePath = filepath.Join(filepath.Dir(dbPath), controllerupdate.RuntimeStateName)
 	if configured := strings.TrimSpace(os.Getenv("OBOARD_BACKUP_DIR")); configured != "" {
@@ -66,7 +67,7 @@ func (s *Server) StartControllerUpdates(ctx context.Context) {
 	case <-initial.C:
 		go s.runScheduledControllerUpdate(ctx)
 	}
-	ticker := time.NewTicker(controllerUpdateCheckPeriod)
+	ticker := time.NewTicker(controllerUpdateSchedulerPeriod)
 	defer ticker.Stop()
 	for {
 		select {
@@ -78,37 +79,68 @@ func (s *Server) StartControllerUpdates(ctx context.Context) {
 	}
 }
 
-func (s *Server) TriggerControllerUpdateCheck(ctx context.Context) {
-	if !s.controllerUpdatesConfigured {
-		return
-	}
-	s.controllerUpdateMu.Lock()
-	if time.Since(s.controllerLastLoginCheck) < controllerLoginCheckDedup {
-		s.controllerUpdateMu.Unlock()
-		return
-	}
-	s.controllerLastLoginCheck = time.Now()
-	s.controllerUpdateMu.Unlock()
-	go s.runScheduledControllerUpdate(context.WithoutCancel(ctx))
-}
-
 func (s *Server) runScheduledControllerUpdate(ctx context.Context) {
 	s.controllerUpdateRunMu.Lock()
 	defer s.controllerUpdateRunMu.Unlock()
 	settings, settingsErr := s.store.ListSettings(ctx)
 	autoUpdateEnabled := settingsErr == nil && settingBool(settings, controllerAutoUpdateSetting, false)
-	status, err := s.controllerUpdater.Check(ctx)
+	if !autoUpdateEnabled {
+		return
+	}
+	interval := time.Duration(controllerUpdateIntervalHours(settings)) * time.Hour
+	now := time.Now()
+	status, err := s.controllerUpdater.Status(ctx)
 	if err != nil {
-		if autoUpdateEnabled {
+		if !s.controllerScheduledCheckDue(now, time.Time{}, interval) {
+			return
+		}
+		s.markControllerScheduledCheck(now)
+		publicErr := controllerUpdateOperationError("检查可用更新失败", status, err)
+		s.notifyControllerUpdateFailure(ctx, "检查可用更新", status.Available.Version, publicErr.Error())
+		return
+	}
+	if status.Channel == "pinned" || isActiveControllerUpdateStatus(status.State) {
+		return
+	}
+	if !status.UpdateAvailable {
+		if !s.controllerScheduledCheckDue(now, status.CheckedAt(), interval) {
+			return
+		}
+		s.markControllerScheduledCheck(now)
+		status, err = s.controllerUpdater.Check(ctx)
+		if err != nil {
 			publicErr := controllerUpdateOperationError("检查可用更新失败", status, err)
 			s.notifyControllerUpdateFailure(ctx, "检查可用更新", status.Available.Version, publicErr.Error())
+			return
 		}
+		s.publishRealtime("controller_update")
+		if !status.UpdateAvailable || status.Channel == "pinned" {
+			return
+		}
+	}
+	if !s.controllerPanelIdle(time.Now()) {
 		return
 	}
-	s.publishRealtime("controller_update")
-	if !status.UpdateAvailable || status.Channel == "pinned" || !autoUpdateEnabled {
-		return
+	s.installScheduledControllerUpdate(ctx, status)
+}
+
+func (s *Server) controllerScheduledCheckDue(now, checkedAt time.Time, interval time.Duration) bool {
+	s.controllerUpdateScheduleMu.Lock()
+	defer s.controllerUpdateScheduleMu.Unlock()
+	last := checkedAt
+	if s.controllerLastScheduledCheck.After(last) {
+		last = s.controllerLastScheduledCheck
 	}
+	return last.IsZero() || now.Sub(last) >= interval
+}
+
+func (s *Server) markControllerScheduledCheck(at time.Time) {
+	s.controllerUpdateScheduleMu.Lock()
+	s.controllerLastScheduledCheck = at
+	s.controllerUpdateScheduleMu.Unlock()
+}
+
+func (s *Server) installScheduledControllerUpdate(ctx context.Context, status controllerupdate.Status) {
 	backup, err := s.createControllerBackup(ctx)
 	if err != nil {
 		message := "创建自动更新备份失败: " + err.Error()
@@ -122,6 +154,9 @@ func (s *Server) runScheduledControllerUpdate(ctx context.Context) {
 		s.notifyControllerUpdateFailure(ctx, "更新前备份", status.Available.Version, message)
 		return
 	}
+	if !s.controllerPanelIdle(time.Now()) {
+		return
+	}
 	if installStatus, err := s.controllerUpdater.Install(ctx); err != nil {
 		publicErr := controllerUpdateOperationError("启动自动更新失败", installStatus, err)
 		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, publicErr.Error())
@@ -130,6 +165,63 @@ func (s *Server) runScheduledControllerUpdate(ctx context.Context) {
 	}
 	s.startControllerUpdateWatch()
 	_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
+}
+
+func validControllerUpdateInterval(hours int) bool {
+	switch hours {
+	case 1, 6, 12, 24:
+		return true
+	default:
+		return false
+	}
+}
+
+func controllerUpdateIntervalHours(settings map[string]string) int {
+	hours, err := strconv.Atoi(strings.TrimSpace(settings[controllerAutoUpdateIntervalSetting]))
+	if err != nil || !validControllerUpdateInterval(hours) {
+		return controllerUpdateDefaultIntervalHours
+	}
+	return hours
+}
+
+func (s *Server) beginControllerPanelRequest() {
+	s.controllerActivityMu.Lock()
+	s.controllerActiveRequests++
+	s.controllerLastActivity = time.Now()
+	s.controllerActivityMu.Unlock()
+}
+
+func (s *Server) noteControllerPanelActivity() {
+	s.controllerActivityMu.Lock()
+	s.controllerLastActivity = time.Now()
+	s.controllerActivityMu.Unlock()
+}
+
+func (s *Server) endControllerPanelRequest() {
+	s.controllerActivityMu.Lock()
+	if s.controllerActiveRequests > 0 {
+		s.controllerActiveRequests--
+	}
+	s.controllerLastActivity = time.Now()
+	s.controllerActivityMu.Unlock()
+}
+
+func (s *Server) controllerPanelIdle(now time.Time) bool {
+	s.controllerActivityMu.Lock()
+	defer s.controllerActivityMu.Unlock()
+	return s.controllerActiveRequests == 0 && (s.controllerLastActivity.IsZero() || now.Sub(s.controllerLastActivity) >= controllerUpdatePanelIdlePeriod)
+}
+
+func (s *Server) controllerUpdateActivity(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func isActiveControllerUpdateStatus(state string) bool {
+	return state == "checking" || state == "downloading" || state == "ready" || state == "installing" || state == "cancelling"
 }
 
 func (s *Server) controllerUpdate(w http.ResponseWriter, r *http.Request) {
@@ -360,6 +452,7 @@ func (s *Server) writeControllerUpdateStatus(w http.ResponseWriter, r *http.Requ
 	settings, err := s.store.ListSettings(r.Context())
 	if err == nil {
 		status.AutoUpdateEnabled = settingBool(settings, controllerAutoUpdateSetting, false)
+		status.AutoUpdateIntervalHours = controllerUpdateIntervalHours(settings)
 		if status.BackupPath == "" {
 			status.BackupPath = settings[controllerBackupSetting]
 		}

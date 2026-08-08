@@ -38,17 +38,18 @@ type BuildInfo struct {
 }
 
 type Status struct {
-	Channel           string    `json:"channel"`
-	Current           BuildInfo `json:"current"`
-	Available         BuildInfo `json:"available"`
-	UpdateAvailable   bool      `json:"update_available"`
-	AutoUpdateEnabled bool      `json:"auto_update_enabled"`
-	CanCancel         bool      `json:"can_cancel"`
-	State             string    `json:"status"`
-	LastCheckedAt     string    `json:"last_checked_at,omitempty"`
-	LastError         string    `json:"last_error,omitempty"`
-	BackupPath        string    `json:"backup_path,omitempty"`
-	ManualCommand     string    `json:"manual_command,omitempty"`
+	Channel                 string    `json:"channel"`
+	Current                 BuildInfo `json:"current"`
+	Available               BuildInfo `json:"available"`
+	UpdateAvailable         bool      `json:"update_available"`
+	AutoUpdateEnabled       bool      `json:"auto_update_enabled"`
+	AutoUpdateIntervalHours int       `json:"auto_update_interval_hours"`
+	CanCancel               bool      `json:"can_cancel"`
+	State                   string    `json:"status"`
+	LastCheckedAt           string    `json:"last_checked_at,omitempty"`
+	LastError               string    `json:"last_error,omitempty"`
+	BackupPath              string    `json:"backup_path,omitempty"`
+	ManualCommand           string    `json:"manual_command,omitempty"`
 }
 
 func (s Status) CheckedAt() time.Time {

@@ -84,7 +84,15 @@ func TestControllerUpdateAPIAndBackupRetention(t *testing.T) {
 	if _, exists := status["install_method"]; exists || status["channel"] != "pinned" || status["status"] != "pinned" {
 		t.Fatalf("unexpected update status: %#v", status)
 	}
+	if status["auto_update_interval_hours"] != float64(controllerUpdateDefaultIntervalHours) {
+		t.Fatalf("unexpected default update interval: %#v", status["auto_update_interval_hours"])
+	}
 	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/check", adminToken, nil, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"controller_auto_update_interval_hours": 2}, http.StatusBadRequest)
+	settings := request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"controller_auto_update_interval_hours": 6}, http.StatusOK)
+	if got := settings["settings"].(map[string]any)["controller_auto_update_interval_hours"]; got != float64(6) {
+		t.Fatalf("unexpected saved update interval: %#v", got)
+	}
 	request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"controller_auto_update_enabled": true}, http.StatusConflict)
 	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/install", adminToken, nil, http.StatusConflict)
 	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/cancel", adminToken, nil, http.StatusConflict)
@@ -104,6 +112,27 @@ func TestControllerUpdateAPIAndBackupRetention(t *testing.T) {
 	}
 	if len(backups) != controllerBackupRetention {
 		t.Fatalf("retained %d backups, want %d", len(backups), controllerBackupRetention)
+	}
+}
+
+func TestControllerUpdatePanelActivityGate(t *testing.T) {
+	app := &Server{}
+	if !app.controllerPanelIdle(time.Now()) {
+		t.Fatal("panel with no activity should be idle")
+	}
+	app.beginControllerPanelRequest()
+	if app.controllerPanelIdle(time.Now().Add(controllerUpdatePanelIdlePeriod)) {
+		t.Fatal("active panel request must block automatic update")
+	}
+	app.endControllerPanelRequest()
+	if app.controllerPanelIdle(time.Now()) {
+		t.Fatal("recent panel activity must block automatic update")
+	}
+	app.controllerActivityMu.Lock()
+	app.controllerLastActivity = time.Now().Add(-controllerUpdatePanelIdlePeriod)
+	app.controllerActivityMu.Unlock()
+	if !app.controllerPanelIdle(time.Now()) {
+		t.Fatal("panel should become idle after the inactivity window")
 	}
 }
 

@@ -3949,7 +3949,7 @@ function ControllerUpdatePrompt({ client, notify, realtimeStatus, realtimeRevisi
           <strong>发现主控新版本 {snapshot?.available?.version || ''}</strong>
           <span>确认后会先备份数据，再安装并自动重启主控。</span>
         </div>
-        <button type="button" className="ghost controller-update-prompt-later" onClick={() => setDismissed(true)}>稍后</button>
+        <button type="button" className="ghost controller-update-prompt-later" aria-label="稍后提醒" title="稍后提醒" onClick={() => setDismissed(true)}><X size={15} /><span>稍后</span></button>
         <button type="button" onClick={() => { setPhase('confirm'); setDialogOpen(true) }}><Download size={14} />确认更新</button>
       </m.aside>}
     </AnimatePresence>
