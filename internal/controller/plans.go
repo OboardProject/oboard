@@ -831,7 +831,29 @@ func (s *Server) subscriptionPlanSubroutes(w http.ResponseWriter, r *http.Reques
 		default:
 			fail(w, errors.New("unknown subscription plan subroute"), 404)
 		}
+	case "membership-rules":
+		if len(parts) == 1 && r.Method == http.MethodGet {
+			s.planMembershipRulesGet(w, r, id)
+			return
+		}
+		if len(parts) == 2 && parts[1] == "preview" && r.Method == http.MethodPost {
+			s.planMembershipRulesPreview(w, r, id)
+			return
+		}
+		if len(parts) == 2 && parts[1] == "versions" && r.Method == http.MethodPost {
+			s.planMembershipRulesVersionCreate(w, r, id)
+			return
+		}
+		method(w)
 	case "ordering":
+		if len(parts) == 2 && parts[1] == "copy-preview" && r.Method == http.MethodPost {
+			s.planOrderingCopyPreview(w, r, id)
+			return
+		}
+		if len(parts) == 2 && parts[1] == "copy-from-plan" && r.Method == http.MethodPost {
+			s.planOrderingCopyFromPlan(w, r, id)
+			return
+		}
 		if len(parts) == 2 && parts[1] == "apply-template" {
 			if r.Method != http.MethodPost {
 				method(w)
@@ -1021,6 +1043,11 @@ func (s *Server) planRevisions(w http.ResponseWriter, r *http.Request, id int64,
 			fail(w, err, 404)
 			return
 		}
+		historicalRules, historicalExclusions, err := s.store.ListPlanRevisionMembershipPolicy(r.Context(), revisionID)
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
 		speed, traffic := historical.SpeedLimitMbps, historical.TrafficLimitBytes
 		mode, day := historical.TrafficResetMode, historical.TrafficResetDay
 		result, err := s.store.CreatePlanVersion(r.Context(), id, store.PlanVersionMutation{
@@ -1031,10 +1058,11 @@ func (s *Server) planRevisions(w http.ResponseWriter, r *http.Request, id int64,
 				TrafficResetMode:  &mode,
 				TrafficResetDay:   &day,
 			},
-			Nodes: &store.PlanNodesMutation{Op: "replace", Nodes: histNodes, ReplaceSnapshot: true},
+			MembershipPolicy: &store.PlanMembershipPolicyMutation{Rules: historicalRules, Exclusions: historicalExclusions, Nodes: histNodes},
 			Ordering: &store.PlanOrderingMutation{
 				Policy: historical.NodeOrderPolicy, ManualOrder: manualOrderFromNodes(histNodes),
 				SetTemplateProvenance: true, OrderTemplateID: historical.OrderTemplateID, OrderTemplateRevision: historical.OrderTemplateRevision,
+				SetSourceProvenance: true, OrderSourcePlanID: historical.OrderSourcePlanID, OrderSourceRevisionID: historical.OrderSourceRevisionID, OrderSourceMode: historical.OrderSourceMode,
 			},
 			ChangeKind:    model.PlanChangeKindRestore,
 			ChangeSummary: strings.TrimSpace(req.ChangeSummary),
@@ -1171,7 +1199,81 @@ func (s *Server) planNodesApply(w http.ResponseWriter, r *http.Request, id int64
 	if baseID == 0 {
 		baseID = plan.LatestRevisionID
 	}
-	orderingMutation, _, err := s.planNodePlacement(r.Context(), id, baseID, req.Op, nodes)
+	var membershipMutation *store.PlanMembershipPolicyMutation
+	rules, exclusions, policyErr := s.store.ListPlanRevisionMembershipPolicy(r.Context(), baseID)
+	if policyErr != nil {
+		fail(w, policyErr, 500)
+		return
+	}
+	if len(rules) > 0 {
+		baseNodes, loadErr := s.store.ListPlanRevisionNodes(r.Context(), baseID)
+		if loadErr != nil {
+			fail(w, loadErr, 500)
+			return
+		}
+		candidate, previewErr := store.PreviewPlanNodesMutation(baseNodes, store.PlanNodesMutation{Op: req.Op, Nodes: nodes})
+		if previewErr != nil {
+			fail(w, previewErr, 400)
+			return
+		}
+		baseByKey := map[string]model.SubscriptionPlanNode{}
+		candidateKeys := map[string]bool{}
+		for _, item := range baseNodes {
+			baseByKey[core.NodeKeyOf(item.NodeType, item.NodeID)] = item
+		}
+		for index := range candidate {
+			key := core.NodeKeyOf(candidate[index].NodeType, candidate[index].NodeID)
+			candidateKeys[key] = true
+			if previous, ok := baseByKey[key]; ok && req.Op == "replace" {
+				candidate[index].SourceType, candidate[index].SourceRuleID = previous.SourceType, previous.SourceRuleID
+			} else if _, ok := baseByKey[key]; !ok || req.Op == "add" {
+				candidate[index].SourceType, candidate[index].SourceRuleID = model.PlanNodeSourceExplicit, 0
+			}
+		}
+		excluded := map[string]model.PlanNodeExclusion{}
+		for _, item := range exclusions {
+			excluded[core.NodeKeyOf(item.NodeType, item.NodeID)] = item
+		}
+		for _, item := range nodes {
+			key := core.NodeKeyOf(item.NodeType, item.NodeID)
+			if req.Op == "add" {
+				delete(excluded, key)
+			}
+		}
+		catalog, loadErr := s.assignableNodeCatalog(r.Context())
+		if loadErr != nil {
+			fail(w, loadErr, 500)
+			return
+		}
+		matched, matchErr := core.ResolvePlanMembershipRules(baseNodes, rules, nil, catalog)
+		if matchErr != nil {
+			fail(w, matchErr, 400)
+			return
+		}
+		for key, previous := range baseByKey {
+			if candidateKeys[key] || len(matched.MatchedBy[key]) == 0 {
+				continue
+			}
+			excluded[key] = model.PlanNodeExclusion{NodeType: previous.NodeType, NodeID: previous.NodeID}
+		}
+		exclusions = exclusions[:0]
+		for _, item := range excluded {
+			exclusions = append(exclusions, item)
+		}
+		resolution, resolveErr := core.ResolvePlanMembershipRules(candidate, rules, exclusions, catalog)
+		if resolveErr != nil {
+			fail(w, resolveErr, 400)
+			return
+		}
+		nodes = resolution.Nodes
+		membershipMutation = &store.PlanMembershipPolicyMutation{Rules: rules, Exclusions: exclusions, Nodes: resolution.Nodes}
+	}
+	orderingMutation, _, err := s.planNodePlacement(r.Context(), id, baseID, func() string {
+		if membershipMutation != nil {
+			return "replace"
+		}
+		return req.Op
+	}(), nodes)
 	if err != nil {
 		fail(w, err, 400)
 		return
@@ -1179,10 +1281,16 @@ func (s *Server) planNodesApply(w http.ResponseWriter, r *http.Request, id int64
 	result, err := s.store.CreatePlanVersion(r.Context(), id, store.PlanVersionMutation{
 		BaseRevisionID:      baseID,
 		ExpectedLockVersion: expected,
-		Nodes:               &store.PlanNodesMutation{Op: req.Op, Nodes: nodes},
-		Ordering:            orderingMutation,
-		ChangeKind:          model.PlanChangeKindNodes,
-		ChangeSummary:       strings.TrimSpace(req.ChangeSummary),
+		Nodes: func() *store.PlanNodesMutation {
+			if membershipMutation != nil {
+				return nil
+			}
+			return &store.PlanNodesMutation{Op: req.Op, Nodes: nodes}
+		}(),
+		MembershipPolicy: membershipMutation,
+		Ordering:         orderingMutation,
+		ChangeKind:       model.PlanChangeKindNodes,
+		ChangeSummary:    strings.TrimSpace(req.ChangeSummary),
 	})
 	if err != nil {
 		s.planVersionConflict(w, err, id)

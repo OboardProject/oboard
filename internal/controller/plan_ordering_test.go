@@ -45,6 +45,71 @@ func orderingPolicy(mode, seed string, exitOrder []string) map[string]any {
 	}
 }
 
+func TestPlanMembershipRulesAndOrderingCopyAPI(t *testing.T) {
+	h, _, token, ids := setupOrderingTestTopology(t)
+	planAID := ids["plan"]
+	p1Key, p2Key := "proxy_path:"+itoa(ids["p1"]), "proxy_path:"+itoa(ids["p2"])
+	planB := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{
+		"name": "copy-target", "enabled": true,
+		"nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p1"]}, {"node_type": "proxy_path", "node_id": ids["p2"]}, {"node_type": "inbound", "node_id": ids["i2"]}},
+	}, http.StatusCreated)["subscription_plan"].(map[string]any)
+	planBID := int64(planB["id"].(float64))
+
+	stateA := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planAID)+"/ordering", token, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planAID)+"/ordering/versions", token, map[string]any{
+		"base_revision_id": int64(stateA["base_revision_id"].(float64)), "expected_lock_version": int64(stateA["lock_version"].(float64)),
+		"policy": orderingPolicy("manual", "exit_region", []string{"JP", "SG"}), "manual_node_order": []string{p2Key, p1Key},
+	}, http.StatusOK)
+	stateB := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planBID)+"/ordering", token, nil, http.StatusOK)
+	baseRequest := map[string]any{"source_plan_id": planAID, "base_revision_id": int64(stateB["base_revision_id"].(float64))}
+	for _, tc := range []struct{ mode, wantMode, first string }{
+		{"copy_rules_preserve_manual", "manual", p1Key},
+		{"copy_rules_rebuild", "exit_region", p1Key},
+		{"copy_effective_order", "manual", p2Key},
+	} {
+		body := map[string]any{}
+		for key, value := range baseRequest {
+			body[key] = value
+		}
+		body["mode"] = tc.mode
+		preview := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planBID)+"/ordering/copy-preview", token, body, http.StatusOK)
+		if preview["policy"].(map[string]any)["mode"] != tc.wantMode {
+			t.Fatalf("%s policy = %#v", tc.mode, preview["policy"])
+		}
+		if preview["nodes"].([]any)[0].(map[string]any)["key"] != tc.first {
+			t.Fatalf("%s nodes = %#v", tc.mode, preview["nodes"])
+		}
+	}
+	apply := map[string]any{"source_plan_id": planAID, "base_revision_id": int64(stateB["base_revision_id"].(float64)), "expected_lock_version": int64(stateB["lock_version"].(float64)), "mode": "copy_effective_order"}
+	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planBID)+"/ordering/copy-from-plan", token, apply, http.StatusOK)
+	copied := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planBID)+"/ordering", token, nil, http.StatusOK)
+	if int64(copied["order_source_plan_id"].(float64)) != planAID || copied["order_source_mode"] != "copy_effective_order" {
+		t.Fatalf("copy provenance = %#v", copied)
+	}
+	if copied["nodes"].([]any)[0].(map[string]any)["key"] != p2Key {
+		t.Fatalf("copied order = %#v", copied["nodes"])
+	}
+
+	rulePlan := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{
+		"name": "rule-target", "enabled": true, "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p1"]}},
+	}, http.StatusCreated)["subscription_plan"].(map[string]any)
+	rulePlanID := int64(rulePlan["id"].(float64))
+	policy := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(rulePlanID)+"/membership-rules", token, nil, http.StatusOK)
+	rulePreview := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(rulePlanID)+"/membership-rules/preview", token, map[string]any{
+		"base_revision_id": int64(policy["base_revision_id"].(float64)), "rules": []map[string]any{{"rule_id": 1, "kind": "exit_region", "scope_key": "SG"}}, "exclusions": []any{},
+	}, http.StatusOK)
+	added := rulePreview["added_node_keys"].([]any)
+	foundP2 := false
+	for _, key := range added {
+		if key == p2Key {
+			foundP2 = true
+		}
+	}
+	if !foundP2 {
+		t.Fatalf("rule preview = %#v", rulePreview)
+	}
+}
+
 func TestPlanOrderingAPI(t *testing.T) {
 	h, _, token, ids := setupOrderingTestTopology(t)
 	planID := ids["plan"]

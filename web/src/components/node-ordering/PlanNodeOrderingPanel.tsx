@@ -20,10 +20,8 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, GripVertical, MoveDown, MoveUp, Plus, RefreshCw, Save, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Copy, GripVertical, MoveDown, MoveUp, Plus, RefreshCw, Save, Sparkles, Trash2 } from 'lucide-react'
 import { Dialog } from '../ui/dialog'
-import { ApplyOrderTemplateDialog, type OrderTemplateSummary } from './ApplyOrderTemplateDialog'
-import type { TemplatePolicy } from './NodeOrderTemplateEditor'
 import { formatPlanVersion } from '../../lib/plan-version'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
@@ -83,11 +81,10 @@ type OrderingState = {
   nodes: OrderingNode[]
   unplaced_count: number
   warnings: string[]
-  order_template_id?: number
-  order_template_revision?: number
-  order_template?: OrderTemplateSummary
-  template_update_available?: boolean
-  template_archived?: boolean
+  order_source_plan_id?: number
+  order_source_revision_id?: number
+  order_source_mode?: string
+  order_source_plan?: { id: number; name: string }
 }
 
 const MODE_LABELS: Record<string, string> = {
@@ -117,19 +114,6 @@ function normalizeOrderingPolicy(policy: OrderingPolicy): OrderingPolicy {
   return {
     ...policy,
     exit_region_order: policy.exit_region_order || [],
-    entry_region_order: policy.entry_region_order || [],
-    entry_order: policy.entry_order || [],
-    new_node_placement: policy.new_node_placement || 'pending',
-    unmatched_placement: policy.unmatched_placement || 'pending',
-  }
-}
-
-function templatePolicyFromOrdering(policy: OrderingPolicy): TemplatePolicy {
-  return {
-    version: 1,
-    base_mode: policy.mode === 'entry' || (policy.mode === 'manual' && policy.manual_seed === 'entry') ? 'entry' : 'exit_region',
-    exit_region_order: policy.exit_region_order || [],
-    entry_region_order_mode: policy.entry_region_order_mode === 'custom' ? 'custom' : 'inherit_exit',
     entry_region_order: policy.entry_region_order || [],
     entry_order: policy.entry_order || [],
     new_node_placement: policy.new_node_placement || 'pending',
@@ -168,10 +152,10 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
   const [previewUnplaced, setPreviewUnplaced] = React.useState(0)
   const [regionInput, setRegionInput] = React.useState('')
   const [previewing, setPreviewing] = React.useState(false)
-  const [applyTemplateOpen, setApplyTemplateOpen] = React.useState(false)
-  const [saveTemplateOpen, setSaveTemplateOpen] = React.useState(false)
-  const [templateName, setTemplateName] = React.useState('')
-  const [templateDescription, setTemplateDescription] = React.useState('')
+  const [copyOpen, setCopyOpen] = React.useState(false)
+  const [copySourcePlanID, setCopySourcePlanID] = React.useState(0)
+  const [copyMode, setCopyMode] = React.useState('copy_rules_preserve_manual')
+  const [copyPreview, setCopyPreview] = React.useState<{ nodes: OrderingNode[]; warnings: string[] } | null>(null)
 
   const loadOrdering = React.useCallback(async () => {
     setLoading(true)
@@ -378,52 +362,36 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
     }
   }
 
-  const applyTemplate = async (template: OrderTemplateSummary, applyMode: 'preserve_manual' | 'rebuild') => {
-    if (!state) return
+  const previewCopy = async () => {
+    if (!state || !copySourcePlanID) return
     setBusy(true)
     setError('')
     try {
-      const result = await client.request<{ no_change?: boolean }>(`/subscription-plans/${plan.id}/ordering/apply-template`, {
-        method: 'POST',
-        body: JSON.stringify({
-          template_id: template.id,
-          template_revision: template.revision,
-          base_revision_id: state.base_revision_id,
-          expected_lock_version: state.lock_version,
-          apply_mode: applyMode,
-          change_summary: `应用模板「${template.name}」r${template.revision}`,
-        }),
+      const result = await client.request<{ nodes: OrderingNode[]; warnings: string[] }>(`/subscription-plans/${plan.id}/ordering/copy-preview`, {
+        method: 'POST', body: JSON.stringify({ source_plan_id: copySourcePlanID, base_revision_id: state.base_revision_id, mode: copyMode }),
       })
-      notify?.(result.no_change ? '排序规则没有变化' : `已应用「${template.name}」r${template.revision}`, result.no_change ? 'warning' : 'success')
-      setApplyTemplateOpen(false)
+      setCopyPreview(result)
+    } catch (reason: any) { setError(reason?.message || String(reason)) } finally { setBusy(false) }
+  }
+
+  const applyCopy = async () => {
+    if (!state || !copySourcePlanID) return
+    setBusy(true)
+    setError('')
+    try {
+      const sourceName = (data.subscription_plans || []).find((item: any) => item.id === copySourcePlanID)?.name || `#${copySourcePlanID}`
+      const result = await client.request<{ no_change?: boolean }>(`/subscription-plans/${plan.id}/ordering/copy-from-plan`, {
+        method: 'POST', body: JSON.stringify({ source_plan_id: copySourcePlanID, base_revision_id: state.base_revision_id, expected_lock_version: state.lock_version, mode: copyMode, change_summary: `从方案「${sourceName}」复制排序` }),
+      })
+      notify?.(result.no_change ? '排序没有变化' : `已复制「${sourceName}」的排序快照`, result.no_change ? 'warning' : 'success')
+      setCopyOpen(false)
+      setCopyPreview(null)
       await loadOrdering()
       onSaved?.()
     } catch (reason: any) {
       const message = reason?.message || String(reason)
-      setError(message.includes('409') || message.includes('conflict') ? '方案或模板已被其他操作更新，请重新加载后重试。' : message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const saveRuleAsTemplate = async () => {
-    if (!workingPolicy || !templateName.trim()) return
-    setBusy(true)
-    setError('')
-    try {
-      await client.request('/node-order-templates', {
-        method: 'POST',
-        body: JSON.stringify({ name: templateName.trim(), description: templateDescription.trim(), policy: templatePolicyFromOrdering(workingPolicy) }),
-      })
-      notify?.('排序规则已另存为模板', 'success')
-      setSaveTemplateOpen(false)
-      setTemplateName('')
-      setTemplateDescription('')
-    } catch (reason: any) {
-      setError(reason?.message || String(reason))
-    } finally {
-      setBusy(false)
-    }
+      setError(message.includes('409') || message.includes('conflict') ? '方案已被其他操作更新，请重新加载后重试。' : message)
+    } finally { setBusy(false) }
   }
 
   const placedKeys = new Set(manualOrder)
@@ -464,19 +432,16 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
               <strong>{MODE_LABELS[workingPolicy.mode] || workingPolicy.mode}</strong>
             </div>
             <div>
-              <span className="muted">来源模板</span>
-              <strong>{state.order_template?.name || '未使用模板'}</strong>
-              {state.order_template_id && <small>方案快照 r{state.order_template_revision || 0}{state.order_template ? ` · 最新 r${state.order_template.revision}` : ''}</small>}
+              <span className="muted">规则来源</span>
+              <strong>{state.order_source_plan?.name || '本方案设置'}</strong>
+              {state.order_source_revision_id && <small>复制自版本 #{state.order_source_revision_id} · 快照</small>}
             </div>
             <div>
               <span className="muted">新增节点</span>
-              <strong>{{ by_template: '按模板自动插入', append: '追加到末尾', pending: '进入待排区' }[workingPolicy.new_node_placement || 'pending']}</strong>
+              <strong>{{ by_template: '按规则自动插入', append: '追加到末尾', pending: '进入待排区' }[workingPolicy.new_node_placement || 'pending']}</strong>
             </div>
             <div className="plan-order-template-actions">
-              {state.template_update_available && <Badge variant="warning">模板有更新</Badge>}
-              {state.template_archived && <Badge variant="secondary">模板已归档</Badge>}
-              <Button variant="outline" size="sm" onClick={() => setApplyTemplateOpen(true)}>应用模板</Button>
-              <Button variant="ghost" size="sm" onClick={() => setSaveTemplateOpen(true)}>另存规则为模板</Button>
+              <Button variant="outline" size="sm" onClick={() => { setCopyOpen(true); setCopyPreview(null) }}><Copy size={14} /> 从其他方案复制</Button>
             </div>
           </div>
           <div>
@@ -675,13 +640,16 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
         </div>
       )}
 
-      <ApplyOrderTemplateDialog open={applyTemplateOpen} planID={plan.id} hasManualOrder={workingPolicy?.mode === 'manual'} client={client} busy={busy} onClose={() => setApplyTemplateOpen(false)} onApply={applyTemplate} />
-      <Dialog isOpen={saveTemplateOpen} onClose={() => setSaveTemplateOpen(false)} title="另存规则为模板" size="sm">
-        <div className="save-template-dialog">
-          <p className="muted">只保存地区、入口和新节点处理规则，不包含当前逐节点人工顺序。</p>
-          <label><span>模板名称</span><Input value={templateName} onChange={event => setTemplateName(event.target.value)} maxLength={100} autoFocus /></label>
-          <label><span>描述</span><Input value={templateDescription} onChange={event => setTemplateDescription(event.target.value)} maxLength={500} /></label>
-          <div className="dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => setSaveTemplateOpen(false)}>取消</Button><Button busy={busy} disabled={!templateName.trim()} onClick={() => void saveRuleAsTemplate()}><Save size={14} /> 保存模板</Button></div>
+      <Dialog isOpen={copyOpen} onClose={() => setCopyOpen(false)} title="从其他方案复制排序" size="lg">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span>来源方案</span><Select value={copySourcePlanID} onChange={event => { setCopySourcePlanID(Number(event.target.value)); setCopyPreview(null) }}><option value={0}>选择方案</option>{(data.subscription_plans || []).filter((item: any) => item.id !== plan.id).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></label>
+          <fieldset style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: 8 }}><legend style={{ fontWeight: 600, marginBottom: 6 }}>复制方式</legend>
+            <label><input type="radio" name="copy-order-mode" checked={copyMode === 'copy_rules_preserve_manual'} onChange={() => { setCopyMode('copy_rules_preserve_manual'); setCopyPreview(null) }} /> 复制底层规则，保留本方案人工顺序</label>
+            <label><input type="radio" name="copy-order-mode" checked={copyMode === 'copy_rules_rebuild'} onChange={() => { setCopyMode('copy_rules_rebuild'); setCopyPreview(null) }} /> 复制底层规则，并重新排列本方案</label>
+            <label><input type="radio" name="copy-order-mode" checked={copyMode === 'copy_effective_order'} onChange={() => { setCopyMode('copy_effective_order'); setCopyPreview(null) }} /> 接受来源方案当前人工调整</label>
+          </fieldset>
+          {copyPreview && <div className="card-custom" style={{ padding: 10, maxHeight: 280, overflow: 'auto' }}><strong>复制后顺序</strong>{copyPreview.warnings?.map((warning, index) => <p key={index} style={{ color: 'var(--color-warning)', margin: '6px 0' }}>{warning}</p>)}<ol style={{ margin: '8px 0 0', paddingLeft: 28 }}>{copyPreview.nodes.map(node => <li key={node.key}>{node.name}</li>)}</ol></div>}
+          <div className="dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => setCopyOpen(false)}>取消</Button><Button variant="outline" busy={busy} disabled={!copySourcePlanID} onClick={() => void previewCopy()}><RefreshCw size={14} /> 预览</Button><Button busy={busy} disabled={!copySourcePlanID || !copyPreview} onClick={() => void applyCopy()}><Copy size={14} /> 应用快照</Button></div>
         </div>
       </Dialog>
     </div>

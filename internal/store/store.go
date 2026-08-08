@@ -356,6 +356,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists subscription_plans (id integer primary key autoincrement, name text not null unique, description text not null default '', enabled integer not null default 1, revision integer not null default 0, active_revision_id integer references subscription_plan_revisions(id) on delete set null, draft_revision_id integer references subscription_plan_revisions(id) on delete set null, lock_version integer not null default 1, current_revision_id integer references subscription_plan_revisions(id) on delete set null, latest_revision_id integer references subscription_plan_revisions(id) on delete set null, pending_revision_id integer references subscription_plan_revisions(id) on delete set null, created_at text not null, updated_at text not null)`,
 		`create table if not exists subscription_plan_revisions (id integer primary key autoincrement, plan_id integer not null references subscription_plans(id) on delete cascade, revision integer not null, version_no integer, based_on_revision_id integer, change_kind text not null default '', change_summary text not null default '', activation_change_id integer, status text not null default 'draft', speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, created_by integer references users(id) on delete set null, created_at text not null, activated_at text, unique(plan_id, revision))`,
 		`create table if not exists subscription_plan_revision_nodes (id integer primary key autoincrement, revision_id integer not null references subscription_plan_revisions(id) on delete cascade, node_type text not null, node_id integer not null, display_group text not null default '', source_type text not null default 'explicit', source_rule_id integer not null default 0, created_at text not null, unique(revision_id, node_type, node_id))`,
+		`create table if not exists subscription_plan_revision_rules (id integer primary key autoincrement, revision_id integer not null references subscription_plan_revisions(id) on delete cascade, rule_id integer not null, kind text not null, scope_key text not null, created_at text not null, unique(revision_id,rule_id))`,
+		`create table if not exists subscription_plan_revision_node_exclusions (revision_id integer not null references subscription_plan_revisions(id) on delete cascade, node_type text not null, node_id integer not null, created_at text not null, primary key(revision_id,node_type,node_id))`,
+		`create table if not exists subscription_plan_rule_reconcile_states (plan_id integer primary key references subscription_plans(id) on delete cascade, catalog_digest text not null default '', desired_digest text not null default '', status text not null default 'idle', last_error text not null default '', last_reconciled_at text, updated_at text not null)`,
 		`create table if not exists assignable_node_metadata (node_type text not null, node_id integer not null, display_name_override text, lock_version integer not null default 1, created_by integer references users(id) on delete set null, updated_by integer references users(id) on delete set null, created_at text not null, updated_at text not null, primary key(node_type,node_id))`,
 		`create table if not exists node_order_templates (id integer primary key autoincrement, name text not null unique, description text not null default '', enabled integer not null default 1, revision integer not null default 1, policy_json text not null, created_by integer references users(id) on delete set null, updated_by integer references users(id) on delete set null, created_at text not null, updated_at text not null)`,
 		`create table if not exists user_plan_bindings (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, plan_id integer not null references subscription_plans(id) on delete cascade, enabled integer not null default 1, status text not null default 'active', starts_at text, expires_at text, traffic_reset_anchor_at text, assigned_by integer references users(id) on delete set null, created_at text not null, updated_at text not null, deployed_at text, expiry_synced_at text)`,
@@ -395,6 +398,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create unique index if not exists idx_plan_revisions_one_draft on subscription_plan_revisions(plan_id) where status='draft'`,
 		`create index if not exists idx_plan_revision_nodes_revision on subscription_plan_revision_nodes(revision_id)`,
 		`create index if not exists idx_plan_revision_nodes_node on subscription_plan_revision_nodes(node_type, node_id)`,
+		`create index if not exists idx_plan_revision_rules_revision on subscription_plan_revision_rules(revision_id,rule_id)`,
 		`create index if not exists idx_node_order_templates_enabled on node_order_templates(enabled,updated_at desc)`,
 		`create index if not exists idx_user_node_exceptions_user on user_node_exceptions(user_id, expires_at)`,
 		`create index if not exists idx_user_node_exceptions_node on user_node_exceptions(node_type, node_id, expires_at)`,
@@ -449,6 +453,15 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "subscription_plan_revisions", "order_template_revision", `alter table subscription_plan_revisions add column order_template_revision integer not null default 0`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "subscription_plan_revisions", "order_source_plan_id", `alter table subscription_plan_revisions add column order_source_plan_id integer references subscription_plans(id) on delete set null`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "subscription_plan_revisions", "order_source_revision_id", `alter table subscription_plan_revisions add column order_source_revision_id integer references subscription_plan_revisions(id) on delete set null`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "subscription_plan_revisions", "order_source_mode", `alter table subscription_plan_revisions add column order_source_mode text not null default ''`); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_plan_revision_node_sort_position on subscription_plan_revision_nodes(revision_id, sort_position) where sort_position is not null`); err != nil {

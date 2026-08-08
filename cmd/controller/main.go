@@ -116,6 +116,7 @@ func main() {
 	go app.StartDatabaseMaintenance(ctx)
 	go app.StartAccessChangeWorker(ctx)
 	go app.StartAccessLifecycleWorker(ctx)
+	go app.StartPlanRuleReconciler(ctx)
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           app.Handler(),

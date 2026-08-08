@@ -9,6 +9,7 @@ import { NodeScopeActionDialog } from '../components/node-assignment/NodeScopeAc
 import { AssignPlanUsersDialog } from '../components/node-assignment/AssignPlanUsersDialog'
 import { NodeRenameDialog, type RenameNode } from '../components/node-assignment/NodeRenameDialog'
 import { X, Filter, RefreshCw, MoreHorizontal, Users, Pencil, Settings } from 'lucide-react'
+import { SubscriptionPlansPage } from './SubscriptionPlansPage'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -83,6 +84,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
   const [showType, setShowType] = React.useState(false)
   const [renameNode, setRenameNode] = React.useState<CatalogNode | null>(null)
   const [batchDialogOpen, setBatchDialogOpen] = React.useState(false)
+  const [contextPlanID, setContextPlanID] = React.useState(0)
 
   const servers = data.servers || []
   const plans = data.subscription_plans || []
@@ -198,10 +200,33 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const contextSelector = (
+    <div className="node-context-selector" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+      <label htmlFor="node-management-context" style={{ fontWeight: 600, fontSize: 13 }}>管理范围</label>
+      <Select id="node-management-context" value={contextPlanID} onChange={e => setContextPlanID(Number(e.target.value))} style={{ minWidth: 240 }}>
+        <option value={0}>全部节点</option>
+        {isAdmin && plans.map((plan: any) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+      </Select>
+      <span className="muted" style={{ fontSize: 12 }}>{contextPlanID ? '设置该方案的节点、命名、规则、排序与版本。' : '分配节点，或按稳定范围创建方案自动规则。'}</span>
+    </div>
+  )
+
+  if (contextPlanID > 0) {
+    return (
+      <div className="panel node-assignments-panel">
+        <div className="panel-body">
+          {contextSelector}
+          <SubscriptionPlansPage data={data} client={client} load={load} notify={notify} embedded selectedPlanID={contextPlanID} />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="panel node-assignments-panel">
       <div className="panel-body">
+        {contextSelector}
+        {isAdmin && <SubscriptionPlansPage data={data} client={client} load={load} notify={notify} embedded />}
         {toast && <p style={{ margin: '0 0 8px', color: 'var(--color-success, #16a34a)' }}>{toast}</p>}
         <>
         <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>

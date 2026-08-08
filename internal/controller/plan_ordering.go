@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -83,14 +82,20 @@ func (s *Server) planOrderingGet(w http.ResponseWriter, r *http.Request, id int6
 		"runtime_authorization_mode": s.authorizationMode(r.Context()),
 		"order_template_id":          revision.OrderTemplateID,
 		"order_template_revision":    revision.OrderTemplateRevision,
+		"order_source_plan_id":       revision.OrderSourcePlanID,
+		"order_source_revision_id":   revision.OrderSourceRevisionID,
+		"order_source_mode":          revision.OrderSourceMode,
+	}
+	if revision.OrderSourcePlanID != nil {
+		if sourcePlan, sourceErr := s.store.GetSubscriptionPlan(r.Context(), *revision.OrderSourcePlanID); sourceErr == nil {
+			response["order_source_plan"] = sourcePlan
+		}
 	}
 	if revision.OrderTemplateID != nil {
 		if template, templateErr := s.store.GetNodeOrderTemplate(r.Context(), *revision.OrderTemplateID); templateErr == nil {
 			response["order_template"] = template
 			response["template_update_available"] = revision.OrderTemplateRevision < template.Revision
 			response["template_archived"] = !template.Enabled
-		} else if errors.Is(templateErr, sql.ErrNoRows) {
-			response["template_archived"] = true
 		}
 	}
 	write(w, 200, response)

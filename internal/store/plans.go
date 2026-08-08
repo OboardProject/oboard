@@ -181,6 +181,9 @@ func insertPlanRevisionTx(ctx context.Context, tx *sql.Tx, planID int64, status 
 
 func insertPlanRevisionNodesTx(ctx context.Context, tx *sql.Tx, revisionID int64, nodes []model.SubscriptionPlanNode, ts string) error {
 	for _, v := range nodes {
+		if v.SourceType == "" {
+			v.SourceType = model.PlanNodeSourceExplicit
+		}
 		if _, err := tx.ExecContext(ctx, `insert into subscription_plan_revision_nodes(revision_id,node_type,node_id,display_group,source_type,source_rule_id,sort_position,display_name_override,created_at) values(?,?,?,?,?,?,?,?,?)`, revisionID, v.NodeType, v.NodeID, v.DisplayGroup, v.SourceType, v.SourceRuleID, nullInt(v.SortPosition), v.DisplayNameOverride, ts); err != nil {
 			return err
 		}
@@ -273,9 +276,10 @@ func (s *Store) CloneSubscriptionPlan(ctx context.Context, id int64, newName str
 	var mode string
 	var day int
 	var policyJSON string
-	var createdBy, orderTemplateID sql.NullInt64
+	var createdBy, orderTemplateID, orderSourcePlanID, orderSourceRevisionID sql.NullInt64
 	var orderTemplateRevision int64
-	if err := tx.QueryRowContext(ctx, `select speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,node_order_policy_json,created_by,order_template_id,order_template_revision from subscription_plan_revisions where id=?`, currentRevisionID).Scan(&speed, &traffic, &mode, &day, &policyJSON, &createdBy, &orderTemplateID, &orderTemplateRevision); err != nil {
+	var orderSourceMode string
+	if err := tx.QueryRowContext(ctx, `select speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,node_order_policy_json,created_by,order_template_id,order_template_revision,order_source_plan_id,order_source_revision_id,order_source_mode from subscription_plan_revisions where id=?`, currentRevisionID).Scan(&speed, &traffic, &mode, &day, &policyJSON, &createdBy, &orderTemplateID, &orderTemplateRevision, &orderSourcePlanID, &orderSourceRevisionID, &orderSourceMode); err != nil {
 		return nil, err
 	}
 	res, err := tx.ExecContext(ctx, `insert into subscription_plans(name,description,enabled,revision,lock_version,current_revision_id,latest_revision_id,pending_revision_id,created_at,updated_at) values(?,?,1,1,1,null,null,null,?,?)`, newName, "", ts, ts)
@@ -294,10 +298,16 @@ func (s *Store) CloneSubscriptionPlan(ctx context.Context, id int64, newName str
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set order_template_id=?,order_template_revision=? where id=?`, nullableInt64(orderTemplateID), orderTemplateRevision, revisionID); err != nil {
+	if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set order_template_id=?,order_template_revision=?,order_source_plan_id=?,order_source_revision_id=?,order_source_mode=? where id=?`, nullableInt64(orderTemplateID), orderTemplateRevision, nullableInt64(orderSourcePlanID), nullableInt64(orderSourceRevisionID), orderSourceMode, revisionID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `insert into subscription_plan_revision_nodes(revision_id,node_type,node_id,display_group,source_type,source_rule_id,sort_position,display_name_override,created_at) select ?,node_type,node_id,display_group,source_type,source_rule_id,sort_position,display_name_override,? from subscription_plan_revision_nodes where revision_id=?`, revisionID, ts, currentRevisionID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `insert into subscription_plan_revision_rules(revision_id,rule_id,kind,scope_key,created_at) select ?,rule_id,kind,scope_key,? from subscription_plan_revision_rules where revision_id=?`, revisionID, ts, currentRevisionID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `insert into subscription_plan_revision_node_exclusions(revision_id,node_type,node_id,created_at) select ?,node_type,node_id,? from subscription_plan_revision_node_exclusions where revision_id=?`, revisionID, ts, currentRevisionID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `update subscription_plans set current_revision_id=?,latest_revision_id=?,active_revision_id=? where id=?`, revisionID, revisionID, revisionID, planID); err != nil {
@@ -396,7 +406,7 @@ func (s *Store) SetSubscriptionPlanEnabled(ctx context.Context, id int64, enable
 }
 
 func (s *Store) ListPlanRevisions(ctx context.Context, planID int64) ([]model.SubscriptionPlanRevision, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,plan_id,revision,version_no,status,speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,node_order_policy_json,order_template_id,order_template_revision,created_by,created_at,activated_at,based_on_revision_id,change_kind,change_summary,activation_change_id from subscription_plan_revisions where plan_id=? order by version_no desc`, planID)
+	rows, err := s.db.QueryContext(ctx, `select id,plan_id,revision,version_no,status,speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,node_order_policy_json,order_template_id,order_template_revision,order_source_plan_id,order_source_revision_id,order_source_mode,created_by,created_at,activated_at,based_on_revision_id,change_kind,change_summary,activation_change_id from subscription_plan_revisions where plan_id=? order by version_no desc`, planID)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +415,7 @@ func (s *Store) ListPlanRevisions(ctx context.Context, planID int64) ([]model.Su
 }
 
 func (s *Store) GetPlanRevision(ctx context.Context, planID, revisionID int64) (*model.SubscriptionPlanRevision, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,plan_id,revision,version_no,status,speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,node_order_policy_json,order_template_id,order_template_revision,created_by,created_at,activated_at,based_on_revision_id,change_kind,change_summary,activation_change_id from subscription_plan_revisions where id=? and plan_id=?`, revisionID, planID)
+	rows, err := s.db.QueryContext(ctx, `select id,plan_id,revision,version_no,status,speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,node_order_policy_json,order_template_id,order_template_revision,order_source_plan_id,order_source_revision_id,order_source_mode,created_by,created_at,activated_at,based_on_revision_id,change_kind,change_summary,activation_change_id from subscription_plan_revisions where id=? and plan_id=?`, revisionID, planID)
 	if err != nil {
 		return nil, err
 	}
@@ -444,19 +454,27 @@ func scanPlanRevisions(rows *sql.Rows) ([]model.SubscriptionPlanRevision, error)
 	var out []model.SubscriptionPlanRevision
 	for rows.Next() {
 		var v model.SubscriptionPlanRevision
-		var createdBy, orderTemplateID sql.NullInt64
+		var createdBy, orderTemplateID, orderSourcePlanID, orderSourceRevisionID sql.NullInt64
 		var ca string
 		var activatedAt sql.NullString
 		var policyJSON string
 		var basedOn sql.NullInt64
 		var activationChangeID sql.NullInt64
-		if err := rows.Scan(&v.ID, &v.PlanID, &v.Revision, &v.VersionNo, &v.Status, &v.SpeedLimitMbps, &v.TrafficLimitBytes, &v.TrafficResetMode, &v.TrafficResetDay, &policyJSON, &orderTemplateID, &v.OrderTemplateRevision, &createdBy, &ca, &activatedAt, &basedOn, &v.ChangeKind, &v.ChangeSummary, &activationChangeID); err != nil {
+		if err := rows.Scan(&v.ID, &v.PlanID, &v.Revision, &v.VersionNo, &v.Status, &v.SpeedLimitMbps, &v.TrafficLimitBytes, &v.TrafficResetMode, &v.TrafficResetDay, &policyJSON, &orderTemplateID, &v.OrderTemplateRevision, &orderSourcePlanID, &orderSourceRevisionID, &v.OrderSourceMode, &createdBy, &ca, &activatedAt, &basedOn, &v.ChangeKind, &v.ChangeSummary, &activationChangeID); err != nil {
 			return nil, err
 		}
 		v.NodeOrderPolicy = parseOrderPolicy(policyJSON)
 		if orderTemplateID.Valid {
 			value := orderTemplateID.Int64
 			v.OrderTemplateID = &value
+		}
+		if orderSourcePlanID.Valid {
+			value := orderSourcePlanID.Int64
+			v.OrderSourcePlanID = &value
+		}
+		if orderSourceRevisionID.Valid {
+			value := orderSourceRevisionID.Int64
+			v.OrderSourceRevisionID = &value
 		}
 		if v.VersionNo == 0 {
 			v.VersionNo = v.Revision
@@ -576,9 +594,10 @@ func (s *Store) RestorePlanRevision(ctx context.Context, planID, revisionID, exp
 	var mode string
 	var day int
 	var policyJSON string
-	var orderTemplateID sql.NullInt64
+	var orderTemplateID, orderSourcePlanID, orderSourceRevisionID sql.NullInt64
 	var orderTemplateRevision int64
-	if err := tx.QueryRowContext(ctx, `select speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,node_order_policy_json,order_template_id,order_template_revision from subscription_plan_revisions where id=? and plan_id=?`, revisionID, planID).Scan(&speed, &traffic, &mode, &day, &policyJSON, &orderTemplateID, &orderTemplateRevision); err != nil {
+	var orderSourceMode string
+	if err := tx.QueryRowContext(ctx, `select speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,node_order_policy_json,order_template_id,order_template_revision,order_source_plan_id,order_source_revision_id,order_source_mode from subscription_plan_revisions where id=? and plan_id=?`, revisionID, planID).Scan(&speed, &traffic, &mode, &day, &policyJSON, &orderTemplateID, &orderTemplateRevision, &orderSourcePlanID, &orderSourceRevisionID, &orderSourceMode); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, sql.ErrNoRows
 		}
@@ -588,13 +607,25 @@ func (s *Store) RestorePlanRevision(ctx context.Context, planID, revisionID, exp
 	if err != nil {
 		return 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set speed_limit_mbps=?,traffic_limit_bytes=?,traffic_reset_mode=?,traffic_reset_day=?,node_order_policy_json=?,order_template_id=?,order_template_revision=? where id=?`, speed, traffic, mode, day, policyJSON, nullableInt64(orderTemplateID), orderTemplateRevision, draftID); err != nil {
+	if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set speed_limit_mbps=?,traffic_limit_bytes=?,traffic_reset_mode=?,traffic_reset_day=?,node_order_policy_json=?,order_template_id=?,order_template_revision=?,order_source_plan_id=?,order_source_revision_id=?,order_source_mode=? where id=?`, speed, traffic, mode, day, policyJSON, nullableInt64(orderTemplateID), orderTemplateRevision, nullableInt64(orderSourcePlanID), nullableInt64(orderSourceRevisionID), orderSourceMode, draftID); err != nil {
 		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `delete from subscription_plan_revision_nodes where revision_id=?`, draftID); err != nil {
 		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `insert into subscription_plan_revision_nodes(revision_id,node_type,node_id,display_group,source_type,source_rule_id,sort_position,display_name_override,created_at) select ?,node_type,node_id,display_group,source_type,source_rule_id,sort_position,display_name_override,? from subscription_plan_revision_nodes where revision_id=?`, draftID, ts, revisionID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `delete from subscription_plan_revision_rules where revision_id=?`, draftID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `delete from subscription_plan_revision_node_exclusions where revision_id=?`, draftID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `insert into subscription_plan_revision_rules(revision_id,rule_id,kind,scope_key,created_at) select ?,rule_id,kind,scope_key,? from subscription_plan_revision_rules where revision_id=?`, draftID, ts, revisionID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `insert into subscription_plan_revision_node_exclusions(revision_id,node_type,node_id,created_at) select ?,node_type,node_id,? from subscription_plan_revision_node_exclusions where revision_id=?`, draftID, ts, revisionID); err != nil {
 		return 0, err
 	}
 	if err := bumpPlanRevisionTx(ctx, tx, planID, ts); err != nil {
@@ -712,10 +743,11 @@ func ensurePlanDraftTx(ctx context.Context, tx *sql.Tx, planID int64, ts string)
 	var mode string
 	var day int
 	var policyJSON string
-	var createdBy, orderTemplateID sql.NullInt64
+	var createdBy, orderTemplateID, orderSourcePlanID, orderSourceRevisionID sql.NullInt64
 	var orderTemplateRevision int64
+	var orderSourceMode string
 	if activeID != 0 {
-		if err := tx.QueryRowContext(ctx, `select speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,node_order_policy_json,created_by,order_template_id,order_template_revision from subscription_plan_revisions where id=?`, activeID).Scan(&speed, &traffic, &mode, &day, &policyJSON, &createdBy, &orderTemplateID, &orderTemplateRevision); err != nil {
+		if err := tx.QueryRowContext(ctx, `select speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,node_order_policy_json,created_by,order_template_id,order_template_revision,order_source_plan_id,order_source_revision_id,order_source_mode from subscription_plan_revisions where id=?`, activeID).Scan(&speed, &traffic, &mode, &day, &policyJSON, &createdBy, &orderTemplateID, &orderTemplateRevision, &orderSourcePlanID, &orderSourceRevisionID, &orderSourceMode); err != nil {
 			return 0, err
 		}
 	}
@@ -728,10 +760,16 @@ func ensurePlanDraftTx(ctx context.Context, tx *sql.Tx, planID int64, ts string)
 		return 0, err
 	}
 	if activeID != 0 {
-		if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set order_template_id=?,order_template_revision=? where id=?`, nullableInt64(orderTemplateID), orderTemplateRevision, draftID); err != nil {
+		if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set order_template_id=?,order_template_revision=?,order_source_plan_id=?,order_source_revision_id=?,order_source_mode=? where id=?`, nullableInt64(orderTemplateID), orderTemplateRevision, nullableInt64(orderSourcePlanID), nullableInt64(orderSourceRevisionID), orderSourceMode, draftID); err != nil {
 			return 0, err
 		}
 		if _, err := tx.ExecContext(ctx, `insert into subscription_plan_revision_nodes(revision_id,node_type,node_id,display_group,source_type,source_rule_id,sort_position,display_name_override,created_at) select ?,node_type,node_id,display_group,source_type,source_rule_id,sort_position,display_name_override,? from subscription_plan_revision_nodes where revision_id=?`, draftID, ts, activeID); err != nil {
+			return 0, err
+		}
+		if _, err := tx.ExecContext(ctx, `insert into subscription_plan_revision_rules(revision_id,rule_id,kind,scope_key,created_at) select ?,rule_id,kind,scope_key,? from subscription_plan_revision_rules where revision_id=?`, draftID, ts, activeID); err != nil {
+			return 0, err
+		}
+		if _, err := tx.ExecContext(ctx, `insert into subscription_plan_revision_node_exclusions(revision_id,node_type,node_id,created_at) select ?,node_type,node_id,? from subscription_plan_revision_node_exclusions where revision_id=?`, draftID, ts, activeID); err != nil {
 			return 0, err
 		}
 	}
@@ -806,6 +844,18 @@ type PlanOrderingMutation struct {
 	SetTemplateProvenance bool
 	OrderTemplateID       *int64
 	OrderTemplateRevision int64
+	SetSourceProvenance   bool
+	OrderSourcePlanID     *int64
+	OrderSourceRevisionID *int64
+	OrderSourceMode       string
+}
+
+// PlanMembershipPolicyMutation replaces the rule and exclusion snapshot in a
+// new immutable version. Nodes must be the server-resolved desired membership.
+type PlanMembershipPolicyMutation struct {
+	Rules      []model.PlanMembershipRule
+	Exclusions []model.PlanNodeExclusion
+	Nodes      []model.SubscriptionPlanNode
 }
 
 type PlanNodePresentationMutation struct {
@@ -823,6 +873,7 @@ type PlanVersionMutation struct {
 	Settings            *PlanSettingsMutation
 	Nodes               *PlanNodesMutation
 	Ordering            *PlanOrderingMutation
+	MembershipPolicy    *PlanMembershipPolicyMutation
 	NodePresentation    *PlanNodePresentationMutation
 	ChangeKind          string
 	ChangeSummary       string
@@ -902,6 +953,16 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 	}
 	candidate := base
 	candidateNodes := clonePlanNodeSlice(baseNodes)
+	baseRules, err := listPlanRevisionRules(ctx, tx, baseID)
+	if err != nil {
+		return nil, err
+	}
+	baseExclusions, err := listPlanRevisionExclusions(ctx, tx, baseID)
+	if err != nil {
+		return nil, err
+	}
+	candidateRules := append([]model.PlanMembershipRule(nil), baseRules...)
+	candidateExclusions := append([]model.PlanNodeExclusion(nil), baseExclusions...)
 	if mutation.Settings != nil {
 		applySettingsMutation(&candidate, mutation.Settings)
 	}
@@ -911,11 +972,21 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 			return nil, err
 		}
 	}
+	if mutation.MembershipPolicy != nil {
+		candidateRules = append([]model.PlanMembershipRule(nil), mutation.MembershipPolicy.Rules...)
+		candidateExclusions = append([]model.PlanNodeExclusion(nil), mutation.MembershipPolicy.Exclusions...)
+		candidateNodes = clonePlanNodeSlice(mutation.MembershipPolicy.Nodes)
+	}
 	if mutation.Ordering != nil {
 		candidate.NodeOrderPolicy = parseOrderPolicy(marshalOrderPolicy(mutation.Ordering.Policy))
 		if mutation.Ordering.SetTemplateProvenance {
 			candidate.OrderTemplateID = mutation.Ordering.OrderTemplateID
 			candidate.OrderTemplateRevision = mutation.Ordering.OrderTemplateRevision
+		}
+		if mutation.Ordering.SetSourceProvenance {
+			candidate.OrderSourcePlanID = mutation.Ordering.OrderSourcePlanID
+			candidate.OrderSourceRevisionID = mutation.Ordering.OrderSourceRevisionID
+			candidate.OrderSourceMode = mutation.Ordering.OrderSourceMode
 		}
 		if mutation.Ordering.ClearManualPositions {
 			for i := range candidateNodes {
@@ -949,7 +1020,7 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 	if candidate.SpeedLimitMbps < 0 || candidate.TrafficLimitBytes < 0 {
 		return nil, fmt.Errorf("plan limits must be >= 0")
 	}
-	contentChanged := planVersionDigest(candidate, candidateNodes) != planVersionDigest(base, baseNodes)
+	contentChanged := planVersionDigest(candidate, candidateNodes, candidateRules, candidateExclusions) != planVersionDigest(base, baseNodes, baseRules, baseExclusions)
 	if !contentChanged {
 		if metaChanged {
 			// Identity-only save: no version is created but the plan row is
@@ -1001,7 +1072,10 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set order_template_id=?,order_template_revision=? where id=?`, candidate.OrderTemplateID, candidate.OrderTemplateRevision, revisionID); err != nil {
+	if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set order_template_id=?,order_template_revision=?,order_source_plan_id=?,order_source_revision_id=?,order_source_mode=? where id=?`, candidate.OrderTemplateID, candidate.OrderTemplateRevision, candidate.OrderSourcePlanID, candidate.OrderSourceRevisionID, candidate.OrderSourceMode, revisionID); err != nil {
+		return nil, err
+	}
+	if err := insertPlanRevisionMembershipPolicyTx(ctx, tx, revisionID, candidateRules, candidateExclusions, ts); err != nil {
 		return nil, err
 	}
 	for _, pn := range candidateNodes {
@@ -1212,19 +1286,27 @@ func (s *Store) SetPlanRevisionActivationChange(ctx context.Context, planID, rev
 
 func loadPlanRevisionSnapshotTx(ctx context.Context, tx *sql.Tx, planID, revisionID int64) (model.SubscriptionPlanRevision, []model.SubscriptionPlanNode, error) {
 	var v model.SubscriptionPlanRevision
-	var createdBy, orderTemplateID sql.NullInt64
+	var createdBy, orderTemplateID, orderSourcePlanID, orderSourceRevisionID sql.NullInt64
 	var ca string
 	var activatedAt sql.NullString
 	var policyJSON string
 	var basedOn sql.NullInt64
 	var activationChangeID sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `select id,plan_id,revision,version_no,status,speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,node_order_policy_json,order_template_id,order_template_revision,created_by,created_at,activated_at,based_on_revision_id,change_kind,change_summary,activation_change_id from subscription_plan_revisions where id=? and plan_id=?`, revisionID, planID).Scan(&v.ID, &v.PlanID, &v.Revision, &v.VersionNo, &v.Status, &v.SpeedLimitMbps, &v.TrafficLimitBytes, &v.TrafficResetMode, &v.TrafficResetDay, &policyJSON, &orderTemplateID, &v.OrderTemplateRevision, &createdBy, &ca, &activatedAt, &basedOn, &v.ChangeKind, &v.ChangeSummary, &activationChangeID); err != nil {
+	if err := tx.QueryRowContext(ctx, `select id,plan_id,revision,version_no,status,speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,node_order_policy_json,order_template_id,order_template_revision,order_source_plan_id,order_source_revision_id,order_source_mode,created_by,created_at,activated_at,based_on_revision_id,change_kind,change_summary,activation_change_id from subscription_plan_revisions where id=? and plan_id=?`, revisionID, planID).Scan(&v.ID, &v.PlanID, &v.Revision, &v.VersionNo, &v.Status, &v.SpeedLimitMbps, &v.TrafficLimitBytes, &v.TrafficResetMode, &v.TrafficResetDay, &policyJSON, &orderTemplateID, &v.OrderTemplateRevision, &orderSourcePlanID, &orderSourceRevisionID, &v.OrderSourceMode, &createdBy, &ca, &activatedAt, &basedOn, &v.ChangeKind, &v.ChangeSummary, &activationChangeID); err != nil {
 		return v, nil, err
 	}
 	v.NodeOrderPolicy = parseOrderPolicy(policyJSON)
 	if orderTemplateID.Valid {
 		value := orderTemplateID.Int64
 		v.OrderTemplateID = &value
+	}
+	if orderSourcePlanID.Valid {
+		value := orderSourcePlanID.Int64
+		v.OrderSourcePlanID = &value
+	}
+	if orderSourceRevisionID.Valid {
+		value := orderSourceRevisionID.Int64
+		v.OrderSourceRevisionID = &value
 	}
 	if v.VersionNo == 0 {
 		v.VersionNo = v.Revision
@@ -1430,7 +1512,7 @@ func sameNodeMembership(a, b []model.SubscriptionPlanNode) bool {
 	return true
 }
 
-func planVersionDigest(rev model.SubscriptionPlanRevision, nodes []model.SubscriptionPlanNode) string {
+func planVersionDigest(rev model.SubscriptionPlanRevision, nodes []model.SubscriptionPlanNode, rules []model.PlanMembershipRule, exclusions []model.PlanNodeExclusion) string {
 	digestNodes := make([]model.SubscriptionPlanNode, len(nodes))
 	copy(digestNodes, nodes)
 	sort.Slice(digestNodes, func(i, j int) bool {
@@ -1441,22 +1523,44 @@ func planVersionDigest(rev model.SubscriptionPlanRevision, nodes []model.Subscri
 		DisplayGroup        string  `json:"display_group,omitempty"`
 		SortPosition        *int    `json:"sort_position,omitempty"`
 		DisplayNameOverride *string `json:"display_name_override,omitempty"`
+		SourceType          string  `json:"source_type,omitempty"`
+		SourceRuleID        int64   `json:"source_rule_id,omitempty"`
 	}
 	nds := make([]nodeDigest, 0, len(digestNodes))
 	for _, pn := range digestNodes {
-		nd := nodeDigest{Key: planRevisionNodeKey(pn.NodeType, pn.NodeID), DisplayGroup: pn.DisplayGroup, DisplayNameOverride: pn.DisplayNameOverride}
+		nd := nodeDigest{Key: planRevisionNodeKey(pn.NodeType, pn.NodeID), DisplayGroup: pn.DisplayGroup, DisplayNameOverride: pn.DisplayNameOverride, SourceType: string(pn.SourceType), SourceRuleID: pn.SourceRuleID}
 		if pn.SortPosition != nil {
 			position := *pn.SortPosition
 			nd.SortPosition = &position
 		}
 		nds = append(nds, nd)
 	}
+	type ruleDigest struct {
+		RuleID   int64  `json:"rule_id"`
+		Kind     string `json:"kind"`
+		ScopeKey string `json:"scope_key"`
+	}
+	ruleValues := make([]ruleDigest, 0, len(rules))
+	for _, rule := range rules {
+		ruleValues = append(ruleValues, ruleDigest{RuleID: rule.RuleID, Kind: rule.Kind, ScopeKey: rule.ScopeKey})
+	}
+	sort.Slice(ruleValues, func(i, j int) bool { return ruleValues[i].RuleID < ruleValues[j].RuleID })
+	exclusionValues := make([]string, 0, len(exclusions))
+	for _, exclusion := range exclusions {
+		exclusionValues = append(exclusionValues, planRevisionNodeKey(exclusion.NodeType, exclusion.NodeID))
+	}
+	sort.Strings(exclusionValues)
 	raw, _ := json.Marshal(map[string]any{
-		"limits":                  []any{rev.SpeedLimitMbps, rev.TrafficLimitBytes, rev.TrafficResetMode, rev.TrafficResetDay},
-		"policy":                  rev.NodeOrderPolicy,
-		"order_template_id":       rev.OrderTemplateID,
-		"order_template_revision": rev.OrderTemplateRevision,
-		"nodes":                   nds,
+		"limits":                   []any{rev.SpeedLimitMbps, rev.TrafficLimitBytes, rev.TrafficResetMode, rev.TrafficResetDay},
+		"policy":                   rev.NodeOrderPolicy,
+		"order_template_id":        rev.OrderTemplateID,
+		"order_template_revision":  rev.OrderTemplateRevision,
+		"order_source_plan_id":     rev.OrderSourcePlanID,
+		"order_source_revision_id": rev.OrderSourceRevisionID,
+		"order_source_mode":        rev.OrderSourceMode,
+		"membership_rules":         ruleValues,
+		"node_exclusions":          exclusionValues,
+		"nodes":                    nds,
 	})
 	return string(raw)
 }

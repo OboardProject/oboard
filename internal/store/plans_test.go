@@ -282,6 +282,108 @@ func TestPlanVersionNoopSaveDoesNotCreateVersion(t *testing.T) {
 	}
 }
 
+func TestPlanVersionCopiesMembershipPolicyAndOrderingSource(t *testing.T) {
+	ctx := context.Background()
+	s := openPlansTestStore(t)
+	plan := &model.SubscriptionPlan{Name: "policy-source", Enabled: true}
+	nodes := []model.SubscriptionPlanNode{
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 1, SourceType: model.PlanNodeSourceRule, SourceRuleID: 1},
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 2, SourceType: model.PlanNodeSourceExplicit},
+	}
+	if err := s.CreateSubscriptionPlan(ctx, plan, nodes); err != nil {
+		t.Fatal(err)
+	}
+	rules := []model.PlanMembershipRule{{RuleID: 1, Kind: "exit_region", ScopeKey: "JP"}}
+	exclusions := []model.PlanNodeExclusion{{NodeType: model.AssignableNodeProxyPath, NodeID: 3}}
+	policyResult, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		BaseRevisionID: plan.LatestRevisionID, ExpectedLockVersion: plan.LockVersion,
+		MembershipPolicy: &PlanMembershipPolicyMutation{Rules: rules, Exclusions: exclusions, Nodes: nodes},
+		ChangeKind:       model.PlanChangeKindNodes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policyResult.RequiresDeployment {
+		t.Fatal("rule-only snapshot with unchanged membership must not deploy")
+	}
+	sourcePlanID, sourceRevisionID := plan.ID, policyResult.Revision.ID
+	orderingResult, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		BaseRevisionID: policyResult.Revision.ID, ExpectedLockVersion: policyResult.LockVersion,
+		Ordering:   &PlanOrderingMutation{Policy: model.NewSubscriptionNodeOrderPolicy(), SetSourceProvenance: true, OrderSourcePlanID: &sourcePlanID, OrderSourceRevisionID: &sourceRevisionID, OrderSourceMode: "copy_rules_rebuild"},
+		ChangeKind: model.PlanChangeKindOrdering,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if orderingResult.Revision.OrderSourcePlanID == nil || *orderingResult.Revision.OrderSourcePlanID != plan.ID || orderingResult.Revision.OrderSourceMode != "copy_rules_rebuild" {
+		t.Fatalf("ordering provenance = %#v", orderingResult.Revision)
+	}
+	clone, err := s.CloneSubscriptionPlan(ctx, plan.ID, "policy-clone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cloneRevision, err := s.GetPlanRevision(ctx, clone.ID, clone.CurrentRevisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cloneRevision.OrderSourceRevisionID == nil || *cloneRevision.OrderSourceRevisionID != sourceRevisionID {
+		t.Fatalf("clone provenance = %#v", cloneRevision)
+	}
+	cloneRules, cloneExclusions, err := s.ListPlanRevisionMembershipPolicy(ctx, clone.CurrentRevisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cloneRules) != 1 || cloneRules[0].ScopeKey != "JP" || len(cloneExclusions) != 1 || cloneExclusions[0].NodeID != 3 {
+		t.Fatalf("clone membership snapshot rules=%#v exclusions=%#v", cloneRules, cloneExclusions)
+	}
+}
+
+func TestPlanVersionAppliesOrderingToResolvedMembership(t *testing.T) {
+	ctx := context.Background()
+	s := openPlansTestStore(t)
+	plan := &model.SubscriptionPlan{Name: "rule-ordering", Enabled: true}
+	if err := s.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 1, SourceType: model.PlanNodeSourceExplicit},
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 2, SourceType: model.PlanNodeSourceRule, SourceRuleID: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	desired := []model.SubscriptionPlanNode{
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 1, SourceType: model.PlanNodeSourceExplicit},
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 2, SourceType: model.PlanNodeSourceRule, SourceRuleID: 1},
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 3, SourceType: model.PlanNodeSourceRule, SourceRuleID: 1},
+	}
+	result, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		BaseRevisionID: plan.LatestRevisionID, ExpectedLockVersion: plan.LockVersion,
+		MembershipPolicy: &PlanMembershipPolicyMutation{
+			Rules: []model.PlanMembershipRule{{RuleID: 1, Kind: "exit_region", ScopeKey: "JP"}},
+			Nodes: desired,
+		},
+		Ordering: &PlanOrderingMutation{
+			Policy:      orderingPolicyForStore(model.SubscriptionNodeOrderManual),
+			ManualOrder: []string{"proxy_path:2", "proxy_path:3", "proxy_path:1"},
+		},
+		ChangeKind: model.PlanChangeKindNodes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := s.ListPlanRevisionNodes(ctx, result.Revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	positions := map[int64]int{}
+	for _, node := range nodes {
+		if node.SortPosition == nil {
+			t.Fatalf("node %d has no manual position: %#v", node.NodeID, nodes)
+		}
+		positions[node.NodeID] = *node.SortPosition
+	}
+	if positions[2] != 0 || positions[3] != 1 || positions[1] != 2 {
+		t.Fatalf("manual positions = %#v", positions)
+	}
+}
+
 func TestPlanVersionOrderingAdvancesCurrentImmediately(t *testing.T) {
 	ctx := context.Background()
 	s := openPlansTestStore(t)

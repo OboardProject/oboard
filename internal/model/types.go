@@ -374,6 +374,9 @@ type SubscriptionPlanRevision struct {
 	NodeOrderPolicy       SubscriptionNodeOrderPolicy `json:"node_order_policy,omitempty"`
 	OrderTemplateID       *int64                      `json:"order_template_id,omitempty"`
 	OrderTemplateRevision int64                       `json:"order_template_revision"`
+	OrderSourcePlanID     *int64                      `json:"order_source_plan_id,omitempty"`
+	OrderSourceRevisionID *int64                      `json:"order_source_revision_id,omitempty"`
+	OrderSourceMode       string                      `json:"order_source_mode,omitempty"`
 	CreatedBy             *int64                      `json:"created_by,omitempty"`
 	CreatedAt             time.Time                   `json:"created_at"`
 	ActivatedAt           *time.Time                  `json:"activated_at,omitempty"`
@@ -393,6 +396,32 @@ type SubscriptionPlanRevisionNode struct {
 	SortPosition        *int               `json:"sort_position,omitempty"`
 	DisplayNameOverride *string            `json:"display_name_override,omitempty"`
 	CreatedAt           time.Time          `json:"created_at"`
+}
+
+type PlanMembershipRule struct {
+	ID         int64     `json:"id"`
+	RevisionID int64     `json:"revision_id"`
+	RuleID     int64     `json:"rule_id"`
+	Kind       string    `json:"kind"`
+	ScopeKey   string    `json:"scope_key"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type PlanNodeExclusion struct {
+	RevisionID int64              `json:"revision_id"`
+	NodeType   AssignableNodeType `json:"node_type"`
+	NodeID     int64              `json:"node_id"`
+	CreatedAt  time.Time          `json:"created_at"`
+}
+
+type PlanRuleReconcileState struct {
+	PlanID           int64      `json:"plan_id"`
+	CatalogDigest    string     `json:"catalog_digest"`
+	DesiredDigest    string     `json:"desired_digest"`
+	Status           string     `json:"status"`
+	LastError        string     `json:"last_error,omitempty"`
+	LastReconciledAt *time.Time `json:"last_reconciled_at,omitempty"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // SubscriptionNodeOrderMode controls how a plan revision's nodes are ordered in

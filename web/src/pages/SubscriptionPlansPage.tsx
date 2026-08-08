@@ -9,6 +9,7 @@ import { FormField, TrafficLimitInput } from '../components/ui/form-field'
 import { PlanNodeOrderingPanel, type OrderingPlan } from '../components/node-ordering/PlanNodeOrderingPanel'
 import { Skeleton } from '../components/ui/skeleton'
 import { PlanNodeNameDialog, type PlanNameNode } from '../components/node-assignment/PlanNodeNameDialog'
+import { PlanMembershipRulesPanel } from '../components/node-assignment/PlanMembershipRulesPanel'
 import { formatPlanVersion } from '../lib/plan-version'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
@@ -47,6 +48,8 @@ type PlanNode = {
   exit_region?: string
   entry_server_name?: string
   entry_protocol?: string
+  source_type?: 'explicit' | 'rule'
+  source_rule_id?: number
 }
 type Revision = { id: number; revision: number; version_no: number; status: string; change_kind?: string; change_summary?: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; activated_at?: string; created_at: string }
 type AccessChange = {
@@ -163,7 +166,12 @@ function regionFlagEmoji(code?: string) {
   return String.fromCodePoint(...value.split('').map(char => char.charCodeAt(0) + offset))
 }
 
-export function SubscriptionPlansPage({ data, client, load, notify }: { data: any; client: AnyClient; load: () => Promise<void>; notify?: (message: string, tone?: any) => void }) {
+function PlanDetailShell({ inline, open, onClose, title, children }: { inline?: boolean; open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
+  if (inline) return open ? <section className="plan-detail-inline" aria-label={title}>{children}</section> : null
+  return <Dialog isOpen={open} onClose={onClose} title={title} size="xl">{children}</Dialog>
+}
+
+export function SubscriptionPlansPage({ data, client, load, notify, embedded = false, selectedPlanID = 0 }: { data: any; client: AnyClient; load: () => Promise<void>; notify?: (message: string, tone?: any) => void; embedded?: boolean; selectedPlanID?: number }) {
   const [plans, setPlans] = React.useState<Plan[]>(data.subscription_plans || [])
   const [selectedID, setSelectedID] = React.useState<number>(0)
   const [detail, setDetail] = React.useState<any>(null)
@@ -230,6 +238,8 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
           source_name: catalogNode?.source_name || globalName,
           exit_region: catalogNode?.exit_region,
           entry_server_name: catalogNode?.entry_server_name,
+          source_type: n.source_type || 'explicit',
+          source_rule_id: n.source_rule_id,
         }
       }))
       setNodePreview(null)
@@ -254,6 +264,16 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
   React.useEffect(() => {
     if (selectedID && detailOpen) void loadDetail(selectedID)
   }, [selectedID, detailOpen, loadDetail])
+
+  React.useEffect(() => {
+    if (!embedded || selectedPlanID <= 0 || selectedPlanID === selectedID) return
+    setSelectedID(selectedPlanID)
+    setDetail(null)
+    setNodePreview(null)
+    setMessage('')
+    setTab('overview')
+    setDetailOpen(true)
+  }, [embedded, selectedPlanID, selectedID])
 
   const selectPlan = (id: number) => {
     setSelectedID(id)
@@ -332,6 +352,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
       await client.request('/subscription-plans', { method: 'POST', body: JSON.stringify({ ...createDraft, nodes: createNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id })) }) })
       setCreateOpen(false)
       await refreshPlans()
+      await load()
       notify?.('套餐已创建', 'success')
     } catch (e: any) {
       setMessage('创建失败：' + (e?.message || String(e)))
@@ -419,6 +440,26 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     }
   }
 
+  const excludeRuleNode = async (node: PlanNode) => {
+    if (!plan) return
+    setMessage('')
+    try {
+      const policy = await client.request<any>(`/subscription-plans/${plan.id}/membership-rules`)
+      const key = nodeKey(node)
+      const exclusions = [...(policy.exclusions || []).filter((item: any) => `${item.node_type}:${item.node_id}` !== key), { node_type: node.node_type, node_id: node.node_id }]
+      await client.request(`/subscription-plans/${plan.id}/membership-rules/versions`, {
+        method: 'POST',
+        body: JSON.stringify({ base_revision_id: plan.latest_revision_id, expected_lock_version: plan.lock_version, rules: policy.rules || [], exclusions, change_summary: `排除规则节点 ${key}` }),
+      })
+      setMessage('已保存持续排除，节点变更正在按授权流程应用。')
+      await loadDetail(plan.id)
+      await refreshPlans()
+    } catch (reason: any) {
+      const text = reason?.message || String(reason)
+      setMessage(text.includes('409') ? '保存失败：方案已发生变化，请重新加载后重试' : `保存失败：${text}`)
+    }
+  }
+
   const editPlanNodeName = (node: PlanNode) => {
     setNameError('')
     setNameNode({
@@ -472,6 +513,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
       }
       await loadDetail(selectedID)
       await refreshPlans()
+      await load()
     } catch (e: any) {
       setMessage('停用失败：' + (e?.message || String(e)))
     }
@@ -482,6 +524,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     try {
       await client.request(`/subscription-plans/${selectedID}/clone`, { method: 'POST', body: '{}' })
       await refreshPlans()
+      await load()
       notify?.('已创建副本', 'success')
     } catch (e: any) {
       setMessage('复制失败：' + (e?.message || String(e)))
@@ -567,15 +610,15 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
   }, {})
 
   return (
-    <div className="panel subscription-plans-panel">
+    <div className={embedded ? 'subscription-plans-embedded' : 'panel subscription-plans-panel'}>
       <div className="panel-body">
 
-        <div className="section-toolbar">
+        {!embedded && <div className="section-toolbar">
           <div><h3>套餐列表</h3><p className="muted">共 {plans.length} 个套餐。</p></div>
           <Button onClick={openCreate}><Plus size={14} /> 新建套餐</Button>
-        </div>
+        </div>}
 
-        <div className="card-custom" style={{ overflow: 'auto', marginBottom: 16 }}>
+        {!embedded && <div className="card-custom" style={{ overflow: 'auto', marginBottom: 16 }}>
           <table className="user-data-table" style={{ minWidth: 780 }}>
             <thead>
               <tr>
@@ -602,10 +645,12 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
               {plans.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 24 }}>还没有套餐，点击“新建套餐”开始。</td></tr>}
             </tbody>
           </table>
-        </div>
+        </div>}
+
+        {embedded && <div className="section-toolbar" style={{ justifyContent: 'flex-end', marginBottom: 10 }}><Button variant="outline" size="sm" onClick={openCreate}><Plus size={14} /> 新建方案</Button></div>}
       </div>
 
-      <Dialog isOpen={detailOpen && selectedID > 0} onClose={closeDetail} title={plan ? `套餐详情：${plan.name}` : '套餐详情'} size="xl">
+      <PlanDetailShell inline={embedded} open={detailOpen && selectedID > 0} onClose={closeDetail} title={plan ? `方案详情：${plan.name}` : '方案详情'}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxHeight: 'calc(85vh - 80px)', overflow: 'auto', paddingRight: 4 }}>
           {detailError && <p style={{ color: 'var(--color-danger)', margin: 0 }}>{detailError}</p>}
           {message && <p style={{ color: message.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)', margin: 0 }}>{message}</p>}
@@ -718,6 +763,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
               {tab === 'nodes' && (
                 <div className="animate-page-in" style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {applying && <p style={{ color: 'var(--color-warning)', margin: 0 }}>有套餐版本正在应用，应用完成前不能保存新的节点版本。</p>}
+                  <PlanMembershipRulesPanel plan={plan} client={client} notify={notify} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
                   <div className="section-toolbar">
                     <div><h3 style={{ margin: 0 }}>节点集合（{workingNodes.length}）</h3><p className="muted">基于最新保存版本编辑；保存后创建不可变新版本，节点变化会走两阶段下发。</p></div>
                     <Button variant="outline" size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }} disabled={applying}><Plus size={14} /> 添加节点</Button>
@@ -739,7 +785,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                         const key = nodeKey(n)
                         const hasOverride = n.display_name_override != null
                         const effectiveName = n.display_name_override || n.global_name || n.name || key
-                        const isCustomName = hasOverride && n.display_name_override !== (n.global_name || n.name)
+                        const isCustomName = hasOverride
 
                         return (
                           <tr key={key} className="table-row-hover">
@@ -753,6 +799,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                                     方案自定义
                                   </Badge>
                                 )}
+                                <Badge variant={n.source_type === 'rule' ? 'outline' : 'secondary'} style={{ fontSize: 10, padding: '1px 6px' }}>{n.source_type === 'rule' ? `规则 #${n.source_rule_id || ''}` : '手动加入'}</Badge>
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
                                 <span style={{ fontFamily: 'var(--font-mono)' }}>{key}</span>
@@ -818,6 +865,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => {
+                                  if (n.source_type === 'rule') { void excludeRuleNode(n); return }
                                   setWorkingNodes(list => list.filter(x => nodeKey(x) !== key))
                                   setNodePreview(null)
                                 }}
@@ -940,7 +988,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
             </div>
           )}
         </div>
-      </Dialog>
+      </PlanDetailShell>
 
       <Dialog isOpen={createOpen} onClose={() => setCreateOpen(false)} title="新建套餐" size="lg">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

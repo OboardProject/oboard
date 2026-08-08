@@ -420,8 +420,10 @@ func (s *Server) createAccessChange(ctx context.Context, r *http.Request, draft 
 		return nil, err
 	}
 	var createdBy *int64
-	if user := currentUser(r); user != nil {
-		createdBy = &user.ID
+	if r != nil {
+		if user := currentUser(r); user != nil {
+			createdBy = &user.ID
+		}
 	}
 	change := &model.AccessChange{
 		ChangeType:               draft.changeType,
