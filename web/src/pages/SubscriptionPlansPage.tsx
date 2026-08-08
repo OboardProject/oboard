@@ -4,7 +4,7 @@ import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
 import { Input } from '../components/ui/input'
-import { Plus, Trash2, RefreshCw, RotateCcw, Ban, Copy, X, Eye, Edit3 } from 'lucide-react'
+import { Plus, Trash2, RefreshCw, RotateCcw, Ban, Copy, X, Eye, Edit3, ArrowUpDown, History } from 'lucide-react'
 import { FormField, TrafficLimitInput } from '../components/ui/form-field'
 import { PlanNodeOrderingPanel, type OrderingPlan } from '../components/node-ordering/PlanNodeOrderingPanel'
 import { Skeleton } from '../components/ui/skeleton'
@@ -178,7 +178,8 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const [detailLoading, setDetailLoading] = React.useState(false)
   const [detailOpen, setDetailOpen] = React.useState(false)
   const [detailError, setDetailError] = React.useState('')
-  const [tab, setTab] = React.useState<'overview' | 'nodes' | 'ordering' | 'history'>('overview')
+  const [orderingOpen, setOrderingOpen] = React.useState(false)
+  const [historyOpen, setHistoryOpen] = React.useState(false)
   const [createOpen, setCreateOpen] = React.useState(false)
   const [createDraft, setCreateDraft] = React.useState({ name: '', description: '', enabled: true, speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'anniversary_month', traffic_reset_day: 1 })
   const [createNodes, setCreateNodes] = React.useState<PlanNode[]>([])
@@ -271,7 +272,6 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     setDetail(null)
     setNodePreview(null)
     setMessage('')
-    setTab('overview')
     setDetailOpen(true)
   }, [embedded, selectedPlanID, selectedID])
 
@@ -280,7 +280,6 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     setDetail(null)
     setNodePreview(null)
     setMessage('')
-    setTab('overview')
     setDetailOpen(true)
   }
 
@@ -687,89 +686,66 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
 
           {!detailLoading && plan && detail && (
             <div className="animate-plan-detail-in" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
+              <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                 <div>
-                  <h3 style={{ margin: 0 }}>{plan.name}</h3>
-                  <p className="muted" style={{ margin: '4px 0 0' }}>
-                    {detail.member_count} 个绑定用户 · {detail.latest_nodes?.length || 0} 个节点 · 最新 {formatPlanVersion(latestVersionCreatedAt)}
-                    {plan.current_revision_id === plan.latest_revision_id && !plan.pending_revision_id ? ' · 当前生效' : ''}
-                    {applying ? ' · 有版本正在应用' : ''}
-                  </p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <h3 style={{ margin: 0 }}>{plan.name}</h3>
+                    <Badge variant={plan.enabled ? 'success' : 'secondary'}>{plan.enabled ? '启用' : '已停用'}</Badge>
+                    {applying ? <Badge variant="warning">正在应用</Badge> : null}
+                  </div>
+                  <div className="muted" style={{ margin: '4px 0 0', fontSize: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span>{detail.member_count} 个绑定用户</span>
+                    <span>·</span>
+                    <span>{workingNodes.length} 个节点</span>
+                    <span>·</span>
+                    <span>限速: {plan.speed_limit_mbps > 0 ? `${plan.speed_limit_mbps} Mbps` : '不限速'}</span>
+                    <span>·</span>
+                    <span>流量: {fmtBytes(plan.traffic_limit_bytes)}</span>
+                    <span>·</span>
+                    <span>重置: {resetModeLabel(plan.traffic_reset_mode, plan.traffic_reset_day)}</span>
+                    <span>·</span>
+                    <span>最新版本: <span style={{ fontFamily: 'var(--font-mono)' }}>{formatPlanVersion(latestVersionCreatedAt)}</span></span>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+                <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' }}>
                   <Button variant="outline" size="sm" onClick={openEdit}><Edit3 size={14} /> 修改套餐</Button>
+                  <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}><History size={14} /> 版本历史</Button>
                   <Button variant="outline" size="sm" onClick={() => void clonePlan()}><Copy size={14} /> 复制</Button>
                   {plan.enabled && <Button variant="outline" size="sm" onClick={() => void disablePlan()}><Ban size={14} /> 停用</Button>}
                 </div>
               </div>
 
-              <div className="section-toolbar" style={{ gap: 4, marginTop: 4 }}>
-                {([['overview', '概览'], ['nodes', '节点'], ['ordering', '排序'], ['history', '版本历史']] as const).map(([key, label]) => (
-                  <Button key={key} variant={tab === key ? 'default' : 'outline'} size="sm" onClick={() => setTab(key)}>{label}</Button>
-                ))}
-              </div>
-
-              {tab === 'overview' && (
-                <div className="animate-page-in" style={{ marginTop: 8 }}>
-                  <div className="plan-info-grid">
-                    <div className="plan-info-item">
-                      <span className="label">套餐名称</span>
-                      <span className="value">{plan.name}</span>
-                    </div>
-                    <div className="plan-info-item">
-                      <span className="label">状态</span>
-                      <span className="value">
-                        <Badge variant={plan.enabled ? 'success' : 'secondary'}>{plan.enabled ? '启用' : '已停用'}</Badge>
-                        {plan.pending_revision_id ? <Badge variant="warning" style={{ marginLeft: 4 }}>正在应用</Badge> : null}
-                      </span>
-                    </div>
-                    <div className="plan-info-item">
-                      <span className="label">速度上限</span>
-                      <span className="value">{plan.speed_limit_mbps > 0 ? `${plan.speed_limit_mbps} Mbps` : '不限速'}</span>
-                    </div>
-                    <div className="plan-info-item">
-                      <span className="label">流量额度</span>
-                      <span className="value">{fmtBytes(plan.traffic_limit_bytes)}</span>
-                    </div>
-                    <div className="plan-info-item">
-                      <span className="label">重置方式</span>
-                      <span className="value">
-                        {resetModeLabel(plan.traffic_reset_mode, plan.traffic_reset_day)}
-                      </span>
-                    </div>
-                    <div className="plan-info-item">
-                      <span className="label">版本状态</span>
-                      <span className="value">
-                        <span style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>{formatPlanVersion(latestVersionCreatedAt)}</span>
-                        <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>
-                          {plan.current_revision_id === plan.latest_revision_id && !plan.pending_revision_id ? '（当前生效）' : ''}
-                        </span>
-                      </span>
-                    </div>
-                    <div className="plan-info-item" style={{ gridColumn: '1 / -1' }}>
-                      <span className="label">描述</span>
-                      <span className="value" style={{ fontWeight: 400, color: plan.description ? 'var(--text-strong)' : 'var(--muted)' }}>
-                        {plan.description || '无备注说明'}
-                      </span>
-                    </div>
+              <div className="animate-page-in" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {applying && <p style={{ color: 'var(--color-warning)', margin: 0 }}>有套餐版本正在应用，应用完成前不能保存新的节点版本。</p>}
+                <PlanMembershipRulesPanel plan={plan} client={client} notify={notify} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
+                <div className="section-toolbar">
+                  <div>
+                    <h3 style={{ margin: 0 }}>节点集合（{workingNodes.length}）</h3>
+                    <p className="muted" style={{ margin: '2px 0 0', fontSize: 12 }}>基于最新保存版本编辑；保存后创建不可变新版本，节点变化走两阶段下发。</p>
                   </div>
-
-                  <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
-                    <Button onClick={openEdit}><Edit3 size={14} /> 修改套餐信息</Button>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {orderingPlan && (
+                      <Button
+                        variant={orderingOpen ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setOrderingOpen(open => !open)}
+                      >
+                        <ArrowUpDown size={14} /> {orderingOpen ? '收起排序' : '节点排序'}
+                      </Button>
+                    )}
+                    <Button variant="outline" size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }} disabled={applying}>
+                      <Plus size={14} /> 添加节点
+                    </Button>
                   </div>
                 </div>
-              )}
 
-              {tab === 'nodes' && (
-                <div className="animate-page-in" style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {applying && <p style={{ color: 'var(--color-warning)', margin: 0 }}>有套餐版本正在应用，应用完成前不能保存新的节点版本。</p>}
-                  <PlanMembershipRulesPanel plan={plan} client={client} notify={notify} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
-                  <div className="section-toolbar">
-                    <div><h3 style={{ margin: 0 }}>节点集合（{workingNodes.length}）</h3><p className="muted">基于最新保存版本编辑；保存后创建不可变新版本，节点变化会走两阶段下发。</p></div>
-                    <Button variant="outline" size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }} disabled={applying}><Plus size={14} /> 添加节点</Button>
+                {orderingOpen && orderingPlan && (
+                  <div className="card-custom" style={{ padding: 12, marginBottom: 8, background: 'var(--bg-control, rgba(0,0,0,0.02))' }}>
+                    <PlanNodeOrderingPanel plan={orderingPlan} data={data} client={client} notify={notify} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
                   </div>
+                )}
 
-                  <div className="card-custom plan-node-table-wrap">
+                <div className="card-custom plan-node-table-wrap">
                   <table className="user-data-table plan-node-table" style={{ width: '100%' }}>
                     <thead>
                       <tr>
@@ -884,107 +860,36 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                       )}
                     </tbody>
                   </table>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <Button size="sm" variant="outline" busy={nodeBusy} onClick={() => void runNodePreview()} disabled={applying}><RefreshCw size={14} /> 预览影响</Button>
-                    {nodePreview && (
+                </div>
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Button size="sm" variant="outline" busy={nodeBusy} onClick={() => void runNodePreview()} disabled={applying}><RefreshCw size={14} /> 预览影响</Button>
+                  {nodePreview && (
+                    <>
+                      <Button size="sm" busy={nodeApplyBusy} onClick={() => void applyNodeChange()} disabled={applying}>确认保存为新版本</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setNodePreview(null)}>取消</Button>
+                    </>
+                  )}
+                </div>
+
+                {nodePreview && (
+                  <div className="node-membership-preview">
+                    <p className="muted" style={{ margin: 0 }}>新版本将为 {nodePreview.node_count} 个节点 · 新增 {nodePreview.preview?.nodes_added?.length || 0} · 移除 {nodePreview.preview?.nodes_removed?.length || 0} · 不变 {nodePreview.preview?.nodes_unchanged || 0} · 受影响用户 {nodePreview.preview?.users_affected || 0} · 任务 {nodePreview.preview?.task_count || 0}</p>
+                    {nodePreview.ordering_preview && (
                       <>
-                        <Button size="sm" busy={nodeApplyBusy} onClick={() => void applyNodeChange()} disabled={applying}>确认保存为新版本</Button>
-                        <Button size="sm" variant="ghost" onClick={() => setNodePreview(null)}>取消</Button>
+                        <div className="membership-region-summary">
+                          <Badge variant="outline">新增 {nodePreview.ordering_preview.added_count || 0}</Badge>
+                          <Badge variant={nodePreview.ordering_preview.pending_count > 0 ? 'warning' : 'success'}>待排 {nodePreview.ordering_preview.pending_count || 0}</Badge>
+                        </div>
+                        {(nodePreview.ordering_preview.warnings || []).map((warning: any, index: number) => <p key={index} className="muted">{warning.message || String(warning)}</p>)}
+                        <div className="membership-order-preview-list">
+                          {(nodePreview.ordering_preview.nodes || []).map((node: any, index: number) => <div key={node.key}><span>{index + 1}</span><strong>{node.name}</strong><span>{node.exit_region || '未知'}</span></div>)}
+                        </div>
                       </>
                     )}
                   </div>
-                  {nodePreview && (
-                    <div className="node-membership-preview">
-                      <p className="muted" style={{ margin: 0 }}>新版本将为 {nodePreview.node_count} 个节点 · 新增 {nodePreview.preview?.nodes_added?.length || 0} · 移除 {nodePreview.preview?.nodes_removed?.length || 0} · 不变 {nodePreview.preview?.nodes_unchanged || 0} · 受影响用户 {nodePreview.preview?.users_affected || 0} · 任务 {nodePreview.preview?.task_count || 0}</p>
-                      {nodePreview.ordering_preview && (
-                        <>
-                          <div className="membership-region-summary">
-                            <Badge variant="outline">新增 {nodePreview.ordering_preview.added_count || 0}</Badge>
-                            <Badge variant={nodePreview.ordering_preview.pending_count > 0 ? 'warning' : 'success'}>待排 {nodePreview.ordering_preview.pending_count || 0}</Badge>
-                          </div>
-                          {(nodePreview.ordering_preview.warnings || []).map((warning: any, index: number) => <p key={index} className="muted">{warning.message || String(warning)}</p>)}
-                          <div className="membership-order-preview-list">
-                            {(nodePreview.ordering_preview.nodes || []).map((node: any, index: number) => <div key={node.key}><span>{index + 1}</span><strong>{node.name}</strong><span>{node.exit_region || '未知'}</span></div>)}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {tab === 'ordering' && orderingPlan && (
-                <div className="animate-page-in" style={{ marginTop: 8 }}>
-                  <PlanNodeOrderingPanel plan={orderingPlan} data={data} client={client} notify={notify} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
-                </div>
-              )}
-
-              {tab === 'history' && (
-                <div className="animate-page-in" style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <div>
-                    <h3 style={{ marginTop: 0 }}>版本历史</h3>
-                    <table className="user-data-table" style={{ width: '100%' }}>
-                      <thead><tr><th>版本</th><th>状态</th><th>类型</th><th>摘要</th><th>限速</th><th>流量</th><th>保存时间</th><th style={{ textAlign: 'right' }}>操作</th></tr></thead>
-                      <tbody>
-                        {(detail.revisions || []).map((r: Revision) => {
-                          const st = revisionStatusLabels[revisionStatus(r, plan)] || revisionStatusLabels.historical
-                          return (
-                            <tr key={r.id}>
-                              <td style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>{formatPlanVersion(r.created_at)}</td>
-                              <td><Badge variant={st.variant}>{st.label}</Badge></td>
-                              <td>{changeKindLabels[r.change_kind || ''] || r.change_kind || '—'}</td>
-                              <td className="muted">{r.change_summary || '—'}</td>
-                              <td>{r.speed_limit_mbps > 0 ? `${r.speed_limit_mbps} Mbps` : '不限'}</td>
-                              <td>{fmtBytes(r.traffic_limit_bytes)}</td>
-                              <td className="muted">{fmtDate(r.created_at)}</td>
-                              <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                                <Button variant="ghost" size="sm" busy={viewBusy} onClick={() => void openRevision(r.id)}><Eye size={14} /> 查看</Button>
-                                <Button variant="outline" size="sm" disabled={r.id === plan.latest_revision_id} onClick={() => void restoreRevision(r.id)}><RotateCcw size={14} /> 基于此版本恢复</Button>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div>
-                    <div className="section-toolbar">
-                      <div><h3 style={{ margin: 0 }}>部署变更</h3><p className="muted">套餐相关的两阶段下发记录。</p></div>
-                      <Button variant="ghost" size="sm" onClick={() => void loadChanges()}><RefreshCw size={14} /></Button>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 360, overflow: 'auto', marginTop: 8 }}>
-                      {planChanges.length === 0 && <p className="muted">暂无变更记录</p>}
-                      {planChanges.map(c => {
-                        const st = changeStatusLabels[c.status] || { label: c.status, variant: 'outline' as const }
-                        return (
-                          <div key={c.id} className="card-custom" style={{ padding: 12 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                              <span style={{ fontWeight: 600 }}>#{c.id} {changeTypeLabels[c.change_type] || c.change_type}</span>
-                              <Badge variant={st.variant}>{st.label}</Badge>
-                              <span className="muted" style={{ fontSize: 12 }}>{c.affected_user_count} 用户 · {fmtDate(c.created_at)}</span>
-                            </div>
-                            {c.error && <p style={{ color: 'var(--color-danger)', fontSize: 12, margin: '6px 0 0' }}>{c.error}</p>}
-                            {(c.targets || []).length > 0 && (
-                              <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {c.targets.map(t => (
-                                  <div key={t.server_id} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                                    <span className="muted">服务器 #{t.server_id}</span>
-                                    <span>{t.status}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {(c.status === 'failed') && <Button variant="outline" size="sm" style={{ marginTop: 8 }} onClick={() => void retryChange(c.id)}>重试</Button>}
-                            {(c.status === 'preparing' || c.status === 'activating') && <Button variant="ghost" size="sm" style={{ marginTop: 8 }} onClick={() => void cancelChange(c.id)}>取消</Button>}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -1160,6 +1065,74 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
             </div>
           </div>
         )}
+      </Dialog>
+
+      <Dialog isOpen={historyOpen} onClose={() => setHistoryOpen(false)} title={plan ? `版本历史与变更：${plan.name}` : '版本历史'} size="lg">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <h4 style={{ marginTop: 0, marginBottom: 8 }}>版本历史</h4>
+            <div className="card-custom" style={{ overflow: 'auto', maxHeight: 280 }}>
+              <table className="user-data-table" style={{ width: '100%' }}>
+                <thead><tr><th>版本</th><th>状态</th><th>类型</th><th>摘要</th><th>限速</th><th>流量</th><th>保存时间</th><th style={{ textAlign: 'right' }}>操作</th></tr></thead>
+                <tbody>
+                  {(detail?.revisions || []).map((r: Revision) => {
+                    const st = revisionStatusLabels[plan ? revisionStatus(r, plan) : 'historical'] || revisionStatusLabels.historical
+                    return (
+                      <tr key={r.id}>
+                        <td style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>{formatPlanVersion(r.created_at)}</td>
+                        <td><Badge variant={st.variant}>{st.label}</Badge></td>
+                        <td>{changeKindLabels[r.change_kind || ''] || r.change_kind || '—'}</td>
+                        <td className="muted">{r.change_summary || '—'}</td>
+                        <td>{r.speed_limit_mbps > 0 ? `${r.speed_limit_mbps} Mbps` : '不限'}</td>
+                        <td>{fmtBytes(r.traffic_limit_bytes)}</td>
+                        <td className="muted">{fmtDate(r.created_at)}</td>
+                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <Button variant="ghost" size="sm" busy={viewBusy} onClick={() => void openRevision(r.id)} style={{ height: 28, padding: '0 8px', fontSize: 12 }}><Eye size={13} style={{ marginRight: 4 }} /> 查看</Button>
+                          <Button variant="outline" size="sm" disabled={r.id === plan?.latest_revision_id} onClick={() => { setHistoryOpen(false); void restoreRevision(r.id) }} style={{ height: 28, padding: '0 8px', fontSize: 12 }}><RotateCcw size={13} style={{ marginRight: 4 }} /> 恢复</Button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div>
+            <div className="section-toolbar">
+              <div><h4 style={{ margin: 0 }}>部署变更</h4><p className="muted" style={{ fontSize: 12, margin: '2px 0 0' }}>套餐相关的两阶段下发记录。</p></div>
+              <Button variant="ghost" size="sm" onClick={() => void loadChanges()}><RefreshCw size={14} /></Button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 260, overflow: 'auto', marginTop: 8 }}>
+              {planChanges.length === 0 && <p className="muted" style={{ padding: 12, margin: 0 }}>暂无变更记录</p>}
+              {planChanges.map(c => {
+                const st = changeStatusLabels[c.status] || { label: c.status, variant: 'outline' as const }
+                return (
+                  <div key={c.id} className="card-custom" style={{ padding: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 600 }}>#{c.id} {changeTypeLabels[c.change_type] || c.change_type}</span>
+                      <Badge variant={st.variant}>{st.label}</Badge>
+                      <span className="muted" style={{ fontSize: 12 }}>{c.affected_user_count} 用户 · {fmtDate(c.created_at)}</span>
+                    </div>
+                    {c.error && <p style={{ color: 'var(--color-danger)', fontSize: 12, margin: '6px 0 0' }}>{c.error}</p>}
+                    {(c.targets || []).length > 0 && (
+                      <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {c.targets.map(t => (
+                          <div key={t.server_id} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                            <span className="muted">服务器 #{t.server_id}</span>
+                            <span>{t.status}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(c.status === 'failed') && <Button variant="outline" size="sm" style={{ marginTop: 8 }} onClick={() => void retryChange(c.id)}>重试</Button>}
+                    {(c.status === 'preparing' || c.status === 'activating') && <Button variant="ghost" size="sm" style={{ marginTop: 8 }} onClick={() => void cancelChange(c.id)}>取消</Button>}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
       </Dialog>
     </div>
   )
