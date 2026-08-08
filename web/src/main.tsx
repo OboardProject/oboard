@@ -3935,6 +3935,15 @@ function ControllerUpdatePrompt({ client, notify, realtimeStatus, realtimeRevisi
   }
 
   const visible = Boolean(snapshot?.update_available) && !dismissed && !working
+
+  useEffect(() => {
+    if (!visible || !snapshot?.auto_update_enabled || dialogOpen) return
+    const timer = window.setTimeout(() => {
+      setDismissed(true)
+    }, 10_000)
+    return () => window.clearTimeout(timer)
+  }, [visible, snapshot?.auto_update_enabled, dialogOpen])
+
   return <>
     <AnimatePresence>
       {visible && <m.aside
@@ -3949,7 +3958,7 @@ function ControllerUpdatePrompt({ client, notify, realtimeStatus, realtimeRevisi
         <div className="controller-update-prompt-icon"><Download size={18} /></div>
         <div className="controller-update-prompt-copy">
           <strong>发现主控新版本 {snapshot?.available?.version || ''}</strong>
-          <span>确认后会先备份数据，再安装并自动重启主控。</span>
+          <span>确认后会先备份数据，再安装并自动重启主控。{snapshot?.auto_update_enabled ? '（已开启自动更新，此提醒将在 10 秒后自动关闭）' : ''}</span>
         </div>
         <button type="button" className="ghost controller-update-prompt-later" aria-label="稍后提醒" title="稍后提醒" onClick={() => setDismissed(true)}><X size={15} /><span>稍后</span></button>
         <button type="button" onClick={() => { setPhase('confirm'); setDialogOpen(true) }}><Download size={14} />确认更新</button>
