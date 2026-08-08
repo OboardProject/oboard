@@ -7657,7 +7657,13 @@ function ServerConnectivityDialog({ server, initialSamples, client, onClose }: {
             <circle cx="40" cy="40" r={ringRadius} className="connectivity-ring-track" />
             <circle cx="40" cy="40" r={ringRadius} className="connectivity-ring-value" strokeDasharray={ringLength} strokeDashoffset={ringLength * (1 - stats.slaRate / 100)} style={{ '--connectivity-ring-length': `${ringLength}` } as React.CSSProperties} />
           </svg>
-          <div className="connectivity-sla-ring-label"><strong><span>{slaWhole}<span>.{slaFrac}%</span></span></strong><span>SLA</span></div>
+          <div className="connectivity-sla-ring-label">
+            <div className="connectivity-sla-value">
+              <span className="sla-integer">{slaWhole}</span>
+              <span className="sla-decimal">.{slaFrac}%</span>
+            </div>
+            <span className="sla-caption">SLA</span>
+          </div>
         </div>
         <div className="connectivity-hero-info">
           <div className="connectivity-hero-status-row">

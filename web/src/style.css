@@ -7793,28 +7793,42 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .connectivity-sla-ring.great .connectivity-ring-value { stroke: var(--success); }
 .connectivity-sla-ring.fair .connectivity-ring-value { stroke: var(--warning); }
 .connectivity-sla-ring.poor .connectivity-ring-value { stroke: var(--danger); }
-.connectivity-sla-ring-label { position: absolute; inset: 0; text-align: center; }
-.connectivity-sla-ring-label strong {
+.connectivity-sla-ring-label {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--text-strong);
-  font-size: 32px;
-  line-height: 1;
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  pointer-events: none;
 }
-.connectivity-sla-ring-label strong span span { font-size: 13px; letter-spacing: 0; }
-.connectivity-sla-ring-label > span {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 10px;
+.connectivity-sla-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.connectivity-sla-value .sla-integer {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+.connectivity-sla-value .sla-decimal {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  opacity: 0.85;
+}
+.connectivity-sla-ring-label .sla-caption {
+  margin-top: 4px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
