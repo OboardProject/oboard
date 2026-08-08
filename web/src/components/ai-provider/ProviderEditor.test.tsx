@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { EndpointEditor } from './EndpointEditor'
-import { endpointDraftRequest, endpointRequestPayload } from './ProviderEditor'
+import { endpointDiscoveryRequest, endpointDraftRequest, endpointRequestPayload } from './ProviderEditor'
 import type { EndpointDraft } from './types'
 
 function endpoint(overrides: Partial<EndpointDraft> = {}): EndpointDraft {
@@ -29,6 +29,22 @@ describe('AI Provider endpoint editor', () => {
       model: 'model',
     })
     expect(endpointDraftRequest('provider', 'openai', draft, 'model', true)).not.toHaveProperty('endpoint')
+  })
+
+  it('builds model discovery requests without provider-test-only model fields', () => {
+    const saved = endpoint({ baseURL: 'https://opencode.ai/zen/go/v1' })
+    expect(endpointDiscoveryRequest('provider', 'custom', saved)).toMatchObject({
+      provider_id: 'provider',
+      endpoint_id: 'saved',
+      endpoint: { base_url: 'https://opencode.ai/zen/go/v1' },
+    })
+    expect(endpointDiscoveryRequest('provider', 'custom', saved)).not.toHaveProperty('model')
+
+    const draft = endpoint({ id: '', hasCredential: false, apiKey: 'draft-key' })
+    expect(endpointDiscoveryRequest('', 'custom', draft)).toMatchObject({
+      provider_kind: 'custom',
+      endpoint: { api_key: 'draft-key' },
+    })
   })
 
   it('shows Anthropic Version only for native Messages and keeps priority editable', () => {

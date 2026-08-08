@@ -70,6 +70,13 @@ export function endpointDraftRequest(providerID: string, providerKind: AIProvide
   return { provider_kind: providerKind, endpoint: endpointRequestPayload(endpoint), model }
 }
 
+export function endpointDiscoveryRequest(providerID: string, providerKind: AIProviderKind, endpoint: EndpointDraft) {
+  if (providerID && endpoint.id) {
+    return { provider_id: providerID, endpoint_id: endpoint.id, endpoint: endpointRequestPayload(endpoint) }
+  }
+  return { provider_kind: providerKind, endpoint: endpointRequestPayload(endpoint) }
+}
+
 type Props = { providers: AIProvider[]; requestV2: RequestV2; refresh: () => Promise<void>; notify: Notify; confirm: Confirm; onOpenLogs: () => void }
 
 export function ProviderEditor({ providers, requestV2, refresh, notify, confirm, onOpenLogs }: Props) {
@@ -112,7 +119,8 @@ export function ProviderEditor({ providers, requestV2, refresh, notify, confirm,
     setDiscovering(true)
     setModelStatus('')
     try {
-      const result = await requestV2<{ models: string[] }>('/ai/provider-models', { method: 'POST', body: JSON.stringify(endpointRequest(endpoint)) })
+      const payload = endpointDiscoveryRequest(editing?.id || '', draft.providerKind, endpoint)
+      const result = await requestV2<{ models: string[] }>('/ai/provider-models', { method: 'POST', body: JSON.stringify(payload) })
       const values = Array.isArray(result?.models) ? result.models.filter(value => typeof value === 'string') : []
       setModels(values)
       setModelStatus(`已加载 ${values.length} 个模型`)
