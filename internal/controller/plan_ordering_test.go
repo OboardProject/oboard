@@ -331,6 +331,9 @@ func TestPlanVersionChangeClassification(t *testing.T) {
 	if ordering["read_only"] != false || ordering["version_no"].(float64) != 2 {
 		t.Fatalf("ordering state after save = %#v", ordering)
 	}
+	if ordering["version_created_at"] == nil || ordering["version_created_at"] == "" {
+		t.Fatalf("ordering version timestamp = %#v", ordering["version_created_at"])
+	}
 
 	// A node membership change is authorization: pending version + access
 	// change; the current snapshot stays until activation.

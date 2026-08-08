@@ -54,6 +54,13 @@ func TestSubscriptionPlansAndAssignmentAPI(t *testing.T) {
 	if len(detail["nodes"].([]any)) != 1 {
 		t.Fatalf("plan nodes = %#v", detail["nodes"])
 	}
+	revisions := detail["revisions"].([]any)
+	latestCreatedAt := revisions[0].(map[string]any)["created_at"]
+	list := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans", token, nil, http.StatusOK)
+	listedPlan := list["subscription_plans"].([]any)[0].(map[string]any)
+	if listedPlan["latest_version_created_at"] != latestCreatedAt {
+		t.Fatalf("latest version timestamp = %#v, want %#v", listedPlan["latest_version_created_at"], latestCreatedAt)
+	}
 
 	// Preview the assignment, then apply it.
 	preview := request(t, h, http.MethodPost, "/api/v2/ui/users/plan-assignment/preview", token, map[string]any{"user_ids": []int64{userID}, "plan_id": planID}, http.StatusOK)["preview"].(map[string]any)

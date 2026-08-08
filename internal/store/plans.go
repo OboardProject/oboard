@@ -420,22 +420,22 @@ func (s *Store) GetPlanRevision(ctx context.Context, planID, revisionID int64) (
 	return &items[0], nil
 }
 
-// ListPlanRevisionVersionNumbers returns the display version number per
-// revision id across all plans, used to render list views without an N+1
-// lookup.
-func (s *Store) ListPlanRevisionVersionNumbers(ctx context.Context) (map[int64]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,coalesce(version_no,revision) from subscription_plan_revisions`)
+// ListPlanRevisionCreatedTimes returns each revision's immutable creation time
+// so list views can render timestamp version labels without an N+1 lookup.
+func (s *Store) ListPlanRevisionCreatedTimes(ctx context.Context) (map[int64]time.Time, error) {
+	rows, err := s.db.QueryContext(ctx, `select id,created_at from subscription_plan_revisions`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[int64]int64{}
+	out := map[int64]time.Time{}
 	for rows.Next() {
-		var id, versionNo int64
-		if err := rows.Scan(&id, &versionNo); err != nil {
+		var id int64
+		var createdAt string
+		if err := rows.Scan(&id, &createdAt); err != nil {
 			return nil, err
 		}
-		out[id] = versionNo
+		out[id] = parseTime(createdAt)
 	}
 	return out, rows.Err()
 }

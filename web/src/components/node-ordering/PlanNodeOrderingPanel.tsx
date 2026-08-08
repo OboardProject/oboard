@@ -24,6 +24,7 @@ import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, GripVertical, MoveDown, Mov
 import { Dialog } from '../ui/dialog'
 import { ApplyOrderTemplateDialog, type OrderTemplateSummary } from './ApplyOrderTemplateDialog'
 import type { TemplatePolicy } from './NodeOrderTemplateEditor'
+import { formatPlanVersion } from '../../lib/plan-version'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -73,7 +74,7 @@ type OrderingState = {
   lock_version: number
   base_revision_id: number
   revision_id: number
-  version_no: number
+  version_created_at: string
   read_only: boolean
   is_current: boolean
   is_latest: boolean
@@ -353,7 +354,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
     setBusy(true)
     setError('')
     try {
-      const res = await client.request<{ version_no: number; effective_immediately: boolean; no_change?: boolean }>(`/subscription-plans/${plan.id}/ordering/versions`, {
+      const res = await client.request<{ revision?: { created_at: string }; effective_immediately: boolean; no_change?: boolean }>(`/subscription-plans/${plan.id}/ordering/versions`, {
         method: 'POST',
         body: JSON.stringify({
           base_revision_id: state.base_revision_id,
@@ -365,7 +366,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
       if (res.no_change) {
         notify?.('排序没有变化，未创建新版本', 'warning')
       } else {
-        notify?.(`已保存为新版本 V${res.version_no}，订阅立即生效`, 'success')
+        notify?.(`已保存版本 ${formatPlanVersion(res.revision?.created_at)}，订阅立即生效`, 'success')
       }
       await loadOrdering()
       onSaved?.()
@@ -437,7 +438,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
           <h3 style={{ margin: 0 }}>订阅排序 · {plan.name}</h3>
           {state && (
             <p className="muted" style={{ margin: '4px 0 0' }}>
-              最新 V{state.version_no} · {state.nodes.length} 个节点
+              最新 <span style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>{formatPlanVersion(state.version_created_at)}</span> · {state.nodes.length} 个节点
               {state.is_current ? ' · 当前生效' : ''}
               {state.is_latest && !state.is_current ? ' · 最新保存' : ''}
               {applying ? ' · 有版本正在应用' : ''}

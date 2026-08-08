@@ -9,6 +9,7 @@ import { FormField, TrafficLimitInput } from '../components/ui/form-field'
 import { PlanNodeOrderingPanel, type OrderingPlan } from '../components/node-ordering/PlanNodeOrderingPanel'
 import { Skeleton } from '../components/ui/skeleton'
 import { PlanNodeNameDialog, type PlanNameNode } from '../components/node-assignment/PlanNodeNameDialog'
+import { formatPlanVersion } from '../lib/plan-version'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -22,7 +23,7 @@ type Plan = {
   current_revision_id: number
   latest_revision_id: number
   pending_revision_id?: number
-  latest_version_no?: number
+  latest_version_created_at?: string
   node_count?: number
   member_count?: number
   active_revision_id?: number
@@ -491,7 +492,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     if (!detail) return
     setMessage('')
     try {
-      const res = await client.request<any>(`/subscription-plans/${selectedID}/revisions/${revisionID}/restore`, {
+      const res = await client.request<{ access_change_id?: number; revision?: Revision }>(`/subscription-plans/${selectedID}/revisions/${revisionID}/restore`, {
         method: 'POST',
         body: JSON.stringify({ expected_lock_version: detail.subscription_plan.lock_version || detail.subscription_plan.revision, change_summary: '基于历史版本恢复' }),
       })
@@ -499,7 +500,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
         await loadChanges()
         notify?.(`已创建恢复版本，正在应用变更 #${res.access_change_id}`, 'success')
       } else {
-        notify?.(`已基于 V${res.version_no} 创建新版本`, 'success')
+        notify?.(`已创建版本 ${formatPlanVersion(res.revision?.created_at)}`, 'success')
       }
       await loadDetail(selectedID)
       await refreshPlans()
@@ -543,6 +544,8 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
   }
 
   const plan = detail?.subscription_plan as Plan | undefined
+  const latestRevision = (detail?.revisions || []).find((revision: Revision) => revision.id === plan?.latest_revision_id) as Revision | undefined
+  const latestVersionCreatedAt = latestRevision?.created_at
   const planChanges = changes.filter(c => c.source_plan_id === selectedID)
   const applying = Boolean(plan?.pending_revision_id)
   const orderingPlan: OrderingPlan | null = plan ? {
@@ -587,7 +590,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                     <Badge variant={p.enabled ? 'success' : 'secondary'}>{p.enabled ? '启用' : '已停用'}</Badge>
                     {p.pending_revision_id ? <Badge variant="warning" style={{ marginLeft: 4 }}>正在应用</Badge> : null}
                   </td>
-                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>V{p.latest_version_no || '—'}</td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>{formatPlanVersion(p.latest_version_created_at)}</td>
                   <td>{p.node_count ?? '—'}</td>
                   <td>{p.speed_limit_mbps > 0 ? `${p.speed_limit_mbps} Mbps` : '不限'}</td>
                   <td>{fmtBytes(p.traffic_limit_bytes)}</td>
@@ -643,7 +646,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                 <div>
                   <h3 style={{ margin: 0 }}>{plan.name}</h3>
                   <p className="muted" style={{ margin: '4px 0 0' }}>
-                    {detail.member_count} 个绑定用户 · {detail.latest_nodes?.length || 0} 个节点 · 最新 V{plan.latest_version_no || '—'}
+                    {detail.member_count} 个绑定用户 · {detail.latest_nodes?.length || 0} 个节点 · 最新 {formatPlanVersion(latestVersionCreatedAt)}
                     {plan.current_revision_id === plan.latest_revision_id && !plan.pending_revision_id ? ' · 当前生效' : ''}
                     {applying ? ' · 有版本正在应用' : ''}
                   </p>
@@ -692,7 +695,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                     <div className="plan-info-item">
                       <span className="label">版本状态</span>
                       <span className="value">
-                        V{plan.latest_version_no || '—'}
+                        <span style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>{formatPlanVersion(latestVersionCreatedAt)}</span>
                         <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>
                           {plan.current_revision_id === plan.latest_revision_id && !plan.pending_revision_id ? '（当前生效）' : ''}
                         </span>
@@ -880,7 +883,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                           const st = revisionStatusLabels[revisionStatus(r, plan)] || revisionStatusLabels.historical
                           return (
                             <tr key={r.id}>
-                              <td style={{ fontFamily: 'var(--font-mono)' }}>V{r.version_no || r.revision}</td>
+                              <td style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>{formatPlanVersion(r.created_at)}</td>
                               <td><Badge variant={st.variant}>{st.label}</Badge></td>
                               <td>{changeKindLabels[r.change_kind || ''] || r.change_kind || '—'}</td>
                               <td className="muted">{r.change_summary || '—'}</td>
@@ -941,7 +944,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
 
       <Dialog isOpen={createOpen} onClose={() => setCreateOpen(false)} title="新建套餐" size="lg">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <p className="muted" style={{ margin: 0 }}>套餐定义可分配节点与速度/流量限额；创建后保存为第一个版本 V1。</p>
+          <p className="muted" style={{ margin: 0 }}>套餐定义可分配节点与速度/流量限额；创建后会生成首个时间戳版本。</p>
           <form id="create-plan-form" className="form" onSubmit={e => { e.preventDefault(); void createPlan() }}>
             <FormField label="名称" required><Input value={createDraft.name} onChange={e => setCreateDraft(d => ({ ...d, name: e.target.value }))} placeholder="例如：标准套餐" /></FormField>
             <FormField label="描述"><Input value={createDraft.description} onChange={e => setCreateDraft(d => ({ ...d, description: e.target.value }))} placeholder="可选" /></FormField>
@@ -1082,7 +1085,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
 
       <PlanNodeNameDialog node={nameNode} busy={nameBusy} error={nameError} onClose={() => setNameNode(null)} onSave={value => savePlanNodeName(value)} />
 
-      <Dialog isOpen={viewRevision !== null} onClose={() => setViewRevision(null)} title={viewRevision ? `V${viewRevision.revision?.version_no || viewRevision.revision?.revision || ''} 详情` : ''} size="lg">
+      <Dialog isOpen={viewRevision !== null} onClose={() => setViewRevision(null)} title={viewRevision ? `版本 ${formatPlanVersion(viewRevision.revision?.created_at)} 详情` : ''} size="lg">
         {viewRevision && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <p className="muted" style={{ margin: 0 }}>

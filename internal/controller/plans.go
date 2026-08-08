@@ -525,7 +525,7 @@ func (s *Server) subscriptionPlanList(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	versionByRevision, err := s.store.ListPlanRevisionVersionNumbers(r.Context())
+	createdAtByRevision, err := s.store.ListPlanRevisionCreatedTimes(r.Context())
 	if err != nil {
 		fail(w, err, 500)
 		return
@@ -551,27 +551,27 @@ func (s *Server) subscriptionPlanList(w http.ResponseWriter, r *http.Request) {
 	views := make([]map[string]any, 0, len(plans))
 	for _, plan := range plans {
 		views = append(views, map[string]any{
-			"id":                  plan.ID,
-			"name":                plan.Name,
-			"description":         plan.Description,
-			"enabled":             plan.Enabled,
-			"speed_limit_mbps":    plan.SpeedLimitMbps,
-			"traffic_limit_bytes": plan.TrafficLimitBytes,
-			"traffic_reset_mode":  plan.TrafficResetMode,
-			"traffic_reset_day":   plan.TrafficResetDay,
-			"revision":            plan.Revision,
-			"active_revision_id":  plan.ActiveRevisionID,
-			"draft_revision_id":   plan.DraftRevisionID,
-			"has_draft":           plan.DraftRevisionID != 0,
-			"lock_version":        plan.LockVersion,
-			"current_revision_id": plan.CurrentRevisionID,
-			"latest_revision_id":  plan.LatestRevisionID,
-			"pending_revision_id": plan.PendingRevisionID,
-			"latest_version_no":   versionByRevision[plan.LatestRevisionID],
-			"node_count":          nodeCount[plan.ID],
-			"member_count":        memberCount[plan.ID],
-			"created_at":          plan.CreatedAt,
-			"updated_at":          plan.UpdatedAt,
+			"id":                        plan.ID,
+			"name":                      plan.Name,
+			"description":               plan.Description,
+			"enabled":                   plan.Enabled,
+			"speed_limit_mbps":          plan.SpeedLimitMbps,
+			"traffic_limit_bytes":       plan.TrafficLimitBytes,
+			"traffic_reset_mode":        plan.TrafficResetMode,
+			"traffic_reset_day":         plan.TrafficResetDay,
+			"revision":                  plan.Revision,
+			"active_revision_id":        plan.ActiveRevisionID,
+			"draft_revision_id":         plan.DraftRevisionID,
+			"has_draft":                 plan.DraftRevisionID != 0,
+			"lock_version":              plan.LockVersion,
+			"current_revision_id":       plan.CurrentRevisionID,
+			"latest_revision_id":        plan.LatestRevisionID,
+			"pending_revision_id":       plan.PendingRevisionID,
+			"latest_version_created_at": createdAtByRevision[plan.LatestRevisionID],
+			"node_count":                nodeCount[plan.ID],
+			"member_count":              memberCount[plan.ID],
+			"created_at":                plan.CreatedAt,
+			"updated_at":                plan.UpdatedAt,
 		})
 	}
 	write(w, 200, map[string]any{"subscription_plans": views, "runtime_authorization_mode": s.authorizationMode(r.Context())})
