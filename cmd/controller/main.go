@@ -73,7 +73,11 @@ func main() {
 	if err := backup.ApplyPendingRestore(backup.Config{Root: backupDir, DatabasePath: *dbPath, ACMEHome: acmeHome, MasterSecret: *secret}); err != nil {
 		log.Fatal(err)
 	}
-	db, err := store.Open(*dbPath)
+	sqliteOptions := store.DefaultSQLiteOptions()
+	sqliteOptions.MaxOpenConns = envIntRange("OBOARD_SQLITE_MAX_OPEN_CONNS", sqliteOptions.MaxOpenConns, 1, 16)
+	sqliteOptions.MaxIdleConns = sqliteOptions.MaxOpenConns
+	sqliteOptions.BusyTimeout = time.Duration(envIntRange("OBOARD_SQLITE_BUSY_TIMEOUT_MS", int(sqliteOptions.BusyTimeout/time.Millisecond), 1000, 30000)) * time.Millisecond
+	db, err := store.OpenWithOptions(*dbPath, sqliteOptions)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -152,6 +156,14 @@ func envBool(key string, fallback bool) bool {
 func envInt(key string, fallback int) int {
 	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
 	if err != nil || value < 0 {
+		return fallback
+	}
+	return value
+}
+
+func envIntRange(key string, fallback, minimum, maximum int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
+	if err != nil || value < minimum || value > maximum {
 		return fallback
 	}
 	return value

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,6 +23,20 @@ import (
 )
 
 type Store struct{ db *sql.DB }
+
+type SQLiteOptions struct {
+	MaxOpenConns int
+	MaxIdleConns int
+	BusyTimeout  time.Duration
+}
+
+func DefaultSQLiteOptions() SQLiteOptions {
+	return SQLiteOptions{
+		MaxOpenConns: 4,
+		MaxIdleConns: 4,
+		BusyTimeout:  5 * time.Second,
+	}
+}
 
 const (
 	UserGroupSystemAdmins = "administrators"
@@ -37,31 +52,71 @@ const serverTelemetrySelectSQL = `select server_id,monitoring_mode,traffic_reset
 const userSelectSQL = `select u.id,u.username,u.nickname,u.password_hash,coalesce(u.session_version,0),u.role,u.status,u.proxy_uuid,u.proxy_password,coalesce(sua.random_id,''),u.speed_limit_mbps,u.traffic_limit_bytes,u.traffic_used_bytes,u.traffic_reset_mode,u.traffic_reset_day,coalesce(u.subscription_token,''),coalesce(p.burn_after_read,0),p.burned_at,coalesce(a.enabled,0),coalesce(a.public_key,''),coalesce(sa.suspended,0),sa.suspended_at,coalesce(sa.suspension_reason,''),coalesce(u.device_limit,0),coalesce(u.legacy_proxy_enabled,1),u.created_at,u.updated_at from users u left join ssh_user_aliases sua on sua.user_id=u.id left join subscription_token_policies p on p.user_id=u.id left join subscription_age_keys a on a.user_id=u.id left join subscription_access_states sa on sa.user_id=u.id`
 
 func Open(path string) (*Store, error) {
-	return open(path, false)
+	return OpenWithOptions(path, DefaultSQLiteOptions())
 }
 
 func OpenForRestore(path string) (*Store, error) {
-	return open(path, true)
+	opts := DefaultSQLiteOptions()
+	opts.MaxOpenConns = 1
+	opts.MaxIdleConns = 1
+	return open(path, opts, true)
 }
 
-func open(path string, restore bool) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+func OpenWithOptions(path string, opts SQLiteOptions) (*Store, error) {
+	return open(path, opts, false)
+}
+
+func open(path string, opts SQLiteOptions, restore bool) (*Store, error) {
+	if opts.MaxOpenConns < 1 {
+		return nil, errors.New("SQLite MaxOpenConns must be positive")
+	}
+	if opts.MaxIdleConns < 0 || opts.MaxIdleConns > opts.MaxOpenConns {
+		return nil, errors.New("SQLite MaxIdleConns must be between zero and MaxOpenConns")
+	}
+	if opts.BusyTimeout <= 0 {
+		return nil, errors.New("SQLite BusyTimeout must be positive")
+	}
+	dsn, err := sqliteDSN(path, opts.BusyTimeout)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.ExecContext(context.Background(), `pragma busy_timeout=5000`); err != nil {
+	db.SetMaxIdleConns(1)
+	ctx := context.Background()
+	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
-	if _, err := db.ExecContext(context.Background(), `pragma foreign_keys=on`); err != nil {
-		_ = db.Close()
-		return nil, err
+	memory := sqliteMemoryDatabase(path)
+	if !memory {
+		journalMode := "WAL"
+		if restore {
+			journalMode = "DELETE"
+		}
+		var activeMode string
+		if err := db.QueryRowContext(ctx, `pragma journal_mode=`+journalMode).Scan(&activeMode); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("set SQLite journal mode %s: %w", journalMode, err)
+		}
+		if !strings.EqualFold(activeMode, journalMode) {
+			_ = db.Close()
+			return nil, fmt.Errorf("set SQLite journal mode %s: active mode is %s", journalMode, activeMode)
+		}
 	}
 	s := &Store{db: db}
-	if err := s.migrate(context.Background(), restore); err != nil {
+	if err := s.migrate(ctx, restore); err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	if !restore {
+		if _, err := db.ExecContext(ctx, `pragma optimize=0x10002`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("optimize SQLite database: %w", err)
+		}
 	}
 	// SQLite may create the file with the process umask. Tighten owner-only
 	// mode after open so session secrets, encrypted DNS tokens, and certificate
@@ -70,7 +125,51 @@ func open(path string, restore bool) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if memory {
+		opts.MaxOpenConns = 1
+		opts.MaxIdleConns = 1
+	}
+	db.SetMaxOpenConns(opts.MaxOpenConns)
+	db.SetMaxIdleConns(opts.MaxIdleConns)
 	return s, nil
+}
+
+func sqliteDSN(path string, busyTimeout time.Duration) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("SQLite path is required")
+	}
+	timeoutMS := busyTimeout.Milliseconds()
+	if timeoutMS < 1 {
+		return "", errors.New("SQLite BusyTimeout must be at least one millisecond")
+	}
+	dsn := path
+	if path == ":memory:" {
+		dsn = "file::memory:"
+	} else if !strings.HasPrefix(path, "file:") {
+		dsn = "file:" + path
+	}
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	pragmas := url.Values{}
+	pragmas.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", timeoutMS))
+	pragmas.Add("_pragma", "foreign_keys(1)")
+	return dsn + separator + pragmas.Encode(), nil
+}
+
+func sqliteMemoryDatabase(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == ":memory:" || strings.HasPrefix(path, "file::memory:") {
+		return true
+	}
+	queryAt := strings.IndexByte(path, '?')
+	if queryAt < 0 {
+		return false
+	}
+	values, err := url.ParseQuery(path[queryAt+1:])
+	return err == nil && strings.EqualFold(values.Get("mode"), "memory")
 }
 
 func secureSQLiteFile(path string) error {
@@ -99,6 +198,8 @@ func secureSQLiteFile(path string) error {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+func (s *Store) DBStats() sql.DBStats { return s.db.Stats() }
 
 func (s *Store) CheckHealth(ctx context.Context) error {
 	for _, query := range []string{
@@ -1137,9 +1238,8 @@ func (s *Store) SetSettings(ctx context.Context, values map[string]string) error
 	return tx.Commit()
 }
 
-// Backup creates a transactionally consistent SQLite snapshot. VACUUM INTO
-// runs through the Store's single database connection, so the result includes
-// committed WAL data without copying live database sidecar files.
+// VACUUM INTO produces a transactionally consistent standalone SQLite
+// snapshot and avoids copying live WAL/SHM sidecars.
 func (s *Store) Backup(ctx context.Context, destination string) error {
 	destination = strings.TrimSpace(destination)
 	if destination == "" {
