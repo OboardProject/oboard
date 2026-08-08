@@ -45,6 +45,7 @@ type PlanNode = {
   display_name_override?: string | null
   exit_region?: string
   entry_server_name?: string
+  entry_protocol?: string
 }
 type Revision = { id: number; revision: number; version_no: number; status: string; change_kind?: string; change_summary?: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; activated_at?: string; created_at: string }
 type AccessChange = {
@@ -153,6 +154,13 @@ function revisionStatus(r: Revision, plan: Plan) {
 }
 
 function nodeKey(n: PlanNode) { return `${n.node_type}:${n.node_id}` }
+
+function regionFlagEmoji(code?: string) {
+  const value = String(code || '').toUpperCase()
+  if (!/^[A-Z]{2}$/.test(value)) return '🌐'
+  const offset = 127397
+  return String.fromCodePoint(...value.split('').map(char => char.charCodeAt(0) + offset))
+}
 
 export function SubscriptionPlansPage({ data, client, load, notify }: { data: any; client: AnyClient; load: () => Promise<void>; notify?: (message: string, tone?: any) => void }) {
   const [plans, setPlans] = React.useState<Plan[]>(data.subscription_plans || [])
@@ -713,30 +721,118 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
                     <div><h3 style={{ margin: 0 }}>节点集合（{workingNodes.length}）</h3><p className="muted">基于最新保存版本编辑；保存后创建不可变新版本，节点变化会走两阶段下发。</p></div>
                     <Button variant="outline" size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }} disabled={applying}><Plus size={14} /> 添加节点</Button>
                   </div>
+
                   <div className="card-custom plan-node-table-wrap">
                   <table className="user-data-table plan-node-table" style={{ width: '100%' }}>
-                    <thead><tr><th>节点</th><th>全局名称</th><th>方案内名称</th><th>入口</th><th>出口</th><th>分组</th><th style={{ textAlign: 'right' }}>操作</th></tr></thead>
+                    <thead>
+                      <tr>
+                        <th style={{ minWidth: 200 }}>节点名称</th>
+                        <th style={{ minWidth: 140 }}>入口服务器</th>
+                        <th style={{ minWidth: 90 }}>出口地区</th>
+                        <th style={{ minWidth: 140 }}>展示分组</th>
+                        <th style={{ textAlign: 'right', minWidth: 110 }}>操作</th>
+                      </tr>
+                    </thead>
                     <tbody>
-                      {workingNodes.map(n => (
-                        <tr key={nodeKey(n)}>
-                          <td><strong>{n.name || nodeKey(n)}</strong><small className="muted">{n.source_name && n.source_name !== n.name ? `来源：${n.source_name}` : nodeKey(n)}</small></td>
-                          <td>{n.global_name || n.name || nodeKey(n)}</td>
-                          <td>
-                            <div className="plan-node-name-row"><span>{n.display_name_override || n.global_name || n.name || nodeKey(n)}</span><Badge variant={n.display_name_override != null ? 'secondary' : 'outline'}>{n.display_name_override != null ? '方案独立' : '继承全局'}</Badge></div>
-                          </td>
-                          <td className="muted">{n.entry_server_name || '—'}</td>
-                          <td className="muted">{n.exit_region || '—'}</td>
-                          <td>
-                            <Input value={n.display_group || ''} onChange={e => { setWorkingNodes(list => list.map(x => nodeKey(x) === nodeKey(n) ? { ...x, display_group: e.target.value } : x)); setNodePreview(null) }} placeholder="展示分组（可选）" style={{ maxWidth: 160 }} />
-                          </td>
-                          <td className="table-actions" style={{ textAlign: 'right' }}>
-                            <Button variant="ghost" size="icon" onClick={() => editPlanNodeName(n)} aria-label={`编辑 ${n.name || nodeKey(n)} 的方案内名称`} title="编辑方案内名称"><Edit3 size={14} /></Button>
-                            {n.display_name_override != null && <Button variant="ghost" size="icon" disabled={nameBusy} onClick={() => void savePlanNodeName(null, { key: nodeKey(n), effective_name: n.name || nodeKey(n), global_name: n.global_name || n.name || nodeKey(n), source_name: n.source_name || n.global_name || n.name || nodeKey(n), display_name_override: n.display_name_override })} aria-label={`恢复 ${n.name || nodeKey(n)} 的全局名称`} title="恢复全局名称"><RotateCcw size={14} /></Button>}
-                            <Button variant="ghost" size="icon" onClick={() => { setWorkingNodes(list => list.filter(x => nodeKey(x) !== nodeKey(n))); setNodePreview(null) }} aria-label={`移除 ${n.name || nodeKey(n)}`} title="移出方案"><Trash2 size={14} /></Button>
-                          </td>
-                        </tr>
-                      ))}
-                      {workingNodes.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 16 }}>节点集合为空</td></tr>}
+                      {workingNodes.map(n => {
+                        const key = nodeKey(n)
+                        const hasOverride = n.display_name_override != null
+                        const effectiveName = n.display_name_override || n.global_name || n.name || key
+                        const isCustomName = hasOverride && n.display_name_override !== (n.global_name || n.name)
+
+                        return (
+                          <tr key={key} className="table-row-hover">
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                <strong style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-strong)' }}>
+                                  {effectiveName}
+                                </strong>
+                                {isCustomName && (
+                                  <Badge variant="secondary" style={{ fontSize: 10, padding: '1px 6px' }}>
+                                    方案自定义
+                                  </Badge>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+                                <span style={{ fontFamily: 'var(--font-mono)' }}>{key}</span>
+                                {isCustomName && (
+                                  <span>全局: {n.global_name || n.name}</span>
+                                )}
+                              </div>
+                            </td>
+                            <td>
+                              <span style={{ fontWeight: 500 }}>{n.entry_server_name || '—'}</span>
+                              {n.entry_protocol && (
+                                <span className="muted" style={{ fontSize: 11, marginLeft: 4, fontFamily: 'var(--font-mono)' }}>
+                                  ({n.entry_protocol})
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              {n.exit_region ? (
+                                <Badge variant="outline" style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                  <span>{regionFlagEmoji(n.exit_region)}</span>
+                                  <span>{n.exit_region}</span>
+                                </Badge>
+                              ) : (
+                                <span className="muted">—</span>
+                              )}
+                            </td>
+                            <td>
+                              <Input
+                                value={n.display_group || ''}
+                                onChange={e => {
+                                  setWorkingNodes(list => list.map(x => nodeKey(x) === key ? { ...x, display_group: e.target.value } : x))
+                                  setNodePreview(null)
+                                }}
+                                placeholder="展示分组（可选）"
+                                style={{ maxWidth: 160, height: 30, fontSize: 12 }}
+                              />
+                            </td>
+                            <td className="table-actions" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => editPlanNodeName(n)}
+                                title="修改在该套餐内的显示名称"
+                                style={{ height: 28, padding: '0 8px', fontSize: 12 }}
+                              >
+                                <Edit3 size={13} style={{ marginRight: 4 }} />
+                                重命名
+                              </Button>
+                              {hasOverride && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  disabled={nameBusy}
+                                  onClick={() => void savePlanNodeName(null, { key: key, effective_name: n.name || key, global_name: n.global_name || n.name || key, source_name: n.source_name || n.global_name || n.name || key, display_name_override: n.display_name_override })}
+                                  title="恢复继承全局名称"
+                                  aria-label={`恢复 ${n.name || key} 的全局名称`}
+                                  style={{ height: 28, width: 28 }}
+                                >
+                                  <RotateCcw size={13} />
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => {
+                                  setWorkingNodes(list => list.filter(x => nodeKey(x) !== key))
+                                  setNodePreview(null)
+                                }}
+                                title="移出套餐"
+                                aria-label={`移除 ${n.name || key}`}
+                                style={{ height: 28, width: 28, color: 'var(--color-danger)' }}
+                              >
+                                <Trash2 size={13} />
+                              </Button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                      {workingNodes.length === 0 && (
+                        <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 24 }}>节点集合为空</td></tr>
+                      )}
                     </tbody>
                   </table>
                   </div>
