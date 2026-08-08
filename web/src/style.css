@@ -15023,3 +15023,21 @@ button.ui-btn-ghost:hover {
   gap: 6px;
 }
 
+/* Node Catalog Table Customization */
+.node-catalog-table {
+  table-layout: auto !important;
+}
+
+.node-catalog-table th,
+.node-catalog-table td {
+  white-space: nowrap;
+}
+
+.node-catalog-table td.node-name-cell {
+  white-space: normal !important;
+  word-break: break-word !important;
+  min-width: 220px;
+  max-width: 440px;
+}
+
+

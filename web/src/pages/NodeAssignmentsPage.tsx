@@ -74,6 +74,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
   const [scopeAction, setScopeAction] = React.useState<{ node: CatalogNode; scope: NodeScopeRequest } | null>(null)
   const [assignOpen, setAssignOpen] = React.useState(false)
   const [users, setUsers] = React.useState<any[] | null>(null)
+  const [showType, setShowType] = React.useState(false)
 
   const servers = data.servers || []
   const plans = data.subscription_plans || []
@@ -159,17 +160,16 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
         body: JSON.stringify({ op: syncOp, nodes: nodeRefs, base_revision_id: baseRevisionID, expected_lock_version: lockVersion }),
       })
       if (res.no_change) {
-        setSyncMessage('节点集合没有变化，未创建新版本')
+        setSyncMessage('节点没有变化')
       } else if (res.access_change_id) {
-        setSyncMessage(`已保存为新版本，正在应用变更 #${res.access_change_id}`)
+        setSyncMessage(`已保存，正在应用变更 #${res.access_change_id}`)
       } else {
-        setSyncMessage(`已${syncOp === 'add' ? '加入' : syncOp === 'remove' ? '移除' : '替换'} ${nodeRefs.length} 个节点并保存为新版本`)
+        setSyncMessage('已保存为新版本')
       }
       setSelected({})
       await refresh()
     } catch (e: any) {
-      const message = e?.message || String(e)
-      setSyncMessage(message.includes('conflict') || message.includes('409') ? '操作失败：方案已发生变化（冲突），请刷新后重试' : '操作失败：' + message)
+      setSyncMessage('操作失败：' + (e?.message || String(e)))
     } finally {
       setSyncBusy(false)
     }
@@ -197,10 +197,14 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
         <>
             <p className="muted">可分配节点目录由代理链路、导入节点与独立入口统一汇总；右键节点或点击行内「⋯」选择范围后，可加入方案或批量创建用户临时例外。</p>
 
-        <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
           <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索名称 / 服务器 / 协议 / 地区" style={{ maxWidth: 260 }} />
           <Button variant="outline" size="sm" onClick={() => setFiltersOpen(v => !v)}><Filter size={14} /> 筛选</Button>
           <Button variant="ghost" size="sm" onClick={() => { setQuery(''); setEntryServerID(0); setEntryRegion(''); setExitRegion(''); setProtocol(''); setStatus(''); setPlanID(0); setUnassigned(false); setGroupBy(''); setSort('name'); setPage(1) }}><RefreshCw size={14} /> 重置</Button>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', userSelect: 'none', marginLeft: 4 }}>
+            <input type="checkbox" checked={showType} onChange={e => setShowType(e.target.checked)} />
+            显示类型
+          </label>
           {isAdmin && (
             <Button variant="outline" size="sm" onClick={() => { setAssignOpen(true); void ensureUsers() }}>
               <Users size={14} /> 将此方案分配给用户
@@ -262,15 +266,14 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
         {error && <p style={{ color: 'var(--color-danger)' }}>{error}</p>}
 
         <div className="card-custom" style={{ marginTop: 12, overflow: 'auto' }}>
-          <table className="user-data-table node-catalog-table" style={{ minWidth: 960 }}>
+          <table className="user-data-table node-catalog-table" style={{ minWidth: 840 }}>
             <thead>
               <tr>
                 <th style={{ width: 32 }}><input type="checkbox" checked={nodes.length > 0 && selectedCount === nodes.length} onChange={e => toggleAll(e.target.checked)} aria-label="全选本页" /></th>
                 <th>节点</th>
-                <th>类型</th>
-                <th>入口服务器</th>
+                {showType && <th>类型</th>}
+                <th>所属服务器</th>
                 <th>协议</th>
-                <th>出口地区</th>
                 <th>状态</th>
                 <th>所属方案</th>
                 <th>有效用户</th>
@@ -282,11 +285,13 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
               {nodes.map(n => (
                 <tr key={n.key} className="table-row-hover" onContextMenu={e => { e.preventDefault(); openScopeMenu(n, e.clientX, e.clientY) }}>
                   <td><input type="checkbox" checked={Boolean(selected[n.key])} onChange={e => setSelected(s => ({ ...s, [n.key]: e.target.checked }))} aria-label={`选择 ${n.name}`} /></td>
-                  <td style={{ fontWeight: 600 }}>{n.name}{n.group ? <span className="muted" style={{ display: 'block', fontSize: 12 }}>{n.group}</span> : null}</td>
-                  <td><Badge variant="secondary">{nodeTypeLabel(n.type)}</Badge></td>
-                  <td>{n.entry_server_name || '—'}</td>
+                  <td className="node-name-cell">
+                    <span style={{ fontWeight: 600, display: 'inline-block', whiteSpace: 'normal', wordBreak: 'break-word' }}>{n.name}</span>
+                    {n.group ? <span className="muted" style={{ display: 'block', fontSize: 12, fontWeight: 400 }}>{n.group}</span> : null}
+                  </td>
+                  {showType && <td><Badge variant="secondary">{nodeTypeLabel(n.type)}</Badge></td>}
+                  <td style={{ fontWeight: 500 }}>{n.entry_server_name || '—'}</td>
                   <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{n.entry_protocol || '—'}</td>
-                  <td>{n.exit_region ? <Badge variant="outline">{n.exit_region}</Badge> : '—'}</td>
                   <td>
                     <Badge variant={n.status === 'ok' ? 'success' : n.status === 'disabled' ? 'secondary' : 'warning'}>
                       {statusLabels[n.status] || n.status}
@@ -310,7 +315,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
                   </td>
                 </tr>
               ))}
-              {nodes.length === 0 && !loading && <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: 24 }}>没有匹配的节点</td></tr>}
+              {nodes.length === 0 && !loading && <tr><td colSpan={showType ? 10 : 9} className="muted" style={{ textAlign: 'center', padding: 24 }}>没有匹配的节点</td></tr>}
             </tbody>
           </table>
           {loading && <p className="muted" style={{ padding: 12 }}>加载中...</p>}
