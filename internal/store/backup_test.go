@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
@@ -34,6 +37,91 @@ func TestBackupCreatesReadableSnapshot(t *testing.T) {
 	}
 	if settings["backup-test"] != "present" {
 		t.Fatalf("snapshot setting = %q", settings["backup-test"])
+	}
+}
+
+func TestBackupDuringConcurrentWrites(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "source.sqlite")
+	db, err := Open(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := db.SetSetting(ctx, "backup-base", "present"); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := make(chan struct{})
+	writerErr := make(chan error, 1)
+	var writer sync.WaitGroup
+	writer.Add(1)
+	go func() {
+		defer writer.Done()
+		for index := 0; ; index++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if err := db.SetSetting(ctx, "backup-writer", fmt.Sprint(index)); err != nil {
+				writerErr <- err
+				return
+			}
+		}
+	}()
+	destination := filepath.Join(root, "backups", "snapshot.sqlite")
+	backupErr := db.Backup(ctx, destination)
+	close(stop)
+	writer.Wait()
+	close(writerErr)
+	if backupErr != nil {
+		t.Fatal(backupErr)
+	}
+	for err := range writerErr {
+		t.Fatal(err)
+	}
+
+	snapshot, err := OpenForRestore(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshot.DBStats().MaxOpenConnections; got != 1 {
+		t.Fatalf("restore MaxOpenConnections = %d, want 1", got)
+	}
+	var mode string
+	if err := snapshot.db.QueryRowContext(ctx, `pragma journal_mode`).Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "delete" {
+		t.Fatalf("restore journal_mode = %q, want delete", mode)
+	}
+	if err := snapshot.CheckIntegrity(ctx); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := snapshot.ListSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings["backup-base"] != "present" {
+		t.Fatalf("snapshot base setting = %q", settings["backup-base"])
+	}
+	if err := snapshot.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	normal, err := Open(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer normal.Close()
+	if err := normal.db.QueryRowContext(ctx, `pragma journal_mode`).Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "wal" {
+		t.Fatalf("normal journal_mode after restore = %q, want wal", mode)
 	}
 }
 

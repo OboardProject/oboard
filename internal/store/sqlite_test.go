@@ -149,3 +149,26 @@ func TestSQLiteConcurrentReadersAndWriter(t *testing.T) {
 		t.Fatalf("MaxOpenConnections = %d, want %d", got, DefaultSQLiteOptions().MaxOpenConns)
 	}
 }
+
+func TestSQLiteAuditIndexes(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, name := range []string{
+		"idx_connection_audit_user_started",
+		"idx_subscription_audit_user_risk_time",
+		"idx_subscription_audit_route_risk_time",
+		"idx_connection_probe_episodes_time",
+		"idx_subscription_rate_buckets_updated",
+	} {
+		var exists int
+		if err := s.db.QueryRow(`select count(*) from sqlite_master where type='index' and name=?`, name).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if exists != 1 {
+			t.Fatalf("index %s does not exist", name)
+		}
+	}
+}
