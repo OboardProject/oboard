@@ -5619,6 +5619,8 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
+  max-width: 320px;
+  width: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-solid);

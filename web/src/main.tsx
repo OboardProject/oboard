@@ -4045,7 +4045,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       <span>当前为固定版本安装。选择上方更新通道后，即可在面板内检查并安装更新。</span>
     </div> : <div className="controller-update-schedule">
       <div className="controller-update-schedule-head">
-        <span><strong>定时自动更新</strong><small>按间隔检查新版本，仅在面板连续 5 分钟无操作时安装。</small></span>
+        <span><strong>定时自动更新</strong></span>
         <label className="notification-enable-row">
           <input type="checkbox" aria-label="启用定时自动更新" checked={snapshot.auto_update_enabled} disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress} onChange={event => void saveAutoUpdate(event.target.checked)} />
         </label>
