@@ -879,12 +879,15 @@ func (s *Server) registerAutomationHandlers() {
 		}
 		return s.store.ResumeSubscriptionAccess(ctx, request.UserID, *principal.UserID)
 	})
-	s.automation.RegisterValidator("servers.onboard", func(_ context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+	s.automation.RegisterValidator("servers.onboard", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		if !principal.AllowsCreate("server") {
 			return nil, errors.New("resource filter does not allow creating servers")
 		}
 		request, err := decodeServerOnboardingOperation(input)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.applyServerOnboardingDefaults(ctx, input, &request); err != nil {
 			return nil, err
 		}
 		if err := validateServer(&request.Server); err != nil {
@@ -898,6 +901,9 @@ func (s *Server) registerAutomationHandlers() {
 		}
 		request, err := decodeServerOnboardingOperation(input)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.applyServerOnboardingDefaults(ctx, input, &request); err != nil {
 			return nil, err
 		}
 		server := request.Server
@@ -1130,6 +1136,42 @@ func decodeServerOnboardingOperation(input json.RawMessage) (serverOnboardingOpe
 	request.Server.ID, request.Server.AgentID, request.Server.AgentTokenHash, request.Server.ChainSecret = 0, "", "", ""
 	request.Server.EnrollmentHash, request.Server.EnrollmentExpiresAt = "", nil
 	return request, nil
+}
+
+// applyServerOnboardingDefaults keeps automation/MCP onboarding aligned with
+// the panel create form. A missing field uses the current Controller default;
+// an explicitly supplied false/zero value remains authoritative.
+func (s *Server) applyServerOnboardingDefaults(ctx context.Context, input json.RawMessage, request *serverOnboardingOperation) error {
+	var envelope struct {
+		Server map[string]json.RawMessage `json:"server"`
+	}
+	if err := json.Unmarshal(input, &envelope); err != nil {
+		return err
+	}
+	settings, err := s.store.ListSettings(ctx)
+	if err != nil {
+		return err
+	}
+	mtuMode, bbrEnabled, timeMode := serverCreationDefaults(settings)
+	if _, ok := envelope.Server["mtu_mode"]; !ok {
+		request.Server.MTUMode = mtuMode
+	}
+	if _, ok := envelope.Server["bbr_enabled"]; !ok {
+		request.Server.BBREnabled = bbrEnabled
+	}
+	if _, ok := envelope.Server["time_correction_mode"]; !ok {
+		request.Server.TimeCorrectionMode = timeMode
+	}
+	if _, ok := envelope.Server["offline_notify_enabled"]; !ok {
+		request.Server.OfflineNotifyEnabled = true
+	}
+	if _, ok := envelope.Server["connectivity_probe_enabled"]; !ok {
+		request.Server.ConnectivityProbeEnabled = true
+	}
+	if _, ok := envelope.Server["connection_audit_enabled"]; !ok {
+		request.Server.ConnectionAuditEnabled = settingBool(settings, settingConnectionAuditEnabled, true)
+	}
+	return nil
 }
 
 type topologyWriteOperation struct {

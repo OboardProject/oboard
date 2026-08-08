@@ -73,6 +73,34 @@ func TestMCPPreparedPlanHashIsCanonicalAndIdentityBound(t *testing.T) {
 	}
 }
 
+func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	s := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+
+	request, err := decodeServerOnboardingOperation(json.RawMessage(`{"server":{"name":"Tokyo-01"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.applyServerOnboardingDefaults(ctx, json.RawMessage(`{"server":{"name":"Tokyo-01"}}`), &request); err != nil {
+		t.Fatal(err)
+	}
+	if !request.Server.ConnectivityProbeEnabled || !request.Server.ConnectionAuditEnabled {
+		t.Fatalf("missing controller defaults: connectivity_probe_enabled=%v connection_audit_enabled=%v", request.Server.ConnectivityProbeEnabled, request.Server.ConnectionAuditEnabled)
+	}
+
+	request, err = decodeServerOnboardingOperation(json.RawMessage(`{"server":{"name":"Tokyo-02","connectivity_probe_enabled":false,"connection_audit_enabled":false}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.applyServerOnboardingDefaults(ctx, json.RawMessage(`{"server":{"name":"Tokyo-02","connectivity_probe_enabled":false,"connection_audit_enabled":false}}`), &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Server.ConnectivityProbeEnabled || request.Server.ConnectionAuditEnabled {
+		t.Fatalf("explicit false values were replaced: connectivity_probe_enabled=%v connection_audit_enabled=%v", request.Server.ConnectivityProbeEnabled, request.Server.ConnectionAuditEnabled)
+	}
+}
+
 func TestMCPResourceResolver(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	s := newTestServer(db, "test-secret", "")
