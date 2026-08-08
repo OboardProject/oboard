@@ -262,22 +262,38 @@ func (s *Server) oauthClient(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		ClientName   string   `json:"client_name"`
 		RedirectURIs []string `json:"redirect_uris"`
-		Scopes       []string `json:"scopes"`
-		Enabled      bool     `json:"enabled"`
+		MetadataURI  string   `json:"metadata_uri"`
+		Enabled      *bool    `json:"enabled"`
 	}
 	if !decodeV2(w, r, &request) {
 		return
 	}
-	validated, err := s.newOAuthClient(request.ClientName, request.RedirectURIs, request.Scopes)
+	validated, err := s.newOAuthClient(request.ClientName, request.RedirectURIs)
 	if err != nil {
 		v2HandleError(w, r, err)
 		return
 	}
-	item.Name, item.RedirectURIs, item.AllowedScopes, item.Enabled = validated.Name, validated.RedirectURIs, validated.AllowedScopes, request.Enabled
+	item.Name, item.RedirectURIs = validated.Name, validated.RedirectURIs
+	if request.Enabled != nil {
+		item.Enabled = *request.Enabled
+	}
+	if metadataURI := strings.TrimSpace(request.MetadataURI); metadataURI != "" && metadataURI != item.MetadataURI {
+		metadata, fetchErr := s.fetchClientMetadata(r.Context(), metadataURI)
+		if fetchErr != nil {
+			v2HandleError(w, r, fetchErr)
+			return
+		}
+		item.MetadataURI = metadataURI
+		item.MetadataHash = metadata.hash
+		item.MetadataETag = metadata.etag
+		item.MetadataFetchedAt = metadata.fetchedAt
+		item.IdentityType = "cimd"
+		item.RedirectURIs = metadata.redirectURIs
+	}
 	if err := s.store.UpdateOAuthClient(r.Context(), item); err != nil {
 		v2HandleError(w, r, err)
 		return
 	}
-	s.auditOAuthEvent(r, oauthAuditActor(currentUser(r)), "oauth_client_updated", "oauth_client", id, map[string]any{"client_name": boundedOAuthAuditValue(item.Name), "redirect_uris": item.RedirectURIs, "scopes": item.AllowedScopes, "enabled": item.Enabled})
+	s.auditOAuthEvent(r, oauthAuditActor(currentUser(r)), "oauth_client_updated", "oauth_client", id, map[string]any{"client_name": boundedOAuthAuditValue(item.Name), "redirect_uris": item.RedirectURIs, "enabled": item.Enabled})
 	v2Write(w, r, http.StatusOK, item, nil)
 }

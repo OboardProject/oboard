@@ -310,7 +310,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerAPIV2Routes(mux)
 	s.registerOAuthRoutes(mux)
 	mcpHandler := s.newMCPHandler()
-	mux.HandleFunc("/mcp", s.apiAuth(mcpHandler.ServeHTTP, model.RoleViewer))
+	mux.Handle("/mcp", s.mcpAuth(mcpHandler))
 	mux.HandleFunc("/api/v1/agent/enroll", s.agentEnroll)
 	mux.HandleFunc("/api/v1/agent/connect", s.agentConnect)
 	mux.HandleFunc("/api/v1/agent/task-results", s.agentTaskResults)

@@ -152,6 +152,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists automation_secret_inputs (id text primary key, changeset_id text not null references automation_changesets(id) on delete cascade, purpose text not null, value_encrypted text not null, expires_at text not null, consumed_at text, created_at text not null)`,
 		`create table if not exists automation_workflows (id text primary key, principal_id text not null references api_principals(id) on delete cascade, grant_id text references oauth_grants(id) on delete cascade, kind text not null, status text not null, reason text not null default '', idempotency_key text not null, changeset_id text references automation_changesets(id) on delete set null, current_step text not null default '', correlation_id text not null, affected_resources_json text not null default '[]', next_action_json text not null default '{}', error_code text not null default '', error_message text not null default '', created_at text not null, updated_at text not null, completed_at text, unique(principal_id,idempotency_key))`,
 		`create table if not exists automation_workflow_steps (id text primary key, workflow_id text not null references automation_workflows(id) on delete cascade, position integer not null, name text not null, status text not null, attempt integer not null default 1, idempotency_key text not null, input_digest text not null, output_digest text not null default '', retryable integer not null default 0, next_action_json text not null default '{}', error_code text not null default '', correlation_id text not null, started_at text, finished_at text, created_at text not null, updated_at text not null, unique(workflow_id,position))`,
+		`create table if not exists automation_external_actions (id text primary key, grant_id text not null default '', workflow_id text not null default '', kind text not null, payload_encrypted text not null, expires_at text not null, consumed_at text, created_at text not null)`,
+		`create index if not exists idx_automation_external_actions_workflow on automation_external_actions(workflow_id)`,
 		`create table if not exists tool_call_audits (id text primary key, principal_id text not null, client_name text not null default '', model_provider text not null default '', capability text not null, scope text not null default '', data_classification text not null, affected_resources_json text not null default '{}', approval_id text not null default '', request_id text not null, arguments_hash text not null, result text not null, source_ip text not null, created_at text not null)`,
 		`create table if not exists ai_providers (id text primary key, name text not null, base_url text not null, model text not null, api_format text not null default 'chat_completions', credential_encrypted text not null default '', enabled integer not null default 0, allow_raw_audit integer not null default 0, daily_token_limit integer not null default 0, capability_json text not null default '', last_used_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists ai_audit_reviews (id text primary key, request_id text not null unique, provider_id text not null references ai_providers(id) on delete restrict, requested_by integer not null references users(id) on delete restrict, status text not null, scope_json text not null, evidence_types_json text not null, window_started_at text not null, window_ended_at text not null, snapshot_at text not null, privacy_mode text not null, resolved_user_ids_json text not null default '[]', resolved_server_ids_json text not null default '[]', final_output_json text not null default '{}', error text not null default '', input_tokens integer not null default 0, output_tokens integer not null default 0, created_at text not null, updated_at text not null, completed_at text)`,
@@ -355,6 +357,31 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 			return err
 		}
 	}
+	// MCP OAuth v2: OAuthClient no longer stores a permission ceiling, and
+	// OAuthGrant becomes the single authorization source with a coarse access
+	// level and a versioned resource boundary. Legacy scopes/resource filters
+	// are kept only as migration/audit snapshots.
+	for _, migration := range []struct {
+		table  string
+		column string
+		sql    string
+	}{
+		{"oauth_clients", "identity_type", `alter table oauth_clients add column identity_type text not null default 'preregistered'`},
+		{"oauth_clients", "metadata_uri", `alter table oauth_clients add column metadata_uri text not null default ''`},
+		{"oauth_clients", "metadata_hash", `alter table oauth_clients add column metadata_hash text not null default ''`},
+		{"oauth_clients", "metadata_etag", `alter table oauth_clients add column metadata_etag text not null default ''`},
+		{"oauth_clients", "metadata_fetched_at", `alter table oauth_clients add column metadata_fetched_at text`},
+		{"oauth_grants", "access_level", `alter table oauth_grants add column access_level text not null default 'read'`},
+		{"oauth_grants", "resource_boundary_v2_json", `alter table oauth_grants add column resource_boundary_v2_json text not null default '{}'`},
+		{"oauth_grants", "policy_version", `alter table oauth_grants add column policy_version integer not null default 1`},
+		{"oauth_grants", "role_version", `alter table oauth_grants add column role_version integer not null default 1`},
+		{"oauth_grants", "status", `alter table oauth_grants add column status text not null default 'active'`},
+		{"oauth_grants", "revoke_reason", `alter table oauth_grants add column revoke_reason text not null default ''`},
+	} {
+		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.sql); err != nil {
+			return err
+		}
+	}
 	for _, stmt := range []string{
 		`create index if not exists idx_oauth_grants_user_client on oauth_grants(user_id,client_id,created_at desc)`,
 		`create index if not exists idx_oauth_access_grant on oauth_access_tokens(grant_id,expires_at)`,
@@ -363,6 +390,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
+	}
+	if err := s.MigrateOAuthV2(ctx); err != nil {
+		return err
 	}
 	for _, column := range []struct {
 		name string

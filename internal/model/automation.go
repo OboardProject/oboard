@@ -203,14 +203,18 @@ type ToolCallAudit struct {
 }
 
 type OAuthClient struct {
-	ID             string          `json:"id"`
-	Name           string          `json:"name"`
-	RedirectURIs   []string        `json:"redirect_uris"`
-	AllowedScopes  []string        `json:"allowed_scopes"`
-	ClientMetadata json.RawMessage `json:"client_metadata"`
-	Enabled        bool            `json:"enabled"`
-	CreatedAt      time.Time       `json:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at"`
+	ID                string          `json:"id"`
+	Name              string          `json:"name"`
+	RedirectURIs      []string        `json:"redirect_uris"`
+	IdentityType      string          `json:"identity_type"`
+	MetadataURI       string          `json:"metadata_uri,omitempty"`
+	MetadataHash      string          `json:"metadata_hash,omitempty"`
+	MetadataETag      string          `json:"metadata_etag,omitempty"`
+	MetadataFetchedAt *time.Time      `json:"metadata_fetched_at,omitempty"`
+	ClientMetadata    json.RawMessage `json:"client_metadata"`
+	Enabled           bool            `json:"enabled"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
 type OAuthApprovalProfile struct {
@@ -221,23 +225,44 @@ type OAuthApprovalProfile struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+type OAuthGrantStatus string
+
+const (
+	OAuthGrantActive         OAuthGrantStatus = "active"
+	OAuthGrantNeedsReconsent OAuthGrantStatus = "needs_reconsent"
+	OAuthGrantRevoked        OAuthGrantStatus = "revoked"
+)
+
 type OAuthGrant struct {
-	ID                string                `json:"id"`
-	ClientID          string                `json:"client_id"`
-	ClientName        string                `json:"client_name,omitempty"`
-	UserID            int64                 `json:"user_id"`
-	Username          string                `json:"username,omitempty"`
-	PrincipalID       string                `json:"principal_id"`
+	ID          string `json:"id"`
+	ClientID    string `json:"client_id"`
+	ClientName  string `json:"client_name,omitempty"`
+	UserID      int64  `json:"user_id"`
+	Username    string `json:"username,omitempty"`
+	PrincipalID string `json:"principal_id"`
+	// AccessLevel is the coarse MCP access level (read or operate). It is the
+	// single authorization source for MCP; legacy scopes below are snapshots
+	// only.
+	AccessLevel string `json:"access_level"`
+	// ResourceBoundaryJSON is the versioned ResourceBoundary. It replaces the
+	// legacy ResourceFilter for MCP authorization.
+	ResourceBoundaryJSON []byte `json:"resource_boundary"`
+	// Scopes and ResourceFilter remain only as migration/audit snapshots and
+	// are never read for MCP authorization.
 	Scopes            []string              `json:"scopes"`
 	ResourceFilter    json.RawMessage       `json:"resource_filter"`
 	ApprovalProfileID string                `json:"approval_profile_id"`
 	ApprovalProfile   *OAuthApprovalProfile `json:"approval_profile,omitempty"`
 	OfflineAccess     bool                  `json:"offline_access"`
+	PolicyVersion     int                   `json:"policy_version"`
+	RoleVersion       int                   `json:"role_version"`
 	ConsentVersion    int                   `json:"consent_version"`
+	Status            OAuthGrantStatus      `json:"status"`
 	CreatedAt         time.Time             `json:"created_at"`
 	ExpiresAt         *time.Time            `json:"expires_at,omitempty"`
 	LastUsedAt        *time.Time            `json:"last_used_at,omitempty"`
 	RevokedAt         *time.Time            `json:"revoked_at,omitempty"`
+	RevokeReason      string                `json:"revoke_reason,omitempty"`
 }
 
 type OAuthAuthorizationCode struct {
@@ -247,7 +272,6 @@ type OAuthAuthorizationCode struct {
 	UserID        int64
 	PrincipalID   string
 	RedirectURI   string
-	Scopes        []string
 	Resource      string
 	CodeChallenge string
 	ExpiresAt     time.Time
@@ -262,7 +286,6 @@ type OAuthToken struct {
 	PrincipalID     string
 	ClientID        string
 	UserID          int64
-	Scopes          []string
 	Resource        string
 	ExpiresAt       time.Time
 	ConsumedAt      *time.Time

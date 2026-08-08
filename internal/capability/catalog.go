@@ -1,11 +1,14 @@
 package capability
 
 import (
+	"context"
 	"encoding/json"
 	"sort"
 	"strings"
 
 	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/authorization"
+	"github.com/OboardProject/oboard/internal/mcpauth"
 )
 
 type DataClassification string
@@ -40,19 +43,41 @@ type Descriptor struct {
 	Replacement        string             `json:"replacement,omitempty"`
 	MCPEnabled         bool               `json:"mcp_enabled"`
 	Executable         bool               `json:"executable"`
+	// MinimumAccess is the coarse MCP access level required. It replaces
+	// RequiredScopes for MCP authorization.
+	MinimumAccess mcpauth.AccessLevel `json:"minimum_access"`
+	// RBACPermission is the shared role-based permission string checked by the
+	// RBAC service. MCP no longer maintains its own role scope table.
+	RBACPermission string `json:"rbac_permission,omitempty"`
+	// ResolveResourceRefs extracts resource references from operation input for
+	// the unified MCP evaluator's resource-boundary check.
+	ResolveResourceRefs func(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) `json:"-"`
 }
 
 type Catalog struct {
 	items map[string]Descriptor
+	rbac  *authorization.RBAC
 }
 
 func NewCatalog() *Catalog {
-	c := &Catalog{items: map[string]Descriptor{}}
+	c := &Catalog{items: map[string]Descriptor{}, rbac: authorization.NewRBAC()}
 	for _, item := range defaultDescriptors() {
+		if item.RBACPermission == "" {
+			item.RBACPermission = item.Name
+		}
 		c.items[item.Name] = item
+		c.rbac.Register(item.Name, authorization.PermissionSpec{ReadOnly: item.ReadOnly, AdminOnly: item.AdminOnly()})
 	}
 	return c
 }
+
+// AdminOnly reports whether the capability is reserved for administrators.
+// The current MCP surface has no admin-only capabilities.
+func (d Descriptor) AdminOnly() bool { return d.RBACPermission == "admin.settings" || d.Destructive }
+
+// RBAC returns the shared role-based permission service. The Controller wires
+// the same instance into the unified MCP evaluator.
+func (c *Catalog) RBAC() *authorization.RBAC { return c.rbac }
 
 func (c *Catalog) Get(name string) (Descriptor, bool) {
 	item, ok := c.items[strings.TrimSpace(name)]
@@ -73,7 +98,7 @@ func (c *Catalog) List(principal application.Principal) []Descriptor {
 func (c *Catalog) ListMCP(principal application.Principal) []Descriptor {
 	out := make([]Descriptor, 0, len(c.items))
 	for _, item := range c.items {
-		if item.MCPEnabled && scopesAllow(principal, item.RequiredScopes) {
+		if item.MCPEnabled && c.authorizePrincipal(principal, item) {
 			out = append(out, item)
 		}
 	}
@@ -83,7 +108,46 @@ func (c *Catalog) ListMCP(principal application.Principal) []Descriptor {
 
 func (c *Catalog) Authorize(principal application.Principal, name string) (Descriptor, bool) {
 	item, ok := c.Get(name)
-	return item, ok && scopesAllow(principal, item.RequiredScopes)
+	return item, ok && c.authorizePrincipal(principal, item)
+}
+
+// authorizePrincipal gates a capability for a principal. OAuth MCP grants use
+// the coarse access level plus the shared RBAC service; every other principal
+// (Service Account, Session, internal AI) keeps the legacy scope mapping.
+func (c *Catalog) authorizePrincipal(principal application.Principal, item Descriptor) bool {
+	if principal.AccessLevel != "" {
+		if !item.MCPEnabled {
+			return false
+		}
+		if !principal.AccessLevel.Allows(item.MinimumAccess) {
+			return false
+		}
+		return c.rbac.Allows(principal.Role, item.RBACPermission)
+	}
+	return scopesAllow(principal, item.RequiredScopes)
+}
+
+// ScopesForGrant derives the legacy fine-grained scope set implied by a coarse
+// MCP grant. It is the union of every MCP-enabled capability that the grant's
+// access level and the human role allow. This keeps application handlers that
+// still call principal.HasScope consistent with the grant while MCP
+// authorization itself uses the unified evaluator.
+func (c *Catalog) ScopesForGrant(principal application.Principal) []string {
+	seen := map[string]bool{}
+	for _, item := range c.items {
+		if !item.MCPEnabled || !c.authorizePrincipal(principal, item) {
+			continue
+		}
+		for _, scope := range item.RequiredScopes {
+			seen[scope] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for scope := range seen {
+		out = append(out, scope)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (c *Catalog) OpenAPI(basePath string) map[string]any {
@@ -174,17 +238,17 @@ func defaultDescriptors() []Descriptor {
 	deploymentInput := schemaObject(map[string]any{"server_ids": idArray(1, 100), "reason": map[string]any{"type": "string", "maxLength": 500}}, "server_ids")
 	incidentPlanInput := schemaObject(map[string]any{"incident_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "user_id": positiveID, "rule_score": map[string]any{"type": "number", "minimum": 0, "maximum": 100}, "anomaly_score": map[string]any{"type": "number", "minimum": 0, "maximum": 100}, "evidence_refs": stringArray(0, 128)}, "incident_id", "user_id")
 	descriptors := []Descriptor{
-		{Name: "inventory.read", Description: "读取受授权范围内的库存摘要", InputSchema: emptyInput, OutputSchema: schemaObject(map[string]any{"servers": arrayOf(server), "users": arrayOf(user), "server_count": map[string]any{"type": "integer"}, "online_count": map[string]any{"type": "integer"}, "user_count": map[string]any{"type": "integer"}}, "servers", "users", "server_count", "online_count", "user_count"), RequiredScopes: []string{"inventory:read"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true},
-		{Name: "servers.list", Description: "列出受授权服务器", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(server)), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true},
-		{Name: "servers.get", Description: "读取服务器状态与能力", InputSchema: schemaObject(map[string]any{"id": positiveID}, "id"), OutputSchema: rawSchema(server), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true},
-		{Name: "users.list", Description: "列出不包含凭据的用户摘要", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(user)), RequiredScopes: []string{"users:read"}, ResourceTypes: []string{"user"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, SensitiveOutput: []string{"username", "nickname"}, MCPEnabled: true},
-		{Name: "topology.read", Description: "读取脱敏后的当前代理拓扑", InputSchema: emptyInput, OutputSchema: schemaObject(map[string]any{"servers": arrayOf(server), "inbounds": arrayOf(inbound), "proxy_paths": arrayOf(path), "proxy_path_steps": arrayOf(step)}, "servers", "inbounds", "proxy_paths", "proxy_path_steps"), RequiredScopes: []string{"topology:read"}, ResourceTypes: []string{"server", "inbound", "proxy_path"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true},
-		{Name: "audit.incidents.list", Description: "列出结构化审计事件，不返回秘密或连接载荷", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(incident)), RequiredScopes: []string{"audit:read"}, ResourceTypes: []string{"audit_incident", "user"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, MCPEnabled: true},
-		{Name: "audit.incidents.get", Description: "读取一个结构化审计事件", InputSchema: schemaObject(map[string]any{"id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}}, "id"), OutputSchema: rawSchema(incident), RequiredScopes: []string{"audit:read"}, ResourceTypes: []string{"audit_incident", "user"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, MCPEnabled: true},
-		{Name: "servers.onboarding.plan", Description: "根据当前库存规划节点接入", InputSchema: serverOnboardingInput, OutputSchema: planOutput, RequiredScopes: []string{"servers:plan"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true},
-		{Name: "proxy_paths.plan", Description: "根据在线节点、地域和约束规划代理链路候选", InputSchema: proxyPlanInput, OutputSchema: planOutput, RequiredScopes: []string{"proxy_paths:plan"}, ResourceTypes: []string{"server", "proxy_path"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true},
-		{Name: "deployments.plan", Description: "计算部署影响范围和前置检查", InputSchema: deploymentInput, OutputSchema: planOutput, RequiredScopes: []string{"deployments:validate"}, ResourceTypes: []string{"server", "deployment"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true},
-		{Name: "audit.incident_response.plan", Description: "根据结构化风险证据生成可逆处置建议", InputSchema: incidentPlanInput, OutputSchema: planOutput, RequiredScopes: []string{"audit:analyze"}, ResourceTypes: []string{"user", "audit_incident"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"source_ip", "destination", "user_identity"}, MCPEnabled: true},
+		{Name: "inventory.read", Description: "读取受授权范围内的库存摘要", InputSchema: emptyInput, OutputSchema: schemaObject(map[string]any{"servers": arrayOf(server), "users": arrayOf(user), "server_count": map[string]any{"type": "integer"}, "online_count": map[string]any{"type": "integer"}, "user_count": map[string]any{"type": "integer"}}, "servers", "users", "server_count", "online_count", "user_count"), RequiredScopes: []string{"inventory:read"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
+		{Name: "servers.list", Description: "列出受授权服务器", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(server)), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
+		{Name: "servers.get", Description: "读取服务器状态与能力", InputSchema: schemaObject(map[string]any{"id": positiveID}, "id"), OutputSchema: rawSchema(server), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefFromID},
+		{Name: "users.list", Description: "列出不包含凭据的用户摘要", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(user)), RequiredScopes: []string{"users:read"}, ResourceTypes: []string{"user"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, SensitiveOutput: []string{"username", "nickname"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
+		{Name: "topology.read", Description: "读取脱敏后的当前代理拓扑", InputSchema: emptyInput, OutputSchema: schemaObject(map[string]any{"servers": arrayOf(server), "inbounds": arrayOf(inbound), "proxy_paths": arrayOf(path), "proxy_path_steps": arrayOf(step)}, "servers", "inbounds", "proxy_paths", "proxy_path_steps"), RequiredScopes: []string{"topology:read"}, ResourceTypes: []string{"server", "inbound", "proxy_path"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
+		{Name: "audit.incidents.list", Description: "列出结构化审计事件，不返回秘密或连接载荷", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(incident)), RequiredScopes: []string{"audit:read"}, ResourceTypes: []string{"audit_incident", "user"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
+		{Name: "audit.incidents.get", Description: "读取一个结构化审计事件", InputSchema: schemaObject(map[string]any{"id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}}, "id"), OutputSchema: rawSchema(incident), RequiredScopes: []string{"audit:read"}, ResourceTypes: []string{"audit_incident", "user"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: auditIncidentRefFromID},
+		{Name: "servers.onboarding.plan", Description: "根据当前库存规划节点接入", InputSchema: serverOnboardingInput, OutputSchema: planOutput, RequiredScopes: []string{"servers:plan"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
+		{Name: "proxy_paths.plan", Description: "根据在线节点、地域和约束规划代理链路候选", InputSchema: proxyPlanInput, OutputSchema: planOutput, RequiredScopes: []string{"proxy_paths:plan"}, ResourceTypes: []string{"server", "proxy_path"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: proxyPathPlanRefs},
+		{Name: "deployments.plan", Description: "计算部署影响范围和前置检查", InputSchema: deploymentInput, OutputSchema: planOutput, RequiredScopes: []string{"deployments:validate"}, ResourceTypes: []string{"server", "deployment"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefsFromIDs},
+		{Name: "audit.incident_response.plan", Description: "根据结构化风险证据生成可逆处置建议", InputSchema: incidentPlanInput, OutputSchema: planOutput, RequiredScopes: []string{"audit:analyze"}, ResourceTypes: []string{"user", "audit_incident"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"source_ip", "destination", "user_identity"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: incidentResponseRefs},
 	}
 	writeDomains := []struct {
 		name, scope    string
@@ -203,13 +267,30 @@ func defaultDescriptors() []Descriptor {
 	}
 	for _, domain := range writeDomains {
 		input, output, evaluator := executableSchemas(domain.name)
-		descriptors = append(descriptors, Descriptor{Name: domain.name, Description: "创建受验证和审批保护的管理变更", InputSchema: input, OutputSchema: output, RequiredScopes: []string{domain.scope}, ResourceEvaluator: evaluator, RiskClass: domain.risk, ApprovalPolicy: "required", Idempotent: true, DataClassification: domain.classification, SensitiveFields: domain.sensitive, SensitiveInput: domain.sensitive, MCPEnabled: true, Executable: domain.executable})
+		descriptors = append(descriptors, Descriptor{Name: domain.name, Description: "创建受验证和审批保护的管理变更", InputSchema: input, OutputSchema: output, RequiredScopes: []string{domain.scope}, ResourceEvaluator: evaluator, RiskClass: domain.risk, ApprovalPolicy: "required", Idempotent: true, DataClassification: domain.classification, SensitiveFields: domain.sensitive, SensitiveInput: domain.sensitive, MCPEnabled: true, Executable: domain.executable, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: writeResolver(domain.name)})
 	}
 	for index := range descriptors {
 		descriptors[index].Version = "1"
 		descriptors[index].Documentation = "oboard://schemas/" + descriptors[index].Name
 	}
 	return descriptors
+}
+
+func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRef, error) {
+	switch name {
+	case "subscriptions.resume", "subscriptions.custom_paths.set_alias", "subscriptions.custom_paths.set_policy":
+		return userRefFromID
+	case "topology.write":
+		return topologyWriteRefs
+	case "topology.reuse_inbound":
+		return topologyReuseInboundRefs
+	case "deployments.apply":
+		return serverRefsFromIDs
+	case "servers.onboard":
+		return serverOnboardRefs
+	default:
+		return noRefs
+	}
 }
 
 func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {

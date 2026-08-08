@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/OboardProject/oboard/internal/mcpauth"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -21,6 +23,13 @@ type Principal struct {
 	SourceIP       netip.Addr
 	ClientName     string
 	Interactive    bool
+	// AccessLevel is set only for OAuth MCP grant principals. When set, the
+	// capability catalog authorizes through MinimumAccess + RBAC instead of the
+	// legacy fine-grained scopes.
+	AccessLevel mcpauth.AccessLevel
+	// GrantPolicy is the live grant snapshot used by the unified evaluator. It
+	// is never persisted on the principal row.
+	GrantPolicy *mcpauth.GrantPolicy
 }
 
 type ResourceSelection struct {
@@ -143,6 +152,56 @@ func (p Principal) AllowsGlobal() bool {
 		return false
 	}
 	return filters.Global != nil && *filters.Global
+}
+
+// ResourceFilterFromBoundary converts a versioned mcpauth.ResourceBoundary into
+// the legacy application.ResourceFilter JSON shape consumed by application
+// handlers, automation, and existing REST checks. Unknown resource types are
+// omitted (the evaluator enforces them separately). String IDs are converted to
+// int64 for backward compatibility.
+func ResourceFilterFromBoundary(boundary mcpauth.ResourceBoundary) json.RawMessage {
+	mode := func(selection mcpauth.ResourceSelection) string {
+		switch selection.Selection {
+		case "all", "none":
+			return selection.Selection
+		default:
+			return "selected"
+		}
+	}
+	ids := func(selection mcpauth.ResourceSelection) []int64 {
+		out := []int64{}
+		for _, raw := range selection.IDs {
+			value, err := strconv.ParseInt(raw, 10, 64)
+			if err == nil {
+				out = append(out, value)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	selection := func(resourceType string) *ResourceSelection {
+		sel, ok := boundary.Resources[resourceType]
+		if !ok {
+			return nil
+		}
+		return &ResourceSelection{Mode: mode(sel), IDs: ids(sel), AllowCreate: sel.AllowCreate}
+	}
+	filter := ResourceFilter{}
+	if servers := selection("server"); servers != nil {
+		filter.Servers = servers
+	}
+	if users := selection("user"); users != nil {
+		filter.Users = users
+	}
+	if paths := selection("proxy_path"); paths != nil {
+		filter.ProxyPaths = paths
+	}
+	filter.DestructiveOperations = boundary.DestructiveOperations
+	encoded, err := json.Marshal(filter)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return encoded
 }
 
 func HumanPrincipal(user model.User, role model.Role, sourceIP netip.Addr) Principal {

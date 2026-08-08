@@ -155,3 +155,23 @@ func nullString(value string) any {
 	}
 	return value
 }
+
+func (s *Store) ListAutomationWorkflows(ctx context.Context, principalID string, limit int) ([]model.AutomationWorkflow, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `select id,principal_id,coalesce(grant_id,''),kind,status,reason,idempotency_key,coalesce(changeset_id,''),current_step,correlation_id,affected_resources_json,next_action_json,error_code,error_message,created_at,updated_at,completed_at from automation_workflows where principal_id=? order by created_at desc limit ?`, principalID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []model.AutomationWorkflow{}
+	for rows.Next() {
+		item, err := scanAutomationWorkflow(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
