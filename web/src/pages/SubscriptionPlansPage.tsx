@@ -139,7 +139,7 @@ function fmtDate(v?: string) {
 function resetModeLabel(mode: string, day: number) {
   switch (mode) {
     case 'month_day': return `每月 ${day || 1} 日`
-    case 'anniversary_month': return '循环每月（从用户获得套餐时起算）'
+    case 'anniversary_month': return '循环每月'
     case 'never': return '不重置'
     default: return '自然月'
   }
@@ -163,7 +163,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
   const [detailError, setDetailError] = React.useState('')
   const [tab, setTab] = React.useState<'overview' | 'nodes' | 'ordering' | 'history'>('overview')
   const [createOpen, setCreateOpen] = React.useState(false)
-  const [createDraft, setCreateDraft] = React.useState({ name: '', description: '', enabled: true, speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'monthly', traffic_reset_day: 1 })
+  const [createDraft, setCreateDraft] = React.useState({ name: '', description: '', enabled: true, speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'anniversary_month', traffic_reset_day: 1 })
   const [createNodes, setCreateNodes] = React.useState<PlanNode[]>([])
   const [editOpen, setEditOpen] = React.useState(false)
   const [editDraft, setEditDraft] = React.useState({ name: '', description: '', enabled: true, speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'monthly', traffic_reset_day: 1 })
@@ -265,7 +265,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
 
   const openCreate = () => {
     setPickerPlanMode('create')
-    setCreateDraft({ name: '', description: '', enabled: true, speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'monthly', traffic_reset_day: 1 })
+    setCreateDraft({ name: '', description: '', enabled: true, speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'anniversary_month', traffic_reset_day: 1 })
     setCreateNodes([])
     setPickerQuery('')
     setPickerResults([])
@@ -852,14 +852,14 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
             <FormField label="名称" required><Input value={createDraft.name} onChange={e => setCreateDraft(d => ({ ...d, name: e.target.value }))} placeholder="例如：标准套餐" /></FormField>
             <FormField label="描述"><Input value={createDraft.description} onChange={e => setCreateDraft(d => ({ ...d, description: e.target.value }))} placeholder="可选" /></FormField>
             <FormField label="速度上限" hint="0 表示不限速。">
-              <div className="input-with-unit"><Input type="number" min={0} value={createDraft.speed_limit_mbps} onChange={e => setCreateDraft(d => ({ ...d, speed_limit_mbps: Number(e.target.value) }))} /><span>Mbps</span></div>
+              <div className="input-with-unit"><Input type="number" min={0} placeholder="0" value={createDraft.speed_limit_mbps || ''} onChange={e => setCreateDraft(d => ({ ...d, speed_limit_mbps: e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)) }))} /><span>Mbps</span></div>
             </FormField>
             <FormField label="流量额度" hint="0 表示不限量。"><TrafficLimitInput bytes={createDraft.traffic_limit_bytes} onChange={v => setCreateDraft(d => ({ ...d, traffic_limit_bytes: v }))} /></FormField>
             <FormField label="重置方式">
               <Select value={createDraft.traffic_reset_mode} onChange={e => setCreateDraft(d => ({ ...d, traffic_reset_mode: e.target.value }))}>
+                <option value="anniversary_month">循环每月</option>
                 <option value="monthly">自然月</option>
                 <option value="month_day">每月指定日</option>
-                <option value="anniversary_month">循环每月（按获得套餐时间）</option>
                 <option value="never">不重置</option>
               </Select>
             </FormField>
@@ -919,7 +919,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
             </FormField>
             <FormField label="速度上限" hint="0 表示不限速。">
               <div className="input-with-unit">
-                <Input type="number" min={0} value={editDraft.speed_limit_mbps} onChange={e => setEditDraft(d => ({ ...d, speed_limit_mbps: Number(e.target.value) }))} />
+                <Input type="number" min={0} placeholder="0" value={editDraft.speed_limit_mbps || ''} onChange={e => setEditDraft(d => ({ ...d, speed_limit_mbps: e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)) }))} />
                 <span>Mbps</span>
               </div>
             </FormField>
@@ -928,9 +928,9 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
             </FormField>
             <FormField label="重置方式" hint="循环每月按用户获得套餐的日期和时刻计算。">
               <Select value={editDraft.traffic_reset_mode} onChange={e => setEditDraft(d => ({ ...d, traffic_reset_mode: e.target.value }))}>
+                <option value="anniversary_month">循环每月</option>
                 <option value="monthly">自然月</option>
                 <option value="month_day">每月指定日</option>
-                <option value="anniversary_month">循环每月（按获得套餐时间）</option>
                 <option value="never">不重置</option>
               </Select>
             </FormField>
