@@ -7634,7 +7634,7 @@ function ServerConnectivityDialog({ server, initialSamples, client, onClose }: {
   const slaTone = connectivitySlaTone(stats.slaRate)
   const ringRadius = 34
   const ringLength = 2 * Math.PI * ringRadius
-  const [slaWhole, slaFrac] = stats.slaRate.toFixed(2).split('.')
+  const slaFormatted = stats.slaRate.toFixed(2)
   const firstBucket = hourlyBuckets[0]
   const midBucket = hourlyBuckets[12]
   const lastBucket = hourlyBuckets[23]
@@ -7658,10 +7658,7 @@ function ServerConnectivityDialog({ server, initialSamples, client, onClose }: {
             <circle cx="40" cy="40" r={ringRadius} className="connectivity-ring-value" strokeDasharray={ringLength} strokeDashoffset={ringLength * (1 - stats.slaRate / 100)} style={{ '--connectivity-ring-length': `${ringLength}` } as React.CSSProperties} />
           </svg>
           <div className="connectivity-sla-ring-label">
-            <div className="connectivity-sla-value">
-              <span className="sla-integer">{slaWhole}</span>
-              <span className="sla-decimal">.{slaFrac}%</span>
-            </div>
+            <div className="connectivity-sla-value">{slaFormatted}%</div>
             <span className="sla-caption">SLA</span>
           </div>
         </div>
