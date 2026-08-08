@@ -7408,11 +7408,16 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
 
         {server.connectivity_probe_enabled && <button type="button" className="server-connectivity" style={{ gridColumn: 'span 2' }} onClick={() => onAction('connectivity-details', server)} aria-label="查看公网可访问性详情与 SLA" title="点击查看公网可访问性详情与 SLA">
           <span className="server-telemetry-heading">
-            <span>公网可访问性</span>
-            <small className={server.connectivity_status === 'available' ? 'is-ok' : server.connectivity_status === 'unavailable' ? 'is-error' : ''}>{server.connectivity_status === 'available' ? '可用' : server.connectivity_status === 'unavailable' ? '不可用' : '等待检测'}</small>
-            <ChevronRight size={12} className="connectivity-open-chevron" aria-hidden="true" />
+            <span className="server-telemetry-title">
+              <span>公网可访问性</span>
+              <small className={server.connectivity_status === 'available' ? 'is-ok' : server.connectivity_status === 'unavailable' ? 'is-error' : ''}>{server.connectivity_status === 'available' ? '可用' : server.connectivity_status === 'unavailable' ? '不可用' : '等待检测'}</small>
+            </span>
+            <ChevronRight size={13} className="connectivity-open-chevron" aria-hidden="true" />
           </span>
-          <span className="server-latency-value"><strong>{server.connectivity_status === 'available' ? `${server.connectivity_latency_ms || 0} ms` : '—'}</strong><span>cp.cloudflare.com · 每分钟</span></span>
+          <span className="server-latency-value">
+            <strong>{server.connectivity_status === 'available' ? `${server.connectivity_latency_ms || 0} ms` : '—'}</strong>
+            <span>cp.cloudflare.com · 每分钟</span>
+          </span>
           <ServerTelemetryChart samples={samples.filter(x => x.connectivity_available !== undefined)} type="latency" />
         </button>}
 

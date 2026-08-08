@@ -7607,26 +7607,103 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .server-time-detail-actions { justify-content: flex-end; }
-/* 公网可访问性详情弹窗 */
+/* 公网可访问性卡片与详情弹窗 */
 .server-connectivity {
-  border: 0;
+  border: 1px solid var(--border);
   width: 100%;
   font: inherit;
   color: inherit;
   text-align: left;
   cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: background-color 0.15s ease;
+  border-radius: var(--radius-md);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+  box-sizing: border-box;
 }
-.server-connectivity:hover { background: var(--surface-2); }
+.server-meta > .server-connectivity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--surface-solid);
+}
+.server-connectivity:hover { background: var(--surface-2); border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); }
 .server-connectivity:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 45%, transparent); outline-offset: 1px; }
-.connectivity-open-chevron {
+
+.server-connectivity .server-telemetry-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+.server-connectivity .server-telemetry-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.server-connectivity .server-telemetry-title > span {
+  display: inline;
+  color: var(--text-strong);
+  font-size: 11px;
+  font-weight: 600;
+}
+.server-connectivity .server-telemetry-heading small {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+.server-connectivity .connectivity-open-chevron {
   color: var(--muted);
   opacity: 0.55;
   transition: opacity 0.15s ease, transform 0.15s ease;
+  flex-shrink: 0;
 }
 .server-connectivity:hover .connectivity-open-chevron,
 .server-connectivity:focus-visible .connectivity-open-chevron { opacity: 1; transform: translateX(1px); }
+
+.server-connectivity .server-latency-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin-top: 1px;
+}
+.server-connectivity .server-latency-value strong {
+  display: inline;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-strong);
+  line-height: 1.2;
+}
+.server-connectivity .server-latency-value span {
+  display: inline;
+  font-size: 9.5px;
+  color: var(--muted);
+  text-align: right;
+  line-height: 1.2;
+}
+.server-connectivity .server-chart-wrap {
+  height: 34px;
+}
+.server-connectivity .server-mini-chart {
+  height: 34px;
+}
+.server-connectivity .server-chart-scale-label {
+  font-size: 7.5px;
+  padding: 0 3px;
+  opacity: 0.75;
+  background: color-mix(in srgb, var(--surface-solid) 85%, transparent);
+}
 
 .connectivity-dialog {
   width: min(680px, 100%);
