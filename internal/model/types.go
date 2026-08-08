@@ -320,6 +320,13 @@ type SubscriptionPlan struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
+const (
+	TrafficResetMonthly          = "monthly"
+	TrafficResetMonthDay         = "month_day"
+	TrafficResetAnniversaryMonth = "anniversary_month"
+	TrafficResetNever            = "never"
+)
+
 // PlanRevisionStatus is the legacy lifecycle of one plan revision row. It is
 // kept only for read compatibility: the draft/active/archived wording belongs
 // to the old model and new versions derive their state from the plan pointers
@@ -482,15 +489,16 @@ type SubscriptionPlanNode struct {
 // exist per user (enforced by a partial unique index), so switching plans is an
 // atomic replace rather than a union of plans.
 type UserPlanBinding struct {
-	ID         int64      `json:"id"`
-	UserID     int64      `json:"user_id"`
-	PlanID     int64      `json:"plan_id"`
-	Enabled    bool       `json:"enabled"`
-	StartsAt   *time.Time `json:"starts_at,omitempty"`
-	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
-	AssignedBy *int64     `json:"assigned_by,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID                   int64      `json:"id"`
+	UserID               int64      `json:"user_id"`
+	PlanID               int64      `json:"plan_id"`
+	Enabled              bool       `json:"enabled"`
+	StartsAt             *time.Time `json:"starts_at,omitempty"`
+	ExpiresAt            *time.Time `json:"expires_at,omitempty"`
+	TrafficResetAnchorAt *time.Time `json:"traffic_reset_anchor_at,omitempty"`
+	AssignedBy           *int64     `json:"assigned_by,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
 type UserNodeExceptionEffect string
@@ -900,10 +908,6 @@ type UserGroup struct {
 	Role                         Role                         `json:"role"`
 	SystemKey                    string                       `json:"system_key,omitempty"`
 	Enabled                      bool                         `json:"enabled"`
-	SpeedLimitMbps               int                          `json:"speed_limit_mbps"`
-	TrafficLimitBytes            int64                        `json:"traffic_limit_bytes"`
-	TrafficResetMode             string                       `json:"traffic_reset_mode"`
-	TrafficResetDay              int                          `json:"traffic_reset_day"`
 	SubscriptionCustomPathPolicy SubscriptionCustomPathPolicy `json:"subscription_custom_path_policy"`
 	CreatedAt                    time.Time                    `json:"created_at"`
 	UpdatedAt                    time.Time                    `json:"updated_at"`
@@ -2292,6 +2296,8 @@ type TrafficRuntimePolicy struct {
 	PeriodEnd         string `json:"period_end,omitempty"`
 	ResetMode         string `json:"reset_mode,omitempty"`
 	ResetDay          int    `json:"reset_day,omitempty"`
+	ResetAnchor       string `json:"reset_anchor,omitempty"`
+	PreviousPeriodKey string `json:"previous_period_key,omitempty"`
 	Timezone          string `json:"timezone,omitempty"`
 	QuotaState        string `json:"quota_state,omitempty"`
 	EnforcementMode   string `json:"enforcement_mode,omitempty"`

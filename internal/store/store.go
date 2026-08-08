@@ -196,7 +196,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists google_eab_credentials (id integer primary key autoincrement, key_id text not null unique, remark text not null default '', hmac_key_encrypted text not null, created_at text not null, updated_at text not null)`,
 		`create table if not exists certificates (id integer primary key autoincrement, name text not null, primary_domain text not null, domains_json text not null default '[]', wildcard integer not null default 0, challenge_type text not null, dns_credential_id integer references dns_credentials(id) on delete set null, issuance_server_id integer references servers(id) on delete set null, acme_ca text not null default 'letsencrypt', account_email text not null default '', google_eab_credential_id integer references google_eab_credentials(id) on delete restrict, eab_key_id text not null default '', eab_hmac_key_encrypted text not null default '', status text not null default 'pending', certificate_pem text not null default '', fullchain_pem text not null default '', private_key_encrypted text not null default '', revision text not null default '', not_before text, not_after text, auto_renew integer not null default 1, validation_records_json text not null default '[]', last_error text not null default '', last_issued_at text, last_renewal_attempt_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists inbound_certificate_bindings (inbound_id integer primary key references inbounds(id) on delete cascade, certificate_id integer references certificates(id) on delete set null, mode text not null default 'auto', server_name text not null default '', created_at text not null, updated_at text not null)`,
-		`create table if not exists user_groups (id integer primary key autoincrement, name text not null unique, description text not null default '', role text not null default 'viewer', system_key text not null default '', enabled integer not null default 1, speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists user_groups (id integer primary key autoincrement, name text not null unique, description text not null default '', role text not null default 'viewer', system_key text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists user_group_members (id integer primary key autoincrement, group_id integer not null references user_groups(id) on delete cascade, user_id integer not null references users(id) on delete cascade, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(group_id,user_id))`,
 		`create table if not exists outbounds (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, next_server_id integer references servers(id) on delete set null, name text not null, protocol text not null, target_address text not null, target_port integer not null, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists routing_rules (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, name text not null, priority integer not null default 100, match_json text not null default '{}', action text not null, outbound_id integer references outbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, target_server_id integer references servers(id) on delete set null, outbound_tag text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
@@ -238,7 +238,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists subscription_plans (id integer primary key autoincrement, name text not null unique, description text not null default '', enabled integer not null default 1, revision integer not null default 0, active_revision_id integer references subscription_plan_revisions(id) on delete set null, draft_revision_id integer references subscription_plan_revisions(id) on delete set null, lock_version integer not null default 1, current_revision_id integer references subscription_plan_revisions(id) on delete set null, latest_revision_id integer references subscription_plan_revisions(id) on delete set null, pending_revision_id integer references subscription_plan_revisions(id) on delete set null, created_at text not null, updated_at text not null)`,
 		`create table if not exists subscription_plan_revisions (id integer primary key autoincrement, plan_id integer not null references subscription_plans(id) on delete cascade, revision integer not null, version_no integer, based_on_revision_id integer, change_kind text not null default '', change_summary text not null default '', activation_change_id integer, status text not null default 'draft', speed_limit_mbps integer not null default 0, traffic_limit_bytes integer not null default 0, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, created_by integer references users(id) on delete set null, created_at text not null, activated_at text, unique(plan_id, revision))`,
 		`create table if not exists subscription_plan_revision_nodes (id integer primary key autoincrement, revision_id integer not null references subscription_plan_revisions(id) on delete cascade, node_type text not null, node_id integer not null, display_group text not null default '', source_type text not null default 'explicit', source_rule_id integer not null default 0, created_at text not null, unique(revision_id, node_type, node_id))`,
-		`create table if not exists user_plan_bindings (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, plan_id integer not null references subscription_plans(id) on delete cascade, enabled integer not null default 1, status text not null default 'active', starts_at text, expires_at text, assigned_by integer references users(id) on delete set null, created_at text not null, updated_at text not null, deployed_at text, expiry_synced_at text)`,
+		`create table if not exists user_plan_bindings (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, plan_id integer not null references subscription_plans(id) on delete cascade, enabled integer not null default 1, status text not null default 'active', starts_at text, expires_at text, traffic_reset_anchor_at text, assigned_by integer references users(id) on delete set null, created_at text not null, updated_at text not null, deployed_at text, expiry_synced_at text)`,
 		`create table if not exists user_node_exceptions (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, node_type text not null, node_id integer not null, effect text not null, reason text not null, status text not null default 'active', starts_at text, expires_at text not null, created_by integer references users(id) on delete set null, created_at text not null, expiry_synced_at text, change_id integer references access_changes(id) on delete set null)`,
 		`create table if not exists access_changes (id integer primary key autoincrement, change_type text not null, source_plan_id integer references subscription_plans(id) on delete cascade, candidate_revision_id integer not null default 0, expected_active_revision_id integer not null default 0, status text not null default 'preparing', preview_hash text not null default '', affected_user_count integer not null default 0, activate_at text, payload_json text not null default '{}', prepare_projection_json text not null default '{}', finalize_projection_json text not null default '{}', error text not null default '', created_by integer references users(id) on delete set null, created_at text not null, activated_at text, finalized_at text, failed_at text, updated_at text not null)`,
 		`create table if not exists access_change_targets (access_change_id integer not null references access_changes(id) on delete cascade, server_id integer not null references servers(id) on delete cascade, prepare_task_id integer not null default 0, finalize_task_id integer not null default 0, status text not null default 'pending', error text not null default '', updated_at text not null, primary key(access_change_id, server_id))`,
@@ -587,6 +587,11 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	}
 	if err := s.dropColumn(ctx, "proxy_paths", "name", `alter table proxy_paths drop column name`); err != nil {
 		return err
+	}
+	for _, column := range []string{"speed_limit_mbps", "traffic_limit_bytes", "traffic_reset_mode", "traffic_reset_day"} {
+		if err := s.dropColumn(ctx, "user_groups", column, `alter table user_groups drop column `+column); err != nil {
+			return err
+		}
 	}
 	if err := s.ensureProxyPathStepPositions(ctx); err != nil {
 		return err
@@ -994,13 +999,13 @@ func (s *Store) ensureDefaultDNSLists(ctx context.Context) error {
 
 func (s *Store) ensureBuiltinUserGroups(ctx context.Context) error {
 	ts := now()
-	if _, err := s.db.ExecContext(ctx, `insert into user_groups(name,description,role,system_key,enabled,speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,created_at,updated_at)
-		select '管理员组','系统管理员账号；该分组不可删除。','admin',?,1,0,0,'monthly',1,?,?
+	if _, err := s.db.ExecContext(ctx, `insert into user_groups(name,description,role,system_key,enabled,created_at,updated_at)
+		select '管理员组','系统管理员账号；该分组不可删除。','admin',?,1,?,?
 		where not exists(select 1 from user_groups where system_key=?)`, UserGroupSystemAdmins, ts, ts, UserGroupSystemAdmins); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `insert into user_groups(name,description,role,system_key,enabled,speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,created_at,updated_at)
-		select '普通用户组','普通用户默认分组，不包含后台管理权限。','viewer',?,1,0,0,'monthly',1,?,?
+	if _, err := s.db.ExecContext(ctx, `insert into user_groups(name,description,role,system_key,enabled,created_at,updated_at)
+		select '普通用户组','普通用户默认分组，不包含后台管理权限。','viewer',?,1,?,?
 		where not exists(select 1 from user_groups where system_key=?)`, UserGroupSystemUsers, ts, ts, UserGroupSystemUsers); err != nil {
 		return err
 	}
@@ -2564,7 +2569,7 @@ func (s *Store) CreateUserGroup(ctx context.Context, v *model.UserGroup) error {
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into user_groups(name,description,role,system_key,enabled,speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, v.Name, v.Description, v.Role, v.SystemKey, boolInt(v.Enabled), v.SpeedLimitMbps, v.TrafficLimitBytes, normalizeTrafficResetMode(v.TrafficResetMode), normalizeTrafficResetDay(v.TrafficResetDay), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into user_groups(name,description,role,system_key,enabled,created_at,updated_at) values(?,?,?,?,?,?,?)`, v.Name, v.Description, v.Role, v.SystemKey, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -2573,12 +2578,12 @@ func (s *Store) CreateUserGroup(ctx context.Context, v *model.UserGroup) error {
 }
 
 func (s *Store) UpdateUserGroup(ctx context.Context, v *model.UserGroup) error {
-	_, err := s.db.ExecContext(ctx, `update user_groups set name=?,description=?,role=?,system_key=?,enabled=?,speed_limit_mbps=?,traffic_limit_bytes=?,traffic_reset_mode=?,traffic_reset_day=?,updated_at=? where id=?`, v.Name, v.Description, v.Role, v.SystemKey, boolInt(v.Enabled), v.SpeedLimitMbps, v.TrafficLimitBytes, normalizeTrafficResetMode(v.TrafficResetMode), normalizeTrafficResetDay(v.TrafficResetDay), now(), v.ID)
+	_, err := s.db.ExecContext(ctx, `update user_groups set name=?,description=?,role=?,system_key=?,enabled=?,updated_at=? where id=?`, v.Name, v.Description, v.Role, v.SystemKey, boolInt(v.Enabled), now(), v.ID)
 	return err
 }
 
 func (s *Store) ListUserGroups(ctx context.Context) ([]model.UserGroup, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,name,description,role,system_key,enabled,speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,created_at,updated_at from user_groups order by case system_key when 'administrators' then 0 when 'users' then 1 else 2 end,id desc`)
+	rows, err := s.db.QueryContext(ctx, `select id,name,description,role,system_key,enabled,created_at,updated_at from user_groups order by case system_key when 'administrators' then 0 when 'users' then 1 else 2 end,id desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -2587,7 +2592,7 @@ func (s *Store) ListUserGroups(ctx context.Context) ([]model.UserGroup, error) {
 }
 
 func (s *Store) GetUserGroup(ctx context.Context, id int64) (*model.UserGroup, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,name,description,role,system_key,enabled,speed_limit_mbps,traffic_limit_bytes,traffic_reset_mode,traffic_reset_day,created_at,updated_at from user_groups where id=?`, id)
+	rows, err := s.db.QueryContext(ctx, `select id,name,description,role,system_key,enabled,created_at,updated_at from user_groups where id=?`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -2608,12 +2613,10 @@ func scanUserGroups(rows *sql.Rows) ([]model.UserGroup, error) {
 		var v model.UserGroup
 		var enabled int
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.Name, &v.Description, &v.Role, &v.SystemKey, &enabled, &v.SpeedLimitMbps, &v.TrafficLimitBytes, &v.TrafficResetMode, &v.TrafficResetDay, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.Name, &v.Description, &v.Role, &v.SystemKey, &enabled, &ca, &ua); err != nil {
 			return nil, err
 		}
 		v.Enabled = enabled == 1
-		v.TrafficResetMode = normalizeTrafficResetMode(v.TrafficResetMode)
-		v.TrafficResetDay = normalizeTrafficResetDay(v.TrafficResetDay)
 		v.CreatedAt = parseTime(ca)
 		v.UpdatedAt = parseTime(ua)
 		out = append(out, v)

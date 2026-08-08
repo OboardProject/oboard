@@ -713,7 +713,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   outbounds: { label: '出口', desc: '配置服务器出口、下一跳和协议认证参数。', group: '代理' },
   routing: { label: '分流规则', desc: '为任意服务器配置分流规则、直连、链路或导入节点。', group: '流量' },
   'external-outbounds': { label: '导入节点', desc: '导入第三方 SS、SOCKS、VLESS 等节点。', group: '流量' },
-  users: { label: '用户', desc: '多用户、凭据、限速、流量额度和订阅令牌。', group: '访问控制' },
+  users: { label: '用户与分组', desc: '用户与分组', group: '访问控制' },
   nodes: { label: '节点分配', desc: '可分配节点目录：筛选、分组、方案归属、有效用户与例外。', group: '访问控制' },
   plans: { label: '订阅方案', desc: '方案节点、排序、限额、版本历史与两阶段部署。', group: '访问控制' },
   dns: { label: 'DNS 设置', desc: '为服务器选择解析服务并检查解析速度。', group: '网络' },
@@ -5898,7 +5898,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
   const quickActions = [
     { key: 'servers', title: '管理服务器', desc: '查看状态、安装 Agent 与端口策略', icon: <ServerIcon size={18} /> },
     { key: 'proxy-paths', title: '代理链路', desc: '编排入口、跳点与第三方出口', icon: <Workflow size={18} /> },
-    { key: 'users', title: '用户与分组', desc: '凭据、限速与订阅令牌', icon: <UsersIcon size={18} /> },
+    { key: 'users', title: '用户与分组', desc: '用户与分组', icon: <UsersIcon size={18} /> },
     { key: 'tasks', title: '任务记录', desc: '查看配置下发与执行回执', icon: <CheckSquare size={18} /> },
   ]
 

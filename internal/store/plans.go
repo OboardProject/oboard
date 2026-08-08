@@ -1436,7 +1436,7 @@ func bumpPlanRevisionTx(ctx context.Context, tx *sql.Tx, planID int64, ts string
 }
 
 func (s *Store) GetActiveUserPlanBinding(ctx context.Context, userID int64) (*model.UserPlanBinding, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where user_id=? and enabled=1 order by id desc limit 1`, userID)
+	rows, err := s.db.QueryContext(ctx, userPlanBindingSelect+` where user_id=? and enabled=1 order by id desc limit 1`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -1452,7 +1452,7 @@ func (s *Store) GetActiveUserPlanBinding(ctx context.Context, userID int64) (*mo
 }
 
 func (s *Store) ListActiveUserPlanBindings(ctx context.Context) ([]model.UserPlanBinding, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where enabled=1 and status='active' order by user_id`)
+	rows, err := s.db.QueryContext(ctx, userPlanBindingSelect+` where enabled=1 and status='active' order by user_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1464,7 +1464,7 @@ func (s *Store) ListActiveUserPlanBindings(ctx context.Context) ([]model.UserPla
 // contains at (starts_at <= at AND (expires_at IS NULL OR expires_at > at)).
 // This is the binding set the plan authorization snapshot resolves from.
 func (s *Store) ListEffectiveUserPlanBindings(ctx context.Context, at time.Time) ([]model.UserPlanBinding, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where enabled=1 and status='active' and (starts_at is null or starts_at <= ?) and (expires_at is null or expires_at > ?) order by user_id`, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano))
+	rows, err := s.db.QueryContext(ctx, userPlanBindingSelect+` where enabled=1 and status='active' and (starts_at is null or starts_at <= ?) and (expires_at is null or expires_at > ?) order by user_id`, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -1473,7 +1473,7 @@ func (s *Store) ListEffectiveUserPlanBindings(ctx context.Context, at time.Time)
 }
 
 func (s *Store) ListUserPlanBindingsForPlan(ctx context.Context, planID int64) ([]model.UserPlanBinding, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where plan_id=? and enabled=1 and status='active' order by user_id`, planID)
+	rows, err := s.db.QueryContext(ctx, userPlanBindingSelect+` where plan_id=? and enabled=1 and status='active' order by user_id`, planID)
 	if err != nil {
 		return nil, err
 	}
@@ -1481,15 +1481,17 @@ func (s *Store) ListUserPlanBindingsForPlan(ctx context.Context, planID int64) (
 	return scanUserPlanBindings(rows)
 }
 
+const userPlanBindingSelect = `select id,user_id,plan_id,enabled,starts_at,expires_at,traffic_reset_anchor_at,assigned_by,created_at,updated_at from user_plan_bindings`
+
 func scanUserPlanBindings(rows *sql.Rows) ([]model.UserPlanBinding, error) {
 	var out []model.UserPlanBinding
 	for rows.Next() {
 		var v model.UserPlanBinding
 		var enabled int
-		var startsAt, expiresAt sql.NullString
+		var startsAt, expiresAt, resetAnchorAt sql.NullString
 		var assignedBy sql.NullInt64
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.UserID, &v.PlanID, &enabled, &startsAt, &expiresAt, &assignedBy, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.UserID, &v.PlanID, &enabled, &startsAt, &expiresAt, &resetAnchorAt, &assignedBy, &ca, &ua); err != nil {
 			return nil, err
 		}
 		v.Enabled = enabled == 1
@@ -1500,6 +1502,10 @@ func scanUserPlanBindings(rows *sql.Rows) ([]model.UserPlanBinding, error) {
 		if expiresAt.Valid {
 			t := parseTime(expiresAt.String)
 			v.ExpiresAt = &t
+		}
+		if resetAnchorAt.Valid {
+			t := parseTime(resetAnchorAt.String)
+			v.TrafficResetAnchorAt = &t
 		}
 		if assignedBy.Valid {
 			v.AssignedBy = &assignedBy.Int64
@@ -1544,7 +1550,14 @@ func (s *Store) setUserPlanBindings(ctx context.Context, bindings []model.UserPl
 		if v.PlanID == 0 {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `insert into user_plan_bindings(user_id,plan_id,enabled,status,starts_at,expires_at,assigned_by,created_at,updated_at) values(?,?,1,?,?,?,?,?,?)`, v.UserID, v.PlanID, status, nilTime(v.StartsAt), nilTime(v.ExpiresAt), v.AssignedBy, ts, ts); err != nil {
+		var anchor any
+		if status == "active" {
+			anchor = ts
+			if v.StartsAt != nil {
+				anchor = v.StartsAt.UTC().Format(time.RFC3339Nano)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `insert into user_plan_bindings(user_id,plan_id,enabled,status,starts_at,expires_at,traffic_reset_anchor_at,assigned_by,created_at,updated_at) values(?,?,1,?,?,?,?,?,?,?)`, v.UserID, v.PlanID, status, nilTime(v.StartsAt), nilTime(v.ExpiresAt), anchor, v.AssignedBy, ts, ts); err != nil {
 			return err
 		}
 	}
@@ -1559,12 +1572,13 @@ func (s *Store) SetUserPlanBindingsActive(ctx context.Context, ids []int64) erro
 	}
 	placeholders := make([]string, 0, len(ids))
 	args := make([]any, 0, len(ids)+1)
-	args = append(args, now())
+	ts := now()
+	args = append(args, ts, ts)
 	for _, id := range ids {
 		placeholders = append(placeholders, "?")
 		args = append(args, id)
 	}
-	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set status='active',updated_at=? where id in (`+strings.Join(placeholders, ",")+`) and status='pending'`, args...)
+	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set status='active',traffic_reset_anchor_at=coalesce(traffic_reset_anchor_at,?),updated_at=? where id in (`+strings.Join(placeholders, ",")+`) and status='pending'`, args...)
 	return err
 }
 
@@ -1579,12 +1593,12 @@ func (s *Store) SetUserPlanBindingsActiveForUsers(ctx context.Context, userIDs [
 	placeholders := make([]string, 0, len(userIDs))
 	args := make([]any, 0, len(userIDs)+2)
 	ts := now()
-	args = append(args, ts, ts)
+	args = append(args, ts, ts, ts)
 	for _, id := range userIDs {
 		placeholders = append(placeholders, "?")
 		args = append(args, id)
 	}
-	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set status='active',deployed_at=coalesce(deployed_at,?),updated_at=? where user_id in (`+strings.Join(placeholders, ",")+`) and status='pending'`, args...)
+	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set status='active',deployed_at=coalesce(deployed_at,?),traffic_reset_anchor_at=coalesce(traffic_reset_anchor_at,?),updated_at=? where user_id in (`+strings.Join(placeholders, ",")+`) and status='pending'`, args...)
 	return err
 }
 
@@ -1618,7 +1632,7 @@ func (s *Store) ListEnabledUserPlanBindings(ctx context.Context, userIDs []int64
 		placeholders = append(placeholders, "?")
 		args = append(args, id)
 	}
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where enabled=1 and user_id in (`+strings.Join(placeholders, ",")+`) order by user_id,id desc`, args...)
+	rows, err := s.db.QueryContext(ctx, userPlanBindingSelect+` where enabled=1 and user_id in (`+strings.Join(placeholders, ",")+`) order by user_id,id desc`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1630,7 +1644,7 @@ func (s *Store) ListEnabledUserPlanBindings(ctx context.Context, userIDs []int64
 // contains at but whose runtime state was never synced (deployed_at is NULL).
 // The lifecycle worker turns each of them into an access change.
 func (s *Store) ListBindingsDueForDeploy(ctx context.Context, at time.Time) ([]model.UserPlanBinding, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where enabled=1 and deployed_at is null and (starts_at is null or starts_at <= ?) and (expires_at is null or expires_at > ?) order by id`, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano))
+	rows, err := s.db.QueryContext(ctx, userPlanBindingSelect+` where enabled=1 and deployed_at is null and (starts_at is null or starts_at <= ?) and (expires_at is null or expires_at > ?) order by id`, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -1659,7 +1673,7 @@ func (s *Store) ClaimBindingsDeployed(ctx context.Context, ids []int64) error {
 // runtime state was deployed, and whose removal was never finalized. The
 // lifecycle worker creates removal changes for them.
 func (s *Store) ListExpiredBindingsNeedingSync(ctx context.Context, at time.Time) ([]model.UserPlanBinding, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,plan_id,enabled,starts_at,expires_at,assigned_by,created_at,updated_at from user_plan_bindings where enabled=1 and expires_at is not null and expires_at <= ? and deployed_at is not null and expiry_synced_at is null order by id`, at.UTC().Format(time.RFC3339Nano))
+	rows, err := s.db.QueryContext(ctx, userPlanBindingSelect+` where enabled=1 and expires_at is not null and expires_at <= ? and deployed_at is not null and expiry_synced_at is null order by id`, at.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -2098,10 +2112,14 @@ func (s *Store) migrateUserPlanBindingDeployTracking(ctx context.Context) error 
 		{"status", `alter table user_plan_bindings add column status text not null default 'active'`},
 		{"deployed_at", `alter table user_plan_bindings add column deployed_at text`},
 		{"expiry_synced_at", `alter table user_plan_bindings add column expiry_synced_at text`},
+		{"traffic_reset_anchor_at", `alter table user_plan_bindings add column traffic_reset_anchor_at text`},
 	} {
 		if err := s.ensureColumn(ctx, "user_plan_bindings", column.name, column.sql); err != nil {
 			return err
 		}
+	}
+	if _, err := s.db.ExecContext(ctx, `update user_plan_bindings set traffic_reset_anchor_at=coalesce(deployed_at,starts_at,created_at) where traffic_reset_anchor_at is null and status='active'`); err != nil {
+		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `create index if not exists idx_user_plan_bindings_deploy on user_plan_bindings(deployed_at, starts_at, expires_at)`); err != nil {
 		return err

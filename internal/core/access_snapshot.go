@@ -16,6 +16,7 @@ type EffectiveUserPolicy struct {
 	TrafficLimitBytes int64
 	TrafficResetMode  string
 	TrafficResetDay   int
+	TrafficResetAnchor time.Time
 	Source            string // user_override | plan | user | default
 }
 
@@ -189,7 +190,7 @@ func BuildEffectiveAccessSnapshot(input EffectiveAccessInput) *EffectiveAccessSn
 		if len(grantByKey) > 0 {
 			snap.UserNodes[userID] = grantByKey
 		}
-		snap.UserPolicies[userID] = effectiveUserPolicy(user, plan)
+		snap.UserPolicies[userID] = effectiveUserPolicy(user, plan, binding)
 		for key, grant := range grantByKey {
 			snap.NodeUsers[key] = append(snap.NodeUsers[key], userID)
 			switch grant.NodeType {
@@ -245,32 +246,34 @@ func compactSortedUserIDs(list []int64) []int64 {
 	return out
 }
 
-func effectiveUserPolicy(user model.User, plan *model.SubscriptionPlan) EffectiveUserPolicy {
-	speed, traffic := user.SpeedLimitMbps, user.TrafficLimitBytes
+func effectiveUserPolicy(user model.User, plan *model.SubscriptionPlan, binding model.UserPlanBinding) EffectiveUserPolicy {
+	speed, traffic := 0, int64(0)
 	mode, day := user.TrafficResetMode, user.TrafficResetDay
-	source := "user"
-	if speed <= 0 && traffic <= 0 {
-		source = "default"
-	}
+	anchor := time.Time{}
+	source := "default"
 	if plan != nil {
-		if speed <= 0 {
-			speed = plan.SpeedLimitMbps
-		}
-		if traffic <= 0 {
-			traffic = plan.TrafficLimitBytes
-		}
-		if user.SpeedLimitMbps > 0 || user.TrafficLimitBytes > 0 {
-			source = "user_override"
-		} else {
-			source = "plan"
-		}
+		speed, traffic = plan.SpeedLimitMbps, plan.TrafficLimitBytes
 		mode, day = plan.TrafficResetMode, plan.TrafficResetDay
-		if user.TrafficResetMode != "" {
-			mode = user.TrafficResetMode
+		if binding.TrafficResetAnchorAt != nil {
+			anchor = *binding.TrafficResetAnchorAt
 		}
-		if user.TrafficResetDay > 0 {
-			day = user.TrafficResetDay
-		}
+		source = "plan"
+	}
+	if user.SpeedLimitMbps != 0 {
+		speed = user.SpeedLimitMbps
+		source = "user_override"
+	}
+	if user.TrafficLimitBytes != 0 {
+		traffic = user.TrafficLimitBytes
+		mode, day = user.TrafficResetMode, user.TrafficResetDay
+		anchor = time.Time{}
+		source = "user_override"
+	}
+	if speed < 0 {
+		speed = 0
+	}
+	if traffic < 0 {
+		traffic = 0
 	}
 	if strings.TrimSpace(mode) == "" {
 		mode = "monthly"
@@ -278,7 +281,7 @@ func effectiveUserPolicy(user model.User, plan *model.SubscriptionPlan) Effectiv
 	if day <= 0 {
 		day = 1
 	}
-	return EffectiveUserPolicy{SpeedLimitMbps: speed, TrafficLimitBytes: traffic, TrafficResetMode: mode, TrafficResetDay: day, Source: source}
+	return EffectiveUserPolicy{SpeedLimitMbps: speed, TrafficLimitBytes: traffic, TrafficResetMode: mode, TrafficResetDay: day, TrafficResetAnchor: anchor, Source: source}
 }
 
 // InboundUserBindings projects the snapshot into the legacy binding shape used
@@ -323,6 +326,7 @@ type UserLimitPolicy struct {
 	TrafficLimitBytes int64
 	TrafficResetMode  string
 	TrafficResetDay   int
+	TrafficResetAnchor time.Time
 }
 
 // UserLimitPolicyMap converts the snapshot policies into the legacy policy
@@ -330,7 +334,7 @@ type UserLimitPolicy struct {
 func (s *EffectiveAccessSnapshot) UserLimitPolicyMap() map[int64]UserLimitPolicy {
 	out := map[int64]UserLimitPolicy{}
 	for userID, policy := range s.UserPolicies {
-		out[userID] = UserLimitPolicy{SpeedLimitMbps: policy.SpeedLimitMbps, TrafficLimitBytes: policy.TrafficLimitBytes, TrafficResetMode: policy.TrafficResetMode, TrafficResetDay: policy.TrafficResetDay}
+		out[userID] = UserLimitPolicy{SpeedLimitMbps: policy.SpeedLimitMbps, TrafficLimitBytes: policy.TrafficLimitBytes, TrafficResetMode: policy.TrafficResetMode, TrafficResetDay: policy.TrafficResetDay, TrafficResetAnchor: policy.TrafficResetAnchor}
 	}
 	return out
 }
