@@ -7092,7 +7092,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     left: 0;
     bottom: 0;
     z-index: 100;
-    width: min(90vw, 360px);
+    width: min(75vw, 256px);
     height: 100vh;
     height: 100dvh;
     max-height: 100dvh;
