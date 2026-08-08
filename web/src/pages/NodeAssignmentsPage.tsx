@@ -208,6 +208,11 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
               <Users size={14} /> 将此套餐分配给用户
             </Button>
           )}
+          {isAdmin && selectedCount === 0 && (
+            <span className="muted" style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              💡 勾选列表节点可开启批量设置
+            </span>
+          )}
           <span className="muted" style={{ marginLeft: 'auto' }}>共 {total} 个节点</span>
         </div>
 
@@ -260,6 +265,30 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
             </Select>
           </div>
         )}
+
+        {isAdmin && selectedCount > 0 && (
+          <div className="node-batch-action-bar">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Badge variant="default" style={{ fontSize: 12, padding: '3px 8px' }}>批量设置</Badge>
+              <strong style={{ fontSize: 13, color: 'var(--text-strong)' }}>已选择 {selectedCount} 个节点</strong>
+              <Button variant="ghost" size="sm" onClick={() => setSelected({})} style={{ height: 26, fontSize: 12, padding: '0 8px' }}>取消选择</Button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Select value={syncPlanID} onChange={e => setSyncPlanID(Number(e.target.value))} style={{ minWidth: 160 }} aria-label="选择套餐">
+                <option value={0}>选择目标套餐</option>
+                {plans.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </Select>
+              <Select value={syncOp} onChange={e => setSyncOp(e.target.value as 'add' | 'remove' | 'replace')} aria-label="操作类型">
+                <option value="add">加入套餐</option>
+                <option value="remove">从套餐移除</option>
+                <option value="replace">替换套餐节点</option>
+              </Select>
+              <Button size="sm" disabled={!syncPlanID || syncBusy} onClick={() => void runSync()}>{syncBusy ? '保存中...' : '保存到套餐'}</Button>
+            </div>
+          </div>
+        )}
+
+        {syncMessage && <p style={{ margin: '8px 0 0', color: syncMessage.startsWith('操作失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)', fontSize: 13 }}>{syncMessage}</p>}
 
         {error && <p style={{ color: 'var(--color-danger)' }}>{error}</p>}
 
@@ -319,32 +348,22 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
           {loading && <p className="muted" style={{ padding: 12 }}>加载中...</p>}
         </div>
 
-        <div className="section-toolbar" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+        <div className="section-toolbar" style={{ marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>上一页</Button>
             <span className="muted">第 {page} / {totalPages} 页</span>
             <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>下一页</Button>
           </div>
-          {isAdmin && selectedCount > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexWrap: 'wrap' }}>
-              <span className="muted">已选 {selectedCount} 个节点</span>
-              <Select value={syncPlanID} onChange={e => setSyncPlanID(Number(e.target.value))} style={{ minWidth: 160 }} aria-label="选择套餐">
-                <option value={0}>选择套餐</option>
-                {plans.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </Select>
-              <Select value={syncOp} onChange={e => setSyncOp(e.target.value as 'add' | 'remove' | 'replace')} aria-label="操作类型">
-                <option value="add">加入套餐</option>
-                <option value="remove">从套餐移除</option>
-                <option value="replace">替换套餐节点</option>
-              </Select>
-              <Button size="sm" disabled={!syncPlanID || syncBusy} onClick={() => void runSync()}>{syncBusy ? '保存中...' : '保存到套餐'}</Button>
-            </div>
+          {isAdmin ? (
+            <span className="muted" style={{ marginLeft: 'auto', fontSize: 12 }}>
+              {selectedCount > 0 ? `已在上方开启 ${selectedCount} 个节点的批量设置` : '勾选表格节点可在顶部开启批量设置'}
+            </span>
+          ) : (
+            <span className="muted" style={{ marginLeft: 'auto', fontSize: 12 }}>套餐修改、临时例外与套餐分配需要管理员权限。</span>
           )}
-          {!isAdmin && <span className="muted" style={{ marginLeft: 'auto' }}>套餐修改、临时例外与套餐分配需要管理员权限。</span>}
         </div>
-            {syncMessage && <p style={{ marginTop: 8, color: syncMessage.startsWith('操作失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{syncMessage}</p>}
-          </>
-      </div>
+      </>
+    </div>
 
       <Dialog isOpen={detail !== null} onClose={() => setDetail(null)} title={detail ? detail.node?.name || '节点详情' : ''} size="lg">
         {detail && (

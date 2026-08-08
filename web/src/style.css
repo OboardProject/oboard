@@ -1119,6 +1119,24 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   flex: 0 0 auto;
 }
 
+.node-batch-action-bar {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface-solid));
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  animation: node-batch-bar-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes node-batch-bar-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .live-refresh-status {
   display: inline-flex;
   align-items: center;
