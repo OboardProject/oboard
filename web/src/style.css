@@ -7325,52 +7325,22 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   }
   .topbar {
     display: grid;
-    grid-template-columns: 44px minmax(0, 1fr) 52px 52px;
+    grid-template-columns: 44px minmax(0, 1fr) auto 44px;
     grid-template-areas:
-      "menu utility utility refresh"
+      "menu status apply refresh"
       "title title title title";
     align-items: center;
     gap: 8px;
     border-radius: var(--radius-lg);
   }
-  .topbar:has(.topbar-apply) {
-    grid-template-areas:
-      "menu utility utility refresh"
-      "title title title title"
-      "apply apply apply apply";
-  }
-  .topbar:has(.deploy-status-pill) {
-    grid-template-areas:
-      "menu utility utility refresh"
-      "title title title title"
-      "status status apply apply";
-  }
   .topbar.proxy-path-topbar {
     grid-template-areas:
-      "menu utility utility refresh"
+      "menu status apply refresh"
       "title title title title"
-      "apply apply apply apply"
-      "picker picker picker picker";
-  }
-  .topbar.proxy-path-topbar:has(.deploy-status-pill) {
-    grid-template-areas:
-      "menu utility utility refresh"
-      "title title title title"
-      "status status apply apply"
       "picker picker picker picker";
   }
   .topbar.topbar-quiet {
-    grid-template-areas: "menu utility utility refresh";
-  }
-  .topbar.topbar-quiet:has(.topbar-apply) {
-    grid-template-areas:
-      "menu utility utility refresh"
-      "apply apply apply apply";
-  }
-  .topbar.topbar-quiet:has(.deploy-status-pill) {
-    grid-template-areas:
-      "menu utility utility refresh"
-      "status status apply apply";
+    grid-template-areas: "menu status apply refresh";
   }
   .topbar-title-container,
   .topbar-actions {
@@ -7382,12 +7352,37 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .deploy-status-pill {
     grid-area: status;
     min-width: 0;
-    justify-content: center;
-    justify-self: stretch;
+    height: 36px;
+    min-height: 36px;
+    padding: 4px 10px;
+    font-size: 12px;
+    justify-self: end;
+    max-width: 100%;
+    white-space: nowrap;
+  }
+  .deploy-status-pill span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .topbar-apply {
     grid-area: apply;
-    width: 100%;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+  }
+  .topbar-apply span {
+    display: none;
+  }
+  .topbar-apply svg {
+    width: 17px;
+    height: 17px;
   }
   .topbar-refresh {
     grid-area: refresh;

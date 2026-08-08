@@ -2093,7 +2093,7 @@ function App() {
                   )
                 )}
 
-                <button className="topbar-apply" onClick={apply} disabled={isDeploying}>
+                <button className="topbar-apply" onClick={apply} disabled={isDeploying} title="下发配置" aria-label="下发配置">
                   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
                   <span>下发配置</span>
                 </button>
