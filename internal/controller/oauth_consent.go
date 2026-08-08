@@ -123,7 +123,7 @@ func (s *Server) renderOAuthConsent(w http.ResponseWriter, r *http.Request, requ
 @media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg-page:#0b0d12;--bg-card:#12151c;--bg-inset:#1a1f2b;--text-primary:#f3f4f6;--text-secondary:#c4cad4;--text-muted:#9aa3b2;--border:#2a3140;--border-strong:#3a4254;--primary:#f3f4f6;--primary-hover:#ffffff;--primary-contrast:#0b0d12;--primary-soft:rgba(243,244,246,.12);--success:#34d399;--success-bg:rgba(52,211,153,.14);--danger:#f87171;--danger-bg:rgba(248,113,113,.14);--warn:#fbbf24;--warn-bg:rgba(251,191,36,.12);--shadow:0 0 0 1px rgba(255,255,255,.04) inset,0 20px 48px rgba(0,0,0,.3)}}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:32px 16px;background:var(--bg-page);color:var(--text-primary);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
-.card{width:min(680px,100%);background:var(--bg-card);border:1px solid var(--border-strong);border-radius:10px;box-shadow:var(--shadow);padding:32px}
+.card{width:min(680px,100%);background:var(--bg-card);border:1px solid var(--border-strong);border-radius:12px;box-shadow:var(--shadow);padding:32px}
 .brand{display:flex;align-items:center;gap:10px;padding-bottom:18px;margin-bottom:20px;border-bottom:1px dashed var(--border)}
 .brand-mark{flex-shrink:0;width:34px;height:34px;border-radius:9px}
 .brand-name{font-weight:800;font-size:15px}
@@ -145,12 +145,15 @@ h1{margin:0 0 10px;font-size:21px;font-weight:700;line-height:1.35}
 .field{display:grid;gap:7px;margin-top:10px}.field>span{font-size:12px;color:var(--text-secondary)}
 select,input[type=text]{width:100%;min-height:40px;padding:8px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--bg-inset);color:var(--text-primary);font:inherit}
 select:focus-visible,input:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
-.check{display:flex;align-items:flex-start;gap:9px;padding:7px 0;color:var(--text-secondary);line-height:1.5}.check input{width:17px;height:17px;margin:2px 0 0;flex:0 0 auto}
-.server-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 14px;max-height:132px;overflow:auto;padding:6px 0}
-.preview{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;max-height:210px;overflow:auto;padding:4px 0}
-.preview-item{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;line-height:1.5;color:var(--text-secondary);padding:3px 0;border-bottom:1px dashed var(--border)}
-.preview-item code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:10.5px}
-.badge{flex-shrink:0;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:99px}
+.check{display:flex;align-items:flex-start;gap:9px;padding:6px 0;color:var(--text-secondary);line-height:1.5;cursor:pointer}.check input{width:17px;height:17px;margin:2px 0 0;flex:0 0 auto;cursor:pointer}
+.server-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px;max-height:160px;overflow-y:auto;padding:10px 12px;margin:8px 0 4px;background:var(--bg-inset);border:1px solid var(--border);border-radius:6px}
+.server-list .check{padding:3px 0}
+.preview{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;padding:2px 4px 2px 0}
+.preview-item{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;padding:8px 12px;border-radius:6px;background:var(--bg-inset);border:1px solid var(--border)}
+.preview-main{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto}
+.preview-cap{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:11.5px;font-weight:600;color:var(--text-primary);background:var(--bg-card);padding:2px 7px;border-radius:4px;border:1px solid var(--border);flex-shrink:0}
+.preview-desc{color:var(--text-secondary);font-size:12px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{flex-shrink:0;font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;line-height:1.4;max-width:260px;text-align:right;word-break:break-word}
 .badge.ok{color:var(--success);background:var(--success-bg)}
 .badge.warn{color:var(--warn);background:var(--warn-bg)}
 .badge.deny{color:var(--danger);background:var(--danger-bg)}
@@ -163,7 +166,7 @@ button.primary:hover{background:var(--primary-hover)}
 button.ghost{background:transparent;color:var(--text-primary);border-color:var(--border-strong)}
 button.ghost:hover{background:var(--primary-soft)}
 .foot{margin-top:20px;text-align:center;color:var(--text-muted);font-size:11.5px;line-height:1.7}
-@media(max-width:600px){body{padding:12px}.card{padding:22px 18px}.server-list,.preview{grid-template-columns:1fr}}
+@media(max-width:600px){body{padding:12px}.card{padding:22px 18px}.server-list{grid-template-columns:1fr}.preview-item{flex-direction:column;align-items:flex-start;gap:6px}.preview-main{width:100%;flex-direction:column;align-items:flex-start;gap:4px}.preview-desc{white-space:normal}.badge{max-width:100%;text-align:left}}
 </style>
 </head>
 <body>
@@ -194,8 +197,8 @@ button.ghost:hover{background:var(--primary-soft)}
     </div>
     <div class="row">
       <div class="row-label">服务器范围</div>
-      <label class="field"><span>允许访问的服务器</span><select name="server_mode"><option value="none"{{if eq .ServerMode "none"}} selected{{end}}>不允许访问服务器</option><option value="selected"{{if eq .ServerMode "selected"}} selected{{end}}>仅允许选中的服务器</option><option value="current"{{if eq .ServerMode "current"}} selected{{end}}>允许所有当前服务器</option><option value="all"{{if eq .ServerMode "all"}} selected{{end}}>允许所有当前及未来服务器</option></select></label>
-      {{if .Servers}}<div class="server-list">{{range .Servers}}<label class="check"><input type="checkbox" name="server_id" value="{{.ID}}"><span>{{.Name}} · #{{.ID}}</span></label>{{end}}</div>{{end}}
+      <label class="field"><span>允许访问的服务器</span><select name="server_mode" onchange="var el=document.getElementById('server-list-box');if(el)el.style.display=this.value==='selected'?'grid':'none';"><option value="none"{{if eq .ServerMode "none"}} selected{{end}}>不允许访问服务器</option><option value="selected"{{if eq .ServerMode "selected"}} selected{{end}}>仅允许选中的服务器</option><option value="current"{{if eq .ServerMode "current"}} selected{{end}}>允许所有当前服务器</option><option value="all"{{if eq .ServerMode "all"}} selected{{end}}>允许所有当前及未来服务器</option></select></label>
+      {{if .Servers}}<div id="server-list-box" class="server-list" style="display:{{if eq .ServerMode "selected"}}grid{{else}}none{{end}};">{{range .Servers}}<label class="check"><input type="checkbox" name="server_id" value="{{.ID}}"><span>{{.Name}} · #{{.ID}}</span></label>{{end}}</div>{{end}}
       <label class="check"><input type="checkbox" name="allow_create_servers" value="1"><span>允许创建新服务器并签发一次性接入动作</span></label>
     </div>
     <div class="row">
@@ -213,7 +216,7 @@ button.ghost:hover{background:var(--primary-soft)}
     </div>
     <div class="row">
       <div class="row-label">实际能力预览</div>
-      <div class="preview">{{range .Preview}}<div class="preview-item"><code>{{.Capability}}</code><span>{{.Description}}</span>{{if eq .Status "allowed"}}<span class="badge ok">可执行/可读</span>{{else if eq .Status "requires_approval"}}<span class="badge warn">需审批</span>{{else}}<span class="badge deny">{{.Reason}}</span>{{end}}</div>{{end}}</div>
+      <div class="preview">{{range .Preview}}<div class="preview-item"><div class="preview-main"><code class="preview-cap">{{.Capability}}</code><span class="preview-desc">{{.Description}}</span></div>{{if eq .Status "allowed"}}<span class="badge ok">可执行/可读</span>{{else if eq .Status "requires_approval"}}<span class="badge warn">需审批</span>{{else}}<span class="badge deny">{{.Reason}}</span>{{end}}</div>{{end}}</div>
     </div>
   </div>
   {{range .Hidden}}<input type="hidden" name="{{.Key}}" value="{{.Value}}">{{end}}
