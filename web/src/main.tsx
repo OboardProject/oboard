@@ -167,6 +167,7 @@ type ControllerUpdateStatus = {
   available: { version: string; build: string; commit: string; date: string }
   update_available: boolean
   auto_update_enabled: boolean
+  auto_update_interval_hours: 1 | 6 | 12 | 24
   can_cancel: boolean
   status: string
   last_checked_at?: string
@@ -1419,6 +1420,26 @@ function App() {
     return true
   }), [token])
 
+  useEffect(() => {
+    if (!token) return
+    let lastSentAt = 0
+    const reportActivity = () => {
+      const now = Date.now()
+      if (now - lastSentAt < 30_000) return
+      lastSentAt = now
+      void client.request('/controller-update/activity', { method: 'POST', body: '{}' }).catch(() => undefined)
+    }
+    reportActivity()
+    document.addEventListener('pointerdown', reportActivity, true)
+    document.addEventListener('keydown', reportActivity, true)
+    document.addEventListener('input', reportActivity, true)
+    return () => {
+      document.removeEventListener('pointerdown', reportActivity, true)
+      document.removeEventListener('keydown', reportActivity, true)
+      document.removeEventListener('input', reportActivity, true)
+    }
+  }, [token, client])
+
   const [showPortalLoader, setShowPortalLoader] = useState(Boolean(token))
 
   useEffect(() => {
@@ -1938,6 +1959,15 @@ function App() {
         <div className={`app${!isMobile && isSidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
           <TopToast toast={toast} onClose={id => setToast(current => current?.id === id ? null : current)} />
           <DialogHost dialog={dialog} onClose={() => setDialog(null)} />
+          {currentRole === 'admin' && <ControllerUpdatePrompt
+            key={token}
+            client={client}
+            notify={(message: string, tone?: ToastKind) => showToast(setToast, message, tone)}
+            realtimeStatus={realtimeStatus}
+            realtimeRevision={realtimeRevision}
+            realtimeResources={realtimeResources}
+            onControllerUpdateInProgressChange={handleControllerUpdateInProgressChange}
+          />}
           {isMobile && (
             <div
               className={`sidebar-backdrop ${isSidebarOpen ? 'open' : ''}`}
@@ -3806,10 +3836,143 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   </section>
 }
 
+function ControllerUpdatePrompt({ client, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
+  const [snapshot, setSnapshot] = useState<ControllerUpdateStatus | null>(null)
+  const [dismissed, setDismissed] = useState(false)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [phase, setPhase] = useState<ControllerUpdateInstallPhase>('confirm')
+  const [failure, setFailure] = useState('')
+  const [connectionInterrupted, setConnectionInterrupted] = useState(false)
+  const [working, setWorking] = useState(false)
+  const targetBuildRef = useRef('')
+
+  const applyStatus = (result: ControllerUpdateStatus) => {
+    setSnapshot(result)
+    if (!working && !isControllerUpdateInProgressStatus(result.status)) return
+    const targetReached = Boolean(targetBuildRef.current) && result.current?.build === targetBuildRef.current
+    if (result.status === 'installed' || (result.status === 'current' && !result.update_available) || (targetReached && !result.update_available)) {
+      setWorking(false)
+      setConnectionInterrupted(false)
+      setPhase('complete')
+      setDialogOpen(true)
+      onControllerUpdateInProgressChange?.(false)
+      return
+    }
+    if (result.status === 'failed' || result.status === 'unavailable') {
+      setWorking(false)
+      setFailure(result.last_error || '主控更新未能完成，请检查更新状态。')
+      setPhase('failed')
+      setDialogOpen(true)
+      onControllerUpdateInProgressChange?.(false)
+      return
+    }
+    if (result.status === 'downloading') setPhase('downloading')
+    else if (result.status === 'ready') setPhase('ready')
+    else if (result.status === 'installing') setPhase('installing')
+    else if (result.status === 'cancelling') setPhase('cancelling')
+  }
+
+  const refresh = async () => {
+    try {
+      const result = await client.request('/controller-update') as ControllerUpdateStatus
+      applyStatus(result)
+    } catch (error: any) {
+      if (working && isExpectedControllerUpdateDisconnect(error)) setConnectionInterrupted(true)
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    const checkAfterLogin = async () => {
+      try {
+        const result = await client.request('/controller-update/check', { method: 'POST' }) as ControllerUpdateStatus
+        if (!cancelled) setSnapshot(result)
+      } catch (error: any) {
+        if (!cancelled) notify?.(`自动检查更新失败：${localizeErrorMessage(error?.message || error)}`, 'warning')
+      }
+    }
+    void checkAfterLogin()
+    return () => { cancelled = true }
+  }, [client])
+
+  useEffect(() => {
+    if (realtimeRevision <= 0 || realtimeStatus !== 'open') return
+    if (!realtimeResources.includes('controller_update') && !realtimeResources.includes('all')) return
+    void refresh()
+  }, [realtimeRevision, realtimeStatus, realtimeResources])
+
+  useEffect(() => {
+    if (!working || realtimeStatus !== 'fallback') return
+    const timer = window.setInterval(() => { void refresh() }, 3000)
+    return () => window.clearInterval(timer)
+  }, [working, realtimeStatus])
+
+  const install = async () => {
+    if (working || !snapshot?.update_available) return
+    targetBuildRef.current = snapshot.available?.build || ''
+    setFailure('')
+    setConnectionInterrupted(false)
+    setWorking(true)
+    setPhase('starting')
+    onControllerUpdateInProgressChange?.(true)
+    try {
+      const result = await client.request('/controller-update/install', { method: 'POST' }) as ControllerUpdateStatus
+      applyStatus(result)
+      notify?.('更新已开始，主控将自动重启', 'success')
+    } catch (error: any) {
+      if (isExpectedControllerUpdateDisconnect(error)) {
+        setConnectionInterrupted(true)
+        setPhase('installing')
+      } else {
+        setWorking(false)
+        setFailure(localizeErrorMessage(error?.message || error))
+        setPhase('failed')
+        onControllerUpdateInProgressChange?.(false)
+      }
+    }
+  }
+
+  const visible = Boolean(snapshot?.update_available) && !dismissed && !working
+  return <>
+    <AnimatePresence>
+      {visible && <m.aside
+        className="controller-update-prompt"
+        role="status"
+        aria-live="polite"
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -8 }}
+        transition={{ duration: 0.2, ease: 'easeOut' }}
+      >
+        <div className="controller-update-prompt-icon"><Download size={18} /></div>
+        <div className="controller-update-prompt-copy">
+          <strong>发现主控新版本 {snapshot?.available?.version || ''}</strong>
+          <span>确认后会先备份数据，再安装并自动重启主控。</span>
+        </div>
+        <button type="button" className="ghost controller-update-prompt-later" onClick={() => setDismissed(true)}>稍后</button>
+        <button type="button" onClick={() => { setPhase('confirm'); setDialogOpen(true) }}><Download size={14} />确认更新</button>
+      </m.aside>}
+    </AnimatePresence>
+    <AnimatePresence>{dialogOpen && snapshot && <ControllerUpdateInstallDialog
+      phase={phase}
+      targetVersion={snapshot.available?.version || ''}
+      connectionInterrupted={connectionInterrupted}
+      failure={failure}
+      canCancel={false}
+      cancelling={false}
+      onCancel={() => setDialogOpen(false)}
+      onInstall={() => void install()}
+      onInterrupt={() => undefined}
+      onHide={() => setDialogOpen(false)}
+      onReload={() => window.location.reload()}
+    />}</AnimatePresence>
+  </>
+}
+
 function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const emptyStatus: ControllerUpdateStatus = {
     channel: '', current: { version: data.version?.version || '', build: data.version?.build || '', commit: data.version?.commit || '', date: data.version?.built_at || '' },
-    available: { version: '', build: '', commit: '', date: '' }, update_available: false, auto_update_enabled: false, can_cancel: false, status: 'loading',
+    available: { version: '', build: '', commit: '', date: '' }, update_available: false, auto_update_enabled: false, auto_update_interval_hours: 24, can_cancel: false, status: 'loading',
   }
   const [snapshot, setSnapshot] = useState<ControllerUpdateStatus>(emptyStatus)
   const [working, setWorking] = useState('')
@@ -3998,7 +4161,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       setWorking('')
     }
   }
-  const setAutoUpdate = async (enabled: boolean) => {
+  const saveAutoUpdate = async (enabled: boolean, intervalHours = snapshot.auto_update_interval_hours || 24) => {
     if (working || snapshot.channel === 'pinned') return
     if (enabled && snapshot.channel === 'dev') {
       const confirmed = await dialogs.confirm({
@@ -4010,10 +4173,24 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     }
     setWorking('auto')
     try {
-      await client.request('/settings', { method: 'POST', body: JSON.stringify({ controller_auto_update_enabled: enabled }) })
-      setSnapshot(previous => ({ ...previous, auto_update_enabled: enabled }))
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ controller_auto_update_enabled: enabled, controller_auto_update_interval_hours: intervalHours }) })
+      setSnapshot(previous => ({ ...previous, auto_update_enabled: enabled, auto_update_interval_hours: intervalHours as 1 | 6 | 12 | 24 }))
       await load('settings', { background: true })
-      notify?.(enabled ? '主控自动更新已开启' : '主控自动更新已关闭', 'success')
+      notify?.(enabled ? `已开启每 ${intervalHours} 小时自动更新` : '定时自动更新已关闭', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const setAutoUpdateInterval = async (intervalHours: 1 | 6 | 12 | 24) => {
+    if (working || snapshot.channel === 'pinned' || snapshot.auto_update_interval_hours === intervalHours) return
+    setWorking('auto')
+    try {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ controller_auto_update_interval_hours: intervalHours }) })
+      setSnapshot(previous => ({ ...previous, auto_update_interval_hours: intervalHours }))
+      await load('settings', { background: true })
+      notify?.(`自动更新间隔已设为 ${intervalHours} 小时`, 'success')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -4070,10 +4247,25 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     {snapshot.last_error && <div className="controller-update-error" role="alert">{snapshot.last_error}</div>}
     {snapshot.channel === 'pinned' ? <div className="controller-update-pinned">
       <span>当前为固定版本安装。选择上方更新通道后，即可在面板内检查并安装更新。</span>
-    </div> : <label className="check-row controller-update-toggle">
-      <input type="checkbox" checked={snapshot.auto_update_enabled} disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress} onChange={event => void setAutoUpdate(event.target.checked)} />
-      <span><strong>自动安装主控更新</strong><small>发现当前通道的新版本后，先备份数据库再安装。</small></span>
-    </label>}
+    </div> : <div className="controller-update-schedule">
+      <div className="controller-update-schedule-head">
+        <span><strong>定时自动更新</strong><small>按间隔检查新版本，仅在面板连续 5 分钟无操作时安装。</small></span>
+        <label className="notification-enable-row">
+          <input type="checkbox" aria-label="启用定时自动更新" checked={snapshot.auto_update_enabled} disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress} onChange={event => void saveAutoUpdate(event.target.checked)} />
+        </label>
+      </div>
+      <div className="controller-update-interval" role="radiogroup" aria-label="自动更新检查间隔">
+        {([1, 6, 12, 24] as const).map(hours => <button
+          key={hours}
+          type="button"
+          role="radio"
+          aria-checked={snapshot.auto_update_interval_hours === hours}
+          className={snapshot.auto_update_interval_hours === hours ? 'active' : ''}
+          disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress}
+          onClick={() => void setAutoUpdateInterval(hours)}
+        >{hours}h</button>)}
+      </div>
+    </div>}
     <div className="settings-actions controller-update-actions">
       <button type="button" className="ghost" onClick={() => void check()} disabled={Boolean(working) || snapshot.channel === 'pinned' || updateInProgress}><RefreshCw size={14} className={working === 'check' ? 'spin' : ''} />{working === 'check' ? '检查中...' : '检查更新'}</button>
       <button type="button" onClick={openInstall} disabled={Boolean(working) || snapshot.channel === 'pinned' || (!snapshot.update_available && !updateInProgress)}><Download size={14} />{working === 'install' ? '准备中...' : updateInProgress ? '查看安装进度' : '备份并安装'}</button>
@@ -7656,20 +7848,22 @@ function ServerConnectivityDialog({ server, initialSamples, client, onClose }: {
     </header>
     <div className="dialog-body connectivity-body">
       <div className="connectivity-hero">
-        <div className={`connectivity-sla-ring ${slaTone}`} role="img" aria-label={`统计期 SLA ${stats.slaRate.toFixed(2)}%`}>
-          <svg viewBox="0 0 80 80">
-            <circle cx="40" cy="40" r={ringRadius} className="connectivity-ring-track" />
-            <circle cx="40" cy="40" r={ringRadius} className="connectivity-ring-value" strokeDasharray={ringLength} strokeDashoffset={ringLength * (1 - stats.slaRate / 100)} style={{ '--connectivity-ring-length': `${ringLength}` } as React.CSSProperties} />
-          </svg>
-          <div className="connectivity-sla-ring-label">
-            <div className="connectivity-sla-value">{slaFormatted}%</div>
-            <span className="sla-caption">SLA</span>
+        <div className={`connectivity-sla-bar-card ${slaTone}`} role="img" aria-label={`统计期 SLA ${stats.slaRate.toFixed(2)}%`}>
+          <div className="connectivity-sla-bar-head">
+            <div className="connectivity-sla-value-block">
+              <span className="sla-rate-number">{slaFormatted}%</span>
+              <span className="sla-rate-label">SLA</span>
+            </div>
+            <div className="connectivity-hero-status-row">
+              <span className={`connectivity-status-chip ${connectivityTone}`}><i aria-hidden="true" />{connectivityLabel}</span>
+              <span className="connectivity-current-latency">{server.connectivity_status === 'available' ? `${server.connectivity_latency_ms || 0} ms` : '—'}</span>
+            </div>
           </div>
-        </div>
-        <div className="connectivity-hero-info">
-          <div className="connectivity-hero-status-row">
-            <span className={`connectivity-status-chip ${connectivityTone}`}><i aria-hidden="true" />{connectivityLabel}</span>
-            <span className="connectivity-current-latency">{server.connectivity_status === 'available' ? `${server.connectivity_latency_ms || 0} ms` : '—'}</span>
+          <div className="connectivity-sla-progress-track">
+            <div
+              className={`connectivity-sla-progress-fill ${slaTone}`}
+              style={{ width: `${Math.min(100, Math.max(0, stats.slaRate))}%` }}
+            />
           </div>
           <dl className="connectivity-hero-grid">
             <div><dt>统计窗口</dt><dd>{windowLabel}</dd></div>
