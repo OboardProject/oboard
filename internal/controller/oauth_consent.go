@@ -90,20 +90,38 @@ func (s *Server) renderOAuthConsent(w http.ResponseWriter, r *http.Request, requ
 			servers = append(servers, oauthConsentServer{ID: item.ID, Name: item.Name})
 		}
 	}
+	allowCreateServers := true
+	if r.Form.Has("allow_create_servers") {
+		allowCreateServers = r.Form.Get("allow_create_servers") == "1"
+	} else if r.Method == http.MethodPost {
+		allowCreateServers = false
+	}
+	userMode := strings.ToLower(strings.TrimSpace(r.Form.Get("user_mode")))
+	if userMode == "" {
+		userMode = "all"
+	}
+	autoRiskStr := "3"
+	if r.Form.Has("auto_approve_risk") {
+		if autoRisk, err := oauthAutoApproveRisk(r.Form.Get("auto_approve_risk")); err == nil {
+			autoRiskStr = strconv.Itoa(autoRisk)
+		}
+	}
 	view := oauthConsentView{
-		ClientName:      client.Name,
-		ClientID:        client.ID,
-		RedirectURI:     request.RedirectURI,
-		MetadataSource:  s.clientMetadataSource(client),
-		Resource:        request.Resource,
-		Scopes:          request.Scope,
-		AccessLevel:     string(accessLevel),
-		OfflineAccess:   offline,
-		Username:        "",
-		Servers:         servers,
-		AutoApproveRisk: "0",
-		Preview:         preview,
-		Hidden:          []map[string]string{{"Key": "client_id", "Value": request.ClientID}, {"Key": "redirect_uri", "Value": request.RedirectURI}, {"Key": "response_type", "Value": "code"}, {"Key": "scope", "Value": strings.Join(request.Scope, " ")}, {"Key": "state", "Value": request.State}, {"Key": "resource", "Value": request.Resource}, {"Key": "code_challenge", "Value": request.CodeChallenge}, {"Key": "code_challenge_method", "Value": "S256"}},
+		ClientName:         client.Name,
+		ClientID:           client.ID,
+		RedirectURI:        request.RedirectURI,
+		MetadataSource:     s.clientMetadataSource(client),
+		Resource:           request.Resource,
+		Scopes:             request.Scope,
+		AccessLevel:        string(accessLevel),
+		OfflineAccess:      offline,
+		AllowCreateServers: allowCreateServers,
+		UserMode:           userMode,
+		Username:           "",
+		Servers:            servers,
+		AutoApproveRisk:    autoRiskStr,
+		Preview:            preview,
+		Hidden:             []map[string]string{{"Key": "client_id", "Value": request.ClientID}, {"Key": "redirect_uri", "Value": request.RedirectURI}, {"Key": "response_type", "Value": "code"}, {"Key": "scope", "Value": strings.Join(request.Scope, " ")}, {"Key": "state", "Value": request.State}, {"Key": "resource", "Value": request.Resource}, {"Key": "code_challenge", "Value": request.CodeChallenge}, {"Key": "code_challenge_method", "Value": "S256"}},
 	}
 	if user != nil {
 		view.Username = user.Username
@@ -199,11 +217,11 @@ button.ghost:hover{background:var(--primary-soft)}
       <div class="row-label">服务器范围</div>
       <label class="field"><span>允许访问的服务器</span><select name="server_mode" onchange="var el=document.getElementById('server-list-box');if(el)el.style.display=this.value==='selected'?'grid':'none';"><option value="none"{{if eq .ServerMode "none"}} selected{{end}}>不允许访问服务器</option><option value="selected"{{if eq .ServerMode "selected"}} selected{{end}}>仅允许选中的服务器</option><option value="current"{{if eq .ServerMode "current"}} selected{{end}}>允许所有当前服务器</option><option value="all"{{if eq .ServerMode "all"}} selected{{end}}>允许所有当前及未来服务器</option></select></label>
       {{if .Servers}}<div id="server-list-box" class="server-list" style="display:{{if eq .ServerMode "selected"}}grid{{else}}none{{end}};">{{range .Servers}}<label class="check"><input type="checkbox" name="server_id" value="{{.ID}}"><span>{{.Name}} · #{{.ID}}</span></label>{{end}}</div>{{end}}
-      <label class="check"><input type="checkbox" name="allow_create_servers" value="1"><span>允许创建新服务器并签发一次性接入动作</span></label>
+      <label class="check"><input type="checkbox" name="allow_create_servers" value="1"{{if .AllowCreateServers}} checked{{end}}><span>允许创建新服务器并签发一次性接入动作</span></label>
     </div>
     <div class="row">
       <div class="row-label">用户范围</div>
-      <label class="field"><span>允许访问的用户相关资源</span><select name="user_mode"><option value="none" selected>不允许访问用户资源</option><option value="all">允许当前及未来用户资源</option></select></label>
+      <label class="field"><span>允许访问的用户相关资源</span><select name="user_mode"><option value="none"{{if eq .UserMode "none"}} selected{{end}}>不允许访问用户资源</option><option value="all"{{if eq .UserMode "all"}} selected{{end}}>允许当前及未来用户资源</option></select></label>
     </div>
     <div class="row">
       <div class="row-label">刷新令牌</div>
@@ -211,7 +229,7 @@ button.ghost:hover{background:var(--primary-soft)}
     </div>
     <div class="row">
       <div class="row-label">自动审批</div>
-      <label class="field"><span>本 Grant 可自动批准的最高风险</span><select name="auto_approve_risk"><option value="0">不自动批准写操作</option><option value="2">Risk 2 · 普通变更</option><option value="3">Risk 3 · 受限范围内的部署</option></select></label>
+      <label class="field"><span>本 Grant 可自动批准的最高风险</span><select name="auto_approve_risk"><option value="0"{{if eq .AutoApproveRisk "0"}} selected{{end}}>不自动批准写操作</option><option value="2"{{if eq .AutoApproveRisk "2"}} selected{{end}}>Risk 2 · 普通变更</option><option value="3"{{if eq .AutoApproveRisk "3"}} selected{{end}}>Risk 3 · 受限范围内的部署</option></select></label>
       <p class="security-note">风险等级 4 永不自动审批。审批策略不会授予新的能力，也不会扩大资源边界。</p>
     </div>
     <div class="row">
@@ -234,9 +252,6 @@ button.ghost:hover{background:var(--primary-soft)}
 		serverMode = "current"
 	}
 	view.ServerMode = serverMode
-	if autoRisk, err := oauthAutoApproveRisk(r.Form.Get("auto_approve_risk")); err == nil {
-		view.AutoApproveRisk = strconv.Itoa(autoRisk)
-	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = tmpl.Execute(w, view)
@@ -257,20 +272,22 @@ func (s *Server) clientMetadataSource(client *model.OAuthClient) string {
 }
 
 type oauthConsentView struct {
-	ClientName      string
-	ClientID        string
-	RedirectURI     string
-	MetadataSource  string
-	Resource        string
-	Scopes          []string
-	AccessLevel     string
-	OfflineAccess   bool
-	ServerMode      string
-	Username        string
-	Servers         []oauthConsentServer
-	AutoApproveRisk string
-	Preview         []consentPreviewItem
-	Hidden          []map[string]string
+	ClientName         string
+	ClientID           string
+	RedirectURI        string
+	MetadataSource     string
+	Resource           string
+	Scopes             []string
+	AccessLevel        string
+	OfflineAccess      bool
+	ServerMode         string
+	AllowCreateServers bool
+	UserMode           string
+	Username           string
+	Servers            []oauthConsentServer
+	AutoApproveRisk    string
+	Preview            []consentPreviewItem
+	Hidden             []map[string]string
 }
 
 func (s *Server) renderOAuthSuccess(w http.ResponseWriter, r *http.Request, redirectURI, state, code, clientName string) {
