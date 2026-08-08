@@ -429,7 +429,20 @@ func (s *Store) ListAutomationChangesets(ctx context.Context, principalID string
 		}
 		out = append(out, *item)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		operations, err := s.listAutomationOperations(ctx, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Operations = operations
+	}
+	return out, nil
 }
 
 func scanAutomationChangeset(scanner interface{ Scan(...any) error }) (*model.AutomationChangeset, error) {
