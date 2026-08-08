@@ -113,6 +113,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
   const [selectedID, setSelectedID] = React.useState<number>(0)
   const [detail, setDetail] = React.useState<any>(null)
   const [detailLoading, setDetailLoading] = React.useState(false)
+  const [detailOpen, setDetailOpen] = React.useState(false)
   const [detailError, setDetailError] = React.useState('')
   const [tab, setTab] = React.useState<'overview' | 'nodes' | 'ordering' | 'history'>('overview')
   const [createOpen, setCreateOpen] = React.useState(false)
@@ -179,8 +180,8 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     void loadChanges()
   }, [])
   React.useEffect(() => {
-    if (selectedID) void loadDetail(selectedID)
-  }, [selectedID, loadDetail])
+    if (selectedID && detailOpen) void loadDetail(selectedID)
+  }, [selectedID, detailOpen, loadDetail])
 
   const selectPlan = (id: number) => {
     setSelectedID(id)
@@ -188,6 +189,15 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
     setNodePreview(null)
     setMessage('')
     setTab('overview')
+    setDetailOpen(true)
+  }
+
+  const closeDetail = () => {
+    setDetailOpen(false)
+    setSelectedID(0)
+    setDetail(null)
+    setNodePreview(null)
+    setMessage('')
   }
 
   const openCreate = () => {
@@ -458,7 +468,7 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
             </thead>
             <tbody>
               {plans.map(p => (
-                <tr key={p.id} className="table-row-hover" style={{ backgroundColor: p.id === selectedID ? 'var(--bg-hover, rgba(0,0,0,0.03))' : 'transparent' }}>
+                <tr key={p.id} className="table-row-hover" style={{ backgroundColor: p.id === selectedID && detailOpen ? 'var(--bg-hover, rgba(0,0,0,0.03))' : 'transparent' }}>
                   <td style={{ fontWeight: 600 }}>{p.name}</td>
                   <td>
                     <Badge variant={p.enabled ? 'success' : 'secondary'}>{p.enabled ? '启用' : '已停用'}</Badge>
@@ -477,230 +487,235 @@ export function SubscriptionPlansPage({ data, client, load, notify }: { data: an
             </tbody>
           </table>
         </div>
+      </div>
 
-        {detailError && <p style={{ color: 'var(--color-danger)' }}>{detailError}</p>}
-        {message && <p style={{ color: message.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{message}</p>}
+      <Dialog isOpen={detailOpen && selectedID > 0} onClose={closeDetail} title={plan ? `方案详情：${plan.name}` : '方案详情'} size="xl">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxHeight: 'calc(85vh - 80px)', overflow: 'auto', paddingRight: 4 }}>
+          {detailError && <p style={{ color: 'var(--color-danger)', margin: 0 }}>{detailError}</p>}
+          {message && <p style={{ color: message.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)', margin: 0 }}>{message}</p>}
 
-        {detailLoading && selectedID > 0 && (
-          <div className="card-custom animate-page-in" style={{ padding: 16 }}>
-            <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
-              <div>
-                <Skeleton className="skeleton-line" style={{ width: 140, height: 24, marginBottom: 6 }} />
-                <Skeleton className="skeleton-line" style={{ width: 260, height: 16 }} />
-              </div>
-              <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-                <Skeleton className="skeleton-line" style={{ width: 88, height: 32 }} />
-                <Skeleton className="skeleton-line" style={{ width: 64, height: 32 }} />
-                <Skeleton className="skeleton-line" style={{ width: 64, height: 32 }} />
-              </div>
-            </div>
-            <div className="section-toolbar" style={{ gap: 4, marginTop: 10 }}>
-              <Skeleton className="skeleton-line" style={{ width: 56, height: 28 }} />
-              <Skeleton className="skeleton-line" style={{ width: 56, height: 28 }} />
-              <Skeleton className="skeleton-line" style={{ width: 56, height: 28 }} />
-              <Skeleton className="skeleton-line" style={{ width: 80, height: 28 }} />
-            </div>
-            <div className="plan-info-grid" style={{ marginTop: 14 }}>
-              {[1, 2, 3, 4, 5, 6].map(i => (
-                <div key={i} className="plan-info-item">
-                  <Skeleton className="skeleton-line" style={{ width: '40%', height: 14 }} />
-                  <Skeleton className="skeleton-line" style={{ width: '75%', height: 20 }} />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {!detailLoading && plan && detail && (
-          <div className="card-custom animate-plan-detail-in" style={{ padding: 16 }}>
-            <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
-              <div>
-                <h3 style={{ margin: 0 }}>{plan.name}</h3>
-                <p className="muted" style={{ margin: '4px 0 0' }}>
-                  {detail.member_count} 个绑定用户 · {detail.latest_nodes?.length || 0} 个节点 · 最新 V{plan.latest_version_no || '—'}
-                  {plan.current_revision_id === plan.latest_revision_id && !plan.pending_revision_id ? ' · 当前生效' : ''}
-                  {applying ? ' · 有版本正在应用' : ''}
-                </p>
-              </div>
-              <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-                <Button variant="outline" size="sm" onClick={openEdit}><Edit3 size={14} /> 修改方案</Button>
-                <Button variant="outline" size="sm" onClick={() => void clonePlan()}><Copy size={14} /> 复制</Button>
-                {plan.enabled && <Button variant="outline" size="sm" onClick={() => void disablePlan()}><Ban size={14} /> 停用</Button>}
-              </div>
-            </div>
-            <div className="section-toolbar" style={{ gap: 4, marginTop: 10 }}>
-              {([['overview', '概览'], ['nodes', '节点'], ['ordering', '排序'], ['history', '版本历史']] as const).map(([key, label]) => (
-                <Button key={key} variant={tab === key ? 'default' : 'outline'} size="sm" onClick={() => setTab(key)}>{label}</Button>
-              ))}
-            </div>
-
-            {tab === 'overview' && (
-              <div className="animate-page-in" style={{ marginTop: 12 }}>
-                <div className="plan-info-grid">
-                  <div className="plan-info-item">
-                    <span className="label">方案名称</span>
-                    <span className="value">{plan.name}</span>
-                  </div>
-                  <div className="plan-info-item">
-                    <span className="label">状态</span>
-                    <span className="value">
-                      <Badge variant={plan.enabled ? 'success' : 'secondary'}>{plan.enabled ? '启用' : '已停用'}</Badge>
-                      {plan.pending_revision_id ? <Badge variant="warning" style={{ marginLeft: 4 }}>正在应用</Badge> : null}
-                    </span>
-                  </div>
-                  <div className="plan-info-item">
-                    <span className="label">速度上限</span>
-                    <span className="value">{plan.speed_limit_mbps > 0 ? `${plan.speed_limit_mbps} Mbps` : '不限速'}</span>
-                  </div>
-                  <div className="plan-info-item">
-                    <span className="label">流量额度</span>
-                    <span className="value">{fmtBytes(plan.traffic_limit_bytes)}</span>
-                  </div>
-                  <div className="plan-info-item">
-                    <span className="label">重置方式</span>
-                    <span className="value">
-                      {plan.traffic_reset_mode === 'monthly' ? `每月重置（第 ${plan.traffic_reset_day} 日）` : '不重置'}
-                    </span>
-                  </div>
-                  <div className="plan-info-item">
-                    <span className="label">版本状态</span>
-                    <span className="value">
-                      V{plan.latest_version_no || '—'}
-                      <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>
-                        {plan.current_revision_id === plan.latest_revision_id && !plan.pending_revision_id ? '（当前生效）' : ''}
-                      </span>
-                    </span>
-                  </div>
-                  <div className="plan-info-item" style={{ gridColumn: '1 / -1' }}>
-                    <span className="label">描述</span>
-                    <span className="value" style={{ fontWeight: 400, color: plan.description ? 'var(--text-strong)' : 'var(--muted)' }}>
-                      {plan.description || '无备注说明'}
-                    </span>
-                  </div>
-                </div>
-
-                <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
-                  <Button onClick={openEdit}><Edit3 size={14} /> 修改方案信息</Button>
-                </div>
-              </div>
-            )}
-
-            {tab === 'nodes' && (
-              <div className="animate-page-in" style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {applying && <p style={{ color: 'var(--color-warning)', margin: 0 }}>有方案版本正在应用，应用完成前不能保存新的节点版本。</p>}
-                <div className="section-toolbar">
-                  <div><h3 style={{ margin: 0 }}>节点集合（{workingNodes.length}）</h3><p className="muted">基于最新保存版本编辑；保存后创建不可变新版本，节点变化会走两阶段下发。</p></div>
-                  <Button variant="outline" size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }} disabled={applying}><Plus size={14} /> 添加节点</Button>
-                </div>
-                <table className="user-data-table" style={{ width: '100%' }}>
-                  <thead><tr><th>节点</th><th>类型</th><th>分组</th><th style={{ textAlign: 'right' }}>操作</th></tr></thead>
-                  <tbody>
-                    {workingNodes.map(n => (
-                      <tr key={nodeKey(n)}>
-                        <td style={{ fontWeight: 600 }}>{n.name || nodeKey(n)}</td>
-                        <td className="muted" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{n.node_type}</td>
-                        <td>
-                          <Input value={n.display_group || ''} onChange={e => { setWorkingNodes(list => list.map(x => nodeKey(x) === nodeKey(n) ? { ...x, display_group: e.target.value } : x)); setNodePreview(null) }} placeholder="展示分组（可选）" style={{ maxWidth: 160 }} />
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <Button variant="ghost" size="sm" onClick={() => { setWorkingNodes(list => list.filter(x => nodeKey(x) !== nodeKey(n))); setNodePreview(null) }}><Trash2 size={14} /></Button>
-                        </td>
-                      </tr>
-                    ))}
-                    {workingNodes.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 16 }}>节点集合为空</td></tr>}
-                  </tbody>
-                </table>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <Button size="sm" variant="outline" busy={nodeBusy} onClick={() => void runNodePreview()} disabled={applying}><RefreshCw size={14} /> 预览影响</Button>
-                  {nodePreview && (
-                    <>
-                      <Button size="sm" busy={nodeApplyBusy} onClick={() => void applyNodeChange()} disabled={applying}>确认保存为新版本</Button>
-                      <Button size="sm" variant="ghost" onClick={() => setNodePreview(null)}>取消</Button>
-                    </>
-                  )}
-                </div>
-                {nodePreview && (
-                  <p className="muted" style={{ margin: 0 }}>
-                    新版本将为 {nodePreview.node_count} 个节点 · 新增 {nodePreview.preview?.nodes_added?.length || 0} · 移除 {nodePreview.preview?.nodes_removed?.length || 0} · 不变 {nodePreview.preview?.nodes_unchanged || 0} · 受影响用户 {nodePreview.preview?.users_affected || 0} · 任务 {nodePreview.preview?.task_count || 0}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {tab === 'ordering' && orderingPlan && (
-              <div className="animate-page-in" style={{ marginTop: 12 }}>
-                <PlanNodeOrderingPanel plan={orderingPlan} data={data} client={client} notify={notify} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
-              </div>
-            )}
-
-            {tab === 'history' && (
-              <div className="animate-page-in" style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {detailLoading && (
+            <div className="animate-page-in" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
                 <div>
-                  <h3 style={{ marginTop: 0 }}>版本历史</h3>
+                  <Skeleton className="skeleton-line" style={{ width: 140, height: 24, marginBottom: 6 }} />
+                  <Skeleton className="skeleton-line" style={{ width: 260, height: 16 }} />
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+                  <Skeleton className="skeleton-line" style={{ width: 88, height: 32 }} />
+                  <Skeleton className="skeleton-line" style={{ width: 64, height: 32 }} />
+                  <Skeleton className="skeleton-line" style={{ width: 64, height: 32 }} />
+                </div>
+              </div>
+              <div className="section-toolbar" style={{ gap: 4, marginTop: 4 }}>
+                <Skeleton className="skeleton-line" style={{ width: 56, height: 28 }} />
+                <Skeleton className="skeleton-line" style={{ width: 56, height: 28 }} />
+                <Skeleton className="skeleton-line" style={{ width: 56, height: 28 }} />
+                <Skeleton className="skeleton-line" style={{ width: 80, height: 28 }} />
+              </div>
+              <div className="plan-info-grid" style={{ marginTop: 10 }}>
+                {[1, 2, 3, 4, 5, 6].map(i => (
+                  <div key={i} className="plan-info-item">
+                    <Skeleton className="skeleton-line" style={{ width: '40%', height: 14 }} />
+                    <Skeleton className="skeleton-line" style={{ width: '75%', height: 20 }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!detailLoading && plan && detail && (
+            <div className="animate-plan-detail-in" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>{plan.name}</h3>
+                  <p className="muted" style={{ margin: '4px 0 0' }}>
+                    {detail.member_count} 个绑定用户 · {detail.latest_nodes?.length || 0} 个节点 · 最新 V{plan.latest_version_no || '—'}
+                    {plan.current_revision_id === plan.latest_revision_id && !plan.pending_revision_id ? ' · 当前生效' : ''}
+                    {applying ? ' · 有版本正在应用' : ''}
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+                  <Button variant="outline" size="sm" onClick={openEdit}><Edit3 size={14} /> 修改方案</Button>
+                  <Button variant="outline" size="sm" onClick={() => void clonePlan()}><Copy size={14} /> 复制</Button>
+                  {plan.enabled && <Button variant="outline" size="sm" onClick={() => void disablePlan()}><Ban size={14} /> 停用</Button>}
+                </div>
+              </div>
+
+              <div className="section-toolbar" style={{ gap: 4, marginTop: 4 }}>
+                {([['overview', '概览'], ['nodes', '节点'], ['ordering', '排序'], ['history', '版本历史']] as const).map(([key, label]) => (
+                  <Button key={key} variant={tab === key ? 'default' : 'outline'} size="sm" onClick={() => setTab(key)}>{label}</Button>
+                ))}
+              </div>
+
+              {tab === 'overview' && (
+                <div className="animate-page-in" style={{ marginTop: 8 }}>
+                  <div className="plan-info-grid">
+                    <div className="plan-info-item">
+                      <span className="label">方案名称</span>
+                      <span className="value">{plan.name}</span>
+                    </div>
+                    <div className="plan-info-item">
+                      <span className="label">状态</span>
+                      <span className="value">
+                        <Badge variant={plan.enabled ? 'success' : 'secondary'}>{plan.enabled ? '启用' : '已停用'}</Badge>
+                        {plan.pending_revision_id ? <Badge variant="warning" style={{ marginLeft: 4 }}>正在应用</Badge> : null}
+                      </span>
+                    </div>
+                    <div className="plan-info-item">
+                      <span className="label">速度上限</span>
+                      <span className="value">{plan.speed_limit_mbps > 0 ? `${plan.speed_limit_mbps} Mbps` : '不限速'}</span>
+                    </div>
+                    <div className="plan-info-item">
+                      <span className="label">流量额度</span>
+                      <span className="value">{fmtBytes(plan.traffic_limit_bytes)}</span>
+                    </div>
+                    <div className="plan-info-item">
+                      <span className="label">重置方式</span>
+                      <span className="value">
+                        {plan.traffic_reset_mode === 'monthly' ? `每月重置（第 ${plan.traffic_reset_day} 日）` : '不重置'}
+                      </span>
+                    </div>
+                    <div className="plan-info-item">
+                      <span className="label">版本状态</span>
+                      <span className="value">
+                        V{plan.latest_version_no || '—'}
+                        <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>
+                          {plan.current_revision_id === plan.latest_revision_id && !plan.pending_revision_id ? '（当前生效）' : ''}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="plan-info-item" style={{ gridColumn: '1 / -1' }}>
+                      <span className="label">描述</span>
+                      <span className="value" style={{ fontWeight: 400, color: plan.description ? 'var(--text-strong)' : 'var(--muted)' }}>
+                        {plan.description || '无备注说明'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+                    <Button onClick={openEdit}><Edit3 size={14} /> 修改方案信息</Button>
+                  </div>
+                </div>
+              )}
+
+              {tab === 'nodes' && (
+                <div className="animate-page-in" style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {applying && <p style={{ color: 'var(--color-warning)', margin: 0 }}>有方案版本正在应用，应用完成前不能保存新的节点版本。</p>}
+                  <div className="section-toolbar">
+                    <div><h3 style={{ margin: 0 }}>节点集合（{workingNodes.length}）</h3><p className="muted">基于最新保存版本编辑；保存后创建不可变新版本，节点变化会走两阶段下发。</p></div>
+                    <Button variant="outline" size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }} disabled={applying}><Plus size={14} /> 添加节点</Button>
+                  </div>
                   <table className="user-data-table" style={{ width: '100%' }}>
-                    <thead><tr><th>版本</th><th>状态</th><th>类型</th><th>摘要</th><th>限速</th><th>流量</th><th>保存时间</th><th style={{ textAlign: 'right' }}>操作</th></tr></thead>
+                    <thead><tr><th>节点</th><th>类型</th><th>分组</th><th style={{ textAlign: 'right' }}>操作</th></tr></thead>
                     <tbody>
-                      {(detail.revisions || []).map((r: Revision) => {
-                        const st = revisionStatusLabels[revisionStatus(r, plan)] || revisionStatusLabels.historical
-                        return (
-                          <tr key={r.id}>
-                            <td style={{ fontFamily: 'var(--font-mono)' }}>V{r.version_no || r.revision}</td>
-                            <td><Badge variant={st.variant}>{st.label}</Badge></td>
-                            <td>{changeKindLabels[r.change_kind || ''] || r.change_kind || '—'}</td>
-                            <td className="muted">{r.change_summary || '—'}</td>
-                            <td>{r.speed_limit_mbps > 0 ? `${r.speed_limit_mbps} Mbps` : '不限'}</td>
-                            <td>{fmtBytes(r.traffic_limit_bytes)}</td>
-                            <td className="muted">{fmtDate(r.created_at)}</td>
-                            <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                              <Button variant="ghost" size="sm" busy={viewBusy} onClick={() => void openRevision(r.id)}><Eye size={14} /> 查看</Button>
-                              <Button variant="outline" size="sm" disabled={r.id === plan.latest_revision_id} onClick={() => void restoreRevision(r.id)}><RotateCcw size={14} /> 基于此版本恢复</Button>
-                            </td>
-                          </tr>
-                        )
-                      })}
+                      {workingNodes.map(n => (
+                        <tr key={nodeKey(n)}>
+                          <td style={{ fontWeight: 600 }}>{n.name || nodeKey(n)}</td>
+                          <td className="muted" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{n.node_type}</td>
+                          <td>
+                            <Input value={n.display_group || ''} onChange={e => { setWorkingNodes(list => list.map(x => nodeKey(x) === nodeKey(n) ? { ...x, display_group: e.target.value } : x)); setNodePreview(null) }} placeholder="展示分组（可选）" style={{ maxWidth: 160 }} />
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <Button variant="ghost" size="sm" onClick={() => { setWorkingNodes(list => list.filter(x => nodeKey(x) !== nodeKey(n))); setNodePreview(null) }}><Trash2 size={14} /></Button>
+                          </td>
+                        </tr>
+                      ))}
+                      {workingNodes.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 16 }}>节点集合为空</td></tr>}
                     </tbody>
                   </table>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <Button size="sm" variant="outline" busy={nodeBusy} onClick={() => void runNodePreview()} disabled={applying}><RefreshCw size={14} /> 预览影响</Button>
+                    {nodePreview && (
+                      <>
+                        <Button size="sm" busy={nodeApplyBusy} onClick={() => void applyNodeChange()} disabled={applying}>确认保存为新版本</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setNodePreview(null)}>取消</Button>
+                      </>
+                    )}
+                  </div>
+                  {nodePreview && (
+                    <p className="muted" style={{ margin: 0 }}>
+                      新版本将为 {nodePreview.node_count} 个节点 · 新增 {nodePreview.preview?.nodes_added?.length || 0} · 移除 {nodePreview.preview?.nodes_removed?.length || 0} · 不变 {nodePreview.preview?.nodes_unchanged || 0} · 受影响用户 {nodePreview.preview?.users_affected || 0} · 任务 {nodePreview.preview?.task_count || 0}
+                    </p>
+                  )}
                 </div>
+              )}
 
-                <div>
-                  <div className="section-toolbar">
-                    <div><h3 style={{ margin: 0 }}>部署变更</h3><p className="muted">方案相关的两阶段下发记录。</p></div>
-                    <Button variant="ghost" size="sm" onClick={() => void loadChanges()}><RefreshCw size={14} /></Button>
+              {tab === 'ordering' && orderingPlan && (
+                <div className="animate-page-in" style={{ marginTop: 8 }}>
+                  <PlanNodeOrderingPanel plan={orderingPlan} data={data} client={client} notify={notify} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
+                </div>
+              )}
+
+              {tab === 'history' && (
+                <div className="animate-page-in" style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div>
+                    <h3 style={{ marginTop: 0 }}>版本历史</h3>
+                    <table className="user-data-table" style={{ width: '100%' }}>
+                      <thead><tr><th>版本</th><th>状态</th><th>类型</th><th>摘要</th><th>限速</th><th>流量</th><th>保存时间</th><th style={{ textAlign: 'right' }}>操作</th></tr></thead>
+                      <tbody>
+                        {(detail.revisions || []).map((r: Revision) => {
+                          const st = revisionStatusLabels[revisionStatus(r, plan)] || revisionStatusLabels.historical
+                          return (
+                            <tr key={r.id}>
+                              <td style={{ fontFamily: 'var(--font-mono)' }}>V{r.version_no || r.revision}</td>
+                              <td><Badge variant={st.variant}>{st.label}</Badge></td>
+                              <td>{changeKindLabels[r.change_kind || ''] || r.change_kind || '—'}</td>
+                              <td className="muted">{r.change_summary || '—'}</td>
+                              <td>{r.speed_limit_mbps > 0 ? `${r.speed_limit_mbps} Mbps` : '不限'}</td>
+                              <td>{fmtBytes(r.traffic_limit_bytes)}</td>
+                              <td className="muted">{fmtDate(r.created_at)}</td>
+                              <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                <Button variant="ghost" size="sm" busy={viewBusy} onClick={() => void openRevision(r.id)}><Eye size={14} /> 查看</Button>
+                                <Button variant="outline" size="sm" disabled={r.id === plan.latest_revision_id} onClick={() => void restoreRevision(r.id)}><RotateCcw size={14} /> 基于此版本恢复</Button>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 480, overflow: 'auto', marginTop: 8 }}>
-                    {planChanges.length === 0 && <p className="muted">暂无变更记录</p>}
-                    {planChanges.map(c => {
-                      const st = changeStatusLabels[c.status] || { label: c.status, variant: 'outline' as const }
-                      return (
-                        <div key={c.id} className="card-custom" style={{ padding: 12 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                            <span style={{ fontWeight: 600 }}>#{c.id} {changeTypeLabels[c.change_type] || c.change_type}</span>
-                            <Badge variant={st.variant}>{st.label}</Badge>
-                            <span className="muted" style={{ fontSize: 12 }}>{c.affected_user_count} 用户 · {fmtDate(c.created_at)}</span>
-                          </div>
-                          {c.error && <p style={{ color: 'var(--color-danger)', fontSize: 12, margin: '6px 0 0' }}>{c.error}</p>}
-                          {(c.targets || []).length > 0 && (
-                            <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                              {c.targets.map(t => (
-                                <div key={t.server_id} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                                  <span className="muted">服务器 #{t.server_id}</span>
-                                  <span>{t.status}</span>
-                                </div>
-                              ))}
+
+                  <div>
+                    <div className="section-toolbar">
+                      <div><h3 style={{ margin: 0 }}>部署变更</h3><p className="muted">方案相关的两阶段下发记录。</p></div>
+                      <Button variant="ghost" size="sm" onClick={() => void loadChanges()}><RefreshCw size={14} /></Button>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 360, overflow: 'auto', marginTop: 8 }}>
+                      {planChanges.length === 0 && <p className="muted">暂无变更记录</p>}
+                      {planChanges.map(c => {
+                        const st = changeStatusLabels[c.status] || { label: c.status, variant: 'outline' as const }
+                        return (
+                          <div key={c.id} className="card-custom" style={{ padding: 12 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <span style={{ fontWeight: 600 }}>#{c.id} {changeTypeLabels[c.change_type] || c.change_type}</span>
+                              <Badge variant={st.variant}>{st.label}</Badge>
+                              <span className="muted" style={{ fontSize: 12 }}>{c.affected_user_count} 用户 · {fmtDate(c.created_at)}</span>
                             </div>
-                          )}
-                          {(c.status === 'failed') && <Button variant="outline" size="sm" style={{ marginTop: 8 }} onClick={() => void retryChange(c.id)}>重试</Button>}
-                          {(c.status === 'preparing' || c.status === 'activating') && <Button variant="ghost" size="sm" style={{ marginTop: 8 }} onClick={() => void cancelChange(c.id)}>取消</Button>}
-                        </div>
-                      )
-                    })}
+                            {c.error && <p style={{ color: 'var(--color-danger)', fontSize: 12, margin: '6px 0 0' }}>{c.error}</p>}
+                            {(c.targets || []).length > 0 && (
+                              <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {c.targets.map(t => (
+                                  <div key={t.server_id} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                                    <span className="muted">服务器 #{t.server_id}</span>
+                                    <span>{t.status}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {(c.status === 'failed') && <Button variant="outline" size="sm" style={{ marginTop: 8 }} onClick={() => void retryChange(c.id)}>重试</Button>}
+                            {(c.status === 'preparing' || c.status === 'activating') && <Button variant="ghost" size="sm" style={{ marginTop: 8 }} onClick={() => void cancelChange(c.id)}>取消</Button>}
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+              )}
+            </div>
+          )}
+        </div>
+      </Dialog>
 
       <Dialog isOpen={createOpen} onClose={() => setCreateOpen(false)} title="新建方案" size="lg">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
