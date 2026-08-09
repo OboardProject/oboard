@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"net/http"
 	"strings"
 )
@@ -96,6 +97,16 @@ func applyVLESSRealityDefaults(cfg map[string]any) error {
 	if !ok || !realityConfigEnabled(realityRaw) {
 		return nil
 	}
+	// Match the panel's vless-reality preset and the chain-service template:
+	// Vision flow, TLS enabled, and a concrete handshake port are mandatory for
+	// a usable Reality inbound. Without them the generated kernel config would
+	// silently skip TLS and the subscription would lose the Vision flow.
+	if strings.TrimSpace(stringFromMap(cfg, "flow")) == "" {
+		cfg["flow"] = "xtls-rprx-vision"
+	}
+	if _, exists := tlsRaw["enabled"]; !exists {
+		tlsRaw["enabled"] = true
+	}
 	handshake, _ := realityRaw["handshake"].(map[string]any)
 	if handshake == nil {
 		handshake = map[string]any{}
@@ -110,6 +121,9 @@ func applyVLESSRealityDefaults(cfg map[string]any) error {
 	}
 	tlsRaw["server_name"] = serverName
 	handshake["server"] = serverName
+	if port := handshakePortFromMap(handshake); port <= 0 {
+		handshake["server_port"] = 443
+	}
 	privateKey := strings.TrimSpace(stringFromMap(realityRaw, "private_key"))
 	if privateKey == "" {
 		pair, err := generateRealityKeyPair()
@@ -136,6 +150,26 @@ func applyVLESSRealityDefaults(cfg map[string]any) error {
 		realityRaw["short_id"] = shortID
 	}
 	return nil
+}
+
+func handshakePortFromMap(m map[string]any) int {
+	switch value := m["server_port"].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case json.Number:
+		if parsed, err := value.Int64(); err == nil {
+			return int(parsed)
+		}
+	case string:
+		if parsed, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+			return parsed
+		}
+	}
+	return 0
 }
 
 func realityConfigEnabled(reality map[string]any) bool {

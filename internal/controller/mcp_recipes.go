@@ -401,7 +401,7 @@ func (s *Server) prepareInboundCreateRecipe(ctx context.Context, principal appli
 		values["listen_ip"] = "0.0.0.0"
 	}
 	if _, exists := values["config_json"]; !exists {
-		values["config_json"] = "{}"
+		values["config_json"] = defaultInboundPresetConfig(protocol)
 	}
 	if _, exists := values["enabled"]; !exists {
 		values["enabled"] = true
@@ -412,6 +412,29 @@ func (s *Server) prepareInboundCreateRecipe(ctx context.Context, principal appli
 		Summary:      map[string]any{"action": "create_inbound", "server": resolved.Value.Label, "server_ref": resolved.Value.Ref, "name": name, "protocol": protocol, "port": port},
 		Verification: map[string]any{"after_commit": []string{"workflow_terminal", "inbound_present", "deployment_required"}},
 	}, nil
+}
+
+// defaultInboundPresetConfig mirrors the panel's default inbound presets
+// (vless-reality, hy2-tls, anytls-basic, ss-2022-128, mieru-basic,
+// ssh-restricted). Credentials and Reality keypairs are left empty so the
+// Controller generates them on save, exactly like the panel flow.
+func defaultInboundPresetConfig(protocol string) string {
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "vless":
+		return `{"flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"cdn.icloud-content.com","reality":{"enabled":true,"handshake":{"server":"cdn.icloud-content.com","server_port":443}}}}`
+	case "hysteria2", "hy2":
+		return `{"tls":{"enabled":true},"up_mbps":100,"down_mbps":100}`
+	case "anytls":
+		return `{"tls":{"enabled":true}}`
+	case "shadowsocks":
+		return `{"method":"2022-blake3-aes-128-gcm"}`
+	case "mieru":
+		return `{"transport":"TCP","multiplexing":"MULTIPLEXING_DEFAULT","user_hint_is_mandatory":true}`
+	case "ssh":
+		return `{"access_mode":"restricted_proxy","exposure_confirmed":false,"exposure_confirmation_version":"ssh-inbound-v1"}`
+	default:
+		return `{}`
+	}
 }
 
 func inferredInboundProtocol(goal string) string {
