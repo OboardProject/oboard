@@ -718,15 +718,15 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
 }
 const navGroups = [
   { label: '', tabs: ['dashboard'] },
-  { label: '基础设施', tabs: ['servers'] },
-  { label: '代理链路', tabs: ['proxy-paths'] },
-  { label: '网络', tabs: ['dns', 'dns-records'] },
-  { label: '访问控制', tabs: ['users', 'subscriptions'] },
-  { label: '节点管理', tabs: ['nodes'] },
+  { label: '', tabs: ['servers'] },
+  { label: '', tabs: ['proxy-paths'] },
+  { label: '', tabs: ['dns', 'dns-records'] },
+  { label: '', tabs: ['users', 'subscriptions'] },
+  { label: '', tabs: ['nodes'] },
   { label: '', tabs: ['notifications'] },
-  { label: '运维审计', tabs: ['tasks', 'audit'] },
-  { label: '系统', tabs: ['automation', 'settings'] },
-  { label: '账户', tabs: ['account'] },
+  { label: '', tabs: ['tasks', 'audit'] },
+  { label: '', tabs: ['automation', 'settings'] },
+  { label: '', tabs: ['account'] },
 ]
 
 const roleRanks: Record<Role, number> = { none: -1, viewer: 0, operator: 1, admin: 2 }
