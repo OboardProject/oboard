@@ -706,7 +706,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' }}>
-                  {embedded && <Button variant="outline" size="sm" onClick={openCreate}><Plus size={14} /> 新建方案</Button>}
+                  {embedded && <Button size="sm" onClick={openCreate}><Plus size={14} /> 新建方案</Button>}
                   <Button variant="outline" size="sm" onClick={openEdit}><Edit3 size={14} /> 修改套餐</Button>
                   <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}><History size={14} /> 版本历史</Button>
                   <Button variant="outline" size="sm" onClick={() => void clonePlan()}><Copy size={14} /> 复制</Button>
@@ -732,7 +732,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                         <ArrowUpDown size={14} /> {orderingOpen ? '收起排序' : '节点排序'}
                       </Button>
                     )}
-                    <Button variant="outline" size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }} disabled={applying}>
+                    <Button size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }} disabled={applying}>
                       <Plus size={14} /> 添加节点
                     </Button>
                   </div>
