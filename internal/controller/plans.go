@@ -101,16 +101,6 @@ func (d *planAssignmentData) planByID(id int64) *model.SubscriptionPlan {
 	return nil
 }
 
-func (d *planAssignmentData) nodeKeySet(planID int64) map[string]bool {
-	out := map[string]bool{}
-	for _, pn := range d.planNodes {
-		if pn.PlanID == planID {
-			out[core.NodeKeyOf(pn.NodeType, pn.NodeID)] = true
-		}
-	}
-	return out
-}
-
 // planMembership maps a node key to the active plans that directly contain it.
 func (d *planAssignmentData) planMembership() map[string][]model.SubscriptionPlanNode {
 	out := map[string][]model.SubscriptionPlanNode{}
@@ -1785,10 +1775,7 @@ func (s *Server) planAssignmentApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditReq(s, r, "assign", "user-plan", fmt.Sprintf("users=%d plan=%d", len(req.UserIDs), req.PlanID))
-	userIDs := make([]int64, 0, len(req.UserIDs))
-	for _, userID := range req.UserIDs {
-		userIDs = append(userIDs, userID)
-	}
+	userIDs := append([]int64(nil), req.UserIDs...)
 	change, err := s.createUserBindingChange(r.Context(), r, data.config, userIDs, bindings, startsAt, expiresAt)
 	if err != nil {
 		fail(w, err, 500)
@@ -1818,73 +1805,6 @@ func (s *Server) resolveAssignmentTarget(ctx context.Context, data *planAssignme
 		return nil, nil, err
 	}
 	return plan, nodes, nil
-}
-
-// queueAccessSyncForServers queues at most one apply_core_config per affected
-// authentication server with a shared configuration version. Config generation
-// reads the effective plan snapshot in plan mode, so this is the access-only
-// sync described by the assignment plan; in legacy mode callers skip it.
-func (s *Server) queueAccessSyncForServers(ctx context.Context, serverIDs []int64, reason string) (int, error) {
-	data, err := s.store.FullRoutingConfigData(ctx)
-	if err != nil {
-		return 0, err
-	}
-	ledger := core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
-	derivedForwards, err := core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger)
-	if err != nil {
-		return 0, err
-	}
-	serverByID := map[int64]model.Server{}
-	for _, server := range data.Servers {
-		serverByID[server.ID] = server
-	}
-	type preparedCoreRefresh struct {
-		serverID int64
-		payload  model.ApplyCoreConfigTaskPayload
-	}
-	prepared := make([]preparedCoreRefresh, 0, len(serverIDs))
-	for _, serverID := range serverIDs {
-		server, ok := serverByID[serverID]
-		if !ok || strings.TrimSpace(server.AgentID) == "" {
-			continue
-		}
-		if err := requireReadyWARPForFocusedApply(data, server.ID); err != nil {
-			return 0, err
-		}
-		generated, err := s.generateServerCoreConfigWithLedger(ctx, server, data, ledger)
-		if err != nil {
-			return 0, err
-		}
-		unchanged, err := s.serverConfigUnchanged(ctx, server.ID, generated.Config)
-		if err != nil {
-			return 0, err
-		}
-		if unchanged {
-			continue
-		}
-		forwardPlan, err := core.BuildPortForwardPlan(0, server, data.Servers, derivedForwards)
-		if err != nil {
-			return 0, err
-		}
-		if err := s.requireTrustedForwardDeploymentBaseline(ctx, server, generated.Config, forwardPlan); err != nil {
-			return 0, err
-		}
-		payload := model.ApplyCoreConfigTaskPayload{Config: generated.Config, Reason: reason, Assets: generated.Assets}
-		prepared = append(prepared, preparedCoreRefresh{serverID: server.ID, payload: payload})
-	}
-	if len(prepared) == 0 {
-		return 0, nil
-	}
-	version, err := s.store.NextConfigVersion(ctx)
-	if err != nil {
-		return 0, err
-	}
-	for _, item := range prepared {
-		if _, err := s.queueAgentTask(ctx, item.serverID, model.AgentTaskTypeApplyCoreConfig, item.payload, version); err != nil {
-			return 0, err
-		}
-	}
-	return len(prepared), nil
 }
 
 // ---------------------------------------------------------------------------

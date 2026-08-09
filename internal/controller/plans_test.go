@@ -9,19 +9,6 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
-func setupPlansAPITest(t *testing.T) (http.Handler, string) {
-	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
-	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	return h, token
-}
-
 func TestSubscriptionPlansAndAssignmentAPI(t *testing.T) {
 	h, srv, token := setupPlansAPITestServer(t)
 	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)

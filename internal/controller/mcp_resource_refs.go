@@ -133,51 +133,6 @@ func inboundMCPResourceRef(item model.Inbound, serverName string) MCPResourceRef
 	return MCPResourceRef{Type: "inbound", ID: item.ID, Name: item.Name, Ref: "inbound:" + strconv.FormatInt(item.ID, 10), Label: label}
 }
 
-func (s *Server) resolveUserRef(ctx context.Context, principal application.Principal, value string) (mcpResourceResolution, error) {
-	_, target, err := splitMCPResourceRef(value, "user")
-	if err != nil {
-		return mcpResourceResolution{}, err
-	}
-	items, err := s.store.ListUsers(ctx)
-	if err != nil {
-		return mcpResourceResolution{}, err
-	}
-	wanted := normalizeMCPResourceName(target)
-	matches := []MCPResourceRef{}
-	for _, item := range items {
-		idMatch := strconv.FormatInt(item.ID, 10) == target
-		nameMatch := normalizeMCPResourceName(item.Username) == wanted || normalizeMCPResourceName(item.Nickname) == wanted
-		if principal.AllowsInt64("user_ids", item.ID) && (idMatch || nameMatch) {
-			matches = append(matches, MCPResourceRef{Type: "user", ID: item.ID, Name: item.Username, Ref: "user:" + strconv.FormatInt(item.ID, 10), Label: item.Username})
-		}
-	}
-	return finishMCPResourceResolution(matches)
-}
-
-func (s *Server) resolveCertificateRef(ctx context.Context, principal application.Principal, value string) (mcpResourceResolution, error) {
-	_, target, err := splitMCPResourceRef(value, "certificate")
-	if err != nil {
-		return mcpResourceResolution{}, err
-	}
-	items, err := s.store.ListCertificates(ctx)
-	if err != nil {
-		return mcpResourceResolution{}, err
-	}
-	wanted := normalizeMCPResourceName(target)
-	matches := []MCPResourceRef{}
-	for _, item := range items {
-		if item.IssuanceServerID != nil && !principal.AllowsInt64("server_ids", *item.IssuanceServerID) {
-			continue
-		}
-		idMatch := strconv.FormatInt(item.ID, 10) == target
-		nameMatch := normalizeMCPResourceName(item.Name) == wanted || normalizeMCPResourceName(item.PrimaryDomain) == wanted
-		if idMatch || nameMatch {
-			matches = append(matches, MCPResourceRef{Type: "certificate", ID: item.ID, Name: item.Name, Ref: "certificate:" + strconv.FormatInt(item.ID, 10), Label: item.Name})
-		}
-	}
-	return finishMCPResourceResolution(matches)
-}
-
 func (s *Server) resolveExternalOutboundRef(ctx context.Context, principal application.Principal, value string) (mcpResourceResolution, error) {
 	_, target, err := splitMCPResourceRef(value, "external_outbound")
 	if err != nil {

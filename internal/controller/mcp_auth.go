@@ -123,18 +123,6 @@ func (s *Server) writeMCPInvalidBearer(w http.ResponseWriter, r *http.Request) {
 	v2Error(w, r, http.StatusUnauthorized, "invalid_token", "访问 Token 无效或已过期")
 }
 
-// writeMCPInsufficientScope emits the RFC 6750 insufficient_scope challenge.
-func (s *Server) writeMCPInsufficientScope(w http.ResponseWriter, r *http.Request) {
-	base, err := s.publicBaseURL(r.Context())
-	if err != nil {
-		v2Error(w, r, http.StatusServiceUnavailable, "oauth_metadata_unavailable", err.Error())
-		return
-	}
-	challenge := `Bearer error="insufficient_scope", error_description="This operation requires OBoard operate access.", scope="oboard:operate", resource_metadata="` + oauthProtectedResourceMetadataURL(base) + `"`
-	w.Header().Set("WWW-Authenticate", challenge)
-	v2Error(w, r, http.StatusForbidden, "insufficient_scope", "当前授权级别不足")
-}
-
 // mcpGrantPrincipal returns the grant principal for the unified evaluator.
 func mcpGrantPrincipal(ctx context.Context) (mcpauth.GrantPrincipal, error) {
 	principal, ok := ctx.Value(mcpGrantPrincipalContextKey{}).(mcpauth.GrantPrincipal)

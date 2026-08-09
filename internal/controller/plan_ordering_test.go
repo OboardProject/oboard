@@ -374,12 +374,6 @@ func TestUserNodeExceptionsBatchAPI(t *testing.T) {
 	_ = keyP1
 }
 
-func planRevisionOf(t *testing.T, h http.Handler, token string, planID int64) float64 {
-	t.Helper()
-	detail := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID), token, nil, http.StatusOK)
-	return detail["subscription_plan"].(map[string]any)["revision"].(float64)
-}
-
 func TestPlanVersionChangeClassification(t *testing.T) {
 	h, srv, token, ids := setupOrderingTestTopology(t)
 	planID := ids["plan"]

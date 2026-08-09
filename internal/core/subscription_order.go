@@ -1,7 +1,6 @@
 package core
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -610,8 +609,6 @@ func regionRankOf(rank map[string]int, code string) int {
 	}
 	return len(rank)
 }
-
-var errSubscriptionOrderPolicy = errors.New("invalid subscription node order policy")
 
 // BuildOrderingNodes renders the display metadata (names, display groups,
 // topology, manual positions) for one revision's node set and applies the

@@ -290,7 +290,7 @@ func (s *Server) applyConnectionAuditDeviceAction(ctx context.Context, connectio
 		changed = true
 	}
 	if totalScore >= 95 && confidence >= 0.90 && device.ProxyAccessState == "active" {
-		device, err = s.store.SetUserDeviceProxyAccessState(ctx, connection.UserID, deviceID, "reject_new")
+		_, err = s.store.SetUserDeviceProxyAccessState(ctx, connection.UserID, deviceID, "reject_new")
 		if err != nil {
 			log.Printf("reject risky device authentication user=%d device=%s: %v", connection.UserID, deviceID, err)
 			return

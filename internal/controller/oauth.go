@@ -72,10 +72,6 @@ func (s *Server) oauthAuthorizationMetadata(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func oauthAuthorizationMetadataURL(base string) string {
-	return oauthWellKnownURL(base, oauthAuthorizationMetadataPath, "")
-}
-
 func oauthProtectedResourceMetadataURL(base string) string {
 	return oauthWellKnownURL(base, oauthProtectedResourcePath, "/mcp")
 }

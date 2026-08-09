@@ -646,13 +646,6 @@ func insertSubscriptionPullAudit(ctx context.Context, tx *sql.Tx, event model.Su
 	return res.LastInsertId()
 }
 
-func subscriptionEvaluationStart(state model.SubscriptionAccessState, fallback time.Time) string {
-	if !state.EvaluationStartedAt.IsZero() {
-		return state.EvaluationStartedAt.UTC().Format(time.RFC3339Nano)
-	}
-	return fallback.UTC().Add(-subscriptionAuditRetention).Format(time.RFC3339Nano)
-}
-
 type subscriptionAuditWindow struct {
 	pulls        int
 	raw          float64

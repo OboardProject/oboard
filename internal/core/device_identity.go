@@ -69,10 +69,6 @@ func credentialUsersForInbound(users []model.User, inbound model.Inbound) []mode
 	return out
 }
 
-func credentialUserForInbound(user model.User, inbound model.Inbound) model.User {
-	return credentialUser(user, inbound.ID, runtimePathIDFromUsername(user.Username), string(inbound.Protocol))
-}
-
 func credentialUser(user model.User, inboundID, pathID int64, protocol string) model.User {
 	if user.DeviceIDHash == "" || user.CredentialEpoch <= 0 || user.CredentialSeed == "" {
 		return user

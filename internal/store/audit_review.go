@@ -240,8 +240,7 @@ func (s *Store) LeaseAuditReviewJob(ctx context.Context, owner string, at time.T
 	if err != nil {
 		return nil, nil, err
 	}
-	provider, err := scanAIProvider(tx.QueryRowContext(ctx, aiProviderSelect+` where id=?`, job.ProviderID))
-	if err != nil {
+	if _, err := scanAIProvider(tx.QueryRowContext(ctx, aiProviderSelect+` where id=?`, job.ProviderID)); err != nil {
 		return nil, nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `update ai_audit_reviews set status='running',updated_at=? where id=? and status='queued'`, cutoff, job.ReviewID); err != nil {
@@ -250,7 +249,7 @@ func (s *Store) LeaseAuditReviewJob(ctx context.Context, owner string, at time.T
 	if err := tx.Commit(); err != nil {
 		return nil, nil, err
 	}
-	provider, err = s.GetAIProvider(ctx, job.ProviderID)
+	provider, err := s.GetAIProvider(ctx, job.ProviderID)
 	if err != nil {
 		return nil, nil, err
 	}

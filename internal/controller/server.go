@@ -7889,40 +7889,6 @@ func redactWARPConfigJSON(raw string) string {
 	return string(out)
 }
 
-func (s *Server) validateWARPProfile(ctx context.Context, v *model.WARPProfile) error {
-	if v.ServerID == 0 {
-		return errors.New("server_id required")
-	}
-	if strings.TrimSpace(v.Name) == "" {
-		return errors.New("name required")
-	}
-	if _, err := s.store.GetServer(ctx, v.ServerID); err != nil {
-		return err
-	}
-	if v.Status == "" {
-		if strings.TrimSpace(v.ConfigJSON) != "" && strings.TrimSpace(v.ConfigJSON) != "{}" {
-			v.Status = model.WARPStatusReady
-		} else {
-			v.Status = model.WARPStatusNeeded
-		}
-	}
-	switch v.Status {
-	case model.WARPStatusNeeded, model.WARPStatusRequested, model.WARPStatusReady, model.WARPStatusFailed:
-	default:
-		return fmt.Errorf("unsupported warp status %q", v.Status)
-	}
-	if v.ConfigJSON == "" {
-		v.ConfigJSON = "{}"
-	}
-	if err := validJSONObject(v.ConfigJSON); err != nil {
-		return err
-	}
-	if v.MTU < 0 || v.MTU > 9000 {
-		return errors.New("mtu must be 0..9000")
-	}
-	return nil
-}
-
 func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/users/")
 	parts := pathParts(r.URL.Path, "/api/v1/users/")
@@ -9637,7 +9603,7 @@ func (s *Server) deployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "dismiss-failure" {
-		s.dismissDeploymentFailure(w, r, id)
+		s.dismissDeploymentFailure(w, r)
 		return
 	}
 	if len(parts) != 1 {
@@ -9689,7 +9655,7 @@ func (s *Server) deploymentStatus(ctx context.Context, tasks []model.AgentTask) 
 	return status, nil
 }
 
-func (s *Server) dismissDeploymentFailure(w http.ResponseWriter, r *http.Request, version int64) {
+func (s *Server) dismissDeploymentFailure(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		method(w)
 		return
@@ -9704,7 +9670,7 @@ func (s *Server) dismissDeploymentFailure(w http.ResponseWriter, r *http.Request
 		fail(w, errors.New("deployment has no failure"), http.StatusConflict)
 		return
 	}
-	version = latest[0].ConfigVersion
+	version := latest[0].ConfigVersion
 	summary := taskSummary(latest)
 	if summary["pending"] > 0 || summary["running"] > 0 || summary["failed"] == 0 {
 		status, statusErr := s.deploymentStatus(r.Context(), latest)
@@ -9809,13 +9775,6 @@ func deploymentConfigErrorStatus(err error) int {
 	return 500
 }
 
-func (s *Server) generateServerCoreConfig(ctx context.Context, server model.Server, data store.FullRoutingConfig) (generatedServerCoreConfig, error) {
-	return s.generateServerCoreConfigWithLedger(ctx, server, data, nil)
-}
-
-// generateServerCoreConfigWithLedger lets the deployment pipeline share one
-// generated-port allocation across every server it prepares. Passing nil derives
-// a ledger from the allocations already loaded with the routing snapshot.
 func (s *Server) generateServerCoreConfigWithLedger(ctx context.Context, server model.Server, data store.FullRoutingConfig, ledger *core.ProxyPathPortLedger) (generatedServerCoreConfig, error) {
 	if ledger == nil {
 		ledger = core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
@@ -10020,15 +9979,6 @@ func trustedForwardFootprint(config string, forwardPlan model.PortForwardPlan) (
 	required := len(footprint.Senders) > 0 || len(footprint.Receivers) > 0
 	encoded, err := json.Marshal(footprint)
 	return string(encoded), required, err
-}
-
-func findWARPProfile(items []model.WARPProfile, id int64) (model.WARPProfile, bool) {
-	for _, item := range items {
-		if item.ID == id {
-			return item, true
-		}
-	}
-	return model.WARPProfile{}, false
 }
 
 func findWARPProfileForServer(items []model.WARPProfile, serverID int64) (model.WARPProfile, bool) {
@@ -11070,7 +11020,8 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 			reportedPeriodKey = resolved
 			resolvedFromTransition = true
 		}
-		periodKey, start, end := reportedPeriodKey, time.Time{}, time.Time{}
+		periodKey := reportedPeriodKey
+		var start, end time.Time
 		if resolvedFromTransition || strings.Contains(reportedPeriodKey, "#migration-") {
 			storedPeriod, periodErr := s.store.GetTrafficPeriod(r.Context(), item.UserID, reportedPeriodKey)
 			if periodErr != nil {

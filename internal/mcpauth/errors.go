@@ -42,9 +42,6 @@ func NewMCPError(code, message, deniedBy string, decision AuthorizationDecision,
 	if decision.Code == CodeResourceDenied || decision.Code == CodeInsufficientScope || decision.Code == CodeRoleDenied {
 		detail.NextAction = &NextAction{Type: "request_new_consent", ResourceURI: "oboard://auth/grant"}
 	}
-	if code == "" {
-		code = decision.Code
-	}
 	if deniedBy == "" {
 		deniedBy = "evaluator"
 	}

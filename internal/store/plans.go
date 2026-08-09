@@ -1125,10 +1125,8 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 	return result, nil
 }
 
-// ActivatePlanVersionGuarded switches the current version to candidate when
-// the plan still points at the exact versions the access change was prepared
-// against. The pending pointer is cleared and the revision is marked
-// activated. It returns ErrPlanRevisionConflict when the plan moved on.
+// TrafficPeriodMigration carries the traffic-period rewrite applied to one
+// user when a plan version that changes the reset cycle activates.
 type TrafficPeriodMigration struct {
 	UserID          int64
 	SourcePeriodKey string

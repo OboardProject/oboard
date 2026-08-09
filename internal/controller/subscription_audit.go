@@ -277,11 +277,6 @@ func (s *Server) combinedAuditOverview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) combinedAuditOverviewData(ctx context.Context, windowHours int) (model.CombinedAuditOverview, error) {
-	_, _, overview, err := s.auditOverviewData(ctx, windowHours)
-	return overview, err
-}
-
 func (s *Server) auditOverviewData(ctx context.Context, windowHours int) (model.ConnectionAuditOverview, model.SubscriptionAuditOverview, model.CombinedAuditOverview, error) {
 	connectionOverview, err := s.store.ConnectionAuditOverview(ctx, windowHours, s.connectionAuditEnabled(ctx), s.auditPolicy(ctx))
 	if err != nil {

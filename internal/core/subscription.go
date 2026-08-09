@@ -504,14 +504,6 @@ func renderClashMetaSubscription(nodes []SubscriptionNode) (string, error) {
 	return renderSubscriptionTarget(nodes, model.SubscriptionFormatClashMeta)
 }
 
-func renderV2RaySubscription(nodes []SubscriptionNode) (string, error) {
-	return renderSubscriptionTarget(nodes, model.SubscriptionFormatV2Ray)
-}
-
-func renderURIListSubscription(nodes []SubscriptionNode) (string, error) {
-	return renderSubscriptionTarget(nodes, model.SubscriptionFormatV2RayURI)
-}
-
 func querySuffix(q url.Values) string {
 	if len(q) == 0 {
 		return ""

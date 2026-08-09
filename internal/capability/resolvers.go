@@ -23,10 +23,6 @@ func serverRefFromID(ctx context.Context, input any) ([]mcpauth.ResourceRef, err
 	return refsFromSingleID(ctx, input, "id", "server")
 }
 
-func userRefsFromIDs(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
-	return refsFromInt64Slice(ctx, input, "user_ids", "user")
-}
-
 func userRefFromID(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
 	return refsFromSingleID(ctx, input, "user_id", "user")
 }

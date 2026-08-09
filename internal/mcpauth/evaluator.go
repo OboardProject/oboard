@@ -2,6 +2,7 @@ package mcpauth
 
 import (
 	"context"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/authorization"
 	"github.com/OboardProject/oboard/internal/model"
@@ -41,9 +42,8 @@ func (e *Evaluator) Authorize(ctx context.Context, principal GrantPrincipal, spe
 	if grant.RevokedAt != nil {
 		return DenyDecision("grant_revoked", "the OAuth grant has been revoked", false)
 	}
-	if grant.ExpiresAt != nil && !grant.ExpiresAt.After(grant.IssuedAt.Add(0)) {
-		// The snapshot's issued/expiry are checked by the store; keep this
-		// simple and rely on RevokedAt plus store-level liveness.
+	if grant.ExpiresAt != nil && time.Now().After(*grant.ExpiresAt) {
+		return DenyDecision("grant_expired", "the OAuth grant has expired", false)
 	}
 	if !grant.AccessLevel.Allows(spec.MinimumAccess) {
 		return DenyScope(spec.MinimumAccess)
