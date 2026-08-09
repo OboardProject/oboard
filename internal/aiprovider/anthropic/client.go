@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -56,12 +57,12 @@ func (c *Client) ListModels(ctx context.Context, endpoint aiprovider.RuntimeEndp
 		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
 			providerErr := aiprovider.DecodeProviderError(response, endpoint.Credential)
-			response.Body.Close()
+			providerErr = errors.Join(providerErr, response.Body.Close())
 			cancel()
 			return nil, providerErr
 		}
 		body, err := aiprovider.ReadBounded(response.Body, aiprovider.MaxModelsBytes)
-		response.Body.Close()
+		err = errors.Join(err, response.Body.Close())
 		cancel()
 		if err != nil {
 			return nil, err

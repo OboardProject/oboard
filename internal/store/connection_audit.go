@@ -479,7 +479,7 @@ func (s *Store) listConnectionAuditsByTime(ctx context.Context, userID int64, ti
 		upload_bytes,download_bytes,payload_first_at,payload_last_at,duration_le_1s_count,duration_le_5s_count,duration_le_20s_count,duration_gt_20s_count,
 		probe_state,internal_probe,presence_sequence,active_peak,active_at_end,collection_generation,bucket_capacity,dropped_bucket_count,
 		collection_started_at,collection_ended_at,started_at,ended_at,created_at
-		from connection_audit_reports where user_id=? and `+timeColumn+`>=? order by `+timeColumn+` desc limit ?`, userID, since, limit)
+		from connection_audit_reports where user_id=? and `+timeColumn+`>=? order by `+timeColumn+` desc limit ?`, userID, since, limit) // #nosec G202 -- timeColumn is restricted to ended_at or started_at above.
 	if err != nil {
 		return nil, err
 	}

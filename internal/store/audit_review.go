@@ -419,7 +419,7 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 	serverClause := auditReviewIDClause("server_id", serverIDs)
 	startText, endText := start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano)
 	if types[model.AuditReviewEvidenceSubscription] {
-		rows, err := s.db.QueryContext(ctx, `select user_id,count(*),sum(case when outcome='served' then 1 else 0 end),sum(case when outcome like 'denied_%' then 1 else 0 end),count(distinct source_ip),count(distinct case when source_province<>'' then source_province when source_country_code<>'' then source_country_code end),count(distinct client_name),count(distinct format),max(requested_at) from subscription_pull_audits where requested_at>=? and requested_at<=? and `+userClause+` group by user_id`, startText, endText)
+		rows, err := s.db.QueryContext(ctx, `select user_id,count(*),sum(case when outcome='served' then 1 else 0 end),sum(case when outcome like 'denied_%' then 1 else 0 end),count(distinct source_ip),count(distinct case when source_province<>'' then source_province when source_country_code<>'' then source_country_code end),count(distinct client_name),count(distinct format),max(requested_at) from subscription_pull_audits where requested_at>=? and requested_at<=? and `+userClause+` group by user_id`, startText, endText) // #nosec G202 -- userClause contains only a fixed column and generated placeholders.
 		if err != nil {
 			return data, err
 		}
@@ -429,8 +429,7 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 			var pulls, successful, denied int64
 			var ips, regions, clients, formats int
 			if err := rows.Scan(&userID, &pulls, &successful, &denied, &ips, &regions, &clients, &formats, &last); err != nil {
-				rows.Close()
-				return data, err
+				return data, errors.Join(err, rows.Close())
 			}
 			if item := byUser[userID]; item != nil {
 				item.SubscriptionPulls, item.SubscriptionSuccessful, item.SubscriptionDenied = pulls, successful, denied
@@ -441,7 +440,7 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 		if err := rows.Close(); err != nil {
 			return data, err
 		}
-		recent, err := s.db.QueryContext(ctx, `select id,user_id,source_ip,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,user_agent,client_name,format,profile_id,age_encrypted,token_kind,outcome,reason,requested_at,created_at from (select a.*,row_number() over(partition by user_id order by requested_at desc) rn from subscription_pull_audits a where requested_at>=? and requested_at<=? and `+userClause+`) where rn<=10 order by user_id,requested_at desc`, startText, endText)
+		recent, err := s.db.QueryContext(ctx, `select id,user_id,source_ip,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,user_agent,client_name,format,profile_id,age_encrypted,token_kind,outcome,reason,requested_at,created_at from (select a.*,row_number() over(partition by user_id order by requested_at desc) rn from subscription_pull_audits a where requested_at>=? and requested_at<=? and `+userClause+`) where rn<=10 order by user_id,requested_at desc`, startText, endText) // #nosec G202 -- userClause contains only a fixed column and generated placeholders.
 		if err != nil {
 			return data, err
 		}
@@ -451,8 +450,7 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 			var age int
 			var requested, created string
 			if err := recent.Scan(&item.ID, &item.UserID, &item.SourceIP, &item.SourceCountryCode, &item.SourceCountry, &item.SourceProvince, &item.SourceCity, &item.SourceISP, &item.GeoDatabaseRevision, &item.UserAgent, &item.ClientName, &item.Format, &profileID, &age, &item.TokenKind, &item.Outcome, &item.Reason, &requested, &created); err != nil {
-				recent.Close()
-				return data, err
+				return data, errors.Join(err, recent.Close())
 			}
 			if profileID.Valid {
 				item.ProfileID = &profileID.Int64
@@ -468,7 +466,7 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 	}
 	if types[model.AuditReviewEvidenceConnection] || types[model.AuditReviewEvidenceDestination] {
 		where := `ended_at>=? and ended_at<=? and ` + userClause + ` and ` + serverClause
-		rows, err := s.db.QueryContext(ctx, `select user_id,coalesce(sum(connection_count),0),coalesce(sum(closed_count),0),coalesce(max(active_peak),0),coalesce(max(active_at_end),0),count(distinct source_ip),count(distinct server_id),count(distinct case when destination<>'' then destination||':'||destination_port end),coalesce(sum(dropped_bucket_count),0),max(ended_at) from connection_audit_reports where `+where+` group by user_id`, startText, endText)
+		rows, err := s.db.QueryContext(ctx, `select user_id,coalesce(sum(connection_count),0),coalesce(sum(closed_count),0),coalesce(max(active_peak),0),coalesce(max(active_at_end),0),count(distinct source_ip),count(distinct server_id),count(distinct case when destination<>'' then destination||':'||destination_port end),coalesce(sum(dropped_bucket_count),0),max(ended_at) from connection_audit_reports where `+where+` group by user_id`, startText, endText) // #nosec G202 -- where is composed from fixed predicates and generated placeholders.
 		if err != nil {
 			return data, err
 		}
@@ -478,8 +476,7 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 			var count, closed, peak, active, dropped int64
 			var ips, servers, destinations int
 			if err := rows.Scan(&userID, &count, &closed, &peak, &active, &ips, &servers, &destinations, &dropped, &last); err != nil {
-				rows.Close()
-				return data, err
+				return data, errors.Join(err, rows.Close())
 			}
 			if item := byUser[userID]; item != nil {
 				item.ConnectionCount, item.ConnectionClosed, item.ConnectionActivePeak, item.ConnectionActiveAtEnd = count, closed, peak, active
@@ -490,7 +487,7 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 		if err := rows.Close(); err != nil {
 			return data, err
 		}
-		breakdown, err := s.db.QueryContext(ctx, `select user_id,server_id,sum(connection_count),max(active_peak),max(ended_at) from connection_audit_reports where `+where+` group by user_id,server_id order by user_id,sum(connection_count) desc`, startText, endText)
+		breakdown, err := s.db.QueryContext(ctx, `select user_id,server_id,sum(connection_count),max(active_peak),max(ended_at) from connection_audit_reports where `+where+` group by user_id,server_id order by user_id,sum(connection_count) desc`, startText, endText) // #nosec G202 -- where is composed from fixed predicates and generated placeholders.
 		if err != nil {
 			return data, err
 		}
@@ -499,8 +496,7 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 			var item model.AuditReviewServerBreakdown
 			var last string
 			if err := breakdown.Scan(&userID, &item.ServerID, &item.ConnectionCount, &item.ActivePeak, &last); err != nil {
-				breakdown.Close()
-				return data, err
+				return data, errors.Join(err, breakdown.Close())
 			}
 			item.LastSeenAt = parseTime(last)
 			if target := byUser[userID]; target != nil {
@@ -511,15 +507,14 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 			return data, err
 		}
 		if types[model.AuditReviewEvidenceConnection] {
-			recent, err := s.db.QueryContext(ctx, `select report_id,server_id,user_id,inbound_id,path_id,source_ip,source_geo_code,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,network,destination,destination_port,outbound_tag,outbound_type,connection_count,closed_count,duration_total_ms,duration_max_ms,active_peak,active_at_end,collection_generation,bucket_capacity,dropped_bucket_count,collection_started_at,collection_ended_at,started_at,ended_at,created_at from (select a.*,row_number() over(partition by user_id order by ended_at desc,connection_count desc) rn from connection_audit_reports a where `+where+`) where rn<=10 order by user_id,ended_at desc`, startText, endText)
+			recent, err := s.db.QueryContext(ctx, `select report_id,server_id,user_id,inbound_id,path_id,source_ip,source_geo_code,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,network,destination,destination_port,outbound_tag,outbound_type,connection_count,closed_count,duration_total_ms,duration_max_ms,active_peak,active_at_end,collection_generation,bucket_capacity,dropped_bucket_count,collection_started_at,collection_ended_at,started_at,ended_at,created_at from (select a.*,row_number() over(partition by user_id order by ended_at desc,connection_count desc) rn from connection_audit_reports a where `+where+`) where rn<=10 order by user_id,ended_at desc`, startText, endText) // #nosec G202 -- where is composed from fixed predicates and generated placeholders.
 			if err != nil {
 				return data, err
 			}
 			for recent.Next() {
 				item, err := scanAuditReviewConnection(recent)
 				if err != nil {
-					recent.Close()
-					return data, err
+					return data, errors.Join(err, recent.Close())
 				}
 				if target := byUser[item.UserID]; target != nil {
 					target.RecentConnections = append(target.RecentConnections, item)
@@ -530,7 +525,7 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 			}
 		}
 		if types[model.AuditReviewEvidenceDestination] {
-			destinations, err := s.db.QueryContext(ctx, `select user_id,destination,destination_port,network,total,server_count,last_seen from (select user_id,destination,destination_port,network,sum(connection_count) total,count(distinct server_id) server_count,max(ended_at) last_seen,row_number() over(partition by user_id order by sum(connection_count) desc,max(ended_at) desc) rn from connection_audit_reports where `+where+` and destination<>'' group by user_id,destination,destination_port,network) where rn<=20 order by user_id,total desc`, startText, endText)
+			destinations, err := s.db.QueryContext(ctx, `select user_id,destination,destination_port,network,total,server_count,last_seen from (select user_id,destination,destination_port,network,sum(connection_count) total,count(distinct server_id) server_count,max(ended_at) last_seen,row_number() over(partition by user_id order by sum(connection_count) desc,max(ended_at) desc) rn from connection_audit_reports where `+where+` and destination<>'' group by user_id,destination,destination_port,network) where rn<=20 order by user_id,total desc`, startText, endText) // #nosec G202 -- where is composed from fixed predicates and generated placeholders.
 			if err != nil {
 				return data, err
 			}
@@ -539,8 +534,7 @@ func (s *Store) AuditReviewData(ctx context.Context, userIDs, serverIDs []int64,
 				var item model.AuditReviewDestination
 				var last string
 				if err := destinations.Scan(&userID, &item.Destination, &item.Port, &item.Network, &item.ConnectionCount, &item.ServerCount, &last); err != nil {
-					destinations.Close()
-					return data, err
+					return data, errors.Join(err, destinations.Close())
 				}
 				item.LastSeenAt = parseTime(last)
 				if target := byUser[userID]; target != nil {

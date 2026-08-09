@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -51,8 +52,7 @@ func (s *Store) MigrateOAuthV2(ctx context.Context) error {
 	for rows.Next() {
 		var item legacyGrant
 		if err := rows.Scan(&item.id, &item.scopesJSON, &item.accessLevel); err != nil {
-			rows.Close()
-			return err
+			return errors.Join(err, rows.Close())
 		}
 		grants = append(grants, item)
 	}

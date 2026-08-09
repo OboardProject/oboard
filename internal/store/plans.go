@@ -1250,8 +1250,7 @@ func trafficPeriodAliasesTx(ctx context.Context, tx *sql.Tx, userID int64, targe
 	for rows.Next() {
 		var source string
 		if err := rows.Scan(&source); err != nil {
-			rows.Close()
-			return nil, err
+			return nil, errors.Join(err, rows.Close())
 		}
 		candidates = append(candidates, source)
 	}
@@ -1900,7 +1899,7 @@ func (s *Store) SetUserPlanBindingsActive(ctx context.Context, ids []int64) erro
 		placeholders = append(placeholders, "?")
 		args = append(args, id)
 	}
-	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set status='active',traffic_reset_anchor_at=coalesce(traffic_reset_anchor_at,?),updated_at=? where id in (`+strings.Join(placeholders, ",")+`) and status='pending'`, args...)
+	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set status='active',traffic_reset_anchor_at=coalesce(traffic_reset_anchor_at,?),updated_at=? where id in (`+strings.Join(placeholders, ",")+`) and status='pending'`, args...) // #nosec G202 -- placeholders contains only generated question marks.
 	return err
 }
 
@@ -1920,7 +1919,7 @@ func (s *Store) SetUserPlanBindingsActiveForUsers(ctx context.Context, userIDs [
 		placeholders = append(placeholders, "?")
 		args = append(args, id)
 	}
-	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set status='active',deployed_at=coalesce(deployed_at,?),traffic_reset_anchor_at=coalesce(traffic_reset_anchor_at,?),updated_at=? where user_id in (`+strings.Join(placeholders, ",")+`) and status='pending'`, args...)
+	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set status='active',deployed_at=coalesce(deployed_at,?),traffic_reset_anchor_at=coalesce(traffic_reset_anchor_at,?),updated_at=? where user_id in (`+strings.Join(placeholders, ",")+`) and status='pending'`, args...) // #nosec G202 -- placeholders contains only generated question marks.
 	return err
 }
 
@@ -1937,7 +1936,7 @@ func (s *Store) ClaimBindingsDeployedForUsers(ctx context.Context, userIDs []int
 		placeholders = append(placeholders, "?")
 		args = append(args, id)
 	}
-	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set deployed_at=coalesce(deployed_at,?) where user_id in (`+strings.Join(placeholders, ",")+`) and deployed_at is null`, args...)
+	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set deployed_at=coalesce(deployed_at,?) where user_id in (`+strings.Join(placeholders, ",")+`) and deployed_at is null`, args...) // #nosec G202 -- placeholders contains only generated question marks.
 	return err
 }
 
@@ -1987,7 +1986,7 @@ func (s *Store) ClaimBindingsDeployed(ctx context.Context, ids []int64) error {
 		placeholders = append(placeholders, "?")
 		args = append(args, id)
 	}
-	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set deployed_at=? where id in (`+strings.Join(placeholders, ",")+`) and deployed_at is null`, args...)
+	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set deployed_at=? where id in (`+strings.Join(placeholders, ",")+`) and deployed_at is null`, args...) // #nosec G202 -- placeholders contains only generated question marks.
 	return err
 }
 
@@ -2016,7 +2015,7 @@ func (s *Store) MarkBindingsExpirySynced(ctx context.Context, ids []int64) error
 		placeholders = append(placeholders, "?")
 		args = append(args, id)
 	}
-	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set expiry_synced_at=? where id in (`+strings.Join(placeholders, ",")+`) and expiry_synced_at is null`, args...)
+	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set expiry_synced_at=? where id in (`+strings.Join(placeholders, ",")+`) and expiry_synced_at is null`, args...) // #nosec G202 -- placeholders contains only generated question marks.
 	return err
 }
 
@@ -2195,7 +2194,7 @@ func (s *Store) ListUserNodeExceptionsByStatus(ctx context.Context, at time.Time
 		args = append(args, string(status))
 	}
 	args = append(args, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano))
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where status in (`+strings.Join(placeholders, ",")+`) and (starts_at is null or starts_at <= ?) and expires_at > ? order by id`, args...)
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where status in (`+strings.Join(placeholders, ",")+`) and (starts_at is null or starts_at <= ?) and expires_at > ? order by id`, args...) // #nosec G202 -- placeholders contains only generated question marks.
 	if err != nil {
 		return nil, err
 	}
@@ -2227,7 +2226,7 @@ func (s *Store) MarkExceptionsExpirySynced(ctx context.Context, ids []int64) err
 		placeholders = append(placeholders, "?")
 		args = append(args, id)
 	}
-	_, err := s.db.ExecContext(ctx, `update user_node_exceptions set expiry_synced_at=? where id in (`+strings.Join(placeholders, ",")+`) and expiry_synced_at is null`, args...)
+	_, err := s.db.ExecContext(ctx, `update user_node_exceptions set expiry_synced_at=? where id in (`+strings.Join(placeholders, ",")+`) and expiry_synced_at is null`, args...) // #nosec G202 -- placeholders contains only generated question marks.
 	return err
 }
 
@@ -2301,8 +2300,7 @@ func (s *Store) migratePlanRevisions(ctx context.Context) error {
 	for rows.Next() {
 		var v planID
 		if err := rows.Scan(&v.id); err != nil {
-			rows.Close()
-			return err
+			return errors.Join(err, rows.Close())
 		}
 		pending = append(pending, v)
 	}
@@ -2382,7 +2380,7 @@ func (s *Store) migratePlanVersionPointers(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `update subscription_plan_revisions set version_no=revision where version_no is null`); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `update subscription_plan_revisions set change_kind='`+model.PlanChangeKindLegacyDraftMigration+`',change_summary='从旧草稿机制迁移的未应用版本' where status='draft' and change_kind=''`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `update subscription_plan_revisions set change_kind=?,change_summary=? where status='draft' and change_kind=''`, model.PlanChangeKindLegacyDraftMigration, "从旧草稿机制迁移的未应用版本"); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_subscription_plan_revision_version_no on subscription_plan_revisions(plan_id, version_no)`); err != nil {
@@ -2509,13 +2507,14 @@ func (s *Store) RemovePlanNodeFromDraftRevisions(ctx context.Context, nodeType m
 	for rows.Next() {
 		var planID int64
 		if err := rows.Scan(&planID); err != nil {
-			rows.Close()
-			return err
+			return errors.Join(err, rows.Close())
 		}
 		planIDs = append(planIDs, planID)
 	}
-	rows.Close()
 	if err := rows.Err(); err != nil {
+		return errors.Join(err, rows.Close())
+	}
+	if err := rows.Close(); err != nil {
 		return err
 	}
 	if len(planIDs) == 0 {

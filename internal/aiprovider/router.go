@@ -41,7 +41,7 @@ func NewRouter(registry Registry) *Router {
 				return nil
 			}
 		},
-		random: rand.New(rand.NewSource(time.Now().UnixNano())),
+		random: rand.New(rand.NewSource(time.Now().UnixNano())), // #nosec G404 -- retry jitter is not used for a security-sensitive decision.
 	}
 }
 

@@ -44,19 +44,19 @@ func (s *Store) CancelServerOfflineNotice(ctx context.Context, serverID int64) e
 }
 
 func (s *Store) ListDueOfflineNotices(ctx context.Context, at time.Time) ([]model.ServerOfflineNotice, error) {
-	return s.listDueNotices(ctx, `n.status='offline' and n.notified=0 and n.notify_at<=? and coalesce(t.offline_notify_enabled,1)!=0`, at)
+	return s.listDueNotices(ctx, ServerOfflineNoticeStatusOffline, at)
 }
 
 func (s *Store) ListDueOnlineNotices(ctx context.Context, at time.Time) ([]model.ServerOfflineNotice, error) {
-	return s.listDueNotices(ctx, `n.status='online' and n.notified=0 and n.notify_at<=? and coalesce(t.offline_notify_enabled,1)!=0`, at)
+	return s.listDueNotices(ctx, ServerOfflineNoticeStatusOnline, at)
 }
 
-func (s *Store) listDueNotices(ctx context.Context, where string, at time.Time) ([]model.ServerOfflineNotice, error) {
+func (s *Store) listDueNotices(ctx context.Context, status string, at time.Time) ([]model.ServerOfflineNotice, error) {
 	rows, err := s.db.QueryContext(ctx, `select n.server_id,n.status,n.since_at,n.notify_at,n.group_key,coalesce(s.name,''),s.last_seen_at
 		from server_offline_notices n
 		join servers s on s.id=n.server_id
 		left join server_telemetry t on t.server_id=n.server_id
-		where `+where+` order by n.notify_at`, at.UTC().Format(time.RFC3339Nano))
+		where n.status=? and n.notified=0 and n.notify_at<=? and coalesce(t.offline_notify_enabled,1)!=0 order by n.notify_at`, status, at.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}

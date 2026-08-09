@@ -316,9 +316,9 @@ func (s *Server) telegramBotServerDetail(ctx context.Context, arg string) string
 		fmt.Fprintf(&builder, "地区：%s\n", server.RegionCode)
 	}
 	if server.MemoryTotalBytes > 0 {
-		fmt.Fprintf(&builder, "内存：%s / %s\n", formatNotificationBytes(int64(server.MemoryUsedBytes)), formatNotificationBytes(int64(server.MemoryTotalBytes)))
+		fmt.Fprintf(&builder, "内存：%s / %s\n", formatNotificationBytesUnsigned(server.MemoryUsedBytes), formatNotificationBytesUnsigned(server.MemoryTotalBytes))
 	}
-	fmt.Fprintf(&builder, "周期流量：↑ %s / ↓ %s\n", formatNotificationBytes(int64(server.TrafficUploadBytes)), formatNotificationBytes(int64(server.TrafficDownloadBytes)))
+	fmt.Fprintf(&builder, "周期流量：↑ %s / ↓ %s\n", formatNotificationBytesUnsigned(server.TrafficUploadBytes), formatNotificationBytesUnsigned(server.TrafficDownloadBytes))
 	fmt.Fprintf(&builder, "离线提醒：%s", map[bool]string{true: "开启", false: "已关闭"}[server.OfflineNotifyEnabled])
 	if server.OfflineAfterSeconds > 0 {
 		fmt.Fprintf(&builder, " · 判断时间 %d 秒", server.OfflineAfterSeconds)
@@ -331,20 +331,20 @@ func (s *Server) telegramBotTraffic(ctx context.Context) string {
 	if err != nil {
 		return "查询流量失败，请稍后再试。"
 	}
-	var upload, download int64
+	var upload, download uint64
 	for _, server := range servers {
-		upload += int64(server.TrafficUploadBytes)
-		download += int64(server.TrafficDownloadBytes)
+		upload += server.TrafficUploadBytes
+		download += server.TrafficDownloadBytes
 	}
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "📊 当前周期流量\n总计：↑ %s / ↓ %s\n", formatNotificationBytes(upload), formatNotificationBytes(download))
+	fmt.Fprintf(&builder, "📊 当前周期流量\n总计：↑ %s / ↓ %s\n", formatNotificationBytesUnsigned(upload), formatNotificationBytesUnsigned(download))
 	if len(servers) == 0 {
 		builder.WriteString("当前没有服务器。")
 		return builder.String()
 	}
 	builder.WriteString("服务器明细：\n")
 	for _, server := range servers {
-		fmt.Fprintf(&builder, "%s：↑ %s / ↓ %s\n", server.Name, formatNotificationBytes(int64(server.TrafficUploadBytes)), formatNotificationBytes(int64(server.TrafficDownloadBytes)))
+		fmt.Fprintf(&builder, "%s：↑ %s / ↓ %s\n", server.Name, formatNotificationBytesUnsigned(server.TrafficUploadBytes), formatNotificationBytesUnsigned(server.TrafficDownloadBytes))
 	}
 	return builder.String()
 }

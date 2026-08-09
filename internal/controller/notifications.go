@@ -1788,6 +1788,10 @@ func formatNotificationBytes(value int64) string {
 	if value < 0 {
 		value = 0
 	}
+	return formatNotificationBytesUnsigned(uint64(value))
+}
+
+func formatNotificationBytesUnsigned(value uint64) string {
 	units := []string{"B", "KB", "MB", "GB", "TB", "PB"}
 	number := float64(value)
 	unit := 0

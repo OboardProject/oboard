@@ -179,7 +179,7 @@ func (s *Store) UpdateAccessChangeStatus(ctx context.Context, id int64, from []m
 	for _, status := range from {
 		args = append(args, string(status))
 	}
-	sqlText := `update access_changes set status=?,error=?` + (`,` + phaseSet + `updated_at=?`) + ` where id=? and status in (` + strings.Join(placeholders, ",") + `)`
+	sqlText := `update access_changes set status=?,error=?` + (`,` + phaseSet + `updated_at=?`) + ` where id=? and status in (` + strings.Join(placeholders, ",") + `)` // #nosec G202 -- fragments are allowlisted and placeholders are generated.
 	res, err := s.db.ExecContext(ctx, sqlText, args...)
 	if err != nil {
 		return err

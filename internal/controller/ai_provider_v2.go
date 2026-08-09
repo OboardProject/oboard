@@ -405,7 +405,7 @@ func validateAIEndpoint(endpoint *model.AIProviderEndpoint) error {
 	if json.Unmarshal([]byte(endpoint.HeadersJSON), &headers) != nil {
 		return errors.New("自定义 Header 必须是字符串对象")
 	}
-	dummy, _ := http.NewRequest(http.MethodGet, endpoint.BaseURL, nil)
+	dummy, _ := http.NewRequest(http.MethodGet, endpoint.BaseURL, nil) // #nosec G704 -- this request is never sent; it only validates the configured headers.
 	if err := aiprovider.ApplyHeaders(dummy, aiprovider.RuntimeEndpoint{AuthMode: aiprovider.AuthModeNone, Headers: headers}); err != nil {
 		return err
 	}

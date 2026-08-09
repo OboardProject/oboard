@@ -122,13 +122,11 @@ func (s *Store) SubscriptionCustomPathPolicies(ctx context.Context) (map[int64]m
 		var id int64
 		var mode model.SubscriptionCustomPathPolicy
 		if err := rows.Scan(&id, &mode); err != nil {
-			rows.Close()
-			return nil, nil, err
+			return nil, nil, errors.Join(err, rows.Close())
 		}
 		users[id] = mode
 	}
-	err = rows.Err()
-	rows.Close()
+	err = errors.Join(rows.Err(), rows.Close())
 	if err != nil {
 		return nil, nil, err
 	}

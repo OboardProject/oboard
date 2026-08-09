@@ -4,7 +4,6 @@ import (
 	"html/template"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/OboardProject/oboard/internal/application"
@@ -227,7 +226,7 @@ func (s *Server) renderOAuthSuccess(w http.ResponseWriter, r *http.Request, redi
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>授权成功 · OBoard</title>
-{{.RefreshMeta}}
+<meta http-equiv="refresh" content="1.2; url={{.RedirectURL}}">
 <style>
 :root{color-scheme:light;--bg-page:#f7f8fa;--bg-card:#ffffff;--text-primary:#111827;--text-secondary:#4b5563;--text-muted:#6b7280;--border:#eaecef;--border-strong:#e2e5ea;--primary:#111827;--primary-hover:#0b1220;--primary-contrast:#ffffff;--success:#10b981;--success-bg:rgba(16,185,129,.1);--shadow:0 1px 3px rgba(0,0,0,.05),0 12px 32px rgba(15,23,42,.03)}
 @media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg-page:#0b0d12;--bg-card:#12151c;--text-primary:#f3f4f6;--text-secondary:#c4cad4;--text-muted:#9aa3b2;--border:#2a3140;--border-strong:#3a4254;--primary:#f3f4f6;--primary-hover:#ffffff;--primary-contrast:#0b0d12;--primary-soft:rgba(243,244,246,.12);--success:#34d399;--success-bg:rgba(52,211,153,.14);--shadow:0 0 0 1px rgba(255,255,255,.04) inset,0 20px 48px rgba(0,0,0,.3)}}
@@ -258,16 +257,7 @@ h1{margin:0 0 10px;font-size:21px;font-weight:700;line-height:1.35}
 	w.Header().Set("Cache-Control", "no-store")
 	_ = tmpl.Execute(w, map[string]any{
 		"ClientName":  clientName,
-		"RedirectURL": template.URL(location),
-		"RedirectJS":  oauthJSString(location),
-		"RefreshMeta": template.HTML(`<meta http-equiv="refresh" content="1.2; url=` + template.HTMLEscapeString(location) + `">`),
+		"RedirectURL": location,
+		"RedirectJS":  location,
 	})
-}
-
-func oauthJSString(value string) template.JS {
-	quoted := strconv.Quote(value)
-	quoted = strings.ReplaceAll(quoted, "<", `\u003c`)
-	quoted = strings.ReplaceAll(quoted, ">", `\u003e`)
-	quoted = strings.ReplaceAll(quoted, "&", `\u0026`)
-	return template.JS(quoted)
 }

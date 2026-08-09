@@ -59,14 +59,12 @@ func (s *Store) ListAIProviders(ctx context.Context) ([]model.AIProvider, error)
 	for rows.Next() {
 		item, err := scanAIProvider(rows)
 		if err != nil {
-			rows.Close()
-			return nil, err
+			return nil, errors.Join(err, rows.Close())
 		}
 		out = append(out, *item)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
+		return nil, errors.Join(err, rows.Close())
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -278,8 +276,7 @@ func (s *Store) MigrateAIProvidersV2(ctx context.Context, masterSecret string) e
 	for rows.Next() {
 		var item legacyProvider
 		if err := rows.Scan(&item.id, &item.name, &item.baseURL, &item.model, &item.format, &item.credential, &item.created, &item.updated); err != nil {
-			rows.Close()
-			return err
+			return errors.Join(err, rows.Close())
 		}
 		legacy = append(legacy, item)
 	}

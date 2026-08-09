@@ -48,7 +48,7 @@ func Open(dir string) (*Database, error) {
 	if dir == "" {
 		return nil, errors.New("geoip directory is not configured")
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, manifestName))
+	raw, err := os.ReadFile(filepath.Join(dir, manifestName)) // #nosec G304 -- dir is the operator-configured GeoIP root and manifestName is constant.
 	if err != nil {
 		return nil, fmt.Errorf("read geoip manifest: %w", err)
 	}
@@ -100,7 +100,7 @@ func verifiedDatabasePath(dir string, file manifestFile) (string, error) {
 		return "", errors.New("database file metadata is invalid")
 	}
 	path := filepath.Join(dir, file.Name)
-	handle, err := os.Open(path)
+	handle, err := os.Open(path) // #nosec G304 -- file.Name is restricted to a basename and its content is verified against the signed manifest hash.
 	if err != nil {
 		return "", err
 	}

@@ -79,8 +79,7 @@ func (s *Store) DeleteOAuthClient(ctx context.Context, id string) error {
 	for rows.Next() {
 		var principalID, profileID string
 		if err := rows.Scan(&principalID, &profileID); err != nil {
-			rows.Close()
-			return err
+			return errors.Join(err, rows.Close())
 		}
 		principalIDs = append(principalIDs, principalID)
 		profileIDs = append(profileIDs, profileID)

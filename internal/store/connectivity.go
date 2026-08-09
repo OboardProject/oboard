@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -173,8 +174,7 @@ func (s *Store) SeedConnectivityHistory(ctx context.Context, migrationAt time.Ti
 		var item seed
 		var checked sql.NullString
 		if err := rows.Scan(&item.serverID, &item.status, &item.createdAt, &item.probeEnabled, &item.available, &item.latency, &checked, &item.probeError); err != nil {
-			rows.Close()
-			return err
+			return errors.Join(err, rows.Close())
 		}
 		if checked.Valid {
 			item.checkedAt = checked.String

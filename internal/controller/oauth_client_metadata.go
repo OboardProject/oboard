@@ -58,16 +58,27 @@ func (s *Server) fetchClientMetadata(ctx context.Context, raw string) (*clientMe
 	}
 	transport := &http.Transport{
 		DisableKeepAlives: true,
+		DialContext:       dialPublicMetadataHost,
 	}
-	// Default deny redirects; the only allowed redirect is same-origin and the
-	// final URL is re-validated before the body is trusted.
-	client := &http.Client{Timeout: clientMetadataFetchTimeout, Transport: transport}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, documentURL.String(), nil)
+	client := &http.Client{
+		Timeout:   clientMetadataFetchTimeout,
+		Transport: transport,
+		CheckRedirect: func(request *http.Request, via []*http.Request) error {
+			if len(via) == 0 || !sameOrigin(via[0].URL, request.URL) {
+				return errors.New("client metadata redirect crossed origins")
+			}
+			if len(via) >= 10 {
+				return errors.New("client metadata returned too many redirects")
+			}
+			return nil
+		},
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, documentURL.String(), nil) // #nosec G704 -- the URL is HTTPS-only and every transport dial is pinned to validated public IPs.
 	if err != nil {
 		return nil, err
 	}
 	request.Header.Set("Accept", "application/json")
-	response, err := client.Do(request)
+	response, err := client.Do(request) // #nosec G704 -- dialPublicMetadataHost rejects private and special-purpose destinations on every connection.
 	if err != nil {
 		return nil, errors.New("client metadata is unavailable: " + err.Error())
 	}
@@ -140,27 +151,55 @@ func parseClientMetadataURL(raw string) (*url.URL, error) {
 // defends against DNS rebinding.
 func (s *Server) assertPublicHost(ctx context.Context, target *url.URL) error {
 	host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(target.Hostname()), "."))
+	_, err := resolvePublicMetadataHost(ctx, host)
+	return err
+}
+
+func resolvePublicMetadataHost(ctx context.Context, host string) ([]netip.Addr, error) {
 	if host == "" {
-		return errors.New("client metadata host is empty")
+		return nil, errors.New("client metadata host is empty")
 	}
 	if strings.Contains(host, "/") || strings.Contains(host, "\\") {
-		return errors.New("client metadata host is invalid")
+		return nil, errors.New("client metadata host is invalid")
 	}
 	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil || len(addresses) == 0 {
-		return errors.New("client metadata host does not resolve")
+		return nil, errors.New("client metadata host does not resolve")
 	}
+	validated := make([]netip.Addr, 0, len(addresses))
 	for _, address := range addresses {
 		ip, ok := netip.AddrFromSlice(address.IP)
 		if !ok {
-			return errors.New("client metadata host resolved to an invalid address")
+			return nil, errors.New("client metadata host resolved to an invalid address")
 		}
 		ip = ip.Unmap()
 		if forbiddenClientMetadataIP(ip) {
-			return fmt.Errorf("client metadata host %q resolves to a forbidden address", host)
+			return nil, fmt.Errorf("client metadata host %q resolves to a forbidden address", host)
 		}
+		validated = append(validated, ip)
 	}
-	return nil
+	return validated, nil
+}
+
+func dialPublicMetadataHost(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, errors.New("client metadata address is invalid")
+	}
+	addresses, err := resolvePublicMetadataHost(ctx, strings.ToLower(strings.TrimSuffix(host, ".")))
+	if err != nil {
+		return nil, err
+	}
+	var dialer net.Dialer
+	var lastErr error
+	for _, ip := range addresses {
+		connection, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if dialErr == nil {
+			return connection, nil
+		}
+		lastErr = dialErr
+	}
+	return nil, fmt.Errorf("client metadata host is unreachable: %w", lastErr)
 }
 
 func forbiddenClientMetadataIP(ip netip.Addr) bool {
