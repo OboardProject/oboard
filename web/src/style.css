@@ -13596,11 +13596,13 @@ button.ui-btn {
 .ui-btn-secondary {
   color: var(--text-strong);
   background: var(--surface-solid);
-  border-color: var(--border-strong);
+  border: 1px solid var(--border-strong);
 }
 .ui-btn-outline:hover,
 .ui-btn-secondary:hover {
+  color: var(--text-strong);
   background: var(--surface-2);
+  border-color: var(--border-strong);
 }
 
 .ui-btn-ghost,

@@ -645,8 +645,6 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
             </tbody>
           </table>
         </div>}
-
-        {embedded && <div className="section-toolbar" style={{ justifyContent: 'flex-end', marginBottom: 10 }}><Button variant="outline" size="sm" onClick={openCreate}><Plus size={14} /> 新建方案</Button></div>}
       </div>
 
       <PlanDetailShell inline={embedded} open={detailOpen && selectedID > 0} onClose={closeDetail} title={plan ? `方案详情：${plan.name}` : '方案详情'}>
@@ -708,6 +706,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' }}>
+                  {embedded && <Button variant="outline" size="sm" onClick={openCreate}><Plus size={14} /> 新建方案</Button>}
                   <Button variant="outline" size="sm" onClick={openEdit}><Edit3 size={14} /> 修改套餐</Button>
                   <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}><History size={14} /> 版本历史</Button>
                   <Button variant="outline" size="sm" onClick={() => void clonePlan()}><Copy size={14} /> 复制</Button>

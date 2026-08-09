@@ -207,7 +207,6 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
         <option value={0}>全部节点</option>
         {isAdmin && plans.map((plan: any) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
       </Select>
-      <span className="muted" style={{ fontSize: 12 }}>{contextPlanID ? '设置该方案的节点、命名、规则、排序与版本。' : '分配节点，或按稳定范围创建方案自动规则。'}</span>
     </div>
   )
 
