@@ -15922,6 +15922,34 @@ button.ui-btn-ghost:hover {
   min-width: 640px;
 }
 
+.plan-node-table .plan-node-drag-cell {
+  width: 42px;
+  min-width: 42px;
+  padding-left: 10px;
+  padding-right: 4px;
+  text-align: center;
+}
+
+.plan-node-row.is-dragging {
+  position: relative;
+  z-index: 20;
+  opacity: 0.7;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-md);
+}
+
+.plan-node-save-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+}
+
+.plan-node-save-row .muted {
+  font-size: 12px;
+}
+
 .plan-node-name-row {
   display: flex;
   align-items: center;
@@ -16016,5 +16044,14 @@ button.ui-btn-ghost:hover {
 
   .plan-node-name-dialog .dialog-actions > span {
     display: none;
+  }
+
+  .plan-node-save-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .plan-node-save-row .ui-btn {
+    width: 100%;
   }
 }

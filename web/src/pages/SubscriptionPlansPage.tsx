@@ -4,7 +4,10 @@ import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
 import { Input } from '../components/ui/input'
-import { Plus, Trash2, RefreshCw, RotateCcw, Ban, Copy, X, Eye, Edit3, ArrowUpDown, History } from 'lucide-react'
+import { Plus, Trash2, RefreshCw, RotateCcw, Ban, Copy, X, Eye, Edit3, SlidersHorizontal, History, GripVertical, Save } from 'lucide-react'
+import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { FormField, TrafficLimitInput } from '../components/ui/form-field'
 import { PlanNodeOrderingPanel, type OrderingPlan } from '../components/node-ordering/PlanNodeOrderingPanel'
 import { Skeleton } from '../components/ui/skeleton'
@@ -94,6 +97,12 @@ type NodeChangePreview = {
   }
 }
 
+type OrderingState = {
+  base_revision_id: number
+  lock_version: number
+  policy: Record<string, any>
+}
+
 const changeTypeLabels: Record<string, string> = {
   plan_publish: '套餐发布',
   plan_restore: '版本回滚',
@@ -159,6 +168,34 @@ function revisionStatus(r: Revision, plan: Plan) {
 
 function nodeKey(n: PlanNode) { return `${n.node_type}:${n.node_id}` }
 
+function SortablePlanNodeRow({ node, children, disabled }: { node: PlanNode; children: React.ReactNode; disabled?: boolean }) {
+  const id = nodeKey(node)
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id, disabled })
+  return (
+    <tr
+      ref={setNodeRef}
+      className={`table-row-hover plan-node-row${isDragging ? ' is-dragging' : ''}`}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <td className="plan-node-drag-cell">
+        <button
+          ref={setActivatorNodeRef}
+          type="button"
+          className="sortable-handle"
+          aria-label={`拖拽调整 ${node.name || id} 的顺序`}
+          title={disabled ? '请先保存节点变更再调整顺序' : '拖拽调整订阅顺序'}
+          disabled={disabled}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical size={15} />
+        </button>
+      </td>
+      {children}
+    </tr>
+  )
+}
+
 function regionFlagEmoji(code?: string) {
   const value = String(code || '').toUpperCase()
   if (!/^[A-Z]{2}$/.test(value)) return '🌐'
@@ -191,9 +228,8 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const [workingSettings, setWorkingSettings] = React.useState<Plan | null>(null)
   const [workingNodes, setWorkingNodes] = React.useState<PlanNode[]>([])
   const [nodeNames, setNodeNames] = React.useState<Record<string, string>>({})
-  const [nodePreview, setNodePreview] = React.useState<NodeChangePreview | null>(null)
-  const [nodeBusy, setNodeBusy] = React.useState(false)
   const [nodeApplyBusy, setNodeApplyBusy] = React.useState(false)
+  const [orderBusy, setOrderBusy] = React.useState(false)
   const [saveBusy, setSaveBusy] = React.useState(false)
   const [changes, setChanges] = React.useState<AccessChange[]>([])
   const [message, setMessage] = React.useState('')
@@ -243,7 +279,6 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
           source_rule_id: n.source_rule_id,
         }
       }))
-      setNodePreview(null)
     } catch (e: any) {
       setDetailError(e?.message || String(e))
     } finally {
@@ -270,7 +305,6 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     if (!embedded || selectedPlanID <= 0 || selectedPlanID === selectedID) return
     setSelectedID(selectedPlanID)
     setDetail(null)
-    setNodePreview(null)
     setMessage('')
     setDetailOpen(true)
   }, [embedded, selectedPlanID, selectedID])
@@ -278,7 +312,6 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const selectPlan = (id: number) => {
     setSelectedID(id)
     setDetail(null)
-    setNodePreview(null)
     setMessage('')
     setDetailOpen(true)
   }
@@ -287,7 +320,6 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     setDetailOpen(false)
     setSelectedID(0)
     setDetail(null)
-    setNodePreview(null)
     setMessage('')
   }
 
@@ -341,7 +373,6 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
       const exists = list.some(x => x.node_type === n.type && x.node_id === n.id)
       return exists ? list.filter(x => !(x.node_type === n.type && x.node_id === n.id)) : [...list, { node_type: n.type, node_id: n.id, display_group: '', name: n.name, global_name: n.effective_global_name || n.name, source_name: n.source_name || n.name, exit_region: n.exit_region, entry_server_name: n.entry_server_name }]
     })
-    setNodePreview(null)
   }
 
   const createPlan = async () => {
@@ -388,39 +419,25 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     }
   }
 
-  const runNodePreview = async () => {
-    if (!detail) return
-    setNodeBusy(true)
-    setMessage('')
-    try {
-      const res = await client.request<NodeChangePreview>(`/subscription-plans/${selectedID}/nodes/preview`, {
-        method: 'POST',
-        body: JSON.stringify({ op: 'replace', nodes: workingNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id, display_group: n.display_group || '' })) }),
-      })
-      setNodePreview(res)
-    } catch (e: any) {
-      setMessage('预览失败：' + (e?.message || String(e)))
-    } finally {
-      setNodeBusy(false)
-    }
-  }
-
   const applyNodeChange = async () => {
-    if (!detail || !nodePreview) return
+    if (!detail) return
     setNodeApplyBusy(true)
     setMessage('')
     try {
+      const preview = await client.request<NodeChangePreview>(`/subscription-plans/${selectedID}/nodes/preview`, {
+        method: 'POST',
+        body: JSON.stringify({ op: 'replace', nodes: workingNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id, display_group: n.display_group || '' })) }),
+      })
       const res = await client.request<{ access_change_id?: number; no_change?: boolean }>(`/subscription-plans/${selectedID}/nodes/apply`, {
         method: 'POST',
         body: JSON.stringify({
           op: 'replace',
           nodes: workingNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id, display_group: n.display_group || '' })),
-          base_revision_id: nodePreview.base_revision_id,
-          expected_lock_version: nodePreview.expected_lock_version,
+          base_revision_id: preview.base_revision_id,
+          expected_lock_version: preview.expected_lock_version,
           change_summary: '调整套餐节点集合',
         }),
       })
-      setNodePreview(null)
       if (res.no_change) {
         notify?.('节点集合没有变化，未创建新版本', 'warning')
       } else if (res.access_change_id) {
@@ -436,6 +453,52 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
       setMessage(err.includes('conflict') || err.includes('409') ? '保存失败：套餐已发生变化（冲突），请重新加载后重试' : '保存失败：' + err)
     } finally {
       setNodeApplyBusy(false)
+    }
+  }
+
+  const latestNodesByKey = new Map<string, any>((detail?.latest_nodes || []).map((node: any) => [`${node.node_type}:${node.node_id}`, node]))
+  const membershipChanged = workingNodes.length !== latestNodesByKey.size || workingNodes.some(node => {
+    const latest = latestNodesByKey.get(nodeKey(node))
+    return !latest || (node.display_group || '') !== (latest.display_group || '')
+  })
+
+  const orderSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+
+  const saveDraggedOrder = async (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id || membershipChanged || orderBusy) return
+    const oldIndex = workingNodes.findIndex(node => nodeKey(node) === String(active.id))
+    const newIndex = workingNodes.findIndex(node => nodeKey(node) === String(over.id))
+    if (oldIndex < 0 || newIndex < 0) return
+    const previous = workingNodes
+    const next = arrayMove(workingNodes, oldIndex, newIndex)
+    setWorkingNodes(next)
+    setOrderBusy(true)
+    setMessage('')
+    try {
+      const ordering = await client.request<OrderingState>(`/subscription-plans/${selectedID}/ordering`)
+      const currentMode = ordering.policy.mode === 'entry' ? 'entry' : 'exit_region'
+      await client.request(`/subscription-plans/${selectedID}/ordering/versions`, {
+        method: 'POST',
+        body: JSON.stringify({
+          base_revision_id: ordering.base_revision_id,
+          expected_lock_version: ordering.lock_version,
+          policy: { ...ordering.policy, version: 2, mode: 'manual', manual_seed: ordering.policy.manual_seed || currentMode },
+          manual_node_order: next.map(nodeKey),
+        }),
+      })
+      notify?.('节点顺序已保存', 'success')
+      await loadDetail(selectedID)
+      await refreshPlans()
+    } catch (reason: any) {
+      setWorkingNodes(previous)
+      const error = reason?.message || String(reason)
+      setMessage(error.includes('409') || error.includes('conflict') ? '排序保存失败：方案已发生变化，请重新加载后重试' : `排序保存失败：${error}`)
+    } finally {
+      setOrderBusy(false)
     }
   }
 
@@ -729,7 +792,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                         size="sm"
                         onClick={() => setOrderingOpen(open => !open)}
                       >
-                        <ArrowUpDown size={14} /> {orderingOpen ? '收起排序' : '节点排序'}
+                        <SlidersHorizontal size={14} /> {orderingOpen ? '收起排序规则' : '排序规则'}
                       </Button>
                     )}
                     <Button size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }} disabled={applying}>
@@ -744,10 +807,11 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                   </div>
                 )}
 
-                <div className="card-custom plan-node-table-wrap">
+                <div className="card-custom plan-node-table-wrap" aria-busy={orderBusy}>
                   <table className="user-data-table plan-node-table" style={{ width: '100%' }}>
                     <thead>
                       <tr>
+                        <th className="plan-node-drag-cell"><span className="sr-only">排序</span></th>
                         <th style={{ minWidth: 200 }}>节点名称</th>
                         <th style={{ minWidth: 140 }}>入口服务器</th>
                         <th style={{ minWidth: 90 }}>出口地区</th>
@@ -755,6 +819,8 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                         <th style={{ textAlign: 'right', minWidth: 110 }}>操作</th>
                       </tr>
                     </thead>
+                    <DndContext sensors={orderSensors} collisionDetection={closestCenter} onDragEnd={saveDraggedOrder}>
+                    <SortableContext items={workingNodes.map(nodeKey)} strategy={verticalListSortingStrategy}>
                     <tbody>
                       {workingNodes.map(n => {
                         const key = nodeKey(n)
@@ -763,7 +829,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                         const isCustomName = hasOverride
 
                         return (
-                          <tr key={key} className="table-row-hover">
+                          <SortablePlanNodeRow key={key} node={n} disabled={membershipChanged || applying || orderBusy}>
                             <td>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                 <strong style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-strong)' }}>
@@ -810,7 +876,6 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                                 value={n.display_group || ''}
                                 onChange={e => {
                                   setWorkingNodes(list => list.map(x => nodeKey(x) === key ? { ...x, display_group: e.target.value } : x))
-                                  setNodePreview(null)
                                 }}
                                 placeholder="展示分组（可选）"
                                 style={{ maxWidth: 160, height: 30, fontSize: 12 }}
@@ -819,13 +884,13 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                             <td className="table-actions" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                               <Button
                                 variant="ghost"
-                                size="sm"
+                                size="icon"
                                 onClick={() => editPlanNodeName(n)}
                                 title="修改在该套餐内的显示名称"
-                                style={{ height: 28, padding: '0 8px', fontSize: 12 }}
+                                aria-label={`重命名 ${effectiveName}`}
+                                style={{ height: 28, width: 28 }}
                               >
-                                <Edit3 size={13} style={{ marginRight: 4 }} />
-                                重命名
+                                <Edit3 size={14} />
                               </Button>
                               {hasOverride && (
                                 <Button
@@ -837,7 +902,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                                   aria-label={`恢复 ${n.name || key} 的全局名称`}
                                   style={{ height: 28, width: 28 }}
                                 >
-                                  <RotateCcw size={13} />
+                                  <RotateCcw size={14} />
                                 </Button>
                               )}
                               <Button
@@ -846,52 +911,32 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                                 onClick={() => {
                                   if (n.source_type === 'rule') { void excludeRuleNode(n); return }
                                   setWorkingNodes(list => list.filter(x => nodeKey(x) !== key))
-                                  setNodePreview(null)
                                 }}
                                 title="移出套餐"
                                 aria-label={`移除 ${n.name || key}`}
                                 style={{ height: 28, width: 28, color: 'var(--color-danger)' }}
                               >
-                                <Trash2 size={13} />
+                                <Trash2 size={14} />
                               </Button>
                             </td>
-                          </tr>
+                          </SortablePlanNodeRow>
                         )
                       })}
                       {workingNodes.length === 0 && (
-                        <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 24 }}>节点集合为空</td></tr>
+                        <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 24 }}>节点集合为空</td></tr>
                       )}
                     </tbody>
+                    </SortableContext>
+                    </DndContext>
                   </table>
                 </div>
 
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <Button size="sm" variant="outline" busy={nodeBusy} onClick={() => void runNodePreview()} disabled={applying}><RefreshCw size={14} /> 预览影响</Button>
-                  {nodePreview && (
-                    <>
-                      <Button size="sm" busy={nodeApplyBusy} onClick={() => void applyNodeChange()} disabled={applying}>确认保存为新版本</Button>
-                      <Button size="sm" variant="ghost" onClick={() => setNodePreview(null)}>取消</Button>
-                    </>
-                  )}
+                <div className="plan-node-save-row">
+                  <span className="muted">{membershipChanged ? '有未保存的节点变更' : orderBusy ? '正在保存节点顺序...' : '拖拽左侧手柄可直接调整订阅顺序'}</span>
+                  <Button size="sm" busy={nodeApplyBusy} onClick={() => void applyNodeChange()} disabled={applying || !membershipChanged}>
+                    <Save size={14} /> 保存节点变更
+                  </Button>
                 </div>
-
-                {nodePreview && (
-                  <div className="node-membership-preview">
-                    <p className="muted" style={{ margin: 0 }}>新版本将为 {nodePreview.node_count} 个节点 · 新增 {nodePreview.preview?.nodes_added?.length || 0} · 移除 {nodePreview.preview?.nodes_removed?.length || 0} · 不变 {nodePreview.preview?.nodes_unchanged || 0} · 受影响用户 {nodePreview.preview?.users_affected || 0} · 任务 {nodePreview.preview?.task_count || 0}</p>
-                    {nodePreview.ordering_preview && (
-                      <>
-                        <div className="membership-region-summary">
-                          <Badge variant="outline">新增 {nodePreview.ordering_preview.added_count || 0}</Badge>
-                          <Badge variant={nodePreview.ordering_preview.pending_count > 0 ? 'warning' : 'success'}>待排 {nodePreview.ordering_preview.pending_count || 0}</Badge>
-                        </div>
-                        {(nodePreview.ordering_preview.warnings || []).map((warning: any, index: number) => <p key={index} className="muted">{warning.message || String(warning)}</p>)}
-                        <div className="membership-order-preview-list">
-                          {(nodePreview.ordering_preview.nodes || []).map((node: any, index: number) => <div key={node.key}><span>{index + 1}</span><strong>{node.name}</strong><span>{node.exit_region || '未知'}</span></div>)}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
               </div>
             </div>
           )}
