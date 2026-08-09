@@ -685,6 +685,8 @@ func (s *Server) newServicePrincipal(owner model.User, name string, scopes []str
 
 func (s *Server) registerAutomationHandlers() {
 	s.registerServerUpdateOperation()
+	s.registerInboundAutomationOperations()
+	s.registerProxyPathAutomationOperations()
 	s.automation.RegisterValidator("subscriptions.custom_paths.set_alias", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		var request struct {
 			UserID int64  `json:"user_id"`

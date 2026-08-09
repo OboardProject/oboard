@@ -58,6 +58,106 @@ func serverUpdateRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, er
 	return refsFromSingleID(ctx, input, "server_id", "server")
 }
 
+func inboundCreateRefs(_ context.Context, input any) ([]mcpauth.ResourceRef, error) {
+	object, err := canonicalMap(input)
+	if err != nil {
+		return nil, err
+	}
+	inbound, ok := object["inbound"].(map[string]any)
+	if !ok {
+		return nil, errors.New("inbound must be an object")
+	}
+	serverID, ok := int64Value(inbound["server_id"])
+	if !ok || serverID <= 0 {
+		return nil, errors.New("inbound.server_id must be a positive integer ID")
+	}
+	return []mcpauth.ResourceRef{{Type: "server", ID: strconv.FormatInt(serverID, 10)}}, nil
+}
+
+func inboundUpdateRefs(_ context.Context, input any) ([]mcpauth.ResourceRef, error) {
+	object, err := canonicalMap(input)
+	if err != nil {
+		return nil, err
+	}
+	inboundID, ok := int64Value(object["inbound_id"])
+	if !ok || inboundID <= 0 {
+		return nil, errors.New("inbound_id must be a positive integer ID")
+	}
+	refs := []mcpauth.ResourceRef{{Type: "inbound", ID: strconv.FormatInt(inboundID, 10)}}
+	if changes, ok := object["changes"].(map[string]any); ok {
+		if serverID, present := int64Value(changes["server_id"]); present && serverID > 0 {
+			refs = append(refs, mcpauth.ResourceRef{Type: "server", ID: strconv.FormatInt(serverID, 10)})
+		}
+	}
+	return refs, nil
+}
+
+func proxyPathUpdateRefs(_ context.Context, input any) ([]mcpauth.ResourceRef, error) {
+	object, err := canonicalMap(input)
+	if err != nil {
+		return nil, err
+	}
+	pathID, ok := int64Value(object["path_id"])
+	if !ok || pathID <= 0 {
+		return nil, errors.New("path_id must be a positive integer ID")
+	}
+	refs := []mcpauth.ResourceRef{{Type: "proxy_path", ID: strconv.FormatInt(pathID, 10)}}
+	if changes, ok := object["changes"].(map[string]any); ok {
+		if inboundID, present := int64Value(changes["inbound_id"]); present && inboundID > 0 {
+			refs = append(refs, mcpauth.ResourceRef{Type: "inbound", ID: strconv.FormatInt(inboundID, 10)})
+		}
+	}
+	return refs, nil
+}
+
+func proxyPathDirectRefs(_ context.Context, input any) ([]mcpauth.ResourceRef, error) {
+	object, err := canonicalMap(input)
+	if err != nil {
+		return nil, err
+	}
+	refs := []mcpauth.ResourceRef{}
+	if inboundID, ok := int64Value(object["inbound_id"]); ok && inboundID > 0 {
+		refs = append(refs, mcpauth.ResourceRef{Type: "inbound", ID: strconv.FormatInt(inboundID, 10)})
+	}
+	if pathID, ok := int64Value(object["source_path_id"]); ok && pathID > 0 {
+		refs = append(refs, mcpauth.ResourceRef{Type: "proxy_path", ID: strconv.FormatInt(pathID, 10)})
+	}
+	if len(refs) == 0 {
+		return nil, errors.New("inbound_id or source_path_id is required")
+	}
+	return refs, nil
+}
+
+func proxyPathStepWriteRefs(_ context.Context, input any) ([]mcpauth.ResourceRef, error) {
+	object, err := canonicalMap(input)
+	if err != nil {
+		return nil, err
+	}
+	refs := []mcpauth.ResourceRef{}
+	step, _ := object["step"].(map[string]any)
+	if step == nil {
+		step, _ = object["changes"].(map[string]any)
+	}
+	for field, resourceType := range map[string]string{"path_id": "proxy_path", "server_id": "server", "inbound_id": "inbound", "external_outbound_id": "external_outbound"} {
+		if id, ok := int64Value(step[field]); ok && id > 0 {
+			refs = append(refs, mcpauth.ResourceRef{Type: resourceType, ID: strconv.FormatInt(id, 10)})
+		}
+	}
+	return refs, nil
+}
+
+func inboundDeleteRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
+	return refsFromSingleID(ctx, input, "inbound_id", "inbound")
+}
+
+func proxyPathDeleteRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
+	return refsFromSingleID(ctx, input, "path_id", "proxy_path")
+}
+
+func proxyPathStepTruncateRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
+	return refsFromSingleID(ctx, input, "path_id", "proxy_path")
+}
+
 func topologyWriteRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
 	object, err := canonicalMap(input)
 	if err != nil {

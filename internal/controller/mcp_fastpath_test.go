@@ -23,7 +23,9 @@ func TestMCPRecipeRouting(t *testing.T) {
 		ambiguous, fallback      bool
 	}{
 		{name: "explicit", intent: "proxy_path.manage", want: "proxy_path.manage"},
+		{name: "explicit inbound", intent: "inbound.create", want: "inbound.create"},
 		{name: "chinese", goal: "新增东京服务器并开启 BBR", want: "server.onboard"},
+		{name: "chinese inbound", goal: "在东京节点创建 VLESS 入站", want: "inbound.create"},
 		{name: "english", goal: "deploy all configuration changes", want: "deployment.apply"},
 		{name: "structured proxy ref", goal: "", want: "proxy_path.manage"},
 		{name: "structured server settings", goal: "", want: "server.manage"},
@@ -39,6 +41,8 @@ func TestMCPRecipeRouting(t *testing.T) {
 				input.TargetRefs = []string{"inbound:7"}
 			case "structured server settings":
 				input.TargetRefs, input.Params = []string{"server:7"}, map[string]any{"bbr_enabled": true}
+			case "explicit inbound":
+				input.TargetRefs, input.Params = []string{"server:7"}, map[string]any{"protocol": "vless", "port": 443}
 			case "ambiguous server ref":
 				input.TargetRefs = []string{"server:7"}
 			}
@@ -195,6 +199,7 @@ func TestMCPFastPathRecipesCommitThroughWorkflow(t *testing.T) {
 	}{
 		{name: "server onboard", args: map[string]any{"intent": "server.onboard", "goal": "新增一台 Tokyo 服务器，IPv6 优先，打开 BBR"}},
 		{name: "server manage", args: map[string]any{"intent": "server.manage", "goal": "把香港服务器调成 IPv6 优先", "target_refs": []any{fmt.Sprintf("server:%d", entry.ID)}, "params": map[string]any{"ip_stack": "prefer_ipv6"}}},
+		{name: "inbound create", args: map[string]any{"intent": "inbound.create", "goal": "在新加坡创建 VLESS 入口", "target_refs": []any{fmt.Sprintf("server:%d", exit.ID)}, "params": map[string]any{"name": "Singapore VLESS", "protocol": "vless", "port": 8443}}},
 		{name: "proxy path", args: map[string]any{"intent": "proxy_path.manage", "goal": "把香港 VLESS 入口通过新加坡", "target_refs": []any{fmt.Sprintf("inbound:%d", inbound.ID), fmt.Sprintf("server:%d", exit.ID)}}},
 		{name: "proxy path wireguard", args: map[string]any{"intent": "proxy_path.manage", "goal": "把香港 VLESS 入口通过新加坡并使用 WireGuard", "target_refs": []any{fmt.Sprintf("inbound:%d", inbound.ID), fmt.Sprintf("server:%d", exit.ID)}, "params": map[string]any{"transport": "wireguard"}}},
 		{name: "proxy path direct", args: map[string]any{"intent": "proxy_path.manage", "goal": "给香港 VLESS 增加 Direct Branch", "target_refs": []any{fmt.Sprintf("inbound:%d", inbound.ID)}}},

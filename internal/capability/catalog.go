@@ -72,8 +72,9 @@ func NewCatalog() *Catalog {
 }
 
 // AdminOnly reports whether the capability is reserved for administrators.
-// The current MCP surface has no admin-only capabilities.
-func (d Descriptor) AdminOnly() bool { return d.RBACPermission == "admin.settings" || d.Destructive }
+// Destructive topology changes remain available to operators, but always use
+// their explicit confirmation schema and the normal Changeset approval flow.
+func (d Descriptor) AdminOnly() bool { return d.RBACPermission == "admin.settings" }
 
 // RBAC returns the shared role-based permission service. The Controller wires
 // the same instance into the unified MCP evaluator.
@@ -262,13 +263,29 @@ func defaultDescriptors() []Descriptor {
 		{"subscriptions.resume", "subscriptions:resume", 2, true, DataInternal, nil},
 		{"subscriptions.custom_paths.set_alias", "subscriptions:manage", 2, true, DataSensitive, []string{"alias"}},
 		{"subscriptions.custom_paths.set_policy", "subscriptions:manage", 2, true, DataInternal, nil},
+		{"inbounds.create", "topology:write", 3, true, DataSensitive, []string{"inbound.config_json"}},
+		{"inbounds.update", "topology:write", 3, true, DataSensitive, []string{"changes.config_json"}},
 		{"topology.write", "topology:write", 3, true, DataInternal, nil},
+		{"proxy_paths.create_direct", "topology:write", 3, true, DataInternal, nil},
+		{"proxy_paths.update", "topology:write", 3, true, DataInternal, nil},
+		{"proxy_path_steps.create", "topology:write", 3, true, DataInternal, nil},
+		{"proxy_path_steps.update", "topology:write", 3, true, DataInternal, nil},
 		{"topology.reuse_inbound", "topology:write", 3, true, DataInternal, nil},
 		{"deployments.apply", "deployments:apply", 3, true, DataInternal, nil},
 	}
 	for _, domain := range writeDomains {
 		input, output, evaluator := executableSchemas(domain.name)
 		descriptors = append(descriptors, Descriptor{Name: domain.name, Description: "创建受验证和审批保护的管理变更", InputSchema: input, OutputSchema: output, RequiredScopes: []string{domain.scope}, ResourceEvaluator: evaluator, RiskClass: domain.risk, ApprovalPolicy: "required", Idempotent: true, DataClassification: domain.classification, SensitiveFields: domain.sensitive, SensitiveInput: domain.sensitive, MCPEnabled: true, Executable: domain.executable, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: writeResolver(domain.name)})
+	}
+	for _, name := range []string{"inbounds.delete", "proxy_paths.delete", "proxy_path_steps.truncate"} {
+		input, output, evaluator := executableSchemas(name)
+		descriptors = append(descriptors, Descriptor{
+			Name: name, Description: "删除受引用保护和审批保护的代理拓扑资源", InputSchema: input, OutputSchema: output,
+			RequiredScopes: []string{"topology:write"}, ResourceEvaluator: evaluator, RiskClass: 3,
+			ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal,
+			Destructive: true, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate,
+			ResolveResourceRefs: writeResolver(name),
+		})
 	}
 	for index := range descriptors {
 		descriptors[index].Version = "1"
@@ -283,6 +300,22 @@ func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRe
 		return userRefFromID
 	case "topology.write":
 		return topologyWriteRefs
+	case "inbounds.create":
+		return inboundCreateRefs
+	case "inbounds.update":
+		return inboundUpdateRefs
+	case "proxy_paths.update":
+		return proxyPathUpdateRefs
+	case "proxy_paths.create_direct":
+		return proxyPathDirectRefs
+	case "proxy_path_steps.create", "proxy_path_steps.update":
+		return proxyPathStepWriteRefs
+	case "inbounds.delete":
+		return inboundDeleteRefs
+	case "proxy_paths.delete":
+		return proxyPathDeleteRefs
+	case "proxy_path_steps.truncate":
+		return proxyPathStepTruncateRefs
 	case "topology.reuse_inbound":
 		return topologyReuseInboundRefs
 	case "deployments.apply":
@@ -327,6 +360,42 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "deployments.apply":
 		return schemaObject(map[string]any{"server_ids": idArray(1, 100), "reason": map[string]any{"type": "string", "maxLength": 500}}, "server_ids"), simpleOutput(map[string]any{"deployment": closedObject(map[string]any{"config_version": map[string]any{"type": "integer"}, "server_ids": idArray(0, 100), "status": stringValue})}), "server_ids"
+	case "inbounds.create", "inbounds.update":
+		inboundProperties := map[string]any{
+			"server_id":             positiveID,
+			"name":                  map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+			"protocol":              map[string]any{"type": "string", "enum": []string{"vless", "hysteria2", "anytls", "shadowsocks", "mieru", "ssh"}},
+			"listen_ip":             map[string]any{"type": "string", "maxLength": 255},
+			"port":                  map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
+			"entry_ip_mode":         map[string]any{"type": "string", "enum": []string{"auto", "ipv4", "ipv6", "custom"}},
+			"external_ip":           map[string]any{"type": "string", "maxLength": 255},
+			"dns_sync_enabled":      boolValue,
+			"dns_credential_id":     nullableInteger(),
+			"dns_domain":            map[string]any{"type": "string", "maxLength": 253},
+			"dns_proxy_enabled":     boolValue,
+			"dns_record_types":      map[string]any{"type": "string", "enum": []string{"auto", "a", "aaaa", "both"}},
+			"ddns_enabled":          boolValue,
+			"ddns_interval_seconds": map[string]any{"type": "integer", "minimum": 300, "maximum": 86400},
+			"tls":                   boolValue,
+			"certificate_mode":      map[string]any{"type": "string", "enum": []string{"external", "auto", "exact", "wildcard", "explicit"}},
+			"certificate_id":        nullableInteger(),
+			"certificate_domain":    map[string]any{"type": "string", "maxLength": 253},
+			"config_json":           map[string]any{"type": "string", "maxLength": 65536},
+			"enabled":               boolValue,
+		}
+		inboundOutput := closedObject(map[string]any{
+			"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
+			"protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"},
+			"entry_ip_mode": stringValue, "external_ip": stringValue, "dns_sync_enabled": boolValue,
+			"dns_domain": stringValue, "tls": boolValue, "certificate_mode": stringValue,
+			"certificate_domain": stringValue, "enabled": boolValue, "advanced_configured": boolValue,
+		})
+		if name == "inbounds.create" {
+			inboundFields := closedObject(inboundProperties, "server_id", "name", "protocol", "port")
+			return schemaObject(map[string]any{"inbound": inboundFields}, "inbound"), simpleOutput(map[string]any{"inbound": inboundOutput, "requires_deployment": boolValue}), "server_ids"
+		}
+		inboundFields := closedObject(inboundProperties)
+		return schemaObject(map[string]any{"inbound_id": positiveID, "changes": inboundFields}, "inbound_id", "changes"), simpleOutput(map[string]any{"inbound": inboundOutput, "requires_deployment": boolValue}), "server_ids"
 	case "topology.reuse_inbound":
 		source := closedObject(map[string]any{"inbound_id": positiveID, "step_id": positiveID})
 		return schemaObject(map[string]any{"sources": map[string]any{"type": "array", "minItems": 1, "maxItems": 64, "items": source}, "target_server_id": positiveID, "target_kind": stringValue, "target_inbound_id": positiveID, "chain_protocol": stringValue, "chain_method": stringValue, "reality_handshake_server": stringValue, "reality_handshake_port": map[string]any{"type": "integer"}, "transport_mode": stringValue, "tunnel_type": stringValue, "ssh_port": map[string]any{"type": "integer"}, "persistent_keepalive": map[string]any{"type": "integer"}, "copy_mode": stringValue, "branch_path_id": positiveID}, "sources", "target_server_id", "target_kind"), simpleOutput(map[string]any{"result_path_count": map[string]any{"type": "integer"}, "affected_server_ids": idArray(0, 100), "requires_deployment": boolValue}), "server_ids"
@@ -335,6 +404,48 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		path := closedObject(map[string]any{"kind": stringValue, "name": stringValue, "name_mode": stringValue, "name_template": map[string]any{"type": "array", "maxItems": 16, "items": namePart}, "inbound_id": positiveID, "exit_region_mode": stringValue, "exit_region_code": stringValue, "enabled": boolValue})
 		step := closedObject(map[string]any{"node_type": stringValue, "transport_mode": stringValue, "processing_role": boolValue, "server_id": positiveID, "inbound_id": positiveID, "external_outbound_id": positiveID, "tunnel_type": stringValue, "ssh_port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535}, "persistent_keepalive": map[string]any{"type": "integer", "minimum": 0, "maximum": 65535}})
 		return schemaObject(map[string]any{"path": path, "steps": map[string]any{"type": "array", "minItems": 0, "maxItems": 5, "items": step}}, "path", "steps"), simpleOutput(map[string]any{"proxy_path": path, "proxy_path_steps": map[string]any{"type": "array", "items": step}, "requires_deployment": boolValue}), "server_ids"
+	case "proxy_paths.update":
+		namePart := closedObject(map[string]any{"kind": stringValue, "value": stringValue}, "kind")
+		changes := closedObject(map[string]any{
+			"name_mode":     map[string]any{"type": "string", "enum": []string{"auto", "custom"}},
+			"name_template": map[string]any{"type": "array", "maxItems": 16, "items": namePart},
+			"inbound_id":    positiveID, "exit_region_mode": map[string]any{"type": "string", "enum": []string{"auto", "manual"}},
+			"exit_region_code": map[string]any{"type": "string", "maxLength": 2}, "enabled": boolValue,
+		})
+		pathOutput := closedObject(map[string]any{"id": positiveID, "revision": stringValue, "kind": stringValue, "name": stringValue, "name_mode": stringValue, "inbound_id": positiveID, "exit_region_mode": stringValue, "exit_region_code": stringValue, "enabled": boolValue})
+		return schemaObject(map[string]any{"path_id": positiveID, "changes": changes}, "path_id", "changes"), simpleOutput(map[string]any{"proxy_path": pathOutput, "requires_deployment": boolValue}), "proxy_path_ids"
+	case "proxy_paths.create_direct":
+		pathOutput := closedObject(map[string]any{"id": positiveID, "revision": stringValue, "kind": stringValue, "name": stringValue, "name_mode": stringValue, "inbound_id": positiveID, "enabled": boolValue})
+		stepOutput := closedObject(map[string]any{"id": positiveID, "revision": stringValue, "path_id": positiveID, "position": map[string]any{"type": "integer"}, "node_type": stringValue, "transport_mode": stringValue, "server_id": nullableInteger(), "inbound_id": nullableInteger(), "external_outbound_id": nullableInteger()})
+		return schemaObject(map[string]any{"inbound_id": positiveID, "source_path_id": positiveID, "source_step_id": positiveID}), simpleOutput(map[string]any{"proxy_path": pathOutput, "proxy_path_steps": map[string]any{"type": "array", "items": stepOutput}, "requires_deployment": boolValue}), "proxy_path_ids"
+	case "proxy_path_steps.create", "proxy_path_steps.update":
+		stepProperties := map[string]any{
+			"path_id": positiveID, "position": map[string]any{"type": "integer", "minimum": 1, "maximum": 5},
+			"node_type":      map[string]any{"type": "string", "enum": []string{"server_inbound", "imported", "warp"}},
+			"transport_mode": map[string]any{"type": "string", "enum": []string{"singbox", "port_forward", "tunnel"}},
+			"server_id":      positiveID, "inbound_id": positiveID, "external_outbound_id": positiveID,
+			"chain_protocol": map[string]any{"type": "string", "enum": []string{"shadowsocks", "vless", "mieru"}},
+			"chain_method":   stringValue, "reality_handshake_server": stringValue,
+			"reality_handshake_port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
+			"tunnel_type":            map[string]any{"type": "string", "enum": []string{"ssh", "wireguard"}},
+			"ssh_port":               map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
+			"persistent_keepalive":   map[string]any{"type": "integer", "minimum": 0, "maximum": 65535},
+			"backend":                map[string]any{"type": "string", "enum": []string{"auto", "realm", "nft", "builtin"}},
+			"listen_ip":              map[string]any{"type": "string", "maxLength": 255},
+		}
+		stepOutput := closedObject(map[string]any{"id": positiveID, "revision": stringValue, "path_id": positiveID, "position": map[string]any{"type": "integer"}, "node_type": stringValue, "transport_mode": stringValue, "server_id": nullableInteger(), "inbound_id": nullableInteger(), "external_outbound_id": nullableInteger()})
+		if name == "proxy_path_steps.create" {
+			stepInput := closedObject(stepProperties, "path_id", "node_type")
+			return schemaObject(map[string]any{"step": stepInput}, "step"), simpleOutput(map[string]any{"proxy_path_step": stepOutput, "requires_deployment": boolValue}), "proxy_path_ids"
+		}
+		stepInput := closedObject(stepProperties, "path_id")
+		return schemaObject(map[string]any{"step_id": positiveID, "changes": stepInput}, "step_id", "changes"), simpleOutput(map[string]any{"proxy_path_step": stepOutput, "requires_deployment": boolValue}), "proxy_path_ids"
+	case "inbounds.delete":
+		return schemaObject(map[string]any{"inbound_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "inbound_id", "confirm"), simpleOutput(map[string]any{"deleted": boolValue, "inbound_id": positiveID, "deleted_proxy_path_count": map[string]any{"type": "integer"}, "requires_deployment": boolValue}), "server_ids"
+	case "proxy_paths.delete":
+		return schemaObject(map[string]any{"path_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "path_id", "confirm"), simpleOutput(map[string]any{"deleted": boolValue, "path_id": positiveID, "requires_deployment": boolValue}), "proxy_path_ids"
+	case "proxy_path_steps.truncate":
+		return schemaObject(map[string]any{"path_id": positiveID, "step_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "path_id", "step_id", "confirm"), simpleOutput(map[string]any{"deleted": boolValue, "path_id": positiveID, "deleted_steps": map[string]any{"type": "integer"}, "path_deleted": boolValue, "requires_deployment": boolValue}), "proxy_path_ids"
 	default:
 		return schemaObject(nil), schemaObject(nil), ""
 	}

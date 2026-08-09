@@ -61,6 +61,133 @@ func TestTopologyWriteRejectsInvalidStepBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestInboundCreateCapabilityAppliesThroughChangeset(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	user := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	node := &model.Server{Name: "entry", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	principal := application.HumanPrincipal(*user, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
+	input := json.RawMessage(`{"inbound":{"server_id":1,"name":"MCP VLESS","protocol":"vless","listen_ip":"0.0.0.0","port":443,"config_json":"{}","enabled":true}}`)
+	draft, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{{Capability: "inbounds.create", Input: input}}})
+	if err != nil {
+		t.Fatalf("validate inbound draft: %v", err)
+	}
+	base, _ := json.Marshal(draft.ExpectedRevisions)
+	changeset, err := server.automation.Create(ctx, principal, automation.CreateRequest{IdempotencyKey: "create-inbound", BaseRevisions: base, Operations: []automation.OperationRequest{{Capability: "inbounds.create", Input: input}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.automation.Validate(ctx, principal, changeset.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.automation.Approve(ctx, principal, changeset.ID, "approved in test"); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := server.automation.Apply(ctx, principal, changeset.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := db.ListInbounds(ctx)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("inbounds=%#v err=%v", items, err)
+	}
+	if items[0].Name != "MCP VLESS" || items[0].ServerID != node.ID || !items[0].Enabled {
+		t.Fatalf("unexpected inbound: %#v", items[0])
+	}
+	if strings.Contains(string(applied.Result), "config_json") {
+		t.Fatalf("changeset result exposed advanced inbound config: %s", applied.Result)
+	}
+}
+
+func TestProxyPathEditCapabilitiesApplyThroughChangesets(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	user := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	entry := &model.Server{Name: "entry", PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline}
+	exit := &model.Server{Name: "exit", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", PortRangeStart: 12000, PortRangeEnd: 13000, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, entry); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateServer(ctx, exit); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: entry.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	path := &model.ProxyPath{Kind: model.ProxyPathKindChain, InboundID: inbound.ID, NameMode: model.ProxyPathNameAuto, ExitRegionMode: "auto", Secret: "test-secret", Enabled: true}
+	if err := db.CreateProxyPath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	principal := application.HumanPrincipal(*user, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
+	apply := func(key, capabilityName string, input json.RawMessage) {
+		t.Helper()
+		draft, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{{Capability: capabilityName, Input: input}}})
+		if err != nil {
+			t.Fatalf("validate %s: %v", capabilityName, err)
+		}
+		base, _ := json.Marshal(draft.ExpectedRevisions)
+		changeset, err := server.automation.Create(ctx, principal, automation.CreateRequest{IdempotencyKey: key, BaseRevisions: base, Operations: []automation.OperationRequest{{Capability: capabilityName, Input: input}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := server.automation.Validate(ctx, principal, changeset.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := server.automation.Approve(ctx, principal, changeset.ID, "approved in test"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := server.automation.Apply(ctx, principal, changeset.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stepInput, _ := json.Marshal(map[string]any{"step": map[string]any{"path_id": path.ID, "position": 1, "node_type": "server_inbound", "transport_mode": "singbox", "server_id": exit.ID, "chain_protocol": "shadowsocks"}})
+	apply("create-path-step", "proxy_path_steps.create", stepInput)
+	steps, err := db.ListProxyPathStepsForPath(ctx, path.ID)
+	if err != nil || len(steps) != 1 || steps[0].ServerID == nil || *steps[0].ServerID != exit.ID {
+		t.Fatalf("steps=%#v err=%v", steps, err)
+	}
+	pathInput, _ := json.Marshal(map[string]any{"path_id": path.ID, "changes": map[string]any{"exit_region_mode": "manual", "exit_region_code": "US", "enabled": true}})
+	apply("update-path", "proxy_paths.update", pathInput)
+	stored, err := db.GetProxyPath(ctx, path.ID)
+	if err != nil || stored.ExitRegionMode != "manual" || stored.ExitRegionCode != "US" {
+		t.Fatalf("path=%#v err=%v", stored, err)
+	}
+	directInput, _ := json.Marshal(map[string]any{"inbound_id": inbound.ID})
+	apply("create-direct-path", "proxy_paths.create_direct", directInput)
+	paths, err := db.ListProxyPaths(ctx)
+	if err != nil || len(paths) != 2 {
+		t.Fatalf("paths after direct branch=%#v err=%v", paths, err)
+	}
+	truncateInput, _ := json.Marshal(map[string]any{"path_id": path.ID, "step_id": steps[0].ID, "confirm": true})
+	apply("truncate-path", "proxy_path_steps.truncate", truncateInput)
+	paths, err = db.ListProxyPaths(ctx)
+	if err != nil || len(paths) != 1 || paths[0].Kind != model.ProxyPathKindDirect {
+		t.Fatalf("paths after truncate=%#v err=%v", paths, err)
+	}
+	deleteInboundInput, _ := json.Marshal(map[string]any{"inbound_id": inbound.ID, "confirm": true})
+	apply("delete-inbound", "inbounds.delete", deleteInboundInput)
+	inbounds, err := db.ListInbounds(ctx)
+	if err != nil || len(inbounds) != 0 {
+		t.Fatalf("inbounds after delete=%#v err=%v", inbounds, err)
+	}
+	paths, err = db.ListProxyPaths(ctx)
+	if err != nil || len(paths) != 0 {
+		t.Fatalf("paths after inbound delete=%#v err=%v", paths, err)
+	}
+}
+
 func TestProxyPathPlannerProducesValidTopologyChangeset(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")

@@ -41,6 +41,7 @@ func (s *Server) mcpRecipes() []mcpRecipe {
 	return []mcpRecipe{
 		{ID: "server.onboard", Version: mcpRecipeVersion, Aliases: []string{"server.onboard", "add server", "create server", "onboard server", "新增服务器", "添加服务器", "接入服务器", "新增节点服务器"}, Verbs: []string{"add", "create", "onboard", "enroll", "新增", "添加", "接入"}, Nouns: []string{"server", "agent", "服务器", "节点服务器"}, Prepare: s.prepareServerOnboardRecipe},
 		{ID: "server.manage", Version: mcpRecipeVersion, Aliases: []string{"server.manage", "update server", "server settings", "修改服务器", "服务器设置"}, Verbs: []string{"update", "change", "set", "modify", "修改", "设置", "调整", "开启", "关闭"}, Nouns: []string{"server", "服务器", "节点"}, Prepare: s.prepareServerManageRecipe},
+		{ID: "inbound.create", Version: mcpRecipeVersion, Aliases: []string{"inbound.create", "create inbound", "add inbound", "创建入口", "新增入口", "添加入口", "创建入站", "新增入站"}, Verbs: []string{"create", "add", "新增", "添加", "创建"}, Nouns: []string{"inbound", "入口", "入站"}, Prepare: s.prepareInboundCreateRecipe},
 		{ID: "proxy_path.manage", Version: mcpRecipeVersion, Aliases: []string{"proxy_path.manage", "proxy path", "proxy chain", "代理链", "代理路径", "链路", "direct branch"}, Verbs: []string{"create", "add", "connect", "route", "创建", "增加", "连接", "经过", "通过"}, Nouns: []string{"proxy path", "chain", "branch", "代理链", "链路", "路径", "wireguard", "ssh"}, Prepare: s.prepareProxyPathRecipe},
 		{ID: "deployment.apply", Version: mcpRecipeVersion, Aliases: []string{"deployment.apply", "deploy all", "apply deployment", "部署全部", "部署所有", "下发修改", "重新应用配置"}, Verbs: []string{"deploy", "apply", "redeploy", "部署", "下发", "应用"}, Nouns: []string{"deployment", "configuration", "changes", "部署", "配置", "修改"}, Prepare: s.prepareDeploymentRecipe},
 	}
@@ -69,6 +70,10 @@ func (s *Server) matchMCPRecipe(input mcpTaskInput) (mcpRecipe, []MCPResourceRef
 	}
 	if refTypes["inbound"] || refTypes["proxy_path"] || refTypes["external_outbound"] {
 		recipe, _ := s.mcpRecipeByID("proxy_path.manage")
+		return recipe, nil, true
+	}
+	if refTypes["server"] && hasInboundCreateParams(input.Params) {
+		recipe, _ := s.mcpRecipeByID("inbound.create")
 		return recipe, nil, true
 	}
 	if refTypes["server"] && hasServerManageParams(input.Params) {
@@ -138,6 +143,15 @@ func (s *Server) matchMCPRecipe(input mcpTaskInput) (mcpRecipe, []MCPResourceRef
 		return mcpRecipe{}, candidates, false
 	}
 	return scores[0].recipe, nil, true
+}
+
+func hasInboundCreateParams(params map[string]any) bool {
+	for _, key := range []string{"inbound", "protocol", "inbound.protocol", "port", "inbound.port", "config_json", "inbound.config_json"} {
+		if _, ok := params[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func hasServerManageParams(params map[string]any) bool {
@@ -226,6 +240,95 @@ func (s *Server) prepareServerManageRecipe(ctx context.Context, principal applic
 	}
 	operation := mcpOperationRef{Capability: "servers.update", Input: map[string]any{"server_id": resolved.Value.ID, "changes": changes}}
 	return &mcpPreparedRecipe{Status: "ready", Intent: "server.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "update_server", "server": resolved.Value.Label, "server_ref": resolved.Value.Ref, "changes": changes}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "server_revision_changed"}}}, nil
+}
+
+func (s *Server) prepareInboundCreateRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	target := firstTaskRef(input, "server", "target_server", "server")
+	if target == "" {
+		matches := s.inferServerCandidatesFromGoal(ctx, principal, input.Goal, 0)
+		if len(matches) > 1 {
+			return &mcpPreparedRecipe{Status: "choose_candidate", Intent: "inbound.create", Field: "target_server", Candidates: matches}, nil
+		}
+		if len(matches) == 1 {
+			target = matches[0].Ref
+		}
+	}
+	if target == "" {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "inbound.create", Questions: []map[string]any{{"field": "target_server", "type": "resource_ref", "reason": "需要指定入口所在的服务器"}}}, nil
+	}
+	resolved, err := s.resolveServerRef(ctx, principal, target)
+	if err != nil {
+		return nil, fmt.Errorf("target server: %w", err)
+	}
+	if len(resolved.Candidates) > 0 {
+		return &mcpPreparedRecipe{Status: "choose_candidate", Intent: "inbound.create", Field: "target_server", Candidates: resolved.Candidates}, nil
+	}
+	values := map[string]any{}
+	if nested, ok := input.Params["inbound"].(map[string]any); ok {
+		for key, value := range nested {
+			values[key] = value
+		}
+	}
+	copyTaskParams(values, input.Params, map[string]string{
+		"name": "name", "inbound.name": "name", "protocol": "protocol", "inbound.protocol": "protocol",
+		"port": "port", "inbound.port": "port", "listen_ip": "listen_ip", "inbound.listen_ip": "listen_ip",
+		"entry_ip_mode": "entry_ip_mode", "external_ip": "external_ip", "dns_sync_enabled": "dns_sync_enabled",
+		"dns_credential_id": "dns_credential_id", "dns_domain": "dns_domain", "dns_proxy_enabled": "dns_proxy_enabled",
+		"dns_record_types": "dns_record_types", "ddns_enabled": "ddns_enabled", "ddns_interval_seconds": "ddns_interval_seconds",
+		"tls": "tls", "certificate_mode": "certificate_mode", "certificate_id": "certificate_id",
+		"certificate_domain": "certificate_domain", "config_json": "config_json", "inbound.config_json": "config_json",
+		"enabled": "enabled",
+	})
+	protocol := strings.ToLower(strings.TrimSpace(fmt.Sprint(values["protocol"])))
+	if protocol == "" || protocol == "<nil>" {
+		protocol = inferredInboundProtocol(input.Goal)
+	}
+	if protocol == "" {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "inbound.create", Questions: []map[string]any{{"field": "protocol", "type": "string", "reason": "需要指定入口协议"}}}, nil
+	}
+	port := taskIntParam(values, "port")
+	if port <= 0 {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "inbound.create", Questions: []map[string]any{{"field": "port", "type": "integer", "reason": "需要指定入口监听端口"}}}, nil
+	}
+	name := strings.TrimSpace(fmt.Sprint(values["name"]))
+	if name == "" || name == "<nil>" {
+		name = strings.ToUpper(protocol)
+	}
+	values["server_id"] = resolved.Value.ID
+	values["name"] = name
+	values["protocol"] = protocol
+	values["port"] = port
+	if _, exists := values["listen_ip"]; !exists {
+		values["listen_ip"] = "0.0.0.0"
+	}
+	if _, exists := values["config_json"]; !exists {
+		values["config_json"] = "{}"
+	}
+	if _, exists := values["enabled"]; !exists {
+		values["enabled"] = true
+	}
+	operation := mcpOperationRef{Capability: "inbounds.create", Input: map[string]any{"inbound": values}}
+	return &mcpPreparedRecipe{
+		Status: "ready", Intent: "inbound.create", Operations: []mcpOperationRef{operation},
+		Summary:      map[string]any{"action": "create_inbound", "server": resolved.Value.Label, "server_ref": resolved.Value.Ref, "name": name, "protocol": protocol, "port": port},
+		Verification: map[string]any{"after_commit": []string{"workflow_terminal", "inbound_present", "deployment_required"}},
+	}, nil
+}
+
+func inferredInboundProtocol(goal string) string {
+	goal = strings.ToLower(goal)
+	for _, candidate := range []string{"hysteria2", "anytls", "shadowsocks", "mieru", "vless", "ssh"} {
+		if strings.Contains(goal, candidate) {
+			return candidate
+		}
+	}
+	if strings.Contains(goal, "hy2") {
+		return "hysteria2"
+	}
+	if strings.Contains(goal, "ss 入口") || strings.Contains(goal, "ss inbound") {
+		return "shadowsocks"
+	}
+	return ""
 }
 
 func (s *Server) prepareDeploymentRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {

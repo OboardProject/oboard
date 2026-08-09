@@ -64,3 +64,28 @@ func TestDefaultCatalogDoesNotExposeEscapeCapabilities(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultCatalogExposesExecutableInboundManagement(t *testing.T) {
+	catalog := NewCatalog()
+	for _, name := range []string{
+		"inbounds.create", "inbounds.update", "inbounds.delete",
+		"proxy_paths.create_direct", "proxy_paths.update", "proxy_paths.delete",
+		"proxy_path_steps.create", "proxy_path_steps.update", "proxy_path_steps.truncate",
+	} {
+		descriptor, ok := catalog.Get(name)
+		if !ok {
+			t.Fatalf("%s is missing from the capability catalog", name)
+		}
+		if !descriptor.MCPEnabled || !descriptor.Executable || descriptor.ReadOnly {
+			t.Fatalf("%s is not an executable MCP write: %#v", name, descriptor)
+		}
+		if descriptor.MinimumAccess != "operate" || descriptor.ApprovalPolicy != "required" {
+			t.Fatalf("%s has unsafe authorization metadata: %#v", name, descriptor)
+		}
+		if strings.HasSuffix(name, ".delete") || strings.HasSuffix(name, ".truncate") {
+			if !descriptor.Destructive {
+				t.Fatalf("%s is missing destructive metadata", name)
+			}
+		}
+	}
+}
