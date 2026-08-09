@@ -332,6 +332,7 @@ func defaultDescriptors() []Descriptor {
 	descriptors = append(descriptors, forwardsDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, opsDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, auditDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
+	descriptors = append(descriptors, systemDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	for index := range descriptors {
 		descriptors[index].Version = "1"
 		descriptors[index].Documentation = "oboard://schemas/" + descriptors[index].Name

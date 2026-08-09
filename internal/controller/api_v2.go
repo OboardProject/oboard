@@ -693,6 +693,7 @@ func (s *Server) registerAutomationHandlers() {
 	s.registerNetworkAutomationOperations()
 	s.registerOpsAutomationOperations()
 	s.registerAuditAutomationOperations()
+	s.registerSystemAutomationOperations()
 	s.automation.RegisterValidator("subscriptions.custom_paths.set_alias", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		var request struct {
 			UserID int64  `json:"user_id"`

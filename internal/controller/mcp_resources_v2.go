@@ -15,6 +15,7 @@ import (
 	"github.com/OboardProject/oboard/internal/mcpauth"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/version"
+	"time"
 )
 
 type mcpResourceDef struct {
@@ -52,6 +53,14 @@ func (s *Server) mcpResourceDefs() []mcpResourceDef {
 		{uri: "oboard://port-forwards", title: "Port Forwards", name: "Port forwards", description: "Return all port forward rules with probe and backend state.", capability: "port_forwards.list", kind: "query"},
 		{uri: "oboard://tunnels", title: "Tunnels", name: "Tunnels", description: "Return all WireGuard / SSH inter-server tunnels.", capability: "tunnels.list", kind: "query"},
 		{uri: "oboard://agent-tasks", title: "Agent Tasks", name: "Agent tasks", description: "Return sanitized Agent tasks (deployments, probes, diagnostics, log jobs). Never includes payloads or results that contain secrets.", capability: "agent_tasks.list", kind: "query_agent_tasks"},
+		{uri: "oboard://settings", title: "Global Settings", name: "Global settings", description: "Return the global Controller settings (audit, subscription, notification, server defaults) without secrets.", capability: "settings.get", kind: "query_settings"},
+		{uri: "oboard://backups", title: "Backups", name: "Backups", description: "Return Controller backup history and backup settings. Never includes recovery passwords or remote credentials.", capability: "backups.list", kind: "query_backups"},
+		{uri: "oboard://certificates", title: "Certificates", name: "Certificates", description: "Return TLS certificates and their issuance status. Private keys stay encrypted in Controller and are never exposed.", capability: "certificates.list", kind: "query_certificates"},
+		{uri: "oboard://approval-policies", title: "Approval Policies", name: "Approval policies", description: "Return automation approval policies for service accounts.", capability: "approval_policies.list", kind: "query_approval_policies"},
+		{uri: "oboard://api-principals", title: "API Principals", name: "API principals", description: "Return service accounts with token prefixes only. Never includes tokens.", capability: "api_principals.list", kind: "query_api_principals"},
+		{uri: "oboard://ai/providers", title: "AI Providers", name: "AI providers", description: "Return AI provider metadata with API key presence only. Never includes keys.", capability: "ai.providers.list", kind: "query_ai_providers"},
+		{uri: "oboard://tool-audits", title: "Tool Audits", name: "Tool audits", description: "Return automation tool-call audit records.", capability: "tool_audits.list", kind: "query_tool_audits"},
+		{uri: "oboard://notification-channels", title: "Notification Channels", name: "Notification channels", description: "Return the acting user's notification channels without channel secrets.", capability: "notification_channels.list", kind: "query_notification_channels"},
 		{uri: "oboard://topology/current", title: "Current Topology", name: "Current topology", description: "Return the current authorized proxy topology, revision identifiers, inbound and outbound relations, and non-secret dependency information.", capability: "topology.read", kind: "query"},
 		{uri: "oboard://subscriptions", title: "Subscriptions", name: "Subscriptions", description: "Return authorization-filtered subscription summaries and state required for planning supported subscription operations. Never includes credentials or provider secrets.", capability: "users.list", kind: "query"},
 		{uri: "oboard://subscription-plans", title: "Subscription Plans", name: "Subscription plans", description: "Return subscription plans and their current version state for planning node assignments. Never includes credentials.", capability: "subscription_plans.list", kind: "query"},
@@ -228,6 +237,116 @@ func (s *Server) readMCPResource(ctx context.Context, principal application.Prin
 			return nil, errors.New("invalid task id")
 		}
 		return s.listAgentTasksMCP(ctx, principal, value, 1)
+	case "query_settings":
+		items, err := s.store.ListSettings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"settings": s.publicSettings(ctx, items)}, nil
+	case "query_backups":
+		if !s.backupConfigured || s.backupManager == nil {
+			return map[string]any{"available": false, "backups": []any{}, "settings": map[string]any{}}, nil
+		}
+		settings, err := s.loadControllerBackupSettings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		items, err := s.store.ListControllerBackups(ctx)
+		if err != nil {
+			return nil, err
+		}
+		backups := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			backups = append(backups, map[string]any{
+				"id": item.ID, "name": item.Name, "origin": item.Origin,
+				"local_status": item.LocalStatus, "remote_status": item.RemoteStatus,
+				"size_bytes": item.SizeBytes, "created_at": item.CreatedAt,
+			})
+		}
+		public := publicControllerBackupSettings(settings)
+		return map[string]any{"available": true, "backups": backups, "settings": public}, nil
+	case "query_certificates":
+		items, err := s.store.ListCertificates(ctx)
+		if err != nil {
+			return nil, err
+		}
+		views := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			views = append(views, automationCertificateView(item))
+		}
+		return map[string]any{"certificates": views, "count": len(views)}, nil
+	case "query_approval_policies":
+		items, err := s.store.ListApprovalPolicies(ctx, "")
+		if err != nil {
+			return nil, err
+		}
+		views := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			views = append(views, automationApprovalPolicyView(item))
+		}
+		return map[string]any{"approval_policies": views, "count": len(views)}, nil
+	case "query_api_principals":
+		items, err := s.store.ListAPIPrincipals(ctx)
+		if err != nil {
+			return nil, err
+		}
+		views := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			views = append(views, map[string]any{
+				"id": item.ID, "name": item.Name, "enabled": item.Enabled, "type": item.Type,
+				"scope_count": len(item.Scopes), "rate_limit_per_minute": item.RateLimitPerMinute,
+				"max_concurrency": item.MaxConcurrency, "expires_at": item.ExpiresAt, "last_used_at": item.LastUsedAt,
+				"created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
+			})
+		}
+		return map[string]any{"api_principals": views, "count": len(views)}, nil
+	case "query_ai_providers":
+		items, err := s.store.ListAIProviders(ctx)
+		if err != nil {
+			return nil, err
+		}
+		views := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			views = append(views, map[string]any{
+				"id": item.ID, "name": item.Name, "enabled": item.Enabled,
+				"api_key_configured": item.HasCredential,
+				"endpoint_count":     len(item.Endpoints), "default_model": item.DefaultModel,
+				"created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
+			})
+		}
+		return map[string]any{"providers": views, "count": len(views)}, nil
+	case "query_tool_audits":
+		items, err := s.store.ListToolCallAudits(ctx, "", 50)
+		if err != nil {
+			return nil, err
+		}
+		views := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			views = append(views, map[string]any{
+				"id": item.ID, "principal_id": item.PrincipalID, "capability": item.Capability,
+				"scope": item.Scope, "data_classification": item.DataClassification,
+				"source_ip": item.SourceIP, "created_at": item.CreatedAt,
+			})
+		}
+		return map[string]any{"audits": views, "count": len(views)}, nil
+	case "query_notification_channels":
+		if principal.UserID == nil {
+			return nil, errors.New("authentication required")
+		}
+		items, err := s.store.ListNotificationChannelsByOwner(ctx, *principal.UserID)
+		if err != nil {
+			return nil, err
+		}
+		views := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			views = append(views, map[string]any{
+				"id": item.ID, "revision": item.UpdatedAt.UTC().Format(time.RFC3339Nano),
+				"name": item.Name, "type": item.Type, "enabled": item.Enabled,
+				"events_configured": strings.TrimSpace(item.Events) != "", "user_count": len(item.UserIDs),
+				"created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
+			})
+		}
+		return map[string]any{"notification_channels": views, "count": len(views)}, nil
 	case "query_audit_connection":
 		return s.mcpAuditConnectionOverview(ctx, principal, 24)
 	case "query_audit_subscription":
