@@ -109,6 +109,53 @@ type TopologyDTO struct {
 	Steps    []ProxyPathStepDTO `json:"proxy_path_steps"`
 }
 
+type SubscriptionPlanNodeDTO struct {
+	NodeType     model.AssignableNodeType `json:"node_type"`
+	NodeID       int64                    `json:"node_id"`
+	DisplayGroup string                   `json:"display_group"`
+	SourceType   model.PlanNodeSourceType `json:"source_type"`
+	SourceRuleID int64                    `json:"source_rule_id,omitempty"`
+	SortPosition *int                     `json:"sort_position,omitempty"`
+}
+
+type SubscriptionPlanDTO struct {
+	ID                int64                     `json:"id"`
+	Name              string                    `json:"name"`
+	Description       string                    `json:"description"`
+	Enabled           bool                      `json:"enabled"`
+	LockVersion       int64                     `json:"lock_version"`
+	CurrentRevisionID int64                     `json:"current_revision_id"`
+	LatestRevisionID  int64                     `json:"latest_revision_id"`
+	PendingRevisionID int64                     `json:"pending_revision_id,omitempty"`
+	SpeedLimitMbps    int                       `json:"speed_limit_mbps"`
+	TrafficLimitBytes string                    `json:"traffic_limit_bytes"`
+	TrafficResetMode  string                    `json:"traffic_reset_mode"`
+	TrafficResetDay   int                       `json:"traffic_reset_day"`
+	Nodes             []SubscriptionPlanNodeDTO `json:"nodes"`
+	CurrentNodes      []SubscriptionPlanNodeDTO `json:"current_nodes"`
+}
+
+func subscriptionPlanDTO(item model.SubscriptionPlan, latest, current []model.SubscriptionPlanNode) SubscriptionPlanDTO {
+	return SubscriptionPlanDTO{
+		ID: item.ID, Name: item.Name, Description: item.Description, Enabled: item.Enabled,
+		LockVersion: item.LockVersion, CurrentRevisionID: item.CurrentRevisionID, LatestRevisionID: item.LatestRevisionID,
+		PendingRevisionID: item.PendingRevisionID, SpeedLimitMbps: item.SpeedLimitMbps,
+		TrafficLimitBytes: formatInt64(item.TrafficLimitBytes), TrafficResetMode: item.TrafficResetMode,
+		TrafficResetDay: item.TrafficResetDay, Nodes: subscriptionPlanNodeDTOs(latest), CurrentNodes: subscriptionPlanNodeDTOs(current),
+	}
+}
+
+func subscriptionPlanNodeDTOs(items []model.SubscriptionPlanNode) []SubscriptionPlanNodeDTO {
+	out := make([]SubscriptionPlanNodeDTO, 0, len(items))
+	for _, item := range items {
+		out = append(out, SubscriptionPlanNodeDTO{
+			NodeType: item.NodeType, NodeID: item.NodeID, DisplayGroup: item.DisplayGroup,
+			SourceType: item.SourceType, SourceRuleID: item.SourceRuleID, SortPosition: item.SortPosition,
+		})
+	}
+	return out
+}
+
 func serverDTO(item model.Server) ServerDTO {
 	return ServerDTO{
 		ID: item.ID, Revision: revision(item.UpdatedAt), Name: item.Name, Status: item.Status,

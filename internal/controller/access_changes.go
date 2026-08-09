@@ -404,6 +404,7 @@ type accessChangeDraft struct {
 	prepareProjection        core.AccessProjection
 	finalizeProjection       core.AccessProjection
 	serverIDs                []int64
+	createdBy                *int64
 }
 
 func (s *Server) createAccessChange(ctx context.Context, r *http.Request, draft accessChangeDraft) (*model.AccessChange, error) {
@@ -419,8 +420,8 @@ func (s *Server) createAccessChange(ctx context.Context, r *http.Request, draft 
 	if err != nil {
 		return nil, err
 	}
-	var createdBy *int64
-	if r != nil {
+	createdBy := draft.createdBy
+	if createdBy == nil && r != nil {
 		if user := currentUser(r); user != nil {
 			createdBy = &user.ID
 		}
@@ -992,6 +993,14 @@ func (s *Server) planChangeApplyHandler(w http.ResponseWriter, r *http.Request, 
 // createPlanPublishChange builds the prepare/finalize projections for a plan
 // revision publish and creates the access change.
 func (s *Server) createPlanPublishChange(ctx context.Context, r *http.Request, plan *model.SubscriptionPlan, revisionID int64) (*model.AccessChange, error) {
+	var actorID *int64
+	if r != nil {
+		actorID = requestActorID(r)
+	}
+	return s.createPlanPublishChangeForActor(ctx, r, actorID, plan, revisionID)
+}
+
+func (s *Server) createPlanPublishChangeForActor(ctx context.Context, r *http.Request, actorID *int64, plan *model.SubscriptionPlan, revisionID int64) (*model.AccessChange, error) {
 	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
 		return nil, err
@@ -1042,6 +1051,7 @@ func (s *Server) createPlanPublishChange(ctx context.Context, r *http.Request, p
 		prepareProjection:        prepare,
 		finalizeProjection:       finalize,
 		serverIDs:                servers,
+		createdBy:                actorID,
 	})
 	if err != nil {
 		return nil, err

@@ -210,10 +210,10 @@ func (s *Server) mcpResourceGroups(principal application.Principal) []map[string
 		groups = append(groups,
 			map[string]any{"group": "identity", "uris": []string{"oboard://context/bootstrap", "oboard://auth/grant", "oboard://system/version", "oboard://system/capabilities"}},
 			map[string]any{"group": "docs", "uris": []string{"oboard://docs/guide", "oboard://docs/security", "oboard://docs/workflows", "oboard://docs/capabilities"}},
-			map[string]any{"group": "inventory", "uris": []string{"oboard://inventory/summary", "oboard://servers", "oboard://users", "oboard://topology/current", "oboard://subscriptions", "oboard://proxy-paths", "oboard://deployments"}},
+			map[string]any{"group": "inventory", "uris": []string{"oboard://inventory/summary", "oboard://servers", "oboard://users", "oboard://topology/current", "oboard://subscriptions", "oboard://subscription-plans", "oboard://proxy-paths", "oboard://deployments"}},
 			map[string]any{"group": "audit", "uris": []string{"oboard://audit/incidents"}},
 			map[string]any{"group": "automation", "uris": []string{"oboard://changesets", "oboard://workflows"}},
-			map[string]any{"group": "templates", "uris": []string{"oboard://servers/{id}", "oboard://servers/{id}/health", "oboard://subscriptions/{id}", "oboard://proxy-paths/{id}", "oboard://deployments/{id}", "oboard://audit/incidents/{id}", "oboard://changesets/{id}", "oboard://workflows/{id}", "oboard://operations/{id}", "oboard://schemas/{id}"}},
+			map[string]any{"group": "templates", "uris": []string{"oboard://servers/{id}", "oboard://servers/{id}/health", "oboard://subscriptions/{id}", "oboard://subscription-plans/{id}", "oboard://proxy-paths/{id}", "oboard://deployments/{id}", "oboard://audit/incidents/{id}", "oboard://changesets/{id}", "oboard://workflows/{id}", "oboard://operations/{id}", "oboard://schemas/{id}"}},
 		)
 	}
 	return groups

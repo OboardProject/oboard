@@ -66,7 +66,7 @@ func NewCatalog() *Catalog {
 			item.RBACPermission = item.Name
 		}
 		c.items[item.Name] = item
-		c.rbac.Register(item.Name, authorization.PermissionSpec{ReadOnly: item.ReadOnly, AdminOnly: item.AdminOnly()})
+		c.rbac.Register(item.RBACPermission, authorization.PermissionSpec{ReadOnly: item.ReadOnly, AdminOnly: item.AdminOnly()})
 	}
 	return c
 }
@@ -215,6 +215,15 @@ func defaultDescriptors() []Descriptor {
 		"subscription_suspend_reason": stringValue, "created_at": stringValue, "updated_at": stringValue,
 	})
 	inbound := closedObject(map[string]any{"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue, "protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"}, "dns_domain": stringValue, "dns_sync_enabled": boolValue, "tls": boolValue, "enabled": boolValue, "advanced_configured": boolValue})
+	planNode := closedObject(map[string]any{"node_type": stringValue, "node_id": positiveID, "display_group": stringValue, "source_type": stringValue, "source_rule_id": map[string]any{"type": "integer"}, "sort_position": nullableInteger()})
+	plan := closedObject(map[string]any{
+		"id": positiveID, "name": stringValue, "description": stringValue, "enabled": boolValue,
+		"lock_version": positiveID, "current_revision_id": positiveID, "latest_revision_id": positiveID,
+		"pending_revision_id": map[string]any{"type": "integer", "minimum": 0},
+		"speed_limit_mbps":    map[string]any{"type": "integer", "minimum": 0}, "traffic_limit_bytes": stringValue,
+		"traffic_reset_mode": stringValue, "traffic_reset_day": map[string]any{"type": "integer"},
+		"nodes": arrayOf(planNode), "current_nodes": arrayOf(planNode),
+	})
 	path := closedObject(map[string]any{"id": positiveID, "revision": stringValue, "kind": stringValue, "name": stringValue, "inbound_id": positiveID, "effective_exit_region_code": stringValue, "exit_region_status": stringValue, "enabled": boolValue})
 	step := closedObject(map[string]any{"id": positiveID, "revision": stringValue, "path_id": positiveID, "position": map[string]any{"type": "integer", "minimum": 1}, "node_type": stringValue, "transport_mode": stringValue, "processing_role": boolValue, "server_id": nullableInteger(), "inbound_id": nullableInteger(), "external_outbound_id": nullableInteger(), "advanced_configured": boolValue})
 	incident := closedObject(map[string]any{"id": stringValue, "user_id": positiveID, "status": stringValue, "classification": stringValue, "severity": stringValue, "rule_score": map[string]any{"type": "integer"}, "anomaly_score": nullableInteger(), "fingerprint": stringValue, "latest_snapshot_id": stringValue, "opened_at": stringValue, "updated_at": stringValue, "resolved_at": nullableString()})
@@ -243,6 +252,8 @@ func defaultDescriptors() []Descriptor {
 		{Name: "servers.list", Description: "列出受授权服务器", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(server)), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "servers.get", Description: "读取服务器状态与能力", InputSchema: schemaObject(map[string]any{"id": positiveID}, "id"), OutputSchema: rawSchema(server), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefFromID},
 		{Name: "users.list", Description: "列出不包含凭据的用户摘要", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(user)), RequiredScopes: []string{"users:read"}, ResourceTypes: []string{"user"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, SensitiveOutput: []string{"username", "nickname"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
+		{Name: "subscription_plans.list", Description: "列出订阅套餐及其当前版本状态", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(plan)), RequiredScopes: []string{"subscription_plans:read"}, ResourceTypes: []string{"subscription_plan"}, ResourceEvaluator: "subscription_plan_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "admin.settings", ResolveResourceRefs: noRefs},
+		{Name: "subscription_plans.get", Description: "读取订阅套餐的最新与当前节点快照", InputSchema: schemaObject(map[string]any{"id": positiveID}, "id"), OutputSchema: rawSchema(plan), RequiredScopes: []string{"subscription_plans:read"}, ResourceTypes: []string{"subscription_plan"}, ResourceEvaluator: "subscription_plan_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "admin.settings", ResolveResourceRefs: subscriptionPlanRefFromID},
 		{Name: "topology.read", Description: "读取脱敏后的当前代理拓扑", InputSchema: emptyInput, OutputSchema: schemaObject(map[string]any{"servers": arrayOf(server), "inbounds": arrayOf(inbound), "proxy_paths": arrayOf(path), "proxy_path_steps": arrayOf(step)}, "servers", "inbounds", "proxy_paths", "proxy_path_steps"), RequiredScopes: []string{"topology:read"}, ResourceTypes: []string{"server", "inbound", "proxy_path"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "audit.incidents.list", Description: "列出结构化审计事件，不返回秘密或连接载荷", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(incident)), RequiredScopes: []string{"audit:read"}, ResourceTypes: []string{"audit_incident", "user"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "audit.incidents.get", Description: "读取一个结构化审计事件", InputSchema: schemaObject(map[string]any{"id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}}, "id"), OutputSchema: rawSchema(incident), RequiredScopes: []string{"audit:read"}, ResourceTypes: []string{"audit_incident", "user"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: auditIncidentRefFromID},
@@ -277,6 +288,15 @@ func defaultDescriptors() []Descriptor {
 		input, output, evaluator := executableSchemas(domain.name)
 		descriptors = append(descriptors, Descriptor{Name: domain.name, Description: "创建受验证和审批保护的管理变更", InputSchema: input, OutputSchema: output, RequiredScopes: []string{domain.scope}, ResourceEvaluator: evaluator, RiskClass: domain.risk, ApprovalPolicy: "required", Idempotent: true, DataClassification: domain.classification, SensitiveFields: domain.sensitive, SensitiveInput: domain.sensitive, MCPEnabled: true, Executable: domain.executable, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: writeResolver(domain.name)})
 	}
+	input, output, evaluator := executableSchemas("subscription_plans.nodes.update")
+	descriptors = append(descriptors, Descriptor{
+		Name: "subscription_plans.nodes.update", Description: "新增、移除或替换订阅套餐节点，并通过访问变更流程应用",
+		InputSchema: input, OutputSchema: output, RequiredScopes: []string{"subscription_plans:write"},
+		ResourceTypes: []string{"subscription_plan", "inbound", "proxy_path", "external_outbound"}, ResourceEvaluator: evaluator,
+		RiskClass: 3, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal,
+		MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "admin.settings",
+		ResolveResourceRefs: subscriptionPlanNodesUpdateRefs,
+	})
 	for _, name := range []string{"inbounds.delete", "proxy_paths.delete", "proxy_path_steps.truncate"} {
 		input, output, evaluator := executableSchemas(name)
 		descriptors = append(descriptors, Descriptor{
@@ -324,6 +344,8 @@ func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRe
 		return serverOnboardRefs
 	case "servers.update":
 		return serverUpdateRefs
+	case "subscription_plans.nodes.update":
+		return subscriptionPlanNodesUpdateRefs
 	default:
 		return noRefs
 	}
@@ -341,6 +363,23 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		return schemaObject(map[string]any{"user_id": positiveID, "alias": map[string]any{"type": "string", "maxLength": 64}, "delete": boolValue}, "user_id"), simpleOutput(map[string]any{"user_id": positiveID, "deleted": boolValue, "subscription_custom_path": closedObject(map[string]any{"user_id": positiveID, "alias": stringValue})}), "user_ids"
 	case "subscriptions.custom_paths.set_policy":
 		return schemaObject(map[string]any{"target_type": map[string]any{"type": "string", "enum": []string{"global", "user", "group"}}, "target_id": map[string]any{"type": "integer", "minimum": 0}, "mode": stringValue}, "target_type", "mode"), simpleOutput(map[string]any{"target_type": stringValue, "target_id": map[string]any{"type": "integer"}, "mode": stringValue}), "user_ids"
+	case "subscription_plans.nodes.update":
+		node := closedObject(map[string]any{
+			"node_type": map[string]any{"type": "string", "enum": []string{"inbound", "proxy_path", "external_outbound"}},
+			"node_id":   positiveID, "display_group": map[string]any{"type": "string", "maxLength": 100},
+		}, "node_type", "node_id")
+		return schemaObject(map[string]any{
+				"plan_id": positiveID, "op": map[string]any{"type": "string", "enum": []string{"add", "remove", "replace"}},
+				"nodes":                 map[string]any{"type": "array", "maxItems": 256, "items": node},
+				"display_group":         map[string]any{"type": "string", "maxLength": 100},
+				"expected_lock_version": positiveID, "base_revision_id": positiveID,
+				"change_summary": map[string]any{"type": "string", "maxLength": 500},
+			}, "plan_id", "op", "nodes"), simpleOutput(map[string]any{
+				"plan_id": positiveID, "no_change": boolValue, "lock_version": positiveID,
+				"latest_revision_id": positiveID, "pending_revision_id": map[string]any{"type": "integer", "minimum": 0},
+				"access_change_id": map[string]any{"type": "integer", "minimum": 0}, "access_change_status": stringValue,
+				"queued_tasks": map[string]any{"type": "integer", "minimum": 0},
+			}), "subscription_plan_ids"
 	case "servers.onboard":
 		serverInput := closedObject(map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "region_code": stringValue, "ip_stack": stringValue, "listen_ip": stringValue, "listen_mode": stringValue, "entry_address": stringValue, "port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"}, "udp_inbound_mode": stringValue, "mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"}, "bbr_enabled": boolValue})
 		return schemaObject(map[string]any{"server": serverInput, "issue_enrollment_token": boolValue}, "server"), simpleOutput(map[string]any{"server": serverInput, "enrollment_expires_at": stringValue, "enrollment_token": stringValue}), "servers.allow_create"

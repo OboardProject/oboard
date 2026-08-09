@@ -429,6 +429,8 @@ func (s *Server) submitPreparedOperations(ctx context.Context, principal applica
 			kind = "server_onboarding"
 		} else if operation.Capability == "deployments.apply" {
 			kind = "deployment"
+		} else if operation.Capability == "subscription_plans.nodes.update" {
+			kind = "access_change"
 		}
 	}
 	item, err := s.automation.Create(ctx, principal, automation.CreateRequest{Reason: reason, IdempotencyKey: idempotencyKey, BaseRevisions: base, AutoApply: mode == "use_preapproval_if_available", Operations: operations})

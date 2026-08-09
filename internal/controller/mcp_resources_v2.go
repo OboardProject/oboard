@@ -43,6 +43,7 @@ func (s *Server) mcpResourceDefs() []mcpResourceDef {
 		{uri: "oboard://users", title: "Users", name: "Users", description: "Return authorization-filtered, non-credential user summaries. Sensitive identity fields must be classified and omitted unless the current RBAC permission explicitly allows them.", capability: "users.list", kind: "query"},
 		{uri: "oboard://topology/current", title: "Current Topology", name: "Current topology", description: "Return the current authorized proxy topology, revision identifiers, inbound and outbound relations, and non-secret dependency information.", capability: "topology.read", kind: "query"},
 		{uri: "oboard://subscriptions", title: "Subscriptions", name: "Subscriptions", description: "Return authorization-filtered subscription summaries and state required for planning supported subscription operations. Never includes credentials or provider secrets.", capability: "users.list", kind: "query"},
+		{uri: "oboard://subscription-plans", title: "Subscription Plans", name: "Subscription plans", description: "Return subscription plans and their current version state for planning node assignments. Never includes credentials.", capability: "subscription_plans.list", kind: "query"},
 		{uri: "oboard://proxy-paths", title: "Proxy Paths", name: "Proxy paths", description: "Return authorization-filtered proxy path summaries, revisions, related servers, and non-secret routing state.", capability: "topology.read", kind: "query"},
 		{uri: "oboard://deployments", title: "Deployments", name: "Deployments", description: "Return deployment records visible to the current grant, including status, target servers, workflow references, and non-secret result summaries.", kind: "list_deployments"},
 		{uri: "oboard://audit/incidents", title: "Audit Incidents", name: "Audit incidents", description: "Return the authorization-filtered index of structured audit incidents. Never returns raw credentials, access tokens, private keys, or secret payloads.", capability: "audit.incidents.list", kind: "query"},
@@ -77,6 +78,7 @@ func (s *Server) mcpResourceTemplateDefs() []mcpResourceDef {
 		{uri: "oboard://servers/{id}", title: "Server by ID", name: "Server by ID", description: "Return one authorized server with its current revision, status, supported capabilities, and non-secret configuration summary.", capability: "servers.get", template: true, kind: "query_id"},
 		{uri: "oboard://servers/{id}/health", title: "Server Health", name: "Server health", description: "Return one authorized server's Agent connectivity, version, build, kernel, last-seen time, and non-secret health status.", capability: "servers.get", template: true, kind: "query_health"},
 		{uri: "oboard://subscriptions/{id}", title: "Subscription by ID", name: "Subscription by ID", description: "Return one authorized subscription with its revision, state, related resources, and non-secret policy summary.", capability: "users.list", template: true, kind: "query_user"},
+		{uri: "oboard://subscription-plans/{id}", title: "Subscription Plan by ID", name: "Subscription plan by ID", description: "Return one subscription plan with its latest and current node snapshots and optimistic-lock revision.", capability: "subscription_plans.get", template: true, kind: "query_id"},
 		{uri: "oboard://proxy-paths/{id}", title: "Proxy Path by ID", name: "Proxy path by ID", description: "Return one authorized proxy path with its revision, related servers, route structure, and non-secret configuration.", capability: "topology.read", template: true, kind: "query_path"},
 		{uri: "oboard://deployments/{id}", title: "Deployment by ID", name: "Deployment by ID", description: "Return one authorized deployment with its state, target servers, Changeset and Workflow references, timestamps, and redacted result summary.", kind: "workflow", template: true},
 		{uri: "oboard://audit/incidents/{id}", title: "Audit Incident by ID", name: "Audit incident by ID", description: "Return one authorized structured audit incident with observations, classifications, timestamps, and evidence references, excluding secret material.", capability: "audit.incidents.get", template: true, kind: "query_incident"},
@@ -290,7 +292,33 @@ func (s *Server) authorizeResourceRead(ctx context.Context, capabilityName, uri 
 	if err != nil {
 		return err
 	}
-	decision := s.mcpEvaluator().Authorize(ctx, grant, s.capabilitySpec(descriptor), nil)
+	var input any
+	switch capabilityName {
+	case "servers.get":
+		id := strings.TrimSuffix(strings.TrimPrefix(uri, "oboard://servers/"), "/health")
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return errors.New("invalid server id")
+		}
+		input = map[string]any{"id": value}
+	case "subscription_plans.get":
+		id, parseErr := mcpTemplateID(uri, "oboard://subscription-plans/")
+		if parseErr != nil {
+			return parseErr
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return errors.New("invalid subscription plan id")
+		}
+		input = map[string]any{"id": value}
+	case "audit.incidents.get":
+		id, parseErr := mcpTemplateID(uri, "oboard://audit/incidents/")
+		if parseErr != nil {
+			return parseErr
+		}
+		input = map[string]any{"id": id}
+	}
+	decision := s.mcpEvaluator().Authorize(ctx, grant, s.capabilitySpec(descriptor), input)
 	if !decision.Allowed {
 		return errors.New("not authorized")
 	}
@@ -323,6 +351,12 @@ func (s *Server) queryMCPResourceTemplate(ctx context.Context, def mcpResourceDe
 			return nil, errors.New("invalid server id")
 		}
 		return s.queryMCPResource(ctx, "servers.get", json.RawMessage(`{"id":`+strconv.FormatInt(value, 10)+`}`))
+	case "subscription_plans.get":
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return nil, errors.New("invalid subscription plan id")
+		}
+		return s.queryMCPResource(ctx, "subscription_plans.get", json.RawMessage(`{"id":`+strconv.FormatInt(value, 10)+`}`))
 	case "users.list":
 		value, parseErr := strconv.ParseInt(id, 10, 64)
 		if parseErr != nil || value <= 0 {

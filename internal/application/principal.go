@@ -38,10 +38,11 @@ type ResourceSelection struct {
 }
 
 type ResourceFilter struct {
-	Servers    *ResourceSelection `json:"servers,omitempty"`
-	Users      *ResourceSelection `json:"users,omitempty"`
-	ProxyPaths *ResourceSelection `json:"proxy_paths,omitempty"`
-	Settings   *struct {
+	Servers           *ResourceSelection `json:"servers,omitempty"`
+	Users             *ResourceSelection `json:"users,omitempty"`
+	ProxyPaths        *ResourceSelection `json:"proxy_paths,omitempty"`
+	SubscriptionPlans *ResourceSelection `json:"subscription_plans,omitempty"`
+	Settings          *struct {
 		AllowedSections []string `json:"allowed_sections"`
 	} `json:"settings,omitempty"`
 	DestructiveOperations bool `json:"destructive_operations"`
@@ -75,6 +76,8 @@ func (p Principal) AllowsInt64(resource string, id int64) bool {
 		selection = canonical.Users
 	case "proxy_path_ids":
 		selection = canonical.ProxyPaths
+	case "subscription_plan_ids":
+		selection = canonical.SubscriptionPlans
 	}
 	if selection != nil {
 		switch strings.ToLower(strings.TrimSpace(selection.Mode)) {

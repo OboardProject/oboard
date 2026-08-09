@@ -187,6 +187,9 @@ func LegacyResourceFilterJSON(boundary ResourceBoundary) json.RawMessage {
 	if paths := selection("proxy_path"); paths != nil {
 		filter["proxy_paths"] = paths
 	}
+	if plans := selection("subscription_plan"); plans != nil {
+		filter["subscription_plans"] = plans
+	}
 	filter["destructive_operations"] = boundary.DestructiveOperations
 	encoded, err := json.Marshal(filter)
 	if err != nil {

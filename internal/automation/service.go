@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -412,10 +413,20 @@ func (s *Service) StartWorkflow(ctx context.Context, principal application.Princ
 		return nil, err
 	}
 	status, stepStatus, currentStep, completedAt := workflowState(changeset, request.ExternalAction, s.now().UTC())
+	nextAction := workflowNextAction(changeset, request.ExternalAction)
+	accessChangeID := int64(0)
+	if strings.TrimSpace(request.Kind) == "access_change" && changeset.Status == model.ChangesetSucceeded {
+		status, stepStatus, currentStep, completedAt, nextAction, accessChangeID, err = s.accessChangeWorkflowState(ctx, changeset, s.now().UTC())
+		if err != nil {
+			return nil, err
+		}
+	}
 	inputDigest := sha256.Sum256([]byte(changeset.ID + "\x00" + changeset.PlanHash))
 	outputDigest := sha256.Sum256(changeset.Result)
-	nextAction := workflowNextAction(changeset, request.ExternalAction)
 	affectedResources := []map[string]any{{"type": "changeset", "id": changeset.ID}}
+	if accessChangeID > 0 {
+		affectedResources = append(affectedResources, map[string]any{"type": "access_change", "id": accessChangeID})
+	}
 	if serverID := workflowExternalServerID(nextAction); serverID > 0 {
 		affectedResources = append(affectedResources, map[string]any{"type": "server", "id": serverID})
 	}
@@ -456,7 +467,7 @@ func (s *Service) synchronizeWorkflow(ctx context.Context, item *model.Automatio
 		return item, nil
 	}
 	now := s.now().UTC()
-	if item.Status == model.WorkflowExternalActionRequired || item.Status == model.WorkflowWaitingForAgent {
+	if item.Kind != "access_change" && (item.Status == model.WorkflowExternalActionRequired || item.Status == model.WorkflowWaitingForAgent) {
 		serverID := workflowExternalServerID(item.NextAction)
 		server, err := s.store.GetServer(ctx, serverID)
 		if err != nil || server.Status != model.ServerOnline {
@@ -476,6 +487,19 @@ func (s *Service) synchronizeWorkflow(ctx context.Context, item *model.Automatio
 	}
 	status, stepStatus, currentStep, completedAt := workflowState(changeset, false, now)
 	nextAction := workflowNextAction(changeset, false)
+	if item.Kind == "access_change" && changeset.Status == model.ChangesetSucceeded {
+		var accessChangeID int64
+		status, stepStatus, currentStep, completedAt, nextAction, accessChangeID, err = s.accessChangeWorkflowState(ctx, changeset, now)
+		if err != nil {
+			return nil, err
+		}
+		if accessChangeID > 0 && !workflowHasAffectedResource(item.AffectedResources, "access_change", accessChangeID) {
+			var affected []map[string]any
+			_ = json.Unmarshal(item.AffectedResources, &affected)
+			affected = append(affected, map[string]any{"type": "access_change", "id": accessChangeID})
+			item.AffectedResources = mustJSON(affected)
+		}
+	}
 	step := &item.Steps[0]
 	if item.Status == status && step.Status == stepStatus && item.CurrentStep == currentStep && string(item.NextAction) == string(nextAction) {
 		return item, nil
@@ -498,6 +522,53 @@ func (s *Service) synchronizeWorkflow(ctx context.Context, item *model.Automatio
 		return nil, err
 	}
 	return item, nil
+}
+
+func (s *Service) accessChangeWorkflowState(ctx context.Context, changeset *model.AutomationChangeset, now time.Time) (model.WorkflowStatus, string, string, *time.Time, json.RawMessage, int64, error) {
+	var result struct {
+		Operations []struct {
+			AccessChangeID int64 `json:"access_change_id"`
+		} `json:"operations"`
+	}
+	if err := json.Unmarshal(changeset.Result, &result); err != nil {
+		return "", "", "", nil, nil, 0, err
+	}
+	accessChangeID := int64(0)
+	for _, operation := range result.Operations {
+		if operation.AccessChangeID > 0 {
+			accessChangeID = operation.AccessChangeID
+			break
+		}
+	}
+	if accessChangeID == 0 {
+		return model.WorkflowSucceeded, "succeeded", "", &now, json.RawMessage(`{}`), 0, nil
+	}
+	change, err := s.store.GetAccessChange(ctx, accessChangeID)
+	if err != nil {
+		return "", "", "", nil, nil, 0, err
+	}
+	nextAction := mustJSON(map[string]any{"type": "wait", "resource_type": "access_change", "resource_id": accessChangeID, "status": change.Status})
+	switch change.Status {
+	case model.AccessChangeFinalized:
+		return model.WorkflowSucceeded, "succeeded", "", &now, json.RawMessage(`{}`), accessChangeID, nil
+	case model.AccessChangeFailed, model.AccessChangeCancelled:
+		return model.WorkflowFailed, "failed", "", &now, json.RawMessage(`{}`), accessChangeID, nil
+	default:
+		return model.WorkflowWaitingForAgent, "running", "access_change", nil, nextAction, accessChangeID, nil
+	}
+}
+
+func workflowHasAffectedResource(raw json.RawMessage, resourceType string, id int64) bool {
+	var affected []map[string]any
+	if json.Unmarshal(raw, &affected) != nil {
+		return false
+	}
+	for _, resource := range affected {
+		if fmt.Sprint(resource["type"]) == resourceType && fmt.Sprint(resource["id"]) == strconv.FormatInt(id, 10) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) RequireWorkflowExternalAction(ctx context.Context, principal application.Principal, id string, changeset *model.AutomationChangeset) (*model.AutomationWorkflow, error) {

@@ -145,6 +145,40 @@ func (s *Service) GetAuditIncident(ctx context.Context, principal Principal, id 
 	return item, nil
 }
 
+func (s *Service) ListSubscriptionPlans(ctx context.Context, principal Principal) ([]SubscriptionPlanDTO, error) {
+	items, err := s.store.ListSubscriptionPlans(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SubscriptionPlanDTO, 0, len(items))
+	for _, item := range items {
+		if !principal.AllowsInt64("subscription_plan_ids", item.ID) {
+			continue
+		}
+		out = append(out, subscriptionPlanDTO(item, nil, nil))
+	}
+	return out, nil
+}
+
+func (s *Service) GetSubscriptionPlan(ctx context.Context, principal Principal, id int64) (SubscriptionPlanDTO, error) {
+	if !principal.AllowsInt64("subscription_plan_ids", id) {
+		return SubscriptionPlanDTO{}, sql.ErrNoRows
+	}
+	item, err := s.store.GetSubscriptionPlan(ctx, id)
+	if err != nil {
+		return SubscriptionPlanDTO{}, err
+	}
+	latest, err := s.store.ListPlanRevisionNodes(ctx, item.LatestRevisionID)
+	if err != nil {
+		return SubscriptionPlanDTO{}, err
+	}
+	current, err := s.store.ListActivePlanNodes(ctx, item.ID)
+	if err != nil {
+		return SubscriptionPlanDTO{}, err
+	}
+	return subscriptionPlanDTO(*item, latest, current), nil
+}
+
 func (s *Service) Query(ctx context.Context, principal Principal, capability string, arguments json.RawMessage) (any, error) {
 	switch capability {
 	case "inventory.read":
@@ -161,6 +195,16 @@ func (s *Service) Query(ctx context.Context, principal Principal, capability str
 		return s.GetServer(ctx, principal, input.ID)
 	case "users.list":
 		return s.ListUsers(ctx, principal)
+	case "subscription_plans.list":
+		return s.ListSubscriptionPlans(ctx, principal)
+	case "subscription_plans.get":
+		var input struct {
+			ID int64 `json:"id"`
+		}
+		if err := strictUnmarshal(arguments, &input); err != nil || input.ID <= 0 {
+			return nil, errors.New("valid subscription plan id is required")
+		}
+		return s.GetSubscriptionPlan(ctx, principal, input.ID)
 	case "topology.read":
 		return s.Topology(ctx, principal)
 	case "servers.onboarding.plan":

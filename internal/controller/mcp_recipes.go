@@ -42,6 +42,7 @@ func (s *Server) mcpRecipes() []mcpRecipe {
 		{ID: "server.onboard", Version: mcpRecipeVersion, Aliases: []string{"server.onboard", "add server", "create server", "onboard server", "新增服务器", "添加服务器", "接入服务器", "新增节点服务器"}, Verbs: []string{"add", "create", "onboard", "enroll", "新增", "添加", "接入"}, Nouns: []string{"server", "agent", "服务器", "节点服务器"}, Prepare: s.prepareServerOnboardRecipe},
 		{ID: "server.manage", Version: mcpRecipeVersion, Aliases: []string{"server.manage", "update server", "server settings", "修改服务器", "服务器设置"}, Verbs: []string{"update", "change", "set", "modify", "修改", "设置", "调整", "开启", "关闭"}, Nouns: []string{"server", "服务器", "节点"}, Prepare: s.prepareServerManageRecipe},
 		{ID: "inbound.create", Version: mcpRecipeVersion, Aliases: []string{"inbound.create", "create inbound", "add inbound", "创建入口", "新增入口", "添加入口", "创建入站", "新增入站"}, Verbs: []string{"create", "add", "新增", "添加", "创建"}, Nouns: []string{"inbound", "入口", "入站"}, Prepare: s.prepareInboundCreateRecipe},
+		{ID: "subscription_plan.nodes.manage", Version: mcpRecipeVersion, Aliases: []string{"subscription_plan.nodes.manage", "plan node assignment", "套餐节点", "套餐节点分配", "订阅套餐节点"}, Verbs: []string{"add", "remove", "replace", "assign", "添加", "加入", "移除", "替换", "分配"}, Nouns: []string{"subscription plan", "plan node", "套餐", "套餐节点", "订阅套餐"}, Prepare: s.prepareSubscriptionPlanNodesRecipe},
 		{ID: "proxy_path.manage", Version: mcpRecipeVersion, Aliases: []string{"proxy_path.manage", "proxy path", "proxy chain", "代理链", "代理路径", "链路", "direct branch"}, Verbs: []string{"create", "add", "connect", "route", "创建", "增加", "连接", "经过", "通过"}, Nouns: []string{"proxy path", "chain", "branch", "代理链", "链路", "路径", "wireguard", "ssh"}, Prepare: s.prepareProxyPathRecipe},
 		{ID: "deployment.apply", Version: mcpRecipeVersion, Aliases: []string{"deployment.apply", "deploy all", "apply deployment", "部署全部", "部署所有", "下发修改", "重新应用配置"}, Verbs: []string{"deploy", "apply", "redeploy", "部署", "下发", "应用"}, Nouns: []string{"deployment", "configuration", "changes", "部署", "配置", "修改"}, Prepare: s.prepareDeploymentRecipe},
 	}
@@ -69,7 +70,15 @@ func (s *Server) matchMCPRecipe(input mcpTaskInput) (mcpRecipe, []MCPResourceRef
 		}
 	}
 	if refTypes["inbound"] || refTypes["proxy_path"] || refTypes["external_outbound"] {
+		if refTypes["subscription_plan"] || hasSubscriptionPlanParams(input.Params) || containsAnyFold(input.Goal, "套餐", "subscription plan", "plan node") {
+			recipe, _ := s.mcpRecipeByID("subscription_plan.nodes.manage")
+			return recipe, nil, true
+		}
 		recipe, _ := s.mcpRecipeByID("proxy_path.manage")
+		return recipe, nil, true
+	}
+	if refTypes["subscription_plan"] {
+		recipe, _ := s.mcpRecipeByID("subscription_plan.nodes.manage")
 		return recipe, nil, true
 	}
 	if refTypes["server"] && hasInboundCreateParams(input.Params) {
@@ -161,6 +170,15 @@ func hasServerManageParams(params map[string]any) bool {
 		"region_code", "region_mode", "port_range_start", "port_range_end", "internal_port_range_start",
 		"internal_port_range_end", "connection_audit_enabled",
 	} {
+		if _, ok := params[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSubscriptionPlanParams(params map[string]any) bool {
+	for _, key := range []string{"subscription_plan", "target_plan", "plan", "plan_id", "nodes", "display_group"} {
 		if _, ok := params[key]; ok {
 			return true
 		}
