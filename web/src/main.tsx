@@ -5209,7 +5209,7 @@ function AuditConsole({ data, client, load, loading, notify }: any) {
       <button type="button" role="tab" aria-selected={view === 'connections'} className={view === 'connections' ? 'active' : ''} onClick={() => setView('connections')}><Shield size={15} />连接风险</button>
       {isAdmin && <button type="button" role="tab" aria-selected={view === 'policy'} className={view === 'policy' ? 'active' : ''} onClick={() => setView('policy')}><Settings2 size={15} />风险策略</button>}
       {isAdmin && <button type="button" role="tab" aria-selected={view === 'settings'} className={view === 'settings' ? 'active' : ''} onClick={() => setView('settings')}><Sliders size={15} />审计设置</button>}
-      {isAdmin && <button type="button" role="tab" aria-selected={view === 'ai'} className={view === 'ai' ? 'active' : ''} onClick={() => setView('ai')}><Bot size={15} />AI 审查</button>}
+      {isAdmin && <button type="button" role="tab" aria-selected={view === 'ai'} className={view === 'ai' ? 'active' : ''} onClick={() => setView('ai')}><Bot size={15} />AI 审查 <Badge variant="secondary" style={{ fontSize: 10, padding: '1px 5px', marginLeft: 2 }}>Beta</Badge></button>}
       <button type="button" role="tab" aria-selected={view === 'operations'} className={view === 'operations' ? 'active' : ''} onClick={() => setView('operations')}><ClipboardList size={15} />操作日志</button>
     </div>
     {view === 'operations' ? <AuditLogs data={data} loading={loading} embedded /> : view === 'ai' && isAdmin ? <AIAuditReviews data={data} client={client} notify={notify} /> : view === 'policy' && isAdmin ? <AuditPolicySettings initialPolicy={subscriptionOverview?.policy || connectionOverview?.policy || data.settings?.audit_policy} auditAction={String(data.settings?.audit_action || 'restrict')} client={client} notify={notify} onSaved={savedPolicy => { setSubscriptionOverview(current => current ? { ...current, policy: savedPolicy } : current); setConnectionOverview(current => current ? { ...current, policy: savedPolicy } : current) }} /> : view === 'settings' && isAdmin ? <AuditSettingsPanel data={data} client={client} load={load} notify={notify} /> : <>
@@ -5524,8 +5524,18 @@ function AIAuditReviews({ data, client, notify }: any) {
 
   return <div className="ai-review-workspace">
     <div className="ai-review-head">
-      <div><strong>综合行为审查</strong><span>基于已保存的审计历史生成建议，不发起节点探测或自动处置。</span></div>
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <strong>综合行为审查</strong>
+          <Badge variant="secondary" style={{ fontSize: 10, padding: '1px 6px' }}>Beta</Badge>
+        </div>
+        <span>基于已保存的审计历史生成建议，不发起节点探测或自动处置。</span>
+      </div>
       <div><button type="button" className="ghost icon-button" onClick={() => void refresh()} disabled={loadingReviews} title="刷新" aria-label="刷新 AI 审查"><RefreshCw size={15} className={loadingReviews ? 'spin' : ''} /></button><button type="button" onClick={() => setCreateOpen(true)} disabled={!providers.some(aiProviderAuditReady)}><Plus size={15} />新建审查</button></div>
+    </div>
+    <div className="audit-paused-notice" style={{ background: 'var(--surface-2, rgba(0,0,0,0.02))', borderColor: 'var(--border-strong)' }}>
+      <Bot size={16} />
+      <span><strong>Beta 功能提示：</strong>部分功能正在开发中，可能不可用。</span>
     </div>
     {!providers.some(aiProviderAuditReady) && <div className="audit-paused-notice"><Bot size={16} /><span>请先配置至少一个通过 A/B 级测试的 Endpoint。</span></div>}
     {loadingReviews && !reviews.length ? <TableSkeleton /> : !reviews.length ? <div className="automation-empty"><Bot size={22} /><span>暂无 AI 审查记录</span></div> : <div className="ai-review-list">{reviews.map(review => {
@@ -5541,7 +5551,16 @@ function AIAuditReviews({ data, client, notify }: any) {
       </article>
     })}</div>}
     <AnimatePresence>{createOpen && <MotionDialogPanel onCancel={() => setCreateOpen(false)} className="ai-review-create-dialog">
-      <header className="dialog-head"><div><h2>新建 AI 审查</h2><p className="muted">指定对象、历史时间与审查维度。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => setCreateOpen(false)} aria-label="关闭" title="关闭"><XIcon /></button></header>
+      <header className="dialog-head">
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <h2>新建 AI 审查</h2>
+            <Badge variant="secondary" style={{ fontSize: 10, padding: '1px 6px' }}>Beta</Badge>
+          </div>
+          <p className="muted">指定对象、历史时间与审查维度。（部分功能正在开发中，可能不可用）</p>
+        </div>
+        <button type="button" className="ghost dialog-close icon-button" onClick={() => setCreateOpen(false)} aria-label="关闭" title="关闭"><XIcon /></button>
+      </header>
       <div className="dialog-body"><form id="ai-review-create-form" className="form ai-review-create-form" onSubmit={createReview}>
         <FormField label="AI Provider" required><Select value={draft.providerID} onChange={event => setDraft({ ...draft, providerID: event.target.value })}>{providers.filter(aiProviderAuditReady).map(item => <option key={item.id} value={item.id}>{item.name} · {item.default_model}</option>)}</Select>{selectedProvider?.allow_raw_audit && <small className="ai-review-privacy-warning">该 Provider 已获授权发送原始审计字段</small>}</FormField>
         <div className="ai-review-scope-grid">
