@@ -269,7 +269,7 @@ func (s *Server) prepareInboundCreateRecipe(ctx context.Context, principal appli
 			values[key] = value
 		}
 	}
-	copyTaskParams(values, input.Params, map[string]string{
+	copyTaskParams(values, input.Params, map[string]string{ // #nosec G101 -- this map contains parameter names only; credential values come from validated task input.
 		"name": "name", "inbound.name": "name", "protocol": "protocol", "inbound.protocol": "protocol",
 		"port": "port", "inbound.port": "port", "listen_ip": "listen_ip", "inbound.listen_ip": "listen_ip",
 		"entry_ip_mode": "entry_ip_mode", "external_ip": "external_ip", "dns_sync_enabled": "dns_sync_enabled",
