@@ -2116,11 +2116,8 @@ func TestProxyPathBranchSourceClearsWhenSourceStepIsDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored, err = s.GetProxyPath(ctx, direct.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stored.BranchSourceStepID != nil {
-		t.Fatalf("branch source survived deleted step: %#v", stored)
+	if err == nil {
+		t.Fatalf("expected direct branch to be deleted when step is deleted, but found: %#v", stored)
 	}
 }
 

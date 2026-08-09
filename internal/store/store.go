@@ -1298,8 +1298,8 @@ func (s *Store) SetSettings(ctx context.Context, values map[string]string) error
 	return tx.Commit()
 }
 
-// VACUUM INTO produces a transactionally consistent standalone SQLite
-// snapshot and avoids copying live WAL/SHM sidecars.
+// Backup writes a transactionally consistent standalone SQLite snapshot and
+// avoids copying live WAL/SHM sidecars.
 func (s *Store) Backup(ctx context.Context, destination string) error {
 	destination = strings.TrimSpace(destination)
 	if destination == "" {
@@ -3197,9 +3197,98 @@ func (s *Store) ListProxyPaths(ctx context.Context) ([]model.ProxyPath, error) {
 	return out, rows.Err()
 }
 
+func cascadeDeleteProxyPathBranchesTx(ctx context.Context, tx *sql.Tx, deletedStepIDs []int64, deletedPathIDs []int64) error {
+	stepSet := make(map[int64]bool)
+	for _, sid := range deletedStepIDs {
+		if sid > 0 {
+			stepSet[sid] = true
+		}
+	}
+	pathSet := make(map[int64]bool)
+	for _, pid := range deletedPathIDs {
+		if pid > 0 {
+			pathSet[pid] = true
+		}
+	}
+
+	for len(stepSet) > 0 {
+		var currentStepIDs []int64
+		for sid := range stepSet {
+			currentStepIDs = append(currentStepIDs, sid)
+		}
+		stepSet = make(map[int64]bool)
+
+		for _, sid := range currentStepIDs {
+			rows, err := tx.QueryContext(ctx, `select id from proxy_paths where branch_source_step_id=?`, sid)
+			if err != nil {
+				continue
+			}
+			for rows.Next() {
+				var childID int64
+				if err := rows.Scan(&childID); err == nil && !pathSet[childID] {
+					pathSet[childID] = true
+					sRows, err := tx.QueryContext(ctx, `select id from proxy_path_steps where path_id=?`, childID)
+					if err == nil {
+						for sRows.Next() {
+							var csid int64
+							if err := sRows.Scan(&csid); err == nil {
+								stepSet[csid] = true
+							}
+						}
+						_ = sRows.Close()
+					}
+				}
+			}
+			_ = rows.Close()
+		}
+	}
+
+	for childID := range pathSet {
+		if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id=?`, childID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `delete from proxy_paths where id=?`, childID); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `delete from proxy_paths where kind='direct' and (branch_source_step_id is null or branch_source_step_id not in (select id from proxy_path_steps))`); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (s *Store) ClearProxyPathBranchSourcesFromPosition(ctx context.Context, pathID int64, position int) error {
-	_, err := s.db.ExecContext(ctx, `update proxy_paths set branch_source_step_id=null,updated_at=? where branch_source_step_id in (select id from proxy_path_steps where path_id=? and position>=?)`, now(), pathID, position)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `select id from proxy_path_steps where path_id=? and position>=?`, pathID, position)
+	if err != nil {
+		return err
+	}
+	var stepIDs []int64
+	for rows.Next() {
+		var sid int64
+		if err := rows.Scan(&sid); err == nil {
+			stepIDs = append(stepIDs, sid)
+		}
+	}
+	_ = rows.Close()
+
+	if len(stepIDs) > 0 {
+		if err := cascadeDeleteProxyPathBranchesTx(ctx, tx, stepIDs, nil); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `update proxy_paths set branch_source_step_id=null,updated_at=? where branch_source_step_id in (select id from proxy_path_steps where path_id=? and position>=?)`, now(), pathID, position); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ClearProxyPathBranchSource(ctx context.Context, pathID int64) error {
@@ -3250,11 +3339,37 @@ func (s *Store) GetProxyPath(ctx context.Context, id int64) (*model.ProxyPath, e
 }
 
 func (s *Store) DeleteProxyPath(ctx context.Context, id int64) error {
-	if _, err := s.db.ExecContext(ctx, `delete from proxy_path_steps where path_id=?`, id); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `delete from proxy_paths where id=?`, id)
-	return err
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `select id from proxy_path_steps where path_id=?`, id)
+	if err != nil {
+		return err
+	}
+	var deletedStepIDs []int64
+	for rows.Next() {
+		var sid int64
+		if err := rows.Scan(&sid); err == nil {
+			deletedStepIDs = append(deletedStepIDs, sid)
+		}
+	}
+	_ = rows.Close()
+
+	if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `delete from proxy_paths where id=?`, id); err != nil {
+		return err
+	}
+
+	if err := cascadeDeleteProxyPathBranchesTx(ctx, tx, deletedStepIDs, []int64{id}); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // ListProxyPathPortAllocations returns every persisted generated-listener port.
@@ -3335,6 +3450,19 @@ func truncateProxyPathStepsTx(ctx context.Context, tx *sql.Tx, matchQuery string
 	if err := rows.Close(); err != nil {
 		return err
 	}
+	var deletedStepIDs []int64
+	for _, item := range cuts {
+		sRows, err := tx.QueryContext(ctx, `select id from proxy_path_steps where path_id=? and position>=?`, item.pathID, item.position)
+		if err == nil {
+			for sRows.Next() {
+				var sid int64
+				if err := sRows.Scan(&sid); err == nil {
+					deletedStepIDs = append(deletedStepIDs, sid)
+				}
+			}
+			_ = sRows.Close()
+		}
+	}
 	for _, item := range cuts {
 		if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id=? and position>=?`, item.pathID, item.position); err != nil {
 			return err
@@ -3344,6 +3472,9 @@ func truncateProxyPathStepsTx(ctx context.Context, tx *sql.Tx, matchQuery string
 		if _, err := tx.ExecContext(ctx, `delete from proxy_paths where id=? and not exists (select 1 from proxy_path_steps s where s.path_id=proxy_paths.id)`, item.pathID); err != nil {
 			return err
 		}
+	}
+	if err := cascadeDeleteProxyPathBranchesTx(ctx, tx, deletedStepIDs, nil); err != nil {
+		return err
 	}
 	return nil
 }
@@ -3430,8 +3561,34 @@ func (s *Store) PruneOrphanedProxyPathSteps(ctx context.Context) error {
 // steps after removing an earlier edge would silently reconnect a different
 // topology than the operator selected.
 func (s *Store) DeleteProxyPathStepsFromPosition(ctx context.Context, pathID int64, position int) error {
-	_, err := s.db.ExecContext(ctx, `delete from proxy_path_steps where path_id=? and position>=?`, pathID, position)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `select id from proxy_path_steps where path_id=? and position>=?`, pathID, position)
+	if err != nil {
+		return err
+	}
+	var deletedStepIDs []int64
+	for rows.Next() {
+		var sid int64
+		if err := rows.Scan(&sid); err == nil {
+			deletedStepIDs = append(deletedStepIDs, sid)
+		}
+	}
+	_ = rows.Close()
+
+	if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id=? and position>=?`, pathID, position); err != nil {
+		return err
+	}
+
+	if err := cascadeDeleteProxyPathBranchesTx(ctx, tx, deletedStepIDs, nil); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (s *Store) CreateProxyPathStep(ctx context.Context, v *model.ProxyPathStep) error {

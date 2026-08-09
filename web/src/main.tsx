@@ -131,6 +131,7 @@ import {
 } from './dns-bulk'
 import { NodeAssignmentsPage } from './pages/NodeAssignmentsPage'
 import { UserPlanDialog } from './pages/UserPlanDialog'
+import { UserDashboardPage, type UserDashboardOverview } from './pages/UserDashboardPage'
 
 const appBasePath = (() => {
   const href = document.querySelector('base')?.getAttribute('href') || '/'
@@ -731,7 +732,7 @@ const navGroups = [
 
 const roleRanks: Record<Role, number> = { none: -1, viewer: 0, operator: 1, admin: 2 }
 const tabMinimumRole: Record<string, Role> = {
-  account: 'none', dashboard: 'operator', tasks: 'operator', audit: 'operator',
+	account: 'none', dashboard: 'none', tasks: 'operator', audit: 'operator',
   servers: 'operator', 'proxy-paths': 'operator',
   users: 'admin', subscriptions: 'viewer', notifications: 'viewer', automation: 'admin', settings: 'admin',
   nodes: 'operator',
@@ -739,13 +740,14 @@ const tabMinimumRole: Record<string, Role> = {
 }
 
 const preloadTabsByRole: Record<Role, string[]> = {
-  none: ['account'],
-  viewer: ['subscriptions', 'account', 'notifications'],
+	none: ['dashboard', 'account'],
+	viewer: ['dashboard', 'subscriptions', 'account', 'notifications'],
   operator: ['subscriptions', 'servers', 'proxy-paths', 'tasks', 'audit', 'mtu'],
   admin: ['servers', 'proxy-paths', 'users', 'nodes', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
 }
 
 const realtimeResourcePages: Record<string, string[]> = {
+	user_overview: ['dashboard'],
   account: ['account'],
   notifications: ['notifications'],
   subscriptions: ['subscriptions', 'account'],
@@ -1783,7 +1785,7 @@ function App() {
 
   useEffect(() => {
     if (token && sessionUser && !tabAllowedForRole(tab, sessionUser.role)) {
-      navigateTab(sessionUser.role === 'viewer' || sessionUser.role === 'none' ? 'account' : 'dashboard')
+      navigateTab('dashboard')
     }
   }, [token, sessionUser?.role, tab])
 
@@ -2454,7 +2456,12 @@ $ _`}</pre>
 
 function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange) {
   if (tab === 'account') return <AccountPage data={data} client={client} load={load} notify={notify} />
-  if (tab === 'dashboard') return <Dashboard data={data} loading={loading} displayName={sessionUser?.nickname || data.current_user?.nickname || sessionUser?.username || data.current_user?.username || 'Admin'} attention={dashboardAttention} dismissAttention={dismissDashboardAttention} />
+  if (tab === 'dashboard') {
+    const displayName = sessionUser?.nickname || data.current_user?.nickname || sessionUser?.username || data.current_user?.username || '用户'
+    return roleRanks[sessionUser?.role || 'viewer'] >= roleRanks.operator
+      ? <Dashboard data={data} loading={loading} displayName={displayName} attention={dashboardAttention} dismissAttention={dismissDashboardAttention} />
+      : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} displayName={displayName} loading={loading} />
+  }
   if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={realtimeStatus} />
   if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} apply={apply} loading={loading} topbarTarget={proxyPathTopbarTarget} />
   if (tab === 'inbounds') return <Inbounds data={data} client={client} load={load} />
@@ -11052,7 +11059,11 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
 	      nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, pathIDs: sharedPathIDs, sourceOptions: graphServerSourceOptions([], pathSources), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : pathDisplayName(canonicalPath.id)}`} pathHandles={pathSources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
     })
   })
-  const directPaths = visiblePaths.filter(path => path.kind === 'direct')
+  const directPaths = visiblePaths.filter(path => {
+    if (path.kind !== 'direct') return false
+    if (!path.branch_source_step_id) return false
+    return Boolean(stepByID.get(path.branch_source_step_id))
+  })
   directPaths.forEach((path, index) => {
     const root = inboundByID.get(path.inbound_id)
     if (!root) return
