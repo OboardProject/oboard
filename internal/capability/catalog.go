@@ -559,6 +559,20 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"config_json":           map[string]any{"type": "string", "maxLength": 65536},
 			"enabled":               boolValue,
 		}
+		// Guidance for the most common protocol shapes so clients do not need
+		// to reverse-engineer the preset contracts:
+		//   vless Reality: config_json must carry
+		//     {"flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"<sni>",
+		//      "reality":{"enabled":true,"handshake":{"server":"<sni>","server_port":443}}}}
+		//     with certificate_mode="external" and tls=false (Reality provides
+		//     its own TLS); the Controller generates the Reality keypair on
+		//     save. When config_json is omitted the Controller applies the
+		//     panel's default preset for the protocol.
+		//   hysteria2/anytls: config_json must include "tls":{"enabled":true}
+		//     and the certificate is bound through certificate_id/mode.
+		//   shadowsocks 2022: method + password (generated when omitted).
+		//   mieru: transport/multiplexing defaults are filled automatically.
+		inboundGuidance := "vless reality requires config_json.tls.reality + certificate_mode=external + tls=false; hysteria2/anytls require config_json.tls.enabled=true with a bound certificate; omitted config_json applies the protocol default preset"
 		inboundOutput := closedObject(map[string]any{
 			"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
 			"protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"},
@@ -568,10 +582,12 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		})
 		if name == "inbounds.create" {
 			inboundFields := closedObject(inboundProperties, "server_id", "name", "protocol", "port")
-			return schemaObject(map[string]any{"inbound": inboundFields}, "inbound"), simpleOutput(map[string]any{"inbound": inboundOutput, "requires_deployment": boolValue}), "server_ids"
+			input := schemaObject(map[string]any{"inbound": inboundFields}, "inbound")
+			return withSchemaDescription(input, inboundGuidance), simpleOutput(map[string]any{"inbound": inboundOutput, "requires_deployment": boolValue}), "server_ids"
 		}
 		inboundFields := closedObject(inboundProperties)
-		return schemaObject(map[string]any{"inbound_id": positiveID, "changes": inboundFields}, "inbound_id", "changes"), simpleOutput(map[string]any{"inbound": inboundOutput, "requires_deployment": boolValue}), "server_ids"
+		input := schemaObject(map[string]any{"inbound_id": positiveID, "changes": inboundFields}, "inbound_id", "changes")
+		return withSchemaDescription(input, inboundGuidance), simpleOutput(map[string]any{"inbound": inboundOutput, "requires_deployment": boolValue}), "server_ids"
 	case "topology.reuse_inbound":
 		source := closedObject(map[string]any{"inbound_id": positiveID, "step_id": positiveID})
 		return schemaObject(map[string]any{"sources": map[string]any{"type": "array", "minItems": 1, "maxItems": 64, "items": source}, "target_server_id": positiveID, "target_kind": stringValue, "target_inbound_id": positiveID, "chain_protocol": stringValue, "chain_method": stringValue, "reality_handshake_server": stringValue, "reality_handshake_port": map[string]any{"type": "integer"}, "transport_mode": stringValue, "tunnel_type": stringValue, "ssh_port": map[string]any{"type": "integer"}, "persistent_keepalive": map[string]any{"type": "integer"}, "copy_mode": stringValue, "branch_path_id": positiveID}, "sources", "target_server_id", "target_kind"), simpleOutput(map[string]any{"result_path_count": map[string]any{"type": "integer"}, "affected_server_ids": idArray(0, 100), "requires_deployment": boolValue}), "server_ids"
@@ -662,6 +678,21 @@ func idArray(min, max int) map[string]any {
 
 func nullableString() map[string]any  { return map[string]any{"type": []string{"string", "null"}} }
 func nullableInteger() map[string]any { return map[string]any{"type": []string{"integer", "null"}} }
+
+// withSchemaDescription attaches a JSON Schema description without turning it
+// into an input property.
+func withSchemaDescription(schema json.RawMessage, description string) json.RawMessage {
+	var root map[string]any
+	if err := json.Unmarshal(schema, &root); err != nil {
+		return schema
+	}
+	root["description"] = description
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		return schema
+	}
+	return encoded
+}
 
 func suggestedChangesetSchema() map[string]any {
 	return closedObject(map[string]any{

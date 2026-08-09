@@ -521,7 +521,11 @@ func (s *Service) synchronizeWorkflow(ctx context.Context, item *model.Automatio
 	}
 	item.Status, item.CurrentStep, item.NextAction, item.CompletedAt = status, currentStep, nextAction, completedAt
 	if status == model.WorkflowFailed {
-		item.ErrorCode = "changeset_" + string(changeset.Status)
+		if item.Kind == "access_change" && accessChangeID > 0 {
+			item.ErrorCode = "access_change_failed"
+		} else {
+			item.ErrorCode = "changeset_" + string(changeset.Status)
+		}
 		if item.Kind == "access_change" && accessChangeID > 0 {
 			if change, getErr := s.store.GetAccessChange(ctx, accessChangeID); getErr == nil && strings.TrimSpace(change.Error) != "" {
 				item.ErrorMessage = change.Error
@@ -650,20 +654,46 @@ func (s *Service) RetryWorkflowStep(ctx context.Context, principal application.P
 		if !step.Retryable || step.Status != "failed" {
 			return nil, errors.New("workflow step is not retryable")
 		}
-		step.Attempt++
-		step.Status, step.ErrorCode, step.Retryable = "queued", "", false
-		now := s.now().UTC()
-		step.StartedAt, step.FinishedAt = &now, nil
-		if err := s.store.UpdateAutomationWorkflowStep(ctx, step); err != nil {
-			return nil, err
-		}
-		item.Status, item.CurrentStep, item.CompletedAt = model.WorkflowQueued, step.Name, nil
-		if err := s.store.UpdateAutomationWorkflow(ctx, item); err != nil {
-			return nil, err
-		}
-		return item, nil
+		return s.resetWorkflowStep(ctx, item, step)
 	}
 	return nil, sql.ErrNoRows
+}
+
+// ResetWorkflowForRetry re-queues a failed workflow step without the
+// retryable precondition. It is reserved for the Controller's durable retry
+// flows (access_change releases), which are always retryable at the durable
+// level even when the step flag predates the retryable marking.
+func (s *Service) ResetWorkflowForRetry(ctx context.Context, principal application.Principal, workflowID, stepID string) (*model.AutomationWorkflow, error) {
+	item, err := s.GetWorkflow(ctx, principal, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	for index := range item.Steps {
+		step := &item.Steps[index]
+		if step.ID != strings.TrimSpace(stepID) {
+			continue
+		}
+		if step.Status != "failed" {
+			return nil, errors.New("workflow step is not failed")
+		}
+		return s.resetWorkflowStep(ctx, item, step)
+	}
+	return nil, sql.ErrNoRows
+}
+
+func (s *Service) resetWorkflowStep(ctx context.Context, item *model.AutomationWorkflow, step *model.AutomationWorkflowStep) (*model.AutomationWorkflow, error) {
+	step.Attempt++
+	step.Status, step.ErrorCode, step.Retryable = "queued", "", false
+	now := s.now().UTC()
+	step.StartedAt, step.FinishedAt = &now, nil
+	if err := s.store.UpdateAutomationWorkflowStep(ctx, step); err != nil {
+		return nil, err
+	}
+	item.Status, item.CurrentStep, item.CompletedAt = model.WorkflowQueued, step.Name, nil
+	if err := s.store.UpdateAutomationWorkflow(ctx, item); err != nil {
+		return nil, err
+	}
+	return item, nil
 }
 
 func workflowState(changeset *model.AutomationChangeset, externalAction bool, now time.Time) (model.WorkflowStatus, string, string, *time.Time) {

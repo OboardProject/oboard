@@ -1970,6 +1970,19 @@ func (s *Store) UpdateServer(ctx context.Context, v *model.Server) error {
 	return s.updateServerTelemetrySettingsWithTransition(ctx, v)
 }
 
+// UpdateServerRuntimeState persists Agent health-report state without touching
+// updated_at, so periodic heartbeats never churn the routing-topology revision
+// that MCP plan/validate/submit operations depend on. Only administrative
+// edits (UpdateServer) advance updated_at.
+func (s *Store) UpdateServerRuntimeState(ctx context.Context, v *model.Server) error {
+	_, err := s.db.ExecContext(ctx, `update servers set status=?, os=?, distro_id=?, distro_version=?, distro_name=?, libc=?, service_manager=?, package_manager=?, arch=?, kernel=?, cpu=?, memory_bytes=?, cpu_usage_percent=?, memory_used_bytes=?, memory_total_bytes=?, agent_memory_bytes=?, disk_bytes=?, agent_version=?, agent_build=?, sing_box_version=?, public_ipv4=?, public_ipv6=?, interface_ipv6=?, detected_region_code=?, last_seen_at=? where id=?`,
+		v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.DetectedRegionCode, nilTime(v.LastSeenAt), v.ID)
+	if err != nil {
+		return err
+	}
+	return s.updateServerTelemetrySettingsWithTransition(ctx, v)
+}
+
 // SetServerEnrollmentHash stores or clears a one-time enrollment hash.
 // Pass an empty hash to clear (unlike UpdateServer, which cannot clear via "").
 // expiresAt is required when setting a hash; cleared tokens also clear expiry.
@@ -2528,7 +2541,10 @@ func (s *Store) UpsertHealthTransition(ctx context.Context, report model.HealthR
 	server.AgentBuild = report.AgentBuild
 	server.SingBoxVersion = report.SingBoxVersion
 	server.LastSeenAt = &n
-	if err := s.UpdateServer(ctx, server); err != nil {
+	// Health reports must not churn updated_at (which drives the
+	// routing-topology revision used by MCP plan/validate/submit); only
+	// administrative server edits do.
+	if err := s.UpdateServerRuntimeState(ctx, server); err != nil {
 		return old, server.Status, err
 	}
 	return old, server.Status, s.UpdateServerTelemetryReport(ctx, server.ID, report, window)
@@ -2633,7 +2649,9 @@ func (s *Store) MarkStaleServersOfflineEffective(ctx context.Context, now time.T
 	marked := []model.Server{}
 	ts := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, item := range stale {
-		res, err := tx.ExecContext(ctx, `update servers set status='offline', updated_at=? where id=? and status in ('online','degraded','unknown')`, ts, item.server.ID)
+		// A status transition is runtime state, not topology content: it must
+		// not churn servers.updated_at (the routing-topology revision source).
+		res, err := tx.ExecContext(ctx, `update servers set status='offline', last_seen_at=? where id=? and status in ('online','degraded','unknown')`, ts, item.server.ID)
 		if err != nil {
 			return nil, err
 		}

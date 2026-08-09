@@ -72,6 +72,7 @@ func (s *Server) mcpResourceDefs() []mcpResourceDef {
 		{uri: "oboard://audit/risk-overview", title: "Audit Risk Overview", name: "Audit risk overview", description: "Return the combined connection and subscription risk overview.", capability: "audit.risk_overview", kind: "query_audit_risk"},
 		{uri: "oboard://audit/logs", title: "Audit Logs", name: "Audit logs", description: "Return the audit operation log (who did what, when, from where).", capability: "audit.logs.list", kind: "query_audit_logs"},
 		{uri: "oboard://audit/ai-reviews", title: "AI Audit Reviews", name: "AI audit reviews", description: "Return AI audit review jobs with status and progress.", capability: "audit.ai_reviews.list", kind: "query_ai_reviews"},
+		{uri: "oboard://access-changes", title: "Access Changes", name: "Access changes", description: "Return 套餐发布 (access change) records with status, error text, and timeline. Use this to diagnose failed releases before retrying.", capability: "access_changes.list", kind: "query_access_changes"},
 		{uri: "oboard://changesets", title: "Changesets", name: "Changesets", description: "Return Changesets owned by the current OAuth grant. Visibility into Changesets owned by other principals requires explicit RBAC permission and must be audited.", kind: "list_changesets"},
 		{uri: "oboard://workflows", title: "Workflows", name: "Workflows", description: "Return persistent Workflows owned by the current OAuth grant, including state, next action, affected resources, approval state, and digest-only step summaries.", kind: "list_workflows"},
 	}
@@ -107,6 +108,7 @@ func (s *Server) mcpResourceTemplateDefs() []mcpResourceDef {
 		{uri: "oboard://servers/{id}/dns-policy", title: "Server DNS Policy by ID", name: "Server DNS policy by ID", description: "Return one authorized server's DNS policy with list bindings and last check state.", capability: "servers.dns_policy.get", template: true, kind: "query_server_dns_policy"},
 		{uri: "oboard://dns-zones/{id}/records", title: "DNS Records by Zone", name: "DNS records by zone", description: "Return the live DNS records of one authorized zone by querying the provider.", capability: "dns_records.list", template: true, kind: "query_dns_records"},
 		{uri: "oboard://agent-tasks/{id}", title: "Agent Task by ID", name: "Agent task by ID", description: "Return one sanitized Agent task with status, type, timestamps, and a redacted result summary.", capability: "agent_tasks.get", template: true, kind: "query_agent_task"},
+		{uri: "oboard://access-changes/{id}", title: "Access Change by ID", name: "Access change by ID", description: "Return one 套餐发布 (access change) with status, error text, and timeline for diagnosing failed releases.", capability: "access_changes.get", template: true, kind: "query_access_change"},
 		{uri: "oboard://subscriptions/{id}", title: "Subscription by ID", name: "Subscription by ID", description: "Return one authorized subscription with its revision, state, related resources, and non-secret policy summary.", capability: "users.list", template: true, kind: "query_user"},
 		{uri: "oboard://subscription-plans/{id}", title: "Subscription Plan by ID", name: "Subscription plan by ID", description: "Return one subscription plan with its latest and current node snapshots and optimistic-lock revision.", capability: "subscription_plans.get", template: true, kind: "query_id"},
 		{uri: "oboard://proxy-paths/{id}", title: "Proxy Path by ID", name: "Proxy path by ID", description: "Return one authorized proxy path with its revision, related servers, route structure, and non-secret configuration.", capability: "topology.read", template: true, kind: "query_path"},
@@ -357,6 +359,18 @@ func (s *Server) readMCPResource(ctx context.Context, principal application.Prin
 		return s.mcpAuditLogs(ctx, principal, 100)
 	case "query_ai_reviews":
 		return s.mcpAuditAIReviews(ctx, principal, 50)
+	case "query_access_changes":
+		return s.listAccessChangesMCP(ctx, principal, 0, 0)
+	case "query_access_change":
+		id, err := mcpTemplateID(uri, "oboard://access-changes/")
+		if err != nil {
+			return nil, err
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return nil, errors.New("invalid access change id")
+		}
+		return s.listAccessChangesMCP(ctx, principal, value, 1)
 	case "query_audit_connection_user":
 		id, err := mcpTemplateID(uri, "oboard://audit/users/")
 		if err != nil {
@@ -551,6 +565,40 @@ func (s *Server) listAgentTasksMCP(ctx context.Context, principal application.Pr
 	}
 	return map[string]any{"tasks": views, "count": len(views)}, nil
 }
+// listAccessChangesMCP returns access-change (套餐发布) records with their
+// durable failure text so MCP clients can diagnose a failed release before
+// deciding to retry it.
+func (s *Server) listAccessChangesMCP(ctx context.Context, principal application.Principal, id, limit int64) (any, error) {
+	var items []model.AccessChange
+	if id > 0 {
+		change, err := s.store.GetAccessChange(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		items = []model.AccessChange{*change}
+	} else {
+		all, err := s.store.ListAccessChanges(ctx, int(limit))
+		if err != nil {
+			return nil, err
+		}
+		items = all
+	}
+	views := make([]map[string]any, 0, len(items))
+	for _, change := range items {
+		views = append(views, map[string]any{
+			"id": change.ID, "change_type": change.ChangeType, "source_plan_id": change.SourcePlanID,
+			"candidate_revision_id": change.CandidateRevisionID,
+			"expected_active_revision_id": change.ExpectedActiveRevisionID,
+			"status": change.Status, "affected_user_count": change.AffectedUserCount,
+			"activate_at": change.ActivateAt, "error": change.Error,
+			"created_by": change.CreatedBy, "created_at": change.CreatedAt,
+			"activated_at": change.ActivatedAt, "finalized_at": change.FinalizedAt, "failed_at": change.FailedAt,
+			"retryable": change.Status == model.AccessChangeFailed,
+		})
+	}
+	return map[string]any{"access_changes": views, "count": len(views)}, nil
+}
+
 func workflowResourceView(item *model.AutomationWorkflow) map[string]any {
 	steps := make([]map[string]any, 0, len(item.Steps))
 	for _, step := range item.Steps {

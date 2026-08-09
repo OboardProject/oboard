@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/authorization"
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/capability"
 	"github.com/OboardProject/oboard/internal/mcpauth"
@@ -126,13 +128,39 @@ func (s *Server) addMCPGetCapabilitySchemaTool(server *mcp.Server, principal app
 		if !known || !descriptor.MCPEnabled {
 			return mcpPlainFailureResult("", "capability is not available to this grant"), nil, nil
 		}
-		decision := s.authorizeCapability(ctx, descriptor, nil)
+		// Schema queries must not resolve resource references from input
+		// (there is no input yet); only the grant access level and the shared
+		// RBAC permission gate the schema itself.
+		decision := s.authorizeCapabilitySchema(ctx, descriptor)
 		if !decision.Allowed {
 			return mcpFailureResult(decision, ""), nil, nil
 		}
 		s.recordToolCall(ctx, principal, "capabilities.schema", input, "succeeded", capability.DataInternal)
 		return &mcp.CallToolResult{}, newToolEnvelope("succeeded", "", mcpCapabilityView(descriptor)), nil
 	})
+}
+
+// authorizeCapabilitySchema gates schema discovery by grant liveness, the
+// grant access level, and the shared RBAC permission — without resolving
+// resource references from operation input.
+func (s *Server) authorizeCapabilitySchema(ctx context.Context, descriptor capability.Descriptor) mcpauth.AuthorizationDecision {
+	grant, err := mcpGrantPrincipal(ctx)
+	if err != nil {
+		return mcpauth.DenyDecision(mcpauth.CodeInvalidToken, "authenticated OAuth grant is required", false)
+	}
+	if grant.Grant.RevokedAt != nil {
+		return mcpauth.DenyDecision(mcpauth.CodeGrantRevoked, "the OAuth grant has been revoked", false)
+	}
+	if grant.Grant.ExpiresAt != nil && time.Now().After(*grant.Grant.ExpiresAt) {
+		return mcpauth.DenyDecision(mcpauth.CodeExpired, "the OAuth grant has expired", false)
+	}
+	if !grant.Grant.AccessLevel.Allows(descriptor.MinimumAccess) {
+		return mcpauth.DenyScope(descriptor.MinimumAccess)
+	}
+	if !s.capabilities.RBAC().Allows(grant.Role, descriptor.RBACPermission) {
+		return mcpauth.DenyRole(descriptor.RBACPermission)
+	}
+	return mcpauth.AllowDecision(authorization.ApprovalRequired, descriptor.RiskClass)
 }
 
 func (s *Server) authorizeCapability(ctx context.Context, descriptor capability.Descriptor, input any) mcpauth.AuthorizationDecision {
@@ -341,7 +369,9 @@ func (s *Server) validatePlanRevisions(ctx context.Context, principal applicatio
 	}
 	return map[string]any{
 		"valid":                 validated.Valid,
-		"validation_digest":     validated.PlanHash,
+		"validation_digest":     mcpPlanDigest(plan.CapabilityID, plan.Operations, plan.ExpectedRevisions),
+		"plan_hash":             validated.PlanHash,
+		"digest_hint":           "pass validation_digest to oboard_submit_changeset together with the exact validated_plan object returned here",
 		"normalized_operations": len(validated.Evidence),
 		"revision_conflicts":    conflicts,
 		"policy_violations":     []string{},
@@ -676,14 +706,18 @@ func (s *Server) addMCPRetryWorkflowStepTool(server *mcp.Server, principal appli
 			phase, queued, retryErr := s.retryAccessChange(ctx, changeID)
 			if retryErr != nil {
 				if strings.Contains(strings.ToLower(retryErr.Error()), "only failed access changes") {
-					return mcpPlainFailureResult("", "套餐发布不在可重试状态：仅失败状态的套餐发布可以重试（可能已被取消或已完成）"), nil, nil
+					return mcpPlainFailureResult("", "套餐发布不在可重试状态：仅失败状态的套餐发布可以重试（可能已被取消或已完成）。可读取 oboard://access-changes/"+strconv.FormatInt(changeID, 10)+" 查看当前状态"), nil, nil
 				}
 				return mcpPlainFailureResult("", "套餐发布重试失败："+retryErr.Error()), nil, nil
 			}
-			// Reset the workflow step to queued so the next status read
-			// synchronizes it to waiting_for_agent while the worker resumes.
-			if _, retryErr := s.automation.RetryWorkflowStep(ctx, principal, workflowID, stepID); retryErr != nil {
-				return mcpPlainFailureResult("", "套餐发布已恢复，但工作流步骤状态重置失败，请重新读取工作流"), nil, nil
+			// Re-queue the workflow step without relying on the persisted
+			// retryable flag (releases are always durable-retryable), so the
+			// next status read synchronizes it to waiting_for_agent while the
+			// worker resumes.
+			if _, retryErr := s.automation.ResetWorkflowForRetry(ctx, principal, workflowID, stepID); retryErr != nil {
+				if _, retryErr = s.automation.RetryWorkflowStep(ctx, principal, workflowID, stepID); retryErr != nil {
+					return mcpPlainFailureResult("", "套餐发布已恢复，但工作流步骤状态重置失败，请重新读取工作流"), nil, nil
+				}
 			}
 			refreshed, _ := s.automation.GetWorkflow(ctx, principal, workflowID)
 			if refreshed == nil {

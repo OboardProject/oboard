@@ -116,3 +116,26 @@ func TestDefaultCatalogExposesExecutableInboundManagement(t *testing.T) {
 		}
 	}
 }
+
+// TestInboundSchemaCarriesProtocolGuidance verifies the inbounds.create schema
+// is self-describing (per-protocol config_json guidance) and never exposes a
+// fake input property.
+func TestInboundSchemaCarriesProtocolGuidance(t *testing.T) {
+	catalog := NewCatalog()
+	descriptor, ok := catalog.Get("inbounds.create")
+	if !ok {
+		t.Fatal("inbounds.create missing")
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(descriptor.InputSchema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	description, _ := schema["description"].(string)
+	if !strings.Contains(description, "certificate_mode=external") || !strings.Contains(description, "tls.reality") {
+		t.Fatalf("inbounds.create schema lacks protocol guidance: %q", description)
+	}
+	raw := string(descriptor.InputSchema)
+	if strings.Contains(raw, "_guidance") {
+		t.Fatalf("inbounds.create schema leaked an internal guidance property: %s", raw)
+	}
+}

@@ -155,7 +155,17 @@ func (s *Service) ListSubscriptionPlans(ctx context.Context, principal Principal
 		if !principal.AllowsInt64("subscription_plan_ids", item.ID) {
 			continue
 		}
-		out = append(out, subscriptionPlanDTO(item, nil, nil))
+		// The list view carries the node sets so MCP clients can verify that
+		// planned nodes actually entered the plan (and which set is live).
+		latest, err := s.store.ListPlanRevisionNodes(ctx, item.LatestRevisionID)
+		if err != nil {
+			return nil, err
+		}
+		current, err := s.store.ListActivePlanNodes(ctx, item.ID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, subscriptionPlanDTO(item, latest, current))
 	}
 	return out, nil
 }

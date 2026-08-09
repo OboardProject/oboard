@@ -403,6 +403,18 @@ func (s *Server) prepareInboundCreateRecipe(ctx context.Context, principal appli
 	if _, exists := values["config_json"]; !exists {
 		values["config_json"] = defaultInboundPresetConfig(protocol)
 	}
+	if _, exists := values["certificate_mode"]; !exists {
+		// VLESS Reality carries its own TLS and must use an external
+		// certificate mode; a managed certificate would require a valid SNI
+		// domain and blocks Reality creation. Match the panel's vless-reality
+		// preset (tls=false, certificate_mode=external).
+		if protocol == "vless" {
+			values["certificate_mode"] = "external"
+			if _, exists := values["tls"]; !exists {
+				values["tls"] = false
+			}
+		}
+	}
 	if _, exists := values["enabled"]; !exists {
 		values["enabled"] = true
 	}
