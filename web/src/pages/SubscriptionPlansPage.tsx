@@ -774,7 +774,11 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                                     方案自定义
                                   </Badge>
                                 )}
-                                <Badge variant={n.source_type === 'rule' ? 'outline' : 'secondary'} style={{ fontSize: 10, padding: '1px 6px' }}>{n.source_type === 'rule' ? `规则 #${n.source_rule_id || ''}` : '手动加入'}</Badge>
+                                {n.source_type === 'rule' && (
+                                  <Badge variant="outline" style={{ fontSize: 10, padding: '1px 6px' }}>
+                                    规则 #{n.source_rule_id || ''}
+                                  </Badge>
+                                )}
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
                                 <span style={{ fontFamily: 'var(--font-mono)' }}>{key}</span>
