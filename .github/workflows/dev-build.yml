@@ -16,6 +16,7 @@ jobs:
   build:
     name: Build development artifacts
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -51,9 +52,18 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.agent-token.outputs.token }}
         run: |
-          commit=$(gh api repos/OboardProject/oboard-agent/commits/main --jq .sha)
+          commit=""
+          for attempt in 1 2 3; do
+            if commit=$(gh api repos/OboardProject/oboard-agent/commits/main --jq .sha) && [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+              break
+            fi
+            commit=""
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 5))
+            fi
+          done
           if [[ ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Unable to resolve the Agent main commit" >&2
+            echo "Unable to resolve the Agent main commit after 3 attempts" >&2
             exit 1
           fi
           echo "commit=$commit" >> "$GITHUB_OUTPUT"

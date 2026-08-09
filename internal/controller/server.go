@@ -221,7 +221,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/me/devices/", s.auth(s.selfUserDevices, model.RoleViewer))
 	mux.HandleFunc("/api/v1/page-data", s.auth(s.pageData, model.RoleNone))
 	mux.HandleFunc("/api/v1/events", s.auth(s.uiEvents, model.RoleNone))
-	mux.HandleFunc("/api/v1/dashboard/summary", s.auth(s.dashboard, model.RoleViewer))
+	mux.HandleFunc("/api/v1/dashboard/summary", s.auth(s.dashboard, model.RoleOperator))
 	mux.HandleFunc("/api/v1/settings/base-path/retry", s.auth(s.settingsBasePathRetry, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/settings", s.auth(s.settings, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update", s.auth(s.controllerUpdate, model.RoleAdmin))
@@ -1695,6 +1695,19 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch page {
 	case "dashboard":
+		if !roleAllows(role, model.RoleOperator) {
+			user := currentUser(r)
+			if user == nil {
+				err = errors.New("invalid session")
+				break
+			}
+			var overview userDashboardOverview
+			overview, err = s.userDashboardOverview(ctx, *user)
+			if err == nil {
+				out["user_overview"] = overview
+			}
+			break
+		}
 		if err = require(model.RoleOperator); err == nil {
 			s.checkOffline(ctx)
 			s.expireTimedOutTasks(ctx)
@@ -10257,7 +10270,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	if auditState.Enabled && auditState.Subscription {
 		s.notifySubscriptionAuditRisk(r.Context(), *user, decision)
-		s.publishRealtime("audit", "subscriptions", "users")
+		s.publishRealtime("audit", "subscriptions", "users", "user_overview")
 	}
 	if decision.RateLimited {
 		if auditState.Enabled && auditState.Subscription {

@@ -21,6 +21,10 @@ import (
 
 func TestRealtimeBrokerFiltersAndCoalescesResources(t *testing.T) {
 	broker := newRealtimeBroker()
+	unassigned, _, ok := broker.subscribe(model.RoleNone)
+	if !ok {
+		t.Fatal("unassigned user subscription failed")
+	}
 	viewer, _, ok := broker.subscribe(model.RoleViewer)
 	if !ok {
 		t.Fatal("viewer subscription failed")
@@ -30,6 +34,17 @@ func TestRealtimeBrokerFiltersAndCoalescesResources(t *testing.T) {
 	case <-viewer.wake:
 		t.Fatal("viewer was notified about an administrator resource")
 	default:
+	}
+	broker.publish("user_overview")
+	<-unassigned.wake
+	selfEvent, ok := unassigned.drain()
+	if !ok || !slices.Equal(selfEvent.Resources, []string{"user_overview"}) {
+		t.Fatalf("unassigned user event = %#v", selfEvent)
+	}
+	<-viewer.wake
+	viewerSelfEvent, ok := viewer.drain()
+	if !ok || !slices.Equal(viewerSelfEvent.Resources, []string{"user_overview"}) {
+		t.Fatalf("viewer self event = %#v", viewerSelfEvent)
 	}
 	broker.publish("subscriptions", "account", "subscriptions")
 	<-viewer.wake
@@ -140,7 +155,7 @@ func TestRealtimeResourcesForTaskAreScoped(t *testing.T) {
 		taskType string
 		want     []string
 	}{
-		{name: "deployment", taskType: model.AgentTaskTypeApplyDeployment, want: []string{"deployments", "probes", "servers", "subscriptions", "tasks", "topology"}},
+		{name: "deployment", taskType: model.AgentTaskTypeApplyDeployment, want: []string{"deployments", "probes", "servers", "subscriptions", "tasks", "topology", "user_overview"}},
 		{name: "dns", taskType: model.AgentTaskTypeBenchmarkDNS, want: []string{"dns", "probes", "servers", "tasks"}},
 		{name: "mtu", taskType: model.AgentTaskTypeDetectMTU, want: []string{"mtu", "servers", "tasks"}},
 		{name: "port forward probe", taskType: model.AgentTaskTypeProbePortForwards, want: []string{"port_forwards", "probes", "tasks"}},
@@ -162,7 +177,8 @@ func TestRealtimeRequestResourcesKeepRuntimeEventsNarrow(t *testing.T) {
 		want []string
 	}{
 		{path: "/api/v2/ui/servers/1", want: []string{"servers", "topology", "subscriptions"}},
-		{path: "/api/v1/agent/traffic-reports", want: []string{"traffic"}},
+		{path: "/api/v2/ui/proxy-paths/1", want: []string{"topology", "subscriptions", "servers", "deployments", "user_overview"}},
+		{path: "/api/v1/agent/traffic-reports", want: []string{"traffic", "user_overview"}},
 		{path: "/api/v1/agent/task-results", want: nil},
 	}
 	for _, tt := range tests {

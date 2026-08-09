@@ -303,7 +303,7 @@ func (s *Server) applyConnectionAuditDeviceAction(ctx context.Context, connectio
 		changed = true
 	}
 	if changed {
-		s.publishRealtime("audit", "users", "deployment")
+		s.publishRealtime("audit", "users", "deployment", "user_overview")
 	}
 }
 

@@ -105,7 +105,7 @@ func TestRegistrationAuthorizationFlow(t *testing.T) {
 	request(t, h, "GET", "/api/v2/ui/me", userToken, nil, 200)
 	request(t, h, "GET", "/api/v2/ui/me/authentication", userToken, nil, 200)
 	request(t, h, "GET", "/api/v2/ui/page-data?page=account", userToken, nil, 200)
-	request(t, h, "GET", "/api/v2/ui/page-data?page=dashboard", userToken, nil, 403)
+	request(t, h, "GET", "/api/v2/ui/page-data?page=dashboard", userToken, nil, 200)
 	request(t, h, "GET", "/api/v2/ui/page-data?page=users", userToken, nil, 403)
 	request(t, h, "GET", "/api/v2/ui/users", userToken, nil, 403)
 	request(t, h, "GET", "/api/v2/ui/settings", userToken, nil, 403)

@@ -526,7 +526,11 @@ func TestPageDataIncludesMinimalCurrentUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=dashboard", token, nil, http.StatusForbidden)
+	dashboard := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=dashboard", token, nil, http.StatusOK)
+	if _, ok := dashboard["user_overview"].(map[string]any); !ok {
+		t.Fatalf("viewer dashboard overview missing: %#v", dashboard)
+	}
+	request(t, h, http.MethodGet, "/api/v2/ui/dashboard/summary", token, nil, http.StatusForbidden)
 	request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=plans", token, nil, http.StatusForbidden)
 	request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans", token, nil, http.StatusForbidden)
 	page := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=account", token, nil, http.StatusOK)

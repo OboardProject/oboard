@@ -2108,6 +2108,10 @@ func TestProxyPathBranchSourceClearsWhenSourceStepIsDeleted(t *testing.T) {
 	if err := s.CreateProxyPath(ctx, direct); err != nil {
 		t.Fatal(err)
 	}
+	standalone := &model.ProxyPath{Kind: model.ProxyPathKindDirect, InboundID: inboundID, Secret: "standalone", Enabled: true}
+	if err := s.CreateProxyPath(ctx, standalone); err != nil {
+		t.Fatal(err)
+	}
 	stored, err := s.GetProxyPath(ctx, direct.ID)
 	if err != nil || stored.BranchSourceStepID == nil || *stored.BranchSourceStepID != sourceStepID {
 		t.Fatalf("stored direct branch=%#v err=%v", stored, err)
@@ -2118,6 +2122,10 @@ func TestProxyPathBranchSourceClearsWhenSourceStepIsDeleted(t *testing.T) {
 	stored, err = s.GetProxyPath(ctx, direct.ID)
 	if err == nil {
 		t.Fatalf("expected direct branch to be deleted when step is deleted, but found: %#v", stored)
+	}
+	stored, err = s.GetProxyPath(ctx, standalone.ID)
+	if err != nil || stored.Kind != model.ProxyPathKindDirect || stored.BranchSourceStepID != nil {
+		t.Fatalf("standalone direct path was affected by branch cleanup: %#v err=%v", stored, err)
 	}
 }
 

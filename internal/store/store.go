@@ -3197,49 +3197,67 @@ func (s *Store) ListProxyPaths(ctx context.Context) ([]model.ProxyPath, error) {
 	return out, rows.Err()
 }
 
+func queryInt64sTx(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, errors.Join(err, rows.Close())
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.Join(err, rows.Close())
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 func cascadeDeleteProxyPathBranchesTx(ctx context.Context, tx *sql.Tx, deletedStepIDs []int64, deletedPathIDs []int64) error {
-	stepSet := make(map[int64]bool)
+	stepSet := make(map[int64]struct{})
 	for _, sid := range deletedStepIDs {
 		if sid > 0 {
-			stepSet[sid] = true
+			stepSet[sid] = struct{}{}
 		}
 	}
-	pathSet := make(map[int64]bool)
+	pathSet := make(map[int64]struct{})
 	for _, pid := range deletedPathIDs {
 		if pid > 0 {
-			pathSet[pid] = true
+			pathSet[pid] = struct{}{}
 		}
 	}
 
 	for len(stepSet) > 0 {
-		var currentStepIDs []int64
+		currentStepIDs := make([]int64, 0, len(stepSet))
 		for sid := range stepSet {
 			currentStepIDs = append(currentStepIDs, sid)
 		}
-		stepSet = make(map[int64]bool)
+		stepSet = make(map[int64]struct{})
 
 		for _, sid := range currentStepIDs {
-			rows, err := tx.QueryContext(ctx, `select id from proxy_paths where branch_source_step_id=?`, sid)
+			childIDs, err := queryInt64sTx(ctx, tx, `select id from proxy_paths where branch_source_step_id=?`, sid)
 			if err != nil {
-				continue
+				return err
 			}
-			for rows.Next() {
-				var childID int64
-				if err := rows.Scan(&childID); err == nil && !pathSet[childID] {
-					pathSet[childID] = true
-					sRows, err := tx.QueryContext(ctx, `select id from proxy_path_steps where path_id=?`, childID)
-					if err == nil {
-						for sRows.Next() {
-							var csid int64
-							if err := sRows.Scan(&csid); err == nil {
-								stepSet[csid] = true
-							}
-						}
-						_ = sRows.Close()
-					}
+			for _, childID := range childIDs {
+				if _, seen := pathSet[childID]; seen {
+					continue
+				}
+				pathSet[childID] = struct{}{}
+				childStepIDs, err := queryInt64sTx(ctx, tx, `select id from proxy_path_steps where path_id=?`, childID)
+				if err != nil {
+					return err
+				}
+				for _, childStepID := range childStepIDs {
+					stepSet[childStepID] = struct{}{}
 				}
 			}
-			_ = rows.Close()
 		}
 	}
 
@@ -3252,10 +3270,6 @@ func cascadeDeleteProxyPathBranchesTx(ctx context.Context, tx *sql.Tx, deletedSt
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, `delete from proxy_paths where kind='direct' and (branch_source_step_id is null or branch_source_step_id not in (select id from proxy_path_steps))`); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -3266,18 +3280,10 @@ func (s *Store) ClearProxyPathBranchSourcesFromPosition(ctx context.Context, pat
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.QueryContext(ctx, `select id from proxy_path_steps where path_id=? and position>=?`, pathID, position)
+	stepIDs, err := queryInt64sTx(ctx, tx, `select id from proxy_path_steps where path_id=? and position>=?`, pathID, position)
 	if err != nil {
 		return err
 	}
-	var stepIDs []int64
-	for rows.Next() {
-		var sid int64
-		if err := rows.Scan(&sid); err == nil {
-			stepIDs = append(stepIDs, sid)
-		}
-	}
-	_ = rows.Close()
 
 	if len(stepIDs) > 0 {
 		if err := cascadeDeleteProxyPathBranchesTx(ctx, tx, stepIDs, nil); err != nil {
@@ -3345,23 +3351,8 @@ func (s *Store) DeleteProxyPath(ctx context.Context, id int64) error {
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.QueryContext(ctx, `select id from proxy_path_steps where path_id=?`, id)
+	deletedStepIDs, err := queryInt64sTx(ctx, tx, `select id from proxy_path_steps where path_id=?`, id)
 	if err != nil {
-		return err
-	}
-	var deletedStepIDs []int64
-	for rows.Next() {
-		var sid int64
-		if err := rows.Scan(&sid); err == nil {
-			deletedStepIDs = append(deletedStepIDs, sid)
-		}
-	}
-	_ = rows.Close()
-
-	if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id=?`, id); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `delete from proxy_paths where id=?`, id); err != nil {
 		return err
 	}
 
@@ -3452,16 +3443,14 @@ func truncateProxyPathStepsTx(ctx context.Context, tx *sql.Tx, matchQuery string
 	}
 	var deletedStepIDs []int64
 	for _, item := range cuts {
-		sRows, err := tx.QueryContext(ctx, `select id from proxy_path_steps where path_id=? and position>=?`, item.pathID, item.position)
-		if err == nil {
-			for sRows.Next() {
-				var sid int64
-				if err := sRows.Scan(&sid); err == nil {
-					deletedStepIDs = append(deletedStepIDs, sid)
-				}
-			}
-			_ = sRows.Close()
+		stepIDs, err := queryInt64sTx(ctx, tx, `select id from proxy_path_steps where path_id=? and position>=?`, item.pathID, item.position)
+		if err != nil {
+			return err
 		}
+		deletedStepIDs = append(deletedStepIDs, stepIDs...)
+	}
+	if err := cascadeDeleteProxyPathBranchesTx(ctx, tx, deletedStepIDs, nil); err != nil {
+		return err
 	}
 	for _, item := range cuts {
 		if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id=? and position>=?`, item.pathID, item.position); err != nil {
@@ -3473,9 +3462,6 @@ func truncateProxyPathStepsTx(ctx context.Context, tx *sql.Tx, matchQuery string
 			return err
 		}
 	}
-	if err := cascadeDeleteProxyPathBranchesTx(ctx, tx, deletedStepIDs, nil); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -3486,10 +3472,15 @@ func (s *Store) DeleteProxyPathsForInbound(ctx context.Context, inboundID int64)
 	}
 	defer tx.Rollback()
 	// A path rooted at this inbound loses its entry point entirely.
-	if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id in (select id from proxy_paths where inbound_id=?)`, inboundID); err != nil {
+	rootPathIDs, err := queryInt64sTx(ctx, tx, `select id from proxy_paths where inbound_id=?`, inboundID)
+	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `delete from proxy_paths where inbound_id=?`, inboundID); err != nil {
+	rootStepIDs, err := queryInt64sTx(ctx, tx, `select s.id from proxy_path_steps s join proxy_paths p on p.id=s.path_id where p.inbound_id=?`, inboundID)
+	if err != nil {
+		return err
+	}
+	if err := cascadeDeleteProxyPathBranchesTx(ctx, tx, rootStepIDs, rootPathIDs); err != nil {
 		return err
 	}
 	// A path that only traverses this inbound as a hop is cut at that hop.
@@ -3567,24 +3558,16 @@ func (s *Store) DeleteProxyPathStepsFromPosition(ctx context.Context, pathID int
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.QueryContext(ctx, `select id from proxy_path_steps where path_id=? and position>=?`, pathID, position)
+	deletedStepIDs, err := queryInt64sTx(ctx, tx, `select id from proxy_path_steps where path_id=? and position>=?`, pathID, position)
 	if err != nil {
-		return err
-	}
-	var deletedStepIDs []int64
-	for rows.Next() {
-		var sid int64
-		if err := rows.Scan(&sid); err == nil {
-			deletedStepIDs = append(deletedStepIDs, sid)
-		}
-	}
-	_ = rows.Close()
-
-	if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id=? and position>=?`, pathID, position); err != nil {
 		return err
 	}
 
 	if err := cascadeDeleteProxyPathBranchesTx(ctx, tx, deletedStepIDs, nil); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id=? and position>=?`, pathID, position); err != nil {
 		return err
 	}
 

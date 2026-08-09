@@ -202,7 +202,7 @@ func (s *Server) recordRejectedSubscriptionPull(r *http.Request, userID int64, f
 		add = s.store.AddRejectedCustomSubscriptionPullAudit
 	}
 	if add(r.Context(), token, event) == nil {
-		s.publishRealtime("audit", "subscriptions")
+		s.publishRealtime("audit", "subscriptions", "user_overview")
 		s.maybeNotifySubscriptionAbnormal(r.Context(), userID)
 	}
 }

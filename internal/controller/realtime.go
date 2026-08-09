@@ -189,6 +189,8 @@ func normalizeRealtimeResources(resources []string) []string {
 
 func realtimeResourceRole(resource string) model.Role {
 	switch resource {
+	case "user_overview":
+		return model.RoleNone
 	case "all", "account", "notifications", "subscriptions", "traffic":
 		return model.RoleViewer
 	case "servers", "server_runtime", "server_metrics", "tasks", "deployments", "probes", "topology", "audit", "mtu", "port_forwards", "tunnels":
@@ -208,7 +210,7 @@ func realtimeResourcesForTask(taskType string) []string {
 	resources := []string{"tasks"}
 	switch taskType {
 	case model.AgentTaskTypeApplyDeployment:
-		resources = append(resources, "deployments", "servers", "topology", "probes", "subscriptions")
+		resources = append(resources, "deployments", "servers", "topology", "probes", "subscriptions", "user_overview")
 	case model.AgentTaskTypeApplyCoreConfig:
 		resources = append(resources, "deployments", "servers", "dns")
 	case model.AgentTaskTypeUpdateAgent:
@@ -398,9 +400,9 @@ func realtimeResourcesForRequest(path string) []string {
 	case "deployments":
 		return []string{"tasks", "deployments"}
 	case "traffic-reports":
-		return []string{"traffic"}
+		return []string{"traffic", "user_overview"}
 	case "connection-reports":
-		return []string{"audit"}
+		return []string{"audit", "user_overview"}
 	case "dns-benchmarks", "dns-lists":
 		return []string{"dns", "servers", "tasks", "probes"}
 	case "mtu-detections":
@@ -408,11 +410,11 @@ func realtimeResourcesForRequest(path string) []string {
 	case "port-forward-probes", "inbound-probes":
 		return []string{"probes", "port_forwards", "topology", "tasks"}
 	case "users", "user-groups", "user-group-members":
-		return []string{"users", "subscriptions", "account", "topology"}
+		return []string{"users", "subscriptions", "account", "topology", "user_overview"}
 	case "subscriptions":
-		return []string{"subscriptions", "account"}
+		return []string{"subscriptions", "account", "user_overview"}
 	case "inbounds", "outbounds", "routing-rules", "external-outbounds", "proxy-paths", "proxy-path-steps", "warp-profiles":
-		return []string{"topology", "subscriptions", "servers", "deployments"}
+		return []string{"topology", "subscriptions", "servers", "deployments", "user_overview"}
 	case "port-forwards":
 		return []string{"port_forwards", "topology", "deployments"}
 	case "tunnels":
@@ -422,7 +424,7 @@ func realtimeResourcesForRequest(path string) []string {
 	case "notification-channels", "notification-announcements":
 		return []string{"notifications"}
 	case "settings", "controller-update":
-		return []string{"settings", "controller_update", "servers"}
+		return []string{"settings", "controller_update", "servers", "user_overview"}
 	case "backups":
 		return []string{"backups", "settings"}
 	case "changesets":
@@ -430,7 +432,7 @@ func realtimeResourcesForRequest(path string) []string {
 	case "api-principals", "oauth-clients", "ai", "approval-policies", "tool-audits":
 		return []string{"automation"}
 	case "auth", "me":
-		return []string{"account"}
+		return []string{"account", "user_overview"}
 	default:
 		return []string{"all"}
 	}
