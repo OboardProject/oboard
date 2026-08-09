@@ -5788,20 +5788,20 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   display: grid;
   gap: 12px;
   padding: 14px;
+  max-width: 320px;
+  width: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-2);
 }
-.controller-update-schedule-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.controller-update-schedule-head > span { min-width: 0; display: grid; gap: 3px; }
-.controller-update-schedule-head strong { color: var(--text-strong); font-size: 14px; }
-.controller-update-schedule-head small { color: var(--muted); line-height: 1.45; }
+.controller-update-schedule-head { display: flex; align-items: center; gap: 8px; }
+.controller-update-schedule-label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.controller-update-schedule-label strong { color: var(--text-strong); font-size: 14px; }
 .controller-update-interval {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
-  max-width: 320px;
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;
