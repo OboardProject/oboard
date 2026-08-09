@@ -51,12 +51,18 @@ func (s *Server) mcpResourceDefs() []mcpResourceDef {
 		{uri: "oboard://dns-credentials", title: "DNS Credentials", name: "DNS credentials", description: "Return DNS provider credential metadata and bound zones. Never includes provider secrets or tokens.", capability: "dns_credentials.list", kind: "query"},
 		{uri: "oboard://port-forwards", title: "Port Forwards", name: "Port forwards", description: "Return all port forward rules with probe and backend state.", capability: "port_forwards.list", kind: "query"},
 		{uri: "oboard://tunnels", title: "Tunnels", name: "Tunnels", description: "Return all WireGuard / SSH inter-server tunnels.", capability: "tunnels.list", kind: "query"},
+		{uri: "oboard://agent-tasks", title: "Agent Tasks", name: "Agent tasks", description: "Return sanitized Agent tasks (deployments, probes, diagnostics, log jobs). Never includes payloads or results that contain secrets.", capability: "agent_tasks.list", kind: "query_agent_tasks"},
 		{uri: "oboard://topology/current", title: "Current Topology", name: "Current topology", description: "Return the current authorized proxy topology, revision identifiers, inbound and outbound relations, and non-secret dependency information.", capability: "topology.read", kind: "query"},
 		{uri: "oboard://subscriptions", title: "Subscriptions", name: "Subscriptions", description: "Return authorization-filtered subscription summaries and state required for planning supported subscription operations. Never includes credentials or provider secrets.", capability: "users.list", kind: "query"},
 		{uri: "oboard://subscription-plans", title: "Subscription Plans", name: "Subscription plans", description: "Return subscription plans and their current version state for planning node assignments. Never includes credentials.", capability: "subscription_plans.list", kind: "query"},
 		{uri: "oboard://proxy-paths", title: "Proxy Paths", name: "Proxy paths", description: "Return authorization-filtered proxy path summaries, revisions, related servers, and non-secret routing state.", capability: "topology.read", kind: "query"},
 		{uri: "oboard://deployments", title: "Deployments", name: "Deployments", description: "Return deployment records visible to the current grant, including status, target servers, workflow references, and non-secret result summaries.", kind: "list_deployments"},
 		{uri: "oboard://audit/incidents", title: "Audit Incidents", name: "Audit incidents", description: "Return the authorization-filtered index of structured audit incidents. Never returns raw credentials, access tokens, private keys, or secret payloads.", capability: "audit.incidents.list", kind: "query"},
+		{uri: "oboard://audit/connection", title: "Connection Audit", name: "Connection audit", description: "Return the connection audit overview with source, region, risk, and device dimensions.", capability: "audit.connection.overview", kind: "query_audit_connection"},
+		{uri: "oboard://audit/subscriptions", title: "Subscription Audit", name: "Subscription audit", description: "Return the subscription audit overview with pull, route, and risk dimensions.", capability: "audit.subscription.overview", kind: "query_audit_subscription"},
+		{uri: "oboard://audit/risk-overview", title: "Audit Risk Overview", name: "Audit risk overview", description: "Return the combined connection and subscription risk overview.", capability: "audit.risk_overview", kind: "query_audit_risk"},
+		{uri: "oboard://audit/logs", title: "Audit Logs", name: "Audit logs", description: "Return the audit operation log (who did what, when, from where).", capability: "audit.logs.list", kind: "query_audit_logs"},
+		{uri: "oboard://audit/ai-reviews", title: "AI Audit Reviews", name: "AI audit reviews", description: "Return AI audit review jobs with status and progress.", capability: "audit.ai_reviews.list", kind: "query_ai_reviews"},
 		{uri: "oboard://changesets", title: "Changesets", name: "Changesets", description: "Return Changesets owned by the current OAuth grant. Visibility into Changesets owned by other principals requires explicit RBAC permission and must be audited.", kind: "list_changesets"},
 		{uri: "oboard://workflows", title: "Workflows", name: "Workflows", description: "Return persistent Workflows owned by the current OAuth grant, including state, next action, affected resources, approval state, and digest-only step summaries.", kind: "list_workflows"},
 	}
@@ -91,11 +97,14 @@ func (s *Server) mcpResourceTemplateDefs() []mcpResourceDef {
 		{uri: "oboard://users/{id}/devices", title: "User Devices by ID", name: "User devices by ID", description: "Return one authorized user's registered devices with status, proxy access state, and last activity. Never includes device tokens.", capability: "user_devices.list", template: true, kind: "query_user_devices"},
 		{uri: "oboard://servers/{id}/dns-policy", title: "Server DNS Policy by ID", name: "Server DNS policy by ID", description: "Return one authorized server's DNS policy with list bindings and last check state.", capability: "servers.dns_policy.get", template: true, kind: "query_server_dns_policy"},
 		{uri: "oboard://dns-zones/{id}/records", title: "DNS Records by Zone", name: "DNS records by zone", description: "Return the live DNS records of one authorized zone by querying the provider.", capability: "dns_records.list", template: true, kind: "query_dns_records"},
+		{uri: "oboard://agent-tasks/{id}", title: "Agent Task by ID", name: "Agent task by ID", description: "Return one sanitized Agent task with status, type, timestamps, and a redacted result summary.", capability: "agent_tasks.get", template: true, kind: "query_agent_task"},
 		{uri: "oboard://subscriptions/{id}", title: "Subscription by ID", name: "Subscription by ID", description: "Return one authorized subscription with its revision, state, related resources, and non-secret policy summary.", capability: "users.list", template: true, kind: "query_user"},
 		{uri: "oboard://subscription-plans/{id}", title: "Subscription Plan by ID", name: "Subscription plan by ID", description: "Return one subscription plan with its latest and current node snapshots and optimistic-lock revision.", capability: "subscription_plans.get", template: true, kind: "query_id"},
 		{uri: "oboard://proxy-paths/{id}", title: "Proxy Path by ID", name: "Proxy path by ID", description: "Return one authorized proxy path with its revision, related servers, route structure, and non-secret configuration.", capability: "topology.read", template: true, kind: "query_path"},
 		{uri: "oboard://deployments/{id}", title: "Deployment by ID", name: "Deployment by ID", description: "Return one authorized deployment with its state, target servers, Changeset and Workflow references, timestamps, and redacted result summary.", kind: "workflow", template: true},
 		{uri: "oboard://audit/incidents/{id}", title: "Audit Incident by ID", name: "Audit incident by ID", description: "Return one authorized structured audit incident with observations, classifications, timestamps, and evidence references, excluding secret material.", capability: "audit.incidents.get", template: true, kind: "query_incident"},
+		{uri: "oboard://audit/users/{id}", title: "Connection Audit User by ID", name: "Connection audit user by ID", description: "Return one user's connection audit detail: sources, destinations, outbounds, recent reports, and risk events.", capability: "audit.connection.user", template: true, kind: "query_audit_connection_user"},
+		{uri: "oboard://audit/subscriptions/users/{id}", title: "Subscription Audit User by ID", name: "Subscription audit user by ID", description: "Return one user's subscription audit detail: sources, clients, formats, recent pulls, and access state.", capability: "audit.subscription.user", template: true, kind: "query_audit_subscription_user"},
 		{uri: "oboard://changesets/{id}", title: "Changeset by ID", name: "Changeset by ID", description: "Return one authorized Changeset, including validation state, blast radius, operations, expected revisions, approvals, and redacted results.", kind: "changeset", template: true},
 		{uri: "oboard://workflows/{id}", title: "Workflow by ID", name: "Workflow by ID", description: "Return one authorized persistent Workflow with state, next action, affected resources, correlation ID, approvals, external actions, and digest-only step data.", kind: "workflow", template: true},
 		{uri: "oboard://operations/{id}", title: "Operation by ID", name: "Operation by ID", description: "Return one authorized Changeset operation with capability ID, risk class, resource references, expected revisions, status, and redacted result.", kind: "operation", template: true},
@@ -207,6 +216,48 @@ func (s *Server) readMCPResource(ctx context.Context, principal application.Prin
 			return nil, errors.New("invalid dns zone id")
 		}
 		return s.listDNSZoneRecords(ctx, principal, value)
+	case "query_agent_tasks":
+		return s.listAgentTasksMCP(ctx, principal, 0, 0)
+	case "query_agent_task":
+		id, err := mcpTemplateID(uri, "oboard://agent-tasks/")
+		if err != nil {
+			return nil, err
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return nil, errors.New("invalid task id")
+		}
+		return s.listAgentTasksMCP(ctx, principal, value, 1)
+	case "query_audit_connection":
+		return s.mcpAuditConnectionOverview(ctx, principal, 24)
+	case "query_audit_subscription":
+		return s.mcpAuditSubscriptionOverview(ctx, principal, 24)
+	case "query_audit_risk":
+		return s.mcpAuditRiskOverview(ctx, principal, 24)
+	case "query_audit_logs":
+		return s.mcpAuditLogs(ctx, principal, 100)
+	case "query_ai_reviews":
+		return s.mcpAuditAIReviews(ctx, principal, 50)
+	case "query_audit_connection_user":
+		id, err := mcpTemplateID(uri, "oboard://audit/users/")
+		if err != nil {
+			return nil, err
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return nil, errors.New("invalid user id")
+		}
+		return s.mcpAuditConnectionUser(ctx, principal, value, 24)
+	case "query_audit_subscription_user":
+		id, err := mcpTemplateID(uri, "oboard://audit/subscriptions/users/")
+		if err != nil {
+			return nil, err
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return nil, errors.New("invalid user id")
+		}
+		return s.mcpAuditSubscriptionUser(ctx, principal, value, 24)
 	case "query_path":
 		id, err := mcpTemplateID(uri, "oboard://proxy-paths/")
 		if err != nil {
@@ -342,6 +393,45 @@ func (s *Server) listDNSZoneRecords(ctx context.Context, principal application.P
 	return map[string]any{"dns_records": records, "dns_zone": map[string]any{"id": zone.ID, "zone_name": zone.ZoneName, "credential_id": zone.CredentialID}, "count": len(records)}, nil
 }
 
+// listAgentTasksMCP returns sanitized Agent task views. Task payloads and
+// results are scrubbed so secrets (enrollment material, tunnel keys, SSH
+// passwords) never reach MCP output.
+func (s *Server) listAgentTasksMCP(ctx context.Context, principal application.Principal, taskID, limit int64) (any, error) {
+	var items []model.AgentTask
+	if taskID > 0 {
+		task, err := s.store.GetTask(ctx, taskID)
+		if err != nil {
+			return nil, err
+		}
+		if !principal.AllowsInt64("server_ids", task.ServerID) {
+			return nil, errors.New("not authorized")
+		}
+		items = []model.AgentTask{*task}
+	} else {
+		all, err := s.store.ListTasks(ctx, int(limit))
+		if err != nil {
+			return nil, err
+		}
+		for _, task := range all {
+			if principal.AllowsInt64("server_ids", task.ServerID) {
+				items = append(items, task)
+			}
+		}
+	}
+	views := make([]map[string]any, 0, len(items))
+	for _, task := range items {
+		scrubbed := task
+		scrubbed.PayloadJSON = scrubSensitiveJSON(task.PayloadJSON)
+		scrubbed.ResultJSON = scrubSensitiveJSON(task.ResultJSON)
+		views = append(views, map[string]any{
+			"id": task.ID, "server_id": task.ServerID, "type": task.Type, "status": task.Status,
+			"config_version": task.ConfigVersion, "created_at": task.CreatedAt, "completed_at": task.CompletedAt,
+			"result_summary": taskResultMessage(scrubbed), "nonce_redacted": scrubbed.Nonce != "",
+			"payload_redacted": scrubbed.PayloadJSON, "result_redacted": scrubbed.ResultJSON,
+		})
+	}
+	return map[string]any{"tasks": views, "count": len(views)}, nil
+}
 func workflowResourceView(item *model.AutomationWorkflow) map[string]any {
 	steps := make([]map[string]any, 0, len(item.Steps))
 	for _, step := range item.Steps {
@@ -440,6 +530,26 @@ func (s *Server) authorizeResourceRead(ctx context.Context, capabilityName, uri 
 			return errors.New("invalid dns zone id")
 		}
 		input = map[string]any{"dns_zone_id": value}
+	case "audit.connection.user":
+		id, parseErr := mcpTemplateID(uri, "oboard://audit/users/")
+		if parseErr != nil {
+			return parseErr
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return errors.New("invalid user id")
+		}
+		input = map[string]any{"user_id": value}
+	case "audit.subscription.user":
+		id, parseErr := mcpTemplateID(uri, "oboard://audit/subscriptions/users/")
+		if parseErr != nil {
+			return parseErr
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return errors.New("invalid user id")
+		}
+		input = map[string]any{"user_id": value}
 	case "subscription_plans.get":
 		id, parseErr := mcpTemplateID(uri, "oboard://subscription-plans/")
 		if parseErr != nil {
