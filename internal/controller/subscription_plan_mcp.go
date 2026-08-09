@@ -164,17 +164,26 @@ func (s *Server) resolveProxyPathRef(ctx context.Context, principal application.
 	if err != nil {
 		return mcpResourceResolution{}, err
 	}
-	items, err := s.store.ListProxyPaths(ctx)
+	paths, err := s.store.ListProxyPaths(ctx)
 	if err != nil {
 		return mcpResourceResolution{}, err
 	}
+	inbounds, err := s.store.ListInbounds(ctx)
+	if err != nil {
+		return mcpResourceResolution{}, err
+	}
+	allowed := map[int64]bool{}
+	for _, inbound := range inbounds {
+		allowed[inbound.ID] = principal.AllowsInt64("server_ids", inbound.ServerID)
+	}
 	wanted := normalizeMCPResourceName(target)
 	matches := []MCPResourceRef{}
-	for _, item := range items {
-		if !principal.AllowsInt64("proxy_path_ids", item.ID) {
+	for _, item := range paths {
+		if !allowed[item.InboundID] || !principal.AllowsInt64("proxy_path_ids", item.ID) {
 			continue
 		}
-		if strconv.FormatInt(item.ID, 10) == target || normalizeMCPResourceName(item.Name) == wanted {
+		idMatch := strconv.FormatInt(item.ID, 10) == target
+		if idMatch || normalizeMCPResourceName(item.Name) == wanted {
 			matches = append(matches, MCPResourceRef{Type: "proxy_path", ID: item.ID, Name: item.Name, Ref: "proxy_path:" + strconv.FormatInt(item.ID, 10), Label: item.Name})
 		}
 	}

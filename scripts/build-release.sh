@@ -43,9 +43,7 @@ create_tar_archive() {
 
 echo "==> Building web assets"
 cd "$CONTROLLER_DIR/web"
-if [ ! -d node_modules ]; then
-  npm ci
-fi
+npm ci --include=dev
 rm -rf "$WEB_OUT_DIR"
 npm run build -- --outDir "$WEB_OUT_DIR" --emptyOutDir
 

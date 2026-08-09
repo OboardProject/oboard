@@ -6,6 +6,15 @@ BUILD_DIR=$(mktemp -d)
 trap 'rm -rf "$BUILD_DIR"' EXIT
 export GOWORK=off
 
+echo "==> Verifying shell script syntax"
+for script in "$CONTROLLER_DIR"/scripts/*.sh; do
+  case $(head -n 1 "$script") in
+    '#!/bin/sh'|'#!/usr/bin/env sh') sh -n "$script" ;;
+    '#!/usr/bin/env bash'|'#!/bin/bash') bash -n "$script" ;;
+    *) echo "unsupported shell shebang: $script" >&2; exit 1 ;;
+  esac
+done
+
 echo "==> Verifying Go module metadata"
 go -C "$CONTROLLER_DIR" mod tidy -diff
 go -C "$CONTROLLER_DIR" mod verify
@@ -23,6 +32,7 @@ echo "==> Building Web UI"
 (
   cd "$CONTROLLER_DIR/web"
   npm ci --include=dev
+  npm test
   npm run build -- --outDir "$BUILD_DIR/web" --emptyOutDir
 )
 

@@ -133,37 +133,6 @@ func inboundMCPResourceRef(item model.Inbound, serverName string) MCPResourceRef
 	return MCPResourceRef{Type: "inbound", ID: item.ID, Name: item.Name, Ref: "inbound:" + strconv.FormatInt(item.ID, 10), Label: label}
 }
 
-func (s *Server) resolveProxyPathRef(ctx context.Context, principal application.Principal, value string) (mcpResourceResolution, error) {
-	_, target, err := splitMCPResourceRef(value, "proxy_path")
-	if err != nil {
-		return mcpResourceResolution{}, err
-	}
-	paths, err := s.store.ListProxyPaths(ctx)
-	if err != nil {
-		return mcpResourceResolution{}, err
-	}
-	inbounds, err := s.store.ListInbounds(ctx)
-	if err != nil {
-		return mcpResourceResolution{}, err
-	}
-	allowed := map[int64]bool{}
-	for _, inbound := range inbounds {
-		allowed[inbound.ID] = principal.AllowsInt64("server_ids", inbound.ServerID)
-	}
-	wanted := normalizeMCPResourceName(target)
-	matches := []MCPResourceRef{}
-	for _, item := range paths {
-		if !allowed[item.InboundID] || !principal.AllowsInt64("proxy_path_ids", item.ID) {
-			continue
-		}
-		idMatch := strconv.FormatInt(item.ID, 10) == target
-		if idMatch || normalizeMCPResourceName(item.Name) == wanted {
-			matches = append(matches, MCPResourceRef{Type: "proxy_path", ID: item.ID, Name: item.Name, Ref: "proxy_path:" + strconv.FormatInt(item.ID, 10), Label: item.Name})
-		}
-	}
-	return finishMCPResourceResolution(matches)
-}
-
 func (s *Server) resolveUserRef(ctx context.Context, principal application.Principal, value string) (mcpResourceResolution, error) {
 	_, target, err := splitMCPResourceRef(value, "user")
 	if err != nil {

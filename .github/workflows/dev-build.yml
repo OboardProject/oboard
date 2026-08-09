@@ -28,11 +28,11 @@ jobs:
           repositories: oboard-agent
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: '1.25.12'
+          go-version-file: go.mod
           cache-dependency-path: go.sum
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: '22'
+          node-version-file: web/.node-version
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Test Controller and release build inputs
@@ -84,7 +84,12 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: oboard-dev-${{ steps.meta.outputs.version }}
-          path: ${{ runner.temp }}/oboard/controller/release/*
+          path: |
+            ${{ runner.temp }}/oboard/controller/release/*.tar.gz
+            ${{ runner.temp }}/oboard/controller/release/sha256sums.txt
+            ${{ runner.temp }}/oboard/controller/release/controller-release-manifest.json
+          if-no-files-found: error
+          compression-level: 0
           retention-days: 14
       - name: Publish mutable development release
         env:
