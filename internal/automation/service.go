@@ -487,8 +487,8 @@ func (s *Service) synchronizeWorkflow(ctx context.Context, item *model.Automatio
 	}
 	status, stepStatus, currentStep, completedAt := workflowState(changeset, false, now)
 	nextAction := workflowNextAction(changeset, false)
+	accessChangeID := int64(0)
 	if item.Kind == "access_change" && changeset.Status == model.ChangesetSucceeded {
-		var accessChangeID int64
 		status, stepStatus, currentStep, completedAt, nextAction, accessChangeID, err = s.accessChangeWorkflowState(ctx, changeset, now)
 		if err != nil {
 			return nil, err
@@ -507,6 +507,13 @@ func (s *Service) synchronizeWorkflow(ctx context.Context, item *model.Automatio
 	outputDigest := sha256.Sum256(changeset.Result)
 	step.Status, step.OutputDigest, step.NextAction = stepStatus, hex.EncodeToString(outputDigest[:]), nextAction
 	step.Retryable, step.ErrorCode = false, ""
+	if item.Kind == "access_change" && status == model.WorkflowFailed {
+		// A failed access change can always be retried through the Controller's
+		// retry flow (it resumes from the durable failure point), so the MCP
+		// workflow step stays retryable and carries the failure text.
+		step.Retryable = true
+		step.ErrorCode = "access_change_failed"
+	}
 	if stepStatus == "succeeded" || stepStatus == "failed" {
 		step.FinishedAt = &now
 	} else {
@@ -515,6 +522,11 @@ func (s *Service) synchronizeWorkflow(ctx context.Context, item *model.Automatio
 	item.Status, item.CurrentStep, item.NextAction, item.CompletedAt = status, currentStep, nextAction, completedAt
 	if status == model.WorkflowFailed {
 		item.ErrorCode = "changeset_" + string(changeset.Status)
+		if item.Kind == "access_change" && accessChangeID > 0 {
+			if change, getErr := s.store.GetAccessChange(ctx, accessChangeID); getErr == nil && strings.TrimSpace(change.Error) != "" {
+				item.ErrorMessage = change.Error
+			}
+		}
 	} else {
 		item.ErrorCode, item.ErrorMessage = "", ""
 	}

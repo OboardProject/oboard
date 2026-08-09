@@ -151,6 +151,8 @@ Report its exact current state, completed steps, failed or blocked steps, approv
 
 Do not describe a partially succeeded Workflow as successful. Recommend only supported next actions: wait, request approval, complete an external action, retry an explicitly retryable step, cancel a cancellable Workflow, refresh resources and re-plan, or stop.
 
+For failed `+"`access_change`"+` (套餐发布) workflows, the step is retryable: calling `+"`oboard_retry_workflow_step`"+` resumes the release from its durable failure point and the Controller worker continues it. Mention the retry option together with the failure reason; never re-submit a new Changeset to work around a failed release.
+
 Never broaden targets or bypass validation, RBAC, resource boundaries, or approval.`, args["workflow_id"])
 			},
 		},

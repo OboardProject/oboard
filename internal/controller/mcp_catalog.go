@@ -39,6 +39,8 @@ Never request, reveal, persist, repeat, or log passwords, private keys, access t
 
 Use a stable idempotency key for every state-changing request. On a revision conflict, refresh the affected resources and re-plan. Never overwrite newer state.
 
+When a Workflow reports failed, read its error message first. For access_change (套餐发布) workflows the step is retryable: call ` + "`oboard_retry_workflow_step`" + ` with the workflow and step ids to resume the release from its durable failure point (for example after a transient database-busy error), then follow the Workflow until terminal. Only retry an explicitly retryable step; never re-submit a new Changeset to work around a failed one.
+
 Keep the requested blast radius as small as possible. Explain required approvals, external actions, unresolved assumptions, rollback considerations, and recovery actions.`
 
 // newMCPHandler builds the /mcp HTTP handler. Authentication is handled by the

@@ -860,35 +860,48 @@ func (s *Server) accessChanges(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) accessChangeRetry(w http.ResponseWriter, r *http.Request, id int64) {
-	change, err := s.store.GetAccessChange(r.Context(), id)
+	phase, queued, err := s.retryAccessChange(r.Context(), id)
 	if err != nil {
-		fail(w, err, 404)
-		return
-	}
-	if change.Status != model.AccessChangeFailed {
-		fail(w, errors.New("only failed access changes can be retried"), http.StatusConflict)
-		return
-	}
-	phase := "prepare"
-	if change.ActivatedAt != nil {
-		phase = "finalize"
-	}
-	if err := s.store.UpdateAccessChangeStatus(r.Context(), id, []model.AccessChangeStatus{model.AccessChangeFailed}, model.AccessChangePreparing, ""); err != nil {
-		fail(w, err, http.StatusConflict)
-		return
-	}
-	if phase == "finalize" {
-		// Keep the durable activation; only the finalize phase is retried.
-		_ = s.store.UpdateAccessChangeStatus(r.Context(), id, []model.AccessChangeStatus{model.AccessChangePreparing}, model.AccessChangeFinalizing, "")
-	}
-	queued, err := s.queueAccessChangePhase(r.Context(), change, phase)
-	if err != nil {
-		s.markAccessChangeFailed(r.Context(), change, "retry: "+err.Error())
-		fail(w, err, 500)
+		status := http.StatusConflict
+		if errors.Is(err, sql.ErrNoRows) {
+			status = http.StatusNotFound
+		}
+		fail(w, err, status)
 		return
 	}
 	auditReq(s, r, "retry", "access-change", fmt.Sprint(id))
 	write(w, 200, map[string]any{"access_change_id": id, "phase": phase, "queued_tasks": queued, "status": phaseStatusName(phase)})
+}
+
+// retryAccessChange resumes a failed access change from its durable failure
+// point: the prepare phase (or only the finalize phase when activation already
+// completed) is re-queued and the Controller worker continues the state
+// machine. It is shared by the panel endpoint and the MCP workflow retry.
+func (s *Server) retryAccessChange(ctx context.Context, id int64) (phase string, queued int, err error) {
+	change, err := s.store.GetAccessChange(ctx, id)
+	if err != nil {
+		return "", 0, err
+	}
+	if change.Status != model.AccessChangeFailed {
+		return "", 0, errors.New("only failed access changes can be retried")
+	}
+	phase = "prepare"
+	if change.ActivatedAt != nil {
+		phase = "finalize"
+	}
+	if err := s.store.UpdateAccessChangeStatus(ctx, id, []model.AccessChangeStatus{model.AccessChangeFailed}, model.AccessChangePreparing, ""); err != nil {
+		return "", 0, err
+	}
+	if phase == "finalize" {
+		// Keep the durable activation; only the finalize phase is retried.
+		_ = s.store.UpdateAccessChangeStatus(ctx, id, []model.AccessChangeStatus{model.AccessChangePreparing}, model.AccessChangeFinalizing, "")
+	}
+	queued, err = s.queueAccessChangePhase(ctx, change, phase)
+	if err != nil {
+		s.markAccessChangeFailed(ctx, change, "retry: "+err.Error())
+		return "", 0, err
+	}
+	return phase, queued, nil
 }
 
 func phaseStatusName(phase string) string {

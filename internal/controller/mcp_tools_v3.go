@@ -659,13 +659,78 @@ func (s *Server) addMCPRetryWorkflowStepTool(server *mcp.Server, principal appli
 		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"workflow_id": map[string]any{"type": "string", "minLength": 1}, "step_id": map[string]any{"type": "string", "minLength": 1}}, "workflow_id", "step_id")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotationsWrite(false),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpRetryWorkflowInput) (*mcp.CallToolResult, any, error) {
-		item, err := s.automation.RetryWorkflowStep(ctx, principal, strings.TrimSpace(input.WorkflowID), strings.TrimSpace(input.StepID))
+		workflowID, stepID := strings.TrimSpace(input.WorkflowID), strings.TrimSpace(input.StepID)
+		workflow, err := s.automation.GetWorkflow(ctx, principal, workflowID)
+		if err != nil {
+			return mcpPlainFailureResult("", "workflow not found"), nil, nil
+		}
+		// Access-change releases (套餐发布) fail durably (for example with a
+		// transient SQLite busy error) and are always retryable: the Controller
+		// resumes them from the durable failure point and the worker continues
+		// the prepare -> activate -> finalize state machine.
+		if workflow.Kind == "access_change" && workflow.Status == model.WorkflowFailed {
+			changeID := mcpWorkflowAccessChangeID(workflow)
+			if changeID == 0 {
+				return mcpPlainFailureResult("", "access change workflow has no associated access change id"), nil, nil
+			}
+			phase, queued, retryErr := s.retryAccessChange(ctx, changeID)
+			if retryErr != nil {
+				if strings.Contains(strings.ToLower(retryErr.Error()), "only failed access changes") {
+					return mcpPlainFailureResult("", "套餐发布不在可重试状态：仅失败状态的套餐发布可以重试（可能已被取消或已完成）"), nil, nil
+				}
+				return mcpPlainFailureResult("", "套餐发布重试失败："+retryErr.Error()), nil, nil
+			}
+			// Reset the workflow step to queued so the next status read
+			// synchronizes it to waiting_for_agent while the worker resumes.
+			if _, retryErr := s.automation.RetryWorkflowStep(ctx, principal, workflowID, stepID); retryErr != nil {
+				return mcpPlainFailureResult("", "套餐发布已恢复，但工作流步骤状态重置失败，请重新读取工作流"), nil, nil
+			}
+			refreshed, _ := s.automation.GetWorkflow(ctx, principal, workflowID)
+			if refreshed == nil {
+				refreshed = workflow
+			}
+			view := workflowResourceView(refreshed)
+			view["retry_summary"] = map[string]any{
+				"message":       "套餐发布已重新排队，正在继续执行",
+				"phase":         phase,
+				"queued_tasks":  queued,
+				"access_change": changeID,
+			}
+			envelope := newToolEnvelope(workflowResultStatus(refreshed.Status), "", view)
+			envelope.WorkflowID = refreshed.ID
+			envelope.ChangesetID = refreshed.ChangesetID
+			envelope.Retryable = true
+			envelope.NextAction = map[string]any{"type": "wait", "resource_type": "access_change", "resource_id": changeID, "phase": phase, "queued_tasks": queued}
+			s.recordToolCall(ctx, principal, "workflows.retry:access_change", map[string]any{"workflow_id": workflowID, "access_change_id": changeID, "phase": phase}, "succeeded", capability.DataInternal)
+			return &mcp.CallToolResult{}, envelope, nil
+		}
+		item, err := s.automation.RetryWorkflowStep(ctx, principal, workflowID, stepID)
 		if err != nil {
 			return mcpPlainFailureResult("", "workflow step is not retryable"), nil, nil
 		}
 		s.recordToolCall(ctx, principal, "workflows.retry", input, "succeeded", capability.DataInternal)
 		return &mcp.CallToolResult{}, newToolEnvelope(workflowResultStatus(item.Status), "", item), nil
 	})
+}
+
+// mcpWorkflowAccessChangeID extracts the access_change id from a workflow's
+// affected resources.
+func mcpWorkflowAccessChangeID(workflow *model.AutomationWorkflow) int64 {
+	if workflow == nil {
+		return 0
+	}
+	var affected []map[string]any
+	if json.Unmarshal(workflow.AffectedResources, &affected) != nil {
+		return 0
+	}
+	for _, resource := range affected {
+		if fmt.Sprint(resource["type"]) == "access_change" {
+			if id, ok := resource["id"].(float64); ok && id > 0 {
+				return int64(id)
+			}
+		}
+	}
+	return 0
 }
 
 type mcpRedeemExternalActionInput struct {
