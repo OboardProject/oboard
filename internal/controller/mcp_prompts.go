@@ -154,6 +154,87 @@ Do not describe a partially succeeded Workflow as successful. Recommend only sup
 Never broaden targets or bypass validation, RBAC, resource boundaries, or approval.`, args["workflow_id"])
 			},
 		},
+		{
+			name: "oboard_access_control", title: "Access Control", description: "Manage panel users, user groups, memberships, and user devices through the Fast Path.",
+			arguments: []*mcp.PromptArgument{
+				stringArg("goal", "Requested outcome (create/update/delete user, group, membership, or device)", true),
+				stringArg("user_hint", "Username or user ID hint", false),
+			},
+			build: func(args map[string]string) string {
+				return fmt.Sprintf(`Call `+"`oboard_task`"+` first for this access-control goal:
+
+%s
+
+User hint:
+
+%s
+
+Use intent `+"`user.manage`"+`, `+"`user_group.manage`"+`, or `+"`user_device.manage`"+` when obvious. Follow needs_input or choose_candidate with the continuation_id; commit only the returned prepared_id with `+"`oboard_commit_task`"+` after confirmation and follow the Workflow until terminal.
+
+Never reveal or request passwords, tokens, or other credentials beyond what the user explicitly asked to set. Do not delete protected (bootstrap admin) accounts.`, args["goal"], args["user_hint"])
+			},
+		},
+		{
+			name: "oboard_network_ops", title: "Network Operations", description: "Manage DNS policy/records/lists, port forwards, tunnels, and MTU detection through the Fast Path.",
+			arguments: []*mcp.PromptArgument{
+				stringArg("goal", "Requested outcome (DNS, port forward, tunnel, or MTU change)", true),
+				stringArg("server_hint", "Server ID or name hint", false),
+			},
+			build: func(args map[string]string) string {
+				return fmt.Sprintf(`Call `+"`oboard_task`"+` first for this network goal:
+
+%s
+
+Server hint:
+
+%s
+
+Intents: `+"`dns_policy.manage`"+`, `+"`dns_record.manage`"+`, `+"`port_forward.manage`"+`, `+"`tunnel.manage`"+`, `+"`host_ops.manage`"+` (MTU detection). Follow needs_input or choose_candidate with the continuation_id and commit only the returned prepared_id after confirmation. Follow the Workflow until terminal.
+
+Topology changes (port forwards, tunnels) carry risk 3 and require approval. Read `+"`oboard://dns-lists`"+`, `+"`oboard://port-forwards`"+`, or `+"`oboard://tunnels`"+` to confirm IDs before planning.`, args["goal"], args["server_hint"])
+			},
+		},
+		{
+			name: "oboard_audit_overview", title: "Audit Overview", description: "Summarize connection, subscription, and risk audit state for the authorized scope.",
+			arguments: []*mcp.PromptArgument{
+				stringArg("focus", "connection, subscription, risk, or all", false),
+				stringArg("user_hint", "Optional user filter", false),
+			},
+			build: func(args map[string]string) string {
+				return fmt.Sprintf(`Read the authorized audit resources:
+
+oboard://audit/connection
+oboard://audit/subscriptions
+oboard://audit/risk-overview
+
+Focus:
+
+%s
+
+User filter:
+
+%s
+
+Summarize elevated-risk and suspended users, evidence categories, recommended actions, and any counter-evidence. Never expose credentials or raw payloads; keep identity details within the user's authorization boundary. For a single user, read `+"`oboard://audit/users/{id}`"+` or `+"`oboard://audit/subscriptions/users/{id}`"+`.
+
+Do not take enforcement action without explicit user confirmation and a normal `+"`oboard_task`"+`/Workflow flow.`, args["focus"], args["user_hint"])
+			},
+		},
+		{
+			name: "oboard_system_ops", title: "System Operations", description: "Manage global settings, backups, certificates, approval policies, and notification channels through the Fast Path.",
+			arguments: []*mcp.PromptArgument{
+				stringArg("goal", "Requested outcome", true),
+			},
+			build: func(args map[string]string) string {
+				return fmt.Sprintf(`Call `+"`oboard_task`"+` first for this system goal:
+
+%s
+
+Intents: `+"`settings.manage`"+`, `+"`certificate.manage`"+`, `+"`notification.manage`"+`. Backup creation, approval policies, and service account deletion are available through `+"`oboard_plan_desired_state`"+` only after `+"`oboard_task`"+` returns fallback_required.
+
+Read `+"`oboard://settings`"+`, `+"`oboard://certificates`"+`, `+"`oboard://approval-policies`"+`, or `+"`oboard://notification-channels`"+` to confirm state before planning. Never expose recovery passwords, API tokens, channel secrets, or certificate private keys.`, args["goal"])
+			},
+		},
 	}
 }
 

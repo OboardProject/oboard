@@ -212,9 +212,13 @@ func (s *Server) mcpResourceGroups(principal application.Principal) []map[string
 			map[string]any{"group": "docs", "uris": []string{"oboard://docs/guide", "oboard://docs/security", "oboard://docs/workflows", "oboard://docs/capabilities"}},
 			map[string]any{"group": "inventory", "uris": []string{"oboard://inventory/summary", "oboard://servers", "oboard://users", "oboard://topology/current", "oboard://subscriptions", "oboard://subscription-plans", "oboard://proxy-paths", "oboard://deployments"}},
 			map[string]any{"group": "access_control", "uris": []string{"oboard://user-groups", "oboard://user-group-members"}},
-			map[string]any{"group": "audit", "uris": []string{"oboard://audit/incidents"}},
-			map[string]any{"group": "automation", "uris": []string{"oboard://changesets", "oboard://workflows"}},
-			map[string]any{"group": "templates", "uris": []string{"oboard://servers/{id}", "oboard://servers/{id}/health", "oboard://subscriptions/{id}", "oboard://subscription-plans/{id}", "oboard://proxy-paths/{id}", "oboard://deployments/{id}", "oboard://audit/incidents/{id}", "oboard://changesets/{id}", "oboard://workflows/{id}", "oboard://operations/{id}", "oboard://schemas/{id}", "oboard://users/{id}", "oboard://users/{id}/devices"}},
+			map[string]any{"group": "traffic", "uris": []string{"oboard://outbounds", "oboard://routing-rules", "oboard://external-outbounds", "oboard://warp-profiles"}},
+			map[string]any{"group": "network", "uris": []string{"oboard://dns-lists", "oboard://dns-credentials", "oboard://port-forwards", "oboard://tunnels"}},
+			map[string]any{"group": "operations", "uris": []string{"oboard://agent-tasks"}},
+			map[string]any{"group": "audit", "uris": []string{"oboard://audit/incidents", "oboard://audit/connection", "oboard://audit/subscriptions", "oboard://audit/risk-overview", "oboard://audit/logs", "oboard://audit/ai-reviews"}},
+			map[string]any{"group": "automation", "uris": []string{"oboard://changesets", "oboard://workflows", "oboard://approval-policies", "oboard://api-principals", "oboard://tool-audits"}},
+			map[string]any{"group": "system", "uris": []string{"oboard://settings", "oboard://backups", "oboard://certificates", "oboard://ai/providers", "oboard://notification-channels"}},
+			map[string]any{"group": "templates", "uris": []string{"oboard://servers/{id}", "oboard://servers/{id}/health", "oboard://servers/{id}/dns-policy", "oboard://subscriptions/{id}", "oboard://subscription-plans/{id}", "oboard://proxy-paths/{id}", "oboard://deployments/{id}", "oboard://audit/incidents/{id}", "oboard://audit/users/{id}", "oboard://audit/subscriptions/users/{id}", "oboard://changesets/{id}", "oboard://workflows/{id}", "oboard://operations/{id}", "oboard://schemas/{id}", "oboard://users/{id}", "oboard://users/{id}/devices", "oboard://agent-tasks/{id}", "oboard://dns-zones/{id}/records"}},
 		)
 	}
 	return groups
@@ -224,7 +228,7 @@ func (s *Server) mcpPromptGroups(principal application.Principal) []map[string]a
 	groups := []map[string]any{
 		map[string]any{"group": "diagnosis", "prompts": []string{"oboard_permission_diagnosis"}},
 		map[string]any{"group": "planning", "prompts": []string{"oboard_safe_change", "oboard_server_onboarding", "oboard_deployment"}},
-		map[string]any{"group": "operations", "prompts": []string{"oboard_incident_review", "oboard_workflow_recovery"}},
+		map[string]any{"group": "operations", "prompts": []string{"oboard_incident_review", "oboard_workflow_recovery", "oboard_access_control", "oboard_network_ops", "oboard_audit_overview", "oboard_system_ops"}},
 	}
 	_ = principal
 	return groups

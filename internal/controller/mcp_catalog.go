@@ -17,7 +17,7 @@ import (
 // static and never modified by resource data.
 const mcpServerInstructions = `You are connected to the OBoard Controller through an authenticated MCP session.
 
-OBoard manages servers, Agent onboarding, inbounds, DNS and certificates, proxy paths, deployments, users, subscriptions, forwarding, tunnels, and diagnostics.
+OBoard manages servers, Agent onboarding, inbounds, outbounds, routing rules, imported nodes, DNS and certificates, proxy paths, deployments, users and groups, subscriptions, forwarding, tunnels, port forwards, WARP, diagnostics, tasks, notifications, audit, and global settings.
 
 For normal OBoard requests, call ` + "`oboard_task`" + ` FIRST with the user's goal. Do NOT read bootstrap or grant, call discover, or fetch capability schemas unless ` + "`oboard_task`" + ` returns ` + "`fallback_required`" + `.
 
