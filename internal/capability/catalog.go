@@ -375,39 +375,39 @@ func usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positi
 		"created_at": stringValue, "updated_at": stringValue,
 	})
 	userUpdateChanges := closedObject(map[string]any{
-		"nickname": map[string]any{"type": "string", "maxLength": 40},
-		"role":     map[string]any{"type": "string", "enum": []string{"admin", "operator", "viewer", "none"}},
-		"status":   map[string]any{"type": "string", "enum": []string{"active", "disabled"}},
-		"password": map[string]any{"type": "string", "minLength": 8, "maxLength": 128, "writeOnly": true},
-		"speed_limit_mbps":       map[string]any{"type": "integer", "minimum": -1},
-		"traffic_limit_bytes":    map[string]any{"type": "integer", "minimum": -1},
-		"traffic_reset_mode":     map[string]any{"type": "string", "enum": []string{"monthly", "month_day", "anniversary_month", "never"}},
-		"traffic_reset_day":      map[string]any{"type": "integer", "minimum": 0, "maximum": 31},
-		"device_limit":           map[string]any{"type": "integer", "minimum": 0},
-		"legacy_proxy_enabled":   boolValue,
+		"nickname":                     map[string]any{"type": "string", "maxLength": 40},
+		"role":                         map[string]any{"type": "string", "enum": []string{"admin", "operator", "viewer", "none"}},
+		"status":                       map[string]any{"type": "string", "enum": []string{"active", "disabled"}},
+		"password":                     map[string]any{"type": "string", "minLength": 8, "maxLength": 128, "writeOnly": true},
+		"speed_limit_mbps":             map[string]any{"type": "integer", "minimum": -1},
+		"traffic_limit_bytes":          map[string]any{"type": "integer", "minimum": -1},
+		"traffic_reset_mode":           map[string]any{"type": "string", "enum": []string{"monthly", "month_day", "anniversary_month", "never"}},
+		"traffic_reset_day":            map[string]any{"type": "integer", "minimum": 0, "maximum": 31},
+		"device_limit":                 map[string]any{"type": "integer", "minimum": 0},
+		"legacy_proxy_enabled":         boolValue,
 		"subscription_burn_after_read": boolValue,
 		"subscription_age_enabled":     boolValue,
 		"subscription_age_public_key":  map[string]any{"type": "string", "maxLength": 4096},
 	})
 	userCreate := closedObject(map[string]any{
-		"username": map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
-		"nickname": map[string]any{"type": "string", "maxLength": 40},
-		"password": map[string]any{"type": "string", "minLength": 8, "maxLength": 128, "writeOnly": true},
-		"role":     map[string]any{"type": "string", "enum": []string{"admin", "operator", "viewer", "none"}},
-		"status":   map[string]any{"type": "string", "enum": []string{"active", "disabled"}},
-		"speed_limit_mbps":       map[string]any{"type": "integer", "minimum": -1},
-		"traffic_limit_bytes":    map[string]any{"type": "integer", "minimum": -1},
-		"traffic_reset_mode":     map[string]any{"type": "string", "enum": []string{"monthly", "month_day", "anniversary_month", "never"}},
-		"traffic_reset_day":      map[string]any{"type": "integer", "minimum": 0, "maximum": 31},
-		"device_limit":           map[string]any{"type": "integer", "minimum": 0},
-		"legacy_proxy_enabled":   boolValue,
+		"username":                     map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
+		"nickname":                     map[string]any{"type": "string", "maxLength": 40},
+		"password":                     map[string]any{"type": "string", "minLength": 8, "maxLength": 128, "writeOnly": true},
+		"role":                         map[string]any{"type": "string", "enum": []string{"admin", "operator", "viewer", "none"}},
+		"status":                       map[string]any{"type": "string", "enum": []string{"active", "disabled"}},
+		"speed_limit_mbps":             map[string]any{"type": "integer", "minimum": -1},
+		"traffic_limit_bytes":          map[string]any{"type": "integer", "minimum": -1},
+		"traffic_reset_mode":           map[string]any{"type": "string", "enum": []string{"monthly", "month_day", "anniversary_month", "never"}},
+		"traffic_reset_day":            map[string]any{"type": "integer", "minimum": 0, "maximum": 31},
+		"device_limit":                 map[string]any{"type": "integer", "minimum": 0},
+		"legacy_proxy_enabled":         boolValue,
 		"subscription_burn_after_read": boolValue,
 	}, "username")
 	groupChanges := closedObject(map[string]any{
-		"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
-		"description": map[string]any{"type": "string", "maxLength": 200},
-		"role":        map[string]any{"type": "string", "enum": []string{"admin", "operator", "viewer", "none"}},
-		"enabled":     boolValue,
+		"name":                            map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
+		"description":                     map[string]any{"type": "string", "maxLength": 200},
+		"role":                            map[string]any{"type": "string", "enum": []string{"admin", "operator", "viewer", "none"}},
+		"enabled":                         boolValue,
 		"subscription_custom_path_policy": map[string]any{"type": "string", "enum": []string{"inherit", "allow", "deny"}},
 	})
 	return []Descriptor{
@@ -420,10 +420,10 @@ func usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positi
 		adminWrite("users.delete", "删除用户及其所有关联数据", schemaObject(map[string]any{"user_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "user_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "user_id": positiveID}, "deleted"), 3, true),
 		adminWrite("users.session_revoke", "吊销用户全部登录会话与访问令牌", schemaObject(map[string]any{"user_id": positiveID}, "user_id"), schemaObject(map[string]any{"session_revoked": boolValue, "user_id": positiveID}, "session_revoked"), 2, false),
 		adminWrite("user_groups.create", "创建用户分组并设置角色与策略", schemaObject(map[string]any{"user_group": closedObject(map[string]any{
-			"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
-			"description": map[string]any{"type": "string", "maxLength": 200},
-			"role":        map[string]any{"type": "string", "enum": []string{"admin", "operator", "viewer", "none"}},
-			"enabled":     boolValue,
+			"name":                            map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
+			"description":                     map[string]any{"type": "string", "maxLength": 200},
+			"role":                            map[string]any{"type": "string", "enum": []string{"admin", "operator", "viewer", "none"}},
+			"enabled":                         boolValue,
 			"subscription_custom_path_policy": map[string]any{"type": "string", "enum": []string{"inherit", "allow", "deny"}},
 		}, "name")}, "user_group"), schemaObject(map[string]any{"user_group": userGroup}, "user_group"), 2, false),
 		adminWrite("user_groups.update", "修改用户分组的角色、启用状态与订阅策略", schemaObject(map[string]any{"group_id": positiveID, "changes": groupChanges}, "group_id", "changes"), schemaObject(map[string]any{"user_group": userGroup, "changed_fields": stringArray(1, 32)}, "user_group"), 2, false),
@@ -540,7 +540,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		inboundProperties := map[string]any{
 			"server_id":             positiveID,
 			"name":                  map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-			"protocol":              map[string]any{"type": "string", "enum": []string{"vless", "hysteria2", "anytls", "shadowsocks", "mieru", "ssh"}},
+			"protocol":              map[string]any{"type": "string", "enum": []string{"vless", "hysteria2", "anytls", "shadowsocks", "mieru", "socks", "ssh"}},
 			"listen_ip":             map[string]any{"type": "string", "maxLength": 255},
 			"port":                  map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
 			"entry_ip_mode":         map[string]any{"type": "string", "enum": []string{"auto", "ipv4", "ipv6", "custom"}},
@@ -572,7 +572,8 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		//     and the certificate is bound through certificate_id/mode.
 		//   shadowsocks 2022: method + password (generated when omitted).
 		//   mieru: transport/multiplexing defaults are filled automatically.
-		inboundGuidance := "vless reality requires config_json.tls.reality + certificate_mode=external + tls=false; hysteria2/anytls require config_json.tls.enabled=true with a bound certificate; omitted config_json applies the protocol default preset"
+		//   socks: authenticated SOCKS5 using each authorized user's credentials.
+		inboundGuidance := "vless reality requires config_json.tls.reality + certificate_mode=external + tls=false; hysteria2/anytls require config_json.tls.enabled=true with a bound certificate; socks creates an authenticated SOCKS5 TCP/UDP inbound using each authorized user's proxy credentials; omitted config_json applies the protocol default preset"
 		inboundOutput := closedObject(map[string]any{
 			"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
 			"protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"},
@@ -590,7 +591,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		return withSchemaDescription(input, inboundGuidance), simpleOutput(map[string]any{"inbound": inboundOutput, "requires_deployment": boolValue}), "server_ids"
 	case "topology.reuse_inbound":
 		source := closedObject(map[string]any{"inbound_id": positiveID, "step_id": positiveID})
-		return schemaObject(map[string]any{"sources": map[string]any{"type": "array", "minItems": 1, "maxItems": 64, "items": source}, "target_server_id": positiveID, "target_kind": stringValue, "target_inbound_id": positiveID, "chain_protocol": stringValue, "chain_method": stringValue, "reality_handshake_server": stringValue, "reality_handshake_port": map[string]any{"type": "integer"}, "transport_mode": stringValue, "tunnel_type": stringValue, "ssh_port": map[string]any{"type": "integer"}, "persistent_keepalive": map[string]any{"type": "integer"}, "copy_mode": stringValue, "branch_path_id": positiveID}, "sources", "target_server_id", "target_kind"), simpleOutput(map[string]any{"result_path_count": map[string]any{"type": "integer"}, "affected_server_ids": idArray(0, 100), "requires_deployment": boolValue}), "server_ids"
+		return schemaObject(map[string]any{"sources": map[string]any{"type": "array", "minItems": 1, "maxItems": 64, "items": source}, "target_server_id": positiveID, "target_kind": stringValue, "target_inbound_id": positiveID, "chain_protocol": map[string]any{"type": "string", "enum": []string{"shadowsocks", "vless", "mieru", "socks"}}, "chain_method": stringValue, "reality_handshake_server": stringValue, "reality_handshake_port": map[string]any{"type": "integer"}, "transport_mode": stringValue, "tunnel_type": stringValue, "ssh_port": map[string]any{"type": "integer"}, "persistent_keepalive": map[string]any{"type": "integer"}, "copy_mode": stringValue, "branch_path_id": positiveID}, "sources", "target_server_id", "target_kind"), simpleOutput(map[string]any{"result_path_count": map[string]any{"type": "integer"}, "affected_server_ids": idArray(0, 100), "requires_deployment": boolValue}), "server_ids"
 	case "topology.write":
 		namePart := closedObject(map[string]any{"kind": stringValue, "value": stringValue}, "kind")
 		path := closedObject(map[string]any{"kind": stringValue, "name": stringValue, "name_mode": stringValue, "name_template": map[string]any{"type": "array", "maxItems": 16, "items": namePart}, "inbound_id": positiveID, "exit_region_mode": stringValue, "exit_region_code": stringValue, "enabled": boolValue})
@@ -616,7 +617,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"node_type":      map[string]any{"type": "string", "enum": []string{"server_inbound", "imported", "warp"}},
 			"transport_mode": map[string]any{"type": "string", "enum": []string{"singbox", "port_forward", "tunnel"}},
 			"server_id":      positiveID, "inbound_id": positiveID, "external_outbound_id": positiveID,
-			"chain_protocol": map[string]any{"type": "string", "enum": []string{"shadowsocks", "vless", "mieru"}},
+			"chain_protocol": map[string]any{"type": "string", "enum": []string{"shadowsocks", "vless", "mieru", "socks"}},
 			"chain_method":   stringValue, "reality_handshake_server": stringValue,
 			"reality_handshake_port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
 			"tunnel_type":            map[string]any{"type": "string", "enum": []string{"ssh", "wireguard"}},

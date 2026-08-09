@@ -131,10 +131,13 @@ func TestInboundSchemaCarriesProtocolGuidance(t *testing.T) {
 		t.Fatal(err)
 	}
 	description, _ := schema["description"].(string)
-	if !strings.Contains(description, "certificate_mode=external") || !strings.Contains(description, "tls.reality") {
+	if !strings.Contains(description, "certificate_mode=external") || !strings.Contains(description, "tls.reality") || !strings.Contains(description, "authenticated SOCKS5") {
 		t.Fatalf("inbounds.create schema lacks protocol guidance: %q", description)
 	}
 	raw := string(descriptor.InputSchema)
+	if !strings.Contains(raw, `"socks"`) {
+		t.Fatalf("inbounds.create schema lacks SOCKS5 protocol: %s", raw)
+	}
 	if strings.Contains(raw, "_guidance") {
 		t.Fatalf("inbounds.create schema leaked an internal guidance property: %s", raw)
 	}

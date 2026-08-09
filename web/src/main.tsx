@@ -312,8 +312,8 @@ type SessionUser = Pick<User, 'id' | 'username' | 'nickname' | 'role' | 'status'
 type UserDraft = { username: string; nickname: string; password?: string; role: Role; status: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; speed_limit_mode: LimitMode; traffic_limit_mode: LimitMode }
 type UserGroupDraft = { name: string; description: string; role: Role; enabled: boolean }
 
-const protocols: Protocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'ssh']
-const proxyProtocols: Exclude<Protocol, 'ssh'>[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru']
+const protocols: Protocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'socks', 'ssh']
+const proxyProtocols: Exclude<Protocol, 'ssh'>[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'socks']
 const externalProtocols: ExternalProtocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'socks']
 const forwardProtocols: ForwardProtocol[] = ['tcp', 'udp', 'tcp_udp']
 const forwardBackends: ForwardBackend[] = ['auto', 'realm', 'nft', 'builtin']
@@ -10105,6 +10105,7 @@ function preferredProtocolPortInRange(protocol: Protocol, start: number, end: nu
     anytls: [443, 8443, 10443],
     shadowsocks: [8388, 18388, 38388],
     mieru: [25250, 35250, 45250],
+		socks: [1080, 11080, 21080],
     ssh: [2222, 22022, 22222],
   }
   for (const port of preferred[protocol] || []) {
@@ -10190,7 +10191,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
       const keepManualPort = mode === 'edit' || old.__port_manual === true
       const nextPort = keepManualPort ? currentPort : nextAvailableInboundPort(data, server, preset.protocol, preset.defaultPort, old.id)
       const oldAutoName = autoInboundName(server, old.protocol || protocol, currentPort)
-      const shouldRename = !old.name || old.name === oldAutoName || /^.+-(vless|hy2|anytls|shadowsocks|mieru|ssh)-\d+$/.test(String(old.name))
+      const shouldRename = !old.name || old.name === oldAutoName || /^.+-(vless|hy2|anytls|shadowsocks|mieru|socks|ssh)-\d+$/.test(String(old.name))
       return {
         ...old,
         protocol: preset.protocol,
@@ -10211,7 +10212,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     const keepManualPort = mode === 'edit' || draft.__port_manual === true
     const nextPort = keepManualPort ? currentPort : nextAvailableInboundPort(data, nextServer, protocol, currentPort, draft.id)
     const oldName = autoInboundName(server, protocol, currentPort)
-    const shouldRename = !draft.name || draft.name === oldName || /^.+-(vless|hy2|anytls|shadowsocks|mieru|ssh)-\d+$/.test(String(draft.name))
+    const shouldRename = !draft.name || draft.name === oldName || /^.+-(vless|hy2|anytls|shadowsocks|mieru|socks|ssh)-\d+$/.test(String(draft.name))
     const nextZones = (selectedDNSCredential?.zones || []).filter(zone => zone.server_id == null || zone.server_id === serverID)
     const nextZone = nextZones.find(zone => zone.server_id === serverID) || nextZones.find(zone => zone.zone_name === selectedDNSZoneName) || nextZones[0]
     const dnsDomain = draft.dns_sync_enabled ? domainWithZone(dnsPrefix, nextZone?.zone_name || '') : draft.dns_domain
@@ -10988,10 +10989,11 @@ function proxyPathReusableTargetOptions(data: any, serverID: number): ProxyPathR
     { kind: 'generated', protocol: 'shadowsocks', chain_method: '2022-blake3-chacha20-poly1305', label: 'SS 2022-ChaCha20', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('shadowsocks:2022-blake3-chacha20-poly1305') || 0, eligible: true },
     { kind: 'generated', protocol: 'vless', label: 'VLESS Reality', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('vless:cdn.icloud-content.com:443') || 0, eligible: true },
     { kind: 'generated', protocol: 'mieru', label: 'Mieru TCP', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('mieru') || 0, eligible: true },
+    { kind: 'generated', protocol: 'socks', label: 'SOCKS5', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('socks') || 0, eligible: true },
   ]
   const existing = ((data.inbounds || []) as Inbound[]).filter(inbound => {
     if (inbound.server_id !== serverID || inbound.enabled === false || inbound.protocol === 'ssh') return false
-    if (inbound.protocol !== 'shadowsocks') return ['vless', 'hy2', 'anytls', 'mieru'].includes(inbound.protocol)
+		if (inbound.protocol !== 'shadowsocks') return ['vless', 'hy2', 'anytls', 'mieru', 'socks'].includes(inbound.protocol)
     const method = String((parseConfig(inbound.config_json || '{}') || {}).method || '2022-blake3-aes-128-gcm').toLowerCase()
     return method.startsWith('2022-')
   }).map<ProxyPathReuseTargetOption>(inbound => ({
@@ -11015,6 +11017,7 @@ function proxyPathTransportPresentation(step: Pick<ProxyPathStep, 'node_type' | 
 	const protocol = String(config.chain_protocol || 'shadowsocks')
 	if (protocol === 'vless') return { kind: 'singbox' as const, title: '共享 VLESS Reality 链式代理' }
 	if (protocol === 'mieru') return { kind: 'singbox' as const, title: '共享 Mieru TCP 链式代理' }
+	if (protocol === 'socks') return { kind: 'singbox' as const, title: '共享 SOCKS5 链式代理' }
 	const method = String(config.chain_method || '2022-blake3-aes-128-gcm')
   const methodLabel = proxyPathChainMethods.find(item => item.value === method)?.label || method
   return { kind: 'singbox' as const, title: `共享 ${methodLabel} 链式代理` }
@@ -14674,6 +14677,7 @@ const inboundPresets: InboundPreset[] = [
   { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'AES-128-GCM，多用户', defaultPort: 8388 },
   { id: 'ss-2022-256', protocol: 'shadowsocks', label: 'SS 2022-256', description: 'AES-256-GCM，多用户', defaultPort: 8388 },
   { id: 'mieru-basic', protocol: 'mieru', label: 'Mieru', description: 'Mieru 多用户入口', defaultPort: 25250 },
+  { id: 'socks5-auth', protocol: 'socks', label: 'SOCKS5', description: '用户名密码认证，支持 TCP 与 UDP', defaultPort: 1080 },
   { id: 'ssh-restricted', protocol: 'ssh', label: 'SSH 受限代理', description: '密码认证，仅支持本地/动态转发', defaultPort: 2222 },
 ]
 
@@ -14740,6 +14744,7 @@ function defaultInboundPreset(protocol: Protocol) {
     anytls: 'anytls-basic',
     shadowsocks: 'ss-2022-128',
     mieru: 'mieru-basic',
+		socks: 'socks5-auth',
     ssh: 'ssh-restricted',
   }
   return defaults[protocol]
@@ -14769,6 +14774,7 @@ function inferInboundPreset(protocol: Protocol, configJson: string) {
   if (protocol === 'hy2') return 'hy2-tls'
   if (protocol === 'anytls') return 'anytls-basic'
   if (protocol === 'mieru') return 'mieru-basic'
+  if (protocol === 'socks') return 'socks5-auth'
   if (protocol === 'ssh') return 'ssh-restricted'
   return defaultInboundPreset(protocol)
 }
@@ -14844,7 +14850,7 @@ function defaultAuth(protocol: Protocol): ProtocolAuth {
   return {
     username: `node-${randomToken(6)}`,
     uuid: protocol === 'vless' ? makeUUID() : '',
-    password: protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' || protocol === 'mieru' ? randomToken(24) : '',
+    password: protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' || protocol === 'mieru' || protocol === 'socks' ? randomToken(24) : '',
     method: protocol === 'shadowsocks' ? '2022-blake3-aes-128-gcm' : '',
   }
 }
@@ -14853,9 +14859,9 @@ function readAuth(configJson: string, protocol: Protocol): ProtocolAuth {
   const cfg = parseConfig(configJson) || {}
   const meta = cfg._oboard && typeof cfg._oboard === 'object' ? cfg._oboard : {}
   return {
-    username: protocol === 'mieru' && typeof cfg.username === 'string' ? cfg.username : typeof meta.username === 'string' ? meta.username : '',
+    username: (protocol === 'mieru' || protocol === 'socks') && typeof cfg.username === 'string' ? cfg.username : typeof meta.username === 'string' ? meta.username : '',
     uuid: protocol === 'vless' && typeof cfg.uuid === 'string' ? cfg.uuid : '',
-    password: (protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' || protocol === 'mieru') && typeof cfg.password === 'string' ? cfg.password : '',
+    password: (protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' || protocol === 'mieru' || protocol === 'socks') && typeof cfg.password === 'string' ? cfg.password : '',
     method: protocol === 'shadowsocks' && typeof cfg.method === 'string' ? cfg.method : '2022-blake3-aes-128-gcm',
   }
 }
@@ -14866,7 +14872,7 @@ function writeAuth(configJson: string, protocol: Protocol, auth: ProtocolAuth) {
   meta.username = auth.username
   meta.auth_auto = true
   cfg._oboard = meta
-  if (protocol === 'mieru') cfg.username = auth.username
+  if (protocol === 'mieru' || protocol === 'socks') cfg.username = auth.username
   else delete cfg.username
   if (protocol === 'vless') cfg.uuid = auth.uuid
   if (protocol === 'hy2' || protocol === 'anytls') cfg.password = auth.password
@@ -14879,6 +14885,10 @@ function writeAuth(configJson: string, protocol: Protocol, auth: ProtocolAuth) {
     cfg.transport = typeof cfg.transport === 'string' ? cfg.transport : 'TCP'
     cfg.multiplexing = typeof cfg.multiplexing === 'string' ? cfg.multiplexing : 'MULTIPLEXING_DEFAULT'
   }
+	if (protocol === 'socks') {
+		cfg.password = auth.password
+		cfg.version = '5'
+	}
   return JSON.stringify(cfg, null, 2)
 }
 
@@ -14907,7 +14917,7 @@ function AuthFields({ value, setValue }: any) {
     <div className="auth-title"><span>认证信息</span><button className="ghost" onClick={() => setValue({ ...value, config_json: regenerateAuthConfig(value.config_json, protocol) })}>重新生成</button></div>
     <FormField label="用户名 / 标签"><input value={auth.username} onChange={e => setAuth({ username: e.target.value })} /></FormField>
     {protocol === 'vless' && <FormField label="UUID" required><input value={auth.uuid} onChange={e => setAuth({ uuid: e.target.value })} /></FormField>}
-    {(protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' || protocol === 'mieru') && <FormField label="密码" required><input value={auth.password} onChange={e => setAuth({ password: e.target.value })} /></FormField>}
+    {(protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' || protocol === 'mieru' || protocol === 'socks') && <FormField label="密码" required><input value={auth.password} onChange={e => setAuth({ password: e.target.value })} /></FormField>}
     {protocol === 'shadowsocks' && <FormField label="加密方法"><input value={auth.method} onChange={e => setAuth({ method: e.target.value })} /></FormField>}
   </div>
 }

@@ -110,7 +110,7 @@ func TestProxyPathReusePreviewFiltersTargetsAndDefaultsToNoBranchCopy(t *testing
 			}
 		}
 	}
-	if generated != 5 || existing != 1 {
+	if generated != 6 || existing != 1 {
 		t.Fatalf("target groups generated=%d existing=%d targets=%#v", generated, existing, targets)
 	}
 	branches := preview["branch_options"].([]proxyPathReuseBranchOption)
@@ -123,6 +123,19 @@ func TestProxyPathReusePreviewFiltersTargetsAndDefaultsToNoBranchCopy(t *testing
 	}
 	if plan.ResultPathCount != 1 || len(plan.Writes[0].Steps) != 1 || plan.Writes[0].Path.ExitRegionMode != "auto" {
 		t.Fatalf("default no-copy plan = %#v", plan)
+	}
+}
+
+func TestSocks5InboundAndGeneratedChainAreAccepted(t *testing.T) {
+	inbound := model.Inbound{ServerID: 1, Name: "SOCKS5", Protocol: model.ProtocolSocks, ListenIP: "0.0.0.0", Port: 1080, ConfigJSON: `{}`, Enabled: true}
+	inbound = normalizeInbound(inbound)
+	if err := validateInbound(inbound); err != nil {
+		t.Fatalf("SOCKS5 inbound rejected: %v", err)
+	}
+	step := model.ProxyPathStep{ConfigJSON: `{"chain_protocol":"socks"}`}
+	cfg, err := core.ParseProxyPathChainConfig(step.ConfigJSON)
+	if err != nil || cfg.Protocol != model.ProtocolSocks {
+		t.Fatalf("SOCKS5 generated chain rejected: config=%#v err=%v", cfg, err)
 	}
 }
 

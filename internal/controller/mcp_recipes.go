@@ -236,7 +236,8 @@ var staticRecipeIDs = []string{
 	"host_ops.manage", "notification.manage", "certificate.manage", "settings.manage",
 }
 
-func hasInboundCreateParams(params map[string]any) bool {	for _, key := range []string{"inbound", "protocol", "inbound.protocol", "port", "inbound.port", "config_json", "inbound.config_json"} {
+func hasInboundCreateParams(params map[string]any) bool {
+	for _, key := range []string{"inbound", "protocol", "inbound.protocol", "port", "inbound.port", "config_json", "inbound.config_json"} {
 		if _, ok := params[key]; ok {
 			return true
 		}
@@ -875,7 +876,7 @@ func (s *Server) inferInboundCandidates(ctx context.Context, principal applicati
 		names[server.ID] = server.Name
 	}
 	protocol := ""
-	for _, value := range []string{"vless", "hysteria2", "hy2", "anytls", "shadowsocks", "mieru"} {
+	for _, value := range []string{"vless", "hysteria2", "hy2", "anytls", "shadowsocks", "mieru", "socks", "socks5"} {
 		if containsAnyFold(goal, value) {
 			protocol = value
 			break

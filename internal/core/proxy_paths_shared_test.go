@@ -329,6 +329,45 @@ func TestGeneratedProxyPathMieruServiceUsesTCPAndMandatoryUserHint(t *testing.T)
 	}
 }
 
+func TestGeneratedProxyPathSocks5ServiceUsesAuthenticationAndTCPUDP(t *testing.T) {
+	serverA := model.Server{ID: 1, Name: "A", ChainSecret: "chain-a", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
+	serverB := model.Server{ID: 2, Name: "B", ChainSecret: "chain-b", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
+	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 10, Name: "socks5", InboundID: root.ID, Secret: "path-socks", Enabled: true}
+	bID := serverB.ID
+	step := model.ProxyPathStep{ID: 11, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &bID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{"chain_protocol":"socks"}`}
+	opts := ConfigOptions{Servers: []model.Server{serverA, serverB}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{path}, ProxyPathSteps: []model.ProxyPathStep{step}}
+	services, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := services[proxyPathChainServiceKey{ServerID: serverB.ID, Protocol: model.ProtocolSocks, Profile: "socks5"}]
+	if len(services) != 1 || service == nil || service.Inbound.Protocol != model.ProtocolSocks {
+		t.Fatalf("SOCKS5 services = %#v", services)
+	}
+	configA := mustServerConfig(t, serverA, opts.Inbounds, nil, opts)
+	outbound := findOutbound(configA, proxyPathStepTag(path.ID, 1))
+	if outbound["type"] != "socks" || outbound["version"] != "5" || outbound["username"] == "" || outbound["password"] == "" {
+		t.Fatalf("SOCKS5 outbound = %#v", outbound)
+	}
+	configB := parseSingBoxConfig(t, mustServerConfig(t, serverB, opts.Inbounds, nil, opts))
+	var generated map[string]any
+	for _, inbound := range configB.Inbounds {
+		if inbound["tag"] == service.Tag {
+			generated = inbound
+			break
+		}
+	}
+	users, ok := generated["users"].([]any)
+	if generated["type"] != "socks" || !ok || len(users) != 1 {
+		t.Fatalf("SOCKS5 generated inbound = %#v", generated)
+	}
+	credential := users[0].(map[string]any)
+	if credential["username"] == "" || credential["password"] == "" {
+		t.Fatalf("SOCKS5 generated credential = %#v", credential)
+	}
+}
+
 func TestExplicitProxyPathInboundOverridesSharedShadowsocksDefault(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "A", ChainSecret: "chain-a", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
 	serverB := model.Server{ID: 2, Name: "B", ChainSecret: "chain-b", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}

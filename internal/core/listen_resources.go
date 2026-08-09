@@ -100,7 +100,7 @@ func singBoxInboundListenTransport(inbound map[string]any) listenTransport {
 	switch strings.ToLower(strings.TrimSpace(stringFromAny(inbound["type"]))) {
 	case "hysteria2", "hy2", "tuic":
 		return listenUDP
-	case "shadowsocks":
+	case "shadowsocks", "socks":
 		switch strings.ToLower(strings.TrimSpace(stringFromAny(inbound["network"]))) {
 		case "tcp":
 			return listenTCP

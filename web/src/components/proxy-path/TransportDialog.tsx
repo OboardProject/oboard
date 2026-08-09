@@ -4,7 +4,7 @@ import { MotionDialogPanel } from '../ui/motion'
 
 export type TransportMode = 'singbox' | 'port_forward' | 'tunnel'
 export type TunnelKind = 'ssh' | 'wireguard'
-export type GeneratedChainProtocol = 'shadowsocks' | 'vless' | 'mieru'
+export type GeneratedChainProtocol = 'shadowsocks' | 'vless' | 'mieru' | 'socks'
 export type BranchCopyMode = 'none' | 'all' | 'single'
 
 export type ProxyPathReuseSource = { inbound_id?: number; step_id?: number }
@@ -377,7 +377,7 @@ function targetOptionKey(option: ProxyPathReuseTargetOption) {
 }
 
 function generatedProtocol(value: any): GeneratedChainProtocol {
-  return value === 'vless' || value === 'mieru' ? value : 'shadowsocks'
+	return value === 'vless' || value === 'mieru' || value === 'socks' ? value : 'shadowsocks'
 }
 
 function parseConfig(raw?: string): Record<string, any> {

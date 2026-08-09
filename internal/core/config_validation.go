@@ -234,8 +234,31 @@ func (v *configValidator) validateInbounds(inbounds []map[string]any) {
 			v.validateShadowsocksInbound(path, inbound)
 		case "mieru":
 			v.validateMieruInbound(path, inbound)
+		case "socks":
+			v.validateSocksInbound(path, inbound)
 		default:
 			v.addf("%s unsupported inbound type %q", path, typ)
+		}
+	}
+}
+
+func (v *configValidator) validateSocksInbound(path string, inbound map[string]any) {
+	users := mapList(inbound["users"])
+	if len(users) == 0 {
+		v.addf("%s socks users missing", path)
+	}
+	seen := map[string]bool{}
+	for i, user := range users {
+		userPath := fmt.Sprintf("%s.users[%d]", path, i)
+		username := strings.TrimSpace(stringFromAny(user["username"]))
+		if username == "" {
+			v.addf("%s missing username", userPath)
+		} else if seen[username] {
+			v.addf("%s duplicate username %q", userPath, username)
+		}
+		seen[username] = true
+		if stringFromAny(user["password"]) == "" {
+			v.addf("%s missing password", userPath)
 		}
 	}
 }

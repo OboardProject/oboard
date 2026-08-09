@@ -1332,7 +1332,7 @@ func (s *Server) currentVersionInfo() model.VersionInfo {
 		AgentUpdateRepo:      defaultAgentUpdateRepo,
 		KernelVersion:        version.KernelVersion,
 		KernelBuild:          version.KernelBuild,
-		Protocols:            []string{"vless", "hy2", "anytls", "shadowsocks", "mieru"},
+		Protocols:            []string{"vless", "hy2", "anytls", "shadowsocks", "mieru", "socks"},
 		Kernel:               "oboard-sb (sing-box compatible)",
 		APIPrefix:            s.currentBasePath() + "/api/v1",
 	}
@@ -5595,6 +5595,18 @@ func applyProtocolAuthDefaults(protocol model.Protocol, raw string) (string, err
 			}
 			cfg["password"] = secret
 		}
+	case model.ProtocolSocks:
+		if stringFromMap(cfg, "username") == "" {
+			cfg["username"] = randomNodeUsername()
+		}
+		if stringFromMap(cfg, "password") == "" {
+			secret, err := security.RandomToken(18)
+			if err != nil {
+				return "", err
+			}
+			cfg["password"] = secret
+		}
+		cfg["version"] = "5"
 	}
 	b, err := json.Marshal(cfg)
 	if err != nil {
@@ -7430,9 +7442,9 @@ func normalizedProxyPathChainFields(cfg map[string]any) (map[string]any, error) 
 	case model.ProtocolVLESS:
 		managed["reality_handshake_server"] = chain.RealityHandshakeServer
 		managed["reality_handshake_port"] = chain.RealityHandshakePort
-	case model.ProtocolMieru:
+	case model.ProtocolMieru, model.ProtocolSocks:
 	default:
-		return nil, errors.New("链路协议必须是 shadowsocks、vless 或 mieru")
+		return nil, errors.New("链路协议必须是 shadowsocks、vless、mieru 或 socks")
 	}
 	return managed, nil
 }

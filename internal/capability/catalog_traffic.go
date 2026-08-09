@@ -3,8 +3,8 @@ package capability
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"strconv"
+	"strings"
 
 	"github.com/OboardProject/oboard/internal/mcpauth"
 )
@@ -25,7 +25,7 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"server_id":      positiveID,
 		"next_server_id": nullableInteger(),
 		"name":           map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-		"protocol":       map[string]any{"type": "string", "enum": []string{"vless", "hysteria2", "anytls", "shadowsocks", "mieru"}},
+		"protocol":       map[string]any{"type": "string", "enum": []string{"vless", "hysteria2", "anytls", "shadowsocks", "mieru", "socks"}},
 		"target_address": map[string]any{"type": "string", "maxLength": 255},
 		"target_port":    map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
 		"config_json":    map[string]any{"type": "string", "maxLength": 65536},
@@ -40,12 +40,12 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"created_at": stringValue, "updated_at": stringValue,
 	})
 	routingRuleFields := closedObject(map[string]any{
-		"server_id": positiveID,
-		"name":      map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-		"priority":  map[string]any{"type": "integer", "minimum": 0, "maximum": 100000},
-		"match_json": map[string]any{"type": "string", "maxLength": 8192},
-		"action":     map[string]any{"type": "string", "enum": []string{"direct", "block", "outbound", "external", "interface"}},
-		"outbound_id":         nullableInteger(),
+		"server_id":            positiveID,
+		"name":                 map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+		"priority":             map[string]any{"type": "integer", "minimum": 0, "maximum": 100000},
+		"match_json":           map[string]any{"type": "string", "maxLength": 8192},
+		"action":               map[string]any{"type": "string", "enum": []string{"direct", "block", "outbound", "external", "interface"}},
+		"outbound_id":          nullableInteger(),
 		"external_outbound_id": nullableInteger(),
 		"target_server_id":     nullableInteger(),
 		"interface_name":       map[string]any{"type": "string", "maxLength": 64},

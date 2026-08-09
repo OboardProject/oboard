@@ -652,7 +652,7 @@ func ParseProxyPathChainConfig(raw string) (ProxyPathChainConfig, error) {
 		if err := ValidatePort(out.RealityHandshakePort); err != nil {
 			return ProxyPathChainConfig{}, fmt.Errorf("Reality handshake port: %w", err)
 		}
-	case model.ProtocolMieru:
+	case model.ProtocolMieru, model.ProtocolSocks:
 	default:
 		return ProxyPathChainConfig{}, fmt.Errorf("unsupported generated proxy path protocol %q", protocol)
 	}
@@ -669,6 +669,8 @@ func (c ProxyPathChainConfig) profile() string {
 		return fmt.Sprintf("reality:%s:%d", c.RealityHandshakeServer, c.RealityHandshakePort)
 	case model.ProtocolMieru:
 		return "tcp"
+	case model.ProtocolSocks:
+		return "socks5"
 	default:
 		return c.Method
 	}
@@ -754,7 +756,7 @@ func buildProxyPathChainServices(paths []model.ProxyPath, steps []model.ProxyPat
 		seed := int(stableProxyPathResourceID("proxy-path-chain-service", key.Protocol, key.Profile) % 1000000)
 		start, end := proxyPathServerPortRange(server)
 		portProtocol := model.ForwardProtocolTCP
-		if key.Protocol == model.ProtocolSS {
+		if key.Protocol == model.ProtocolSS || key.Protocol == model.ProtocolSocks {
 			portProtocol = model.ForwardProtocolTCPUDP
 		}
 		port := ledger.resolve(PortRequirement{
@@ -839,6 +841,8 @@ func proxyPathChainServiceLabel(key proxyPathChainServiceKey) string {
 		return "VLESS Reality"
 	case model.ProtocolMieru:
 		return "Mieru TCP"
+	case model.ProtocolSocks:
+		return "SOCKS5"
 	default:
 		return key.Profile
 	}
@@ -857,6 +861,8 @@ func proxyPathChainServiceConfigJSON(server model.Server, key proxyPathChainServ
 		cfg = map[string]any{"method": key.Profile, "password": proxyPathChainServicePassword(server, key.Profile)}
 	case model.ProtocolMieru:
 		cfg = map[string]any{"transport": "TCP", "multiplexing": "MULTIPLEXING_DEFAULT", "user_hint_is_mandatory": true}
+	case model.ProtocolSocks:
+		cfg = map[string]any{}
 	case model.ProtocolVLESS:
 		privateSeed := sha256.Sum256([]byte("oboard-chain-vless-private:" + proxyPathServerChainSeed(server) + ":" + key.Profile))
 		privateKey, err := ecdh.X25519().NewPrivateKey(privateSeed[:])
@@ -1666,7 +1672,7 @@ func transparentForwardProtocol(inbound model.Inbound) model.ForwardProtocol {
 		return model.ForwardProtocolUDP
 	case model.ProtocolVLESS, model.ProtocolAnyTLS:
 		return model.ForwardProtocolTCP
-	case model.ProtocolSS:
+	case model.ProtocolSS, model.ProtocolSocks:
 		network := strings.ToLower(strings.TrimSpace(stringValue(parseStepConfig(inbound.ConfigJSON), "network", "")))
 		switch network {
 		case "tcp":
@@ -1763,6 +1769,8 @@ func proxyPathRuntimeProfile(config ProxyPathChainConfig) string {
 		return fmt.Sprintf("Reality %s:%d", config.RealityHandshakeServer, config.RealityHandshakePort)
 	case model.ProtocolMieru:
 		return "TCP"
+	case model.ProtocolSocks:
+		return "SOCKS5"
 	default:
 		return ""
 	}
@@ -1772,7 +1780,7 @@ func proxyPathRuntimeNetwork(inbound model.Inbound) model.ForwardProtocol {
 	switch inbound.Protocol {
 	case model.ProtocolHY2:
 		return model.ForwardProtocolUDP
-	case model.ProtocolSS:
+	case model.ProtocolSS, model.ProtocolSocks:
 		return transparentForwardProtocol(inbound)
 	case model.ProtocolMieru:
 		if MieruInboundTransport(inbound) == "UDP" {

@@ -134,7 +134,7 @@ func AdapterFor(protocol model.Protocol) (Adapter, error) {
 	case model.ProtocolMieru:
 		return mieruAdapter{}, nil
 	case model.ProtocolSocks:
-		return nil, fmt.Errorf("socks is only supported as imported outbound")
+		return socksAdapter{}, nil
 	default:
 		return nil, fmt.Errorf("unsupported protocol %q", protocol)
 	}
@@ -808,6 +808,9 @@ func validateServerUDPForInbound(server model.Server, inbound model.Inbound) err
 	}
 	if inbound.Protocol == model.ProtocolMieru && MieruInboundTransport(inbound) == "UDP" {
 		return fmt.Errorf("server %s udp_inbound_mode=%s cannot host UDP Mieru inbound %s", server.Name, server.UDPInboundMode, inbound.Name)
+	}
+	if inbound.Protocol == model.ProtocolSocks {
+		return fmt.Errorf("server %s udp_inbound_mode=%s cannot host SOCKS5 inbound %s because SOCKS5 exposes native UDP associate", server.Name, server.UDPInboundMode, inbound.Name)
 	}
 	return nil
 }
@@ -2303,7 +2306,7 @@ func firstActiveUser(users []model.User) *model.User {
 
 func InboundSupportsMultipleUsers(inbound model.Inbound) bool {
 	switch inbound.Protocol {
-	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolMieru, model.ProtocolSSH:
+	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolMieru, model.ProtocolSocks, model.ProtocolSSH:
 		return true
 	case model.ProtocolSS:
 		method := stringValue(parseExtra(inbound.ConfigJSON), "method", "2022-blake3-aes-128-gcm")
@@ -2387,6 +2390,17 @@ func mieruPasswordUsers(users []model.User) []map[string]any {
 			continue
 		}
 		out = append(out, map[string]any{"name": mieruUsername(user), "password": user.ProxyPassword})
+	}
+	return out
+}
+
+func socksPasswordUsers(users []model.User) []map[string]any {
+	out := make([]map[string]any, 0, len(users))
+	for _, user := range users {
+		if strings.TrimSpace(user.Username) == "" || user.ProxyPassword == "" {
+			continue
+		}
+		out = append(out, map[string]any{"username": user.Username, "password": user.ProxyPassword})
 	}
 	return out
 }
@@ -2806,6 +2820,53 @@ func boolValueWithDefault(value any, fallback bool) bool {
 		return typed
 	}
 	return fallback
+}
+
+type socksAdapter struct{}
+
+func (socksAdapter) Protocol() model.Protocol { return model.ProtocolSocks }
+func (socksAdapter) ValidateInbound(v model.Inbound) error {
+	if err := ValidateListenIP(v.ListenIP); err != nil {
+		return err
+	}
+	return ValidatePort(v.Port)
+}
+func (socksAdapter) ValidateOutbound(v model.Outbound) error {
+	if strings.TrimSpace(v.TargetAddress) == "" {
+		return errors.New("target_address required")
+	}
+	return ValidatePort(v.TargetPort)
+}
+func (a socksAdapter) Inbound(v model.Inbound, users []model.User) (map[string]any, error) {
+	if err := a.ValidateInbound(v); err != nil {
+		return nil, err
+	}
+	extra := parseExtra(v.ConfigJSON)
+	item := map[string]any{"type": "socks", "tag": tag("in", v.ID), "listen": v.ListenIP, "listen_port": v.Port, "users": socksPasswordUsers(users)}
+	applyAllowed(item, extra, "udp_timeout")
+	return item, nil
+}
+func (a socksAdapter) Outbound(v model.Outbound, user *model.User) (map[string]any, error) {
+	if err := a.ValidateOutbound(v); err != nil {
+		return nil, err
+	}
+	extra := parseExtra(v.ConfigJSON)
+	item := map[string]any{"type": "socks", "tag": tag("out", v.ID), "server": v.TargetAddress, "server_port": v.TargetPort, "version": "5"}
+	if user != nil {
+		item["username"] = user.Username
+		item["password"] = user.ProxyPassword
+	}
+	applyAllowed(item, extra, "version", "username", "password", "network", "udp_over_tcp", "multiplex", "domain_resolver", "network_strategy", "fallback_delay")
+	return item, nil
+}
+func (a socksAdapter) SubscriptionNode(user model.User, inbound model.Inbound, server model.Server) (map[string]any, error) {
+	if err := a.ValidateInbound(inbound); err != nil {
+		return nil, err
+	}
+	extra := parseExtra(inbound.ConfigJSON)
+	node := map[string]any{"type": "socks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "version": "5", "username": user.Username, "password": user.ProxyPassword}
+	applyAllowed(node, extra, "network", "udp_over_tcp")
+	return node, nil
 }
 
 type ssAdapter struct{}

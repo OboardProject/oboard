@@ -20,7 +20,7 @@ import (
 
 func TestProtocolAdaptersGenerateSingBoxBlocks(t *testing.T) {
 	users := []model.User{{Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111", ProxyPassword: "pass-a"}}
-	protocols := []model.Protocol{model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru}
+	protocols := []model.Protocol{model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru, model.ProtocolSocks}
 	for _, protocol := range protocols {
 		adapter, err := AdapterFor(protocol)
 		if err != nil {
@@ -533,6 +533,7 @@ func TestTransparentPortForwardProtocolsFollowUserInbound(t *testing.T) {
 		{protocol: model.ProtocolSS, config: `{"network":"tcp"}`, want: model.ForwardProtocolTCP},
 		{protocol: model.ProtocolMieru, config: `{"transport":"TCP"}`, want: model.ForwardProtocolTCP},
 		{protocol: model.ProtocolMieru, config: `{"transport":"UDP"}`, want: model.ForwardProtocolUDP},
+		{protocol: model.ProtocolSocks, config: `{}`, want: model.ForwardProtocolTCPUDP},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.protocol)+tc.config, func(t *testing.T) {
@@ -540,6 +541,19 @@ func TestTransparentPortForwardProtocolsFollowUserInbound(t *testing.T) {
 				t.Fatalf("protocol = %s, want %s", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSocks5InboundRequiresNativeUDPMode(t *testing.T) {
+	inbound := model.Inbound{Name: "SOCKS5", Protocol: model.ProtocolSocks}
+	for _, mode := range []model.UDPInboundMode{model.UDPInboundBlock, model.UDPInboundUoT} {
+		err := validateServerUDPForInbound(model.Server{Name: "edge", UDPInboundMode: mode}, inbound)
+		if err == nil || !strings.Contains(err.Error(), "SOCKS5") {
+			t.Fatalf("udp_inbound_mode=%s error = %v", mode, err)
+		}
+	}
+	if err := validateServerUDPForInbound(model.Server{Name: "edge", UDPInboundMode: model.UDPInboundAllow}, inbound); err != nil {
+		t.Fatalf("allow mode rejected SOCKS5: %v", err)
 	}
 }
 
@@ -588,6 +602,7 @@ func TestTransparentProcessingClonesEverySupportedInboundProtocol(t *testing.T) 
 		{name: "anytls", protocol: model.ProtocolAnyTLS, config: testInboundConfig(model.ProtocolAnyTLS), wantType: "anytls", wantForward: model.ForwardProtocolTCP},
 		{name: "shadowsocks", protocol: model.ProtocolSS, config: `{"method":"aes-128-gcm"}`, wantType: "shadowsocks", wantForward: model.ForwardProtocolTCPUDP},
 		{name: "mieru", protocol: model.ProtocolMieru, config: `{"transport":"TCP"}`, wantType: "mieru", wantForward: model.ForwardProtocolTCP},
+		{name: "socks5", protocol: model.ProtocolSocks, config: `{}`, wantType: "socks", wantForward: model.ForwardProtocolTCPUDP},
 	}
 	for index, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1498,7 +1513,7 @@ func TestVLESSRealityInboundStripsClientPublicKey(t *testing.T) {
 
 func TestProtocolUsersUseSingBoxObjectShape(t *testing.T) {
 	users := []model.User{{Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111", ProxyPassword: "pass-a"}}
-	for _, protocol := range []model.Protocol{model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru} {
+	for _, protocol := range []model.Protocol{model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru, model.ProtocolSocks} {
 		adapter, err := AdapterFor(protocol)
 		if err != nil {
 			t.Fatal(err)
@@ -1511,6 +1526,33 @@ func TestProtocolUsersUseSingBoxObjectShape(t *testing.T) {
 		if !ok || len(rawUsers) != 1 {
 			t.Fatalf("%s users shape = %#v, want []map[string]any", protocol, block["users"])
 		}
+	}
+}
+
+func TestSocksAdapterUsesAuthenticatedSocks5Credentials(t *testing.T) {
+	user := model.User{Username: "alice", Status: "active", ProxyPassword: "socks-password"}
+	adapter, err := AdapterFor(model.ProtocolSocks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbound := model.Inbound{ID: 7, Name: "SOCKS5", Protocol: model.ProtocolSocks, ListenIP: "0.0.0.0", Port: 1080, ConfigJSON: `{}`, Enabled: true}
+	block, err := adapter.Inbound(inbound, []model.User{user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	users, ok := block["users"].([]map[string]any)
+	if !ok || len(users) != 1 || users[0]["username"] != "alice" || users[0]["password"] != "socks-password" {
+		t.Fatalf("SOCKS5 inbound users = %#v", block["users"])
+	}
+	if _, exists := users[0]["name"]; exists {
+		t.Fatalf("SOCKS5 inbound emitted unsupported name field: %#v", users[0])
+	}
+	node, err := adapter.SubscriptionNode(user, inbound, model.Server{EntryAddress: "proxy.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node["type"] != "socks" || node["version"] != "5" || node["username"] != "alice" || node["password"] != "socks-password" {
+		t.Fatalf("SOCKS5 subscription node = %#v", node)
 	}
 }
 

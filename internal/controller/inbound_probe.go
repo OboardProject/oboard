@@ -60,7 +60,7 @@ func controllerProbeTransport(inbound model.Inbound) string {
 	switch inbound.Protocol {
 	case model.ProtocolHY2:
 		return "udp"
-	case model.ProtocolSS:
+	case model.ProtocolSS, model.ProtocolSocks:
 		return "tcp_udp"
 	case model.ProtocolMieru:
 		if core.MieruInboundTransport(inbound) == "UDP" {

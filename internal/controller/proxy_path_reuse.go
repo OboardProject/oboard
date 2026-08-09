@@ -251,6 +251,7 @@ func proxyPathReuseTargets(data store.FullRoutingConfig, request proxyPathReuseR
 		{Kind: "generated", Protocol: model.ProtocolSS, ChainMethod: "2022-blake3-chacha20-poly1305", Label: "SS 2022-ChaCha20", Visibility: "system_hidden", Eligible: true},
 		{Kind: "generated", Protocol: model.ProtocolVLESS, Label: "VLESS Reality", Visibility: "system_hidden", Eligible: true},
 		{Kind: "generated", Protocol: model.ProtocolMieru, Label: "Mieru TCP", Visibility: "system_hidden", Eligible: true},
+		{Kind: "generated", Protocol: model.ProtocolSocks, Label: "SOCKS5", Visibility: "system_hidden", Eligible: true},
 	}
 	for index := range generated {
 		chain := core.ProxyPathChainConfig{Protocol: generated[index].Protocol, Method: generated[index].ChainMethod, RealityHandshakeServer: request.RealityHandshakeServer, RealityHandshakePort: request.RealityHandshakePort}
