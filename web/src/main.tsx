@@ -54,6 +54,7 @@ import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPath
 import type { GraphFocusScope, GraphPathFocusState } from './components/proxy-path/graph-topology'
 import { roundedOrthogonalPath, type GraphRect } from './components/proxy-path/graph-geometry'
 import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
+import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
 import './style.css'
 import { Badge } from './components/ui/badge'
 import logo from './assets/logo.svg'
@@ -66,7 +67,7 @@ import {
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
-  ArrowUpDown, GripVertical, ListFilter, Layers
+  ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -219,6 +220,8 @@ type InboundProbeResult = { id: number; inbound_id: number; server_id: number; c
 type PortForwardProbeResult = { id: number; port_forward_id: number; server_id: number; mode: string; available: boolean; latency_ms: number; sample_count: number; error: string; result_json: string; created_at: string }
 type TunnelType = 'wireguard' | 'ssh'
 type Tunnel = { id: number; name: string; source_server_id: number; target_server_id: number; type: TunnelType; local_address: string; peer_address: string; listen_port: number; target_endpoint: string; target_port: number; priority: number; config_json: string; enabled: boolean }
+type ProxyPathRuntimeNode = { resource_key: string; step_id: number; kind: string; name: string; server_id: number; protocol: Protocol; profile?: string; listen_ip: string; port: number; network: ForwardProtocol; listen_scope: 'public' | 'loopback'; shared: boolean; reference_count: number }
+type ProxyPathPlan = { path_id: number; name: string; inbound_id: number; enabled: boolean; warnings?: string[]; runtime_nodes?: ProxyPathRuntimeNode[]; port_forwards?: PortForward[]; tunnels?: Tunnel[] }
 type NotificationTemplate = { title: string; body: string }
 type NotificationEventDefinition = { value: string; label: string; description: string; variables: string[] }
 type NotificationChannel = { id: number; owner_user_id: number; owner_username?: string; name: string; type: 'telegram' | 'bark' | 'test'; enabled: boolean; events: string; config_json: string; templates_json: string; user_ids: number[] }
@@ -7903,6 +7906,8 @@ type RoutingDraft = { server_id: number; name: string; priority: number; match_k
 type TransportMode = 'port-forward' | 'tunnel'
 type TransportDraft = { mode: TransportMode; name: string; source_server_id: number; target_server_id: number; listen_ip: string; listen_port: number; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; type: TunnelType; priority: number; config_json: string; enabled: boolean }
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step'; id: number; label: string; path_id?: number; node_id?: string }
+type RelatedGraphTarget = { entity: GraphEntity; relation: GraphRelationTarget }
+type GraphContextMenu = { x: number; y: number; entity: GraphEntity; pathIDs: number[]; source: 'node' | 'edge' }
 type ImportedNodeDraft = { content: string; scope: 'global' | 'server'; server_id: number; expose_to_users: boolean; position?: GraphPosition | null }
 type CanvasServerInstance = { instance_id: string; server_id: number }
 type CanvasWARPInstance = { instance_id: string; root_server_id: number }
@@ -7986,8 +7991,12 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const [namingPath, setNamingPath] = useState<ProxyPath | null>(null)
 	const [transportRequest, setTransportRequest] = useState<TransportDialogRequest | null>(null)
 	const [sourceSelectionRequest, setSourceSelectionRequest] = useState<GraphSourceSelectionRequest | null>(null)
-  const [graphMenu, setGraphMenu] = useState<{ x: number; y: number; entity: GraphEntity } | null>(null)
+  const [graphMenu, setGraphMenu] = useState<GraphContextMenu | null>(null)
   const [activeGraphEntity, setActiveGraphEntity] = useState<GraphEntity | null>(null)
+  const [activeGraphPathIDs, setActiveGraphPathIDs] = useState<number[]>([])
+  const [activeGraphSource, setActiveGraphSource] = useState<'node' | 'edge'>('node')
+  const [relatedGraphTarget, setRelatedGraphTarget] = useState<RelatedGraphTarget | null>(null)
+  const pathFocusTimer = useRef<number | null>(null)
   useEffect(() => { setNodes(builtFlow.nodes); setEdges(builtFlow.edges) }, [builtFlow])
   useEffect(() => {
     if (focusedPathID && !visibleProxyPaths.some(path => path.id === focusedPathID)) setFocusedPathID(0)
@@ -8129,6 +8138,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     if (initialSafeFitFrame.current !== null) window.cancelAnimationFrame(initialSafeFitFrame.current)
     if (serverSafeFitTimer.current !== null) window.clearTimeout(serverSafeFitTimer.current)
     if (connectionArrangeTimer.current !== null) window.clearTimeout(connectionArrangeTimer.current)
+    if (pathFocusTimer.current !== null) window.clearTimeout(pathFocusTimer.current)
   }, [])
   useEffect(() => {
     if (!flowInstance || !selected?.id || pendingServerSafeFit.current !== selected.id) return
@@ -9092,6 +9102,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const entity = node.data?.entity as GraphEntity | undefined
 	  if (entity?.type === 'server') {
       setSelectedServer(entity.id)
+      setRelatedGraphTarget(null)
       setInspectorOpen(true)
       setIsToolbarCollapsed(true)
     }
@@ -9106,6 +9117,15 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		  if (entity?.type === 'direct' && entity.path_id) editProxyPathNameForEntity(entity)
   }
 	  const graphPathIDs = (item: Node | Edge) => ((item.data?.pathIDs || []) as number[])
+	  const relationTargetForEntity = (entity: GraphEntity | null | undefined, pathIDs: readonly number[] = []): GraphRelationTarget | null => {
+	    if (!entity) return null
+	    if (entity.type === 'server' && entity.id) return { kind: 'server', id: entity.id }
+	    if (entity.type === 'entry' && entity.id) return { kind: 'entry', id: entity.id }
+	    if (entity.type === 'imported' && entity.id) return { kind: 'external', id: entity.id }
+	    if (entity.type === 'proxy-path-step' && entity.id) return { kind: 'step', id: entity.id, pathIDs }
+	    if ((entity.type === 'direct' || entity.type === 'proxy-path') && (entity.path_id || entity.id)) return { kind: 'path', id: entity.path_id || entity.id }
+	    return null
+	  }
 	  const previewGraphPaths = (item: Node | Edge) => {
 	    if (focusedPathID) return
 	    const pathIDs = graphPathIDs(item)
@@ -9124,15 +9144,19 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		  setGraphMenu(null)
 	    setActiveGraphEntity(_node.data?.entity as GraphEntity || null)
 	    const pathIDs = graphPathIDs(_node)
+	    setActiveGraphPathIDs(pathIDs)
+	    setActiveGraphSource('node')
 	    if (pathIDs.length === 1) setFocusedPathID(pathIDs[0])
 	  }
-	  const openGraphContextMenu = (clientX: number, clientY: number, entity: GraphEntity) => {
+	  const openGraphContextMenu = (clientX: number, clientY: number, entity: GraphEntity, pathIDs: number[], source: 'node' | 'edge') => {
 	    const menuWidth = Math.min(260, Math.max(148, window.innerWidth - 16))
-		    const menuHeight = entity.type === 'proxy-path-step' || (entity.type === 'direct' && entity.path_id) ? 166 : entity.type === 'direct' ? 126 : 86
+		    const menuHeight = entity.type === 'proxy-path-step' || (entity.type === 'direct' && entity.path_id) ? 210 : entity.type === 'direct' ? 126 : 132
     setGraphMenu({
       x: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(clientY, window.innerHeight - menuHeight - 8)),
       entity,
+	  pathIDs,
+	  source,
     })
   }
 	  const onNodeContextMenu = (e: React.MouseEvent, node: Node) => {
@@ -9140,24 +9164,27 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    if (!entity) return
     e.preventDefault()
     e.stopPropagation()
-    openGraphContextMenu(e.clientX, e.clientY, entity)
+	    openGraphContextMenu(e.clientX, e.clientY, entity, graphPathIDs(node), 'node')
   }
   const onEdgeContextMenu = (e: React.MouseEvent, edge: Edge) => {
     const entity = edge.data?.entity as GraphEntity | undefined
     if (!entity) return
     e.preventDefault()
     e.stopPropagation()
-    openGraphContextMenu(e.clientX, e.clientY, entity)
+	    openGraphContextMenu(e.clientX, e.clientY, entity, graphPathIDs(edge), 'edge')
   }
 	  const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
 	    setGraphMenu(null)
 	    setActiveGraphEntity(edge.data?.entity as GraphEntity || null)
 	    const pathIDs = graphPathIDs(edge)
+	    setActiveGraphPathIDs(pathIDs)
+	    setActiveGraphSource('edge')
 	    if (pathIDs.length === 1) setFocusedPathID(pathIDs[0])
 	  }
 	  const closeGraphMenu = () => {
 	    setGraphMenu(null)
 	    setActiveGraphEntity(null)
+	    setActiveGraphPathIDs([])
 	  }
 	  const clearGraphSelection = () => {
 	    closeGraphMenu()
@@ -9166,9 +9193,42 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }
   const toggleInspector = () => {
     const next = !inspectorOpen
+    if (next) setRelatedGraphTarget(null)
     setInspectorOpen(next)
     if (next) setIsToolbarCollapsed(true)
   }
+	const openRelatedPaths = (entity: GraphEntity | null | undefined, pathIDs: readonly number[] = []) => {
+	  const relation = relationTargetForEntity(entity, pathIDs)
+	  if (!entity || !relation) return
+	  setRelatedGraphTarget({ entity, relation })
+	  setInspectorOpen(true)
+	  setIsToolbarCollapsed(true)
+	  setGraphMenu(null)
+	}
+	const locateRelatedPath = (related: RelatedProxyPath) => {
+	  if (related.path.enabled === false || !related.rootServerID) return
+	  if (related.rootServerID !== selected?.id) selectEntryServer(related.rootServerID)
+	  setFocusedPathID(related.path.id)
+	  setHoveredGraphFocus(undefined)
+	  setActiveGraphEntity(null)
+	  setActiveGraphPathIDs([])
+	  const fitAttempt = (attempt = 0) => {
+	    if (!flowInstance) return
+	    const pathNodes = flowInstance.getNodes().filter(node => ((node.data?.pathIDs || []) as number[]).includes(related.path.id))
+	    if (pathNodes.length) {
+	      flowInstance.fitView({ nodes: pathNodes, padding: 0.28, minZoom: 0.3, maxZoom: 1.05, duration: 280 })
+	      pathFocusTimer.current = null
+	      return
+	    }
+	    if (attempt >= 8) {
+	      pathFocusTimer.current = null
+	      return
+	    }
+	    pathFocusTimer.current = window.setTimeout(() => fitAttempt(attempt + 1), 50)
+	  }
+	  if (pathFocusTimer.current !== null) window.clearTimeout(pathFocusTimer.current)
+	  pathFocusTimer.current = window.setTimeout(() => fitAttempt(), 50)
+	}
   const deleteGraphMenuEntity = async () => {
     const entity = graphMenu?.entity
     setGraphMenu(null)
@@ -9200,6 +9260,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     }
     if (entity.type === 'server') {
       setSelectedServer(entity.id)
+      setRelatedGraphTarget(null)
       setInspectorOpen(true)
       setIsToolbarCollapsed(true)
     }
@@ -9373,7 +9434,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         <ProxyGraphLegend />
         {activeGraphEntity && <div className="graph-selection-toolbar" role="toolbar" aria-label="当前选中项操作">
           <strong title={activeGraphEntity.label}>{activeGraphEntity.label}</strong>
-				  {(activeGraphEntity.type === 'proxy-path-step' || (activeGraphEntity.type === 'direct' && activeGraphEntity.path_id)) && <button type="button" className="ghost" onClick={() => editProxyPathNameForEntity(activeGraphEntity)}><Edit3 size={13} />链路设置</button>}
+		  {(activeGraphEntity.type === 'proxy-path-step' || (activeGraphEntity.type === 'direct' && activeGraphEntity.path_id)) && <button type="button" className="ghost" onClick={() => editProxyPathNameForEntity(activeGraphEntity)}><Edit3 size={13} />链路设置</button>}
+		  {activeGraphSource === 'node' && relationTargetForEntity(activeGraphEntity, activeGraphPathIDs) && <button type="button" className="ghost" onClick={() => openRelatedPaths(activeGraphEntity, activeGraphPathIDs)}><Workflow size={13} aria-hidden="true" />相关链路</button>}
 	          {activeGraphActionLabel && <button type="button" className="ghost" onClick={() => void openActiveGraphEntity()}><Edit3 size={13} />{activeGraphActionLabel}</button>}
 			  {activeGraphEntity.type === 'direct' && <button type="button" className="ghost" onClick={() => copyDirectExit(activeGraphEntity)}><Copy size={13} />复制直接出口</button>}
 			  <button type="button" className="ghost danger-text" onClick={() => void deleteActiveGraphEntity()}><Trash2 size={13} />{activeGraphEntity.node_id?.startsWith('canvas-server-') || activeGraphEntity.node_id?.startsWith('direct-exit-canvas-') || activeGraphEntity.node_id?.startsWith('warp-canvas-') ? '移出画布' : activeGraphEntity.type === 'proxy-path-step' ? '断开后续' : '删除'}</button>
@@ -9383,23 +9445,28 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 
         {graphMenu && <div className="graph-context-menu" style={{ left: graphMenu.x, top: graphMenu.y }} onContextMenu={e => e.preventDefault()}>
           <div className="graph-context-menu-title">{graphMenu.entity.label}</div>
-				  {(graphMenu.entity.type === 'proxy-path-step' || (graphMenu.entity.type === 'direct' && graphMenu.entity.path_id)) && <button onClick={editProxyPathName}><Edit3 size={14} />链路设置</button>}
+			  {(graphMenu.entity.type === 'proxy-path-step' || (graphMenu.entity.type === 'direct' && graphMenu.entity.path_id)) && <button onClick={editProxyPathName}><Edit3 size={14} />链路设置</button>}
+			  {graphMenu.source === 'node' && relationTargetForEntity(graphMenu.entity, graphMenu.pathIDs) && <button onClick={() => openRelatedPaths(graphMenu.entity, graphMenu.pathIDs)}><Workflow size={14} aria-hidden="true" />相关链路</button>}
 			  {graphMenu.entity.type === 'proxy-path-step' && ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === graphMenu.entity.id)?.node_type !== 'warp' && <button onClick={editProxyPathTransport}><ArrowLeftRight size={14} />更改传递方式</button>}
 			  {graphMenu.entity.type === 'direct' && <button onClick={copyGraphMenuDirectExit}><Copy size={14} />复制直接出口</button>}
 			  <button className="danger-text" onClick={deleteGraphMenuEntity}><Trash2 size={14} />{graphMenu.entity.node_id?.startsWith('canvas-server-') || graphMenu.entity.node_id?.startsWith('direct-exit-canvas-') || graphMenu.entity.node_id?.startsWith('warp-canvas-') ? '从画布移除' : graphMenu.entity.type === 'proxy-path-step' ? '取消此处及后续节点' : '删除'}</button>
         </div>}
         </div>
         {inspectorOpen && <aside className="graph-inspector open">
-          <button className="ghost inspector-toggle" onClick={toggleInspector}><X size={15} />收起详情</button>
+          <button className="ghost inspector-toggle" onClick={() => { setInspectorOpen(false); setRelatedGraphTarget(null) }}><X size={15} aria-hidden="true" />收起详情</button>
           <div className="graph-inspector-content">
-            <div className="host-picker compact-panel">
-              <h3>主机</h3>
-              <p className="muted">当前一级服务器及其后续链路。</p>
-              <div className="host-list">{servers.map(s => <button key={s.id} className={selected?.id === s.id ? '' : 'ghost'} onClick={() => selectEntryServer(s.id)}>{s.name}<small>{labelValue(s.status || 'unknown')}</small></button>)}</div>
-            </div>
-            <div className="branch-panel compact-panel">
-              {selected ? <ServerBranchTree data={data} server={selected} /> : <p className="muted">暂无服务器</p>}
-            </div>
+			{relatedGraphTarget
+			  ? <RelatedPathsInspector data={data} client={client} target={relatedGraphTarget} onLocate={locateRelatedPath} />
+			  : <>
+			      <div className="host-picker compact-panel">
+			        <h3>主机</h3>
+			        <p className="muted">当前一级服务器及其后续链路。</p>
+			        <div className="host-list">{servers.map(s => <button key={s.id} className={selected?.id === s.id ? '' : 'ghost'} onClick={() => selectEntryServer(s.id)}>{s.name}<small>{labelValue(s.status || 'unknown')}</small></button>)}</div>
+			      </div>
+			      <div className="branch-panel compact-panel">
+			        {selected ? <ServerBranchTree data={data} server={selected} /> : <p className="muted">暂无服务器</p>}
+			      </div>
+			    </>}
           </div>
         </aside>}
       </div>
@@ -10500,6 +10567,160 @@ function userByID(data: any, id: number) {
 
 function groupByID(data: any, id: number) {
   return ((data.user_groups || []) as UserGroup[]).find(g => g.id === id)
+}
+
+function RelatedPathsInspector({ data, client, target, onLocate }: {
+  data: any
+  client: ReturnType<typeof api>
+  target: RelatedGraphTarget
+  onLocate: (path: RelatedProxyPath) => void
+}) {
+  const related = useMemo(() => relatedProxyPaths(data, target.relation), [data.inbounds, data.proxy_paths, data.proxy_path_steps, target])
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set())
+  const [plans, setPlans] = useState<Record<number, ProxyPathPlan>>({})
+  const [loadingPlans, setLoadingPlans] = useState<Set<number>>(() => new Set())
+  const [planErrors, setPlanErrors] = useState<Record<number, string>>({})
+  const dataFingerprint = `${((data.proxy_paths || []) as ProxyPath[]).map(path => `${path.id}:${path.enabled}`).join(',')}|${((data.proxy_path_steps || []) as ProxyPathStep[]).map(step => `${step.id}:${step.path_id}:${step.position}:${step.transport_mode || ''}:${step.processing_role === true}`).join(',')}`
+
+  useEffect(() => {
+    setExpanded(new Set())
+  }, [target.entity.type, target.entity.id, target.relation.kind])
+  useEffect(() => {
+    setPlans({})
+    setPlanErrors({})
+    setLoadingPlans(new Set())
+  }, [dataFingerprint])
+
+  const loadPlan = async (pathID: number) => {
+    setLoadingPlans(current => new Set(current).add(pathID))
+    setPlanErrors(current => {
+      const next = { ...current }
+      delete next[pathID]
+      return next
+    })
+    try {
+      const response = await client.request(`/proxy-paths/${pathID}/plan`) as { plan: ProxyPathPlan }
+      setPlans(current => ({ ...current, [pathID]: response.plan }))
+    } catch (error: any) {
+      setPlanErrors(current => ({ ...current, [pathID]: localizeErrorMessage(error.message || error) }))
+    } finally {
+      setLoadingPlans(current => {
+        const next = new Set(current)
+        next.delete(pathID)
+        return next
+      })
+    }
+  }
+  const togglePath = (item: RelatedProxyPath) => {
+    if (item.path.enabled === false) return
+    const opening = !expanded.has(item.path.id)
+    setExpanded(current => {
+      const next = new Set(current)
+      if (opening) next.add(item.path.id)
+      else next.delete(item.path.id)
+      return next
+    })
+    if (opening && !plans[item.path.id] && !loadingPlans.has(item.path.id)) void loadPlan(item.path.id)
+  }
+  const enabled = related.filter(item => item.path.enabled !== false)
+  const disabled = related.filter(item => item.path.enabled === false)
+  const groups = [{ label: '启用', items: enabled }, { label: '已禁用', items: disabled }].filter(group => group.items.length)
+
+  return <section className="related-paths-panel" aria-labelledby="related-paths-title">
+    <header className="related-paths-head">
+      <div className="related-paths-title-icon"><Workflow size={16} aria-hidden="true" /></div>
+      <div><span>节点关联</span><h3 id="related-paths-title">{target.entity.label}</h3><p>{related.length ? `${related.length} 条链路引用此节点` : '没有链路引用此节点'}</p></div>
+    </header>
+    {!related.length && <div className="related-paths-empty"><Network size={20} aria-hidden="true" /><strong>暂无关联链路</strong><span>此节点尚未被任何已保存分支使用。</span></div>}
+    {groups.map(group => <section className="related-path-group" key={group.label}>
+      <div className="related-path-group-label"><span>{group.label}</span><small>{group.items.length}</small></div>
+      <div className="related-path-list">
+        {group.items.map(item => {
+          const path = item.path
+          const isOpen = expanded.has(path.id)
+          const detailsID = `related-path-details-${path.id}`
+          const rootServer = ((data.servers || []) as Server[]).find(server => server.id === item.rootServerID)
+          const plan = plans[path.id]
+          const loading = loadingPlans.has(path.id)
+          const error = planErrors[path.id]
+          return <article className={`related-path-item${path.enabled === false ? ' is-disabled' : ''}`} key={path.id}>
+            <div className="related-path-row">
+              <button
+                type="button"
+                className="related-path-expand ghost icon-button"
+                onClick={() => togglePath(item)}
+                disabled={path.enabled === false}
+                aria-label={path.enabled === false ? `${path.name} 已禁用，没有运行节点` : `${isOpen ? '收起' : '展开'} ${path.name} 的内部节点`}
+                aria-expanded={path.enabled === false ? undefined : isOpen}
+                aria-controls={path.enabled === false ? undefined : detailsID}
+                title={path.enabled === false ? '链路已禁用，没有运行节点' : isOpen ? '收起内部节点' : '查看内部节点'}
+              >{isOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}</button>
+              <div className="related-path-main">
+                <div><strong title={path.name || `路径 ${path.id}`}>{path.name || `路径 ${path.id}`}</strong><span className={`status-pill ${path.enabled === false ? 'neutral' : 'ok'}`}>{path.enabled === false ? '已禁用' : '启用'}</span></div>
+                <p>{item.roles.join('、')}</p>
+                <small>{rootServer?.name || `服务器 #${item.rootServerID}`} · {proxyPathChainLabels(data, path).join(' → ')}</small>
+              </div>
+              <button
+                type="button"
+                className="ghost icon-button related-path-locate"
+                onClick={() => onLocate(item)}
+                disabled={path.enabled === false}
+                aria-label={path.enabled === false ? `${path.name} 已禁用，无法定位` : `在链路图中定位 ${path.name}`}
+                title={path.enabled === false ? '启用链路后才能在图中定位' : '在链路图中定位'}
+              ><LocateFixed size={15} aria-hidden="true" /></button>
+            </div>
+            {isOpen && <div className="related-path-details" id={detailsID} aria-busy={loading}>
+              {loading && <div className="related-path-loading" role="status"><Loader2 size={14} className="spin" aria-hidden="true" />正在投影运行节点</div>}
+              {error && <div className="related-path-error" role="alert"><span>{error}</span><button type="button" className="ghost" onClick={() => void loadPlan(path.id)}>重试</button></div>}
+              {plan && !loading && !error && <ProxyPathRuntimeDetails plan={plan} data={data} />}
+            </div>}
+          </article>
+        })}
+      </div>
+    </section>)}
+  </section>
+}
+
+function ProxyPathRuntimeDetails({ plan, data }: { plan: ProxyPathPlan; data: any }) {
+  const nodes = plan.runtime_nodes || []
+  const forwards = plan.port_forwards || []
+  const tunnels = plan.tunnels || []
+  const hasResources = nodes.length > 0 || forwards.length > 0 || tunnels.length > 0
+  return <div className="runtime-resource-view">
+    {!hasResources && <div className="runtime-resource-empty">这条链路没有隐藏的内部运行节点。</div>}
+    {nodes.length > 0 && <div className="runtime-resource-section">
+      <h4>内部节点</h4>
+      <ul>{nodes.map(node => {
+        const server = ((data.servers || []) as Server[]).find(item => item.id === node.server_id)
+        return <li key={node.resource_key}>
+          <span className="runtime-resource-icon"><Network size={14} aria-hidden="true" /></span>
+          <div><strong>{node.name || runtimeNodeKindLabel(node.kind)}</strong><span>{server?.name || `服务器 #${node.server_id}`} · {labelProtocol(node.protocol)}{node.profile ? ` / ${node.profile}` : ''}</span><small>{node.listen_scope === 'loopback' ? '内部回环' : '公网监听'} · {formatHostPort(node.listen_ip, node.port)} · {labelValue(node.network)}{node.shared ? ` · ${node.reference_count} 条链路共享` : ' · 独占'}</small></div>
+        </li>
+      })}</ul>
+    </div>}
+    {(forwards.length > 0 || tunnels.length > 0) && <div className="runtime-resource-section">
+      <h4>派生传输</h4>
+      <ul>
+        {forwards.map(forward => <li key={`forward-${forward.id}`}><span className="runtime-resource-icon"><ArrowLeftRight size={14} aria-hidden="true" /></span><div><strong>端口转发</strong><span>{serverNameByID(data, forward.source_server_id)} → {serverNameByID(data, forward.target_server_id)}</span><small>{formatHostPort(forward.listen_ip, forward.listen_port)} → {formatHostPort(forward.target_address, forward.target_port)} · {labelValue(forward.protocol)}</small></div></li>)}
+        {tunnels.map(tunnel => <li key={`tunnel-${tunnel.id}`}><span className="runtime-resource-icon"><Cable size={14} aria-hidden="true" /></span><div><strong>{tunnel.type === 'wireguard' ? 'WireGuard 组网' : 'SSH 隧道'}</strong><span>{serverNameByID(data, tunnel.source_server_id)} → {serverNameByID(data, tunnel.target_server_id)}</span><small>{tunnel.listen_port ? `本地端口 ${tunnel.listen_port}` : '内部连接'}{tunnel.target_port ? ` · 目标端口 ${tunnel.target_port}` : ''}</small></div></li>)}
+      </ul>
+    </div>}
+    {(plan.warnings || []).length > 0 && <div className="runtime-resource-warnings">{plan.warnings!.map((warning, index) => <span key={index}>{warning}</span>)}</div>}
+  </div>
+}
+
+function runtimeNodeKindLabel(kind: string) {
+  const labels: Record<string, string> = {
+    shared_chain_inbound: '共享链式入站',
+    path_internal_inbound: '路径内部入站',
+    shared_transparent_inbound: '透明转发接收入口',
+    trusted_processing_inbound: '可信转发处理入口',
+  }
+  return labels[kind] || '内部节点'
+}
+
+function serverNameByID(data: any, serverID: number) {
+  return ((data.servers || []) as Server[]).find(server => server.id === serverID)?.name || `服务器 #${serverID}`
 }
 
 function ServerBranchTree({ data, server }: { data: any; server: Server }) {

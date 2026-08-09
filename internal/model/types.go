@@ -1188,15 +1188,32 @@ type ProxyPathPlanStep struct {
 	TunnelID           int64                      `json:"tunnel_id,omitempty"`
 }
 
+type ProxyPathRuntimeNode struct {
+	ResourceKey    string          `json:"resource_key"`
+	StepID         int64           `json:"step_id"`
+	Kind           string          `json:"kind"`
+	Name           string          `json:"name"`
+	ServerID       int64           `json:"server_id"`
+	Protocol       Protocol        `json:"protocol"`
+	Profile        string          `json:"profile,omitempty"`
+	ListenIP       string          `json:"listen_ip"`
+	Port           int             `json:"port"`
+	Network        ForwardProtocol `json:"network"`
+	ListenScope    string          `json:"listen_scope"`
+	Shared         bool            `json:"shared"`
+	ReferenceCount int             `json:"reference_count"`
+}
+
 type ProxyPathPlan struct {
-	PathID       int64               `json:"path_id"`
-	Name         string              `json:"name"`
-	InboundID    int64               `json:"inbound_id"`
-	Enabled      bool                `json:"enabled"`
-	Steps        []ProxyPathPlanStep `json:"steps"`
-	Warnings     []string            `json:"warnings,omitempty"`
-	PortForwards []PortForward       `json:"port_forwards,omitempty"`
-	Tunnels      []Tunnel            `json:"tunnels,omitempty"`
+	PathID       int64                  `json:"path_id"`
+	Name         string                 `json:"name"`
+	InboundID    int64                  `json:"inbound_id"`
+	Enabled      bool                   `json:"enabled"`
+	Steps        []ProxyPathPlanStep    `json:"steps"`
+	Warnings     []string               `json:"warnings,omitempty"`
+	RuntimeNodes []ProxyPathRuntimeNode `json:"runtime_nodes"`
+	PortForwards []PortForward          `json:"port_forwards,omitempty"`
+	Tunnels      []Tunnel               `json:"tunnels,omitempty"`
 }
 
 // ProxyPathPortAllocation records the port one generated proxy-path listener

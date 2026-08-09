@@ -12,6 +12,109 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+func TestProxyPathPlanRuntimeNodesAreSharedAndCredentialFree(t *testing.T) {
+	source := model.Server{ID: 1, Name: "source", ChainSecret: "source-secret", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
+	target := model.Server{ID: 2, Name: "target", ChainSecret: "target-secret", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
+	root := model.Inbound{ID: 10, ServerID: source.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	paths := []model.ProxyPath{
+		{ID: 1, Name: "one", InboundID: root.ID, Secret: "one-secret", Enabled: true},
+		{ID: 2, Name: "two", InboundID: root.ID, Secret: "two-secret", Enabled: true},
+		{ID: 3, Name: "disabled", InboundID: root.ID, Secret: "disabled-secret", Enabled: false},
+	}
+	targetID := target.ID
+	steps := []model.ProxyPathStep{
+		{ID: 101, PathID: 1, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`},
+		{ID: 201, PathID: 2, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`},
+		{ID: 301, PathID: 3, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`},
+	}
+
+	plans, err := BuildProxyPathPlansWithLedger(paths, steps, []model.Server{source, target}, []model.Inbound{root}, NewProxyPathPortLedger(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 3 || len(plans[0].RuntimeNodes) != 1 || len(plans[1].RuntimeNodes) != 1 || len(plans[2].RuntimeNodes) != 0 {
+		t.Fatalf("runtime nodes = %#v", plans)
+	}
+	first, second := plans[0].RuntimeNodes[0], plans[1].RuntimeNodes[0]
+	if first.Kind != "shared_chain_inbound" || !first.Shared || first.ReferenceCount != 2 || first.ResourceKey != second.ResourceKey || first.Port != second.Port {
+		t.Fatalf("shared runtime nodes = %#v / %#v", first, second)
+	}
+	if first.Profile != DefaultProxyPathChainMethod || first.Network != model.ForwardProtocolTCPUDP || first.ListenScope != "public" {
+		t.Fatalf("runtime summary = %#v", first)
+	}
+	encoded, err := json.Marshal(plans)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"source-secret", "target-secret", "one-secret", "two-secret", "password", "private_key"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("runtime plan leaked %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestProxyPathPlanRuntimeNodesIncludeTrustedProcessingInbound(t *testing.T) {
+	source := model.Server{ID: 1, Name: "source", ChainSecret: "source-secret", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100, InternalPortRangeStart: 50000, InternalPortRangeEnd: 50100}
+	target := model.Server{ID: 2, Name: "target", ChainSecret: "target-secret", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100, InternalPortRangeStart: 51000, InternalPortRangeEnd: 51100}
+	root := model.Inbound{ID: 10, ServerID: source.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 1, Name: "transparent", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	targetID := target.ID
+	step := model.ProxyPathStep{ID: 101, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportPortForward, ProcessingRole: true, ConfigJSON: `{}`}
+
+	plans, err := BuildProxyPathPlansWithLedger([]model.ProxyPath{path}, []model.ProxyPathStep{step}, []model.Server{source, target}, []model.Inbound{root}, NewProxyPathPortLedger(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || len(plans[0].RuntimeNodes) != 2 {
+		t.Fatalf("runtime nodes = %#v", plans)
+	}
+	kinds := map[string]model.ProxyPathRuntimeNode{}
+	for _, node := range plans[0].RuntimeNodes {
+		kinds[node.Kind] = node
+	}
+	if kinds["shared_transparent_inbound"].ListenScope != "public" {
+		t.Fatalf("outer runtime node = %#v", kinds["shared_transparent_inbound"])
+	}
+	inner := kinds["trusted_processing_inbound"]
+	if inner.ListenScope != "loopback" || inner.ListenIP != "127.0.0.1" || inner.Protocol != model.ProtocolVLESS {
+		t.Fatalf("trusted processing node = %#v", inner)
+	}
+}
+
+func TestProxyPathPlanRuntimeNodesReserveDistinctTrustedInnerPorts(t *testing.T) {
+	source := model.Server{ID: 1, Name: "source", ChainSecret: "source-secret", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
+	target := model.Server{ID: 2, Name: "target", ChainSecret: "target-secret", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100, InternalPortRangeStart: 51000, InternalPortRangeEnd: 51001}
+	roots := []model.Inbound{
+		{ID: 10, ServerID: source.ID, Name: "entry-one", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true},
+		{ID: 11, ServerID: source.ID, Name: "entry-two", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 8443, ConfigJSON: `{}`, Enabled: true},
+	}
+	paths := []model.ProxyPath{
+		{ID: 1, Name: "one", InboundID: roots[0].ID, Secret: "one-secret", Enabled: true},
+		{ID: 2, Name: "two", InboundID: roots[1].ID, Secret: "two-secret", Enabled: true},
+	}
+	targetID := target.ID
+	steps := []model.ProxyPathStep{
+		{ID: 101, PathID: 1, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportPortForward, ProcessingRole: true, ConfigJSON: `{}`},
+		{ID: 201, PathID: 2, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportPortForward, ProcessingRole: true, ConfigJSON: `{}`},
+	}
+
+	plans, err := BuildProxyPathPlansWithLedger(paths, steps, []model.Server{source, target}, roots, NewProxyPathPortLedger(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports := map[int]bool{}
+	for _, plan := range plans {
+		for _, node := range plan.RuntimeNodes {
+			if node.Kind == "trusted_processing_inbound" {
+				ports[node.Port] = true
+			}
+		}
+	}
+	if len(ports) != 2 || ports[0] {
+		t.Fatalf("trusted processing ports = %#v, plans = %#v", ports, plans)
+	}
+}
+
 func TestSharedProxyPathShadowsocksServiceReusesPortAndRoutesByPath(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "A", ChainSecret: "chain-a", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
 	serverB := model.Server{ID: 2, Name: "B", ChainSecret: "chain-b", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}

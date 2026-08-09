@@ -987,6 +987,9 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 				// disabling it silently change the allocation of unrelated paths.
 				if path.Enabled {
 					inboundByID[plannedInbound.ID] = plannedInbound
+					if targetInbound == nil {
+						plan.RuntimeNodes = append(plan.RuntimeNodes, proxyPathRuntimeTargetNode(path, step, targetServerID, plannedInbound, chainServices, transparentGroups[path.ID]))
+					}
 				}
 				if path.Enabled && mode == model.ProxyPathTransportSingBox {
 					sourceServer, sourceOK := serverByID[previousServerID]
@@ -1017,6 +1020,30 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 					continue
 				}
 				plan.PortForwards = append(plan.PortForwards, f)
+				if path.Enabled && step.ProcessingRole {
+					processingInbound := root
+					processingInbound.ID = plannedInbound.ID
+					processingInbound.ServerID = targetServerID
+					processingInbound.Name = fmt.Sprintf("%s / 处理加解密", firstNonEmpty(path.Name, root.Name))
+					group := transparentGroups[path.ID]
+					resourceKey := fmt.Sprintf("trusted-inner:path:%d:step:%d", path.ID, step.Position)
+					shared := false
+					if group != nil {
+						processingInbound.Name = fmt.Sprintf("%s / 共享处理加解密", firstNonEmpty(root.Name, fmt.Sprintf("入口 %d", root.ID)))
+						processingInbound = proxyPathSharedTrustedInnerInbound(group.InboundID, group.PrefixLength, serverByID[targetServerID], processingInbound, inboundByID, ledger)
+						resourceKey = fmt.Sprintf("trusted-inner:inbound:%d:step:%d", group.InboundID, group.PrefixLength)
+						shared = true
+					} else {
+						processingInbound = proxyPathTrustedInnerInbound(path, step, serverByID[targetServerID], processingInbound, inboundByID, ledger)
+					}
+					// Keep the loopback listener in the projection's occupancy set. The
+					// outer transparent listener keeps its generated ID, so reserve a
+					// disjoint internal ID for collision checks performed by later paths.
+					processingReservation := processingInbound
+					processingReservation.ID = processingInbound.ID - (int64(1) << 44)
+					inboundByID[processingReservation.ID] = processingReservation
+					plan.RuntimeNodes = append(plan.RuntimeNodes, proxyPathRuntimeNode(resourceKey, step.ID, "trusted_processing_inbound", processingInbound, "", shared))
+				}
 				sourceListenPort = plannedInbound.Port
 			case model.ProxyPathTransportTunnel:
 				if !targetOK {
@@ -1078,6 +1105,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 		}
 		out = append(out, plan)
 	}
+	finalizeProxyPathRuntimeNodeReferences(out)
 	ledger.markProjectionComplete()
 	return out, inboundByID, nil
 }
@@ -1673,6 +1701,114 @@ func proxyPathPlanTargetInbound(path model.ProxyPath, step model.ProxyPathStep, 
 		return proxyPathSharedTransparentInbound(path.InboundID, step, server, inbounds, ledger)
 	}
 	return proxyPathInternalInbound(path, step, server, inbounds, ledger)
+}
+
+func proxyPathRuntimeTargetNode(path model.ProxyPath, step model.ProxyPathStep, targetServerID int64, inbound model.Inbound, services map[proxyPathChainServiceKey]*proxyPathChainService, transparentGroup *transparentProxyPathGroup) model.ProxyPathRuntimeNode {
+	if service, ok := proxyPathChainServiceForStep(services, step, targetServerID); ok {
+		return proxyPathRuntimeNode(
+			fmt.Sprintf("shared-chain:%d", inbound.ID),
+			step.ID,
+			"shared_chain_inbound",
+			inbound,
+			proxyPathRuntimeProfile(service.ChainConfig),
+			true,
+		)
+	}
+	if transparentGroup != nil && step.Position <= transparentGroup.PrefixLength {
+		return proxyPathRuntimeNode(
+			fmt.Sprintf("transparent:inbound:%d:step:%d", transparentGroup.InboundID, step.Position),
+			step.ID,
+			"shared_transparent_inbound",
+			inbound,
+			"",
+			true,
+		)
+	}
+	return proxyPathRuntimeNode(
+		fmt.Sprintf("path-internal:path:%d:step:%d", path.ID, step.Position),
+		step.ID,
+		"path_internal_inbound",
+		inbound,
+		"",
+		false,
+	)
+}
+
+func proxyPathRuntimeNode(resourceKey string, stepID int64, kind string, inbound model.Inbound, profile string, shared bool) model.ProxyPathRuntimeNode {
+	listenScope := "public"
+	if inbound.ListenIP == "127.0.0.1" || inbound.ListenIP == "::1" || strings.EqualFold(inbound.ListenIP, "localhost") {
+		listenScope = "loopback"
+	}
+	return model.ProxyPathRuntimeNode{
+		ResourceKey: resourceKey,
+		StepID:      stepID,
+		Kind:        kind,
+		Name:        inbound.Name,
+		ServerID:    inbound.ServerID,
+		Protocol:    inbound.Protocol,
+		Profile:     profile,
+		ListenIP:    inbound.ListenIP,
+		Port:        inbound.Port,
+		Network:     proxyPathRuntimeNetwork(inbound),
+		ListenScope: listenScope,
+		Shared:      shared,
+	}
+}
+
+func proxyPathRuntimeProfile(config ProxyPathChainConfig) string {
+	switch config.Protocol {
+	case model.ProtocolSS:
+		return config.Method
+	case model.ProtocolVLESS:
+		return fmt.Sprintf("Reality %s:%d", config.RealityHandshakeServer, config.RealityHandshakePort)
+	case model.ProtocolMieru:
+		return "TCP"
+	default:
+		return ""
+	}
+}
+
+func proxyPathRuntimeNetwork(inbound model.Inbound) model.ForwardProtocol {
+	switch inbound.Protocol {
+	case model.ProtocolHY2:
+		return model.ForwardProtocolUDP
+	case model.ProtocolSS:
+		return transparentForwardProtocol(inbound)
+	case model.ProtocolMieru:
+		if MieruInboundTransport(inbound) == "UDP" {
+			return model.ForwardProtocolUDP
+		}
+		return model.ForwardProtocolTCP
+	default:
+		return model.ForwardProtocolTCP
+	}
+}
+
+func finalizeProxyPathRuntimeNodeReferences(plans []model.ProxyPathPlan) {
+	references := map[string]map[int64]bool{}
+	for planIndex := range plans {
+		seen := map[string]bool{}
+		nodes := make([]model.ProxyPathRuntimeNode, 0, len(plans[planIndex].RuntimeNodes))
+		for _, node := range plans[planIndex].RuntimeNodes {
+			if node.ResourceKey == "" || seen[node.ResourceKey] {
+				continue
+			}
+			seen[node.ResourceKey] = true
+			nodes = append(nodes, node)
+			if references[node.ResourceKey] == nil {
+				references[node.ResourceKey] = map[int64]bool{}
+			}
+			references[node.ResourceKey][plans[planIndex].PathID] = true
+		}
+		plans[planIndex].RuntimeNodes = nodes
+	}
+	for planIndex := range plans {
+		for nodeIndex := range plans[planIndex].RuntimeNodes {
+			node := &plans[planIndex].RuntimeNodes[nodeIndex]
+			node.ReferenceCount = len(references[node.ResourceKey])
+			node.Shared = node.ReferenceCount > 1
+		}
+	}
 }
 
 func DerivedPortForwardsFromProxyPaths(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound) ([]model.PortForward, error) {

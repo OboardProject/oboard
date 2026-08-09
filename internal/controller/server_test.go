@@ -1959,6 +1959,23 @@ func TestProxyPathServerOnlyStepsPlanAndValidation(t *testing.T) {
 	if len(steps) != 3 || int64(steps[0].(map[string]any)["server_id"].(float64)) != serverBID || int64(steps[1].(map[string]any)["server_id"].(float64)) != serverCID {
 		t.Fatalf("bad proxy path plan: %#v", plan)
 	}
+	runtimeNodes := plan["plan"].(map[string]any)["runtime_nodes"].([]any)
+	if len(runtimeNodes) != 3 {
+		t.Fatalf("bad proxy path runtime nodes: %#v", plan)
+	}
+	allowedRuntimeFields := map[string]bool{
+		"resource_key": true, "step_id": true, "kind": true, "name": true,
+		"server_id": true, "protocol": true, "profile": true, "listen_ip": true,
+		"port": true, "network": true, "listen_scope": true, "shared": true,
+		"reference_count": true,
+	}
+	for _, raw := range runtimeNodes {
+		for key := range raw.(map[string]any) {
+			if !allowedRuntimeFields[key] {
+				t.Fatalf("proxy path runtime node exposed %q: %#v", key, raw)
+			}
+		}
+	}
 	request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": transparentStepID}, http.StatusBadRequest)
 	listed := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths", token, nil, http.StatusOK)
 	if got := len(listed["proxy_paths"].([]any)); got != 1 {
