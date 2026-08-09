@@ -3,7 +3,9 @@ package capability
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/OboardProject/oboard/internal/application"
@@ -226,6 +228,22 @@ func defaultDescriptors() []Descriptor {
 	})
 	path := closedObject(map[string]any{"id": positiveID, "revision": stringValue, "kind": stringValue, "name": stringValue, "inbound_id": positiveID, "effective_exit_region_code": stringValue, "exit_region_status": stringValue, "enabled": boolValue})
 	step := closedObject(map[string]any{"id": positiveID, "revision": stringValue, "path_id": positiveID, "position": map[string]any{"type": "integer", "minimum": 1}, "node_type": stringValue, "transport_mode": stringValue, "processing_role": boolValue, "server_id": nullableInteger(), "inbound_id": nullableInteger(), "external_outbound_id": nullableInteger(), "advanced_configured": boolValue})
+	userGroup := closedObject(map[string]any{
+		"id": positiveID, "revision": stringValue, "name": stringValue, "description": stringValue,
+		"role": stringValue, "system_key": stringValue, "enabled": boolValue,
+		"subscription_custom_path_policy": stringValue, "created_at": stringValue, "updated_at": stringValue,
+	})
+	userDevice := closedObject(map[string]any{
+		"id": stringValue, "device_id_hash": stringValue, "user_id": positiveID, "name": stringValue,
+		"token_prefix": stringValue, "credential_epoch": map[string]any{"type": "integer"},
+		"status": stringValue, "subscription_suspended": boolValue, "proxy_access_state": stringValue,
+		"created_at": stringValue, "updated_at": stringValue, "last_subscription_at": nullableString(),
+		"last_proxy_activity_at": nullableString(), "revoked_at": nullableString(),
+	})
+	userGroupMember := closedObject(map[string]any{
+		"id": positiveID, "group_id": positiveID, "user_id": positiveID, "enabled": boolValue,
+		"created_at": stringValue, "updated_at": stringValue,
+	})
 	incident := closedObject(map[string]any{"id": stringValue, "user_id": positiveID, "status": stringValue, "classification": stringValue, "severity": stringValue, "rule_score": map[string]any{"type": "integer"}, "anomaly_score": nullableInteger(), "fingerprint": stringValue, "latest_snapshot_id": stringValue, "opened_at": stringValue, "updated_at": stringValue, "resolved_at": nullableString()})
 	planOutput := schemaObject(map[string]any{
 		"kind":     stringValue,
@@ -307,11 +325,127 @@ func defaultDescriptors() []Descriptor {
 			ResolveResourceRefs: writeResolver(name),
 		})
 	}
+	descriptors = append(descriptors, usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
+	descriptors = append(descriptors, trafficDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
+	descriptors = append(descriptors, externalOutboundDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
+	descriptors = append(descriptors, networkDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
+	descriptors = append(descriptors, forwardsDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	for index := range descriptors {
 		descriptors[index].Version = "1"
 		descriptors[index].Documentation = "oboard://schemas/" + descriptors[index].Name
 	}
 	return descriptors
+}
+
+// usersAccessDescriptors builds the users and access-control capability set.
+// All user, group, member, device, and session capabilities are admin-only and
+// follow the same boundary rules as the panel's 用户与分组 tab.
+func usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positiveID map[string]any, stringValue, boolValue map[string]any, nullableString, nullableInteger func() map[string]any) []Descriptor {
+	adminWrite := func(name, description string, input, output json.RawMessage, risk int, destructive bool) Descriptor {
+		return Descriptor{
+			Name: name, Description: description, InputSchema: input, OutputSchema: output,
+			RequiredScopes: []string{name + ":write"}, ResourceEvaluator: "user_ids",
+			RiskClass: risk, ApprovalPolicy: "required", Idempotent: true,
+			DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, SensitiveInput: []string{"user_identity", "password"},
+			Destructive: destructive, MCPEnabled: true, Executable: true,
+			MinimumAccess: mcpauth.AccessOperate, RBACPermission: "admin.settings",
+			ResolveResourceRefs: usersWriteResolver(name),
+		}
+	}
+	adminRead := func(name, description string, output json.RawMessage, input json.RawMessage) Descriptor {
+		return Descriptor{
+			Name: name, Description: description, InputSchema: input, OutputSchema: output,
+			RequiredScopes: []string{name + ":read"}, ReadOnly: true, Idempotent: true,
+			DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"},
+			MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "admin.settings",
+			ResolveResourceRefs: noRefs,
+		}
+	}
+	userFull := closedObject(map[string]any{
+		"id": positiveID, "revision": stringValue, "username": stringValue, "nickname": stringValue,
+		"role": stringValue, "status": stringValue, "speed_limit_mbps": map[string]any{"type": "integer"},
+		"traffic_limit_bytes": stringValue, "traffic_used_bytes": stringValue,
+		"subscription_configured": boolValue, "subscription_age_enabled": boolValue,
+		"subscription_suspended": boolValue, "subscription_suspended_at": nullableString(),
+		"subscription_suspend_reason": stringValue, "device_limit": map[string]any{"type": "integer"},
+		"legacy_proxy_enabled": boolValue, "protected": boolValue,
+		"created_at": stringValue, "updated_at": stringValue,
+	})
+	userUpdateChanges := closedObject(map[string]any{
+		"nickname": map[string]any{"type": "string", "maxLength": 40},
+		"role":     map[string]any{"type": "string", "enum": []string{"admin", "operator", "viewer", "none"}},
+		"status":   map[string]any{"type": "string", "enum": []string{"active", "disabled"}},
+		"password": map[string]any{"type": "string", "minLength": 8, "maxLength": 128, "writeOnly": true},
+		"speed_limit_mbps":       map[string]any{"type": "integer", "minimum": -1},
+		"traffic_limit_bytes":    map[string]any{"type": "integer", "minimum": -1},
+		"traffic_reset_mode":     map[string]any{"type": "string", "enum": []string{"monthly", "month_day", "anniversary_month", "never"}},
+		"traffic_reset_day":      map[string]any{"type": "integer", "minimum": 0, "maximum": 31},
+		"device_limit":           map[string]any{"type": "integer", "minimum": 0},
+		"legacy_proxy_enabled":   boolValue,
+		"subscription_burn_after_read": boolValue,
+		"subscription_age_enabled":     boolValue,
+		"subscription_age_public_key":  map[string]any{"type": "string", "maxLength": 4096},
+	})
+	userCreate := closedObject(map[string]any{
+		"username": map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
+		"nickname": map[string]any{"type": "string", "maxLength": 40},
+		"password": map[string]any{"type": "string", "minLength": 8, "maxLength": 128, "writeOnly": true},
+		"role":     map[string]any{"type": "string", "enum": []string{"admin", "operator", "viewer", "none"}},
+		"status":   map[string]any{"type": "string", "enum": []string{"active", "disabled"}},
+		"speed_limit_mbps":       map[string]any{"type": "integer", "minimum": -1},
+		"traffic_limit_bytes":    map[string]any{"type": "integer", "minimum": -1},
+		"traffic_reset_mode":     map[string]any{"type": "string", "enum": []string{"monthly", "month_day", "anniversary_month", "never"}},
+		"traffic_reset_day":      map[string]any{"type": "integer", "minimum": 0, "maximum": 31},
+		"device_limit":           map[string]any{"type": "integer", "minimum": 0},
+		"legacy_proxy_enabled":   boolValue,
+		"subscription_burn_after_read": boolValue,
+	}, "username")
+	groupChanges := closedObject(map[string]any{
+		"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
+		"description": map[string]any{"type": "string", "maxLength": 200},
+		"role":        map[string]any{"type": "string", "enum": []string{"admin", "operator", "viewer", "none"}},
+		"enabled":     boolValue,
+		"subscription_custom_path_policy": map[string]any{"type": "string", "enum": []string{"inherit", "allow", "deny"}},
+	})
+	return []Descriptor{
+		adminRead("users.get", "读取单个用户的管理摘要，不含任何凭据", schemaObject(map[string]any{"id": positiveID}, "id"), rawSchema(userFull)),
+		adminRead("user_groups.list", "列出全部用户分组", schemaObject(nil), rawSchema(arrayOf(userGroup))),
+		adminRead("user_group_members.list", "列出全部用户分组与用户的成员关系", schemaObject(nil), rawSchema(arrayOf(userGroupMember))),
+		adminRead("user_devices.list", "列出指定用户的已登记设备", schemaObject(map[string]any{"user_id": positiveID}, "user_id"), schemaObject(map[string]any{"devices": arrayOf(userDevice)}, "devices")),
+		adminWrite("users.create", "创建面板用户并分配角色与额度", schemaObject(map[string]any{"user": userCreate}, "user"), schemaObject(map[string]any{"user": userFull}, "user"), 2, false),
+		adminWrite("users.update", "修改用户角色、状态、额度与订阅设置", schemaObject(map[string]any{"user_id": positiveID, "changes": userUpdateChanges}, "user_id", "changes"), schemaObject(map[string]any{"user": userFull, "changed_fields": stringArray(1, 32)}, "user"), 2, false),
+		adminWrite("users.delete", "删除用户及其所有关联数据", schemaObject(map[string]any{"user_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "user_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "user_id": positiveID}, "deleted"), 3, true),
+		adminWrite("users.session_revoke", "吊销用户全部登录会话与访问令牌", schemaObject(map[string]any{"user_id": positiveID}, "user_id"), schemaObject(map[string]any{"session_revoked": boolValue, "user_id": positiveID}, "session_revoked"), 2, false),
+		adminWrite("user_groups.create", "创建用户分组并设置角色与策略", schemaObject(map[string]any{"user_group": closedObject(map[string]any{
+			"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
+			"description": map[string]any{"type": "string", "maxLength": 200},
+			"role":        map[string]any{"type": "string", "enum": []string{"admin", "operator", "viewer", "none"}},
+			"enabled":     boolValue,
+			"subscription_custom_path_policy": map[string]any{"type": "string", "enum": []string{"inherit", "allow", "deny"}},
+		}, "name")}, "user_group"), schemaObject(map[string]any{"user_group": userGroup}, "user_group"), 2, false),
+		adminWrite("user_groups.update", "修改用户分组的角色、启用状态与订阅策略", schemaObject(map[string]any{"group_id": positiveID, "changes": groupChanges}, "group_id", "changes"), schemaObject(map[string]any{"user_group": userGroup, "changed_fields": stringArray(1, 32)}, "user_group"), 2, false),
+		adminWrite("user_groups.delete", "删除用户分组及其全部成员关系", schemaObject(map[string]any{"group_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "group_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "group_id": positiveID}, "deleted"), 3, true),
+		adminWrite("user_group_members.set", "新增或更新用户与分组的成员关系", schemaObject(map[string]any{"group_id": positiveID, "user_id": positiveID, "enabled": boolValue}, "group_id", "user_id"), schemaObject(map[string]any{"user_group_member": userGroupMember}, "user_group_member"), 2, false),
+		adminWrite("user_devices.update", "重命名用户已登记设备", schemaObject(map[string]any{"user_id": positiveID, "device_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}}, "user_id", "device_id", "name"), schemaObject(map[string]any{"device": userDevice}, "device"), 2, false),
+		adminWrite("user_devices.revoke", "吊销用户设备凭据并撤销其代理与订阅访问", schemaObject(map[string]any{"user_id": positiveID, "device_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "revoked": map[string]any{"type": "boolean", "enum": []any{true}}}, "user_id", "device_id", "revoked"), schemaObject(map[string]any{"device": userDevice, "revoked": boolValue}, "device"), 2, false),
+	}
+}
+
+func usersWriteResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRef, error) {
+	return func(_ context.Context, input any) ([]mcpauth.ResourceRef, error) {
+		object, err := canonicalMap(input)
+		if err != nil {
+			return nil, err
+		}
+		if name == "users.create" || name == "user_groups.create" || name == "user_groups.update" || name == "user_groups.delete" {
+			return nil, nil
+		}
+		id, ok := int64Value(object["user_id"])
+		if !ok || id <= 0 {
+			return nil, errors.New("user_id must be a positive integer ID")
+		}
+		return []mcpauth.ResourceRef{{Type: "user", ID: strconv.FormatInt(id, 10)}}, nil
+	}
 }
 
 func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRef, error) {

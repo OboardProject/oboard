@@ -41,6 +41,16 @@ func (s *Server) mcpResourceDefs() []mcpResourceDef {
 		{uri: "oboard://inventory/summary", title: "Inventory Summary", name: "Inventory summary", description: "Return an authorization-filtered inventory summary with object counts, status counts, non-secret health information, and revision metadata.", capability: "inventory.read", kind: "query"},
 		{uri: "oboard://servers", title: "Servers", name: "Servers", description: "Return the index of servers visible to the current grant. Omit credentials, enrollment tokens, secret material, and unauthorized servers.", capability: "servers.list", kind: "query"},
 		{uri: "oboard://users", title: "Users", name: "Users", description: "Return authorization-filtered, non-credential user summaries. Sensitive identity fields must be classified and omitted unless the current RBAC permission explicitly allows them.", capability: "users.list", kind: "query"},
+		{uri: "oboard://user-groups", title: "User Groups", name: "User groups", description: "Return all user groups with roles, enabled state, and subscription custom-path policy. Never includes credentials.", capability: "user_groups.list", kind: "query"},
+		{uri: "oboard://user-group-members", title: "User Group Members", name: "User group members", description: "Return all user-group membership relations (group_id, user_id, enabled).", capability: "user_group_members.list", kind: "query"},
+		{uri: "oboard://outbounds", title: "Outbounds", name: "Outbounds", description: "Return redacted server outbounds (next-hop proxy). Never includes auth config or credentials.", capability: "outbounds.list", kind: "query"},
+		{uri: "oboard://routing-rules", title: "Routing Rules", name: "Routing rules", description: "Return all routing rules with match state, action, and target references.", capability: "routing_rules.list", kind: "query"},
+		{uri: "oboard://external-outbounds", title: "External Outbounds", name: "External outbounds", description: "Return imported third-party nodes with region state. Never includes auth config or credentials.", capability: "external_outbounds.list", kind: "query"},
+		{uri: "oboard://warp-profiles", title: "WARP Profiles", name: "WARP profiles", description: "Return WARP profile state per server with private keys redacted.", capability: "warp_profiles.list", kind: "query"},
+		{uri: "oboard://dns-lists", title: "DNS Lists", name: "DNS lists", description: "Return all encrypted and bootstrap DNS resolver lists with candidates.", capability: "dns_lists.list", kind: "query"},
+		{uri: "oboard://dns-credentials", title: "DNS Credentials", name: "DNS credentials", description: "Return DNS provider credential metadata and bound zones. Never includes provider secrets or tokens.", capability: "dns_credentials.list", kind: "query"},
+		{uri: "oboard://port-forwards", title: "Port Forwards", name: "Port forwards", description: "Return all port forward rules with probe and backend state.", capability: "port_forwards.list", kind: "query"},
+		{uri: "oboard://tunnels", title: "Tunnels", name: "Tunnels", description: "Return all WireGuard / SSH inter-server tunnels.", capability: "tunnels.list", kind: "query"},
 		{uri: "oboard://topology/current", title: "Current Topology", name: "Current topology", description: "Return the current authorized proxy topology, revision identifiers, inbound and outbound relations, and non-secret dependency information.", capability: "topology.read", kind: "query"},
 		{uri: "oboard://subscriptions", title: "Subscriptions", name: "Subscriptions", description: "Return authorization-filtered subscription summaries and state required for planning supported subscription operations. Never includes credentials or provider secrets.", capability: "users.list", kind: "query"},
 		{uri: "oboard://subscription-plans", title: "Subscription Plans", name: "Subscription plans", description: "Return subscription plans and their current version state for planning node assignments. Never includes credentials.", capability: "subscription_plans.list", kind: "query"},
@@ -77,6 +87,10 @@ func (s *Server) mcpResourceTemplateDefs() []mcpResourceDef {
 	return []mcpResourceDef{
 		{uri: "oboard://servers/{id}", title: "Server by ID", name: "Server by ID", description: "Return one authorized server with its current revision, status, supported capabilities, and non-secret configuration summary.", capability: "servers.get", template: true, kind: "query_id"},
 		{uri: "oboard://servers/{id}/health", title: "Server Health", name: "Server health", description: "Return one authorized server's Agent connectivity, version, build, kernel, last-seen time, and non-secret health status.", capability: "servers.get", template: true, kind: "query_health"},
+		{uri: "oboard://users/{id}", title: "User by ID", name: "User by ID", description: "Return one authorized user's management summary: role, status, limits, subscription state, and revision. Never includes credentials or tokens.", capability: "users.get", template: true, kind: "query_user_by_id"},
+		{uri: "oboard://users/{id}/devices", title: "User Devices by ID", name: "User devices by ID", description: "Return one authorized user's registered devices with status, proxy access state, and last activity. Never includes device tokens.", capability: "user_devices.list", template: true, kind: "query_user_devices"},
+		{uri: "oboard://servers/{id}/dns-policy", title: "Server DNS Policy by ID", name: "Server DNS policy by ID", description: "Return one authorized server's DNS policy with list bindings and last check state.", capability: "servers.dns_policy.get", template: true, kind: "query_server_dns_policy"},
+		{uri: "oboard://dns-zones/{id}/records", title: "DNS Records by Zone", name: "DNS records by zone", description: "Return the live DNS records of one authorized zone by querying the provider.", capability: "dns_records.list", template: true, kind: "query_dns_records"},
 		{uri: "oboard://subscriptions/{id}", title: "Subscription by ID", name: "Subscription by ID", description: "Return one authorized subscription with its revision, state, related resources, and non-secret policy summary.", capability: "users.list", template: true, kind: "query_user"},
 		{uri: "oboard://subscription-plans/{id}", title: "Subscription Plan by ID", name: "Subscription plan by ID", description: "Return one subscription plan with its latest and current node snapshots and optimistic-lock revision.", capability: "subscription_plans.get", template: true, kind: "query_id"},
 		{uri: "oboard://proxy-paths/{id}", title: "Proxy Path by ID", name: "Proxy path by ID", description: "Return one authorized proxy path with its revision, related servers, route structure, and non-secret configuration.", capability: "topology.read", template: true, kind: "query_path"},
@@ -153,6 +167,46 @@ func (s *Server) readMCPResource(ctx context.Context, principal application.Prin
 		return mcpServerHealthPayload(payload), nil
 	case "query_user":
 		return s.queryMCPResource(ctx, "users.list", json.RawMessage(`{}`))
+	case "query_user_by_id":
+		id, err := mcpTemplateID(uri, "oboard://users/")
+		if err != nil {
+			return nil, err
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return nil, errors.New("invalid user id")
+		}
+		return s.queryMCPResource(ctx, "users.get", json.RawMessage(`{"id":`+strconv.FormatInt(value, 10)+`}`))
+	case "query_user_devices":
+		id, err := mcpTemplateID(uri, "oboard://users/", "/devices")
+		if err != nil {
+			return nil, err
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return nil, errors.New("invalid user id")
+		}
+		return s.queryMCPResource(ctx, "user_devices.list", json.RawMessage(`{"user_id":`+strconv.FormatInt(value, 10)+`}`))
+	case "query_server_dns_policy":
+		id, err := mcpTemplateID(uri, "oboard://servers/", "/dns-policy")
+		if err != nil {
+			return nil, err
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return nil, errors.New("invalid server id")
+		}
+		return s.queryMCPResource(ctx, "servers.dns_policy.get", json.RawMessage(`{"server_id":`+strconv.FormatInt(value, 10)+`}`))
+	case "query_dns_records":
+		id, err := mcpTemplateID(uri, "oboard://dns-zones/", "/records")
+		if err != nil {
+			return nil, err
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return nil, errors.New("invalid dns zone id")
+		}
+		return s.listDNSZoneRecords(ctx, principal, value)
 	case "query_path":
 		id, err := mcpTemplateID(uri, "oboard://proxy-paths/")
 		if err != nil {
@@ -243,6 +297,51 @@ func (s *Server) readMCPResource(ctx context.Context, principal application.Prin
 	}
 }
 
+// listDNSZoneRecords reads one zone's live records from the configured DNS
+// provider and merges the Controller-side metadata. Provider credentials never
+// enter the MCP output.
+func (s *Server) listDNSZoneRecords(ctx context.Context, principal application.Principal, zoneID int64) (any, error) {
+	zone, err := s.store.GetDNSCredentialZone(ctx, zoneID)
+	if err != nil {
+		return nil, err
+	}
+	if zone.ServerID != nil && !principal.AllowsInt64("server_ids", *zone.ServerID) {
+		return nil, errors.New("not authorized")
+	}
+	credential, err := s.store.GetDNSCredential(ctx, zone.CredentialID)
+	if err != nil {
+		return nil, err
+	}
+	if !credential.Enabled {
+		return nil, errors.New("DNS credential is disabled")
+	}
+	client, err := s.dnsProviderClient(credentialForDNSZone(*credential, *zone))
+	if err != nil {
+		return nil, err
+	}
+	items, err := client.ListRecords(ctx)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := s.store.ListDNSRecordMetadata(ctx, zoneID)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if local, ok := metadata[item.ID]; ok {
+			item.Comment, item.ServerID, item.InboundID = local.Comment, local.ServerID, local.InboundID
+		}
+		records = append(records, map[string]any{
+			"id": item.ID, "dns_zone_id": zoneID, "zone_name": zone.ZoneName,
+			"type": item.Type, "name": item.Name, "content": item.Content,
+			"proxied": item.Proxied, "ttl": item.TTL, "enabled": item.Enabled,
+			"comment": item.Comment, "server_id": item.ServerID, "inbound_id": item.InboundID,
+		})
+	}
+	return map[string]any{"dns_records": records, "dns_zone": map[string]any{"id": zone.ID, "zone_name": zone.ZoneName, "credential_id": zone.CredentialID}, "count": len(records)}, nil
+}
+
 func workflowResourceView(item *model.AutomationWorkflow) map[string]any {
 	steps := make([]map[string]any, 0, len(item.Steps))
 	for _, step := range item.Steps {
@@ -301,6 +400,46 @@ func (s *Server) authorizeResourceRead(ctx context.Context, capabilityName, uri 
 			return errors.New("invalid server id")
 		}
 		input = map[string]any{"id": value}
+	case "users.get":
+		id, parseErr := mcpTemplateID(uri, "oboard://users/")
+		if parseErr != nil {
+			return parseErr
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return errors.New("invalid user id")
+		}
+		input = map[string]any{"id": value}
+	case "user_devices.list":
+		id, parseErr := mcpTemplateID(uri, "oboard://users/", "/devices")
+		if parseErr != nil {
+			return parseErr
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return errors.New("invalid user id")
+		}
+		input = map[string]any{"user_id": value}
+	case "servers.dns_policy.get":
+		id, parseErr := mcpTemplateID(uri, "oboard://servers/", "/dns-policy")
+		if parseErr != nil {
+			return parseErr
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return errors.New("invalid server id")
+		}
+		input = map[string]any{"server_id": value}
+	case "dns_records.list":
+		id, parseErr := mcpTemplateID(uri, "oboard://dns-zones/", "/records")
+		if parseErr != nil {
+			return parseErr
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return errors.New("invalid dns zone id")
+		}
+		input = map[string]any{"dns_zone_id": value}
 	case "subscription_plans.get":
 		id, parseErr := mcpTemplateID(uri, "oboard://subscription-plans/")
 		if parseErr != nil {
@@ -518,11 +657,16 @@ func mcpServerHealthPayload(payload any) map[string]any {
 	return map[string]any{"server_id": item.ID, "status": item.Status, "agent_connected": item.AgentConnected, "agent_version": item.AgentVersion, "agent_build": item.AgentBuild, "kernel_version": item.KernelVersion, "last_seen_at": item.LastSeenAt}
 }
 
-func mcpTemplateID(uri, prefix string) (string, error) {
+func mcpTemplateID(uri, prefix string, suffixes ...string) (string, error) {
 	if !strings.HasPrefix(uri, prefix) {
 		return "", errors.New("invalid resource URI")
 	}
 	id := strings.TrimPrefix(uri, prefix)
+	for _, suffix := range suffixes {
+		if suffix != "" && strings.HasSuffix(id, suffix) {
+			id = strings.TrimSuffix(id, suffix)
+		}
+	}
 	if id == "" || strings.ContainsAny(id, "/?#") {
 		return "", errors.New("invalid resource URI")
 	}

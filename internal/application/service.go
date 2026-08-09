@@ -160,6 +160,194 @@ func (s *Service) ListSubscriptionPlans(ctx context.Context, principal Principal
 	return out, nil
 }
 
+// GetUser returns one user's management summary. User identities are
+// sensitive; the caller must classify the output accordingly.
+func (s *Service) GetUser(ctx context.Context, principal Principal, id int64) (UserDTO, error) {
+	if !principal.AllowsInt64("user_ids", id) {
+		return UserDTO{}, sql.ErrNoRows
+	}
+	item, err := s.store.GetUser(ctx, id)
+	if err != nil {
+		return UserDTO{}, err
+	}
+	return userDTO(*item), nil
+}
+
+func (s *Service) ListUserGroups(ctx context.Context, principal Principal) ([]model.UserGroup, error) {
+	items, err := s.store.ListUserGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (s *Service) ListUserGroupMembers(ctx context.Context, principal Principal) ([]model.UserGroupMember, error) {
+	items, err := s.store.ListUserGroupMembers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (s *Service) ListUserDevices(ctx context.Context, principal Principal, userID int64) ([]model.UserDevice, error) {
+	if !principal.AllowsInt64("user_ids", userID) {
+		return nil, sql.ErrNoRows
+	}
+	return s.store.ListUserDevices(ctx, userID)
+}
+
+// ListOutbounds returns redacted server outbound views. The auth config
+// (config_json) is never included so credentials stay out of MCP output.
+func (s *Service) ListOutbounds(ctx context.Context, principal Principal) ([]map[string]any, error) {
+	items, err := s.store.ListOutbounds(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if !principal.AllowsInt64("server_ids", item.ServerID) {
+			continue
+		}
+		out = append(out, map[string]any{
+			"id": item.ID, "revision": revision(item.UpdatedAt), "server_id": item.ServerID,
+			"next_server_id": item.NextServerID, "name": item.Name, "protocol": item.Protocol,
+			"target_address": item.TargetAddress, "target_port": item.TargetPort,
+			"advanced_configured": strings.TrimSpace(item.ConfigJSON) != "" && strings.TrimSpace(item.ConfigJSON) != "{}",
+			"enabled": item.Enabled, "created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
+func (s *Service) ListRoutingRules(ctx context.Context, principal Principal) ([]model.RoutingRule, error) {
+	items, err := s.store.ListRoutingRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.RoutingRule, 0, len(items))
+	for _, item := range items {
+		if !principal.AllowsInt64("server_ids", item.ServerID) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+// ListExternalOutbounds returns redacted imported-node views. The node auth
+// config (config_json) is never included.
+func (s *Service) ListExternalOutbounds(ctx context.Context, principal Principal) ([]map[string]any, error) {
+	items, err := s.store.ListExternalOutbounds(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if item.ServerID != nil && !principal.AllowsInt64("server_ids", *item.ServerID) {
+			continue
+		}
+		out = append(out, map[string]any{
+			"id": item.ID, "revision": revision(item.UpdatedAt), "server_id": item.ServerID,
+			"name": item.Name, "protocol": item.Protocol, "scope": item.Scope,
+			"target_address": item.TargetAddress, "target_port": item.TargetPort,
+			"region_mode": item.RegionMode, "region_code": item.RegionCode,
+			"effective_region_code": item.EffectiveRegionCode, "region_status": item.RegionStatus,
+			"expose_to_users": item.ExposeToUsers, "enabled": item.Enabled,
+			"advanced_configured": strings.TrimSpace(item.ConfigJSON) != "" && strings.TrimSpace(item.ConfigJSON) != "{}",
+			"created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
+func (s *Service) ListWARPProfiles(ctx context.Context, principal Principal) ([]map[string]any, error) {
+	items, err := s.store.ListWARPProfiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if !principal.AllowsInt64("server_ids", item.ServerID) {
+			continue
+		}
+		configured := strings.TrimSpace(item.ConfigJSON) != ""
+		out = append(out, map[string]any{
+			"id": item.ID, "revision": revision(item.UpdatedAt), "server_id": item.ServerID,
+			"name": item.Name, "status": item.Status, "mtu": item.MTU, "dns_strategy": item.DNSStrategy,
+			"error": item.Error, "enabled": item.Enabled, "configured": configured,
+			"created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
+// ListDNSLists returns DNS lists (encrypted and bootstrap) with candidates.
+func (s *Service) ListDNSLists(ctx context.Context, principal Principal) ([]model.DNSList, error) {
+	items, err := s.store.ListDNSLists(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.DNSList, 0, len(items))
+	for _, item := range items {
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+// ListDNSCredentials returns DNS provider credential metadata. Credential
+// secrets and tokens are never included.
+func (s *Service) ListDNSCredentials(ctx context.Context, principal Principal) ([]model.DNSCredential, error) {
+	items, err := s.store.ListDNSCredentials(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// GetServerDNSPolicy returns one server's DNS policy when it exists.
+func (s *Service) GetServerDNSPolicy(ctx context.Context, principal Principal, serverID int64) (model.ServerDNSPolicy, error) {
+	if !principal.AllowsInt64("server_ids", serverID) {
+		return model.ServerDNSPolicy{}, sql.ErrNoRows
+	}
+	policy, err := s.store.GetServerDNSPolicy(ctx, serverID)
+	if err != nil {
+		return model.ServerDNSPolicy{}, err
+	}
+	return *policy, nil
+}
+
+// ListPortForwards returns port forwards the principal may manage.
+func (s *Service) ListPortForwards(ctx context.Context, principal Principal) ([]model.PortForward, error) {
+	items, err := s.store.ListPortForwards(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.PortForward, 0, len(items))
+	for _, item := range items {
+		if !principal.AllowsInt64("server_ids", item.SourceServerID) || !principal.AllowsInt64("server_ids", item.TargetServerID) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+// ListTunnels returns tunnels the principal may manage.
+func (s *Service) ListTunnels(ctx context.Context, principal Principal) ([]model.Tunnel, error) {
+	items, err := s.store.ListTunnels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.Tunnel, 0, len(items))
+	for _, item := range items {
+		if !principal.AllowsInt64("server_ids", item.SourceServerID) || !principal.AllowsInt64("server_ids", item.TargetServerID) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
 func (s *Service) GetSubscriptionPlan(ctx context.Context, principal Principal, id int64) (SubscriptionPlanDTO, error) {
 	if !principal.AllowsInt64("subscription_plan_ids", id) {
 		return SubscriptionPlanDTO{}, sql.ErrNoRows
@@ -195,6 +383,50 @@ func (s *Service) Query(ctx context.Context, principal Principal, capability str
 		return s.GetServer(ctx, principal, input.ID)
 	case "users.list":
 		return s.ListUsers(ctx, principal)
+	case "users.get":
+		var input struct {
+			ID int64 `json:"id"`
+		}
+		if err := strictUnmarshal(arguments, &input); err != nil || input.ID <= 0 {
+			return nil, errors.New("valid user id is required")
+		}
+		return s.GetUser(ctx, principal, input.ID)
+	case "user_groups.list":
+		return s.ListUserGroups(ctx, principal)
+	case "user_group_members.list":
+		return s.ListUserGroupMembers(ctx, principal)
+	case "user_devices.list":
+		var input struct {
+			UserID int64 `json:"user_id"`
+		}
+		if err := strictUnmarshal(arguments, &input); err != nil || input.UserID <= 0 {
+			return nil, errors.New("valid user_id is required")
+		}
+		return s.ListUserDevices(ctx, principal, input.UserID)
+	case "outbounds.list":
+		return s.ListOutbounds(ctx, principal)
+	case "routing_rules.list":
+		return s.ListRoutingRules(ctx, principal)
+	case "external_outbounds.list":
+		return s.ListExternalOutbounds(ctx, principal)
+	case "warp_profiles.list":
+		return s.ListWARPProfiles(ctx, principal)
+	case "dns_lists.list":
+		return s.ListDNSLists(ctx, principal)
+	case "dns_credentials.list":
+		return s.ListDNSCredentials(ctx, principal)
+	case "servers.dns_policy.get":
+		var input struct {
+			ServerID int64 `json:"server_id"`
+		}
+		if err := strictUnmarshal(arguments, &input); err != nil || input.ServerID <= 0 {
+			return nil, errors.New("valid server_id is required")
+		}
+		return s.GetServerDNSPolicy(ctx, principal, input.ServerID)
+	case "port_forwards.list":
+		return s.ListPortForwards(ctx, principal)
+	case "tunnels.list":
+		return s.ListTunnels(ctx, principal)
 	case "subscription_plans.list":
 		return s.ListSubscriptionPlans(ctx, principal)
 	case "subscription_plans.get":

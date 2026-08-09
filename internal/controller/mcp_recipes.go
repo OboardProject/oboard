@@ -40,6 +40,9 @@ type mcpPreparedRecipe struct {
 func (s *Server) mcpRecipes() []mcpRecipe {
 	return []mcpRecipe{
 		{ID: "server.onboard", Version: mcpRecipeVersion, Aliases: []string{"server.onboard", "add server", "create server", "onboard server", "新增服务器", "添加服务器", "接入服务器", "新增节点服务器"}, Verbs: []string{"add", "create", "onboard", "enroll", "新增", "添加", "接入"}, Nouns: []string{"server", "agent", "服务器", "节点服务器"}, Prepare: s.prepareServerOnboardRecipe},
+		{ID: "user.manage", Version: mcpRecipeVersion, Aliases: []string{"user.manage", "manage user", "create user", "update user", "delete user", "用户管理", "新建用户", "创建用户", "修改用户", "删除用户"}, Verbs: []string{"create", "add", "update", "change", "delete", "remove", "disable", "enable", "吊销", "创建", "新建", "添加", "修改", "删除", "停用", "启用"}, Nouns: []string{"user", "account", "用户", "账号", "账户"}, Prepare: s.prepareUserManageRecipe},
+		{ID: "user_group.manage", Version: mcpRecipeVersion, Aliases: []string{"user_group.manage", "manage user group", "user group", "用户分组", "分组管理", "用户组"}, Verbs: []string{"create", "update", "delete", "创建", "新增", "修改", "删除"}, Nouns: []string{"user group", "group", "分组", "用户组", "群组"}, Prepare: s.prepareUserGroupRecipe},
+		{ID: "user_device.manage", Version: mcpRecipeVersion, Aliases: []string{"user_device.manage", "manage device", "rename device", "revoke device", "设备管理", "重命名设备", "吊销设备"}, Verbs: []string{"rename", "revoke", "重命名", "吊销", "删除"}, Nouns: []string{"device", "设备"}, Prepare: s.prepareUserDeviceRecipe},
 		{ID: "server.manage", Version: mcpRecipeVersion, Aliases: []string{"server.manage", "update server", "server settings", "修改服务器", "服务器设置"}, Verbs: []string{"update", "change", "set", "modify", "修改", "设置", "调整", "开启", "关闭"}, Nouns: []string{"server", "服务器", "节点"}, Prepare: s.prepareServerManageRecipe},
 		{ID: "inbound.create", Version: mcpRecipeVersion, Aliases: []string{"inbound.create", "create inbound", "add inbound", "创建入口", "新增入口", "添加入口", "创建入站", "新增入站"}, Verbs: []string{"create", "add", "新增", "添加", "创建"}, Nouns: []string{"inbound", "入口", "入站"}, Prepare: s.prepareInboundCreateRecipe},
 		{ID: "subscription_plan.nodes.manage", Version: mcpRecipeVersion, Aliases: []string{"subscription_plan.nodes.manage", "plan node assignment", "套餐节点", "套餐节点分配", "订阅套餐节点"}, Verbs: []string{"add", "remove", "replace", "assign", "添加", "加入", "移除", "替换", "分配"}, Nouns: []string{"subscription plan", "plan node", "套餐", "套餐节点", "订阅套餐"}, Prepare: s.prepareSubscriptionPlanNodesRecipe},
@@ -820,4 +823,225 @@ func mcpOperationRequests(operations []mcpOperationRef) ([]automation.OperationR
 		out = append(out, automation.OperationRequest{Capability: operation.Capability, Input: raw})
 	}
 	return out, nil
+}
+
+// prepareUserManageRecipe routes create / update / delete / session-revoke
+// requests for panel users onto the users.* executable capabilities.
+func (s *Server) prepareUserManageRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	goal := strings.ToLower(strings.TrimSpace(input.Goal))
+	deleting := containsAnyFold(goal, "删除", "delete", "remove")
+	revoking := containsAnyFold(goal, "吊销会话", "revoke session", "踢下线", "强制下线")
+	userID := int64(0)
+	if target := firstTaskRef(input, "user", "target_user", "user"); target != "" {
+		resolved, err := s.resolveUserRef(ctx, principal, target)
+		if err != nil {
+			return nil, err
+		}
+		if len(resolved.Candidates) > 0 {
+			return &mcpPreparedRecipe{Status: "choose_candidate", Intent: "user.manage", Field: "user", Candidates: resolved.Candidates}, nil
+		}
+		userID = resolved.Value.ID
+	} else if matches := s.inferUserCandidatesFromGoal(ctx, principal, input.Goal); len(matches) == 1 {
+		userID = matches[0].ID
+	} else if len(matches) > 1 {
+		return &mcpPreparedRecipe{Status: "choose_candidate", Intent: "user.manage", Field: "user", Candidates: matches}, nil
+	}
+	if userID <= 0 && !deleting && !revoking {
+		if nested, ok := input.Params["user"].(map[string]any); ok {
+			create := map[string]any{}
+			for key, value := range nested {
+				create[key] = value
+			}
+			operation := mcpOperationRef{Capability: "users.create", Input: map[string]any{"user": create}}
+			return &mcpPreparedRecipe{Status: "ready", Intent: "user.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "create_user", "username": taskStringParam(input.Params, "user.username", "username")}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "user_present"}}}, nil
+		}
+		username := taskStringParam(input.Params, "user.username", "username")
+		if username == "" {
+			username = inferredUserName(input.Goal)
+		}
+		if username == "" {
+			return &mcpPreparedRecipe{Status: "needs_input", Intent: "user.manage", Questions: []map[string]any{{"field": "user", "type": "object", "reason": "需要指定要创建的用户（至少包含 username）"}}}, nil
+		}
+		user := map[string]any{"username": username}
+		if nickname := inferredUserNickname(input.Goal); nickname != "" {
+			user["nickname"] = nickname
+		}
+		for _, key := range []string{"role", "status", "password", "speed_limit_mbps", "traffic_limit_bytes", "device_limit"} {
+			if value, ok := input.Params[key]; ok {
+				user[key] = value
+			}
+		}
+		operation := mcpOperationRef{Capability: "users.create", Input: map[string]any{"user": user}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "user.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "create_user", "username": username}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "user_present"}}}, nil
+	}
+	if userID <= 0 {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "user.manage", Questions: []map[string]any{{"field": "user", "type": "resource_ref", "reason": "需要指定要操作的用户"}}}, nil
+	}
+	if deleting {
+		operation := mcpOperationRef{Capability: "users.delete", Input: map[string]any{"user_id": userID, "confirm": true}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "user.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "delete_user", "user_id": userID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+	}
+	if revoking {
+		operation := mcpOperationRef{Capability: "users.session_revoke", Input: map[string]any{"user_id": userID}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "user.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "revoke_user_sessions", "user_id": userID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+	}
+	changes := map[string]any{}
+	if nested, ok := input.Params["changes"].(map[string]any); ok {
+		for key, value := range nested {
+			changes[key] = value
+		}
+	}
+	for _, key := range []string{"nickname", "role", "status", "password", "speed_limit_mbps", "traffic_limit_bytes", "traffic_reset_mode", "traffic_reset_day", "device_limit", "legacy_proxy_enabled"} {
+		if value, ok := input.Params[key]; ok {
+			changes[key] = value
+		}
+	}
+	if len(changes) == 0 {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "user.manage", Questions: []map[string]any{{"field": "changes", "type": "object", "reason": "未识别到要修改的用户设置"}}}, nil
+	}
+	operation := mcpOperationRef{Capability: "users.update", Input: map[string]any{"user_id": userID, "changes": changes}}
+	return &mcpPreparedRecipe{Status: "ready", Intent: "user.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "update_user", "user_id": userID, "changes": changes}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "user_revision_changed"}}}, nil
+}
+
+// prepareUserGroupRecipe routes create / update / delete for user groups.
+func (s *Server) prepareUserGroupRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	goal := strings.ToLower(strings.TrimSpace(input.Goal))
+	deleting := containsAnyFold(goal, "删除", "delete", "remove")
+	groupID := int64(0)
+	if value := taskIntParam(input.Params, "group_id"); value > 0 {
+		groupID = int64(value)
+	} else if target := firstTaskRef(input, "user_group", "target_group", "group"); target != "" {
+		resolved, err := s.resolveUserGroupRef(ctx, principal, target)
+		if err != nil {
+			return nil, err
+		}
+		if len(resolved.Candidates) > 0 {
+			return &mcpPreparedRecipe{Status: "choose_candidate", Intent: "user_group.manage", Field: "group", Candidates: resolved.Candidates}, nil
+		}
+		groupID = resolved.Value.ID
+	}
+	if groupID <= 0 && !deleting {
+		group := map[string]any{}
+		if nested, ok := input.Params["user_group"].(map[string]any); ok {
+			for key, value := range nested {
+				group[key] = value
+			}
+		}
+		if name := taskStringParam(input.Params, "user_group.name", "name"); name == "" && len(group) == 0 {
+			return &mcpPreparedRecipe{Status: "needs_input", Intent: "user_group.manage", Questions: []map[string]any{{"field": "user_group", "type": "object", "reason": "需要指定用户分组的名称"}}}, nil
+		}
+		if name := taskStringParam(input.Params, "user_group.name", "name"); name != "" && group["name"] == nil {
+			group["name"] = name
+		}
+		operation := mcpOperationRef{Capability: "user_groups.create", Input: map[string]any{"user_group": group}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "user_group.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "create_user_group", "name": group["name"]}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "user_group_present"}}}, nil
+	}
+	if groupID <= 0 {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "user_group.manage", Questions: []map[string]any{{"field": "group_id", "type": "integer", "reason": "需要指定要操作的用户分组 ID"}}}, nil
+	}
+	if deleting {
+		operation := mcpOperationRef{Capability: "user_groups.delete", Input: map[string]any{"group_id": groupID, "confirm": true}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "user_group.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "delete_user_group", "group_id": groupID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+	}
+	changes := map[string]any{}
+	if nested, ok := input.Params["changes"].(map[string]any); ok {
+		for key, value := range nested {
+			changes[key] = value
+		}
+	}
+	for _, key := range []string{"name", "description", "role", "enabled", "subscription_custom_path_policy"} {
+		if value, ok := input.Params[key]; ok {
+			changes[key] = value
+		}
+	}
+	if len(changes) == 0 {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "user_group.manage", Questions: []map[string]any{{"field": "changes", "type": "object", "reason": "未识别到要修改的分组设置"}}}, nil
+	}
+	operation := mcpOperationRef{Capability: "user_groups.update", Input: map[string]any{"group_id": groupID, "changes": changes}}
+	return &mcpPreparedRecipe{Status: "ready", Intent: "user_group.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "update_user_group", "group_id": groupID, "changes": changes}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+}
+
+// prepareUserDeviceRecipe routes device rename / revoke operations.
+func (s *Server) prepareUserDeviceRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	userID := int64(0)
+	if value := taskIntParam(input.Params, "user_id"); value > 0 {
+		userID = int64(value)
+	} else if target := firstTaskRef(input, "user", "target_user", "user"); target != "" {
+		resolved, err := s.resolveUserRef(ctx, principal, target)
+		if err != nil {
+			return nil, err
+		}
+		if len(resolved.Candidates) > 0 {
+			return &mcpPreparedRecipe{Status: "choose_candidate", Intent: "user_device.manage", Field: "user", Candidates: resolved.Candidates}, nil
+		}
+		userID = resolved.Value.ID
+	}
+	if userID <= 0 {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "user_device.manage", Questions: []map[string]any{{"field": "user_id", "type": "integer", "reason": "需要指定设备所属用户"}}}, nil
+	}
+	deviceID := taskStringParam(input.Params, "device_id")
+	if deviceID == "" {
+		deviceID = strings.TrimPrefix(firstTaskRef(input, "device", "target_device", "device"), "device:")
+	}
+	if deviceID == "" {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "user_device.manage", Questions: []map[string]any{{"field": "device_id", "type": "string", "reason": "需要指定设备 ID"}}}, nil
+	}
+	if containsAnyFold(input.Goal, "吊销", "revoke", "删除") {
+		operation := mcpOperationRef{Capability: "user_devices.revoke", Input: map[string]any{"user_id": userID, "device_id": deviceID, "revoked": true}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "user_device.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "revoke_device", "user_id": userID, "device_id": deviceID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+	}
+	name := taskStringParam(input.Params, "name")
+	if name == "" {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "user_device.manage", Questions: []map[string]any{{"field": "name", "type": "string", "reason": "需要指定新的设备名称"}}}, nil
+	}
+	operation := mcpOperationRef{Capability: "user_devices.update", Input: map[string]any{"user_id": userID, "device_id": deviceID, "name": name}}
+	return &mcpPreparedRecipe{Status: "ready", Intent: "user_device.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "rename_device", "user_id": userID, "device_id": deviceID, "name": name}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+}
+
+func inferredUserName(goal string) string {
+	lower := strings.ToLower(goal)
+	for _, candidate := range []struct {
+		tokens []string
+		name   string
+	}{{[]string{"管理员", "admin"}, "admin"}, {[]string{"操作员", "operator"}, "operator"}} {
+		for _, token := range candidate.tokens {
+			if strings.Contains(lower, token) {
+				return candidate.name
+			}
+		}
+	}
+	return ""
+}
+
+func inferredUserNickname(goal string) string {
+	for _, candidate := range []struct {
+		tokens []string
+		name   string
+	}{{[]string{"管理员", "admin"}, "管理员"}, {[]string{"操作员", "operator"}, "操作员"}} {
+		for _, token := range candidate.tokens {
+			if strings.Contains(strings.ToLower(goal), strings.ToLower(token)) {
+				return candidate.name
+			}
+		}
+	}
+	return ""
+}
+
+func (s *Server) inferUserCandidatesFromGoal(ctx context.Context, principal application.Principal, goal string) []MCPResourceRef {
+	items, err := s.store.ListUsers(ctx)
+	if err != nil {
+		return nil
+	}
+	lower := strings.ToLower(goal)
+	matches := []MCPResourceRef{}
+	for _, item := range items {
+		if !principal.AllowsInt64("user_ids", item.ID) {
+			continue
+		}
+		if strings.Contains(lower, strings.ToLower(item.Username)) || (item.Nickname != "" && strings.Contains(lower, strings.ToLower(item.Nickname))) {
+			matches = append(matches, userMCPResourceRef(item))
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].ID < matches[j].ID })
+	return matches
 }

@@ -796,9 +796,9 @@ func TestProxyPathBranchesUseAuthUserRoutesAndSubscriptionNodes(t *testing.T) {
 		t.Fatalf("branch auth_user routes missing: routeA=%v routeB=%v routeDirect=%v config=%s", routeA, routeB, routeDirect, config)
 	}
 	sub, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
-		EffectiveNodes:  map[string]bool{NodeKeyOf(model.AssignableNodeProxyPath, pathA.ID): true, NodeKeyOf(model.AssignableNodeProxyPath, pathB.ID): true, NodeKeyOf(model.AssignableNodeProxyPath, pathDirect.ID): true},
-		ProxyPaths:      opts.ProxyPaths,
-		ProxyPathSteps:  opts.ProxyPathSteps,
+		EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeProxyPath, pathA.ID): true, NodeKeyOf(model.AssignableNodeProxyPath, pathB.ID): true, NodeKeyOf(model.AssignableNodeProxyPath, pathDirect.ID): true},
+		ProxyPaths:     opts.ProxyPaths,
+		ProxyPathSteps: opts.ProxyPathSteps,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -156,6 +156,73 @@ func (s *Server) resolveExternalOutboundRef(ctx context.Context, principal appli
 	return finishMCPResourceResolution(matches)
 }
 
+func (s *Server) resolveUserRef(ctx context.Context, principal application.Principal, value string) (mcpResourceResolution, error) {
+	_, target, err := splitMCPResourceRef(value, "user")
+	if err != nil {
+		return mcpResourceResolution{}, err
+	}
+	items, err := s.store.ListUsers(ctx)
+	if err != nil {
+		return mcpResourceResolution{}, err
+	}
+	if id, parseErr := strconv.ParseInt(target, 10, 64); parseErr == nil && id > 0 {
+		for _, item := range items {
+			if item.ID == id && principal.AllowsInt64("user_ids", id) {
+				ref := userMCPResourceRef(item)
+				return mcpResourceResolution{Value: &ref}, nil
+			}
+		}
+		return mcpResourceResolution{}, sql.ErrNoRows
+	}
+	wanted := normalizeMCPResourceName(target)
+	matches := []MCPResourceRef{}
+	for _, item := range items {
+		if !principal.AllowsInt64("user_ids", item.ID) {
+			continue
+		}
+		if normalizeMCPResourceName(item.Username) == wanted || (item.Nickname != "" && normalizeMCPResourceName(item.Nickname) == wanted) {
+			matches = append(matches, userMCPResourceRef(item))
+		}
+	}
+	return finishMCPResourceResolution(matches)
+}
+
+func userMCPResourceRef(item model.User) MCPResourceRef {
+	return MCPResourceRef{Type: "user", ID: item.ID, Name: item.Username, Ref: "user:" + strconv.FormatInt(item.ID, 10), Label: fmt.Sprintf("%s (%s)", item.Username, item.Nickname)}
+}
+
+func (s *Server) resolveUserGroupRef(ctx context.Context, principal application.Principal, value string) (mcpResourceResolution, error) {
+	_, target, err := splitMCPResourceRef(value, "user_group")
+	if err != nil {
+		return mcpResourceResolution{}, err
+	}
+	items, err := s.store.ListUserGroups(ctx)
+	if err != nil {
+		return mcpResourceResolution{}, err
+	}
+	if id, parseErr := strconv.ParseInt(target, 10, 64); parseErr == nil && id > 0 {
+		for _, item := range items {
+			if item.ID == id {
+				ref := userGroupMCPResourceRef(item)
+				return mcpResourceResolution{Value: &ref}, nil
+			}
+		}
+		return mcpResourceResolution{}, sql.ErrNoRows
+	}
+	wanted := normalizeMCPResourceName(target)
+	matches := []MCPResourceRef{}
+	for _, item := range items {
+		if normalizeMCPResourceName(item.Name) == wanted {
+			matches = append(matches, userGroupMCPResourceRef(item))
+		}
+	}
+	return finishMCPResourceResolution(matches)
+}
+
+func userGroupMCPResourceRef(item model.UserGroup) MCPResourceRef {
+	return MCPResourceRef{Type: "user_group", ID: item.ID, Name: item.Name, Ref: "user_group:" + strconv.FormatInt(item.ID, 10), Label: item.Name}
+}
+
 func finishMCPResourceResolution(matches []MCPResourceRef) (mcpResourceResolution, error) {
 	sort.Slice(matches, func(i, j int) bool {
 		if matches[i].Label == matches[j].Label {
