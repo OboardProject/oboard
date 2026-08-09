@@ -733,6 +733,10 @@ func (s *Server) markAccessChangeFailed(ctx context.Context, change *model.Acces
 // activate_at time arrived).
 func (s *Server) proceedAccessChangeActivation(ctx context.Context, change *model.AccessChange) {
 	if err := s.activateAccessChange(ctx, change); err != nil {
+		if store.IsSQLiteBusy(err) {
+			log.Printf("access change %d activation waiting for SQLite writer; will retry: %v", change.ID, err)
+			return
+		}
 		s.markAccessChangeFailed(ctx, change, "activate: "+err.Error())
 		return
 	}

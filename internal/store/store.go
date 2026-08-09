@@ -149,14 +149,32 @@ func sqliteDSN(path string, busyTimeout time.Duration) (string, error) {
 	} else if !strings.HasPrefix(path, "file:") {
 		dsn = "file:" + path
 	}
-	separator := "?"
-	if strings.Contains(dsn, "?") {
-		separator = "&"
-	}
 	pragmas := url.Values{}
+	if queryAt := strings.IndexByte(dsn, '?'); queryAt >= 0 {
+		var err error
+		pragmas, err = url.ParseQuery(dsn[queryAt+1:])
+		if err != nil {
+			return "", fmt.Errorf("parse SQLite DSN query: %w", err)
+		}
+		dsn = dsn[:queryAt]
+	}
 	pragmas.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", timeoutMS))
 	pragmas.Add("_pragma", "foreign_keys(1)")
-	return dsn + separator + pragmas.Encode(), nil
+	// Store transactions are read-modify-write operations. Reserving the single
+	// SQLite writer before their first read avoids deferred-transaction upgrade
+	// failures, which do not reliably wait for busy_timeout.
+	pragmas.Set("_txlock", "immediate")
+	return dsn + "?" + pragmas.Encode(), nil
+}
+
+// IsSQLiteBusy reports transient SQLite writer conflicts, including extended
+// result codes such as SQLITE_BUSY_SNAPSHOT.
+func IsSQLiteBusy(err error) bool {
+	var coded interface{ Code() int }
+	if !errors.As(err, &coded) {
+		return false
+	}
+	return coded.Code()&0xff == 5 // SQLITE_BUSY
 }
 
 func sqliteMemoryDatabase(path string) bool {

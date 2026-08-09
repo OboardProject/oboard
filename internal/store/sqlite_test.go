@@ -2,13 +2,20 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+type sqliteCodeTestError int
+
+func (e sqliteCodeTestError) Error() string { return "sqlite test error" }
+func (e sqliteCodeTestError) Code() int     { return int(e) }
 
 func TestSQLiteOpenEnablesWAL(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
@@ -30,7 +37,7 @@ func TestSQLiteDSNPreservesSupportedPathsAndQueries(t *testing.T) {
 		"./data/oboard.sqlite",
 		filepath.Join(t.TempDir(), "oboard.sqlite"),
 		"file:./data/oboard.sqlite",
-		"file:/absolute/path/oboard.sqlite?cache=shared",
+		"file:/absolute/path/oboard.sqlite?cache=shared&_txlock=deferred",
 		":memory:",
 		"file::memory:",
 	} {
@@ -38,11 +45,30 @@ func TestSQLiteDSNPreservesSupportedPathsAndQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("sqliteDSN(%q): %v", path, err)
 		}
-		if !strings.Contains(dsn, "_pragma=busy_timeout%285000%29") || !strings.Contains(dsn, "_pragma=foreign_keys%281%29") {
+		if !strings.Contains(dsn, "_pragma=busy_timeout%285000%29") || !strings.Contains(dsn, "_pragma=foreign_keys%281%29") || !strings.Contains(dsn, "_txlock=immediate") {
 			t.Fatalf("sqliteDSN(%q) = %q, missing pragmas", path, dsn)
 		}
-		if strings.Contains(path, "cache=shared") && !strings.Contains(dsn, "cache=shared&") {
-			t.Fatalf("sqliteDSN(%q) = %q, existing query was not preserved", path, dsn)
+		if strings.Contains(dsn, "_txlock=deferred") {
+			t.Fatalf("sqliteDSN(%q) = %q, deferred transaction override survived", path, dsn)
+		}
+		if strings.Contains(path, "cache=shared") {
+			parsed, err := url.Parse(dsn)
+			if err != nil || parsed.Query().Get("cache") != "shared" {
+				t.Fatalf("sqliteDSN(%q) = %q, existing query was not preserved", path, dsn)
+			}
+		}
+	}
+}
+
+func TestIsSQLiteBusyRecognizesExtendedResultCodes(t *testing.T) {
+	for _, code := range []int{5, 517, 773} {
+		if !IsSQLiteBusy(fmt.Errorf("wrapped: %w", sqliteCodeTestError(code))) {
+			t.Fatalf("SQLite result code %d was not recognized as busy", code)
+		}
+	}
+	for _, err := range []error{errors.New("database is locked (5) (SQLITE_BUSY)"), sqliteCodeTestError(6)} {
+		if IsSQLiteBusy(err) {
+			t.Fatalf("error %v was incorrectly recognized as SQLite busy", err)
 		}
 	}
 }

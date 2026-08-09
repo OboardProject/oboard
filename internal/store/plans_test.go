@@ -524,6 +524,72 @@ func TestPlanVersionActivationConflictKeepsCurrent(t *testing.T) {
 	}
 }
 
+func TestPlanVersionActivationWaitsForConcurrentWriter(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	s := openPlansTestStore(t)
+	plan := &model.SubscriptionPlan{Name: "activation-writer", Enabled: true}
+	if err := s.CreateSubscriptionPlan(ctx, plan, nil); err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Nodes:               &PlanNodesMutation{Op: "add", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 1}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err = s.GetSubscriptionPlan(ctx, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writer, err := s.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if _, err := writer.ExecContext(ctx, `begin immediate`); err != nil {
+		t.Fatal(err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = writer.ExecContext(context.Background(), `rollback`)
+		}
+	}()
+	if _, err := writer.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values('activation-writer','held',?)`, now()); err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		close(started)
+		result <- s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, created.Revision.ID, 9, nil)
+	}()
+	<-started
+	select {
+	case err := <-result:
+		t.Fatalf("activation returned before the concurrent writer committed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, err := writer.ExecContext(ctx, `commit`); err != nil {
+		t.Fatal(err)
+	}
+	committed = true
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	plan, err = s.GetSubscriptionPlan(ctx, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.CurrentRevisionID != created.Revision.ID || plan.PendingRevisionID != 0 {
+		t.Fatalf("plan after queued activation = %#v", plan)
+	}
+}
+
 func TestPlanDraftLimits(t *testing.T) {
 	ctx := context.Background()
 	s := openPlansTestStore(t)
