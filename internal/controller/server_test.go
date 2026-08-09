@@ -1245,7 +1245,7 @@ func TestControllerFormalAPI(t *testing.T) {
 	if serverPayload["mtu_mode"] != "detect" || serverPayload["mtu_probe_host"] == "" {
 		t.Fatalf("server MTU defaults missing: %#v", serverPayload)
 	}
-	if serverPayload["monitoring_mode"] != "lightweight" || serverPayload["traffic_reset_mode"] != "monthly" || serverPayload["connectivity_probe_enabled"] != false {
+	if serverPayload["monitoring_mode"] != "lightweight" || serverPayload["traffic_reset_mode"] != "monthly" || serverPayload["connectivity_probe_enabled"] != true {
 		t.Fatalf("server telemetry defaults missing: %#v", serverPayload)
 	}
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
