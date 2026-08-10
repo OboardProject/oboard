@@ -201,9 +201,9 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const contextSelector = (
-    <div className="node-context-selector" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-      <label htmlFor="node-management-context" style={{ fontWeight: 600, fontSize: 13 }}>管理范围</label>
-      <Select id="node-management-context" value={contextPlanID} onChange={e => setContextPlanID(Number(e.target.value))} style={{ minWidth: 240 }}>
+    <div className="node-context-selector">
+      <label htmlFor="node-management-context">管理范围</label>
+      <Select id="node-management-context" value={contextPlanID} onChange={e => setContextPlanID(Number(e.target.value))}>
         <option value={0}>全部节点</option>
         {isAdmin && plans.map((plan: any) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
       </Select>

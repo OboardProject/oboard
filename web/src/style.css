@@ -16136,3 +16136,25 @@ button.ui-btn-ghost:hover {
   overflow-x: visible !important;
 }
 
+.node-context-selector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.node-context-selector label {
+  flex: 0 0 auto;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.node-context-selector .custom-select,
+.node-context-selector select {
+  width: auto !important;
+  min-width: 160px;
+  max-width: 260px;
+}
+
