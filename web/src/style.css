@@ -8564,8 +8564,10 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .form-field-meta {
   position: relative;
   min-width: 0;
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
   align-content: start;
   padding-top: 2px;
 }
@@ -8581,6 +8583,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   font-weight: 650;
   line-height: 1.35;
   letter-spacing: -0.01em;
+  cursor: pointer;
 }
 
 .form-field em {
@@ -8602,7 +8605,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .form-field-help {
-  position: relative;
+  position: relative !important;
   flex: 0 0 auto;
   width: 24px;
   min-width: 24px;
@@ -8614,18 +8617,19 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   color: var(--muted) !important;
   background: transparent !important;
   box-shadow: none !important;
+  cursor: pointer;
+  pointer-events: auto !important;
 }
 
 .form-field-help:hover,
-.form-field-help:focus-visible,
-.form-field-help[aria-expanded="true"] {
+.form-field-help:focus-visible {
   color: var(--text-strong) !important;
   background: var(--surface-2) !important;
   transform: none;
 }
 
 .form-field-help {
-  position: relative;
+  position: relative !important;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -8635,7 +8639,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   position: absolute;
   left: -8px;
   bottom: calc(100% + 7px);
-  z-index: 99999;
+  z-index: 99999 !important;
   display: block;
   width: max-content;
   max-width: min(320px, calc(100vw - 48px));
@@ -8654,14 +8658,13 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   word-break: break-word;
   opacity: 0;
   visibility: hidden;
-  pointer-events: none;
+  pointer-events: none !important;
   transform: translateY(3px);
   transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s ease;
 }
 
-.form-field-help:hover .form-field-help-popover,
-.form-field-help:focus-visible .form-field-help-popover,
-.form-field-help-popover[data-open="true"] {
+.form-field-help:hover > .form-field-help-popover,
+.form-field-help:focus-visible > .form-field-help-popover {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
@@ -16118,9 +16121,8 @@ button.ui-btn-ghost:hover {
   transform: translateY(-3px) !important;
 }
 
-.form-field-help:hover .form-field-help-popover.popover-bottom,
-.form-field-help:focus-visible .form-field-help-popover.popover-bottom,
-.form-field-help-popover.popover-bottom[data-open="true"] {
+.form-field-help:hover > .form-field-help-popover.popover-bottom,
+.form-field-help:focus-visible > .form-field-help-popover.popover-bottom {
   transform: translateY(0) !important;
 }
 
