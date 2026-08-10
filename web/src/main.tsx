@@ -6558,10 +6558,12 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。" placement="bottom">
             <Select value={draft.entry_ip_mode} onChange={e => update({ entry_ip_mode: e.target.value as EntryIPMode })}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
           </FormField>
-          <FormField label="自定义入口地址" hint="可填写域名、IPv4 或 IPv6。" placement="bottom">
-            <input value={draft.entry_address} onChange={e => update({ entry_address: e.target.value })} placeholder="例如 1.2.3.4 或 example.com" />
-            <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
-          </FormField>
+          {draft.entry_ip_mode === 'custom' && (
+            <FormField label="自定义入口地址" hint="可填写域名、IPv4 或 IPv6。" placement="bottom">
+              <input value={draft.entry_address} onChange={e => update({ entry_address: e.target.value })} placeholder="例如 1.2.3.4 或 example.com" />
+              <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
+            </FormField>
+          )}
           <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom">
             <Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select>
           </FormField>
@@ -6677,10 +6679,12 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           <FormField label="服务器名称" required hint="用于面板识别。" placement="bottom"><input value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
           <ServerRegionField draft={draft} update={update} servers={servers} />
           <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。" placement="bottom"><Select value={draft.entry_ip_mode} onChange={e => update({ entry_ip_mode: e.target.value as EntryIPMode })}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
-          <FormField label="自定义入口地址" hint="选择自定义时使用。" placement="bottom">
-            <input value={draft.entry_address || ''} onChange={e => update({ entry_address: e.target.value })} placeholder="域名 / IPv4 / IPv6" />
-            <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
-          </FormField>
+          {draft.entry_ip_mode === 'custom' && (
+            <FormField label="自定义入口地址" hint="选择自定义时使用。" placement="bottom">
+              <input value={draft.entry_address || ''} onChange={e => update({ entry_address: e.target.value })} placeholder="域名 / IPv4 / IPv6" />
+              <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
+            </FormField>
+          )}
           <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
           <FormField label="监听 IP" hint="填写具体地址可覆盖监听模式。" placement="bottom"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
           <div className="form-section-title">网络策略</div>
@@ -6827,7 +6831,6 @@ function MTUSettingsDialog({ draft, onCancel, onSave, nested = true }: { draft: 
 function DetectedEntryAddressNote({ ipv4, ipv6 }: { ipv4?: string; ipv6?: string }) {
   return (
     <small className="detected-address-note">
-      <span>Agent 自动检测，无需手动填写</span>
       <span><strong>IPv4</strong> {ipv4 || '待检测'}<i>·</i><strong>IPv6</strong> {ipv6 || '待检测'}</span>
     </small>
   )
