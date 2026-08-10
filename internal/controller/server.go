@@ -226,6 +226,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/dashboard/summary", s.auth(s.dashboard, model.RoleOperator))
 	mux.HandleFunc("/api/v1/settings/base-path/retry", s.auth(s.settingsBasePathRetry, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/settings", s.auth(s.settings, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/subscription-relays", s.auth(s.subscriptionRelays, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/subscription-relays/", s.auth(s.subscriptionRelaySubroutes, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update", s.auth(s.controllerUpdate, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/check", s.auth(s.controllerUpdateCheck, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/channel", s.auth(s.controllerUpdateChannel, model.RoleAdmin))
@@ -330,8 +332,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/agent/mtu-detections", s.agentMTUDetections)
 	mux.HandleFunc("/api/v1/agent/port-forward-probes", s.agentPortForwardProbes)
 	mux.HandleFunc("/api/v1/agent/inbound-probes", s.agentInboundProbes)
+	mux.HandleFunc("/api/v1/subscription-relay/enroll", s.subscriptionRelayEnroll)
+	mux.HandleFunc("/api/v1/subscription-relay/heartbeat", s.subscriptionRelayHeartbeat)
+	mux.HandleFunc("/api/v1/subscription-relay/uninstall", s.subscriptionRelayUninstall)
 	mux.HandleFunc("/install/agent.sh", s.agentInstallScript)
 	mux.HandleFunc("/install/agent-self-update.sh", s.agentSelfUpdateScript)
+	mux.HandleFunc("/install/subscription-relay.sh", s.subscriptionRelayInstallScript)
 	mux.HandleFunc("/downloads", notFound)
 	mux.HandleFunc("/downloads/", s.downloadArtifact)
 	mux.HandleFunc("/", s.static)
@@ -354,7 +360,7 @@ func (s *Server) managementAPIVersionGate(next http.Handler) http.Handler {
 			next.ServeHTTP(w, request)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/v1/") && !strings.HasPrefix(r.URL.Path, "/api/v1/agent/") && r.URL.Path != "/api/v1/subscriptions" && !strings.HasPrefix(r.URL.Path, "/api/v1/subscriptions/") {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && !strings.HasPrefix(r.URL.Path, "/api/v1/agent/") && !strings.HasPrefix(r.URL.Path, "/api/v1/subscription-relay/") && r.URL.Path != "/api/v1/subscriptions" && !strings.HasPrefix(r.URL.Path, "/api/v1/subscriptions/") {
 			http.NotFound(w, r)
 			return
 		}
@@ -2102,6 +2108,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			err = addServers()
+		}
+		if err == nil {
+			out["subscription_relays"], err = s.publicSubscriptionRelays(ctx)
 		}
 	default:
 		fail(w, fmt.Errorf("unknown page %q", page), http.StatusBadRequest)

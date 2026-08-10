@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
@@ -223,7 +224,7 @@ func (s *Service) ListOutbounds(ctx context.Context, principal Principal) ([]map
 			"next_server_id": item.NextServerID, "name": item.Name, "protocol": item.Protocol,
 			"target_address": item.TargetAddress, "target_port": item.TargetPort,
 			"advanced_configured": strings.TrimSpace(item.ConfigJSON) != "" && strings.TrimSpace(item.ConfigJSON) != "{}",
-			"enabled": item.Enabled, "created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
+			"enabled":             item.Enabled, "created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
 		})
 	}
 	return out, nil
@@ -264,7 +265,7 @@ func (s *Service) ListExternalOutbounds(ctx context.Context, principal Principal
 			"effective_region_code": item.EffectiveRegionCode, "region_status": item.RegionStatus,
 			"expose_to_users": item.ExposeToUsers, "enabled": item.Enabled,
 			"advanced_configured": strings.TrimSpace(item.ConfigJSON) != "" && strings.TrimSpace(item.ConfigJSON) != "{}",
-			"created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
+			"created_at":          item.CreatedAt, "updated_at": item.UpdatedAt,
 		})
 	}
 	return out, nil
@@ -377,6 +378,38 @@ func (s *Service) GetSubscriptionPlan(ctx context.Context, principal Principal, 
 	return subscriptionPlanDTO(*item, latest, current), nil
 }
 
+func (s *Service) ListSubscriptionRelays(ctx context.Context) ([]map[string]any, error) {
+	items, err := s.store.ListSubscriptionRelays(ctx)
+	if err != nil {
+		return nil, err
+	}
+	settings, err := s.store.ListSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	activeURL := strings.TrimRight(settings["subscription_relay_url"], "/")
+	now := time.Now().UTC()
+	out := make([]map[string]any, 0, len(items))
+	for _, relay := range items {
+		status := relay.Status
+		if relay.TokenHash == "" && status != "uninstalled" {
+			status = "pending"
+		} else if status != "uninstalled" && relay.LastSeenAt != nil && now.Sub(*relay.LastSeenAt) > 2*time.Minute {
+			status = "offline"
+		}
+		out = append(out, map[string]any{
+			"id": relay.ID, "name": relay.Name, "public_url": relay.PublicURL, "status": status,
+			"enrolled": relay.TokenHash != "", "active": activeURL != "" && strings.TrimRight(relay.PublicURL, "/") == activeURL,
+			"version": relay.Version, "build": relay.Build, "commit": relay.Commit, "os": relay.OS, "arch": relay.Arch,
+			"service_manager": relay.ServiceManager, "update_target_version": relay.UpdateTargetVersion,
+			"update_target_build": relay.UpdateTargetBuild, "update_requested_at": relay.UpdateRequestedAt,
+			"last_update_error": relay.LastUpdateError, "last_seen_at": relay.LastSeenAt,
+			"enrollment_expires_at": relay.EnrollmentExpiresAt, "created_at": relay.CreatedAt, "updated_at": relay.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
 func (s *Service) Query(ctx context.Context, principal Principal, capability string, arguments json.RawMessage) (any, error) {
 	switch capability {
 	case "inventory.read":
@@ -447,6 +480,8 @@ func (s *Service) Query(ctx context.Context, principal Principal, capability str
 			return nil, errors.New("valid subscription plan id is required")
 		}
 		return s.GetSubscriptionPlan(ctx, principal, input.ID)
+	case "subscription_relays.list":
+		return s.ListSubscriptionRelays(ctx)
 	case "topology.read":
 		return s.Topology(ctx, principal)
 	case "servers.onboarding.plan":

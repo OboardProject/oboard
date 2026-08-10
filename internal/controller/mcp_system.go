@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/version"
 )
 
 // registerSystemAutomationOperations wires the system-domain capability
@@ -21,10 +23,241 @@ import (
 
 func (s *Server) registerSystemAutomationOperations() {
 	s.registerSettingsOperations()
+	s.registerSubscriptionRelayOperations()
 	s.registerBackupOperations()
 	s.registerCertificateOperations()
 	s.registerAutomationAdminOperations()
 	s.registerNotificationOperations()
+}
+
+type subscriptionRelayAutomationInput struct {
+	RelayID   int64  `json:"relay_id"`
+	Name      string `json:"name"`
+	PublicURL string `json:"public_url"`
+	Confirm   bool   `json:"confirm"`
+}
+
+func (s *Server) registerSubscriptionRelayOperations() {
+	s.automation.RegisterValidator("subscription_relays.create", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, normalized, err := s.subscriptionRelayAutomationDraft(ctx, input, false)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"name": request.Name, "public_url": normalized}, nil
+	})
+	s.automation.RegisterRevisionResolver("subscription_relays.create", func(context.Context, application.Principal, json.RawMessage) (map[string]string, error) {
+		return map[string]string{}, nil
+	})
+	s.automation.Register("subscription_relays.create", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, normalized, err := s.subscriptionRelayAutomationDraft(ctx, input, false)
+		if err != nil {
+			return nil, err
+		}
+		token, err := security.RandomToken(32)
+		if err != nil {
+			return nil, err
+		}
+		expiresAt := time.Now().UTC().Add(enrollmentTokenTTL)
+		relay := model.SubscriptionRelay{Name: request.Name, PublicURL: normalized, Status: "pending", EnrollmentHash: security.HashSecret(token), EnrollmentExpiresAt: &expiresAt}
+		if err := s.store.CreateSubscriptionRelay(ctx, &relay); err != nil {
+			return nil, err
+		}
+		settings, _ := s.store.ListSettings(ctx)
+		if strings.TrimSpace(settings[settingSubscriptionRelayURL]) == "" {
+			if err := s.store.SetSetting(ctx, settingSubscriptionRelayURL, normalized); err != nil {
+				return nil, err
+			}
+		}
+		items, err := s.publicSubscriptionRelays(ctx)
+		if err != nil {
+			return nil, err
+		}
+		public := map[string]any{"subscription_relay": findPublicSubscriptionRelay(items, relay.ID), "enrollment_expires_at": expiresAt}
+		oneTime := map[string]any{"subscription_relay": findPublicSubscriptionRelay(items, relay.ID), "enrollment_expires_at": expiresAt, "enrollment_token": token}
+		return automation.MutationResult{Public: public, OneTime: oneTime}, nil
+	})
+
+	for _, capability := range []string{"subscription_relays.update", "subscription_relays.issue_enrollment", "subscription_relays.activate", "subscription_relays.request_update", "subscription_relays.delete"} {
+		name := capability
+		s.automation.RegisterRevisionResolver(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+			request, err := decodeSubscriptionRelayAutomationInput(input)
+			if err != nil {
+				return nil, err
+			}
+			relay, err := s.store.GetSubscriptionRelay(ctx, request.RelayID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]string{"subscription-relay:" + strconv.FormatInt(relay.ID, 10): relay.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
+		})
+	}
+
+	s.automation.RegisterValidator("subscription_relays.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, normalized, err := s.subscriptionRelayAutomationDraft(ctx, input, true)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := s.store.GetSubscriptionRelay(ctx, request.RelayID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"relay_id": request.RelayID, "name": request.Name, "public_url": normalized}, nil
+	})
+	s.automation.Register("subscription_relays.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, normalized, err := s.subscriptionRelayAutomationDraft(ctx, input, true)
+		if err != nil {
+			return nil, err
+		}
+		relay, err := s.store.GetSubscriptionRelay(ctx, request.RelayID)
+		if err != nil {
+			return nil, err
+		}
+		settings, _ := s.store.ListSettings(ctx)
+		wasActive := strings.TrimRight(settings[settingSubscriptionRelayURL], "/") == strings.TrimRight(relay.PublicURL, "/")
+		relay.Name, relay.PublicURL = request.Name, normalized
+		if err := s.store.UpdateSubscriptionRelay(ctx, relay); err != nil {
+			return nil, err
+		}
+		if wasActive {
+			if err := s.store.SetSetting(ctx, settingSubscriptionRelayURL, normalized); err != nil {
+				return nil, err
+			}
+		}
+		items, err := s.publicSubscriptionRelays(ctx)
+		return map[string]any{"subscription_relay": findPublicSubscriptionRelay(items, relay.ID)}, err
+	})
+
+	s.automation.RegisterValidator("subscription_relays.issue_enrollment", s.validateSubscriptionRelayIDOperation)
+	s.automation.Register("subscription_relays.issue_enrollment", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, err := decodeSubscriptionRelayAutomationInput(input)
+		if err != nil {
+			return nil, err
+		}
+		token, err := security.RandomToken(32)
+		if err != nil {
+			return nil, err
+		}
+		expiresAt := time.Now().UTC().Add(enrollmentTokenTTL)
+		if err := s.store.SetSubscriptionRelayEnrollment(ctx, request.RelayID, security.HashSecret(token), expiresAt); err != nil {
+			return nil, err
+		}
+		public := map[string]any{"relay_id": request.RelayID, "enrollment_expires_at": expiresAt}
+		oneTime := map[string]any{"relay_id": request.RelayID, "enrollment_expires_at": expiresAt, "enrollment_token": token}
+		return automation.MutationResult{Public: public, OneTime: oneTime}, nil
+	})
+
+	s.automation.RegisterValidator("subscription_relays.activate", s.validateSubscriptionRelayIDOperation)
+	s.automation.Register("subscription_relays.activate", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, err := decodeSubscriptionRelayAutomationInput(input)
+		if err != nil {
+			return nil, err
+		}
+		relay, err := s.store.GetSubscriptionRelay(ctx, request.RelayID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.SetSetting(ctx, settingSubscriptionRelayURL, relay.PublicURL); err != nil {
+			return nil, err
+		}
+		return map[string]any{"relay_id": relay.ID, "active": true}, nil
+	})
+
+	s.automation.RegisterValidator("subscription_relays.request_update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		result, err := s.validateSubscriptionRelayIDOperation(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		request, _ := decodeSubscriptionRelayAutomationInput(input)
+		relay, _ := s.store.GetSubscriptionRelay(ctx, request.RelayID)
+		if relay.TokenHash == "" {
+			return nil, errors.New("中继尚未接入，不能下发更新")
+		}
+		return result, nil
+	})
+	s.automation.Register("subscription_relays.request_update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, err := decodeSubscriptionRelayAutomationInput(input)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.RequestSubscriptionRelayUpdate(ctx, request.RelayID, version.Version, version.Build); err != nil {
+			return nil, err
+		}
+		return map[string]any{"relay_id": request.RelayID, "status": "updating", "target_version": version.Version, "target_build": version.Build}, nil
+	})
+
+	s.automation.RegisterValidator("subscription_relays.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, err := decodeSubscriptionRelayAutomationInput(input)
+		if err != nil || !request.Confirm {
+			return nil, errors.New("relay_id and confirm=true are required")
+		}
+		if _, err := s.store.GetSubscriptionRelay(ctx, request.RelayID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"relay_id": request.RelayID, "deleted": true}, nil
+	})
+	s.automation.Register("subscription_relays.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, err := decodeSubscriptionRelayAutomationInput(input)
+		if err != nil || !request.Confirm {
+			return nil, errors.New("relay_id and confirm=true are required")
+		}
+		relay, err := s.store.GetSubscriptionRelay(ctx, request.RelayID)
+		if err != nil {
+			return nil, err
+		}
+		settings, _ := s.store.ListSettings(ctx)
+		if strings.TrimRight(settings[settingSubscriptionRelayURL], "/") == strings.TrimRight(relay.PublicURL, "/") {
+			if err := s.store.SetSetting(ctx, settingSubscriptionRelayURL, ""); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.store.DeleteSubscriptionRelay(ctx, relay.ID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"relay_id": relay.ID, "deleted": true}, nil
+	})
+}
+
+func (s *Server) subscriptionRelayAutomationDraft(ctx context.Context, input json.RawMessage, requireID bool) (subscriptionRelayAutomationInput, string, error) {
+	request, err := decodeSubscriptionRelayAutomationInput(input)
+	if err != nil {
+		return request, "", err
+	}
+	request.Name = strings.TrimSpace(request.Name)
+	if (requireID && request.RelayID <= 0) || request.Name == "" || len(request.Name) > 80 {
+		return request, "", errors.New("有效的 relay_id 和 1-80 字符名称是必需的")
+	}
+	normalized, err := s.normalizeSubscriptionRelayURL(request.PublicURL)
+	if err != nil || normalized == "" {
+		return request, "", errors.New("中继公开地址必须是使用当前基础路径的 HTTPS 地址")
+	}
+	excludeID := int64(0)
+	if requireID {
+		excludeID = request.RelayID
+	}
+	if exists, err := s.store.SubscriptionRelayURLExists(ctx, normalized, excludeID); err != nil {
+		return request, "", err
+	} else if exists {
+		return request, "", errors.New("该中继公开地址已存在")
+	}
+	return request, normalized, nil
+}
+
+func decodeSubscriptionRelayAutomationInput(input json.RawMessage) (subscriptionRelayAutomationInput, error) {
+	var request subscriptionRelayAutomationInput
+	if err := strictAutomationInput(input, &request); err != nil {
+		return request, err
+	}
+	return request, nil
+}
+
+func (s *Server) validateSubscriptionRelayIDOperation(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+	request, err := decodeSubscriptionRelayAutomationInput(input)
+	if err != nil || request.RelayID <= 0 {
+		return nil, errors.New("valid relay_id is required")
+	}
+	if _, err := s.store.GetSubscriptionRelay(ctx, request.RelayID); err != nil {
+		return nil, err
+	}
+	return map[string]any{"relay_id": request.RelayID}, nil
 }
 
 // ---- settings ----
@@ -502,7 +735,7 @@ func automationApprovalPolicyView(policy model.ApprovalPolicy) map[string]any {
 		"id": policy.ID, "principal_id": policy.PrincipalID, "capability": policy.Capability,
 		"mode": policy.Mode, "allow_risk4": policy.AllowRisk4, "expires_at": policy.ExpiresAt,
 		"resource_filter_configured": len(policy.ResourceFilter) > 0 && string(policy.ResourceFilter) != "{}",
-		"created_at": policy.CreatedAt, "updated_at": policy.UpdatedAt,
+		"created_at":                 policy.CreatedAt, "updated_at": policy.UpdatedAt,
 	}
 }
 

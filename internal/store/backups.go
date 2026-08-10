@@ -102,6 +102,9 @@ func (s *Store) RewrapEncryptedSecrets(ctx context.Context, sourceSecret, target
 	if err := rewrapColumn(ctx, tx, `select id,hmac_key_encrypted from google_eab_credentials where hmac_key_encrypted<>''`, `update google_eab_credentials set hmac_key_encrypted=?,updated_at=? where id=?`, sourceSecret, targetSecret, "google-eab-hmac-key"); err != nil {
 		return err
 	}
+	if err := rewrapColumn(ctx, tx, `select id,signing_secret_encrypted from subscription_relays where signing_secret_encrypted<>''`, `update subscription_relays set signing_secret_encrypted=?,updated_at=? where id=?`, sourceSecret, targetSecret, "subscription-relay-signing-secret"); err != nil {
+		return err
+	}
 	var backupSecret string
 	err = tx.QueryRowContext(ctx, `select value from app_settings where key=?`, controllerBackupSecretsSetting).Scan(&backupSecret)
 	if err == nil && backupSecret != "" {

@@ -5,6 +5,7 @@ set -eu
 REPO=${OBOARD_REPO:-OboardProject/oboard}
 VERSION_VALUE=${VERSION:-latest}
 ACTION=${OBOARD_ACTION:-install}
+MANAGED_UPDATE=${OBOARD_MANAGED_UPDATE:-0}
 INSTALL_DIR=/opt/oboard-subscription-relay
 ENV_FILE=$INSTALL_DIR/relay.env
 TMP_DIR=
@@ -22,6 +23,7 @@ need_command() { command -v "$1" >/dev/null 2>&1 || fail "缺少命令：$1"; }
 [ "$(id -u)" -eq 0 ] || fail "安装订阅中继需要 root 权限。"
 case "$REPO" in [A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*) ;; *) fail "OBOARD_REPO 格式无效。" ;; esac
 case "$ACTION" in install|update|uninstall) ;; *) fail "OBOARD_ACTION 必须是 install、update 或 uninstall。" ;; esac
+case "$MANAGED_UPDATE" in 0|1) ;; *) fail "OBOARD_MANAGED_UPDATE 必须是 0 或 1。" ;; esac
 
 service_manager() {
 	if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then echo systemd
@@ -30,44 +32,56 @@ service_manager() {
 	fi
 }
 
+env_value() {
+	key=$1
+	[ -r "$ENV_FILE" ] || return 0
+	sed -n "s/^${key}=//p" "$ENV_FILE" | tail -n1
+}
+
 uninstall_relay() {
+	stored_controller_url=$(env_value OBOARD_CONTROLLER_URL)
+	stored_relay_id=$(env_value OBOARD_SUBSCRIPTION_RELAY_ID)
+	stored_relay_token=$(env_value OBOARD_SUBSCRIPTION_RELAY_TOKEN)
+	stored_relay_secret=$(env_value OBOARD_SUBSCRIPTION_RELAY_SECRET)
+	if [ -x "$INSTALL_DIR/oboard-subscription-relay" ]; then
+		OBOARD_CONTROLLER_URL=$stored_controller_url OBOARD_SUBSCRIPTION_RELAY_ID=$stored_relay_id OBOARD_SUBSCRIPTION_RELAY_TOKEN=$stored_relay_token OBOARD_SUBSCRIPTION_RELAY_SECRET=$stored_relay_secret "$INSTALL_DIR/oboard-subscription-relay" notify-uninstall >/dev/null 2>&1 || true
+	fi
 	manager=$(service_manager)
 	if [ "$manager" = systemd ]; then
-		systemctl disable --now oboard-subscription-relay.service >/dev/null 2>&1 || true
-		rm -f /etc/systemd/system/oboard-subscription-relay.service
+		systemctl disable --now oboard-subscription-relay-updater.service oboard-subscription-relay.service >/dev/null 2>&1 || true
+		rm -f /etc/systemd/system/oboard-subscription-relay-updater.service /etc/systemd/system/oboard-subscription-relay.service
 		systemctl daemon-reload >/dev/null 2>&1 || true
 	elif [ "$manager" = openrc ]; then
+		rc-service oboard-subscription-relay-updater stop >/dev/null 2>&1 || true
 		rc-service oboard-subscription-relay stop >/dev/null 2>&1 || true
+		rc-update del oboard-subscription-relay-updater default >/dev/null 2>&1 || true
 		rc-update del oboard-subscription-relay default >/dev/null 2>&1 || true
-		rm -f /etc/init.d/oboard-subscription-relay
+		rm -f /etc/init.d/oboard-subscription-relay-updater /etc/init.d/oboard-subscription-relay
 	fi
 	rm -rf "$INSTALL_DIR"
-	echo "订阅中继已卸载。主控中的中继公开地址需要另行清空。"
+	echo "订阅中继已卸载。可以在主控中删除对应记录。"
 }
 
 if [ "$ACTION" = uninstall ]; then uninstall_relay; exit 0; fi
 
-stored_controller_url=
-stored_relay_secret=
-stored_relay_addr=
-stored_trusted_proxies=
-if [ "$ACTION" = update ] && [ -r "$ENV_FILE" ]; then
-	stored_controller_url=$(sed -n 's/^OBOARD_CONTROLLER_URL=//p' "$ENV_FILE" | tail -n1)
-	stored_relay_secret=$(sed -n 's/^OBOARD_SUBSCRIPTION_RELAY_SECRET=//p' "$ENV_FILE" | tail -n1)
-	stored_relay_addr=$(sed -n 's/^OBOARD_SUBSCRIPTION_RELAY_ADDR=//p' "$ENV_FILE" | tail -n1)
-	stored_trusted_proxies=$(sed -n 's/^OBOARD_SUBSCRIPTION_RELAY_TRUSTED_PROXY_CIDRS=//p' "$ENV_FILE" | tail -n1)
-fi
+stored_controller_url=$(env_value OBOARD_CONTROLLER_URL)
+stored_relay_addr=$(env_value OBOARD_SUBSCRIPTION_RELAY_ADDR)
+stored_trusted_proxies=$(env_value OBOARD_SUBSCRIPTION_RELAY_TRUSTED_PROXY_CIDRS)
 CONTROLLER_URL=${OBOARD_CONTROLLER_URL:-$stored_controller_url}
-RELAY_SECRET=${OBOARD_SUBSCRIPTION_RELAY_SECRET:-$stored_relay_secret}
+ENROLLMENT_TOKEN=${OBOARD_SUBSCRIPTION_RELAY_ENROLLMENT_TOKEN:-}
 RELAY_ADDR=${OBOARD_SUBSCRIPTION_RELAY_ADDR:-${stored_relay_addr:-:8080}}
 TRUSTED_PROXIES=${OBOARD_SUBSCRIPTION_RELAY_TRUSTED_PROXY_CIDRS:-${stored_trusted_proxies:-127.0.0.0/8,::1/128}}
 [ -n "$CONTROLLER_URL" ] || fail "缺少 OBOARD_CONTROLLER_URL。"
 case "$CONTROLLER_URL" in https://*) ;; *) fail "OBOARD_CONTROLLER_URL 必须使用 HTTPS。" ;; esac
-[ "${#RELAY_SECRET}" -ge 32 ] || fail "OBOARD_SUBSCRIPTION_RELAY_SECRET 至少需要 32 个字符。"
 case "$CONTROLLER_URL" in *[!A-Za-z0-9:/._~-]*) fail "OBOARD_CONTROLLER_URL 包含不安全字符。" ;; esac
-case "$RELAY_SECRET" in *[!A-Za-z0-9._~+=/-]*) fail "中继密钥只能使用 URL 安全字符。" ;; esac
 case "$RELAY_ADDR" in *[!A-Za-z0-9:.[\]-]*) fail "中继监听地址包含不安全字符。" ;; esac
 case "$TRUSTED_PROXIES" in *[!A-Fa-f0-9:.,/-]*) fail "可信代理 CIDR 包含不安全字符。" ;; esac
+if [ "$ACTION" = install ]; then
+	[ -n "$ENROLLMENT_TOKEN" ] || fail "缺少一次性中继接入令牌。"
+	case "$ENROLLMENT_TOKEN" in *[!A-Za-z0-9_-]*) fail "中继接入令牌格式无效。" ;; esac
+elif [ ! -r "$ENV_FILE" ]; then
+	fail "未找到现有中继配置，不能执行更新。"
+fi
 
 case "$(uname -m)" in x86_64|amd64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; *) fail "不支持当前架构：$(uname -m)" ;; esac
 need_command tar
@@ -79,7 +93,7 @@ if command -v curl >/dev/null 2>&1; then
 	fi
 elif command -v wget >/dev/null 2>&1; then
 	download() { wget -q -O "$2" "$1"; }
-	[ "$VERSION_VALUE" != latest ] || fail "使用 wget 安装时请通过 VERSION 指定版本。"
+	[ "$VERSION_VALUE" != latest ] || fail "使用 wget 时请通过 VERSION 指定版本。"
 else
 	fail "需要 curl 或 wget。"
 fi
@@ -105,25 +119,41 @@ tar -xzf "$TMP_DIR/$ARCHIVE" -C "$TMP_DIR"
 install -d -m 0755 "$INSTALL_DIR"
 install -m 0755 "$TMP_DIR/bin/oboard-subscription-relay" "$INSTALL_DIR/oboard-subscription-relay.new"
 mv -f "$INSTALL_DIR/oboard-subscription-relay.new" "$INSTALL_DIR/oboard-subscription-relay"
-umask 077
-{
-	printf 'OBOARD_CONTROLLER_URL=%s\n' "$CONTROLLER_URL"
-	printf 'OBOARD_SUBSCRIPTION_RELAY_SECRET=%s\n' "$RELAY_SECRET"
-	printf 'OBOARD_SUBSCRIPTION_RELAY_ADDR=%s\n' "$RELAY_ADDR"
-	printf 'OBOARD_SUBSCRIPTION_RELAY_TRUSTED_PROXY_CIDRS=%s\n' "$TRUSTED_PROXIES"
-} > "$ENV_FILE.new"
-mv -f "$ENV_FILE.new" "$ENV_FILE"
+
+if [ "$ACTION" = install ]; then
+	"$INSTALL_DIR/oboard-subscription-relay" enroll --controller "$CONTROLLER_URL" --token "$ENROLLMENT_TOKEN" --env-output "$ENV_FILE"
+	{
+		printf 'OBOARD_SUBSCRIPTION_RELAY_ADDR=%s\n' "$RELAY_ADDR"
+		printf 'OBOARD_SUBSCRIPTION_RELAY_TRUSTED_PROXY_CIDRS=%s\n' "$TRUSTED_PROXIES"
+	} >> "$ENV_FILE"
+	chmod 0600 "$ENV_FILE"
+fi
 
 manager=$(service_manager)
 if [ "$manager" = systemd ]; then
-	install -m 0644 "$TMP_DIR/deploy/systemd/oboard-subscription-relay.service" /etc/systemd/system/oboard-subscription-relay.service
-	systemctl daemon-reload
-	systemctl enable --now oboard-subscription-relay.service
+	if [ "$MANAGED_UPDATE" = 0 ]; then
+		install -m 0644 "$TMP_DIR/deploy/systemd/oboard-subscription-relay.service" /etc/systemd/system/oboard-subscription-relay.service
+		install -m 0644 "$TMP_DIR/deploy/systemd/oboard-subscription-relay-updater.service" /etc/systemd/system/oboard-subscription-relay-updater.service
+		systemctl daemon-reload
+		systemctl enable oboard-subscription-relay.service oboard-subscription-relay-updater.service
+	fi
+	systemctl restart oboard-subscription-relay.service
+	[ "$MANAGED_UPDATE" = 1 ] || systemctl restart oboard-subscription-relay-updater.service
 elif [ "$manager" = openrc ]; then
-	install -m 0755 "$TMP_DIR/deploy/openrc/oboard-subscription-relay" /etc/init.d/oboard-subscription-relay
-	rc-update add oboard-subscription-relay default
+	if [ "$MANAGED_UPDATE" = 0 ]; then
+		install -m 0755 "$TMP_DIR/deploy/openrc/oboard-subscription-relay" /etc/init.d/oboard-subscription-relay
+		install -m 0755 "$TMP_DIR/deploy/openrc/oboard-subscription-relay-updater" /etc/init.d/oboard-subscription-relay-updater
+		rc-update add oboard-subscription-relay default
+		rc-update add oboard-subscription-relay-updater default
+	fi
 	rc-service oboard-subscription-relay restart
+	[ "$MANAGED_UPDATE" = 1 ] || rc-service oboard-subscription-relay-updater restart
 else
 	fail "未识别 systemd 或 OpenRC；程序已安装但尚未启动。"
 fi
-echo "订阅中继已启动，请为其配置 HTTPS 反向代理后在面板中填写中继公开地址。"
+
+if [ "$ACTION" = install ]; then
+	echo "订阅中继已接入并启动，请确认 HTTPS 反向代理指向本机监听端口。"
+else
+	echo "订阅中继已更新到 $VERSION_VALUE。"
+fi

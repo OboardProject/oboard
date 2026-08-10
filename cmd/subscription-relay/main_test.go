@@ -5,21 +5,27 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/controller"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/subrelay"
 )
 
 func TestRelaySignsAndRestrictsRequests(t *testing.T) {
 	secret := "0123456789abcdef0123456789abcdef"
+	relayID := "7"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := subrelay.Verify(secret, r.Method, r.URL.RequestURI(), r.Header.Get(subrelay.HeaderTimestamp), r.Header.Get(subrelay.HeaderNonce), r.Header.Get(subrelay.HeaderClientIP), r.UserAgent(), r.Header.Get("If-None-Match"), r.Header.Get(subrelay.HeaderSignature), time.Now()); err != nil {
+		if err := subrelay.Verify(secret, relayID, r.Method, r.URL.RequestURI(), r.Header.Get(subrelay.HeaderTimestamp), r.Header.Get(subrelay.HeaderNonce), r.Header.Get(subrelay.HeaderClientIP), r.UserAgent(), r.Header.Get("If-None-Match"), r.Header.Get(subrelay.HeaderSignature), time.Now()); err != nil {
 			t.Error(err)
+		}
+		if got := r.Header.Get(subrelay.HeaderRelayID); got != relayID {
+			t.Errorf("relay ID = %q", got)
 		}
 		if got := r.Header.Get(subrelay.HeaderClientIP); got != "203.0.113.9" {
 			t.Errorf("client IP = %q", got)
@@ -32,7 +38,7 @@ func TestRelaySignsAndRestrictsRequests(t *testing.T) {
 	}))
 	defer upstream.Close()
 	target, _ := validateUpstream(upstream.URL, true)
-	handler := &relay{upstream: target, secret: secret, client: upstream.Client()}
+	handler := &relay{upstream: target, id: relayID, secret: secret, client: upstream.Client()}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions/token?format=mihomo", nil)
 	request.RemoteAddr = "203.0.113.9:1234"
@@ -90,7 +96,7 @@ func TestRelayBasePathAndHealth(t *testing.T) {
 
 func TestRelayControllerEndToEnd(t *testing.T) {
 	secret := "0123456789abcdef0123456789abcdef"
-	t.Setenv("OBOARD_SUBSCRIPTION_RELAY_SECRET", secret)
+	masterSecret := "controller-session-secret-at-least-32"
 	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +106,20 @@ func TestRelayControllerEndToEnd(t *testing.T) {
 	if err := db.CreateUser(context.Background(), user); err != nil {
 		t.Fatal(err)
 	}
-	app := controller.New(db, "controller-session-secret-at-least-32", "", "", nil)
+	encrypted, err := security.EncryptSecret(masterSecret, "subscription-relay-signing-secret", secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	managed := &model.SubscriptionRelay{Name: "relay", PublicURL: "https://relay.example", Status: "pending", EnrollmentHash: security.HashSecret("enroll-token"), EnrollmentExpiresAt: &expiresAt}
+	if err := db.CreateSubscriptionRelay(context.Background(), managed); err != nil {
+		t.Fatal(err)
+	}
+	managed, err = db.ClaimSubscriptionRelayEnrollment(context.Background(), security.HashSecret("enroll-token"), security.HashSecret("relay-token"), encrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := controller.New(db, masterSecret, "", "", nil)
 	defer app.Close()
 	upstream := httptest.NewServer(app.Handler())
 	defer upstream.Close()
@@ -108,7 +127,7 @@ func TestRelayControllerEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := &relay{upstream: target, secret: secret, client: upstream.Client()}
+	handler := &relay{upstream: target, id: strconv.FormatInt(managed.ID, 10), secret: secret, client: upstream.Client()}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions/relay-subscription-token?format=sing-box", nil)
 	request.RemoteAddr = "203.0.113.20:1234"

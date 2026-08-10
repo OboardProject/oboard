@@ -6561,6 +6561,93 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .subscription-security-note strong { margin-bottom: 3px; color: var(--text-strong); font-size: 13px; }
 .subscription-security-note span { font-size: 12px; line-height: 1.5; }
 
+.subscription-relay-manager > .settings-card-head > button,
+.subscription-relay-actions button,
+.subscription-relay-title,
+.subscription-relay-row a,
+.subscription-relay-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.subscription-relay-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 88px;
+  padding: 16px 0;
+  color: var(--muted);
+}
+
+.subscription-relay-empty svg { flex: 0 0 auto; color: var(--primary); }
+.subscription-relay-empty strong,
+.subscription-relay-empty span { display: block; }
+.subscription-relay-empty strong { margin-bottom: 3px; color: var(--text-strong); font-size: 14px; }
+.subscription-relay-empty span { font-size: 12px; line-height: 1.5; }
+
+.subscription-relay-list {
+  display: grid;
+  border-top: 1px solid var(--border);
+}
+
+.subscription-relay-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  min-width: 0;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.subscription-relay-main {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.subscription-relay-title { flex-wrap: wrap; }
+.subscription-relay-title > strong { color: var(--text-strong); font-size: 14px; }
+.subscription-relay-row a {
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--primary);
+  font-size: 13px;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.subscription-relay-row a:hover { text-decoration: underline; }
+.subscription-relay-row a svg { flex: 0 0 auto; }
+
+.subscription-relay-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.subscription-relay-error {
+  align-items: flex-start;
+  max-width: 720px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.subscription-relay-error svg { flex: 0 0 auto; margin-top: 1px; }
+
+.subscription-relay-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.subscription-relay-actions button { white-space: nowrap; }
+
 @media (max-width: 900px) {
   .settings-card-head.subscription-security-head {
     grid-template-columns: minmax(0, 1fr);
@@ -6574,6 +6661,21 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
     padding-left: 0;
     border-left: 0;
   }
+  .subscription-relay-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .subscription-relay-actions { justify-content: flex-start; }
+}
+
+@media (max-width: 560px) {
+  .subscription-relay-manager > .settings-card-head > button { width: 100%; }
+  .subscription-relay-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .subscription-relay-actions button { width: 100%; }
+  .subscription-relay-actions .icon-button { min-width: 42px; }
 }
 
 .settings-form > .form-field {
@@ -16173,4 +16275,3 @@ button.ui-btn-ghost:hover {
   min-width: 160px;
   max-width: 260px;
 }
-

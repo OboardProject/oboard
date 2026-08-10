@@ -4,23 +4,31 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"os"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/subrelay"
 )
 
 const settingSubscriptionRelayURL = "subscription_relay_url"
 
 func (s *Server) withSubscriptionRelay(next http.Handler) http.Handler {
-	secret := strings.TrimSpace(os.Getenv("OBOARD_SUBSCRIPTION_RELAY_SECRET"))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(subrelay.HeaderSignature) == "" {
+		if r.Header.Get(subrelay.HeaderSignature) == "" || !s.isSubscriptionRelayPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if secret == "" || !s.isSubscriptionRelayPath(r.URL.Path) {
+		relayID := strings.TrimSpace(r.Header.Get(subrelay.HeaderRelayID))
+		id, idErr := strconv.ParseInt(relayID, 10, 64)
+		relay, relayErr := s.store.GetSubscriptionRelay(r.Context(), id)
+		if idErr != nil || relayErr != nil || relay.SigningSecretEncrypted == "" {
+			http.Error(w, "invalid subscription relay", http.StatusUnauthorized)
+			return
+		}
+		secret, err := security.DecryptSecret(s.sessionSecret, subscriptionRelaySecretPurpose, relay.SigningSecretEncrypted)
+		if err != nil {
 			http.Error(w, "invalid subscription relay", http.StatusUnauthorized)
 			return
 		}
@@ -30,7 +38,7 @@ func (s *Server) withSubscriptionRelay(next http.Handler) http.Handler {
 			http.Error(w, "invalid subscription relay", http.StatusUnauthorized)
 			return
 		}
-		err = subrelay.Verify(secret, r.Method, r.URL.RequestURI(), r.Header.Get(subrelay.HeaderTimestamp), r.Header.Get(subrelay.HeaderNonce), clientIP, r.UserAgent(), r.Header.Get("If-None-Match"), r.Header.Get(subrelay.HeaderSignature), time.Now())
+		err = subrelay.Verify(secret, relayID, r.Method, r.URL.RequestURI(), r.Header.Get(subrelay.HeaderTimestamp), r.Header.Get(subrelay.HeaderNonce), clientIP, r.UserAgent(), r.Header.Get("If-None-Match"), r.Header.Get(subrelay.HeaderSignature), time.Now())
 		if err != nil || !s.consumeSubscriptionRelayNonce(r.Header.Get(subrelay.HeaderNonce), time.Now()) {
 			http.Error(w, "invalid subscription relay", http.StatusUnauthorized)
 			return

@@ -1,30 +1,42 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/subrelay"
 )
 
 func TestSubscriptionRelayAuthenticatesClientIPAndRejectsReplay(t *testing.T) {
 	secret := "0123456789abcdef0123456789abcdef"
-	previous, existed := os.LookupEnv("OBOARD_SUBSCRIPTION_RELAY_SECRET")
-	if err := os.Setenv("OBOARD_SUBSCRIPTION_RELAY_SECRET", secret); err != nil {
+	masterSecret := "controller-session-secret-at-least-32"
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if existed {
-			_ = os.Setenv("OBOARD_SUBSCRIPTION_RELAY_SECRET", previous)
-		} else {
-			_ = os.Unsetenv("OBOARD_SUBSCRIPTION_RELAY_SECRET")
-		}
-	})
-	s := &Server{subscriptionRelayNonces: map[string]time.Time{}}
+	defer db.Close()
+	encrypted, err := security.EncryptSecret(masterSecret, subscriptionRelaySecretPurpose, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	relay := &model.SubscriptionRelay{Name: "relay", PublicURL: "https://relay.example", Status: "pending", EnrollmentHash: security.HashSecret("enroll-token"), EnrollmentExpiresAt: &expiresAt}
+	if err := db.CreateSubscriptionRelay(context.Background(), relay); err != nil {
+		t.Fatal(err)
+	}
+	relay, err = db.ClaimSubscriptionRelayEnrollment(context.Background(), security.HashSecret("enroll-token"), security.HashSecret("relay-token"), encrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{store: db, sessionSecret: masterSecret, subscriptionRelayNonces: map[string]time.Time{}}
 	handler := s.withSubscriptionRelay(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(clientIP(r)))
 	}))
@@ -33,10 +45,12 @@ func TestSubscriptionRelayAuthenticatesClientIPAndRejectsReplay(t *testing.T) {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	nonce := "0123456789abcdef01234567"
 	client := "203.0.113.8"
+	relayID := strconv.FormatInt(relay.ID, 10)
 	request.Header.Set(subrelay.HeaderTimestamp, timestamp)
 	request.Header.Set(subrelay.HeaderNonce, nonce)
 	request.Header.Set(subrelay.HeaderClientIP, client)
-	request.Header.Set(subrelay.HeaderSignature, subrelay.Sign(secret, request.Method, request.URL.RequestURI(), timestamp, nonce, client, "", ""))
+	request.Header.Set(subrelay.HeaderRelayID, relayID)
+	request.Header.Set(subrelay.HeaderSignature, subrelay.Sign(secret, relayID, request.Method, request.URL.RequestURI(), timestamp, nonce, client, "", ""))
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)

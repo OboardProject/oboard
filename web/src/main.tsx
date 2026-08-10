@@ -103,6 +103,7 @@ import { getServerTimeIssue } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
 import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
 import { controllerUpdatePendingToast, isControllerUpdateInProgressStatus, isExpectedControllerUpdateDisconnect } from './controller-update'
+import { subscriptionRelayCommand, subscriptionRelayStatus, type SubscriptionRelay, type SubscriptionRelayAction } from './subscription-relay'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { connectivityBucketTone as backendConnectivityBucketTone, connectivityRequestPath, connectivitySlaDisplay, formatConnectivityDuration, type ConnectivityResponse, type ConnectivityWindowKey } from './connectivity-sla'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
@@ -3002,6 +3003,181 @@ function AIProviderRawLogDialog({ client, onClose }: { client: ReturnType<typeof
   </MotionDialogPanel>
 }
 
+function SubscriptionRelayManager({ data, client, load, notify }: { data: any; client: ReturnType<typeof api>; load: PageLoad; notify?: (message: string, kind?: ToastKind) => void }) {
+  const dialogs = useDialogs()
+  const [relays, setRelays] = useState<SubscriptionRelay[]>(data.subscription_relays || [])
+  const [editor, setEditor] = useState<{ relay?: SubscriptionRelay } | null>(null)
+  const [commandTarget, setCommandTarget] = useState<{ relay: SubscriptionRelay; token: string } | null>(null)
+  const [busy, setBusy] = useState('')
+
+  useEffect(() => { setRelays(data.subscription_relays || []) }, [data.subscription_relays])
+  useEffect(() => {
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const result = await client.request('/subscription-relays')
+        if (!cancelled) setRelays(result.subscription_relays || [])
+      } catch {
+        // The next normal page refresh will retry without disrupting settings work.
+      }
+    }
+    const timer = window.setInterval(() => { void refresh() }, 30000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [client])
+
+  const reload = () => { void load('settings', { background: true, forceFresh: true }) }
+  const saveRelay = async (draft: { name: string; public_url: string }) => {
+    setBusy('save')
+    try {
+      if (editor?.relay) {
+        const result = await client.request(`/subscription-relays/${editor.relay.id}`, { method: 'PATCH', body: JSON.stringify(draft) })
+        setRelays(current => current.map(item => item.id === editor.relay?.id ? result.subscription_relay : item))
+        notify?.('中继设置已保存', 'success')
+      } else {
+        const result = await client.request('/subscription-relays', { method: 'POST', body: JSON.stringify(draft) })
+        setRelays(current => [...current, result.subscription_relay])
+        setCommandTarget({ relay: result.subscription_relay, token: result.enrollment_token })
+        notify?.('中继已创建，请在目标主机执行安装命令', 'success')
+      }
+      setEditor(null)
+      reload()
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setBusy('')
+    }
+  }
+  const openCommands = async (relay: SubscriptionRelay) => {
+    setBusy(`commands-${relay.id}`)
+    try {
+      const result = await client.request(`/subscription-relays/${relay.id}/enroll-token`, { method: 'POST', body: '{}' })
+      setCommandTarget({ relay, token: result.enrollment_token })
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setBusy('')
+    }
+  }
+  const activate = async (relay: SubscriptionRelay) => {
+    setBusy(`activate-${relay.id}`)
+    try {
+      await client.request(`/subscription-relays/${relay.id}/activate`, { method: 'POST', body: '{}' })
+      setRelays(current => current.map(item => ({ ...item, active: item.id === relay.id })))
+      notify?.(`${relay.name} 已设为订阅入口`, 'success')
+      reload()
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setBusy('')
+    }
+  }
+  const requestUpdate = async (relay: SubscriptionRelay) => {
+    const confirmed = await dialogs.confirm({
+      title: '更新订阅中继？',
+      confirmText: '下发更新',
+      message: <div><p>主控会在 <strong>{relay.name}</strong> 下次心跳时下发当前版本。</p><p className="muted">订阅服务会在替换程序后自动重启，现有配置保持不变。</p></div>,
+    })
+    if (!confirmed) return
+    setBusy(`update-${relay.id}`)
+    try {
+      const result = await client.request(`/subscription-relays/${relay.id}/update`, { method: 'POST', body: '{}' })
+      setRelays(current => current.map(item => item.id === relay.id ? { ...item, status: 'updating', update_target_version: result.target_version, update_target_build: result.target_build, last_update_error: '' } : item))
+      notify?.(`已向 ${relay.name} 下发更新请求`, 'success')
+      reload()
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setBusy('')
+    }
+  }
+  const removeRelay = async (relay: SubscriptionRelay) => {
+    const confirmed = await dialogs.confirm({
+      title: '删除中继记录？',
+      tone: 'danger',
+      confirmText: '删除记录',
+      message: <div><p>将从主控删除 <strong>{relay.name}</strong>。</p><p className="muted">这不会远程卸载程序；请先在目标主机执行卸载命令。</p></div>,
+    })
+    if (!confirmed) return
+    setBusy(`delete-${relay.id}`)
+    try {
+      await client.request(`/subscription-relays/${relay.id}`, { method: 'DELETE' })
+      setRelays(current => current.filter(item => item.id !== relay.id))
+      notify?.('中继记录已删除', 'success')
+      reload()
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return <section className="settings-card subscription-relay-manager">
+    <div className="settings-card-head">
+      <div><h3>订阅中继</h3><p className="muted">独立部署订阅入口，授权、审计和内容生成仍由主控实时处理。</p></div>
+      <button type="button" onClick={() => setEditor({})}><Plus size={15} />创建中继</button>
+    </div>
+    {relays.length === 0
+      ? <div className="subscription-relay-empty"><Network size={22} /><div><strong>尚未创建中继</strong><span>创建后，在国内主机执行一次安装命令即可接入。</span></div></div>
+      : <div className="subscription-relay-list" role="list">
+        {relays.map(relay => {
+          const state = subscriptionRelayStatus(relay.status)
+          const platform = [relay.os, relay.arch].filter(Boolean).join(' / ')
+          return <article className="subscription-relay-row" role="listitem" key={relay.id}>
+            <div className="subscription-relay-main">
+              <div className="subscription-relay-title"><strong>{relay.name}</strong><span className={`status-pill ${state.tone}`}>{state.label}</span>{relay.active && <span className="status-pill ok">当前入口</span>}</div>
+              <a href={relay.public_url} target="_blank" rel="noreferrer">{relay.public_url}<ExternalLink size={13} /></a>
+              <div className="subscription-relay-meta">
+                <span>版本 {relay.version || '未上报'}{relay.build ? ` · ${relay.build}` : ''}</span>
+                {platform && <span>{platform}</span>}
+                <span>{relay.last_seen_at ? `最后心跳 ${formatTableTime(relay.last_seen_at)}` : '尚未接入'}</span>
+              </div>
+              {relay.last_update_error && <p className="subscription-relay-error"><AlertTriangle size={14} />{relay.last_update_error}</p>}
+            </div>
+            <div className="subscription-relay-actions">
+              {!relay.active && <button type="button" className="ghost" onClick={() => void activate(relay)} disabled={Boolean(busy)}><Check size={14} />设为入口</button>}
+              <button type="button" className="ghost" onClick={() => void openCommands(relay)} disabled={Boolean(busy)}><Terminal size={14} />{busy === `commands-${relay.id}` ? '生成中...' : '命令'}</button>
+              <button type="button" className="ghost" onClick={() => void requestUpdate(relay)} disabled={Boolean(busy) || !relay.enrolled || relay.status === 'updating'}><RefreshCw size={14} className={busy === `update-${relay.id}` ? 'spin' : ''} />更新</button>
+              <IconButton label={`编辑 ${relay.name}`} onClick={() => setEditor({ relay })}><Edit3 size={15} /></IconButton>
+              <IconButton label={`删除 ${relay.name}`} className="danger-text" onClick={() => void removeRelay(relay)} busy={busy === `delete-${relay.id}`}><Trash2 size={15} /></IconButton>
+            </div>
+          </article>
+        })}
+      </div>}
+    <AnimatePresence>{editor && <SubscriptionRelayEditorDialog relay={editor.relay} currentBasePath={String(data.settings?.base_path || '')} saving={busy === 'save'} onCancel={() => setEditor(null)} onSubmit={saveRelay} />}</AnimatePresence>
+    <AnimatePresence>{commandTarget && <SubscriptionRelayCommandDialog relay={commandTarget.relay} enrollmentToken={commandTarget.token} controllerURL={effectiveControllerURL(data)} version={String(data.version?.version || 'latest')} onClose={() => setCommandTarget(null)} />}</AnimatePresence>
+  </section>
+}
+
+function SubscriptionRelayEditorDialog({ relay, currentBasePath, saving, onCancel, onSubmit }: { relay?: SubscriptionRelay; currentBasePath: string; saving: boolean; onCancel: () => void; onSubmit: (draft: { name: string; public_url: string }) => Promise<void> }) {
+  const [name, setName] = useState(relay?.name || '')
+  const [publicURL, setPublicURL] = useState(relay?.public_url || '')
+  const submit = () => { if (name.trim() && publicURL.trim() && !saving) void onSubmit({ name: name.trim(), public_url: publicURL.trim() }) }
+  return <MotionDialogPanel onCancel={onCancel} className="install-dialog">
+    <header className="dialog-head"><div><h2>{relay ? '编辑订阅中继' : '创建订阅中继'}</h2><p className="muted">公开地址必须由 HTTPS 反向代理提供。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button></header>
+    <div className="dialog-body form">
+      <FormField label="名称"><input value={name} onChange={event => setName(event.target.value)} maxLength={80} autoFocus placeholder="国内订阅入口" /></FormField>
+      <FormField label="公开地址" hint="路径需与当前面板基础路径一致。"><input value={publicURL} onChange={event => setPublicURL(event.target.value)} spellCheck={false} placeholder={`https://sub.example.com${currentBasePath}`} /></FormField>
+    </div>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button><button type="button" onClick={submit} disabled={saving || !name.trim() || !publicURL.trim()}>{saving ? '保存中...' : relay ? '保存' : '创建并生成命令'}</button></footer>
+  </MotionDialogPanel>
+}
+
+function SubscriptionRelayCommandDialog({ relay, enrollmentToken, controllerURL, version, onClose }: { relay: SubscriptionRelay; enrollmentToken: string; controllerURL: string; version: string; onClose: () => void }) {
+  const [action, setAction] = useState<SubscriptionRelayAction>(relay.enrolled ? 'update' : 'install')
+  const title = action === 'install' ? '安装' : action === 'update' ? '更新' : '卸载'
+  const description = action === 'install' ? '在目标主机接入中继并启动订阅服务与更新服务。' : action === 'update' ? '保留身份和监听设置，更新到当前主控版本。' : '停止服务并移除本机程序与凭据。'
+  const command = subscriptionRelayCommand({ controllerURL, version, action, enrollmentToken })
+  return <MotionDialogPanel onCancel={onClose} className="install-dialog">
+    <header className="dialog-head"><div><h2>订阅中继命令</h2><p className="muted">{relay.name} · 在目标主机执行</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>
+    <div className="dialog-body">
+      <Select variant="segmented" className="install-action-select" value={action} onChange={event => setAction(event.target.value as SubscriptionRelayAction)} aria-label="中继操作"><option value="install">安装</option><option value="update">更新</option><option value="uninstall">卸载</option></Select>
+      <p className="install-root-note">安装令牌仅使用一次，不会写入下载 URL。请在目标主机的 root SSH 中执行。</p>
+      <InstallCommandCard title={title} desc={description} command={command} tone={action === 'uninstall' ? 'danger' : 'default'} />
+    </div>
+    <footer className="dialog-actions"><button type="button" onClick={onClose}>完成</button></footer>
+  </MotionDialogPanel>
+}
+
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const dialogs = useDialogs()
   const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
@@ -3013,7 +3189,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const environmentTrustedProxyCIDRs: string[] = Array.isArray(data.settings?.trusted_proxy_environment_cidrs) ? data.settings.trusted_proxy_environment_cidrs.map(String) : []
   const reverseProxyStatus = data.reverse_proxy_status || {}
   const [controllerURL, setControllerURL] = useState(savedURL || currentOrigin)
-  const [subscriptionRelayURL, setSubscriptionRelayURL] = useState(String(data.settings?.subscription_relay_url || ''))
   const [basePath, setBasePath] = useState(currentBasePath)
   const [trustedProxyCIDRs, setTrustedProxyCIDRs] = useState<string>(configuredTrustedProxyCIDRs.join('\n'))
   const [subscriptionAgePolicy, setSubscriptionAgePolicy] = useState<'optional' | 'required'>(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional')
@@ -3032,7 +3207,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [registrationDefaultGroupID, setRegistrationDefaultGroupID] = useState(Number(data.settings?.registration_default_group_id || 0))
   const [saving, setSaving] = useState('')
   useEffect(() => { setControllerURL(savedURL || currentOrigin) }, [savedURL, currentOrigin])
-  useEffect(() => { setSubscriptionRelayURL(String(data.settings?.subscription_relay_url || '')) }, [data.settings?.subscription_relay_url])
   useEffect(() => { setBasePath(currentBasePath) }, [currentBasePath])
   useEffect(() => { setTrustedProxyCIDRs(configuredTrustedProxyCIDRs.join('\n')) }, [data.settings?.trusted_proxy_cidrs])
   useEffect(() => {
@@ -3158,11 +3332,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     await runSave('subscription-age', async () => {
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: subscriptionAgePolicy }) })
     }, '订阅加密策略已保存')
-  }
-  const saveSubscriptionRelay = async () => {
-    await runSave('subscription-relay', async () => {
-      await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_relay_url: subscriptionRelayURL.trim() }) })
-    }, subscriptionRelayURL.trim() ? '订阅中继地址已启用' : '订阅链接已恢复直连主控')
   }
   const saveControllerLogs = async () => {
     await runSave('controller-logs', async () => {
@@ -3342,15 +3511,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <div className="settings-actions"><button onClick={() => void saveSubscriptionAgePolicy()} disabled={Boolean(saving)}>{saving === 'subscription-age' ? '保存中...' : '保存加密策略'}</button></div>
         </div>
       </section>
-      <section className="settings-card">
-        <div className="settings-card-head"><div><h3>订阅中继</h3><p className="muted">用户订阅链接使用独立入口，节点授权和格式生成仍由主控处理。</p></div></div>
-        <div className="form settings-form single-field">
-          <FormField label="中继公开地址" hint="填写部署中继后的完整 HTTPS 地址；路径必须与面板基础路径一致。留空时直连主控。" full>
-            <input value={subscriptionRelayURL} onChange={event => setSubscriptionRelayURL(event.target.value)} placeholder={`https://sub.example.com${currentBasePath}`} spellCheck={false} aria-label="中继公开地址" />
-          </FormField>
-          <div className="settings-actions"><button onClick={() => void saveSubscriptionRelay()} disabled={Boolean(saving)}>{saving === 'subscription-relay' ? '保存中...' : '保存中继地址'}</button></div>
-        </div>
-      </section></>}
+      <SubscriptionRelayManager data={data} client={client} load={load} notify={notify} /></>}
       {activeSection === 'traffic' && <section className="settings-card">
         <div className="settings-card-head"><div><h3>流量控制</h3><p className="muted">用于计算用户当前周期流量，并在达量后暂停节点使用。</p></div></div>
         <div className="form settings-form two-column">

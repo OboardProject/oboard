@@ -719,6 +719,30 @@ type ControllerBackup struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+type SubscriptionRelay struct {
+	ID                     int64      `json:"id"`
+	Name                   string     `json:"name"`
+	PublicURL              string     `json:"public_url"`
+	Status                 string     `json:"status"`
+	TokenHash              string     `json:"-"`
+	SigningSecretEncrypted string     `json:"-"`
+	EnrollmentHash         string     `json:"-"`
+	EnrollmentExpiresAt    *time.Time `json:"enrollment_expires_at,omitempty"`
+	Version                string     `json:"version"`
+	Build                  string     `json:"build"`
+	Commit                 string     `json:"commit"`
+	OS                     string     `json:"os"`
+	Arch                   string     `json:"arch"`
+	ServiceManager         string     `json:"service_manager"`
+	UpdateTargetVersion    string     `json:"update_target_version"`
+	UpdateTargetBuild      string     `json:"update_target_build"`
+	UpdateRequestedAt      *time.Time `json:"update_requested_at,omitempty"`
+	LastUpdateError        string     `json:"last_update_error,omitempty"`
+	LastSeenAt             *time.Time `json:"last_seen_at,omitempty"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
+}
+
 type Server struct {
 	ID                       int64              `json:"id"`
 	Name                     string             `json:"name"`

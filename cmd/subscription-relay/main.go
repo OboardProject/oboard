@@ -26,6 +26,7 @@ const maxResponseBytes = 16 << 20
 
 type relay struct {
 	upstream       *url.URL
+	id             string
 	secret         string
 	client         *http.Client
 	trustedProxies []netip.Prefix
@@ -33,8 +34,26 @@ type relay struct {
 }
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "enroll":
+			if err := runEnrollment(os.Args[2:]); err != nil {
+				log.Fatal(err)
+			}
+			return
+		case "updater":
+			if err := runUpdater(os.Args[2:]); err != nil {
+				log.Fatal(err)
+			}
+			return
+		case "notify-uninstall":
+			notifyUninstall(env("OBOARD_CONTROLLER_URL", ""), env("OBOARD_SUBSCRIPTION_RELAY_ID", ""), env("OBOARD_SUBSCRIPTION_RELAY_TOKEN", ""), env("OBOARD_SUBSCRIPTION_RELAY_SECRET", ""))
+			return
+		}
+	}
 	address := flag.String("addr", env("OBOARD_SUBSCRIPTION_RELAY_ADDR", ":8080"), "listen address")
 	upstreamValue := flag.String("upstream", env("OBOARD_CONTROLLER_URL", ""), "Controller base URL")
+	relayID := flag.String("relay-id", env("OBOARD_SUBSCRIPTION_RELAY_ID", ""), "managed relay ID")
 	secret := flag.String("secret", env("OBOARD_SUBSCRIPTION_RELAY_SECRET", ""), "shared relay secret")
 	allowHTTP := flag.Bool("allow-http-upstream", false, "allow an insecure upstream for local testing")
 	trustedProxyValue := flag.String("trusted-proxy-cidrs", env("OBOARD_SUBSCRIPTION_RELAY_TRUSTED_PROXY_CIDRS", "127.0.0.0/8,::1/128"), "comma-separated reverse proxy networks")
@@ -46,11 +65,14 @@ func main() {
 	if err := subrelay.ValidateSecret(*secret); err != nil {
 		log.Fatal(err)
 	}
+	if strings.TrimSpace(*relayID) == "" {
+		log.Fatal("OBOARD_SUBSCRIPTION_RELAY_ID is required")
+	}
 	trustedProxies, err := parseTrustedProxies(*trustedProxyValue)
 	if err != nil {
 		log.Fatal(err)
 	}
-	handler := &relay{upstream: upstream, secret: *secret, trustedProxies: trustedProxies, slots: make(chan struct{}, 256), client: &http.Client{Timeout: 65 * time.Second, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext, ForceAttemptHTTP2: true, MaxIdleConns: 64, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second}}}
+	handler := &relay{upstream: upstream, id: *relayID, secret: *secret, trustedProxies: trustedProxies, slots: make(chan struct{}, 256), client: &http.Client{Timeout: 65 * time.Second, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext, ForceAttemptHTTP2: true, MaxIdleConns: 64, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second}}}
 	server := &http.Server{Addr: *address, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 70 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 32 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -112,7 +134,8 @@ func (s *relay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	request.Header.Set(subrelay.HeaderTimestamp, timestamp)
 	request.Header.Set(subrelay.HeaderNonce, nonce)
 	request.Header.Set(subrelay.HeaderClientIP, clientIP)
-	request.Header.Set(subrelay.HeaderSignature, subrelay.Sign(s.secret, request.Method, request.URL.RequestURI(), timestamp, nonce, clientIP, request.UserAgent(), request.Header.Get("If-None-Match")))
+	request.Header.Set(subrelay.HeaderRelayID, s.id)
+	request.Header.Set(subrelay.HeaderSignature, subrelay.Sign(s.secret, s.id, request.Method, request.URL.RequestURI(), timestamp, nonce, clientIP, request.UserAgent(), request.Header.Get("If-None-Match")))
 	response, err := s.client.Do(request)
 	if err != nil {
 		http.Error(w, "subscription upstream unavailable", http.StatusBadGateway)

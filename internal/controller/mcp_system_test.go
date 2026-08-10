@@ -42,6 +42,46 @@ func TestSettingsCapabilities(t *testing.T) {
 	}
 }
 
+func TestSubscriptionRelayCapabilities(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "relay-admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111112", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	applyAutomationChangeset(t, server, principal, "relay-create", automation.OperationRequest{Capability: "subscription_relays.create", Input: json.RawMessage(`{"name":"国内入口","public_url":"https://relay.example.com"}`)})
+	relays, err := db.ListSubscriptionRelays(ctx)
+	if err != nil || len(relays) != 1 {
+		t.Fatalf("relays=%#v err=%v", relays, err)
+	}
+	relayID := relays[0].ID
+	listed, err := server.application.Query(ctx, principal, "subscription_relays.list", json.RawMessage(`{}`))
+	if err != nil || len(listed.([]map[string]any)) != 1 {
+		t.Fatalf("relay query=%#v err=%v", listed, err)
+	}
+	updateInput, _ := json.Marshal(map[string]any{"relay_id": relayID, "name": "华东入口", "public_url": "https://sub.example.com"})
+	applyAutomationChangeset(t, server, principal, "relay-update", automation.OperationRequest{Capability: "subscription_relays.update", Input: updateInput})
+	updated, err := db.GetSubscriptionRelay(ctx, relayID)
+	if err != nil || updated.Name != "华东入口" || updated.PublicURL != "https://sub.example.com" {
+		t.Fatalf("updated relay=%#v err=%v", updated, err)
+	}
+	issueInput, _ := json.Marshal(map[string]any{"relay_id": relayID})
+	applyAutomationChangeset(t, server, principal, "relay-issue", automation.OperationRequest{Capability: "subscription_relays.issue_enrollment", Input: issueInput})
+	activateInput, _ := json.Marshal(map[string]any{"relay_id": relayID})
+	applyAutomationChangeset(t, server, principal, "relay-activate", automation.OperationRequest{Capability: "subscription_relays.activate", Input: activateInput})
+	settings, _ := db.ListSettings(ctx)
+	if settings[settingSubscriptionRelayURL] != "https://sub.example.com" {
+		t.Fatalf("active relay URL=%q", settings[settingSubscriptionRelayURL])
+	}
+	deleteInput, _ := json.Marshal(map[string]any{"relay_id": relayID, "confirm": true})
+	applyAutomationChangeset(t, server, principal, "relay-delete", automation.OperationRequest{Capability: "subscription_relays.delete", Input: deleteInput})
+	if _, err := db.GetSubscriptionRelay(ctx, relayID); err == nil {
+		t.Fatal("deleted relay still exists")
+	}
+}
+
 func TestApprovalPolicyAndNotificationCapabilities(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")
