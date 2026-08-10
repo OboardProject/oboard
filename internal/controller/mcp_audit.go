@@ -188,6 +188,15 @@ func (s *Server) auditReviewDeleteCandidate(ctx context.Context, input json.RawM
 	if review.Status == "queued" || review.Status == "running" {
 		return nil, store.ErrAuditReviewActive
 	}
+	jobs, err := s.store.ListAuditReviewJobs(ctx, review.ID, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, job := range jobs {
+		if job.Status == "running" {
+			return nil, store.ErrAuditReviewActive
+		}
+	}
 	return review, nil
 }
 

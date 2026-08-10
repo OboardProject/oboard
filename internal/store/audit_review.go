@@ -372,7 +372,7 @@ func (s *Store) CancelAuditReview(ctx context.Context, reviewID string) error {
 }
 
 func (s *Store) DeleteAuditReview(ctx context.Context, reviewID string) error {
-	result, err := s.db.ExecContext(ctx, `delete from ai_audit_reviews where id=? and status not in ('queued','running')`, reviewID)
+	result, err := s.db.ExecContext(ctx, `delete from ai_audit_reviews where id=? and status not in ('queued','running') and not exists(select 1 from ai_audit_review_jobs where review_id=? and status='running')`, reviewID, reviewID)
 	if err != nil {
 		return err
 	}
@@ -382,6 +382,16 @@ func (s *Store) DeleteAuditReview(ctx context.Context, reviewID string) error {
 	var status string
 	if err := s.db.QueryRowContext(ctx, `select status from ai_audit_reviews where id=?`, reviewID).Scan(&status); err != nil {
 		return err
+	}
+	var runningJobs int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from ai_audit_review_jobs where review_id=? and status='running'`, reviewID).Scan(&runningJobs); err != nil {
+		return err
+	}
+	if runningJobs > 0 {
+		return ErrAuditReviewActive
+	}
+	if status != "queued" && status != "running" {
+		return sql.ErrNoRows
 	}
 	return ErrAuditReviewActive
 }

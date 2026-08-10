@@ -181,7 +181,19 @@ func TestDeleteAuditReviewRequiresTerminalStatusAndCascades(t *testing.T) {
 	if err := db.DeleteAuditReview(ctx, review.ID); !errors.Is(err, ErrAuditReviewActive) {
 		t.Fatalf("active review delete error = %v", err)
 	}
-	if err := db.CancelAuditReview(ctx, review.ID); err != nil {
+	if _, err := db.db.ExecContext(ctx, `update ai_audit_reviews set status='failed' where id=?`, review.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.ExecContext(ctx, `update ai_audit_review_jobs set status='running' where id=?`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteAuditReview(ctx, review.ID); !errors.Is(err, ErrAuditReviewActive) {
+		t.Fatalf("running job review delete error = %v", err)
+	}
+	if _, err := db.db.ExecContext(ctx, `update ai_audit_review_jobs set status='cancelled' where id=?`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.ExecContext(ctx, `update ai_audit_reviews set status='cancelled' where id=?`, review.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.DeleteAuditReview(ctx, review.ID); err != nil {
