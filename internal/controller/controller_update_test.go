@@ -13,7 +13,7 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
-func TestControllerUpdateAPIAndBackupRetention(t *testing.T) {
+func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	root := t.TempDir()
 	binary := filepath.Join(root, "oboard-controller")
 	if err := os.WriteFile(binary, []byte("controller"), 0o755); err != nil {
@@ -105,17 +105,70 @@ func TestControllerUpdateAPIAndBackupRetention(t *testing.T) {
 	viewerLogin := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-user-password"}, http.StatusOK)
 	request(t, handler, http.MethodGet, "/api/v2/ui/controller-update", viewerLogin["token"].(string), nil, http.StatusForbidden)
 
-	for i := 0; i < controllerBackupRetention+2; i++ {
-		if _, err := app.createControllerBackup(context.Background()); err != nil {
-			t.Fatal(err)
-		}
+	firstBackup, err := app.createControllerBackup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(app.controllerBackupDir, "manual-backup.sqlite")
+	if err := os.WriteFile(unrelated, []byte("manual"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	latestBackup, err := app.createControllerBackup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(firstBackup); !os.IsNotExist(err) {
+		t.Fatalf("previous update backup was not removed: %v", err)
+	}
+	if _, err := os.Stat(latestBackup); err != nil {
+		t.Fatalf("latest update backup was removed: %v", err)
+	}
+	if _, err := os.Stat(unrelated); err != nil {
+		t.Fatalf("unrelated backup was removed: %v", err)
 	}
 	backups, err := filepath.Glob(filepath.Join(app.controllerBackupDir, "oboard-before-update-*.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(backups) != controllerBackupRetention {
-		t.Fatalf("retained %d backups, want %d", len(backups), controllerBackupRetention)
+	if len(backups) != 1 || backups[0] != latestBackup {
+		t.Fatalf("unexpected retained update backups: %#v", backups)
+	}
+}
+
+func TestSuccessfulControllerUpdateRemovesBackup(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := newTestServer(db, "test-secret", "")
+	app.controllerBackupDir = filepath.Join(root, "backups")
+	backupPath, err := app.createControllerBackup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.recordControllerUpdateBackup(context.Background(), backupPath, "20260810010101"); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := db.ListSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.removeSuccessfulControllerUpdateBackup(context.Background(), settings, controllerupdate.Status{Current: controllerupdate.BuildInfo{Build: "different-build"}})
+	if _, err := os.Stat(backupPath); err != nil {
+		t.Fatalf("backup was removed before the target build succeeded: %v", err)
+	}
+	app.removeSuccessfulControllerUpdateBackup(context.Background(), settings, controllerupdate.Status{Current: controllerupdate.BuildInfo{Build: "20260810010101"}})
+	if _, err := os.Stat(backupPath); !os.IsNotExist(err) {
+		t.Fatalf("successful update backup was not removed: %v", err)
+	}
+	settings, err = db.ListSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings[controllerBackupSetting] != "" || settings[controllerBackupTargetBuildSetting] != "" {
+		t.Fatalf("successful update backup state was not cleared: %#v", settings)
 	}
 }
 
