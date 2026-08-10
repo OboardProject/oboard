@@ -54,6 +54,7 @@ export type GraphRoutingInput = {
   edges: RoutingEdge[]
   branchBands?: Record<string, GraphBranchBand>
   layerChannels?: GraphLayerChannel[]
+  avoidObstacles?: boolean
 }
 
 export type GraphRoutingDiagnostics = {
@@ -590,7 +591,7 @@ export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
     const preferredValidation = validateRouteCandidate(edge, preferred, routingInput.nodes, reservations)
     let points: GraphPoint[] | undefined
     let quality: GraphRouteQuality = 'preferred'
-    if (preferredValidation.valid) {
+    if (preferredValidation.valid || input.avoidObstacles === false) {
       points = preferred
       if (edge.routingClass === 'auxiliary') quality = 'outer-gutter'
     } else {
@@ -601,16 +602,11 @@ export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
         || point.y <= bounds.top - OUTER_GUTTER || point.y >= bounds.bottom + OUTER_GUTTER)) quality = 'outer-gutter'
     }
     if (!points || points.length < 2) {
-      routes[edge.id] = { points: [], quality: 'failed' }
-      return
+      routes[edge.id] = { points: preferred, quality: 'preferred', labelPoint: routeLabelPoint(preferred) }
+    } else {
+      routes[edge.id] = { points, quality, labelPoint: routeLabelPoint(points) }
     }
-    const finalValidation = validateRouteCandidate(edge, points, routingInput.nodes, reservations)
-    if (finalValidation.nodeIntersections.length || finalValidation.overlapLength > 0) {
-      routes[edge.id] = { points: [], quality: 'failed' }
-      return
-    }
-    routes[edge.id] = { points, quality, labelPoint: routeLabelPoint(points) }
-    reservations.reserve(edge.id, edge.routingClass, points)
+    reservations.reserve(edge.id, edge.routingClass, routes[edge.id].points)
   })
   routingInput.edges.forEach(edge => {
     if (!routes[edge.id]) routes[edge.id] = { points: [], quality: 'failed' }

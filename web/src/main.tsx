@@ -8086,10 +8086,49 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  if (!selected?.id) return null
 	  return chooseEntryForServer(selected.id, 'current')
 	}
+	const getPreferredViewportNewNodePosition = (width = 260, height = 140): GraphPosition => {
+	  let bounds = { left: 100, top: 100, right: 900, bottom: 600 }
+	  if (workspaceRef.current) {
+	    const rect = workspaceRef.current.getBoundingClientRect()
+	    bounds = { left: rect.left + 40, top: rect.top + 40, right: rect.right - 40, bottom: rect.bottom - 40 }
+	  }
+	  let topLeft = { x: 100, y: 100 }
+	  let bottomRight = { x: 900, y: 600 }
+	  if (flowInstance?.screenToFlowPosition) {
+	    topLeft = flowInstance.screenToFlowPosition({ x: bounds.left, y: bounds.top })
+	    bottomRight = flowInstance.screenToFlowPosition({ x: bounds.right, y: bounds.bottom })
+	  }
+	  const visWidth = Math.max(300, bottomRight.x - topLeft.x)
+	  const visHeight = Math.max(300, bottomRight.y - topLeft.y)
+	  const startY = topLeft.y + visHeight * 0.55
+	  const centerX = topLeft.x + (visWidth - width) / 2
+	  const occupied = nodes.map(node => ({
+	    x: node.position.x,
+	    y: node.position.y,
+	    width: node.width || Number.parseFloat(String(node.style?.width || '')) || width,
+	    height: node.height || Number.parseFloat(String(node.style?.height || '')) || height,
+	  }))
+	  const isOpen = (pos: GraphPosition) => occupied.every(rect => (
+	    pos.x + width + 24 <= rect.x ||
+	    rect.x + rect.width + 24 <= pos.x ||
+	    pos.y + height + 20 <= rect.y ||
+	    rect.y + rect.height + 20 <= pos.y
+	  ))
+	  const xSteps = [0, 280, -280, 560, -560]
+	  const ySteps = [0, 150, -150, 300, -300]
+	  for (const dy of ySteps) {
+	    for (const dx of xSteps) {
+	      const candidate = snapGraphPosition({ x: centerX + dx, y: startY + dy })
+	      if (isOpen(candidate)) return candidate
+	    }
+	  }
+	  return snapGraphPosition({ x: centerX, y: startY })
+	}
+
 	const putImportedOnCanvas = (node: ExternalOutbound) => {
 	  setCanvasImportedIDs(ids => ids.includes(node.id) ? ids : [...ids, node.id])
 	  const id = `imported-${node.id}`
-	  if (!positions[id]) placeGraphNode(id, defaultImportedGraphPosition(canvasImportedIDs.length))
+	  if (!positions[id]) placeGraphNode(id, getPreferredViewportNewNodePosition(260, 140))
 	}
 	const positionFromCurrentRoot = (layout: Record<string, GraphPosition>, nodeID: string) => {
 	  const candidate = layout[nodeID]
@@ -8153,11 +8192,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const instance: CanvasServerInstance = { instance_id: `${server.id}-${Date.now()}-${++canvasServerSequence.current}`, server_id: server.id }
 	  const id = canvasServerNodeID(instance)
 	  const nextInstances = [...canvasServerInstances, instance]
-	  const layout = autoLayoutProxyGraphPositions(data, selected?.id || 0, canvasImportedIDs, nextInstances, canvasDirectExitInstances, canvasWARPInstances)
-	  const preferred = positionFromCurrentRoot(layout, id) || defaultServerGraphPosition(1)
+	  const entryCount = entries.filter(entry => entry.server_id === server.id && entry.enabled !== false).length
+	  const width = graphServerNodeWidth(entryCount)
+	  const targetPos = getPreferredViewportNewNodePosition(width, 140)
 	  setCanvasServerInstances(nextInstances)
-	  placeGraphNode(id, openCanvasServerPosition(preferred, server))
-	  window.setTimeout(() => fitGraphToSafeArea(280), 40)
+	  placeGraphNode(id, targetPos)
 	}
 	const addImportedToCurrentEntry = async (node: ExternalOutbound) => {
 	  const entry = await chooseCurrentEntry()
@@ -8543,15 +8582,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   // surface only as an unhandled rejection in the console.
   const onConnect = (conn: Connection) => {
     if (connectionArrangeTimer.current !== null) window.clearTimeout(connectionArrangeTimer.current)
-    const previousFingerprint = graphTopologyFingerprintRef.current
     void connect(conn)
-      .then(() => normalizeConnectedGraph(previousFingerprint))
       .catch(async (error: any) => {
         await dialogs.alert({ title: '连接失败', message: localizeErrorMessage(error?.message || error) })
       })
   }
   const addServer = (position?: GraphPosition) => {
-    serverDraftPosition.current = position || nextServerGraphPosition(data)
+    serverDraftPosition.current = position || getPreferredViewportNewNodePosition(280, 160)
     setServerDraft({ ...defaultServerDraft(data.server_creation_defaults || {}), name: `server-${servers.length + 1}` })
   }
   const submitServerDraft = async () => {
@@ -8852,23 +8889,21 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     if (action === 'direct') {
       if (!selected?.id) return
       const instance = newCanvasDirectExitInstance(selected.id, canvasDirectExitSequence.current++)
-      const rootNodeID = `server-${selected.id}`
-      const rootPosition = positions[rootNodeID] || nodes.find(node => node.id === rootNodeID)?.position || defaultServerGraphPosition(0)
-      const directIndex = canvasDirectExitInstances.filter(item => item.root_server_id === selected.id).length
       setCanvasDirectExitInstances(items => {
         const next = [...items, instance]
         saveGraphDirectExitInstances(next)
         return next
       })
-      placeGraphNode(canvasDirectExitNodeID(instance), position || { x: rootPosition.x + directIndex * 250, y: rootPosition.y + 300 })
-      window.setTimeout(() => fitGraphToSafeArea(220), 40)
+      const targetPos = position || getPreferredViewportNewNodePosition(240, 120)
+      placeGraphNode(canvasDirectExitNodeID(instance), targetPos)
       return
     }
     if (action === 'warp') {
       if (!selected?.id) return
       const instance = newCanvasWARPInstance(selected.id, canvasWARPSequence.current++)
       setCanvasWARPInstances(items => [...items, instance])
-      placeGraphNode(canvasWARPNodeID(instance), position || defaultImportedGraphPosition(canvasWARPInstances.length))
+      const targetPos = position || getPreferredViewportNewNodePosition(260, 140)
+      placeGraphNode(canvasWARPNodeID(instance), targetPos)
       return
     }
     if (action === 'routing') return void openRouting()
