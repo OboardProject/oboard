@@ -33,14 +33,22 @@ describe('UserDashboardPage', () => {
   })
 
   it('shows the effective node count, healthy account and current traffic', () => {
-    act(() => root.render(<UserDashboardPage overview={normalOverview} displayName="小明" />))
+    let navigated = false
+    act(() => root.render(<UserDashboardPage overview={normalOverview} displayName="小明" onNavigateSubscriptions={() => { navigated = true }} />))
 
     expect(container.textContent).toContain('欢迎回来，小明')
     expect(container.textContent).toContain('已分配节点4')
     expect(container.textContent).toContain('账号状态正常')
     expect(container.textContent).toContain('512 MB')
     expect(container.textContent).toContain('总量 1.0 GB')
+    expect(container.querySelector('.dash-watermark')?.textContent).toBe('4')
+    expect(container.textContent).toContain('订阅')
     expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('50')
+
+    const subButton = container.querySelector('.dash-welcome-actions button') as HTMLButtonElement
+    expect(subButton).not.toBeNull()
+    act(() => subButton.click())
+    expect(navigated).toBe(true)
   })
 
   it('shows only boolean audit status and account attention reasons', () => {

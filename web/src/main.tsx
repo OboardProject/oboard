@@ -2477,7 +2477,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
     const displayName = sessionUser?.nickname || data.current_user?.nickname || sessionUser?.username || data.current_user?.username || '用户'
     return roleRanks[sessionUser?.role || 'viewer'] >= roleRanks.operator
       ? <Dashboard data={data} loading={loading} displayName={displayName} attention={dashboardAttention} dismissAttention={dismissDashboardAttention} />
-      : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} displayName={displayName} loading={loading} />
+      : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('subscriptions')} />
   }
   if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={realtimeStatus} />
   if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} apply={apply} loading={loading} topbarTarget={proxyPathTopbarTarget} />
@@ -13781,7 +13781,9 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
       } else {
         await client.request('/notification-channels/test', { method: 'POST', body: JSON.stringify(notificationPayloadFromDraft(target)) })
       }
-      notify?.(target.type === 'test' ? '测试已发送，请在「通知 → 原始日志」中查看记录。' : '测试已发送，请到 Telegram / Bark 客户端确认是否收到“OBoard 测试通知”。', 'success')
+      notify?.(target.type === 'test'
+        ? (isAdmin ? '测试已发送，请在「通知 → 原始日志」中查看记录。' : '测试通知已记录。')
+        : '测试已发送，请到 Telegram / Bark 客户端确认是否收到“OBoard 测试通知”。', 'success')
     } catch (e: any) {
       await dialogs.alert({ title: '测试失败', message: localizeErrorMessage(e.message || e) })
     } finally {
@@ -13837,7 +13839,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
       </div>
       <div className="section-actions">
         {isAdmin && <button type="button" className="ghost" onClick={() => setAnnouncementOpen(true)}><Send size={15} /><span>发送通知</span></button>}
-        <button type="button" className="ghost" onClick={() => setRawLogOpen(true)}><ClipboardList size={15} /><span>原始日志</span></button>
+        {isAdmin && <button type="button" className="ghost" onClick={() => setRawLogOpen(true)}><ClipboardList size={15} /><span>原始日志</span></button>}
         <button type="button" onClick={openCreate}><Plus size={15} /><span>新建通道</span></button>
       </div>
     </div>
@@ -13918,7 +13920,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
           ownerUserID={ownerUserID}
         />
       )}
-      {rawLogOpen && <NotificationRawLogDialog client={client} onClose={() => setRawLogOpen(false)} />}
+      {isAdmin && rawLogOpen && <NotificationRawLogDialog client={client} onClose={() => setRawLogOpen(false)} />}
     </AnimatePresence>
   </Panel>
 }
@@ -14182,7 +14184,7 @@ function NotificationChannelDialog({
         </> : (
           <div className="notification-test-channel-hint">
             <Info size={15} />
-            <span>测试渠道不调用外部服务，每次通知会以原始内容记录到主控日志，可在「通知 → 原始日志」中查看。</span>
+            <span>{isAdmin ? '测试渠道不调用外部服务，每次通知会以原始内容记录到主控日志，可在「通知 → 原始日志」中查看。' : '测试渠道不调用外部服务，通知仅写入主控日志。'}</span>
           </div>
         )}
       </div>

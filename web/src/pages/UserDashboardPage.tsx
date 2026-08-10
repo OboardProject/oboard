@@ -1,4 +1,4 @@
-import { Activity, CircleAlert, Gauge, Network, ShieldCheck } from 'lucide-react'
+import { Activity, CircleAlert, Gauge, Link as LinkIcon, Network, ShieldCheck } from 'lucide-react'
 
 import { DashboardSkeleton } from '../components/ui/skeleton'
 
@@ -43,11 +43,22 @@ function auditLabel(overview: UserDashboardOverview) {
   return overview.audit.risk ? '审计存在风险' : '审计未发现风险'
 }
 
-export function UserDashboardPage({ overview, displayName, loading = false }: { overview?: UserDashboardOverview; displayName: string; loading?: boolean }) {
+export function UserDashboardPage({
+  overview,
+  displayName,
+  loading = false,
+  onNavigateSubscriptions,
+}: {
+  overview?: UserDashboardOverview
+  displayName: string
+  loading?: boolean
+  onNavigateSubscriptions?: () => void
+}) {
   if (!overview) {
     return <div className="user-dashboard-page">{loading ? <DashboardSkeleton /> : null}</div>
   }
 
+  const assignedCount = Math.max(0, Number(overview.assigned_node_count) || 0)
   const usedBytes = Math.max(0, Number(overview.traffic.used_bytes) || 0)
   const limitBytes = Math.max(0, Number(overview.traffic.limit_bytes) || 0)
   const usagePercent = limitBytes > 0 ? Math.min(100, (usedBytes / limitBytes) * 100) : 0
@@ -57,15 +68,28 @@ export function UserDashboardPage({ overview, displayName, loading = false }: { 
 
   return (
     <div className="user-dashboard-page">
-      <header className="user-dashboard-head">
-        <div className="user-dashboard-kicker"><Activity size={14} aria-hidden="true" /><span>总览</span></div>
-        <h1>欢迎回来，{displayName}</h1>
-      </header>
+      <section className="dash-welcome user-dash-welcome">
+        <div className="dash-welcome-copy">
+          <div className="user-dashboard-kicker">
+            <Activity size={14} aria-hidden="true" />
+            <span>总览</span>
+          </div>
+          <h1>欢迎回来，{displayName}</h1>
+          <p>以下是您的账户、流量及已分配节点概览。随时配置与获取最新的节点订阅。</p>
+        </div>
+        <div className="dash-welcome-actions">
+          <button type="button" onClick={onNavigateSubscriptions}>
+            <LinkIcon size={15} aria-hidden="true" />
+            <span>订阅</span>
+          </button>
+        </div>
+        <div className="dash-watermark" aria-hidden="true">{assignedCount}</div>
+      </section>
 
       <section className="user-overview-band" aria-label="账户使用概览">
         <div className="user-overview-cell">
           <div className="user-overview-cell-head"><span>已分配节点</span><Network size={17} aria-hidden="true" /></div>
-          <strong>{Math.max(0, Number(overview.assigned_node_count) || 0)}</strong>
+          <strong>{assignedCount}</strong>
           <small>当前有效分配</small>
         </div>
 
