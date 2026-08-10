@@ -895,6 +895,10 @@ func TestNotificationTestChannelAndRawLog(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
+	request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "viewer", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	viewerLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)
+	viewerToken := viewerLogin["token"].(string)
+	request(t, h, http.MethodGet, "/api/v2/ui/notification-channels/raw-log?lines=100", viewerToken, nil, http.StatusForbidden)
 
 	created := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "调试", "type": "test", "enabled": true, "events": notificationTrafficQuota,

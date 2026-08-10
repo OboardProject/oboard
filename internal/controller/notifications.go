@@ -420,6 +420,10 @@ func (s *Server) notificationChannels(w http.ResponseWriter, r *http.Request) {
 			method(w)
 			return
 		}
+		if !roleAllows(role, model.RoleAdmin) {
+			fail(w, errors.New("admin role required for notification raw logs"), http.StatusForbidden)
+			return
+		}
 		s.notificationRawLog(w, r)
 		return
 	}
