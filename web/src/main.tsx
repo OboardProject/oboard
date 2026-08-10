@@ -5287,6 +5287,26 @@ function AIAuditReviews({ data, client, notify }: any) {
       setWorking('')
     }
   }
+  const deleteReview = async (review: AuditReview) => {
+    const confirmed = await dialogs.confirm({
+      title: '删除这条 AI 审查记录？',
+      message: '审查报告、证据快照、模型任务和原始日志都会永久删除，此操作不能撤销。',
+      confirmText: '删除审查记录',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    setWorking(`delete-${review.id}`)
+    try {
+      await client.request(`/audit/ai-reviews/${review.id}`, { method: 'DELETE' })
+      if (detail?.review.id === review.id) setDetail(null)
+      setReviews(current => current.filter(item => item.id !== review.id))
+      notify?.('AI 审查记录已删除', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
   const toggleEvidence = (value: string) => setDraft(current => ({ ...current, evidenceTypes: current.evidenceTypes.includes(value) ? current.evidenceTypes.filter(item => item !== value) : [...current.evidenceTypes, value] }))
   const selectedProvider = providers.find(item => item.id === draft.providerID)
   const canCreate = Boolean(draft.providerID && draft.evidenceTypes.length && (draft.userMode === 'all' || draft.userIDs.length) && (draft.serverMode === 'all' || draft.serverIDs.length) && (draft.timeMode === 'preset' || draft.startedAt && draft.endedAt))
@@ -5316,7 +5336,7 @@ function AIAuditReviews({ data, client, notify }: any) {
       const progress = review.job_count ? Math.round(review.completed_job_count / review.job_count * 100) : 0
       return <article key={review.id} className="ai-review-row">
         <div className="ai-review-row-main"><div><span className={`audit-risk-pill ${reportTone}`}>{auditReviewStatusLabel(review.status, reportVerdict)}</span><strong>{reportTitle}</strong></div><p>{auditReviewEvidenceLabel(review.evidence_types)} · {formatTableTime(review.window_started_at)} 至 {formatTableTime(review.window_ended_at)}</p><small>{review.resolved_user_ids.length} 个用户 · {review.resolved_server_ids.length} 台服务器 · {review.privacy_mode === 'raw' ? '原始字段' : '脱敏字段'} · {(review.input_tokens || 0) + (review.output_tokens || 0)} Token</small>{active && <div className="ai-review-progress"><span style={{ width: `${progress}%` }} /></div>}{review.error && <small className="danger-text">{review.error}</small>}</div>
-        <div className="ai-review-row-actions"><button type="button" className="ghost" onClick={() => void openDetail(review.id)} disabled={working === `detail-${review.id}`}>查看</button>{review.status === 'failed' && review.error && <button type="button" className="ghost" onClick={() => void showReviewLog(review.id)} disabled={working === `log-${review.id}`}><Terminal size={14} />原始日志</button>}{active && <button type="button" className="ghost danger-text" onClick={() => void cancelReview(review)} disabled={Boolean(working)}>取消</button>}</div>
+        <div className="ai-review-row-actions"><button type="button" className="ghost" onClick={() => void openDetail(review.id)} disabled={working === `detail-${review.id}`}>查看</button>{review.status === 'failed' && review.error && <button type="button" className="ghost" onClick={() => void showReviewLog(review.id)} disabled={working === `log-${review.id}`}><Terminal size={14} />原始日志</button>}{active ? <button type="button" className="ghost danger-text" onClick={() => void cancelReview(review)} disabled={Boolean(working)}>取消</button> : <button type="button" className="ghost icon-button danger-text" onClick={() => void deleteReview(review)} disabled={Boolean(working)} aria-label={`删除 ${formatTableTime(review.created_at)} 的 AI 审查记录`} title="删除 AI 审查记录"><Trash2 size={14} aria-hidden="true" /></button>}</div>
       </article>
     })}</div>}
     <AnimatePresence>{createOpen && <MotionDialogPanel onCancel={() => setCreateOpen(false)} className="ai-review-create-dialog">
@@ -12124,13 +12144,13 @@ function UserManagement({ data, client, load }: any) {
       <div className="user-table-scroll">
         <table className="user-data-table">
           <colgroup>
-            <col style={{ width: '17%' }} />
+            <col style={{ width: '15%' }} />
+            <col style={{ width: '9%' }} />
+            <col style={{ width: '8%' }} />
             <col style={{ width: '10%' }} />
-            <col style={{ width: '11%' }} />
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '18%' }} />
-            <col style={{ width: '25%' }} />
-            <col style={{ width: '11%' }} />
+            <col style={{ width: '14%' }} />
+            <col style={{ width: '30%' }} />
+            <col style={{ width: '14%' }} />
           </colgroup>
           <thead>
             <tr style={{ borderBottom: '1.5px solid var(--border-color)', color: 'var(--text-muted)' }}>

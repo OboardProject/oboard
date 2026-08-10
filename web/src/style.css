@@ -9278,7 +9278,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 .user-data-table {
   width: 100%;
-  min-width: 960px;
+  min-width: 1040px;
   border-collapse: separate;
   border-spacing: 0;
   text-align: left;
@@ -9289,7 +9289,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 /* 桌面端压缩单元格内边距，避免横向滚动 */
 .user-data-table th,
 .user-data-table td {
-  padding: 12px 12px !important;
+  padding: 12px 10px !important;
 }
 .user-data-table th:first-child,
 .user-data-table td:first-child { padding-left: 18px !important; }
@@ -9359,28 +9359,31 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .user-subscription-actions {
   width: 100%;
   min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(112px, 1fr));
+  display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: nowrap;
 }
 
 .user-subscription-button {
-  width: 100%;
+  flex: 1 1 0px;
   min-width: 0;
-  min-height: 34px;
-  height: 34px;
-  padding: 6px 8px;
-  gap: 6px;
-  border-radius: var(--radius-sm);
+  min-height: 32px;
+  height: 32px;
+  padding: 5px 8px;
+  gap: 5px;
+  border-radius: var(--radius-full, 9999px);
   font-size: 12px;
   line-height: 1;
   white-space: nowrap;
+  justify-content: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .user-subscription-button svg {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   flex: 0 0 auto;
 }
 
@@ -9390,6 +9393,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   justify-content: flex-end;
   flex-wrap: nowrap;
   gap: 6px;
+  min-width: max-content;
 }
 
 .user-row-icon-button {
