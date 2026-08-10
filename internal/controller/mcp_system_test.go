@@ -19,14 +19,18 @@ func TestSettingsCapabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal := userAutomationPrincipal(t, db, admin.ID)
-	updateInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"audit_enabled": false, "traffic_timezone": "Asia/Tokyo", "traffic_enforcement_mode": "reject_new"}})
+	updateInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"audit_enabled": false, "traffic_timezone": "Asia/Tokyo", "traffic_enforcement_mode": "reject_new", "subscription_relay_url": "https://subscriptions.example.com"}})
 	applyAutomationChangeset(t, server, principal, "settings-update", automation.OperationRequest{Capability: "settings.update", Input: updateInput})
 	settings, err := db.ListSettings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings["audit_enabled"] != "false" || settings["traffic_timezone"] != "Asia/Tokyo" || settings["traffic_enforcement_mode"] != "reject_new" {
+	if settings["audit_enabled"] != "false" || settings["traffic_timezone"] != "Asia/Tokyo" || settings["traffic_enforcement_mode"] != "reject_new" || settings["subscription_relay_url"] != "https://subscriptions.example.com" {
 		t.Fatalf("settings not applied: %#v", settings)
+	}
+	invalidInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"subscription_relay_url": "http://subscriptions.example.com"}})
+	if _, err := server.settingsUpdateCandidate(ctx, invalidInput, false); err == nil {
+		t.Fatal("settings.update validation accepted an insecure relay URL")
 	}
 	payload, err := server.readSystemResource(ctx, principal, "settings")
 	if err != nil {

@@ -33,6 +33,7 @@ var settingsAutomationFields = map[string]bool{
 	"audit_enabled": true, "subscription_audit_enabled": true, "connection_audit_enabled": true,
 	"audit_action": true, "traffic_timezone": true, "traffic_enforcement_mode": true,
 	"subscription_age_policy": true, "subscription_custom_path_mode": true,
+	"subscription_relay_url":  true,
 	"server_default_mtu_mode": true, "server_default_bbr_enabled": true,
 	"server_default_time_correction_mode": true, "time_check_ntp_servers": true,
 	"trusted_proxy_cidrs": true, "controller_log_max_mb": true, "controller_log_backups": true,
@@ -76,13 +77,6 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 	changed := make([]string, 0, len(fields))
 	for field := range fields {
 		changed = append(changed, field)
-	}
-	if !apply {
-		return changed, nil
-	}
-	current, err := s.store.ListSettings(ctx)
-	if err != nil {
-		return nil, err
 	}
 	updates := map[string]string{}
 	setBool := func(key string, value json.RawMessage) error {
@@ -168,6 +162,17 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 		}
 		updates[settingSubscriptionCustomPathMode] = mode
 	}
+	if value, ok := fields["subscription_relay_url"]; ok {
+		var raw string
+		if err := json.Unmarshal(value, &raw); err != nil {
+			return nil, err
+		}
+		normalized, err := s.normalizeSubscriptionRelayURL(raw)
+		if err != nil {
+			return nil, err
+		}
+		updates[settingSubscriptionRelayURL] = normalized
+	}
 	if value, ok := fields["server_default_mtu_mode"]; ok {
 		if err := setString(settingServerDefaultMTUMode, value); err != nil {
 			return nil, err
@@ -226,7 +231,9 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 			return nil, err
 		}
 	}
-	_ = current
+	if !apply {
+		return changed, nil
+	}
 	if err := s.store.SetSettings(ctx, updates); err != nil {
 		return nil, err
 	}

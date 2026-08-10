@@ -1,0 +1,24 @@
+#!/sbin/openrc-run
+
+description="Dedicated public subscription entry for OBoard"
+command="/opt/oboard-subscription-relay/oboard-subscription-relay"
+command_user="nobody"
+pidfile="/run/${RC_SVCNAME}.pid"
+supervisor="supervise-daemon"
+respawn_delay=5
+output_log="/var/log/${RC_SVCNAME}.log"
+error_log="/var/log/${RC_SVCNAME}.log"
+
+if [ -r /opt/oboard-subscription-relay/relay.env ]; then
+	. /opt/oboard-subscription-relay/relay.env
+	export OBOARD_SUBSCRIPTION_RELAY_ADDR OBOARD_CONTROLLER_URL OBOARD_SUBSCRIPTION_RELAY_SECRET OBOARD_SUBSCRIPTION_RELAY_TRUSTED_PROXY_CIDRS
+fi
+
+depend() {
+	need net
+	after firewall
+}
+
+start_pre() {
+	checkpath -f -m 0640 -o nobody "/var/log/${RC_SVCNAME}.log"
+}

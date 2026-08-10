@@ -1,0 +1,31 @@
+[Unit]
+Description=OBoard Subscription Relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=OBOARD_SUBSCRIPTION_RELAY_ADDR=:8080
+Environment=OBOARD_SUBSCRIPTION_RELAY_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128
+EnvironmentFile=/opt/oboard-subscription-relay/relay.env
+ExecStart=/opt/oboard-subscription-relay/oboard-subscription-relay
+Restart=always
+RestartSec=5
+DynamicUser=true
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

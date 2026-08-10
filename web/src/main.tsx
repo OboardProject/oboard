@@ -150,6 +150,12 @@ function appControllerURL() {
   return `${window.location.origin}${appBasePath}`
 }
 
+let subscriptionPublicBaseURL = ''
+
+function appSubscriptionURL() {
+  return subscriptionPublicBaseURL || appControllerURL()
+}
+
 function appWebSocketURL(path: string) {
   const url = new URL(appPath(path), window.location.href)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -1398,6 +1404,7 @@ function App() {
   }
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<any>({})
+  subscriptionPublicBaseURL = String(data.settings?.subscription_relay_url || '').replace(/\/+$/, '')
   const [restoringSession, setRestoringSession] = useState(() => !sessionStorage.getItem('oboard.token'))
   const [restoreError, setRestoreError] = useState('')
   const [, setAttentionDismissRevision] = useState(0)
@@ -3006,6 +3013,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const environmentTrustedProxyCIDRs: string[] = Array.isArray(data.settings?.trusted_proxy_environment_cidrs) ? data.settings.trusted_proxy_environment_cidrs.map(String) : []
   const reverseProxyStatus = data.reverse_proxy_status || {}
   const [controllerURL, setControllerURL] = useState(savedURL || currentOrigin)
+  const [subscriptionRelayURL, setSubscriptionRelayURL] = useState(String(data.settings?.subscription_relay_url || ''))
   const [basePath, setBasePath] = useState(currentBasePath)
   const [trustedProxyCIDRs, setTrustedProxyCIDRs] = useState<string>(configuredTrustedProxyCIDRs.join('\n'))
   const [subscriptionAgePolicy, setSubscriptionAgePolicy] = useState<'optional' | 'required'>(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional')
@@ -3024,6 +3032,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [registrationDefaultGroupID, setRegistrationDefaultGroupID] = useState(Number(data.settings?.registration_default_group_id || 0))
   const [saving, setSaving] = useState('')
   useEffect(() => { setControllerURL(savedURL || currentOrigin) }, [savedURL, currentOrigin])
+  useEffect(() => { setSubscriptionRelayURL(String(data.settings?.subscription_relay_url || '')) }, [data.settings?.subscription_relay_url])
   useEffect(() => { setBasePath(currentBasePath) }, [currentBasePath])
   useEffect(() => { setTrustedProxyCIDRs(configuredTrustedProxyCIDRs.join('\n')) }, [data.settings?.trusted_proxy_cidrs])
   useEffect(() => {
@@ -3149,6 +3158,11 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     await runSave('subscription-age', async () => {
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: subscriptionAgePolicy }) })
     }, '订阅加密策略已保存')
+  }
+  const saveSubscriptionRelay = async () => {
+    await runSave('subscription-relay', async () => {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_relay_url: subscriptionRelayURL.trim() }) })
+    }, subscriptionRelayURL.trim() ? '订阅中继地址已启用' : '订阅链接已恢复直连主控')
   }
   const saveControllerLogs = async () => {
     await runSave('controller-logs', async () => {
@@ -3307,7 +3321,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         </div>
       </section>}
       {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
-      {activeSection === 'subscriptions' && <section className="settings-card">
+      {activeSection === 'subscriptions' && <><section className="settings-card">
         <div className="settings-card-head subscription-security-head">
           <div><h3>Mihomo Age 加密</h3><p className="muted">服务端只保存用户公钥，私钥始终留在客户端。</p></div>
           <div className="subscription-security-summary">
@@ -3327,7 +3341,16 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </FormField>
           <div className="settings-actions"><button onClick={() => void saveSubscriptionAgePolicy()} disabled={Boolean(saving)}>{saving === 'subscription-age' ? '保存中...' : '保存加密策略'}</button></div>
         </div>
-      </section>}
+      </section>
+      <section className="settings-card">
+        <div className="settings-card-head"><div><h3>订阅中继</h3><p className="muted">用户订阅链接使用独立入口，节点授权和格式生成仍由主控处理。</p></div></div>
+        <div className="form settings-form single-field">
+          <FormField label="中继公开地址" hint="填写部署中继后的完整 HTTPS 地址；路径必须与面板基础路径一致。留空时直连主控。" full>
+            <input value={subscriptionRelayURL} onChange={event => setSubscriptionRelayURL(event.target.value)} placeholder={`https://sub.example.com${currentBasePath}`} spellCheck={false} aria-label="中继公开地址" />
+          </FormField>
+          <div className="settings-actions"><button onClick={() => void saveSubscriptionRelay()} disabled={Boolean(saving)}>{saving === 'subscription-relay' ? '保存中...' : '保存中继地址'}</button></div>
+        </div>
+      </section></>}
       {activeSection === 'traffic' && <section className="settings-card">
         <div className="settings-card-head"><div><h3>流量控制</h3><p className="muted">用于计算用户当前周期流量，并在达量后暂停节点使用。</p></div></div>
         <div className="form settings-form two-column">
@@ -13150,7 +13173,7 @@ const subscriptionClientFormats: Array<{ id: SubscriptionFormat; name: string; t
 
 function subscriptionURLForToken(token: string, format: SubscriptionFormat, encrypted = false) {
   if (!token) return ''
-	const base = `${appControllerURL()}/api/v1/subscriptions/${token}`
+	const base = `${appSubscriptionURL()}/api/v1/subscriptions/${token}`
 	const params = new URLSearchParams()
   if (format !== 'sing-box') params.set('format', format)
   if (encrypted) params.set('age', '1')
@@ -13164,7 +13187,7 @@ function subscriptionURLForUser(user: User, format: SubscriptionFormat, encrypte
 
 function subscriptionURLForCustomPath(alias: string, format: SubscriptionFormat, encrypted = false) {
   if (!alias) return ''
-  const base = `${appControllerURL()}/s/${alias}`
+  const base = `${appSubscriptionURL()}/s/${alias}`
   const params = new URLSearchParams()
   if (format !== 'sing-box') params.set('format', format)
   if (encrypted) params.set('age', '1')

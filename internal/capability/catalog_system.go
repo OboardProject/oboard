@@ -84,6 +84,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			"audit_action": map[string]any{"type": "string", "enum": []string{"restrict", "warn"}},
 			"traffic_timezone": stringValue, "traffic_enforcement_mode": map[string]any{"type": "string", "enum": []string{"reject_new", "disconnect_and_reject"}},
 			"subscription_age_policy": map[string]any{"type": "string", "enum": []string{"optional", "required"}},
+			"subscription_relay_url": map[string]any{"type": "string", "maxLength": 2048},
 			"subscription_custom_path_mode": map[string]any{"type": "string", "enum": []string{"disabled", "selective", "enabled"}},
 			"server_default_mtu_mode": stringValue, "server_default_bbr_enabled": boolValue,
 			"server_default_time_correction_mode": stringValue, "time_check_ntp_servers": stringArray(0, 8),

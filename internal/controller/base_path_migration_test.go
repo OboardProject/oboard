@@ -119,6 +119,23 @@ func TestBasePathMigrationWaitsForAgentCallbackOnNewPath(t *testing.T) {
 	basePathRequest(t, restarted.Handler(), "/new/healthz", http.StatusOK, `"ok":true`)
 }
 
+func TestBasePathMigrationRequiresSubscriptionRelayDisabled(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(ctx, settingSubscriptionRelayURL, "https://subscriptions.example.com/old"); err != nil {
+		t.Fatal(err)
+	}
+	app := New(db, "test-secret", basePathTestStaticDir(t), "/old", nil)
+	defer app.Close()
+	if _, migrated, err := app.startBasePathMigration(ctx, httptest.NewRequest(http.MethodPost, "http://localhost/old/api/v2/ui/settings", nil), "/new"); err == nil || migrated || migrationConflictStatus(err) != http.StatusConflict {
+		t.Fatalf("migration with active relay = migrated %v, err %v", migrated, err)
+	}
+}
+
 func TestBasePathMigrationRestoresAndRetriesFailedAgents(t *testing.T) {
 	ctx := context.Background()
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))

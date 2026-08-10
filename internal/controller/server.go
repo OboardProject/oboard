@@ -127,6 +127,8 @@ type Server struct {
 	controllerActivityMu          sync.Mutex
 	controllerActiveRequests      int
 	controllerLastActivity        time.Time
+	subscriptionRelayMu           sync.Mutex
+	subscriptionRelayNonces       map[string]time.Time
 	backupManager                 *backup.Manager
 	backupConfigured              bool
 	backupMu                      sync.Mutex
@@ -158,7 +160,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	socketPath := strings.TrimSpace(os.Getenv("OBOARD_CONTROLLER_UPDATER_SOCKET"))
 	catalog := capability.NewCatalog()
 	auditIntel := auditintel.New(store, sessionSecret)
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}}
 	s.initializeTrustedProxies()
 	s.registerAutomationHandlers()
 	s.restoreBasePathState(context.Background(), basePath)
@@ -333,7 +335,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/downloads", notFound)
 	mux.HandleFunc("/downloads/", s.downloadArtifact)
 	mux.HandleFunc("/", s.static)
-	return s.withTrustedProxyState(s.withBasePath(s.requestLogger(s.withSecurityHeaders(s.realtimeInvalidation(s.managementAPIVersionGate(mux))))))
+	return s.withSubscriptionRelay(s.withTrustedProxyState(s.withBasePath(s.requestLogger(s.withSecurityHeaders(s.realtimeInvalidation(s.managementAPIVersionGate(mux)))))))
 }
 
 func (s *Server) managementAPIVersionGate(next http.Handler) http.Handler {
@@ -690,6 +692,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost, http.MethodPatch:
 		var req struct {
 			ControllerURL                *string            `json:"controller_url"`
+			SubscriptionRelayURL         *string            `json:"subscription_relay_url"`
 			BasePath                     *string            `json:"base_path"`
 			CertificateAutoMatch         *bool              `json:"certificate_auto_match_enabled"`
 			CertificatePreference        *string            `json:"certificate_default_preference"`
@@ -793,6 +796,18 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			changed = append(changed, "controller_url")
+		}
+		if req.SubscriptionRelayURL != nil {
+			relayURL, err := s.normalizeSubscriptionRelayURL(*req.SubscriptionRelayURL)
+			if err != nil {
+				fail(w, err, http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), settingSubscriptionRelayURL, relayURL); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, "subscription_relay_url")
 		}
 		if req.CertificateAutoMatch != nil {
 			if err := s.store.SetSetting(r.Context(), "certificate_auto_match_enabled", strconv.FormatBool(*req.CertificateAutoMatch)); err != nil {
@@ -1156,6 +1171,13 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	if raw, ok := out["controller_url"].(string); ok && strings.TrimSpace(raw) != "" {
 		if normalized, err := s.normalizeControllerURL(raw); err == nil {
 			out["controller_url"] = normalized
+		}
+	}
+	if raw, ok := out[settingSubscriptionRelayURL].(string); ok && strings.TrimSpace(raw) != "" {
+		if normalized, err := s.normalizeSubscriptionRelayURL(raw); err == nil {
+			out[settingSubscriptionRelayURL] = normalized
+		} else {
+			out[settingSubscriptionRelayURL] = ""
 		}
 	}
 	out["base_path"] = s.currentBasePath()
@@ -13103,6 +13125,35 @@ func (s *Server) publicBaseURL(ctx context.Context) (string, error) {
 		return "", errors.New("controller_url 无效")
 	}
 	return normalized, nil
+}
+
+func (s *Server) normalizeSubscriptionRelayURL(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	target, err := url.Parse(value)
+	if err != nil || target.Scheme != "https" || target.Host == "" || target.User != nil || target.RawQuery != "" || target.Fragment != "" {
+		return "", errors.New("subscription_relay_url must be a valid HTTPS URL")
+	}
+	path := strings.TrimSuffix(target.EscapedPath(), "/")
+	want := s.currentBasePath()
+	if path == "/" {
+		path = ""
+	}
+	if path != want {
+		return "", fmt.Errorf("subscription_relay_url path must be %s", fallbackBasePath(want))
+	}
+	target.Path = path
+	target.RawPath = ""
+	return strings.TrimSuffix(target.String(), "/"), nil
+}
+
+func fallbackBasePath(value string) string {
+	if value == "" {
+		return "/"
+	}
+	return value
 }
 
 func shellSingleQuote(value string) string {

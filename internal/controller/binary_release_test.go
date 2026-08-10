@@ -19,14 +19,15 @@ func TestBinaryOnlyControllerReleaseAssets(t *testing.T) {
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	required := map[string][]string{
-		"scripts/build-release.sh":         {"create_tar_archive \"$stage\" \"$archive\" bin web downloads", "${arch}_install.tar.gz", "deploy/systemd", "deploy/openrc"},
-		"scripts/install.sh":               {"OBOARD_UPDATE_CHANNEL", "oboard-controller-updater", "install_component controller", "prepare_controller_updater_runtime", "uninstall_controller", "OBOARD_PURGE_DATA", "resolve_purge_data", "drain_piped_script"},
-		"scripts/verify-release.sh":        {"Testing Controller", "Building Web UI", "Building current-platform binaries", "cmd/controller-updater"},
-		"scripts/fetch-agent-release.sh":   {"OBOARD_RELEASE_PUBLIC_KEY", "release-manifest.json.sig", "OBOARD_AGENT_CHANNEL", "OBOARD_AGENT_EXPECTED_COMMIT"},
-		".github/workflows/ci.yml":         {"contents: read", "Test Controller and release build inputs"},
-		".github/workflows/dev-build.yml":  {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "gh api repos/OboardProject/oboard-agent/commits/main", "OBOARD_AGENT_CHANNEL: dev", "OBOARD_AGENT_EXPECTED_COMMIT", "controller-release-manifest.json", "gh release upload dev", "gh release edit dev", "gh release create dev", "--clobber"},
-		".github/workflows/prerelease.yml": {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "OBOARD_AGENT_CHANNEL: release", "gh release create"},
-		".github/workflows/release.yml":    {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "OBOARD_AGENT_CHANNEL: release", "gh release create"},
+		"scripts/build-release.sh":              {"create_tar_archive \"$stage\" \"$archive\" bin/oboard-controller", "${arch}_install.tar.gz", "oboard-subscription-relay", "install-subscription-relay.sh", "deploy/systemd", "deploy/openrc"},
+		"scripts/install-subscription-relay.sh": {"OBOARD_SUBSCRIPTION_RELAY_SECRET", "sha256sums.txt", "oboard-subscription-relay.service", "OBOARD_ACTION"},
+		"scripts/install.sh":                    {"OBOARD_UPDATE_CHANNEL", "oboard-controller-updater", "install_component controller", "prepare_controller_updater_runtime", "uninstall_controller", "OBOARD_PURGE_DATA", "resolve_purge_data", "drain_piped_script"},
+		"scripts/verify-release.sh":             {"Testing Controller", "Building Web UI", "Building current-platform binaries", "cmd/controller-updater"},
+		"scripts/fetch-agent-release.sh":        {"OBOARD_RELEASE_PUBLIC_KEY", "release-manifest.json.sig", "OBOARD_AGENT_CHANNEL", "OBOARD_AGENT_EXPECTED_COMMIT"},
+		".github/workflows/ci.yml":              {"contents: read", "Test Controller and release build inputs"},
+		".github/workflows/dev-build.yml":       {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "gh api repos/OboardProject/oboard-agent/commits/main", "OBOARD_AGENT_CHANNEL: dev", "OBOARD_AGENT_EXPECTED_COMMIT", "controller-release-manifest.json", "gh release upload dev", "gh release edit dev", "gh release create dev", "--clobber"},
+		".github/workflows/prerelease.yml":      {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "OBOARD_AGENT_CHANNEL: release", "gh release create"},
+		".github/workflows/release.yml":         {"contents: write", "client-id: ${{ vars.OBOARD_RELEASE_APP_ID }}", "OBOARD_AGENT_CHANNEL: release", "gh release create"},
 	}
 	for name, fragments := range required {
 		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
@@ -83,7 +84,7 @@ func TestBinaryOnlyControllerReleaseAssets(t *testing.T) {
 	}
 
 	if bash, err := exec.LookPath("bash"); err == nil {
-		for _, name := range []string{"scripts/build-release.sh", "scripts/install.sh", "scripts/update.sh", "scripts/deploy-test-controller.sh"} {
+		for _, name := range []string{"scripts/build-release.sh", "scripts/install.sh", "scripts/install-subscription-relay.sh", "scripts/update.sh", "scripts/deploy-test-controller.sh"} {
 			path := filepath.Join(root, filepath.FromSlash(name))
 			if output, err := exec.Command(bash, "-n", path).CombinedOutput(); err != nil {
 				t.Fatalf("%s syntax error: %v\n%s", name, err, output)
@@ -91,7 +92,7 @@ func TestBinaryOnlyControllerReleaseAssets(t *testing.T) {
 		}
 	}
 	if dash, err := exec.LookPath("dash"); err == nil {
-		for _, name := range []string{"scripts/install.sh", "scripts/update.sh"} {
+		for _, name := range []string{"scripts/install.sh", "scripts/install-subscription-relay.sh", "scripts/update.sh"} {
 			path := filepath.Join(root, filepath.FromSlash(name))
 			if output, err := exec.Command(dash, "-n", path).CombinedOutput(); err != nil {
 				t.Fatalf("%s POSIX shell syntax error: %v\n%s", name, err, output)

@@ -238,6 +238,9 @@ func (s *Server) startBasePathMigration(ctx context.Context, r *http.Request, ra
 	if err != nil {
 		return "", false, err
 	}
+	if strings.TrimSpace(settings[settingSubscriptionRelayURL]) != "" {
+		return "", false, &basePathMigrationRequestError{status: http.StatusConflict, err: errors.New("请先清空订阅中继地址，再修改面板路径")}
+	}
 	targetURL, err := s.controllerURLForBasePath(settings, nextPath)
 	if err != nil {
 		return "", false, &basePathMigrationRequestError{status: http.StatusBadRequest, err: err}

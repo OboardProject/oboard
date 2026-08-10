@@ -23,6 +23,7 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
+	"github.com/OboardProject/oboard/internal/subrelay"
 	"github.com/OboardProject/oboard/internal/version"
 )
 
@@ -58,6 +59,11 @@ func main() {
 	log.SetOutput(io.MultiWriter(os.Stdout, logManager))
 	if err := validateSessionSecret(*secret); err != nil {
 		log.Fatal(err)
+	}
+	if relaySecret := strings.TrimSpace(os.Getenv("OBOARD_SUBSCRIPTION_RELAY_SECRET")); relaySecret != "" {
+		if err := subrelay.ValidateSecret(relaySecret); err != nil {
+			log.Fatal(err)
+		}
 	}
 	normalizedBasePath, err := controller.NormalizeBasePath(*basePath)
 	if err != nil {
