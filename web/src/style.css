@@ -5799,7 +5799,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .controller-update-schedule-label strong { color: var(--text-strong); font-size: 14px; }
 .controller-update-interval {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   width: 100%;
@@ -5810,7 +5810,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .controller-update-interval button {
   min-width: 0;
   min-height: 34px;
-  padding: 0 10px;
+  padding: 0 6px;
   border: 0;
   border-radius: 6px;
   background: transparent;

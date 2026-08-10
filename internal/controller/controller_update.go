@@ -169,7 +169,7 @@ func (s *Server) installScheduledControllerUpdate(ctx context.Context, status co
 
 func validControllerUpdateInterval(hours int) bool {
 	switch hours {
-	case 1, 6, 12, 24:
+	case 1, 6, 24, 72, 168:
 		return true
 	default:
 		return false

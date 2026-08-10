@@ -164,13 +164,26 @@ function stripAppBasePath(pathname: string) {
 type Role = 'admin' | 'operator' | 'viewer' | 'none'
 type PageLoadOptions = { background?: boolean; forceFresh?: boolean }
 type PageLoad = (targetTab?: string, options?: PageLoadOptions) => Promise<void>
+type ControllerUpdateIntervalHours = 1 | 6 | 24 | 72 | 168
+const controllerUpdateIntervalOptions = [
+  { hours: 1, label: '1h' },
+  { hours: 6, label: '6h' },
+  { hours: 24, label: '24h' },
+  { hours: 72, label: '72h' },
+  { hours: 168, label: '一周' },
+] as const
+
+function controllerUpdateIntervalLabel(hours: number) {
+  return controllerUpdateIntervalOptions.find(option => option.hours === hours)?.label || `${hours}h`
+}
+
 type ControllerUpdateStatus = {
   channel: 'stable' | 'dev' | 'pinned' | ''
   current: { version: string; build: string; commit: string; date: string }
   available: { version: string; build: string; commit: string; date: string }
   update_available: boolean
   auto_update_enabled: boolean
-  auto_update_interval_hours: 1 | 6 | 12 | 24
+  auto_update_interval_hours: ControllerUpdateIntervalHours
   can_cancel: boolean
   status: string
   last_checked_at?: string
@@ -3716,23 +3729,23 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     setWorking('auto')
     try {
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ controller_auto_update_enabled: enabled, controller_auto_update_interval_hours: intervalHours }) })
-      setSnapshot(previous => ({ ...previous, auto_update_enabled: enabled, auto_update_interval_hours: intervalHours as 1 | 6 | 12 | 24 }))
+      setSnapshot(previous => ({ ...previous, auto_update_enabled: enabled, auto_update_interval_hours: intervalHours as ControllerUpdateIntervalHours }))
       await load('settings', { background: true })
-      notify?.(enabled ? `已开启每 ${intervalHours} 小时自动更新` : '定时自动更新已关闭', 'success')
+      notify?.(enabled ? `已开启每 ${controllerUpdateIntervalLabel(intervalHours)} 自动更新` : '定时自动更新已关闭', 'success')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
       setWorking('')
     }
   }
-  const setAutoUpdateInterval = async (intervalHours: 1 | 6 | 12 | 24) => {
+  const setAutoUpdateInterval = async (intervalHours: ControllerUpdateIntervalHours) => {
     if (working || snapshot.channel === 'pinned' || snapshot.auto_update_interval_hours === intervalHours) return
     setWorking('auto')
     try {
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ controller_auto_update_interval_hours: intervalHours }) })
       setSnapshot(previous => ({ ...previous, auto_update_interval_hours: intervalHours }))
       await load('settings', { background: true })
-      notify?.(`自动更新间隔已设为 ${intervalHours} 小时`, 'success')
+      notify?.(`自动更新间隔已设为 ${controllerUpdateIntervalLabel(intervalHours)}`, 'success')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -3797,15 +3810,15 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
         </label>
       </div>
       <div className="controller-update-interval" role="radiogroup" aria-label="自动更新检查间隔">
-        {([1, 6, 12, 24] as const).map(hours => <button
-          key={hours}
+        {controllerUpdateIntervalOptions.map(option => <button
+          key={option.hours}
           type="button"
           role="radio"
-          aria-checked={snapshot.auto_update_interval_hours === hours}
-          className={snapshot.auto_update_interval_hours === hours ? 'active' : ''}
+          aria-checked={snapshot.auto_update_interval_hours === option.hours}
+          className={snapshot.auto_update_interval_hours === option.hours ? 'active' : ''}
           disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress}
-          onClick={() => void setAutoUpdateInterval(hours)}
-        >{hours}h</button>)}
+          onClick={() => void setAutoUpdateInterval(option.hours)}
+        >{option.label}</button>)}
       </div>
     </div>}
     <div className="settings-actions controller-update-actions">

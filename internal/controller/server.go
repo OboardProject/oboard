@@ -974,7 +974,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.ControllerAutoUpdateInterval != nil {
 			if !validControllerUpdateInterval(*req.ControllerAutoUpdateInterval) {
-				fail(w, errors.New("controller_auto_update_interval_hours must be 1, 6, 12 or 24"), http.StatusBadRequest)
+				fail(w, errors.New("controller_auto_update_interval_hours must be 1, 6, 24, 72 or 168"), http.StatusBadRequest)
 				return
 			}
 			if err := s.store.SetSetting(r.Context(), controllerAutoUpdateIntervalSetting, strconv.Itoa(*req.ControllerAutoUpdateInterval)); err != nil {

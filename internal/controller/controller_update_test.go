@@ -88,10 +88,14 @@ func TestControllerUpdateAPIAndBackupRetention(t *testing.T) {
 		t.Fatalf("unexpected default update interval: %#v", status["auto_update_interval_hours"])
 	}
 	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/check", adminToken, nil, http.StatusOK)
-	request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"controller_auto_update_interval_hours": 2}, http.StatusBadRequest)
-	settings := request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"controller_auto_update_interval_hours": 6}, http.StatusOK)
-	if got := settings["settings"].(map[string]any)["controller_auto_update_interval_hours"]; got != float64(6) {
-		t.Fatalf("unexpected saved update interval: %#v", got)
+	for _, interval := range []int{1, 6, 24, 72, 168} {
+		settings := request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"controller_auto_update_interval_hours": interval}, http.StatusOK)
+		if got := settings["settings"].(map[string]any)["controller_auto_update_interval_hours"]; got != float64(interval) {
+			t.Fatalf("unexpected saved update interval: got %#v, want %d", got, interval)
+		}
+	}
+	for _, interval := range []int{2, 12} {
+		request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"controller_auto_update_interval_hours": interval}, http.StatusBadRequest)
 	}
 	request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"controller_auto_update_enabled": true}, http.StatusConflict)
 	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/install", adminToken, nil, http.StatusConflict)
