@@ -798,6 +798,9 @@ func (s *Server) applyExternalOutboundOperation(ctx context.Context, principal a
 				return nil, err
 			}
 		case "external_outbounds.delete":
+			if _, err := s.store.RemoveAssignableNodeFromPlans(ctx, model.AssignableNodeExternalOutbound, external.ID); err != nil {
+				return nil, err
+			}
 			if err := s.store.DeleteProxyPathStepsForExternal(ctx, external.ID); err != nil {
 				return nil, err
 			}

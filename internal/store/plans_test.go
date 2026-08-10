@@ -241,6 +241,84 @@ func TestSubscriptionPlanCRUDAndNodeVersions(t *testing.T) {
 	}
 }
 
+func TestRemoveAssignableNodeFromPlansCreatesImmutableCleanupVersion(t *testing.T) {
+	ctx := context.Background()
+	s := openPlansTestStore(t)
+	plans := make([]*model.SubscriptionPlan, 0, 2)
+	for _, name := range []string{"管理员", "premium"} {
+		plan := &model.SubscriptionPlan{Name: name, Enabled: true}
+		if err := s.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{
+			{NodeType: model.AssignableNodeProxyPath, NodeID: 41, DisplayGroup: "HK"},
+			{NodeType: model.AssignableNodeProxyPath, NodeID: 42},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		plans = append(plans, plan)
+	}
+	oldRevision := plans[0].CurrentRevisionID
+	refs, err := s.RemoveAssignableNodeFromPlans(ctx, model.AssignableNodeProxyPath, 41)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs.Active) != 2 || len(refs.Draft) != 0 || len(refs.Pending) != 0 {
+		t.Fatalf("references = %#v", refs)
+	}
+	oldNodes, err := s.ListPlanRevisionNodes(ctx, oldRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(oldNodes) != 2 {
+		t.Fatalf("published history was modified: %#v", oldNodes)
+	}
+	for _, plan := range plans {
+		updated, err := s.GetSubscriptionPlan(ctx, plan.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated.CurrentRevisionID == plan.CurrentRevisionID || updated.PendingRevisionID != 0 {
+			t.Fatalf("cleanup did not activate a new current revision: %#v", updated)
+		}
+		nodes, err := s.ListActivePlanNodes(ctx, plan.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(nodes) != 1 || nodes[0].NodeID != 42 {
+			t.Fatalf("active cleanup nodes = %#v", nodes)
+		}
+	}
+}
+
+func TestRemoveAssignableNodeFromPlansRejectsPendingPlanWithoutMutation(t *testing.T) {
+	ctx := context.Background()
+	s := openPlansTestStore(t)
+	plan := &model.SubscriptionPlan{Name: "pending-cleanup", Enabled: true}
+	if err := s.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 51}}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Nodes:               &PlanNodesMutation{Op: "add", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 52}}},
+		ChangeKind:          model.PlanChangeKindNodes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.GetSubscriptionPlan(ctx, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RemoveAssignableNodeFromPlans(ctx, model.AssignableNodeProxyPath, 51); !errors.Is(err, ErrPlanVersionApplying) {
+		t.Fatalf("pending cleanup err = %v, want ErrPlanVersionApplying", err)
+	}
+	after, err := s.GetSubscriptionPlan(ctx, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.CurrentRevisionID != before.CurrentRevisionID || after.PendingRevisionID != created.Revision.ID {
+		t.Fatalf("pending plan mutated after rejected cleanup: before=%#v after=%#v", before, after)
+	}
+}
+
 func historicalNodesForTest(t *testing.T, s *Store, revisionID int64) []model.SubscriptionPlanNode {
 	t.Helper()
 	nodes, err := s.ListPlanRevisionNodes(context.Background(), revisionID)

@@ -2454,43 +2454,241 @@ type PlanNodeReference struct {
 }
 
 // PlanNodeReferences reports which plans reference an assignable node and how
-// many user node exceptions point at it. Active references block deletion;
-// draft references are cleaned automatically.
+// many user node exceptions point at it. Pending references cannot be removed
+// while their access change is being applied.
 type PlanNodeReferences struct {
 	Active     []PlanNodeReference `json:"active"`
 	Draft      []PlanNodeReference `json:"draft"`
+	Pending    []PlanNodeReference `json:"pending"`
 	Exceptions int                 `json:"exceptions"`
 }
 
-// PlanNodeReferences queries active and draft revision membership plus user
-// exception counts for one assignable node.
+// PlanNodeReferences queries the live plan pointers rather than the legacy
+// revision status column. New immutable plan versions leave old revisions
+// archived, so status alone cannot identify the subscription's current set.
 func (s *Store) PlanNodeReferences(ctx context.Context, nodeType model.AssignableNodeType, nodeID int64) (PlanNodeReferences, error) {
-	refs := PlanNodeReferences{}
-	rows, err := s.db.QueryContext(ctx, `select r.plan_id,p.name,coalesce(pn.display_group,''),r.status from subscription_plan_revision_nodes pn join subscription_plan_revisions r on r.id=pn.revision_id join subscription_plans p on p.id=r.plan_id where pn.node_type=? and pn.node_id=?`, string(nodeType), nodeID)
+	refs, err := planNodeReferencesForQuery(ctx, s.db, nodeType, nodeID)
 	if err != nil {
-		return refs, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var planID int64
-		var name, group, status string
-		if err := rows.Scan(&planID, &name, &group, &status); err != nil {
-			return refs, err
-		}
-		ref := PlanNodeReference{PlanID: planID, Name: name, Group: group}
-		if status == string(model.PlanRevisionActive) {
-			refs.Active = append(refs.Active, ref)
-		} else {
-			refs.Draft = append(refs.Draft, ref)
-		}
-	}
-	if err := rows.Err(); err != nil {
 		return refs, err
 	}
 	if err := s.db.QueryRowContext(ctx, `select count(*) from user_node_exceptions where node_type=? and node_id=?`, string(nodeType), nodeID).Scan(&refs.Exceptions); err != nil {
 		return refs, err
 	}
 	return refs, nil
+}
+
+func planNodeReferencesForQuery(ctx context.Context, q queryer, nodeType model.AssignableNodeType, nodeID int64) (PlanNodeReferences, error) {
+	refs := PlanNodeReferences{}
+	queries := []struct {
+		pointer string
+		out     *[]PlanNodeReference
+	}{
+		{pointer: "current_revision_id", out: &refs.Active},
+		{pointer: "draft_revision_id", out: &refs.Draft},
+		{pointer: "pending_revision_id", out: &refs.Pending},
+	}
+	for _, query := range queries {
+		rows, err := q.QueryContext(ctx, `select p.id,p.name,coalesce(pn.display_group,'') from subscription_plan_revision_nodes pn join subscription_plans p on p.`+query.pointer+`=pn.revision_id where pn.node_type=? and pn.node_id=? order by p.id`, string(nodeType), nodeID)
+		if err != nil {
+			return refs, err
+		}
+		for rows.Next() {
+			var ref PlanNodeReference
+			if err := rows.Scan(&ref.PlanID, &ref.Name, &ref.Group); err != nil {
+				return refs, errors.Join(err, rows.Close())
+			}
+			*query.out = append(*query.out, ref)
+		}
+		if err := rows.Err(); err != nil {
+			return refs, errors.Join(err, rows.Close())
+		}
+		if err := rows.Close(); err != nil {
+			return refs, err
+		}
+	}
+	return refs, nil
+}
+
+// RemoveAssignableNodeFromPlans removes a deleted assignable node from every
+// live plan pointer. Current revisions are replaced with a new immutable
+// revision; legacy drafts are pruned in place so a later edit cannot restore a
+// resource that no longer exists. The caller can use the returned references
+// for an impact summary.
+func (s *Store) RemoveAssignableNodeFromPlans(ctx context.Context, nodeType model.AssignableNodeType, nodeIDs ...int64) (PlanNodeReferences, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PlanNodeReferences{}, err
+	}
+	defer tx.Rollback()
+	refs, err := removeAssignableNodeFromPlansTx(ctx, tx, nodeType, nodeIDs...)
+	if err != nil {
+		return refs, err
+	}
+	if err := tx.Commit(); err != nil {
+		return refs, err
+	}
+	return refs, nil
+}
+
+func removeAssignableNodeFromPlansTx(ctx context.Context, tx *sql.Tx, nodeType model.AssignableNodeType, nodeIDs ...int64) (PlanNodeReferences, error) {
+	ids := make(map[int64]struct{}, len(nodeIDs))
+	for _, id := range nodeIDs {
+		if id > 0 {
+			ids[id] = struct{}{}
+		}
+	}
+	if len(ids) == 0 {
+		return PlanNodeReferences{}, nil
+	}
+	refsByPlan := map[int64]PlanNodeReference{}
+	refs := PlanNodeReferences{}
+	for id := range ids {
+		one, err := planNodeReferencesForQuery(ctx, tx, nodeType, id)
+		if err != nil {
+			return refs, err
+		}
+		refs.Active = append(refs.Active, one.Active...)
+		refs.Draft = append(refs.Draft, one.Draft...)
+		refs.Pending = append(refs.Pending, one.Pending...)
+	}
+	for _, ref := range refs.Active {
+		refsByPlan[ref.PlanID] = ref
+	}
+	for _, ref := range refs.Draft {
+		if _, exists := refsByPlan[ref.PlanID]; !exists {
+			refsByPlan[ref.PlanID] = ref
+		}
+	}
+	for _, ref := range refs.Pending {
+		if _, exists := refsByPlan[ref.PlanID]; !exists {
+			refsByPlan[ref.PlanID] = ref
+		}
+	}
+	if len(refs.Pending) > 0 {
+		names := make([]string, 0, len(refs.Pending))
+		seen := map[string]bool{}
+		for _, ref := range refs.Pending {
+			if !seen[ref.Name] {
+				names = append(names, ref.Name)
+				seen[ref.Name] = true
+			}
+		}
+		return refs, fmt.Errorf("%w: subscription plan(s) still have a pending version: %s", ErrPlanVersionApplying, strings.Join(names, ", "))
+	}
+
+	planIDs := make([]int64, 0, len(refsByPlan))
+	for planID := range refsByPlan {
+		planIDs = append(planIDs, planID)
+	}
+	sort.Slice(planIDs, func(i, j int) bool { return planIDs[i] < planIDs[j] })
+	idsList := make([]int64, 0, len(ids))
+	for id := range ids {
+		idsList = append(idsList, id)
+	}
+	for _, planID := range planIDs {
+		var currentID, pendingID, draftID int64
+		var planName string
+		if err := tx.QueryRowContext(ctx, `select p.name,coalesce(p.current_revision_id,0),coalesce(p.pending_revision_id,0),coalesce(p.draft_revision_id,0) from subscription_plans p where p.id=?`, planID).Scan(&planName, &currentID, &pendingID, &draftID); err != nil {
+			return refs, err
+		}
+		if pendingID != 0 {
+			return refs, fmt.Errorf("%w: subscription plan %q is still applying", ErrPlanVersionApplying, planName)
+		}
+		currentChanged := false
+		if currentID != 0 {
+			revision, nodes, err := loadPlanRevisionSnapshotTx(ctx, tx, planID, currentID)
+			if err != nil {
+				return refs, err
+			}
+			candidate := make([]model.SubscriptionPlanNode, 0, len(nodes))
+			for _, node := range nodes {
+				if node.NodeType == nodeType {
+					if _, remove := ids[node.NodeID]; remove {
+						continue
+					}
+				}
+				candidate = append(candidate, node)
+			}
+			if len(candidate) != len(nodes) {
+				rules, err := listPlanRevisionRules(ctx, tx, currentID)
+				if err != nil {
+					return refs, err
+				}
+				exclusions, err := listPlanRevisionExclusions(ctx, tx, currentID)
+				if err != nil {
+					return refs, err
+				}
+				filteredExclusions := exclusions[:0]
+				for _, exclusion := range exclusions {
+					if exclusion.NodeType == nodeType {
+						if _, remove := ids[exclusion.NodeID]; remove {
+							continue
+						}
+					}
+					filteredExclusions = append(filteredExclusions, exclusion)
+				}
+				ts := now()
+				if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set status=? where plan_id=? and status=?`, string(model.PlanRevisionArchived), planID, string(model.PlanRevisionActive)); err != nil {
+					return refs, err
+				}
+				newID, err := insertPlanRevisionTx(ctx, tx, planID, model.PlanRevisionActive, revision.SpeedLimitMbps, revision.TrafficLimitBytes, revision.TrafficResetMode, revision.TrafficResetDay, nil, marshalOrderPolicy(revision.NodeOrderPolicy), model.PlanChangeKindNodes, "节点删除时自动从订阅套餐移除", currentID, ts, ts)
+				if err != nil {
+					return refs, err
+				}
+				if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set order_template_id=?,order_template_revision=?,order_source_plan_id=?,order_source_revision_id=?,order_source_mode=? where id=?`, nullableInt64(sql.NullInt64{Int64: valueOrZero(revision.OrderTemplateID), Valid: revision.OrderTemplateID != nil}), revision.OrderTemplateRevision, nullableInt64(sql.NullInt64{Int64: valueOrZero(revision.OrderSourcePlanID), Valid: revision.OrderSourcePlanID != nil}), nullableInt64(sql.NullInt64{Int64: valueOrZero(revision.OrderSourceRevisionID), Valid: revision.OrderSourceRevisionID != nil}), revision.OrderSourceMode, newID); err != nil {
+					return refs, err
+				}
+				if err := insertPlanRevisionMembershipPolicyTx(ctx, tx, newID, rules, filteredExclusions, ts); err != nil {
+					return refs, err
+				}
+				if err := insertPlanRevisionNodesTx(ctx, tx, newID, candidate, ts); err != nil {
+					return refs, err
+				}
+				if _, err := tx.ExecContext(ctx, `update subscription_plans set current_revision_id=?,latest_revision_id=?,active_revision_id=?,lock_version=lock_version+1,revision=revision+1,updated_at=? where id=?`, newID, newID, newID, ts, planID); err != nil {
+					return refs, err
+				}
+				currentChanged = true
+			}
+		}
+		if draftID != 0 {
+			result, err := tx.ExecContext(ctx, `delete from subscription_plan_revision_nodes where revision_id=? and node_type=? and node_id in (`+int64Placeholders(len(idsList))+`)`, append([]any{draftID, nodeType}, int64Args(idsList)...)...)
+			if err != nil {
+				return refs, err
+			}
+			if _, err := tx.ExecContext(ctx, `delete from subscription_plan_revision_node_exclusions where revision_id=? and node_type=? and node_id in (`+int64Placeholders(len(idsList))+`)`, append([]any{draftID, nodeType}, int64Args(idsList)...)...); err != nil {
+				return refs, err
+			}
+			removed, err := result.RowsAffected()
+			if err != nil {
+				return refs, err
+			}
+			if removed > 0 && !currentChanged {
+				if _, err := tx.ExecContext(ctx, `update subscription_plans set lock_version=lock_version+1,revision=revision+1,updated_at=? where id=?`, now(), planID); err != nil {
+					return refs, err
+				}
+			}
+		}
+	}
+	return refs, nil
+}
+
+func valueOrZero(v *int64) int64 {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+func int64Placeholders(count int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
+}
+
+func int64Args(values []int64) []any {
+	out := make([]any, len(values))
+	for i, value := range values {
+		out[i] = value
+	}
+	return out
 }
 
 // RemovePlanNodeFromDraftRevisions drops one node from every draft revision

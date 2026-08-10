@@ -49,6 +49,9 @@ func (s *Server) registerInboundAutomationOperations() {
 		if err != nil {
 			return nil, err
 		}
+		if _, err := s.store.RemoveAssignableNodeFromPlans(ctx, model.AssignableNodeInbound, inbound.ID); err != nil {
+			return nil, err
+		}
 		if err := s.deleteDNSInboundRecords(ctx, inbound); err != nil {
 			return nil, err
 		}

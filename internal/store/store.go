@@ -3297,6 +3297,13 @@ func cascadeDeleteProxyPathBranchesTx(ctx context.Context, tx *sql.Tx, deletedSt
 		}
 	}
 
+	pathIDs := make([]int64, 0, len(pathSet))
+	for pathID := range pathSet {
+		pathIDs = append(pathIDs, pathID)
+	}
+	if _, err := removeAssignableNodeFromPlansTx(ctx, tx, model.AssignableNodeProxyPath, pathIDs...); err != nil {
+		return err
+	}
 	for childID := range pathSet {
 		if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id=?`, childID); err != nil {
 			return err
@@ -3492,6 +3499,19 @@ func truncateProxyPathStepsTx(ctx context.Context, tx *sql.Tx, matchQuery string
 		if _, err := tx.ExecContext(ctx, `delete from proxy_path_steps where path_id=? and position>=?`, item.pathID, item.position); err != nil {
 			return err
 		}
+	}
+	emptyPathIDs := make([]int64, 0, len(cuts))
+	for _, item := range cuts {
+		var empty int
+		if err := tx.QueryRowContext(ctx, `select not exists(select 1 from proxy_path_steps where path_id=?)`, item.pathID).Scan(&empty); err != nil {
+			return err
+		}
+		if empty != 0 {
+			emptyPathIDs = append(emptyPathIDs, item.pathID)
+		}
+	}
+	if _, err := removeAssignableNodeFromPlansTx(ctx, tx, model.AssignableNodeProxyPath, emptyPathIDs...); err != nil {
+		return err
 	}
 	for _, item := range cuts {
 		if _, err := tx.ExecContext(ctx, `delete from proxy_paths where id=? and not exists (select 1 from proxy_path_steps s where s.path_id=proxy_paths.id)`, item.pathID); err != nil {

@@ -962,6 +962,8 @@ function localizeErrorMessage(message: unknown) {
   if (!raw) return '操作失败，请稍后重试'
   if (raw.startsWith('invalid age public key:')) return 'Age 公钥格式无效'
   if (raw.startsWith('invalid trusted proxy address ')) return `受信代理地址无效：${raw.slice('invalid trusted proxy address '.length)}`
+  if (raw.startsWith('subscription plan(s) are still applying a change:')) return '相关订阅套餐正在应用变更，完成后再删除'
+  if (raw.startsWith('plan version is still applying; retry after it settles:')) return '相关订阅套餐正在应用变更，完成后再删除'
   return errorMessages[raw] || errorMessages[raw.toLowerCase()] || raw
 }
 
@@ -8821,9 +8823,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     const ok = await dialogs.confirm({
       title: cascading ? '取消后续链路' : `删除${item.name}`,
       message: cascading
-        ? `确认从 ${entity.label} 开始断开？该位置及其全部后续节点都会从这条路径移除。`
+        ? <div className="dialog-detail">
+            <p>确认从 {entity.label} 开始断开？该位置及其全部后续节点都会从这条路径移除。</p>
+            <p className="muted">如果这会删除整条链路，相关节点也会从所有订阅套餐自动移除。</p>
+          </div>
         : <div className="dialog-detail">
             <p>确认删除 {entity.label}？</p>
+            <p className="muted">如果该节点已加入订阅套餐，删除时会从所有套餐自动移除；相关链路会同步清理。</p>
             {affected.length > 0 && <>
               <p>以下 {affected.length} 条链路经过它，会被同步截断或删除：</p>
               <ul>{affected.map((name, index) => <li key={index}>{name}</li>)}</ul>

@@ -3181,6 +3181,10 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		} else {
 			for _, inbound := range inbounds {
 				if inbound.ServerID == id {
+					if _, err := s.store.RemoveAssignableNodeFromPlans(r.Context(), model.AssignableNodeInbound, inbound.ID); err != nil {
+						fail(w, err, http.StatusConflict)
+						return
+					}
 					if err := s.deleteDNSInboundRecords(r.Context(), inbound); err != nil {
 						fail(w, err, 502)
 						return
@@ -4719,6 +4723,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		if _, err := s.store.RemoveAssignableNodeFromPlans(r.Context(), model.AssignableNodeInbound, id); err != nil {
+			fail(w, err, http.StatusConflict)
+			return
+		}
 		if err := s.deleteDNSInboundRecords(r.Context(), *inbound); err != nil {
 			fail(w, err, 502)
 			return
@@ -6020,6 +6028,10 @@ func (s *Server) externalOutbounds(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if _, err := s.guardAssignableNodeDelete(r.Context(), model.AssignableNodeExternalOutbound, id); err != nil {
+			fail(w, err, http.StatusConflict)
+			return
+		}
+		if _, err := s.store.RemoveAssignableNodeFromPlans(r.Context(), model.AssignableNodeExternalOutbound, id); err != nil {
 			fail(w, err, http.StatusConflict)
 			return
 		}

@@ -2173,6 +2173,10 @@ func TestProxyPathTransportCanChangeAndDeleteCascades(t *testing.T) {
 	if changed["proxy_path_step"].(map[string]any)["processing_role"] != false {
 		t.Fatalf("switching back to chain proxy must clear transparent processor: %#v", changed)
 	}
+	subscriptionPlan := &model.SubscriptionPlan{Name: "管理员", Enabled: true}
+	if err := db.CreateSubscriptionPlan(context.Background(), subscriptionPlan, []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: pathID}}); err != nil {
+		t.Fatal(err)
+	}
 
 	deleted := request(t, h, http.MethodDelete, "/api/v2/ui/proxy-path-steps/"+itoa(stepID), token, nil, http.StatusOK)
 	if int(deleted["deleted_steps"].(float64)) != 2 || deleted["path_deleted"] != true {
@@ -2182,6 +2186,13 @@ func TestProxyPathTransportCanChangeAndDeleteCascades(t *testing.T) {
 	paths := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths", token, nil, http.StatusOK)
 	if paths["proxy_paths"] != nil && len(paths["proxy_paths"].([]any)) != 0 {
 		t.Fatalf("empty path should be removed: %#v", paths)
+	}
+	planNodes, err := db.ListActivePlanNodes(context.Background(), subscriptionPlan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planNodes) != 0 {
+		t.Fatalf("deleted path remains in subscription plan: %#v", planNodes)
 	}
 }
 

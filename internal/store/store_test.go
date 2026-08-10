@@ -2085,6 +2085,40 @@ func TestDeleteProxyPathsForInboundTruncatesLaterSteps(t *testing.T) {
 	}
 }
 
+func TestDeleteProxyPathRemovesSubscriptionPlanReference(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	pathID, _, _, _ := proxyPathTruncationFixture(t, s)
+	plan := &model.SubscriptionPlan{Name: "path-delete-plan", Enabled: true}
+	if err := s.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{
+		{NodeType: model.AssignableNodeProxyPath, NodeID: pathID},
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 999},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteProxyPath(ctx, pathID); err != nil {
+		t.Fatal(err)
+	}
+	refs, err := s.PlanNodeReferences(ctx, model.AssignableNodeProxyPath, pathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs.Active) != 0 || len(refs.Draft) != 0 {
+		t.Fatalf("deleted path remains in plan references: %#v", refs)
+	}
+	nodes, err := s.ListActivePlanNodes(ctx, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].NodeID != 999 {
+		t.Fatalf("active plan nodes after path deletion = %#v", nodes)
+	}
+}
+
 func TestProxyPathBranchSourceClearsWhenSourceStepIsDeleted(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

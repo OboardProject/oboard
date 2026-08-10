@@ -1343,24 +1343,39 @@ func nodeKeyUsersDiffer(a, b *core.EffectiveAccessSnapshot, key string) bool {
 	return false
 }
 
-// guardAssignableNodeDelete blocks deletion of nodes referenced by active plan
-// revisions and prunes the node from draft revisions. Active references require
-// an access change to remove the node before the deletion can proceed.
+// guardAssignableNodeDelete validates that deletion is not racing an
+// in-flight subscription change. Live references are removed as part of the
+// deletion transaction (or by the caller immediately before deleting a
+// non-path resource), so a published plan no longer blocks topology cleanup.
 func (s *Server) guardAssignableNodeDelete(ctx context.Context, nodeType model.AssignableNodeType, nodeID int64) (store.PlanNodeReferences, error) {
 	refs, err := s.store.PlanNodeReferences(ctx, nodeType, nodeID)
 	if err != nil {
 		return refs, err
 	}
-	if len(refs.Active) > 0 {
-		names := make([]string, 0, len(refs.Active))
-		for _, ref := range refs.Active {
+	if len(refs.Pending) > 0 {
+		names := make([]string, 0, len(refs.Pending))
+		seen := map[string]bool{}
+		for _, ref := range refs.Pending {
+			if seen[ref.Name] {
+				continue
+			}
 			names = append(names, ref.Name)
+			seen[ref.Name] = true
 		}
-		return refs, fmt.Errorf("node is referenced by active subscription plan(s): %s; publish a plan change to remove it first", strings.Join(names, ", "))
+		return refs, fmt.Errorf("subscription plan(s) are still applying a change: %s; retry after it finishes", strings.Join(names, ", "))
 	}
-	if len(refs.Draft) > 0 {
-		if err := s.store.RemovePlanNodeFromDraftRevisions(ctx, nodeType, nodeID); err != nil {
+	seenPlans := map[int64]bool{}
+	for _, ref := range append(append([]store.PlanNodeReference{}, refs.Active...), refs.Draft...) {
+		if seenPlans[ref.PlanID] {
+			continue
+		}
+		seenPlans[ref.PlanID] = true
+		plan, err := s.store.GetSubscriptionPlan(ctx, ref.PlanID)
+		if err != nil {
 			return refs, err
+		}
+		if plan.PendingRevisionID != 0 {
+			return refs, fmt.Errorf("subscription plan(s) are still applying a change: %s; retry after it finishes", plan.Name)
 		}
 	}
 	return refs, nil

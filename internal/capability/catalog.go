@@ -318,7 +318,7 @@ func defaultDescriptors() []Descriptor {
 	for _, name := range []string{"inbounds.delete", "proxy_paths.delete", "proxy_path_steps.truncate"} {
 		input, output, evaluator := executableSchemas(name)
 		descriptors = append(descriptors, Descriptor{
-			Name: name, Description: "删除受引用保护和审批保护的代理拓扑资源", InputSchema: input, OutputSchema: output,
+			Name: name, Description: "删除代理拓扑资源，并自动从所有订阅套餐移除已删除节点", InputSchema: input, OutputSchema: output,
 			RequiredScopes: []string{"topology:write"}, ResourceEvaluator: evaluator, RiskClass: 3,
 			ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal,
 			Destructive: true, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate,
