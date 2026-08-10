@@ -14,6 +14,8 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+var ErrAuditReviewActive = errors.New("进行中的 AI 审查需先取消，才能删除记录")
+
 func (s *Store) CreateAuditReview(ctx context.Context, review *model.AuditReview, evidence []model.AuditReviewEvidence, jobs []model.AuditReviewJob) error {
 	if review == nil || review.ID == "" || review.RequestID == "" || review.ProviderID == "" || review.RequestedBy <= 0 || len(jobs) == 0 {
 		return errors.New("audit review is incomplete")
@@ -367,6 +369,21 @@ func (s *Store) CancelAuditReview(ctx context.Context, reviewID string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) DeleteAuditReview(ctx context.Context, reviewID string) error {
+	result, err := s.db.ExecContext(ctx, `delete from ai_audit_reviews where id=? and status not in ('queued','running')`, reviewID)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 1 {
+		return nil
+	}
+	var status string
+	if err := s.db.QueryRowContext(ctx, `select status from ai_audit_reviews where id=?`, reviewID).Scan(&status); err != nil {
+		return err
+	}
+	return ErrAuditReviewActive
 }
 
 func (s *Store) AuditReviewEvidenceRefs(ctx context.Context, reviewID string) (map[string]bool, error) {

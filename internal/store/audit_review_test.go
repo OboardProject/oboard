@@ -154,6 +154,53 @@ func TestAuditReviewEvidenceRefsAreScopedToReview(t *testing.T) {
 	}
 }
 
+func TestDeleteAuditReviewRequiresTerminalStatusAndCascades(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "audit-review-delete.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	actor := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "44444444-4444-4444-8444-444444444444", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, actor); err != nil {
+		t.Fatal(err)
+	}
+	provider := &model.AIProvider{ID: "provider", Name: "provider", BaseURL: "http://127.0.0.1", Model: "model", CredentialEncrypted: "encrypted", Enabled: true}
+	if err := db.CreateAIProvider(ctx, provider); err != nil {
+		t.Fatal(err)
+	}
+	review, job := auditReviewFixture(actor.ID, provider.ID, "delete", "delete-job")
+	userID := actor.ID
+	evidence := []model.AuditReviewEvidence{{Ref: "user:delete", ReviewID: review.ID, Kind: "user", UserID: &userID, Payload: json.RawMessage(`{"subject_ref":"user:delete"}`)}}
+	if err := db.CreateAuditReview(ctx, review, evidence, []model.AuditReviewJob{job}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.ExecContext(ctx, `insert into ai_audit_review_routes(job_id,route_json,created_at) values(?,?,?)`, job.ID, `{}`, now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteAuditReview(ctx, review.ID); !errors.Is(err, ErrAuditReviewActive) {
+		t.Fatalf("active review delete error = %v", err)
+	}
+	if err := db.CancelAuditReview(ctx, review.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteAuditReview(ctx, review.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.GetAuditReview(ctx, review.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("deleted review lookup error = %v", err)
+	}
+	for _, table := range []string{"ai_audit_review_evidence", "ai_audit_review_jobs", "ai_audit_review_routes"} {
+		var count int
+		if err := db.db.QueryRowContext(ctx, `select count(*) from `+table).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("%s retained %d rows after review deletion", table, count)
+		}
+	}
+}
+
 func auditReviewFixture(actorID int64, providerID, suffix, jobID string) (*model.AuditReview, model.AuditReviewJob) {
 	nowTime := time.Now().UTC()
 	review := &model.AuditReview{

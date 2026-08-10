@@ -10,6 +10,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/auditreview"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 func (s *Server) auditAIReviews(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +75,8 @@ func (s *Server) auditAIReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reviewID := parts[0]
-	if _, err := s.store.GetAuditReview(r.Context(), reviewID); err != nil {
+	item, err := s.store.GetAuditReview(r.Context(), reviewID)
+	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, sql.ErrNoRows) {
 			status = http.StatusNotFound
@@ -83,13 +85,28 @@ func (s *Server) auditAIReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodGet {
-		item, _ := s.store.GetAuditReview(r.Context(), reviewID)
 		jobs, err := s.store.ListAuditReviewJobs(r.Context(), reviewID, false)
 		if err != nil {
 			fail(w, err, http.StatusInternalServerError)
 			return
 		}
 		write(w, http.StatusOK, map[string]any{"ai_audit_review": item, "jobs": jobs})
+		return
+	}
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		if err := s.store.DeleteAuditReview(r.Context(), reviewID); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, store.ErrAuditReviewActive) {
+				status = http.StatusConflict
+			} else if errors.Is(err, sql.ErrNoRows) {
+				status = http.StatusNotFound
+			}
+			fail(w, err, status)
+			return
+		}
+		auditReq(s, r, "delete", "ai-audit-review", reviewID)
+		s.publishRealtime("audit", "ai-reviews")
+		write(w, http.StatusOK, map[string]any{"deleted": true, "review_id": reviewID})
 		return
 	}
 	if len(parts) == 2 && parts[1] == "evidence" && r.Method == http.MethodGet {

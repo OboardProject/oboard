@@ -11,6 +11,7 @@ import (
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/auditreview"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 // registerAuditAutomationOperations wires the AI audit review operations of
@@ -76,15 +77,41 @@ func (s *Server) registerAuditAutomationOperations() {
 		s.publishRealtime("audit", "ai-reviews")
 		return map[string]any{"cancelled": true, "review_id": reviewID}, nil
 	})
+
+	s.automation.RegisterValidator("audit.ai_reviews.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		review, err := s.auditReviewDeleteCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"review_id": review.ID, "status": review.Status}, nil
+	})
+	s.automation.RegisterRevisionResolver("audit.ai_reviews.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		review, err := s.auditReviewDeleteCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"ai-audit-review:" + review.ID: review.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
+	})
+	s.automation.Register("audit.ai_reviews.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		review, err := s.auditReviewDeleteCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.DeleteAuditReview(ctx, review.ID); err != nil {
+			return nil, err
+		}
+		s.publishRealtime("audit", "ai-reviews")
+		return map[string]any{"deleted": true, "review_id": review.ID}, nil
+	})
 }
 
 type auditReviewCreateRequest struct {
-	RequestID     string               `json:"request_id"`
-	ProviderID    string               `json:"provider_id"`
+	RequestID     string                 `json:"request_id"`
+	ProviderID    string                 `json:"provider_id"`
 	Scope         model.AuditReviewScope `json:"scope"`
-	EvidenceTypes []string             `json:"evidence_types"`
-	Start         time.Time            `json:"-"`
-	End           time.Time            `json:"-"`
+	EvidenceTypes []string               `json:"evidence_types"`
+	Start         time.Time              `json:"-"`
+	End           time.Time              `json:"-"`
 }
 
 func (s *Server) auditReviewCreateCandidate(ctx context.Context, principal application.Principal, input json.RawMessage) (auditReviewCreateRequest, error) {
@@ -140,6 +167,28 @@ func auditReviewCancelInput(input json.RawMessage) (string, error) {
 		return "", errors.New("review_id is required")
 	}
 	return strings.TrimSpace(request.ReviewID), nil
+}
+
+func (s *Server) auditReviewDeleteCandidate(ctx context.Context, input json.RawMessage) (*model.AuditReview, error) {
+	var request struct {
+		ReviewID string `json:"review_id"`
+		Confirm  bool   `json:"confirm"`
+	}
+	if err := strictAutomationInput(input, &request); err != nil {
+		return nil, err
+	}
+	request.ReviewID = strings.TrimSpace(request.ReviewID)
+	if request.ReviewID == "" || !request.Confirm {
+		return nil, errors.New("review_id and confirm=true are required")
+	}
+	review, err := s.store.GetAuditReview(ctx, request.ReviewID)
+	if err != nil {
+		return nil, err
+	}
+	if review.Status == "queued" || review.Status == "running" {
+		return nil, store.ErrAuditReviewActive
+	}
+	return review, nil
 }
 
 // ---- MCP audit resource queries ----

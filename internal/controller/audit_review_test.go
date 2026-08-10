@@ -74,7 +74,13 @@ func TestAuditAIReviewsAreAdminOnlyAndIdempotent(t *testing.T) {
 	request(t, handler, http.MethodGet, "/api/v2/ui/audit/ai-reviews/"+reviewID, adminToken, nil, http.StatusOK)
 	request(t, handler, http.MethodGet, "/api/v2/ui/audit/ai-reviews/"+reviewID+"/evidence", adminToken, nil, http.StatusOK)
 	request(t, handler, http.MethodGet, "/api/v2/ui/audit/ai-reviews/"+reviewID+"/jobs", adminToken, nil, http.StatusOK)
+	request(t, handler, http.MethodDelete, "/api/v2/ui/audit/ai-reviews/"+reviewID, adminToken, nil, http.StatusConflict)
 	request(t, handler, http.MethodPost, "/api/v2/ui/audit/ai-reviews/"+reviewID+"/cancel", adminToken, map[string]any{}, http.StatusOK)
+	deleted := request(t, handler, http.MethodDelete, "/api/v2/ui/audit/ai-reviews/"+reviewID, adminToken, nil, http.StatusOK)
+	if deleted["deleted"] != true || deleted["review_id"] != reviewID {
+		t.Fatalf("unexpected delete response: %#v", deleted)
+	}
+	request(t, handler, http.MethodGet, "/api/v2/ui/audit/ai-reviews/"+reviewID, adminToken, nil, http.StatusNotFound)
 }
 
 func TestAuditReviewTimeRangeValidation(t *testing.T) {
