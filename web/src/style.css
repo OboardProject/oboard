@@ -8624,30 +8624,38 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   transform: none;
 }
 
+.form-field-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .form-field-help-popover {
   position: absolute;
-  left: 50%;
+  left: -8px;
   bottom: calc(100% + 7px);
-  z-index: 80;
+  z-index: 99999;
   display: block;
   width: max-content;
-  max-width: min(280px, calc(100vw - 32px));
-  padding: 8px 10px;
+  max-width: min(320px, calc(100vw - 48px));
+  padding: 8px 12px;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--text-strong);
   background: var(--surface-solid);
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.5;
   text-align: left;
   white-space: normal;
   overflow-wrap: anywhere;
+  word-break: break-word;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transform: translateX(-50%) translateY(3px);
+  transform: translateY(3px);
   transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s ease;
 }
 
@@ -8656,7 +8664,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .form-field-help-popover[data-open="true"] {
   opacity: 1;
   visibility: visible;
-  transform: translateX(-50%) translateY(0);
+  transform: translateY(0);
 }
 
 .form-field-control {
@@ -16100,19 +16108,20 @@ button.ui-btn-ghost:hover {
 
 /* Tooltip Z-Index & Overflow Layering Fixes */
 .form-field-help-popover {
+  left: -8px !important;
   z-index: 99999 !important;
 }
 
 .form-field-help-popover.popover-bottom {
   top: calc(100% + 7px) !important;
   bottom: auto !important;
-  transform: translateX(-50%) translateY(-3px) !important;
+  transform: translateY(-3px) !important;
 }
 
 .form-field-help:hover .form-field-help-popover.popover-bottom,
 .form-field-help:focus-visible .form-field-help-popover.popover-bottom,
 .form-field-help-popover.popover-bottom[data-open="true"] {
-  transform: translateX(-50%) translateY(0) !important;
+  transform: translateY(0) !important;
 }
 
 .dialog-panel,
