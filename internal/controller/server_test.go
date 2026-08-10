@@ -1894,7 +1894,7 @@ func TestImportedNodeURIProxyPathAndGrantAPI(t *testing.T) {
 		t.Fatalf("server-only path plan missing target server: %#v", plan)
 	}
 	direct := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)["proxy_path"].(map[string]any)
-	if direct["kind"] != "direct" || direct["name"] != "s1｜直出" {
+	if direct["kind"] != "direct" || direct["name"] != "s1" {
 		t.Fatalf("bad direct path: %#v", direct)
 	}
 	request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusBadRequest)

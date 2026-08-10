@@ -393,7 +393,7 @@ func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 	if !cDirectRoute {
 		t.Fatalf("C should terminate the two-hop branch with direct: %s", configC)
 	}
-	subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{serverA, serverB, serverC}, []model.Inbound{rootInbound}, SubscriptionOptions{
+	subscriptionNodes, err := BuildSubscriptionNodes(user, []model.Server{serverA, serverB, serverC}, []model.Inbound{rootInbound}, SubscriptionOptions{
 		EffectiveNodes: map[string]bool{
 			NodeKeyOf(model.AssignableNodeProxyPath, chain.ID):   true,
 			NodeKeyOf(model.AssignableNodeProxyPath, direct.ID):  true,
@@ -405,8 +405,14 @@ func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(subscription, "A｜C") || !strings.Contains(subscription, "A｜B｜直出") || !strings.Contains(subscription, "A｜B｜C｜直出") {
-		t.Fatalf("subscription should preserve both chain and direct branches: %s", subscription)
+	names := map[string]bool{}
+	for _, node := range subscriptionNodes {
+		names[node.SourceName] = true
+	}
+	for _, name := range []string{"A｜B｜C", "A｜B", "A｜B｜C｜直出"} {
+		if !names[name] {
+			t.Fatalf("subscription should preserve %q, got %#v", name, names)
+		}
 	}
 }
 

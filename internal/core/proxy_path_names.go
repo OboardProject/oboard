@@ -15,6 +15,7 @@ type proxyPathNameState struct {
 	path         model.ProxyPath
 	route        []string
 	middleDepth  int
+	directSuffix bool
 	features     []string
 	featureDepth int
 	base         string
@@ -67,9 +68,6 @@ func ResolveProxyPathNames(paths []model.ProxyPath, steps []model.ProxyPathStep,
 		pathSteps := stepsByPath[path.ID]
 		route := proxyPathRouteLabels(path, pathSteps, serverByID, inboundByID, externalByID)
 		middleDepth := 0
-		if path.Kind == model.ProxyPathKindDirect {
-			middleDepth = max(0, len(route)-2)
-		}
 		base := automaticProxyPathName(route, middleDepth)
 		if path.NameMode == model.ProxyPathNameCustom {
 			if rendered, err := renderProxyPathNameTemplate(path.NameTemplate, serverByID, externalByID); err == nil && strings.TrimSpace(rendered) != "" {
@@ -104,6 +102,18 @@ func ResolveProxyPathNames(paths []model.ProxyPath, steps []model.ProxyPathStep,
 		if !changed {
 			break
 		}
+		recomputeProxyPathNames(states)
+	}
+	conflicts := proxyPathNameConflicts(states, reserved)
+	changed := false
+	for index := range states {
+		state := &states[index]
+		if conflicts[state.path.ID] && state.path.Kind == model.ProxyPathKindDirect {
+			state.directSuffix = true
+			changed = true
+		}
+	}
+	if changed {
 		recomputeProxyPathNames(states)
 	}
 	for {
@@ -276,9 +286,6 @@ func proxyPathRouteLabels(path model.ProxyPath, steps []model.ProxyPathStep, ser
 			labels = append(labels, proxyPathServerLabel(servers[serverID], serverID))
 		}
 	}
-	if path.Kind == model.ProxyPathKindDirect {
-		labels = append(labels, "直出")
-	}
 	return labels
 }
 
@@ -313,6 +320,9 @@ func recomputeProxyPathNames(states []proxyPathNameState) {
 		name := state.base
 		if state.path.NameMode != model.ProxyPathNameCustom {
 			name = automaticProxyPathName(state.route, state.middleDepth)
+		}
+		if state.directSuffix {
+			name += proxyPathNameSeparator + "直出"
 		}
 		if state.featureDepth > 0 {
 			name += proxyPathNameSeparator + strings.Join(state.features[:state.featureDepth], proxyPathNameSeparator)

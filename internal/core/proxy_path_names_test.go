@@ -27,14 +27,31 @@ func TestResolveProxyPathNamesUsesEndpointsAndDynamicResourceNames(t *testing.T)
 	}
 }
 
-func TestResolveProxyPathNamesIncludesIntermediateDirectExit(t *testing.T) {
+func TestResolveProxyPathNamesOmitsUnneededDirectSuffix(t *testing.T) {
 	servers := []model.Server{{ID: 1, Name: "A"}, {ID: 2, Name: "B"}}
 	inbounds := []model.Inbound{{ID: 10, ServerID: 1, Name: "entry", Protocol: model.ProtocolVLESS, Enabled: true}}
 	paths := []model.ProxyPath{{ID: 100, Kind: model.ProxyPathKindDirect, NameMode: model.ProxyPathNameAuto, InboundID: 10, Enabled: true}}
 	steps := []model.ProxyPathStep{{ID: 1, PathID: 100, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: int64Ptr(2)}}
 	resolved := ResolveProxyPathNames(paths, steps, servers, inbounds, nil)
-	if got := resolved[0].Name; got != "A｜B｜直出" {
+	if got := resolved[0].Name; got != "A｜B" {
 		t.Fatalf("direct branch name = %q", got)
+	}
+}
+
+func TestResolveProxyPathNamesUsesDirectSuffixOnlyForConflict(t *testing.T) {
+	servers := []model.Server{{ID: 1, Name: "A"}, {ID: 2, Name: "B"}}
+	inbounds := []model.Inbound{{ID: 10, ServerID: 1, Name: "entry", Protocol: model.ProtocolVLESS, Enabled: true}}
+	paths := []model.ProxyPath{
+		{ID: 100, NameMode: model.ProxyPathNameAuto, InboundID: 10, Enabled: true},
+		{ID: 200, Kind: model.ProxyPathKindDirect, NameMode: model.ProxyPathNameAuto, InboundID: 10, Enabled: true},
+	}
+	steps := []model.ProxyPathStep{
+		{ID: 1, PathID: 100, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: int64Ptr(2)},
+		{ID: 2, PathID: 200, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: int64Ptr(2)},
+	}
+	resolved := ResolveProxyPathNames(paths, steps, servers, inbounds, nil)
+	if resolved[0].Name != "A｜B" || resolved[1].Name != "A｜B｜直出" {
+		t.Fatalf("resolved = %#v", resolved)
 	}
 }
 
