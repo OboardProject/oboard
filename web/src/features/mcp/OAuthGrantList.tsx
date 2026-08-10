@@ -28,7 +28,8 @@ export function OAuthGrantList({ requestV2, notify, confirm }: OAuthGrantListPro
 
   const load = useCallback(async () => {
     try {
-      setGrants(await listGrants(requestV2))
+      const items = await listGrants(requestV2)
+      setGrants(items.filter((grant) => !grant.revoked_at && grant.status !== 'revoked'))
     } catch (error: any) {
       notify?.(error?.message || 'OAuth Grant 列表加载失败', 'error')
     }
@@ -47,8 +48,8 @@ export function OAuthGrantList({ requestV2, notify, confirm }: OAuthGrantListPro
     setWorking(`grant-revoke-${grant.id}`)
     try {
       await revokeGrant(requestV2, grant.id)
-      await load()
-      notify?.('OAuth Grant 已撤销', 'success')
+      setGrants((current) => current.filter((item) => item.id !== grant.id))
+      notify?.('OAuth Grant 已撤销并移除', 'success')
     } catch (error: any) {
       notify?.(error?.message || '撤销失败', 'error')
     } finally {
@@ -60,15 +61,14 @@ export function OAuthGrantList({ requestV2, notify, confirm }: OAuthGrantListPro
     <section className="settings-card automation-wide automation-grants">
       <div className="settings-card-head automation-section-head"><div><h3>OAuth Grant</h3><p className="muted">MCP 实时继承授权用户的当前角色；撤销后该 Grant 的访问和刷新令牌立即失效。</p></div></div>
       <div className="automation-list">{grants.length ? grants.map((grant) => {
-        const revoked = Boolean(grant.revoked_at)
         const reconsent = grant.status === 'needs_reconsent'
         return <div className="automation-row" key={grant.id}>
           <div>
-            <div className="automation-row-title"><strong>{grant.client_name || grant.client_id}</strong><span className={`automation-state ${revoked ? '' : 'is-enabled'}`}>{revoked ? '已撤销' : reconsent ? '待重新授权' : '有效'}</span><span className="automation-state">{inheritedRoleLabel(grant)}</span>{grant.offline_access && <span className="automation-state">可离线刷新</span>}</div>
+            <div className="automation-row-title"><strong>{grant.client_name || grant.client_id}</strong><span className={`automation-state ${reconsent ? '' : 'is-enabled'}`}>{reconsent ? '待重新授权' : '有效'}</span><span className="automation-state">{inheritedRoleLabel(grant)}</span>{grant.offline_access && <span className="automation-state">可离线刷新</span>}</div>
             <span>{grant.username || `用户 ${grant.user_id}`} · 权限随用户角色实时更新</span>
             <small>最近使用 {grant.last_used_at ? formatTime(grant.last_used_at) : '暂无'}</small>
           </div>
-          <div><button type="button" className="ghost icon-button danger-text" disabled={revoked || working === `grant-revoke-${grant.id}`} onClick={() => void revoke(grant)} title={revoked ? '授权已撤销' : '撤销授权'} aria-label={`撤销 ${grant.client_name || grant.id}`}><Trash2 size={15} /></button></div>
+          <div><button type="button" className="ghost icon-button danger-text" disabled={working === `grant-revoke-${grant.id}`} onClick={() => void revoke(grant)} title="撤销授权" aria-label={`撤销 ${grant.client_name || grant.id}`}><Trash2 size={15} /></button></div>
         </div>
       }) : <div className="automation-empty"><ShieldCheck size={20} /><span>暂无 OAuth Grant。客户端首次登录并完成同意后会显示在这里。</span></div>}</div>
     </section>

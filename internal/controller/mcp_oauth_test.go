@@ -442,6 +442,17 @@ func TestMCPAdminInheritsOperateWhenClientRequestsReadScope(t *testing.T) {
 	if item["effective_role"] != "admin" || item["access_level"] != "operate" {
 		t.Fatalf("grant list did not project the current user role: %#v", item)
 	}
+
+	request(t, handler, http.MethodDelete, "/api/v2/oauth-grants/"+grant.ID, adminToken, nil, http.StatusOK)
+	listed = request(t, handler, http.MethodGet, "/api/v2/oauth-grants", adminToken, nil, http.StatusOK)
+	items, _ = listed["data"].([]any)
+	if len(items) != 0 {
+		t.Fatalf("revoked grant remained in management list: %#v", listed["data"])
+	}
+	revoked, err := db.GetOAuthGrant(context.Background(), grant.ID)
+	if err != nil || revoked.Status != model.OAuthGrantRevoked || revoked.RevokedAt == nil {
+		t.Fatalf("revoked grant audit state was not retained: grant=%#v err=%v", revoked, err)
+	}
 }
 
 func TestOAuthViewerInheritsReadWhenClientRequestsOperateScope(t *testing.T) {

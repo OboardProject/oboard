@@ -192,6 +192,9 @@ func (s *Server) oauthGrants(w http.ResponseWriter, r *http.Request) {
 		v2HandleError(w, r, err)
 		return
 	}
+	items = slices.DeleteFunc(items, func(item model.OAuthGrant) bool {
+		return item.RevokedAt != nil || item.Status == model.OAuthGrantRevoked
+	})
 	for index := range items {
 		user, userErr := s.store.GetUser(r.Context(), items[index].UserID)
 		if userErr != nil {
