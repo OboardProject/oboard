@@ -12561,17 +12561,17 @@ button[aria-busy="true"] {
   margin: 0 auto;
 }
 .user-dashboard-head {
-  min-height: 122px;
+  min-height: auto;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  padding: 12px 0 26px;
+  padding: 4px 0 16px;
 }
 .user-dashboard-kicker {
   display: flex;
   align-items: center;
   gap: 7px;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
@@ -12581,7 +12581,7 @@ button[aria-busy="true"] {
   margin: 0;
   color: var(--text-strong);
   font-family: var(--font-display);
-  font-size: 30px;
+  font-size: 28px;
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1.2;
@@ -12590,7 +12590,7 @@ button[aria-busy="true"] {
 .user-overview-band {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  min-height: 238px;
+  min-height: 148px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -12598,12 +12598,12 @@ button[aria-busy="true"] {
 }
 .user-overview-cell {
   min-width: 0;
-  padding: 26px 28px;
+  padding: 20px 22px;
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 14px;
+  gap: 8px;
 }
 .user-overview-cell:first-child { border-left: 0; }
 .user-overview-cell-head {
@@ -12625,19 +12625,19 @@ button[aria-busy="true"] {
   max-width: 100%;
   color: var(--text-strong);
   font-family: var(--font-display);
-  font-size: 40px;
+  font-size: 32px;
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1;
   overflow-wrap: anywhere;
 }
-.user-overview-cell.account > strong { font-size: 30px; }
+.user-overview-cell.account > strong { font-size: 26px; }
 .user-overview-cell.account.normal > strong,
 .user-overview-cell.account.normal .user-overview-cell-head svg { color: var(--success); }
 .user-overview-cell.account.attention > strong,
 .user-overview-cell.account.attention .user-overview-cell-head svg { color: var(--warning); }
 .user-overview-cell > small {
-  margin-top: auto;
+  margin-top: 4px;
   color: var(--muted);
   font-size: 12.5px;
   line-height: 1.55;
