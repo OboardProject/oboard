@@ -2826,130 +2826,26 @@ function auditPolicyMode(value: AuditPolicy): AuditPolicy['mode'] {
   return 'custom'
 }
 
-type AutomationCapability = {
-  name: string
-  description: string
-  required_scopes: string[]
-  risk_class: number
-  read_only: boolean
-  executable: boolean
-  data_classification: string
-}
-
-const automationScopeLabels: Record<string, string> = {
-  'inventory:read': '库存概览',
-  'servers:read': '服务器信息',
-  'users:read': '用户摘要',
-  'topology:read': '代理拓扑',
-  'audit:read': '审计事件',
-  'servers:plan': '节点接入规划',
-  'proxy_paths:plan': '代理链路规划',
-  'deployments:validate': '部署校验',
-  'audit:analyze': '审计分析',
-  'servers:onboard': '接入服务器',
-  'subscriptions:resume': '恢复订阅访问',
-  'topology:write': '修改代理拓扑',
-  'deployments:apply': '执行部署',
-}
-
-function automationScopeLabel(scope: string) {
-  return automationScopeLabels[scope] || scope
-}
-
-function automationScopeSummary(scopes: string[]) {
-  if (!scopes?.length) return '未授予权限'
-  const labels = scopes.map(automationScopeLabel)
-  return labels.length > 3 ? `${labels.slice(0, 3).join('、')} 等 ${labels.length} 项` : labels.join('、')
-}
-
-function AutomationPermissionPicker({ capabilities, value, onChange }: { capabilities: AutomationCapability[]; value: string[]; onChange: (scopes: string[]) => void }) {
-  const rows = useMemo(() => {
-    const byScope = new Map<string, { scope: string; descriptions: string[]; risk: number; executable: boolean; readOnly: boolean }>()
-    for (const capability of capabilities) {
-      for (const scope of capability.required_scopes || []) {
-        const current = byScope.get(scope) || { scope, descriptions: [], risk: 0, executable: false, readOnly: true }
-        if (capability.description && !current.descriptions.includes(capability.description)) current.descriptions.push(capability.description)
-        current.risk = Math.max(current.risk, Number(capability.risk_class || 0))
-        current.executable ||= Boolean(capability.executable)
-        current.readOnly &&= Boolean(capability.read_only)
-        byScope.set(scope, current)
-      }
-    }
-    return Array.from(byScope.values()).sort((a, b) => {
-      const rank = (item: typeof a) => item.executable ? 2 : item.readOnly && !item.scope.endsWith(':read') ? 1 : 0
-      return rank(a) - rank(b) || automationScopeLabel(a.scope).localeCompare(automationScopeLabel(b.scope), 'zh-CN')
-    })
-  }, [capabilities])
-  const groups = [
-    { key: 'read', title: '查询', description: '读取面板中的结构化信息。', rows: rows.filter(item => !item.executable && item.scope.endsWith(':read')) },
-    { key: 'plan', title: '规划与分析', description: '生成建议和校验结果，不执行变更。', rows: rows.filter(item => !item.executable && !item.scope.endsWith(':read')) },
-    { key: 'execute', title: '变更执行', description: '只能创建受校验和审批保护的变更。', rows: rows.filter(item => item.executable) },
-  ].filter(group => group.rows.length)
-  const toggle = (scope: string) => onChange(value.includes(scope) ? value.filter(item => item !== scope) : [...value, scope])
-  return <div className="automation-permission-picker">
-    <div className="automation-permission-summary"><div><strong>权限范围</strong><span>逐项选择这个凭据可以使用的能力。</span></div><span>{value.length} 项</span></div>
-    {groups.map(group => <section key={group.key} className="automation-permission-group">
-      <div className="automation-permission-group-head"><strong>{group.title}</strong><span>{group.description}</span></div>
-      <div className="automation-permission-options">
-        {group.rows.map(item => <label key={item.scope} className={`automation-permission-option${item.executable ? ' is-executable' : ''}`}>
-          <input type="checkbox" checked={value.includes(item.scope)} onChange={() => toggle(item.scope)} />
-          <span><strong>{automationScopeLabel(item.scope)}</strong><small>{item.descriptions.join('；')}</small><code>{item.scope}</code></span>
-          {item.executable && <em>风险 {item.risk}</em>}
-        </label>)}
-      </div>
-    </section>)}
-  </div>
-}
-
-
 function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeResources }: any) {
   const dialogs = useDialogs()
   const [view, setView] = useState<'access' | 'changes' | 'ai'>('access')
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState('')
-  const [snapshot, setSnapshot] = useState<any>({ principals: [], policies: [], changesets: [], providers: [], audits: [], capabilities: [] })
-  const [serviceDialogOpen, setServiceDialogOpen] = useState(false)
-  const [policyDialogOpen, setPolicyDialogOpen] = useState(false)
+  const [snapshot, setSnapshot] = useState<any>({ changesets: [], providers: [], audits: [] })
   const [connectDialogOpen, setConnectDialogOpen] = useState(false)
-  const [serviceTokenDialogOpen, setServiceTokenDialogOpen] = useState(false)
   const [connectClient, setConnectClient] = useState<AutomationConnectClient>('codex')
   const [connectRisk2, setConnectRisk2] = useState(true)
-  const [connectToken, setConnectToken] = useState<{ value: string; expiresAt: string } | null>(null)
   const [controllerURL, setControllerURL] = useState(() => data?.settings?.controller_url || '')
-  const [editingServiceID, setEditingServiceID] = useState('')
-  const [serviceDraft, setServiceDraft] = useState({ name: '', scopes: [] as string[], cidrs: '', serverIDs: '', userIDs: '', rate: 60, concurrency: 4 })
   const [aiRawLogOpen, setAiRawLogOpen] = useState(false)
-  const [policyDraft, setPolicyDraft] = useState({ principalID: '', capability: '', mode: 'required', allowRisk4: false, serverIDs: '', userIDs: '' })
-
-  const splitValues = (value: string) => value.split(/[\s,]+/).map(item => item.trim()).filter(Boolean)
-  const numberValues = (value: string) => splitValues(value).map(Number).filter(item => Number.isInteger(item) && item > 0)
-  const resourceFilter = (serverIDs: string, userIDs: string) => {
-    const filter: Record<string, number[]> = {}
-    const servers = numberValues(serverIDs)
-    const users = numberValues(userIDs)
-    if (servers.length) filter.server_ids = servers
-    if (users.length) filter.user_ids = users
-    return filter
-  }
-  const resourceFilterIDs = (value: any, key: 'server_ids' | 'user_ids') => {
-    const source = value && typeof value === 'object' ? value : {}
-    return Array.isArray(source[key]) ? source[key].join(', ') : ''
-  }
   const refresh = async () => {
     setLoading(true)
     try {
-      const [principals, policies, changesets, providers, audits, capabilities, settings] = await Promise.all([
-        client.requestV2('/api-principals'), client.requestV2('/approval-policies'),
-        client.requestV2('/changesets'), client.requestV2('/ai/providers'), client.requestV2('/tool-audits'), client.requestV2('/capabilities'),
+      const [changesets, providers, audits, settings] = await Promise.all([
+        client.requestV2('/changesets'), client.requestV2('/ai/providers'), client.requestV2('/tool-audits'),
         client.request('/settings')
       ])
-      setSnapshot({ principals, policies, changesets, providers, audits, capabilities })
+      setSnapshot({ changesets, providers, audits })
       setControllerURL(settings?.settings?.controller_url || '')
-      setPolicyDraft(current => ({
-        ...current,
-        principalID: current.principalID || principals.find((item: any) => item.type === 'service_account')?.id || '',
-        capability: current.capability || capabilities.find((item: any) => item.executable)?.name || ''
-      }))
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -2961,78 +2857,11 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
     if (realtimeRevision > 0 && (realtimeResources.includes('automation') || realtimeResources.includes('all'))) void refresh()
   }, [realtimeRevision, realtimeResources])
 
-  const openServiceDialog = (principal?: any) => {
-    setEditingServiceID(principal?.id || '')
-    setServiceDraft(principal ? {
-      name: principal.name,
-      scopes: [...(principal.scopes || [])],
-      cidrs: (principal.allowed_cidrs || []).join(', '),
-      serverIDs: resourceFilterIDs(principal.resource_filter, 'server_ids'),
-      userIDs: resourceFilterIDs(principal.resource_filter, 'user_ids'),
-      rate: principal.rate_limit_per_minute,
-      concurrency: principal.max_concurrency,
-    } : { name: '', scopes: [], cidrs: '', serverIDs: '', userIDs: '', rate: 60, concurrency: 4 })
-    setServiceDialogOpen(true)
-  }
-  const saveServiceAccount = async (event: React.FormEvent) => {
-    event.preventDefault()
-    setWorking(editingServiceID ? 'service-update' : 'service-create')
-    try {
-      await client.requestV2(editingServiceID ? `/api-principals/${editingServiceID}` : '/api-principals', { method: editingServiceID ? 'PATCH' : 'POST', body: JSON.stringify({
-        name: serviceDraft.name, scopes: serviceDraft.scopes, allowed_cidrs: splitValues(serviceDraft.cidrs),
-        resource_filter: resourceFilter(serviceDraft.serverIDs, serviceDraft.userIDs), rate_limit_per_minute: serviceDraft.rate, max_concurrency: serviceDraft.concurrency
-      }) })
-      setServiceDialogOpen(false)
-      await refresh()
-      notify?.(editingServiceID ? 'Service Account 已更新' : 'Service Account 已创建', 'success')
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
-  }
   const closeConnectDialog = () => {
     setConnectDialogOpen(false)
   }
-  const closeServiceTokenDialog = () => {
-    setServiceTokenDialogOpen(false)
-    setConnectToken(null)
-  }
   const openConnectDialog = () => {
     setConnectDialogOpen(true)
-  }
-  const issueToken = async (principal: any) => {
-    setWorking(`token-${principal.id}`)
-    try {
-      const result = await client.requestV2(`/api-principals/${principal.id}/tokens`, { method: 'POST', body: JSON.stringify({}) })
-      setConnectToken({ value: result.token, expiresAt: result.token_info?.expires_at || '' })
-      setServiceTokenDialogOpen(true)
-      await refresh()
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
-  }
-  const togglePrincipal = async (principal: any) => {
-    setWorking(`principal-${principal.id}`)
-    try {
-      await client.requestV2(`/api-principals/${principal.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: !principal.enabled }) })
-      await refresh()
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
-  }
-  const deletePrincipal = async (principal: any) => {
-    const confirmed = await dialogs.confirm({ title: `删除 ${principal.name}？`, message: '已签发的 Token 和审批策略会一并撤销，此操作不能撤销。', confirmText: '删除', tone: 'danger' })
-    if (!confirmed) return
-    setWorking(`principal-delete-${principal.id}`)
-    try {
-      await client.requestV2(`/api-principals/${principal.id}`, { method: 'DELETE' })
-      if (editingServiceID === principal.id) setServiceDialogOpen(false)
-      await refresh()
-      notify?.('Service Account 已删除', 'success')
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
-  }
-  const savePolicy = async (event: React.FormEvent) => {
-    event.preventDefault()
-    setWorking('policy-save')
-    try {
-      await client.requestV2('/approval-policies', { method: 'POST', body: JSON.stringify({ principal_id: policyDraft.principalID, capability: policyDraft.capability, mode: policyDraft.mode, allow_risk4: policyDraft.allowRisk4, resource_filter: resourceFilter(policyDraft.serverIDs, policyDraft.userIDs) }) })
-      setPolicyDialogOpen(false)
-      await refresh()
-      notify?.('审批策略已保存', 'success')
-    } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const changesetAction = async (item: any, action: 'approve' | 'apply' | 'validate') => {
     setWorking(`${action}-${item.id}`)
@@ -3042,40 +2871,9 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
       notify?.(action === 'approve' ? '变更集已批准' : action === 'apply' ? '变更集已执行' : '变更集已校验', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
-  const serviceAccounts = snapshot.principals.filter((item: any) => item.type === 'service_account')
   const publicControllerURL = normalizeAutomationControllerURL(controllerURL)
   const connectArtifacts = automationConnectArtifacts(connectClient, publicControllerURL, { risk2: connectRisk2 })
   const connectReady = true
-  const executableCapabilities: AutomationCapability[] = snapshot.capabilities.filter((item: any) => item.executable)
-  const capabilities: AutomationCapability[] = snapshot.capabilities
-  const eligiblePolicyCapabilities = (principalID: string) => {
-    const principal = serviceAccounts.find((item: any) => item.id === principalID)
-    return executableCapabilities.filter(item => (item.required_scopes || []).every(scope => principal?.scopes?.includes('*') || principal?.scopes?.includes(scope)))
-  }
-  const changePolicyPrincipal = (principalID: string) => {
-    const available = eligiblePolicyCapabilities(principalID)
-    const capability = available[0]?.name || ''
-    const existing = snapshot.policies.find((item: any) => item.principal_id === principalID && item.capability === capability)
-    setPolicyDraft({ principalID, capability, mode: existing?.mode || 'required', allowRisk4: Boolean(existing?.allow_risk4), serverIDs: resourceFilterIDs(existing?.resource_filter, 'server_ids'), userIDs: resourceFilterIDs(existing?.resource_filter, 'user_ids') })
-  }
-  const changePolicyCapability = (capability: string) => {
-    const existing = snapshot.policies.find((item: any) => item.principal_id === policyDraft.principalID && item.capability === capability)
-    setPolicyDraft(current => ({ ...current, capability, mode: existing?.mode || 'required', allowRisk4: Boolean(existing?.allow_risk4), serverIDs: resourceFilterIDs(existing?.resource_filter, 'server_ids'), userIDs: resourceFilterIDs(existing?.resource_filter, 'user_ids') }))
-  }
-  const openPolicyDialog = (principal?: any, policy?: any) => {
-    const principalID = policy?.principal_id || principal?.id || serviceAccounts[0]?.id || ''
-    const available = eligiblePolicyCapabilities(principalID)
-    const selectedPolicy = policy || snapshot.policies.find((item: any) => item.principal_id === principalID && available.some(capability => capability.name === item.capability))
-    setPolicyDraft({
-      principalID,
-      capability: selectedPolicy?.capability || available[0]?.name || '',
-      mode: selectedPolicy?.mode || 'required',
-      allowRisk4: Boolean(selectedPolicy?.allow_risk4),
-      serverIDs: resourceFilterIDs(selectedPolicy?.resource_filter, 'server_ids'),
-      userIDs: resourceFilterIDs(selectedPolicy?.resource_filter, 'user_ids'),
-    })
-    setPolicyDialogOpen(true)
-  }
   return <Panel title="自动化" className="automation-panel">
     <div className="audit-console-tabs automation-tabs" role="tablist" aria-label="自动化视图">
       <button className={view === 'access' ? 'active' : ''} onClick={() => setView('access')}><Key size={15} />访问凭据</button>
@@ -3085,26 +2883,16 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
     </div>
     {view === 'access' && <>
       <div className="automation-access-toolbar">
-        <div><strong>MCP 客户端</strong><span>仅通过 OAuth 登录；Service Account 仅用于受控的 `/api/v2` 自动化。</span></div>
+        <div><strong>MCP 客户端</strong><span>通过 OAuth 登录并授权当前用户的访问权限。</span></div>
         <button type="button" onClick={() => openConnectDialog()}><Cable size={15} />接入客户端</button>
       </div>
       <MCPAccessPage
         requestV2={client.requestV2}
         notify={notify}
         confirm={dialogs.confirm}
-        serviceAccountSection={
-          <section className="settings-card">
-            <div className="settings-card-head automation-section-head"><div><h3>Service Account</h3><p className="muted">仅供受控的 `/api/v2` 自动化使用，不可用于 MCP。</p></div><button type="button" onClick={() => openServiceDialog()}><Plus size={14} />新建</button></div>
-            <div className="automation-list">{serviceAccounts.length ? serviceAccounts.map((item: any) => <div className="automation-row" key={item.id}><div><div className="automation-row-title"><strong>{item.name}</strong><span className={`automation-state ${item.enabled ? 'is-enabled' : ''}`}>{item.enabled ? '已启用' : '已停用'}</span></div><span>{automationScopeSummary(item.scopes)}</span><small>{item.allowed_cidrs?.length ? item.allowed_cidrs.join(', ') : '任意来源'} · {item.rate_limit_per_minute}/分钟 · 并发 {item.max_concurrency}</small></div><div><button className="ghost icon-button" onClick={() => openServiceDialog(item)} title="编辑" aria-label={`编辑 ${item.name}`}><Edit3 size={15} /></button><button className="ghost icon-button" onClick={() => void issueToken(item)} disabled={!item.enabled} title={item.enabled ? '签发 API Token' : '启用后才能签发 Token'} aria-label={item.enabled ? `为 ${item.name} 签发 API Token` : '启用后才能签发 Token'}><KeyRound size={15} /></button><button className="ghost icon-button" onClick={() => void togglePrincipal(item)} title={item.enabled ? '禁用' : '启用'} aria-label={item.enabled ? '禁用' : '启用'}>{item.enabled ? <PauseCircle size={15} /> : <Play size={15} />}</button><button className="ghost icon-button danger-text" onClick={() => void deletePrincipal(item)} title="删除" aria-label={`删除 ${item.name}`}><Trash2 size={15} /></button></div></div>) : <div className="automation-empty"><KeyRound size={20} /><span>还没有 Service Account</span><button type="button" className="ghost" onClick={() => openServiceDialog()}>新建凭据</button></div>}</div>
-          </section>
-        }
       />
     </>}
     {view === 'changes' && <div className="automation-grid">
-      <section className="settings-card">
-        <div className="settings-card-head automation-section-head"><div><h3>审批策略</h3><p className="muted">执行权限默认需要人工审批，可按主体和能力单独调整。</p></div><button type="button" onClick={() => openPolicyDialog()} disabled={!serviceAccounts.length}><Settings2 size={14} />配置</button></div>
-        <div className="automation-list">{snapshot.policies.length ? snapshot.policies.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{automationScopeLabel(executableCapabilities.find(capability => capability.name === item.capability)?.required_scopes?.[0] || item.capability)}</strong><span>{serviceAccounts.find((principal: any) => principal.id === item.principal_id)?.name || item.principal_id}</span><small>{item.mode === 'automatic' ? '自动批准' : item.mode === 'denied' ? '拒绝执行' : '人工审批'} · {item.capability}</small></div><div><button type="button" className="ghost icon-button" onClick={() => openPolicyDialog(undefined, item)} title="编辑策略" aria-label="编辑策略"><Edit3 size={15} /></button></div></div>) : <div className="automation-empty"><ShieldCheck size={20} /><span>{serviceAccounts.length ? '当前全部执行能力均需人工审批' : '先创建 Service Account，再配置审批策略'}</span>{Boolean(serviceAccounts.length) && <button type="button" className="ghost" onClick={() => openPolicyDialog()}>配置策略</button>}</div>}</div>
-      </section>
       <section className="settings-card automation-changesets">
         <div className="settings-card-head"><div><h3>Changeset</h3><p className="muted">校验计划哈希、影响范围并执行已批准变更。</p></div></div>
         <div className="automation-list">{snapshot.changesets.length ? snapshot.changesets.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{item.reason || item.id}</strong><span>{item.operations.map((operation: any) => operation.capability).join(' · ')}</span><small>{item.status} · 风险 {item.risk_class} · {formatTableTime(item.created_at)}</small></div><div>{item.status === 'draft' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'validate')} title="校验" aria-label="校验"><ShieldCheck size={15} /></button>}{item.status === 'awaiting_approval' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'approve')} title="批准" aria-label="批准"><BadgeCheck size={15} /></button>}{item.status === 'approved' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'apply')} title="执行" aria-label="执行"><Play size={15} /></button>}</div></div>) : <p className="muted">暂无变更集</p>}</div>
@@ -3142,55 +2930,6 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
         </>}
       </div>
       <footer className="dialog-actions"><button type="button" onClick={closeConnectDialog}>完成</button></footer>
-    </MotionDialogPanel>}</AnimatePresence>
-    <AnimatePresence>{serviceTokenDialogOpen && connectToken && <MotionDialogPanel onCancel={closeServiceTokenDialog} className="automation-dialog">
-      <header className="dialog-head"><div><h2>API Token 已签发</h2><p className="muted">仅用于对应 Service Account 的 `/api/v2` 请求，不可访问 MCP。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={closeServiceTokenDialog} aria-label="关闭" title="关闭"><XIcon /></button></header>
-      <div className="dialog-body automation-connect-body">
-        <div className="automation-token-once"><KeyRound size={18} /><div><strong>Token 仅显示这一次</strong><span>请存入受保护的凭据管理器。不要写入仓库、聊天记录或普通配置文件。</span></div></div>
-        <div className="automation-connect-output"><div className="automation-connect-output-head"><strong>Bearer Token</strong><span>{connectToken.expiresAt ? `有效期至 ${formatTableTime(connectToken.expiresAt)}` : '按服务端策略到期'}</span></div><CopyBlock value={connectToken.value} /></div>
-      </div>
-      <footer className="dialog-actions"><button type="button" onClick={closeServiceTokenDialog}>我已妥善保存</button></footer>
-    </MotionDialogPanel>}</AnimatePresence>
-    <AnimatePresence>{serviceDialogOpen && <MotionDialogPanel onCancel={() => setServiceDialogOpen(false)} className="automation-dialog">
-      <header className="dialog-head"><div><h2>{editingServiceID ? '编辑 Service Account' : '新建 Service Account'}</h2><p className="muted">按用途授予最少权限，Token 创建后再单独签发。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => setServiceDialogOpen(false)} aria-label="关闭" title="关闭"><XIcon /></button></header>
-      <div className="dialog-body">
-        <form id="service-account-form" className="form automation-dialog-form" onSubmit={saveServiceAccount}>
-          <FormField label="名称" required><input autoFocus required value={serviceDraft.name} onChange={event => setServiceDraft({ ...serviceDraft, name: event.target.value })} placeholder="例如：CI 自动化" /></FormField>
-          <AutomationPermissionPicker capabilities={capabilities} value={serviceDraft.scopes} onChange={scopes => setServiceDraft({ ...serviceDraft, scopes })} />
-          <details className="automation-advanced">
-            <summary><span><strong>访问限制</strong><small>IP、资源范围和调用频率</small></span><ChevronDown size={16} /></summary>
-            <div className="automation-advanced-body">
-              <FormField label="允许 CIDR" hint="留空允许任意来源；支持多个 CIDR。"><input value={serviceDraft.cidrs} onChange={event => setServiceDraft({ ...serviceDraft, cidrs: event.target.value })} placeholder="例如：203.0.113.0/24" /></FormField>
-              <div className="two-column"><FormField label="服务器 ID" hint="留空不限制"><input value={serviceDraft.serverIDs} onChange={event => setServiceDraft({ ...serviceDraft, serverIDs: event.target.value })} placeholder="1, 2" /></FormField><FormField label="用户 ID" hint="留空不限制"><input value={serviceDraft.userIDs} onChange={event => setServiceDraft({ ...serviceDraft, userIDs: event.target.value })} placeholder="10, 11" /></FormField></div>
-              <div className="two-column"><FormField label="每分钟请求"><input type="number" min={1} max={10000} value={serviceDraft.rate} onChange={event => setServiceDraft({ ...serviceDraft, rate: Number(event.target.value) })} /></FormField><FormField label="最大并发"><input type="number" min={1} max={64} value={serviceDraft.concurrency} onChange={event => setServiceDraft({ ...serviceDraft, concurrency: Number(event.target.value) })} /></FormField></div>
-            </div>
-          </details>
-        </form>
-      </div>
-      <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setServiceDialogOpen(false)}>取消</button><button type="submit" form="service-account-form" disabled={Boolean(working) || !serviceDraft.name.trim() || !serviceDraft.scopes.length}>{editingServiceID ? '保存' : '创建'}</button></footer>
-    </MotionDialogPanel>}</AnimatePresence>
-    <AnimatePresence>{policyDialogOpen && <MotionDialogPanel onCancel={() => setPolicyDialogOpen(false)} className="automation-dialog automation-policy-dialog">
-      <header className="dialog-head"><div><h2>配置审批策略</h2><p className="muted">每项执行能力独立决定人工审批、自动批准或拒绝。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => setPolicyDialogOpen(false)} aria-label="关闭" title="关闭"><XIcon /></button></header>
-      <div className="dialog-body">
-        <form id="approval-policy-form" className="form automation-dialog-form" onSubmit={savePolicy}>
-          <FormField label="Service Account"><Select value={policyDraft.principalID} onChange={event => changePolicyPrincipal(event.target.value)}>{serviceAccounts.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>
-          <div className="automation-policy-capabilities">
-            <div className="automation-permission-summary"><div><strong>执行能力</strong><span>这里只显示该主体已经获得的执行权限。</span></div><span>{eligiblePolicyCapabilities(policyDraft.principalID).length} 项</span></div>
-            {eligiblePolicyCapabilities(policyDraft.principalID).length ? eligiblePolicyCapabilities(policyDraft.principalID).map(capability => <label key={capability.name} className={`automation-policy-capability${policyDraft.capability === capability.name ? ' is-selected' : ''}`}>
-              <input type="radio" name="approval-capability" checked={policyDraft.capability === capability.name} onChange={() => changePolicyCapability(capability.name)} />
-              <span><strong>{automationScopeLabel(capability.required_scopes[0] || capability.name)}</strong><small>{capability.description}</small><code>{capability.name}</code></span><em>风险 {capability.risk_class}</em>
-            </label>) : <div className="automation-inline-empty">这个主体没有执行权限，请先编辑 Service Account。</div>}
-          </div>
-          {policyDraft.capability && <>
-            <FormField label="处理方式" hint="拒绝策略优先级最高。"><Select variant="segmented" value={policyDraft.mode} onChange={event => setPolicyDraft({ ...policyDraft, mode: event.target.value })}><option value="required">人工审批</option><option value="automatic">自动批准</option><option value="denied">拒绝执行</option></Select></FormField>
-            <details className="automation-advanced">
-              <summary><span><strong>进一步限制资源</strong><small>可选；范围仍不会超过 Service Account 本身</small></span><ChevronDown size={16} /></summary>
-              <div className="automation-advanced-body"><div className="two-column"><FormField label="服务器 ID" hint="留空沿用主体范围"><input value={policyDraft.serverIDs} onChange={event => setPolicyDraft({ ...policyDraft, serverIDs: event.target.value })} /></FormField><FormField label="用户 ID" hint="留空沿用主体范围"><input value={policyDraft.userIDs} onChange={event => setPolicyDraft({ ...policyDraft, userIDs: event.target.value })} /></FormField></div></div>
-            </details>
-          </>}
-        </form>
-      </div>
-      <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setPolicyDialogOpen(false)}>取消</button><button type="submit" form="approval-policy-form" disabled={Boolean(working) || !policyDraft.capability}>保存策略</button></footer>
     </MotionDialogPanel>}</AnimatePresence>
     <AnimatePresence>{aiRawLogOpen && <AIProviderRawLogDialog client={client} onClose={() => setAiRawLogOpen(false)} />}</AnimatePresence>
   </Panel>
