@@ -3,6 +3,7 @@ import { AnimatePresence } from 'motion/react'
 import { Bot, ClipboardList, Edit3, PauseCircle, Play, Plus, Send, Trash2, X } from 'lucide-react'
 import { apiStyleLabel, formatTokenLimit, providerEndpointTemplate, tokenDisplayToLimit, tokenLimitToDisplay, type AIProviderKind, type TokenDisplayUnit } from '../../ai-provider'
 import { FormField } from '../ui/form-field'
+import { Switch } from '../ui/switch'
 import { MotionDialogPanel } from '../ui/motion'
 import { Select } from '../ui/select'
 import { EndpointEditor } from './EndpointEditor'
@@ -193,8 +194,15 @@ export function ProviderEditor({ providers, requestV2, refresh, notify, confirm,
         <div className="two-column"><FormField label="Provider 名称" required><input autoFocus required value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="例如：Claude Production" /></FormField><FormField label="Provider Vendor" required><Select variant="segmented" value={draft.providerKind} onChange={event => changeKind(event.target.value as AIProviderKind)}><option value="openai">OpenAI</option><option value="anthropic">Claude</option><option value="custom">Custom</option></Select></FormField></div>
         <FormField label="默认模型" required><ModelSelector value={draft.defaultModel} options={models} loading={discovering} status={modelStatus} disabled={!draft.endpoints.length} onChange={value => setDraft({ ...draft, defaultModel: value })} onDiscover={() => void discoverModels()} /></FormField>
         <div className="two-column"><FormField label="路由策略"><Select value="ordered_failover" disabled><option value="ordered_failover">Ordered Failover</option></Select></FormField><FormField label="每日 Token 上限" hint="0 表示不设日限额"><div className="token-limit-input"><input inputMode="decimal" required value={draft.tokenAmount} aria-invalid={tokenLimit === null || undefined} onChange={event => setDraft({ ...draft, tokenAmount: event.target.value })} /><Select variant="segmented" value={draft.tokenUnit} onChange={event => setDraft({ ...draft, tokenUnit: event.target.value as TokenDisplayUnit })}><option value="Token">Token</option><option value="K">K</option><option value="M">M</option></Select></div></FormField></div>
-        <label className="toggle-line"><input type="checkbox" checked={draft.enabled} onChange={event => setDraft({ ...draft, enabled: event.target.checked })} /><span>启用 Provider</span></label>
-        <label className="toggle-line"><input type="checkbox" checked={draft.allowRawAudit} onChange={event => setDraft({ ...draft, allowRawAudit: event.target.checked })} /><span>允许保存审计业务原始输入与输出</span></label>
+
+        <div className="switch-form-row" style={{ padding: '4px 0' }}>
+          <span className="switch-form-label">启用 Provider</span>
+          <Switch checked={draft.enabled} onChange={checked => setDraft({ ...draft, enabled: checked })} />
+        </div>
+        <div className="switch-form-row" style={{ padding: '4px 0' }}>
+          <span className="switch-form-label">允许保存审计业务原始输入与输出</span>
+          <Switch checked={draft.allowRawAudit} onChange={checked => setDraft({ ...draft, allowRawAudit: checked })} />
+        </div>
         <div className="ai-endpoints-heading"><div><strong>Upstream Endpoints</strong><span>按 Priority 从小到大尝试</span></div><button type="button" className="ghost" onClick={() => setDraft(current => ({ ...current, endpoints: [...current.endpoints, { ...draftEndpoint(undefined, current.providerKind), priority: (Math.max(0, ...current.endpoints.map(endpoint => endpoint.priority)) || 0) + 10 }] }))}><Plus size={14} />添加 Endpoint</button></div>
         {draft.endpoints.map((endpoint, index) => <EndpointEditor key={endpoint.localID} endpoint={endpoint} index={index} canDelete={draft.endpoints.length > 1} testing={testing} onChange={next => updateEndpoint(index, next)} onDelete={() => removeEndpoint(index)} onTest={() => void testEndpoint(endpoint)} />)}
       </form></div>

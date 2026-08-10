@@ -5,6 +5,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { ChevronDown, ChevronUp, GripVertical, Plus, RotateCcw } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
+import { Switch } from '../ui/switch'
 
 export type TemplatePolicy = {
   version: number
@@ -81,7 +82,10 @@ export function NodeOrderTemplateEditor({ policy, onChange, regionCodes, entries
       <section>
         <div className="template-section-heading"><h4>{policy.base_mode === 'entry' ? '入口地区顺序' : '出口地区顺序'}</h4><Button type="button" variant="ghost" size="sm" onClick={() => update(regionField, regionCodes as any)}><RotateCcw size={14} /> 恢复默认</Button></div>
         {policy.base_mode === 'entry' && (
-          <label className="inline-check"><input type="checkbox" checked={policy.entry_region_order_mode === 'inherit_exit'} onChange={event => update('entry_region_order_mode', event.target.checked ? 'inherit_exit' : 'custom')} /> 跟随出口地区顺序</label>
+          <div className="switch-setting-row" style={{ padding: '4px 0', marginBottom: 8 }}>
+            <span className="switch-setting-label">跟随出口地区顺序</span>
+            <Switch checked={policy.entry_region_order_mode === 'inherit_exit'} onChange={checked => update('entry_region_order_mode', checked ? 'inherit_exit' : 'custom')} />
+          </div>
         )}
         <RuleList items={activeRegions} onChange={items => update(regionField, items as any)} />
         <div className="template-add-rule"><Input value={regionInput} onChange={event => setRegionInput(event.target.value)} placeholder="地区代码，如 JP" maxLength={2} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addRegion() } }} /><Button type="button" variant="outline" size="sm" onClick={addRegion}><Plus size={14} /> 添加</Button></div>

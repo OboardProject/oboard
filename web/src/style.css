@@ -15979,3 +15979,149 @@ button.ui-btn-ghost:hover {
     width: 100%;
   }
 }
+
+/* ==========================================================================
+   Custom Switch Component & Unified Tooltip Overflows
+   ========================================================================== */
+.ui-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.ui-switch.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ui-switch-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+}
+
+.ui-switch-track {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+  border-radius: 11px;
+  background-color: var(--border-strong, #cbd5e1);
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.ui-switch.is-checked .ui-switch-track {
+  background-color: var(--primary, #0f172a);
+}
+
+.ui-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background-color: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ui-switch.is-checked .ui-switch-thumb {
+  transform: translateX(16px);
+}
+
+.ui-switch-input:focus-visible + .ui-switch-track {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Switch Sizes */
+.ui-switch-sm .ui-switch-track {
+  width: 30px;
+  height: 18px;
+  border-radius: 9px;
+}
+.ui-switch-sm .ui-switch-thumb {
+  width: 14px;
+  height: 14px;
+  top: 2px;
+  left: 2px;
+}
+.ui-switch-sm.is-checked .ui-switch-thumb {
+  transform: translateX(12px);
+}
+
+.ui-switch-lg .ui-switch-track {
+  width: 46px;
+  height: 26px;
+  border-radius: 13px;
+}
+.ui-switch-lg .ui-switch-thumb {
+  width: 22px;
+  height: 22px;
+  top: 2px;
+  left: 2px;
+}
+.ui-switch-lg.is-checked .ui-switch-thumb {
+  transform: translateX(20px);
+}
+
+/* Unified Setting & Form Switch Rows (Switch on Right Side) */
+.switch-setting-row,
+.switch-form-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+
+.switch-setting-label,
+.switch-form-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  color: var(--text-strong);
+  font-size: 14px;
+}
+
+/* Tooltip Z-Index & Overflow Layering Fixes */
+.form-field-help-popover {
+  z-index: 99999 !important;
+}
+
+.form-field-help-popover.popover-bottom {
+  top: calc(100% + 7px) !important;
+  bottom: auto !important;
+  transform: translateX(-50%) translateY(-3px) !important;
+}
+
+.form-field-help:hover .form-field-help-popover.popover-bottom,
+.form-field-help:focus-visible .form-field-help-popover.popover-bottom,
+.form-field-help-popover.popover-bottom[data-open="true"] {
+  transform: translateX(-50%) translateY(0) !important;
+}
+
+.dialog-panel,
+.dialog-body {
+  overflow: visible !important;
+}
+
+.dialog-body-scrollable {
+  overflow-y: auto !important;
+  overflow-x: visible !important;
+}
+

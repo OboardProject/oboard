@@ -9,6 +9,7 @@ import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, us
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { FormField, TrafficLimitInput } from '../components/ui/form-field'
+import { Switch } from '../components/ui/switch'
 import { PlanNodeOrderingPanel, type OrderingPlan } from '../components/node-ordering/PlanNodeOrderingPanel'
 import { Skeleton } from '../components/ui/skeleton'
 import { PlanNodeNameDialog, type PlanNameNode } from '../components/node-assignment/PlanNodeNameDialog'
@@ -1038,9 +1039,9 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                 <span>日</span>
               </div>
             </FormField>}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginTop: 4 }}>
-              <input type="checkbox" id="edit-plan-enabled" checked={editDraft.enabled} onChange={e => setEditDraft(d => ({ ...d, enabled: e.target.checked }))} />
-              <label htmlFor="edit-plan-enabled">启用套餐</label>
+            <div className="switch-form-row" style={{ marginTop: 8 }}>
+              <span className="switch-form-label">启用套餐</span>
+              <Switch checked={editDraft.enabled} onChange={checked => setEditDraft(d => ({ ...d, enabled: checked }))} />
             </div>
           </form>
           {message && <p style={{ color: 'var(--color-danger)' }}>{message}</p>}

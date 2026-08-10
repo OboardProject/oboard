@@ -57,6 +57,7 @@ import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } fr
 import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
 import './style.css'
 import { Badge } from './components/ui/badge'
+import { Switch } from './components/ui/switch'
 import logo from './assets/logo.svg'
 import { 
   LayoutDashboard, Server as ServerIcon, Workflow, Users as UsersIcon, Link as LinkIcon, 
@@ -4847,13 +4848,19 @@ function AuditSettingsPanel({ data, client, load, notify }: any) {
     <div className="settings-card-head"><div><h3>审计设置</h3><p className="muted">统一控制订阅审计与连接审计的采集、风险评估、通知和 Agent 行为。</p></div></div>
     <div className="form settings-form single-field">
       <FormField label="总审计开关" hint="关闭后订阅审计与连接审计全部停止：Agent 立即停止采集与上报并清除本地审计状态，风险通知不再发送，历史数据保留可查。">
-        <label className="notification-enable-row"><input type="checkbox" checked={auditEnabled} onChange={event => setAuditEnabled(event.target.checked)} aria-label="启用总审计" /></label>
+        <div className="switch-setting-row">
+          <Switch checked={auditEnabled} onChange={setAuditEnabled} ariaLabel="启用总审计" />
+        </div>
       </FormField>
       <FormField label="订阅审计" hint="关闭后订阅拉取不再记录、评分或触发暂停；已有暂停状态仍保持，需管理员手动恢复。">
-        <label className="notification-enable-row"><input type="checkbox" checked={auditEnabled && subscriptionAuditEnabled} disabled={!auditEnabled} onChange={event => setSubscriptionAuditEnabled(event.target.checked)} aria-label="启用订阅审计" /></label>
+        <div className="switch-setting-row">
+          <Switch checked={auditEnabled && subscriptionAuditEnabled} disabled={!auditEnabled} onChange={setSubscriptionAuditEnabled} ariaLabel="启用订阅审计" />
+        </div>
       </FormField>
       <FormField label="连接审计（全局）" hint="关闭后所有服务器的 Agent 停止采集、上报和本地审计状态写入；仍可在单台服务器上单独控制。">
-        <label className="notification-enable-row"><input type="checkbox" checked={auditEnabled && connectionAuditEnabled} disabled={!auditEnabled} onChange={event => setConnectionAuditEnabled(event.target.checked)} aria-label="启用连接审计" /></label>
+        <div className="switch-setting-row">
+          <Switch checked={auditEnabled && connectionAuditEnabled} disabled={!auditEnabled} onChange={setConnectionAuditEnabled} ariaLabel="启用连接审计" />
+        </div>
       </FormField>
       <FormField label="风险阈值处理" hint="主动限制：订阅拉取达到高风险处置阈值并满足置信度与双证据要求时，暂停具体设备并通知管理员；仅警告：不暂停、只发送风险通知，评估与记录继续。">
         <Select variant="segmented" value={auditAction} onChange={e => setAuditAction(e.target.value as 'restrict' | 'warn')} aria-label="审计风险阈值处理方式">
@@ -6544,21 +6551,21 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
       <div className="dialog-body">
         <div className="form server-dialog-form labeled-form">
           <div className="form-section-title">基础信息</div>
-          <FormField label="服务器名称" required hint="用于面板识别。">
+          <FormField label="服务器名称" required hint="用于面板识别。" placement="bottom">
             <input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="例如：server-1" />
           </FormField>
           <ServerRegionField draft={draft} update={update} servers={servers} />
-          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。">
+          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。" placement="bottom">
             <Select value={draft.entry_ip_mode} onChange={e => update({ entry_ip_mode: e.target.value as EntryIPMode })}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
           </FormField>
-          <FormField label="自定义入口地址" hint="可填写域名、IPv4 或 IPv6。">
+          <FormField label="自定义入口地址" hint="可填写域名、IPv4 或 IPv6。" placement="bottom">
             <input value={draft.entry_address} onChange={e => update({ entry_address: e.target.value })} placeholder="例如 1.2.3.4 或 example.com" />
             <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
           </FormField>
-          <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。">
+          <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom">
             <Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select>
           </FormField>
-          <FormField label="监听 IP" hint="通常保持 0.0.0.0；填写具体地址可覆盖监听模式。">
+          <FormField label="监听 IP" hint="通常保持 0.0.0.0；填写具体地址可覆盖监听模式。" placement="bottom">
             <input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" />
           </FormField>
 
@@ -6570,7 +6577,10 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
             <UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} />
           </FormField>
           <FormField label="BBR + FQ" hint="首次安装 Agent 时尝试启用，失败不影响安装。">
-            <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.bbr_enabled)} onChange={e => update({ bbr_enabled: e.target.checked })} aria-label="安装时启用 BBR + FQ" /></label>
+            <div className="switch-form-row">
+              <span className="switch-form-label">安装时启用 BBR + FQ</span>
+              <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} />
+            </div>
           </FormField>
           <FormField label="时间校准" hint="开启后，Agent 接入时会立即检测。" full>
             <TimeCorrectionSelector value={draft.time_correction_mode} onChange={value => update({ time_correction_mode: value })} />
@@ -6591,14 +6601,23 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           </FormField>
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
           <FormField label="公网可访问性" hint="每分钟检测公网连接和延迟。">
-            <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.connectivity_probe_enabled)} onChange={e => update({ connectivity_probe_enabled: e.target.checked })} aria-label="启用公网可访问性" /></label>
+            <div className="switch-form-row">
+              <span className="switch-form-label">启用公网可访问性</span>
+              <Switch checked={Boolean(draft.connectivity_probe_enabled)} onChange={checked => update({ connectivity_probe_enabled: checked })} />
+            </div>
           </FormField>
           <FormField label="连接审计" hint="记录来源 IP、目标与出口摘要。">
-            <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.connection_audit_enabled)} onChange={e => update({ connection_audit_enabled: e.target.checked })} aria-label="启用连接审计" /></label>
+            <div className="switch-form-row">
+              <span className="switch-form-label">启用连接审计</span>
+              <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} />
+            </div>
             {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
           </FormField>
           <FormField label="离线与恢复提醒" hint="关闭后不再提醒这台服务器的离线与恢复。">
-            <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.offline_notify_enabled)} onChange={e => update({ offline_notify_enabled: e.target.checked })} aria-label="启用离线与恢复提醒" /></label>
+            <div className="switch-form-row">
+              <span className="switch-form-label">启用离线与恢复提醒</span>
+              <Switch checked={Boolean(draft.offline_notify_enabled)} onChange={checked => update({ offline_notify_enabled: checked })} />
+            </div>
           </FormField>
           {Boolean(draft.offline_notify_enabled) && <FormField label="离线判断时间（秒）" hint="留空或 0 表示使用设置中的默认值。">
             <input type="number" min={0} max={86400} value={Number(draft.offline_after_seconds) || 0} onChange={e => update({ offline_after_seconds: Math.max(0, Number(e.target.value) || 0) })} />
@@ -6655,19 +6674,24 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
       <div className="dialog-body">
         <div className="form server-dialog-form labeled-form">
           <div className="form-section-title">基础信息</div>
-          <FormField label="服务器名称" required><input value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
+          <FormField label="服务器名称" required hint="用于面板识别。" placement="bottom"><input value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
           <ServerRegionField draft={draft} update={update} servers={servers} />
-          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。"><Select value={draft.entry_ip_mode} onChange={e => update({ entry_ip_mode: e.target.value as EntryIPMode })}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
-          <FormField label="自定义入口地址" hint="选择自定义时使用。">
+          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。" placement="bottom"><Select value={draft.entry_ip_mode} onChange={e => update({ entry_ip_mode: e.target.value as EntryIPMode })}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
+          <FormField label="自定义入口地址" hint="选择自定义时使用。" placement="bottom">
             <input value={draft.entry_address || ''} onChange={e => update({ entry_address: e.target.value })} placeholder="域名 / IPv4 / IPv6" />
             <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
           </FormField>
-          <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
-          <FormField label="监听 IP" hint="填写具体地址可覆盖监听模式。"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
+          <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
+          <FormField label="监听 IP" hint="填写具体地址可覆盖监听模式。" placement="bottom"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
           <div className="form-section-title">网络策略</div>
-          <FormField label="出口解析策略"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
+          <FormField label="出口解析策略" hint="选择出口优先使用的 IP 类型。"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
-          <FormField label="BBR + FQ" hint="下次重新安装 Agent 时尝试启用，失败不影响安装。"><label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.bbr_enabled)} onChange={e => update({ bbr_enabled: e.target.checked })} aria-label="安装时尝试启用 BBR + FQ" /></label></FormField>
+          <FormField label="BBR + FQ" hint="下次重新安装 Agent 时尝试启用，失败不影响安装。">
+            <div className="switch-form-row">
+              <span className="switch-form-label">安装时尝试启用 BBR + FQ</span>
+              <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} />
+            </div>
+          </FormField>
           <FormField label="时间校准" hint="切换模式后会立即检测时间偏差。" full><TimeCorrectionSelector value={draft.time_correction_mode || 'off'} onChange={value => update({ time_correction_mode: value })} /></FormField>
           <FormField label="公网端口范围" hint="自动托管的公网监听端口池；耗尽时部署会报错，不会越界回落。"><PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} /></FormField>
           <FormField label="内部回环端口范围" hint="仅监听 127.0.0.1 / ::1 的内部组件端口池，不受公网端口限制。"><PortRangeInput start={draft.internal_port_range_start} end={draft.internal_port_range_end} onChange={(internal_port_range_start, internal_port_range_end) => update({ internal_port_range_start, internal_port_range_end })} onValidityChange={setInternalPortRangeValid} /></FormField>
@@ -6677,14 +6701,23 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           </FormField>
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
           <FormField label="公网可访问性" hint="每分钟检测公网连接和延迟。">
-            <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.connectivity_probe_enabled)} onChange={e => update({ connectivity_probe_enabled: e.target.checked })} aria-label="启用公网可访问性" /></label>
+            <div className="switch-form-row">
+              <span className="switch-form-label">启用公网可访问性</span>
+              <Switch checked={Boolean(draft.connectivity_probe_enabled)} onChange={checked => update({ connectivity_probe_enabled: checked })} />
+            </div>
           </FormField>
           <FormField label="连接审计" hint="关闭后 Agent 停止采集、上报和本地审计状态写入。">
-            <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.connection_audit_enabled)} onChange={e => update({ connection_audit_enabled: e.target.checked })} aria-label="启用连接审计" /></label>
+            <div className="switch-form-row">
+              <span className="switch-form-label">启用连接审计</span>
+              <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} />
+            </div>
             {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
           </FormField>
           <FormField label="离线与恢复提醒" hint="关闭后不再提醒这台服务器的离线与恢复。">
-            <label className="notification-enable-row"><input type="checkbox" checked={Boolean(draft.offline_notify_enabled)} onChange={e => update({ offline_notify_enabled: e.target.checked })} aria-label="启用离线与恢复提醒" /></label>
+            <div className="switch-form-row">
+              <span className="switch-form-label">启用离线与恢复提醒</span>
+              <Switch checked={Boolean(draft.offline_notify_enabled)} onChange={checked => update({ offline_notify_enabled: checked })} />
+            </div>
           </FormField>
           {Boolean(draft.offline_notify_enabled) && <FormField label="离线判断时间（秒）" hint="留空或 0 表示使用设置中的默认值。">
             <input type="number" min={0} max={86400} value={Number(draft.offline_after_seconds) || 0} onChange={e => update({ offline_after_seconds: Math.max(0, Number(e.target.value) || 0) })} />
@@ -10031,10 +10064,10 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             <input value={draft.external_ip || ''} onChange={e => changeExternalIP(e.target.value)} placeholder="例如 1.2.3.4 或 origin.example.net" />
           </FormField>}
           <div className="managed-entry-box">
-            <label className="check-row">
-              <input type="checkbox" checked={Boolean(draft.dns_sync_enabled)} onChange={e => update({ dns_sync_enabled: e.target.checked, dns_credential_id: e.target.checked ? (draft.dns_credential_id || dnsCredentials.find(item => item.verified_at)?.id) : undefined, dns_record_types: draft.dns_record_types === 'auto' ? 'a' : (draft.dns_record_types || 'a'), dns_proxy_enabled: e.target.checked && selectedDNSCredential?.provider === 'cloudflare' ? Boolean(draft.dns_proxy_enabled) : false })} />
-              <span>自动同步 DNS 解析</span>
-            </label>
+            <div className="switch-setting-row" style={{ padding: '4px 0', marginBottom: 8 }}>
+              <span className="switch-setting-label">自动同步 DNS 解析</span>
+              <Switch checked={Boolean(draft.dns_sync_enabled)} onChange={checked => update({ dns_sync_enabled: checked, dns_credential_id: checked ? (draft.dns_credential_id || dnsCredentials.find(item => item.verified_at)?.id) : undefined, dns_record_types: draft.dns_record_types === 'auto' ? 'a' : (draft.dns_record_types || 'a'), dns_proxy_enabled: checked && selectedDNSCredential?.provider === 'cloudflare' ? Boolean(draft.dns_proxy_enabled) : false })} />
+            </div>
             {draft.dns_sync_enabled && <>
               <FormField label="域名服务账号" required>
                 <Select value={Number(draft.dns_credential_id || 0)} onChange={e => changeDNSCredential(Number(e.target.value))}><option value={0}>选择凭据</option>{dnsCredentials.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name} · {dnsProviderLabels[item.provider]}</option>)}</Select>
@@ -10055,7 +10088,10 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
               {selectedDNSCredential?.provider === 'cloudflare' && <FormField label="Cloudflare 代理" hint="普通代理建议使用 DNS only。">
                 <Select variant="segmented" value={String(Boolean(draft.dns_proxy_enabled))} onChange={e => update({ dns_proxy_enabled: e.target.value === 'true' })}><option value="false">DNS only</option><option value="true">开启代理</option></Select>
               </FormField>}
-              {entryMode !== 'custom' && <label className="check-row"><input type="checkbox" checked={Boolean(draft.ddns_enabled)} onChange={e => update({ ddns_enabled: e.target.checked })} /><span>公网 IP 变化时定时更新</span></label>}
+              {entryMode !== 'custom' && <div className="switch-setting-row" style={{ padding: '4px 0', marginTop: 8 }}>
+                <span className="switch-setting-label">公网 IP 变化时定时更新</span>
+                <Switch checked={Boolean(draft.ddns_enabled)} onChange={checked => update({ ddns_enabled: checked })} />
+              </div>}
               {draft.ddns_enabled && <FormField label="检查间隔"><Select value={Number(draft.ddns_interval_seconds || 300)} onChange={e => update({ ddns_interval_seconds: Number(e.target.value) })}><option value={300}>5 分钟</option><option value={900}>15 分钟</option><option value={3600}>1 小时</option><option value={21600}>6 小时</option></Select></FormField>}
               <div className="access-note compact"><strong>同步时机</strong><span>下发前同步，开启定时更新后按间隔刷新。</span></div>
               {!dnsCredentials.length && <div className="access-note warning"><strong>还没有可用的域名服务账号</strong><span>请先到“域名解析”创建并验证账号。</span></div>}
@@ -12532,7 +12568,12 @@ function DNSListDialog({ draft, setDraft, editing, saving, onCancel, onSave }: {
             </div>)}
           </div>
         </section>
-        <FormField label="使用状态"><div className="notification-enable-row"><input type="checkbox" checked={draft.enabled} disabled={Boolean(editing?.protected)} onChange={event => update({ enabled: event.target.checked })} /><span>{editing?.protected ? '默认列表始终启用' : draft.enabled ? '列表已启用' : '列表已停用'}</span></div></FormField>
+        <FormField label="使用状态">
+          <div className="switch-form-row">
+            <span className="switch-form-label">{editing?.protected ? '默认列表始终启用' : draft.enabled ? '列表已启用' : '列表已停用'}</span>
+            <Switch checked={draft.enabled} disabled={Boolean(editing?.protected)} onChange={checked => update({ enabled: checked })} />
+          </div>
+        </FormField>
       </div>
     </div>
     <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button><button type="button" onClick={onSave} disabled={saving || !canSave}>{saving ? '保存中…' : editing ? '保存修改' : '创建列表'}</button></footer>
@@ -12671,7 +12712,12 @@ function DNSSettingsDialog({ server, policy, lists, benchmarks, client, onClose,
         <FormField label="加密解析服务列表" full><Select value={draft.encryptedListID} onChange={event => setDraft({ ...draft, encryptedListID: Number(event.target.value) })}>{lists.filter(list => list.kind === 'encrypted' && (list.enabled || list.id === policy?.encrypted_list_id)).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
         <FormField label="基础解析服务列表" full><Select value={draft.bootstrapListID} onChange={event => setDraft({ ...draft, bootstrapListID: Number(event.target.value) })}>{lists.filter(list => list.kind === 'bootstrap' && (list.enabled || list.id === policy?.bootstrap_list_id)).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
         <FormField label="IP 类型"><Select value={draft.strategy} onChange={event => setDraft({ ...draft, strategy: event.target.value })}><option value="auto">跟随服务器</option><option value="prefer_ipv4">优先 IPv4</option><option value="prefer_ipv6">优先 IPv6</option><option value="ipv4_only">仅 IPv4</option><option value="ipv6_only">仅 IPv6</option></Select></FormField>
-        <FormField label="每小时自动检查"><label className="notification-enable-row"><input type="checkbox" checked={draft.hourlyTest} onChange={event => setDraft({ ...draft, hourlyTest: event.target.checked })} aria-label="启用每小时自动检查" /></label></FormField>
+        <FormField label="每小时自动检查">
+          <div className="switch-form-row">
+            <span className="switch-form-label">启用每小时自动检查</span>
+            <Switch checked={draft.hourlyTest} onChange={checked => setDraft({ ...draft, hourlyTest: checked })} ariaLabel="启用每小时自动检查" />
+          </div>
+        </FormField>
         <div className="dns-list-preview"><span>{encryptedList?.candidates.map(candidate => dnsTransportLabel(candidate.transport)).join(' · ')}</span><span>{bootstrapList?.candidates.map(candidate => dnsTransportLabel(candidate.transport)).join(' · ')}</span></div>
       </div>
     </div>
@@ -14021,9 +14067,10 @@ function NotificationChannelDialog({
         </FormField>
 
         <FormField label="启用通知">
-          <label className="notification-enable-row">
-            <input type="checkbox" checked={draft.enabled} onChange={e => update({ enabled: e.target.checked })} aria-label="启用通知" />
-          </label>
+          <div className="switch-form-row">
+            <span className="switch-form-label">启用此通知通道</span>
+            <Switch checked={draft.enabled} onChange={checked => update({ enabled: checked })} ariaLabel="启用通知" />
+          </div>
         </FormField>
 
         <FormField label="通知事件" required hint="可多选。">
@@ -14076,9 +14123,10 @@ function NotificationChannelDialog({
             <input value={draft.chat_id} onChange={e => update({ chat_id: e.target.value })} placeholder="-1001234567890" autoComplete="off" />
           </FormField>
           <FormField label="启用互动指令" hint="开启后可在 Telegram 中向机器人发送指令查询状态、流量、用户和审计概览。">
-            <label className="notification-enable-row">
-              <input type="checkbox" checked={draft.interactive} onChange={e => update({ interactive: e.target.checked })} aria-label="启用互动指令" />
-            </label>
+            <div className="switch-form-row">
+              <span className="switch-form-label">启用互动指令</span>
+              <Switch checked={draft.interactive} onChange={checked => update({ interactive: checked })} ariaLabel="启用互动指令" />
+            </div>
           </FormField>
           {draft.interactive && <FormField label="允许互动的 Chat ID" required hint="只有这些 Chat ID 能使用机器人指令，多个用英文逗号分隔。可在 @userinfobot 查询自己的 Chat ID。">
             <textarea rows={3} value={draft.allowed_chat_ids} onChange={e => update({ allowed_chat_ids: e.target.value })} placeholder="123456789, -1001234567890" autoComplete="off" />

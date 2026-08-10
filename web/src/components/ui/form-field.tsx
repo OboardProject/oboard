@@ -3,17 +3,16 @@ import { useState } from 'react'
 import { HelpCircle } from 'lucide-react'
 import { Select } from './select'
 
-export function FormField({ label, hint, required, children, className = '', full = false }: { label: string; hint?: string; required?: boolean; children: React.ReactNode; className?: string; full?: boolean }) {
+export function FormField({ label, hint, required, children, className = '', full = false, placement = 'top' }: { label: string; hint?: string; required?: boolean; children: React.ReactNode; className?: string; full?: boolean; placement?: 'top' | 'bottom' }) {
   const [hintOpen, setHintOpen] = useState(false)
   const hintID = React.useId()
-  const useHintPopover = Boolean(hint && hint.length > 16)
   return (
     <label className={`form-field${full ? ' form-field-full' : ''}${className ? ` ${className}` : ''}`.trim()}>
       <div className="form-field-meta">
         <span className="form-field-label">
           {label}
           {required ? <em aria-label="必填">*</em> : null}
-          {useHintPopover ? (
+          {hint ? (
             <button
               type="button"
               className="form-field-help"
@@ -28,11 +27,10 @@ export function FormField({ label, hint, required, children, className = '', ful
               onBlur={() => setHintOpen(false)}
             >
               <HelpCircle size={14} aria-hidden="true" />
-              <span id={hintID} role="tooltip" className="form-field-help-popover" data-open={hintOpen || undefined}>{hint}</span>
+              <span id={hintID} role="tooltip" className={`form-field-help-popover${placement === 'bottom' ? ' popover-bottom' : ''}`} data-open={hintOpen || undefined}>{hint}</span>
             </button>
           ) : null}
         </span>
-        {hint && !useHintPopover ? <small className="form-field-hint">{hint}</small> : null}
       </div>
       <div className="form-field-control">{children}</div>
     </label>

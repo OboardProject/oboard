@@ -1,6 +1,7 @@
 import { ChevronDown, KeyRound, Send, Trash2 } from 'lucide-react'
 import type { AIAPIStyle, AIAuthMode } from '../../ai-provider'
 import { FormField } from '../ui/form-field'
+import { Switch } from '../ui/switch'
 import { Select } from '../ui/select'
 import { CapabilityBadge } from './CapabilityBadge'
 import type { EndpointDraft } from './types'
@@ -37,8 +38,14 @@ export function EndpointEditor({ endpoint, index, canDelete, testing, onChange, 
         <div className="two-column"><FormField label="模型覆盖"><input value={endpoint.modelOverride} onChange={event => update('modelOverride', event.target.value)} /></FormField><FormField label="超时 (ms)"><input type="number" min={1000} max={600000} value={endpoint.timeoutMS} onChange={event => update('timeoutMS', Number(event.target.value))} /></FormField></div>
         <div className="two-column"><FormField label="Models Path"><input value={endpoint.modelsPath} onChange={event => update('modelsPath', event.target.value)} placeholder="/models" /></FormField><FormField label="Generate Path"><input value={endpoint.generatePath} onChange={event => update('generatePath', event.target.value)} placeholder="使用协议默认路径" /></FormField></div>
         <div className="two-column"><FormField label="重试次数"><input type="number" min={0} max={10} value={endpoint.maxRetries} onChange={event => update('maxRetries', Number(event.target.value))} /></FormField><FormField label="Custom Headers" hint="每行 Name: Value"><textarea rows={3} value={endpoint.headers} onChange={event => update('headers', event.target.value)} placeholder="X-Tenant: production" /></FormField></div>
-        <label className="toggle-line"><input type="checkbox" checked={endpoint.enabled} onChange={event => update('enabled', event.target.checked)} /><span>启用 Endpoint</span></label>
-        <label className="toggle-line"><input type="checkbox" checked={endpoint.allowPrivateNetwork} onChange={event => update('allowPrivateNetwork', event.target.checked)} /><span>允许访问私网或本机地址</span></label>
+        <div className="switch-form-row" style={{ padding: '4px 0' }}>
+          <span className="switch-form-label">启用 Endpoint</span>
+          <Switch checked={endpoint.enabled} onChange={checked => update('enabled', checked)} />
+        </div>
+        <div className="switch-form-row" style={{ padding: '4px 0' }}>
+          <span className="switch-form-label">允许访问私网或本机地址</span>
+          <Switch checked={endpoint.allowPrivateNetwork} onChange={checked => update('allowPrivateNetwork', checked)} />
+        </div>
       </div>
     </details>
   </section>
