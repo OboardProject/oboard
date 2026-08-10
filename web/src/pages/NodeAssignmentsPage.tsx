@@ -241,11 +241,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
               <Users size={14} /> 将此套餐分配给用户
             </Button>
           )}
-          {isAdmin && selectedCount === 0 && (
-            <span className="muted" style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              💡 勾选列表节点可开启批量设置
-            </span>
-          )}
+
           {isAdmin && selectedCount > 0 && (
             <>
               <Button variant="default" size="sm" onClick={() => { setSyncMessage(''); setBatchDialogOpen(true) }} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
