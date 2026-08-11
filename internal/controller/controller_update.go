@@ -143,20 +143,35 @@ func (s *Server) markControllerScheduledCheck(at time.Time) {
 }
 
 func (s *Server) installScheduledControllerUpdate(ctx context.Context, status controllerupdate.Status) {
+	prepareStatus, err := s.controllerUpdater.Prepare(ctx)
+	if err != nil {
+		publicErr := controllerUpdateOperationError("启动自动更新下载失败", prepareStatus, err)
+		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, publicErr.Error())
+		s.notifyControllerUpdateFailure(ctx, "下载更新", status.Available.Version, publicErr.Error())
+		return
+	}
+	s.startControllerUpdateWatch()
 	backup, err := s.createControllerBackup(ctx)
 	if err != nil {
+		s.cancelPreparedControllerUpdate()
 		message := "创建自动更新备份失败: " + err.Error()
 		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, message)
 		s.notifyControllerUpdateFailure(ctx, "更新前备份", status.Available.Version, message)
 		return
 	}
-	if err := s.recordControllerUpdateBackup(ctx, backup, status.Available.Build); err != nil {
+	targetBuild := strings.TrimSpace(prepareStatus.Available.Build)
+	if targetBuild == "" {
+		targetBuild = status.Available.Build
+	}
+	if err := s.recordControllerUpdateBackup(ctx, backup, targetBuild); err != nil {
+		s.cancelPreparedControllerUpdate()
 		message := "记录自动更新备份失败: " + err.Error()
 		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, message)
 		s.notifyControllerUpdateFailure(ctx, "更新前备份", status.Available.Version, message)
 		return
 	}
 	if !s.controllerPanelIdle(time.Now()) {
+		s.cancelPreparedControllerUpdate()
 		return
 	}
 	if installStatus, err := s.controllerUpdater.Install(ctx); err != nil {
@@ -167,6 +182,12 @@ func (s *Server) installScheduledControllerUpdate(ctx context.Context, status co
 	}
 	s.startControllerUpdateWatch()
 	_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
+}
+
+func (s *Server) cancelPreparedControllerUpdate() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = s.controllerUpdater.Cancel(ctx)
 }
 
 func validControllerUpdateInterval(hours int) bool {
@@ -339,13 +360,23 @@ func (s *Server) controllerUpdateInstall(w http.ResponseWriter, r *http.Request)
 		s.writeControllerUpdateStatus(w, r, status)
 		return
 	}
+	status, err = s.controllerUpdater.Prepare(r.Context())
+	if err != nil {
+		publicErr := controllerUpdateOperationError("启动主控更新下载失败", status, err)
+		_ = s.store.SetSetting(r.Context(), controllerUpdateErrorSetting, publicErr.Error())
+		fail(w, publicErr, http.StatusBadGateway)
+		return
+	}
+	s.startControllerUpdateWatch()
 	backup, err := s.createControllerBackup(r.Context())
 	if err != nil {
+		s.cancelPreparedControllerUpdate()
 		_ = s.store.SetSetting(r.Context(), controllerUpdateErrorSetting, err.Error())
 		fail(w, fmt.Errorf("创建数据库备份失败，已取消更新: %w", err), http.StatusInternalServerError)
 		return
 	}
 	if err := s.recordControllerUpdateBackup(r.Context(), backup, status.Available.Build); err != nil {
+		s.cancelPreparedControllerUpdate()
 		_ = s.store.SetSetting(r.Context(), controllerUpdateErrorSetting, err.Error())
 		fail(w, fmt.Errorf("记录数据库备份失败，已取消更新: %w", err), http.StatusInternalServerError)
 		return

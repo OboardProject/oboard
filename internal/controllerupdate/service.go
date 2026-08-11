@@ -46,11 +46,12 @@ type ServiceConfig struct {
 }
 
 type Service struct {
-	config        ServiceConfig
-	mu            sync.Mutex
-	status        Status
-	installCancel context.CancelFunc
-	installRun    uint64
+	config         ServiceConfig
+	mu             sync.Mutex
+	status         Status
+	installCancel  context.CancelFunc
+	installApprove chan struct{}
+	installRun     uint64
 }
 
 func DefaultServiceConfig() ServiceConfig {
@@ -222,6 +223,7 @@ func (s *Service) Serve(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/status", s.handleStatus)
 	mux.HandleFunc("/v1/check", s.handleCheck)
+	mux.HandleFunc("/v1/prepare", s.handlePrepare)
 	mux.HandleFunc("/v1/install", s.handleInstall)
 	mux.HandleFunc("/v1/cancel", s.handleCancel)
 	mux.HandleFunc("/v1/channel", s.handleChannel)
@@ -264,7 +266,7 @@ func (s *Service) handleCheck(w http.ResponseWriter, r *http.Request) {
 	writeStatus(w, http.StatusOK, status)
 }
 
-func (s *Service) handleInstall(w http.ResponseWriter, r *http.Request) {
+func (s *Service) handlePrepare(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || requestHasBody(r) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
@@ -303,18 +305,51 @@ func (s *Service) handleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.installCancel = cancel
+	approval := make(chan struct{})
+	s.installApprove = approval
 	s.installRun++
 	runID := s.installRun
 	s.mu.Unlock()
 	go func() {
-		_, _ = s.install(runCtx)
+		_, _ = s.install(runCtx, approval)
 		s.mu.Lock()
 		if s.installRun == runID {
 			s.installCancel = nil
+			s.installApprove = nil
 		}
 		s.mu.Unlock()
 	}()
 	writeStatus(w, http.StatusOK, status)
+}
+
+func (s *Service) handleInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || requestHasBody(r) {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status := s.decorateStatus(s.status)
+	switch status.State {
+	case "downloading", "ready":
+		if s.installCancel == nil {
+			status.LastError = "更新包尚未准备完成。"
+			writeStatus(w, http.StatusConflict, status)
+			return
+		}
+		if s.installApprove != nil {
+			close(s.installApprove)
+			s.installApprove = nil
+		}
+		writeStatus(w, http.StatusOK, status)
+	case "installing", "current":
+		writeStatus(w, http.StatusOK, status)
+	default:
+		if strings.TrimSpace(status.LastError) == "" {
+			status.LastError = "当前没有已准备的主控更新。"
+		}
+		writeStatus(w, http.StatusConflict, status)
+	}
 }
 
 func (s *Service) handleCancel(w http.ResponseWriter, r *http.Request) {
@@ -451,7 +486,7 @@ func (s *Service) check(ctx context.Context) (Status, error) {
 	return status, s.saveStatus(status)
 }
 
-func (s *Service) install(ctx context.Context) (Status, error) {
+func (s *Service) install(ctx context.Context, approval <-chan struct{}) (Status, error) {
 	s.mu.Lock()
 	status := s.decorateStatus(s.status)
 	if status.Channel == "" {
@@ -497,7 +532,7 @@ func (s *Service) install(ctx context.Context) (Status, error) {
 	}
 	defer os.RemoveAll(stage)
 
-	status, err = s.prepareInstallation(ctx, available)
+	status, err = s.prepareInstallation(ctx, available, approval)
 	if err != nil || status.State != "installing" {
 		return status, err
 	}
@@ -512,7 +547,7 @@ func (s *Service) install(ctx context.Context) (Status, error) {
 	return status, s.saveStatus(status)
 }
 
-func (s *Service) prepareInstallation(ctx context.Context, available BuildInfo) (Status, error) {
+func (s *Service) prepareInstallation(ctx context.Context, available BuildInfo, approval <-chan struct{}) (Status, error) {
 	s.mu.Lock()
 	status := s.decorateStatus(s.status)
 	status.Available = available
@@ -533,6 +568,11 @@ func (s *Service) prepareInstallation(ctx context.Context, available BuildInfo) 
 		return status, err
 	}
 	s.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return s.finishInstallError(ctx.Err())
+	case <-approval:
+	}
 	if err := s.config.Wait(ctx, s.config.ReadyWindow); err != nil {
 		return s.finishInstallError(err)
 	}

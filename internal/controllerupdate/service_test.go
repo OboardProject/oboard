@@ -431,7 +431,9 @@ func TestPrepareInstallationPublishesCancellableReadyWindowAndInstallingGrace(t 
 		return nil
 	}
 	available := BuildInfo{Version: "dev", Build: "20260802000000", Commit: "next-commit"}
-	status, err := service.prepareInstallation(ctx, available)
+	approval := make(chan struct{})
+	close(approval)
+	status, err := service.prepareInstallation(ctx, available, approval)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,5 +456,85 @@ func TestPrepareInstallationPublishesCancellableReadyWindowAndInstallingGrace(t 
 	case <-ctx.Done():
 		t.Fatal("installing context was cancelled during the grace period")
 	default:
+	}
+}
+
+func TestPreparedInstallationWaitsForExplicitApproval(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "oboard-controller")
+	if err := os.WriteFile(binary, []byte("controller"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binaryEnv := filepath.Join(root, "controller.env")
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_UPDATE_CHANNEL=dev\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldVersion, oldBuild, oldCommit, oldDate := version.Version, version.Build, version.Commit, version.Date
+	version.Version, version.Build, version.Commit, version.Date = "dev", "20260701000000", "commit-old", "2026-07-28T00:00:00Z"
+	t.Cleanup(func() {
+		version.Version, version.Build, version.Commit, version.Date = oldVersion, oldBuild, oldCommit, oldDate
+	})
+	service := NewService(ServiceConfig{
+		BinaryEnvPath:      binaryEnv,
+		ControllerBinary:   binary,
+		StatePath:          filepath.Join(root, "status.json"),
+		RuntimeStatePath:   filepath.Join(root, "runtime.json"),
+		ReadyWindow:        time.Nanosecond,
+		InstallGracePeriod: time.Nanosecond,
+		Wait: func(context.Context, time.Duration) error {
+			return nil
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	approval := make(chan struct{})
+	service.mu.Lock()
+	service.installCancel = cancel
+	service.installApprove = approval
+	service.status = Status{State: "downloading", UpdateAvailable: true, CanCancel: true}
+	service.mu.Unlock()
+
+	type result struct {
+		status Status
+		err    error
+	}
+	done := make(chan result, 1)
+	available := BuildInfo{Version: "dev", Build: "20260802000000", Commit: "next-commit"}
+	go func() {
+		status, err := service.prepareInstallation(ctx, available, approval)
+		done <- result{status: status, err: err}
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		service.mu.Lock()
+		state := service.status.State
+		service.mu.Unlock()
+		if state == "ready" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("prepared update did not reach ready state")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case got := <-done:
+		t.Fatalf("installation advanced without approval: %#v", got)
+	default:
+	}
+
+	recorder := httptest.NewRecorder()
+	service.handleInstall(recorder, httptest.NewRequest(http.MethodPost, "/v1/install", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("install approval response=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	select {
+	case got := <-done:
+		if got.err != nil || got.status.State != "installing" || got.status.CanCancel {
+			t.Fatalf("approved installation result=%#v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("approved installation did not advance")
 	}
 }

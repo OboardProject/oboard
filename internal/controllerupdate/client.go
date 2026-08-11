@@ -41,6 +41,10 @@ func (c *Client) Check(ctx context.Context) (Status, error) {
 	return c.call(ctx, http.MethodPost, "/v1/check")
 }
 
+func (c *Client) Prepare(ctx context.Context) (Status, error) {
+	return c.call(ctx, http.MethodPost, "/v1/prepare")
+}
+
 func (c *Client) Install(ctx context.Context) (Status, error) {
 	return c.call(ctx, http.MethodPost, "/v1/install")
 }
