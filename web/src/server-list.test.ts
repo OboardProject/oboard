@@ -25,12 +25,26 @@ describe('server list ordering', () => {
     expect(normalizeServerOrder([3, '2', 3, 0, 'bad'])).toEqual([3, 2])
   })
 
-  it('sorts by newest creation time and then ID', () => {
-    expect(sortServerList(servers, 'created', [], resolveRegion).map(server => server.id)).toEqual([3, 2, 1])
+  it('pins servers awaiting their first connection before creation-time ordering', () => {
+    expect(sortServerList(servers, 'created', [], resolveRegion).map(server => server.id)).toEqual([2, 3, 1])
   })
 
-  it('sorts by localized country and keeps newest servers first within a country', () => {
+  it('pins servers awaiting their first connection before country ordering', () => {
     expect(sortServerList(servers, 'country', [], resolveRegion).map(server => server.id)).toEqual([2, 3, 1])
+  })
+
+  it('pins unenrolled servers newest-first in custom mode', () => {
+    const withAnotherUnenrolled = [...servers, { id: 4, name: 'Berlin', status: 'offline', created_at: '2026-08-04T00:00:00Z', region: 'DE' }]
+    expect(sortServerList(withAnotherUnenrolled, 'custom', [1, 4, 3, 2], resolveRegion).map(server => server.id)).toEqual([4, 2, 1, 3])
+  })
+
+  it('returns a server to normal ordering after its first connection', () => {
+    const waiting = [
+      { id: 1, name: 'Connected', status: 'online', agent_id: 'a1', created_at: '2026-08-03T00:00:00Z', region: 'JP' },
+      { id: 2, name: 'Waiting', status: 'offline', created_at: '2026-08-01T00:00:00Z', region: 'US' },
+    ]
+    expect(sortServerList(waiting, 'created', [], resolveRegion).map(server => server.id)).toEqual([2, 1])
+    expect(sortServerList(waiting.map(server => server.id === 2 ? { ...server, agent_id: 'a2' } : server), 'created', [], resolveRegion).map(server => server.id)).toEqual([1, 2])
   })
 
   it('inserts a new server after the last custom item from the same country', () => {

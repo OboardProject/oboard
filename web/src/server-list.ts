@@ -24,6 +24,17 @@ function compareCreated(a: ServerListItem, b: ServerListItem) {
   return createdTime(b) - createdTime(a) || Number(b.id) - Number(a.id)
 }
 
+function isAwaitingFirstConnection(server: ServerListItem) {
+  return !String(server.agent_id || '').trim()
+}
+
+function compareFirstConnectionPriority(a: ServerListItem, b: ServerListItem) {
+  const awaitingA = isAwaitingFirstConnection(a)
+  const awaitingB = isAwaitingFirstConnection(b)
+  if (awaitingA !== awaitingB) return awaitingA ? -1 : 1
+  return awaitingA ? compareCreated(a, b) : 0
+}
+
 function compareCountry<T extends ServerListItem>(a: T, b: T, resolveRegion: RegionResolver<T>) {
   const regionA = resolveRegion(a)
   const regionB = resolveRegion(b)
@@ -73,12 +84,13 @@ export function reconcileCustomServerOrder<T extends ServerListItem>(servers: T[
 
 export function sortServerList<T extends ServerListItem>(servers: T[], mode: ServerSortMode, customOrder: number[], resolveRegion: RegionResolver<T>) {
   const items = [...servers]
-  if (mode === 'created') return items.sort(compareCreated)
-  if (mode === 'country') return items.sort((a, b) => compareCountry(a, b, resolveRegion))
+  if (mode === 'created') return items.sort((a, b) => compareFirstConnectionPriority(a, b) || compareCreated(a, b))
+  if (mode === 'country') return items.sort((a, b) => compareFirstConnectionPriority(a, b) || compareCountry(a, b, resolveRegion))
 
   const order = reconcileCustomServerOrder(items, customOrder, resolveRegion)
   const positions = new Map(order.map((id, index) => [id, index]))
-  return items.sort((a, b) => (positions.get(Number(a.id)) ?? Number.MAX_SAFE_INTEGER) - (positions.get(Number(b.id)) ?? Number.MAX_SAFE_INTEGER))
+  return items.sort((a, b) => compareFirstConnectionPriority(a, b)
+    || (positions.get(Number(a.id)) ?? Number.MAX_SAFE_INTEGER) - (positions.get(Number(b.id)) ?? Number.MAX_SAFE_INTEGER))
 }
 
 export function filterServerList<T extends ServerListItem>(servers: T[], query: string, status: ServerStatusFilter, regionCode: string, resolveRegion: RegionResolver<T>) {
