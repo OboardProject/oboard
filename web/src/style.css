@@ -8864,10 +8864,12 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   max-width: min(320px, calc(100vw - 48px));
   padding: 8px 12px;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--text-strong);
-  background: var(--surface-solid);
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  background: color-mix(in srgb, var(--surface-solid) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-lg);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.5;
@@ -8878,15 +8880,17 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   opacity: 0;
   visibility: hidden;
   pointer-events: none !important;
-  transform: translateY(3px);
-  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s ease;
+  transform: scale(0.96) translateY(3px);
+  transition: opacity var(--duration-appica) var(--ease-appica-spring),
+              transform var(--duration-appica) var(--ease-appica-spring),
+              visibility var(--duration-appica) ease;
 }
 
 .form-field-help:hover > .form-field-help-popover,
 .form-field-help:focus-visible > .form-field-help-popover {
   opacity: 1;
   visibility: visible;
-  transform: translateY(0);
+  transform: scale(1) translateY(0);
 }
 
 .form-field-control {
@@ -9844,6 +9848,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .traffic-limit-input {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 116px;
+  align-items: center;
 }
 
 .input-with-unit input,
@@ -9864,6 +9869,11 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   background: var(--surface-2);
   font-size: 12px;
   font-weight: 750;
+  transition: border-color var(--duration-appica) var(--ease-appica-spring);
+}
+
+.input-with-unit:focus-within > span {
+  border-color: color-mix(in srgb, var(--primary) 70%, var(--border));
 }
 
 .traffic-limit-input .ui-segmented-select {
@@ -14429,10 +14439,12 @@ button.ui-btn-ghost:hover {
   overflow: hidden;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--bg-card);
+  background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   box-shadow: var(--shadow-md);
   z-index: var(--z-popover);
-  animation: popover-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: popover-in var(--duration-appica) var(--ease-appica-spring) both;
 }
 
 .searchable-multi-select-search {
@@ -14541,10 +14553,13 @@ button.ui-btn-ghost:hover {
   overflow-y: auto;
   display: grid;
   padding: 5px;
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   box-shadow: var(--shadow-lg);
+  animation: popover-in var(--duration-appica) var(--ease-appica-spring) both;
 }
 
 .searchable-combobox-menu > button {
