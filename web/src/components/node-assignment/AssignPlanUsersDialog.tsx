@@ -145,7 +145,7 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
           <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="到期时间（可选）" aria-label="到期时间（可选）" title="到期时间（可选）" style={{ maxWidth: 200 }} />
           <Button variant="outline" size="sm" busy={previewBusy} onClick={() => void runPreview()}>预览影响</Button>
         </div>
-        {message && <p style={{ margin: 0, color: message.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{message}</p>}
+        {message && <p role="status" aria-live="polite" style={{ margin: 0, color: message.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{message}</p>}
         {preview && (
           <div className="card-custom" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <p className="muted" style={{ margin: 0 }}>

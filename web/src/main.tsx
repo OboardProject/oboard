@@ -69,7 +69,7 @@ import {
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
-  ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network
+  ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network, Package
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -134,6 +134,7 @@ import {
   type DNSBulkResult,
 } from './dns-bulk'
 import { NodeAssignmentsPage } from './pages/NodeAssignmentsPage'
+import { SubscriptionPlansPage } from './pages/SubscriptionPlansPage'
 import { UserPlanDialog } from './pages/UserPlanDialog'
 import { UserDashboardPage, type UserDashboardOverview } from './pages/UserDashboardPage'
 
@@ -729,6 +730,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   routing: { label: '分流规则', desc: '为任意服务器配置分流规则、直连、链路或导入节点。', group: '流量' },
   'external-outbounds': { label: '导入节点', desc: '导入第三方 SS、SOCKS、VLESS 等节点。', group: '流量' },
   users: { label: '用户与分组', desc: '用户与分组', group: '访问控制' },
+  plans: { label: '套餐管理', desc: '配置套餐额度、节点范围、用户分配、排序与版本。', group: '访问控制' },
   nodes: { label: '全部节点', desc: '节点目录、全局名称、方案归属、有效用户与例外。', group: '节点管理' },
   dns: { label: 'DNS 设置', desc: '为服务器选择解析服务并检查解析速度。', group: '网络' },
   'dns-records': { label: '域名解析', desc: '管理云服务商账号和域名解析记录。', group: '网络' },
@@ -747,7 +749,7 @@ const navGroups = [
   { label: '', tabs: ['servers'] },
   { label: '', tabs: ['proxy-paths'] },
   { label: '', tabs: ['dns', 'dns-records'] },
-  { label: '', tabs: ['users', 'subscriptions'] },
+  { label: '', tabs: ['users', 'plans', 'subscriptions'] },
   { label: '', tabs: ['nodes'] },
   { label: '', tabs: ['notifications'] },
   { label: '', tabs: ['tasks', 'audit'] },
@@ -759,7 +761,7 @@ const roleRanks: Record<Role, number> = { none: -1, viewer: 0, operator: 1, admi
 const tabMinimumRole: Record<string, Role> = {
 	account: 'none', dashboard: 'none', tasks: 'operator', audit: 'operator',
   servers: 'operator', 'proxy-paths': 'operator',
-  users: 'admin', subscriptions: 'viewer', notifications: 'viewer', automation: 'admin', settings: 'admin',
+  users: 'admin', plans: 'admin', subscriptions: 'viewer', notifications: 'viewer', automation: 'admin', settings: 'admin',
   nodes: 'operator',
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
 }
@@ -768,7 +770,7 @@ const preloadTabsByRole: Record<Role, string[]> = {
 	none: ['dashboard', 'account'],
 	viewer: ['dashboard', 'subscriptions', 'account', 'notifications'],
   operator: ['subscriptions', 'servers', 'proxy-paths', 'tasks', 'audit', 'mtu'],
-  admin: ['servers', 'proxy-paths', 'users', 'nodes', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
+  admin: ['servers', 'proxy-paths', 'users', 'plans', 'nodes', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
 }
 
 const realtimeResourcePages: Record<string, string[]> = {
@@ -783,12 +785,12 @@ const realtimeResourcePages: Record<string, string[]> = {
   tasks: ['dashboard', 'tasks'],
   deployments: ['dashboard', 'servers', 'proxy-paths', 'tasks'],
   probes: ['servers', 'proxy-paths', 'dns', 'mtu', 'port-forwards', 'tasks'],
-  topology: ['servers', 'proxy-paths', 'subscriptions', 'settings'],
+  topology: ['servers', 'proxy-paths', 'plans', 'subscriptions', 'settings'],
   audit: ['dashboard', 'audit'],
   mtu: ['servers', 'mtu'],
   port_forwards: ['proxy-paths', 'port-forwards'],
   tunnels: ['proxy-paths', 'tunnels'],
-  users: ['users', 'subscriptions', 'account', 'audit'],
+  users: ['users', 'plans', 'subscriptions', 'account', 'audit'],
   dns: ['dns', 'dns-records', 'servers', 'settings'],
   settings: ['dashboard', 'servers', 'subscriptions', 'settings'],
   backups: ['settings'],
@@ -831,7 +833,6 @@ const pathTabs: Record<string, string> = Object.entries(tabPaths).reduce((acc, [
   acc[path] = tab
   return acc
 }, { '/': 'dashboard' } as Record<string, string>)
-pathTabs['/plans'] = 'nodes'
 pathTabs['/node-order-templates'] = 'nodes'
 
 function tabFromPath(pathname: string) {
@@ -862,6 +863,7 @@ function getTabIcon(x: string) {
   if (x === 'servers') return <ServerIcon size={18} />
   if (x === 'proxy-paths') return <Workflow size={18} />
   if (x === 'users') return <UsersIcon size={18} />
+  if (x === 'plans') return <Package size={18} />
   if (x === 'subscriptions') return <LinkIcon size={18} />
   if (x === 'notifications') return <Bell size={18} />
   if (x === 'tasks') return <CheckSquare size={18} />
@@ -1908,6 +1910,7 @@ function App() {
     servers: '服务器管理',
     'proxy-paths': '代理链路',
     users: '用户与分组管理',
+    plans: '套餐管理',
     dns: 'DNS 设置',
     'dns-records': '域名解析',
     subscriptions: sessionUser?.role === 'admin' ? '节点订阅' : '我的订阅',
@@ -2497,8 +2500,9 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'routing') return <RoutingRules data={data} client={client} load={load} />
   if (tab === 'external-outbounds') return <ExternalOutbounds data={data} client={client} load={load} />
   if (tab === 'users') return <UserManagement data={data} client={client} load={load} />
+  if (tab === 'plans') return <SubscriptionPlansPage data={data} client={client} load={load} notify={notify} />
   if (tab === 'nodes') return <NodeAssignmentsPage data={data} client={client} load={load} />
-  if (tab === 'node-order-templates' || tab === 'plans') return <NodeAssignmentsPage data={data} client={client} load={load} />
+  if (tab === 'node-order-templates') return <NodeAssignmentsPage data={data} client={client} load={load} />
   if (tab === 'dns') return <DNS data={data} client={client} load={load} notify={notify} />
   if (tab === 'dns-records') return <ManagedDNSSettings data={data} client={client} load={load} notify={notify} />
   if (tab === 'mtu') return <MTU data={data} client={client} load={load} notify={notify} />

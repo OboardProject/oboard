@@ -4,7 +4,7 @@ import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
 import { Input } from '../components/ui/input'
-import { Plus, Trash2, RefreshCw, RotateCcw, Ban, Copy, X, Eye, Edit3, SlidersHorizontal, History, GripVertical, Save } from 'lucide-react'
+import { Plus, Trash2, RefreshCw, RotateCcw, Ban, Copy, X, Eye, Edit3, SlidersHorizontal, History, GripVertical, Save, Users } from 'lucide-react'
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -14,6 +14,7 @@ import { PlanNodeOrderingPanel, type OrderingPlan } from '../components/node-ord
 import { Skeleton } from '../components/ui/skeleton'
 import { PlanNodeNameDialog, type PlanNameNode } from '../components/node-assignment/PlanNodeNameDialog'
 import { PlanMembershipRulesPanel } from '../components/node-assignment/PlanMembershipRulesPanel'
+import { AssignPlanUsersDialog } from '../components/node-assignment/AssignPlanUsersDialog'
 import { formatPlanVersion } from '../lib/plan-version'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
@@ -239,6 +240,29 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const [nameNode, setNameNode] = React.useState<PlanNameNode | null>(null)
   const [nameBusy, setNameBusy] = React.useState(false)
   const [nameError, setNameError] = React.useState('')
+  const [assignOpen, setAssignOpen] = React.useState(false)
+  const [users, setUsers] = React.useState<any[] | null>(null)
+  const [userLoadBusy, setUserLoadBusy] = React.useState(false)
+
+  const ensureUsers = async () => {
+    if (users) return users
+    try {
+      const res = await client.request<{ users: any[] }>('/users')
+      setUsers(res.users || [])
+      return res.users || []
+    } catch (reason: any) {
+      setMessage('用户列表加载失败：' + (reason?.message || String(reason)))
+      return null
+    }
+  }
+
+  const openUserAssignment = async () => {
+    setUserLoadBusy(true)
+    setMessage('')
+    const loadedUsers = await ensureUsers()
+    setUserLoadBusy(false)
+    if (loadedUsers) setAssignOpen(true)
+  }
 
   const refreshPlans = async () => {
     const res = await client.request<{ subscription_plans: Plan[] }>('/subscription-plans')
@@ -771,6 +795,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' }}>
                   {embedded && <Button size="sm" onClick={openCreate}><Plus size={14} /> 新建方案</Button>}
+                  <Button variant="outline" size="sm" busy={userLoadBusy} onClick={() => void openUserAssignment()}><Users size={14} /> 分配用户</Button>
                   <Button variant="outline" size="sm" onClick={openEdit}><Edit3 size={14} /> 修改套餐</Button>
                   <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}><History size={14} /> 版本历史</Button>
                   <Button variant="outline" size="sm" onClick={() => void clonePlan()}><Copy size={14} /> 复制</Button>
@@ -1084,6 +1109,21 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
           </div>
         </div>
       </Dialog>
+
+      <AssignPlanUsersDialog
+        open={assignOpen}
+        defaultPlanID={selectedID}
+        plans={plans}
+        users={users || []}
+        client={client}
+        notify={notify || (() => undefined)}
+        onClose={() => setAssignOpen(false)}
+        onDone={async () => {
+          await loadDetail(selectedID)
+          await refreshPlans()
+          await load()
+        }}
+      />
 
       <PlanNodeNameDialog node={nameNode} busy={nameBusy} error={nameError} onClose={() => setNameNode(null)} onSave={value => savePlanNodeName(value)} />
 

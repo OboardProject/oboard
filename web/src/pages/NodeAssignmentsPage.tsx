@@ -7,10 +7,8 @@ import { Input } from '../components/ui/input'
 import { Switch } from '../components/ui/switch'
 import { NodeScopeMenu, type NodeScopeRequest, type ScopeNode } from '../components/node-assignment/NodeScopeMenu'
 import { NodeScopeActionDialog } from '../components/node-assignment/NodeScopeActionDialog'
-import { AssignPlanUsersDialog } from '../components/node-assignment/AssignPlanUsersDialog'
 import { NodeRenameDialog, type RenameNode } from '../components/node-assignment/NodeRenameDialog'
-import { X, Filter, RefreshCw, MoreHorizontal, Users, Pencil, Settings } from 'lucide-react'
-import { SubscriptionPlansPage } from './SubscriptionPlansPage'
+import { X, Filter, RefreshCw, MoreHorizontal, Pencil, Settings } from 'lucide-react'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -80,12 +78,10 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
   const [filtersOpen, setFiltersOpen] = React.useState(false)
   const [menu, setMenu] = React.useState<{ x: number; y: number; node: CatalogNode } | null>(null)
   const [scopeAction, setScopeAction] = React.useState<{ node: CatalogNode; scope: NodeScopeRequest } | null>(null)
-  const [assignOpen, setAssignOpen] = React.useState(false)
   const [users, setUsers] = React.useState<any[] | null>(null)
   const [showType, setShowType] = React.useState(false)
   const [renameNode, setRenameNode] = React.useState<CatalogNode | null>(null)
   const [batchDialogOpen, setBatchDialogOpen] = React.useState(false)
-  const [contextPlanID, setContextPlanID] = React.useState(0)
 
   const servers = data.servers || []
   const plans = data.subscription_plans || []
@@ -201,32 +197,9 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
-  const contextSelector = (
-    <div className="node-context-selector">
-      <label htmlFor="node-management-context">管理范围</label>
-      <Select id="node-management-context" value={contextPlanID} onChange={e => setContextPlanID(Number(e.target.value))}>
-        <option value={0}>全部节点</option>
-        {isAdmin && plans.map((plan: any) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
-      </Select>
-    </div>
-  )
-
-  if (contextPlanID > 0) {
-    return (
-      <div className="panel node-assignments-panel">
-        <div className="panel-body">
-          {contextSelector}
-          <SubscriptionPlansPage data={data} client={client} load={load} notify={notify} embedded selectedPlanID={contextPlanID} />
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="panel node-assignments-panel">
       <div className="panel-body">
-        {contextSelector}
-        {isAdmin && <SubscriptionPlansPage data={data} client={client} load={load} notify={notify} embedded />}
         {toast && <p style={{ margin: '0 0 8px', color: 'var(--color-success, #16a34a)' }}>{toast}</p>}
         <>
         <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -237,12 +210,6 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
             <Switch size="sm" checked={showType} onChange={setShowType} ariaLabel="显示类型" />
             显示类型
           </label>
-          {isAdmin && (
-            <Button variant="outline" size="sm" onClick={() => { setAssignOpen(true); void ensureUsers() }}>
-              <Users size={14} /> 将此套餐分配给用户
-            </Button>
-          )}
-
           {isAdmin && selectedCount > 0 && (
             <>
               <Button variant="default" size="sm" onClick={() => { setSyncMessage(''); setBatchDialogOpen(true) }} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -462,16 +429,6 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
         onDone={refresh}
       />
 
-      <AssignPlanUsersDialog
-        open={assignOpen}
-        defaultPlanID={planID}
-        plans={plans}
-        users={users || []}
-        client={client}
-        notify={notify}
-        onClose={() => setAssignOpen(false)}
-        onDone={refresh}
-      />
       <NodeRenameDialog node={renameNode as RenameNode | null} client={client} onClose={() => setRenameNode(null)} onSaved={async () => { await refresh(); notify('全局节点名称已更新', 'success') }} />
 
       <Dialog isOpen={batchDialogOpen} onClose={() => setBatchDialogOpen(false)} title={`批量设置节点套餐（已选 ${selectedCount} 个节点）`} size="default">
