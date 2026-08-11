@@ -3412,7 +3412,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       <button className={activeSection === 'traffic' ? 'active' : ''} role="tab" aria-selected={activeSection === 'traffic'} onClick={() => setActiveSection('traffic')}><Gauge size={15} />流量控制</button>
       <button className={activeSection === 'notifications' ? 'active' : ''} role="tab" aria-selected={activeSection === 'notifications'} onClick={() => setActiveSection('notifications')}><Bell size={15} />通知提醒</button>
       <button className={activeSection === 'backups' ? 'active' : ''} role="tab" aria-selected={activeSection === 'backups'} onClick={() => setActiveSection('backups')}><Database size={15} />数据备份</button>
-      <button className={activeSection === 'updates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'updates'} onClick={() => setActiveSection('updates')}><Download size={15} />主控更新</button>
+      <button className={activeSection === 'updates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'updates'} onClick={() => setActiveSection('updates')}><Download size={15} />更新</button>
       <button className={activeSection === 'logs' ? 'active' : ''} role="tab" aria-selected={activeSection === 'logs'} onClick={() => setActiveSection('logs')}><FileText size={15} />运行日志</button>
     </nav>
     <div className="settings-grid">
@@ -4012,6 +4012,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || isControllerUpdateInProgressStatus(snapshot.status) ? 'warning' : 'ok'
   const updateInProgress = installExpected || isControllerUpdateInProgressStatus(snapshot.status)
   const channelSelectDisabled = updateInProgress || snapshot.status === 'checking' || snapshot.status === 'unavailable'
+  const [autoUpdateDialogOpen, setAutoUpdateDialogOpen] = useState(false)
   const expectedAgentVersion = String(data.version?.agent_expected_version || '').trim()
   const expectedAgentBuild = String(data.version?.agent_expected_build || '').trim()
   const expectedAgentLabel = expectedAgentVersion ? `${expectedAgentVersion}${expectedAgentBuild ? ` · 构建 ${expectedAgentBuild}` : ''}` : '暂无构建信息'
@@ -4019,7 +4020,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   const updateLayoutTransition = { duration: shouldReduceMotion ? 0 : 0.28, ease: 'easeOut' as const }
   return <section className="settings-card controller-update-card">
     <m.div layout={updateLayout} transition={updateLayoutTransition} className="settings-card-head controller-update-head">
-      <m.div layout={updateLayout} transition={updateLayoutTransition} className="controller-update-heading"><h3>主控更新</h3><p className="muted">更新通道 · {channelLabel}</p></m.div>
+      <m.div layout={updateLayout} transition={updateLayoutTransition} className="controller-update-heading"><h3>更新</h3><p className="muted">更新通道 · {channelLabel}</p></m.div>
       <AnimatePresence initial={false} mode="popLayout">
         {snapshot.channel === 'dev' && <m.div
           layout={updateLayout}
@@ -4053,45 +4054,89 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       {snapshot.backup_path && <span>最近备份<strong title={snapshot.backup_path}>{snapshot.backup_path}</strong></span>}
     </div>
     {snapshot.last_error && <div className="controller-update-error" role="alert">{snapshot.last_error}</div>}
-    {snapshot.channel === 'pinned' ? <div className="controller-update-pinned">
+    {snapshot.channel === 'pinned' && <div className="controller-update-pinned">
       <span>当前为固定版本安装。选择上方更新通道后，即可在面板内检查并安装更新。</span>
-    </div> : <div className="controller-update-schedule">
-      <div className="controller-update-schedule-head">
-        <div className="controller-update-schedule-label">
-          <strong>主控自动更新</strong>
-          <Switch checked={snapshot.auto_update_enabled} disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress} onChange={checked => void saveAutoUpdate(checked)} ariaLabel="启用定时自动更新" />
-        </div>
-      </div>
-      <div className="controller-update-interval" role="radiogroup" aria-label="自动更新检查间隔">
-        {controllerUpdateIntervalOptions.map(option => <button
-          key={option.hours}
-          type="button"
-          role="radio"
-          aria-checked={snapshot.auto_update_interval_hours === option.hours}
-          className={snapshot.auto_update_interval_hours === option.hours ? 'active' : ''}
-          disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress}
-          onClick={() => void setAutoUpdateInterval(option.hours)}
-        >{option.label}</button>)}
-      </div>
     </div>}
-    <div className="managed-update-settings" aria-label="组件自动更新设置">
-      <div className="managed-update-switches">
-        <label><span><strong>Agent 自动更新</strong><small>发现配套构建后下发更新任务</small></span><Switch checked={Boolean(updateSettings.agent_auto_update_enabled)} disabled={Boolean(working)} onChange={checked => void saveManagedUpdateSetting({ agent_auto_update_enabled: checked })} ariaLabel="启用 Agent 自动更新" /></label>
-        <label><span><strong>订阅中继自动更新</strong><small>发现主控配套构建后通过心跳更新</small></span><Switch checked={Boolean(updateSettings.subscription_relay_auto_update_enabled)} disabled={Boolean(working)} onChange={checked => void saveManagedUpdateSetting({ subscription_relay_auto_update_enabled: checked })} ariaLabel="启用订阅中继自动更新" /></label>
-      </div>
-      <div className="managed-update-window">
-        <label className="managed-update-window-toggle"><span><strong>仅在指定时段自动安装</strong><small>按主控时区 {String(updateSettings.traffic_timezone || 'Asia/Shanghai')}</small></span><Switch checked={Boolean(updateSettings.update_window_enabled)} disabled={Boolean(working)} onChange={checked => void saveManagedUpdateSetting({ update_window_enabled: checked })} ariaLabel="仅在指定时段自动安装" /></label>
-        <div className="managed-update-hours">
-          <FormField label="开始时间"><Select value={Number(updateSettings.update_window_start_hour ?? 3)} disabled={Boolean(working) || !updateSettings.update_window_enabled} onChange={event => void saveManagedUpdateSetting({ update_window_start_hour: Number(event.target.value) })} aria-label="自动更新开始小时">{Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{String(hour).padStart(2, '0')}:00</option>)}</Select></FormField>
-          <span aria-hidden="true">至</span>
-          <FormField label="结束时间"><Select value={Number(updateSettings.update_window_end_hour ?? 7)} disabled={Boolean(working) || !updateSettings.update_window_enabled} onChange={event => void saveManagedUpdateSetting({ update_window_end_hour: Number(event.target.value) })} aria-label="自动更新结束小时">{Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{String(hour).padStart(2, '0')}:00</option>)}</Select></FormField>
-        </div>
-      </div>
-    </div>
     <div className="settings-actions controller-update-actions">
+      <button type="button" className="ghost" onClick={() => setAutoUpdateDialogOpen(true)} title="自动更新设置"><Sliders size={14} /><span>自动更新设置</span></button>
       <button type="button" className="ghost" onClick={() => void check()} disabled={Boolean(working) || snapshot.channel === 'pinned' || updateInProgress}><RefreshCw size={14} className={working === 'check' ? 'spin' : ''} />{working === 'check' ? '检查中...' : '检查更新'}</button>
       <button type="button" onClick={openInstall} disabled={Boolean(working) || snapshot.channel === 'pinned' || (!snapshot.update_available && !updateInProgress)}><Download size={14} />{working === 'install' ? '准备中...' : updateInProgress ? '查看安装进度' : '备份并安装'}</button>
     </div>
+    <AnimatePresence>{autoUpdateDialogOpen && (
+      <Dialog isOpen={autoUpdateDialogOpen} onClose={() => setAutoUpdateDialogOpen(false)} title="自动更新配置" size="default">
+        <div className="auto-update-dialog-content">
+          <div className="auto-update-dialog-section">
+            <div className="auto-update-section-head">
+              <div>
+                <strong>主控自动更新</strong>
+                <p>按设定的时间间隔自动检查并下发主控更新</p>
+              </div>
+              <Switch checked={snapshot.auto_update_enabled} disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress} onChange={checked => void saveAutoUpdate(checked)} ariaLabel="启用定时自动更新" />
+            </div>
+            {snapshot.auto_update_enabled && (
+              <div className="controller-update-interval" role="radiogroup" aria-label="自动更新检查间隔" style={{ marginTop: 8 }}>
+                {controllerUpdateIntervalOptions.map(option => (
+                  <button
+                    key={option.hours}
+                    type="button"
+                    role="radio"
+                    aria-checked={snapshot.auto_update_interval_hours === option.hours}
+                    className={snapshot.auto_update_interval_hours === option.hours ? 'active' : ''}
+                    disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress}
+                    onClick={() => void setAutoUpdateInterval(option.hours)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="auto-update-dialog-section">
+            <div className="auto-update-switch-row">
+              <div>
+                <strong>Agent 自动更新</strong>
+                <p>发现配套构建后下发更新任务</p>
+              </div>
+              <Switch checked={Boolean(updateSettings.agent_auto_update_enabled)} disabled={Boolean(working)} onChange={checked => void saveManagedUpdateSetting({ agent_auto_update_enabled: checked })} ariaLabel="启用 Agent 自动更新" />
+            </div>
+
+            <div className="auto-update-switch-row">
+              <div>
+                <strong>订阅中继自动更新</strong>
+                <p>发现主控配套构建后通过心跳更新</p>
+              </div>
+              <Switch checked={Boolean(updateSettings.subscription_relay_auto_update_enabled)} disabled={Boolean(working)} onChange={checked => void saveManagedUpdateSetting({ subscription_relay_auto_update_enabled: checked })} ariaLabel="启用订阅中继自动更新" />
+            </div>
+          </div>
+
+          <div className="auto-update-dialog-section">
+            <div className="auto-update-switch-row">
+              <div>
+                <strong>仅在指定时段自动安装</strong>
+                <p>按主控时区 {String(updateSettings.traffic_timezone || 'Asia/Shanghai')}</p>
+              </div>
+              <Switch checked={Boolean(updateSettings.update_window_enabled)} disabled={Boolean(working)} onChange={checked => void saveManagedUpdateSetting({ update_window_enabled: checked })} ariaLabel="仅在指定时段自动安装" />
+            </div>
+            {Boolean(updateSettings.update_window_enabled) && (
+              <div className="managed-update-hours" style={{ marginTop: 8, borderLeft: 0, paddingLeft: 0 }}>
+                <FormField label="开始时间">
+                  <Select value={Number(updateSettings.update_window_start_hour ?? 3)} disabled={Boolean(working)} onChange={event => void saveManagedUpdateSetting({ update_window_start_hour: Number(event.target.value) })} aria-label="自动更新开始小时">
+                    {Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{String(hour).padStart(2, '0')}:00</option>)}
+                  </Select>
+                </FormField>
+                <span aria-hidden="true" style={{ alignSelf: 'center', textAlign: 'center' }}>至</span>
+                <FormField label="结束时间">
+                  <Select value={Number(updateSettings.update_window_end_hour ?? 7)} disabled={Boolean(working)} onChange={event => void saveManagedUpdateSetting({ update_window_end_hour: Number(event.target.value) })} aria-label="自动更新结束小时">
+                    {Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{String(hour).padStart(2, '0')}:00</option>)}
+                  </Select>
+                </FormField>
+              </div>
+            )}
+          </div>
+        </div>
+      </Dialog>
+    )}</AnimatePresence>
     <AnimatePresence>{installDialogOpen && <ControllerUpdateInstallDialog
       phase={installPhase}
       targetVersion={snapshot.available?.version || ''}

@@ -6052,6 +6052,55 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .controller-update-actions { justify-content: flex-end; }
 .controller-update-actions button { display: inline-flex; align-items: center; gap: 6px; }
 
+/* Auto Update Dialog Styles */
+.auto-update-dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 4px;
+}
+
+.auto-update-dialog-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.auto-update-section-head,
+.auto-update-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.auto-update-section-head > div,
+.auto-update-switch-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.auto-update-section-head strong,
+.auto-update-switch-row strong {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-strong);
+}
+
+.auto-update-section-head p,
+.auto-update-switch-row p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 @container (max-width: 560px) {
   .controller-update-head { grid-template-columns: minmax(0, 1fr) auto; }
   .controller-update-heading { grid-column: 1; grid-row: 1; }
