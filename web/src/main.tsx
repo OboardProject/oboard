@@ -3080,6 +3080,7 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
     try {
       await client.request(`/subscription-relays/${relay.id}/activate`, { method: 'POST', body: '{}' })
       setRelays(current => current.map(item => ({ ...item, active: item.id === relay.id })))
+      setControllerDirectEnabled(false)
       notify?.(`${relay.name} 已设为订阅入口`, 'success')
       reload()
     } catch (error: any) {

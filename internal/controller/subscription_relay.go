@@ -12,7 +12,10 @@ import (
 	"github.com/OboardProject/oboard/internal/subrelay"
 )
 
-const settingSubscriptionRelayURL = "subscription_relay_url"
+const (
+	settingSubscriptionRelayURL                = "subscription_relay_url"
+	settingSubscriptionControllerDirectEnabled = "subscription_controller_direct_enabled"
+)
 
 func (s *Server) withSubscriptionRelay(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,6 +38,16 @@ func (s *Server) withSubscriptionRelay(next http.Handler) http.Handler {
 			return
 		}
 		if r.Header.Get(subrelay.HeaderSignature) == "" {
+			directSetting, err := s.store.GetSetting(r.Context(), settingSubscriptionControllerDirectEnabled)
+			if err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			directEnabled, _ := strconv.ParseBool(strings.TrimSpace(directSetting))
+			if directEnabled {
+				next.ServeHTTP(w, r)
+				return
+			}
 			http.NotFound(w, r)
 			return
 		}

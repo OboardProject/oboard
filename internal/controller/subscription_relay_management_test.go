@@ -75,6 +75,15 @@ func TestManagedSubscriptionRelayEnrollmentHeartbeatAndUpdate(t *testing.T) {
 	if action := checkedHeartbeat("old-build")["action"]; action != "none" {
 		t.Fatalf("unexpected initial action %v", action)
 	}
+	settings, err := db.ListSettings(t.Context())
+	if err != nil || settings[settingSubscriptionRelayURL] != "https://relay.example" || settings[settingSubscriptionControllerDirectEnabled] != "false" {
+		t.Fatalf("initial relay access settings: %#v err=%v", settings, err)
+	}
+	request(t, handler, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{"subscription_controller_direct_enabled": true}, http.StatusOK)
+	settings, err = db.ListSettings(t.Context())
+	if err != nil || settings[settingSubscriptionControllerDirectEnabled] != "true" {
+		t.Fatalf("direct access setting was not enabled: value=%q err=%v", settings[settingSubscriptionControllerDirectEnabled], err)
+	}
 	request(t, handler, http.MethodPost, "/api/v2/ui/subscription-relays/"+strconv.FormatInt(relayID, 10)+"/update", token, map[string]any{}, http.StatusAccepted)
 	if action := checkedHeartbeat("old-build"); action["action"] != "update" || action["target_build"] != version.Build {
 		t.Fatalf("unexpected update action %#v", action)
@@ -113,8 +122,8 @@ func TestManagedSubscriptionRelayEnrollmentHeartbeatAndUpdate(t *testing.T) {
 	if response := heartbeat(version.Build); response.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked relay credentials status=%d body=%s", response.Code, response.Body.String())
 	}
-	settings, err := db.ListSettings(t.Context())
-	if err != nil || settings[settingSubscriptionRelayURL] != "" {
-		t.Fatalf("active relay setting was not cleared: value=%q err=%v", settings[settingSubscriptionRelayURL], err)
+	settings, err = db.ListSettings(t.Context())
+	if err != nil || settings[settingSubscriptionRelayURL] != "" || settings[settingSubscriptionControllerDirectEnabled] != "true" {
+		t.Fatalf("relay access settings were not restored: %#v err=%v", settings, err)
 	}
 }

@@ -163,7 +163,7 @@ func (s *Server) registerSubscriptionRelayOperations() {
 		if relay.TokenHash == "" || relay.SigningSecretEncrypted == "" {
 			return nil, errors.New("中继尚未接入，不能设为订阅入口")
 		}
-		if err := s.store.SetSetting(ctx, settingSubscriptionRelayURL, relay.PublicURL); err != nil {
+		if err := s.store.SetSettings(ctx, map[string]string{settingSubscriptionRelayURL: relay.PublicURL, settingSubscriptionControllerDirectEnabled: "false"}); err != nil {
 			return nil, err
 		}
 		return map[string]any{"relay_id": relay.ID, "active": true}, nil
@@ -210,12 +210,6 @@ func (s *Server) registerSubscriptionRelayOperations() {
 		relay, err := s.store.GetSubscriptionRelay(ctx, request.RelayID)
 		if err != nil {
 			return nil, err
-		}
-		settings, _ := s.store.ListSettings(ctx)
-		if strings.TrimRight(settings[settingSubscriptionRelayURL], "/") == strings.TrimRight(relay.PublicURL, "/") {
-			if err := s.store.SetSetting(ctx, settingSubscriptionRelayURL, ""); err != nil {
-				return nil, err
-			}
 		}
 		if err := s.store.DeleteSubscriptionRelay(ctx, relay.ID); err != nil {
 			return nil, err
@@ -274,7 +268,7 @@ var settingsAutomationFields = map[string]bool{
 	"audit_enabled": true, "subscription_audit_enabled": true, "connection_audit_enabled": true,
 	"audit_action": true, "traffic_timezone": true, "traffic_enforcement_mode": true,
 	"subscription_age_policy": true, "subscription_custom_path_mode": true,
-	"subscription_relay_url":  true,
+	"subscription_relay_url": true, "subscription_controller_direct_enabled": true,
 	"server_default_mtu_mode": true, "server_default_bbr_enabled": true,
 	"server_default_time_correction_mode": true, "time_check_ntp_servers": true,
 	"trusted_proxy_cidrs": true, "controller_log_max_mb": true, "controller_log_backups": true,
@@ -413,6 +407,11 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 			return nil, err
 		}
 		updates[settingSubscriptionRelayURL] = normalized
+	}
+	if value, ok := fields["subscription_controller_direct_enabled"]; ok {
+		if err := setBool(settingSubscriptionControllerDirectEnabled, value); err != nil {
+			return nil, err
+		}
 	}
 	if value, ok := fields["server_default_mtu_mode"]; ok {
 		if err := setString(settingServerDefaultMTUMode, value); err != nil {

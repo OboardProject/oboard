@@ -699,6 +699,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			ControllerURL                *string            `json:"controller_url"`
 			SubscriptionRelayURL         *string            `json:"subscription_relay_url"`
+			SubscriptionControllerDirect *bool              `json:"subscription_controller_direct_enabled"`
 			BasePath                     *string            `json:"base_path"`
 			CertificateAutoMatch         *bool              `json:"certificate_auto_match_enabled"`
 			CertificatePreference        *string            `json:"certificate_default_preference"`
@@ -814,6 +815,13 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			changed = append(changed, "subscription_relay_url")
+		}
+		if req.SubscriptionControllerDirect != nil {
+			if err := s.store.SetSetting(r.Context(), settingSubscriptionControllerDirectEnabled, strconv.FormatBool(*req.SubscriptionControllerDirect)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingSubscriptionControllerDirectEnabled)
 		}
 		if req.CertificateAutoMatch != nil {
 			if err := s.store.SetSetting(r.Context(), "certificate_auto_match_enabled", strconv.FormatBool(*req.CertificateAutoMatch)); err != nil {
@@ -1140,7 +1148,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	for key, value := range items {
 		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID {
 			continue
@@ -1149,6 +1157,7 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	}
 	out[controllerAutoUpdateSetting] = settingBool(items, controllerAutoUpdateSetting, false)
 	out[controllerAutoUpdateIntervalSetting] = controllerUpdateIntervalHours(items)
+	out[settingSubscriptionControllerDirectEnabled] = settingBool(items, settingSubscriptionControllerDirectEnabled, false)
 	if raw := strings.TrimSpace(items[settingRegistrationEnabled]); raw != "" {
 		out[settingRegistrationEnabled] = settingBool(items, settingRegistrationEnabled, false)
 	}

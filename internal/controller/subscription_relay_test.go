@@ -60,6 +60,17 @@ func TestSubscriptionRelayAuthenticatesClientIPAndRejectsReplay(t *testing.T) {
 	if direct.Code != http.StatusNotFound {
 		t.Fatalf("direct subscription status = %d", direct.Code)
 	}
+	if err := db.SetSetting(context.Background(), settingSubscriptionControllerDirectEnabled, "true"); err != nil {
+		t.Fatal(err)
+	}
+	direct = httptest.NewRecorder()
+	handler.ServeHTTP(direct, httptest.NewRequest(http.MethodGet, "https://controller.example/api/v1/subscriptions/token?format=mihomo", nil))
+	if direct.Code != http.StatusOK {
+		t.Fatalf("enabled direct subscription status = %d", direct.Code)
+	}
+	if err := db.SetSetting(context.Background(), settingSubscriptionControllerDirectEnabled, "false"); err != nil {
+		t.Fatal(err)
+	}
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)

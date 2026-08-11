@@ -11,6 +11,11 @@ import (
 
 const subscriptionRelaySelect = `select id,name,public_url,status,token_hash,signing_secret_encrypted,coalesce(enrollment_hash,''),enrollment_expires_at,version,build,commit_hash,os,arch,service_manager,update_target_version,update_target_build,update_requested_at,last_update_error,last_seen_at,created_at,updated_at from subscription_relays`
 
+const (
+	subscriptionRelayURLSetting                = "subscription_relay_url"
+	subscriptionControllerDirectEnabledSetting = "subscription_controller_direct_enabled"
+)
+
 func (s *Store) CreateSubscriptionRelay(ctx context.Context, relay *model.SubscriptionRelay) error {
 	ts := now()
 	result, err := s.db.ExecContext(ctx, `insert into subscription_relays(name,public_url,status,enrollment_hash,enrollment_expires_at,created_at,updated_at) values(?,?,?,?,?,?,?)`, relay.Name, relay.PublicURL, relay.Status, nullEmpty(relay.EnrollmentHash), timePtrString(relay.EnrollmentExpiresAt), ts, ts)
@@ -65,14 +70,23 @@ func (s *Store) UpdateSubscriptionRelay(ctx context.Context, relay *model.Subscr
 }
 
 func (s *Store) DeleteSubscriptionRelay(ctx context.Context, id int64) error {
-	result, err := s.db.ExecContext(ctx, `delete from subscription_relays where id=?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ts := now()
+	if err := restoreControllerDirectForActiveRelay(ctx, tx, id, ts); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `delete from subscription_relays where id=?`, id)
 	if err != nil {
 		return err
 	}
 	if count, _ := result.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) ClaimSubscriptionRelayEnrollment(ctx context.Context, enrollmentHash, tokenHash, signingSecretEncrypted string) (*model.SubscriptionRelay, error) {
@@ -129,9 +143,26 @@ func (s *Store) RequestSubscriptionRelayUpdate(ctx context.Context, id int64, ta
 }
 
 func (s *Store) SetSubscriptionRelayActiveIfUnset(ctx context.Context, publicURL string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values('subscription_relay_url',?,?) on conflict(key) do update set value=excluded.value,updated_at=excluded.updated_at where trim(app_settings.value)=''`, publicURL, ts)
-	return err
+	result, err := tx.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value,updated_at=excluded.updated_at where trim(app_settings.value)=''`, subscriptionRelayURLSetting, publicURL, ts)
+	if err != nil {
+		return err
+	}
+	activated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if activated > 0 {
+		if _, err := tx.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value,updated_at=excluded.updated_at`, subscriptionControllerDirectEnabledSetting, "false", ts); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) CompleteSubscriptionRelayUpdate(ctx context.Context, id int64) error {
@@ -153,10 +184,26 @@ func (s *Store) MarkSubscriptionRelayUninstalled(ctx context.Context, id int64) 
 	if count, _ := result.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
 	}
-	if _, err := tx.ExecContext(ctx, `update app_settings set value='',updated_at=? where key='subscription_relay_url' and rtrim(value,'/')=(select rtrim(public_url,'/') from subscription_relays where id=?)`, ts, id); err != nil {
+	if err := restoreControllerDirectForActiveRelay(ctx, tx, id, ts); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func restoreControllerDirectForActiveRelay(ctx context.Context, tx *sql.Tx, id int64, ts string) error {
+	result, err := tx.ExecContext(ctx, `update app_settings set value='',updated_at=? where key=? and rtrim(value,'/')=(select rtrim(public_url,'/') from subscription_relays where id=?)`, ts, subscriptionRelayURLSetting, id)
+	if err != nil {
+		return err
+	}
+	cleared, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if cleared == 0 {
+		return nil
+	}
+	_, err = tx.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value,updated_at=excluded.updated_at`, subscriptionControllerDirectEnabledSetting, "true", ts)
+	return err
 }
 
 func scanSubscriptionRelays(rows *sql.Rows) ([]model.SubscriptionRelay, error) {

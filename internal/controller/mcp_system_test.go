@@ -20,13 +20,13 @@ func TestSettingsCapabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal := userAutomationPrincipal(t, db, admin.ID)
-	updateInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"audit_enabled": false, "traffic_timezone": "Asia/Tokyo", "traffic_enforcement_mode": "reject_new", "subscription_relay_url": "https://subscriptions.example.com"}})
+	updateInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"audit_enabled": false, "traffic_timezone": "Asia/Tokyo", "traffic_enforcement_mode": "reject_new", "subscription_relay_url": "https://subscriptions.example.com", "subscription_controller_direct_enabled": true}})
 	applyAutomationChangeset(t, server, principal, "settings-update", automation.OperationRequest{Capability: "settings.update", Input: updateInput})
 	settings, err := db.ListSettings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings["audit_enabled"] != "false" || settings["traffic_timezone"] != "Asia/Tokyo" || settings["traffic_enforcement_mode"] != "reject_new" || settings["subscription_relay_url"] != "https://subscriptions.example.com" {
+	if settings["audit_enabled"] != "false" || settings["traffic_timezone"] != "Asia/Tokyo" || settings["traffic_enforcement_mode"] != "reject_new" || settings["subscription_relay_url"] != "https://subscriptions.example.com" || settings[settingSubscriptionControllerDirectEnabled] != "true" {
 		t.Fatalf("settings not applied: %#v", settings)
 	}
 	invalidInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"subscription_relay_url": "http://subscriptions.example.com"}})
@@ -80,13 +80,17 @@ func TestSubscriptionRelayCapabilities(t *testing.T) {
 	activateInput, _ := json.Marshal(map[string]any{"relay_id": relayID})
 	applyAutomationChangeset(t, server, principal, "relay-activate", automation.OperationRequest{Capability: "subscription_relays.activate", Input: activateInput})
 	settings, _ := db.ListSettings(ctx)
-	if settings[settingSubscriptionRelayURL] != "https://sub.example.com" {
-		t.Fatalf("active relay URL=%q", settings[settingSubscriptionRelayURL])
+	if settings[settingSubscriptionRelayURL] != "https://sub.example.com" || settings[settingSubscriptionControllerDirectEnabled] != "false" {
+		t.Fatalf("active relay settings=%#v", settings)
 	}
 	deleteInput, _ := json.Marshal(map[string]any{"relay_id": relayID, "confirm": true})
 	applyAutomationChangeset(t, server, principal, "relay-delete", automation.OperationRequest{Capability: "subscription_relays.delete", Input: deleteInput})
 	if _, err := db.GetSubscriptionRelay(ctx, relayID); err == nil {
 		t.Fatal("deleted relay still exists")
+	}
+	settings, _ = db.ListSettings(ctx)
+	if settings[settingSubscriptionRelayURL] != "" || settings[settingSubscriptionControllerDirectEnabled] != "true" {
+		t.Fatalf("deleted relay access settings=%#v", settings)
 	}
 }
 
