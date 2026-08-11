@@ -14818,7 +14818,7 @@ button.ui-btn-ghost:hover {
   isolation: isolate;
   display: inline-grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(72px, auto);
+  grid-auto-columns: minmax(0, 1fr);
   align-items: stretch;
   gap: 4px;
   width: fit-content;

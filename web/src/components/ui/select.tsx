@@ -57,7 +57,10 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(({
     return (
       <div
         className={`ui-segmented-select${disabled ? ' disabled' : ''}${className ? ` ${className}` : ''}`}
-        style={style}
+        style={{
+          gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))`,
+          ...style,
+        }}
         role="radiogroup"
         aria-label={ariaLabel}
         aria-required={required || undefined}
