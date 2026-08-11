@@ -20,6 +20,14 @@ trap cleanup EXIT
 fail() { echo "$*" >&2; exit 1; }
 need_command() { command -v "$1" >/dev/null 2>&1 || fail "缺少命令：$1"; }
 
+resolve_release_target() {
+	VERSION_VALUE=${VERSION_VALUE#v}
+	case "$VERSION_VALUE" in
+		*dev*) TAG=dev; ARTIFACT_VERSION=dev ;;
+		*) TAG=v$VERSION_VALUE; ARTIFACT_VERSION=$VERSION_VALUE ;;
+	esac
+}
+
 [ "$(id -u)" -eq 0 ] || fail "安装订阅中继需要 root 权限。"
 case "$REPO" in [A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*) ;; *) fail "OBOARD_REPO 格式无效。" ;; esac
 case "$ACTION" in install|update|uninstall) ;; *) fail "OBOARD_ACTION 必须是 install、update 或 uninstall。" ;; esac
@@ -97,10 +105,7 @@ elif command -v wget >/dev/null 2>&1; then
 else
 	fail "需要 curl 或 wget。"
 fi
-VERSION_VALUE=${VERSION_VALUE#v}
-TAG=v$VERSION_VALUE
-ARTIFACT_VERSION=$VERSION_VALUE
-if [ "$VERSION_VALUE" = dev ]; then TAG=dev; ARTIFACT_VERSION=dev; fi
+resolve_release_target
 ARCHIVE=oboard_controller_${ARTIFACT_VERSION}_linux_${ARCH}_install.tar.gz
 BASE_URL=https://github.com/$REPO/releases/download/$TAG
 TMP_DIR=$(mktemp -d /tmp/oboard-subscription-relay.XXXXXX)

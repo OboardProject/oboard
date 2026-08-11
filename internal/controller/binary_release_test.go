@@ -274,6 +274,32 @@ exit 1
 	}
 }
 
+func TestSubscriptionRelayInstallerResolvesReleaseTarget(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to locate repository")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	content, err := os.ReadFile(filepath.Join(root, "internal", "controller", "assets", "install-subscription-relay.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	function := extractShellFunction(t, string(content), "resolve_release_target")
+	for _, test := range []struct {
+		version string
+		want    string
+	}{
+		{version: "dev-5e1ebffaa8b1", want: "dev dev"},
+		{version: "v1.2.3", want: "v1.2.3 1.2.3"},
+	} {
+		command := exec.Command("sh", "-c", function+"\nVERSION_VALUE=$1\nresolve_release_target\nprintf '%s %s\\n' \"$TAG\" \"$ARTIFACT_VERSION\"\n", "test", test.version)
+		output, err := command.CombinedOutput()
+		if err != nil || strings.TrimSpace(string(output)) != test.want {
+			t.Errorf("release target for %q = %q, err=%v; want %q", test.version, strings.TrimSpace(string(output)), err, test.want)
+		}
+	}
+}
+
 func TestBinaryInstallerBuildsDetectedPanelURLs(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {

@@ -62,7 +62,9 @@ export function subscriptionRelayCommand(options: {
 }) {
   const controllerURL = options.controllerURL.replace(/\/+$/, '')
   const download = `curl -fsSL ${shellQuote(`${controllerURL}/install/subscription-relay.sh`)}`
-  const values = [`VERSION=${shellQuote(options.version || 'latest')}`]
+  const requestedVersion = options.version || 'latest'
+  const releaseVersion = requestedVersion.includes('dev') ? 'dev' : requestedVersion
+  const values = [`VERSION=${shellQuote(releaseVersion)}`]
   if (options.action === 'install') {
     values.push(`OBOARD_CONTROLLER_URL=${shellQuote(controllerURL)}`)
     values.push(`OBOARD_SUBSCRIPTION_RELAY_ENROLLMENT_TOKEN=${shellQuote(options.enrollmentToken || '')}`)

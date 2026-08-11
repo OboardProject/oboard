@@ -19,6 +19,17 @@ describe('subscription relay commands', () => {
     expect(subscriptionRelayCommand({ controllerURL: 'https://panel.example', version: 'dev', action: 'uninstall' })).toContain("OBOARD_ACTION='uninstall'")
   })
 
+  it('uses the mutable development release for commit-qualified versions', () => {
+    const command = subscriptionRelayCommand({
+      controllerURL: 'https://panel.example/qzq',
+      version: 'dev-5e1ebffaa8b1',
+      action: 'install',
+      enrollmentToken: 'secret-token',
+    })
+    expect(command).toContain("VERSION='dev'")
+    expect(command).not.toContain('vdev-5e1ebffaa8b1')
+  })
+
   it('maps operational states to visible labels', () => {
     expect(subscriptionRelayStatus('online')).toEqual({ label: '在线', tone: 'ok' })
     expect(subscriptionRelayStatus('failed').label).toBe('更新失败')
