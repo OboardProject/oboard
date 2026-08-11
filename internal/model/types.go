@@ -2469,6 +2469,7 @@ type HealthReport struct {
 	NetworkTotalUploadBytes   uint64       `json:"network_total_upload_bytes"`
 	NetworkTotalDownloadBytes uint64       `json:"network_total_download_bytes"`
 	ConnectivityProbeEnabled  bool         `json:"connectivity_probe_enabled"`
+	ConnectivityProbeTarget   string       `json:"connectivity_probe_target"`
 	ConnectivityAvailable     bool         `json:"connectivity_available"`
 	ConnectivityLatencyMS     int64        `json:"connectivity_latency_ms"`
 	ConnectivityCheckedAt     time.Time    `json:"connectivity_checked_at"`

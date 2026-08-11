@@ -645,7 +645,7 @@ function ServerRegionField({ draft, update, servers }: { draft: any; update: (pa
 
 function ConnectivityProbeTargetField({ draft, update }: { draft: any; update: (patch: any) => void }) {
   if (!draft.connectivity_probe_enabled) return null
-  const automaticDomain = serverRegionCode(draft) === 'CN' ? '12306.cn' : 'cp.cloudflare.com'
+  const automaticDomain = connectivityProbeDomain(draft)
   return <FormField label="探测域名" hint="自动模式下，中国大陆使用 12306.cn，其他地区使用 cp.cloudflare.com。">
     <Select value={draft.connectivity_probe_target || 'auto'} onChange={event => update({ connectivity_probe_target: event.target.value as ConnectivityProbeTarget })}>
       <option value="auto">自动（当前：{automaticDomain}）</option>
@@ -654,6 +654,13 @@ function ConnectivityProbeTargetField({ draft, update }: { draft: any; update: (
       <option value="google">www.gstatic.com</option>
     </Select>
   </FormField>
+}
+
+function connectivityProbeDomain(server: Pick<Server, 'connectivity_probe_target' | 'region_mode' | 'region_code' | 'detected_region_code'>) {
+  if (server.connectivity_probe_target === '12306') return '12306.cn'
+  if (server.connectivity_probe_target === 'google') return 'www.gstatic.com'
+  if (server.connectivity_probe_target === 'cloudflare') return 'cp.cloudflare.com'
+  return serverRegionCode(server) === 'CN' ? '12306.cn' : 'cp.cloudflare.com'
 }
 
 function exitRegionStatusLabel(status?: string, code?: string) {
@@ -7885,7 +7892,7 @@ function ServerConnectivityDialog({ server, client, onClose }: { server: Server;
         <span className={`connectivity-head-icon ${currentTone}`}><Activity size={17} aria-hidden="true" /></span>
         <div>
           <h2>SLA（公网可用率）</h2>
-          <p>{server.name || `服务器 #${server.id}`} · cp.cloudflare.com · 每分钟检测</p>
+          <p>{server.name || `服务器 #${server.id}`} · {connectivityProbeDomain(server)} · 每分钟检测</p>
         </div>
       </div>
       <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>

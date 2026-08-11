@@ -1370,6 +1370,21 @@ func TestServerMonitoringPolicyAndHealthSanitization(t *testing.T) {
 	}
 }
 
+func TestConnectivityProbePolicyRejectsStaleTarget(t *testing.T) {
+	checkedAt := time.Now().UTC()
+	server := &model.Server{ConnectivityProbeEnabled: true, ConnectivityProbeTarget: model.ConnectivityProbeTargetGoogle}
+	report := model.HealthReport{ConnectivityProbeTarget: "cloudflare", ConnectivityAvailable: true, ConnectivityLatencyMS: 20, ConnectivityCheckedAt: checkedAt}
+	applyConnectivityProbePolicy(&report, server)
+	if report.ConnectivityAvailable || report.ConnectivityLatencyMS != 0 || !report.ConnectivityCheckedAt.IsZero() {
+		t.Fatalf("stale target result was accepted: %#v", report)
+	}
+	report = model.HealthReport{ConnectivityProbeTarget: "google", ConnectivityAvailable: true, ConnectivityLatencyMS: 20, ConnectivityCheckedAt: checkedAt}
+	applyConnectivityProbePolicy(&report, server)
+	if !report.ConnectivityAvailable || report.ConnectivityLatencyMS != 20 || !report.ConnectivityCheckedAt.Equal(checkedAt) {
+		t.Fatalf("current target result was rejected: %#v", report)
+	}
+}
+
 func TestValidateServerListenMode(t *testing.T) {
 	server := &model.Server{Name: "s1", PortRangeStart: 10000, PortRangeEnd: 10010}
 	if err := validateServer(server); err != nil {

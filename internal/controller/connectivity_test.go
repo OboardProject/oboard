@@ -87,6 +87,36 @@ func TestConnectivitySLADurationIntegration(t *testing.T) {
 			t.Fatalf("disabled interval was counted as an outage: %#v", response.Outages)
 		}
 	})
+
+	t.Run("target change is an unobserved boundary", func(t *testing.T) {
+		history := model.ServerConnectivityHistory{Events: []model.ServerConnectivityEvent{
+			connectivityTestEvent(1, from, model.ConnectivityEventProbeResult, boolPointer(true), 20),
+			connectivityTestEvent(2, from.Add(30*time.Minute), model.ConnectivityEventProbeTargetChanged, nil, 0),
+			connectivityTestEvent(3, from.Add(31*time.Minute), model.ConnectivityEventProbeResult, boolPointer(true), 25),
+		}}
+		response := BuildConnectivityResponse(1, window, history)
+		assertNear(t, response.Summary.AvailableSeconds, 59*60, 0.001)
+		assertNear(t, response.Summary.UnknownSeconds, 60, 0.001)
+		if response.Summary.SLAPercent == nil || *response.Summary.SLAPercent != 100 || response.Summary.OutageCount != 0 {
+			t.Fatalf("target change affected SLA or outages: %#v", response.Summary)
+		}
+	})
+
+	t.Run("target change preserves an existing offline outage", func(t *testing.T) {
+		history := model.ServerConnectivityHistory{Events: []model.ServerConnectivityEvent{
+			connectivityTestEvent(1, from, model.ConnectivityEventProbeResult, boolPointer(true), 20),
+			connectivityTestEvent(2, from.Add(20*time.Minute), model.ConnectivityEventServerOffline, boolPointer(false), 0),
+			connectivityTestEvent(3, from.Add(30*time.Minute), model.ConnectivityEventProbeTargetChanged, nil, 0),
+			connectivityTestEvent(4, from.Add(40*time.Minute), model.ConnectivityEventProbeResult, boolPointer(true), 25),
+		}}
+		response := BuildConnectivityResponse(1, window, history)
+		assertNear(t, response.Summary.AvailableSeconds, 40*60, 0.001)
+		assertNear(t, response.Summary.UnavailableSeconds, 20*60, 0.001)
+		assertNear(t, response.Summary.UnknownSeconds, 0, 0.001)
+		if response.Summary.SLAPercent == nil || response.Summary.OutageCount != 1 || len(response.Outages) != 1 || response.Outages[0].DurationSeconds != 20*60 {
+			t.Fatalf("target change masked offline outage: summary=%#v outages=%#v", response.Summary, response.Outages)
+		}
+	})
 }
 
 func TestConnectivityPendingUnknownAndBaseline(t *testing.T) {

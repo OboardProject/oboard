@@ -10694,6 +10694,17 @@ func effectiveConnectivityProbeTarget(server *model.Server) model.ConnectivityTa
 	return model.ConnectivityProbeTargetCloudflare
 }
 
+func applyConnectivityProbePolicy(report *model.HealthReport, server *model.Server) {
+	report.ConnectivityProbeEnabled = server != nil && server.ConnectivityProbeEnabled
+	if report.ConnectivityProbeEnabled && report.ConnectivityProbeTarget == string(effectiveConnectivityProbeTarget(server)) {
+		return
+	}
+	report.ConnectivityAvailable = false
+	report.ConnectivityLatencyMS = 0
+	report.ConnectivityCheckedAt = time.Time{}
+	report.ConnectivityError = ""
+}
+
 func signAgentTaskEnvelope(secret string, task model.AgentTask) string {
 	return security.SignTaskEnvelope(secret, security.TaskEnvelope{ID: task.ID, ServerID: task.ServerID, Type: task.Type, ConfigVersion: task.ConfigVersion, Nonce: task.Nonce, PayloadJSON: task.PayloadJSON})
 }
@@ -10727,13 +10738,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 			if currentErr != nil {
 				return
 			}
-			h.ConnectivityProbeEnabled = current.ConnectivityProbeEnabled
-			if !current.ConnectivityProbeEnabled {
-				h.ConnectivityAvailable = false
-				h.ConnectivityLatencyMS = 0
-				h.ConnectivityCheckedAt = time.Time{}
-				h.ConnectivityError = ""
-			}
+			applyConnectivityProbePolicy(&h, current)
 			settings, _ := s.store.ListSettings(ctx)
 			_, start, end := trafficWindow(time.Now(), current.TrafficResetMode, current.TrafficResetDay, time.Time{}, trafficLocation(settings))
 			window := model.ServerTrafficWindow{Key: start.Format("2006-01-02"), Start: start, End: end}
@@ -10777,6 +10782,11 @@ func sanitizeServerHealthReport(report *model.HealthReport) {
 		report.ConnectivityLatencyMS = 0
 		report.ConnectivityAvailable = false
 		report.ConnectivityError = "invalid connectivity probe latency"
+	}
+	switch report.ConnectivityProbeTarget {
+	case string(model.ConnectivityProbeTargetCloudflare), string(model.ConnectivityProbeTarget12306), string(model.ConnectivityProbeTargetGoogle):
+	default:
+		report.ConnectivityProbeTarget = ""
 	}
 	if !report.ConnectivityCheckedAt.IsZero() {
 		checked := report.ConnectivityCheckedAt.UTC()

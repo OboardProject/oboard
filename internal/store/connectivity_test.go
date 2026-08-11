@@ -71,6 +71,12 @@ func TestConnectivityProbeEventsTrackRealProbesOnly(t *testing.T) {
 func TestConnectivityProbeTargetPersists(t *testing.T) {
 	ctx := context.Background()
 	db, server := newConnectivityTestStore(t)
+	checkedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+	report := model.HealthReport{ConnectivityProbeEnabled: true, ConnectivityAvailable: true, ConnectivityLatencyMS: 23, ConnectivityCheckedAt: checkedAt, Timestamp: checkedAt}
+	if err := db.UpdateServerTelemetryReport(ctx, server.ID, report, telemetryWindow(checkedAt)); err != nil {
+		t.Fatal(err)
+	}
+	initialBoundaries := connectivityEventCount(t, db, server.ID, model.ConnectivityEventProbeTargetChanged)
 	server.ConnectivityProbeTarget = model.ConnectivityProbeTargetGoogle
 	if err := db.UpdateServer(ctx, server); err != nil {
 		t.Fatal(err)
@@ -81,6 +87,19 @@ func TestConnectivityProbeTargetPersists(t *testing.T) {
 	}
 	if stored.ConnectivityProbeTarget != model.ConnectivityProbeTargetGoogle {
 		t.Fatalf("connectivity probe target = %q, want google", stored.ConnectivityProbeTarget)
+	}
+	if stored.ConnectivityStatus != "pending" || stored.ConnectivityCheckedAt != nil {
+		t.Fatalf("target change retained old connectivity state: status=%q checked_at=%v", stored.ConnectivityStatus, stored.ConnectivityCheckedAt)
+	}
+	if got := connectivityEventCount(t, db, server.ID, model.ConnectivityEventProbeTargetChanged); got != initialBoundaries+1 {
+		t.Fatalf("target change boundaries = %d, want %d", got, initialBoundaries+1)
+	}
+	var source string
+	if err := db.db.QueryRowContext(ctx, `select source from server_connectivity_events where server_id=? and kind=? order by id desc limit 1`, server.ID, model.ConnectivityEventProbeTargetChanged).Scan(&source); err != nil {
+		t.Fatal(err)
+	}
+	if source != "target_change" {
+		t.Fatalf("target change boundary source = %q", source)
 	}
 }
 

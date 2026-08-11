@@ -154,6 +154,16 @@ func applyConnectivityEvent(state *connectivityState, event model.ServerConnecti
 		state.lastProbeAt = nil
 		state.lastProbeLatency = 0
 		state.lastProbeError = ""
+	case model.ConnectivityEventProbeTargetChanged:
+		state.probeEnabledKnown = true
+		state.probeEnabled = true
+		if state.cause != "server_offline" {
+			state.availability = connectivityUnknown
+			state.cause = ""
+		}
+		state.lastProbeAt = nil
+		state.lastProbeLatency = 0
+		state.lastProbeError = ""
 	case model.ConnectivityEventProbeResult:
 		state.probeEnabledKnown = true
 		state.probeEnabled = true

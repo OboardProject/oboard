@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -79,7 +80,7 @@ func (s *Store) RecordConnectivityProbeSettingEvent(ctx context.Context, serverI
 func (s *Store) ListConnectivityHistory(ctx context.Context, serverID int64, from, to time.Time) (model.ServerConnectivityHistory, error) {
 	var history model.ServerConnectivityHistory
 	for _, kinds := range [][]model.ConnectivityEventKind{
-		{model.ConnectivityEventProbeEnabled, model.ConnectivityEventProbeDisabled},
+		{model.ConnectivityEventProbeEnabled, model.ConnectivityEventProbeDisabled, model.ConnectivityEventProbeTargetChanged},
 		{model.ConnectivityEventProbeResult, model.ConnectivityEventServerOffline},
 	} {
 		event, err := s.latestConnectivityEventBefore(ctx, serverID, from, kinds)
@@ -116,7 +117,19 @@ func (s *Store) ListConnectivityHistory(ctx context.Context, serverID int64, fro
 }
 
 func (s *Store) latestConnectivityEventBefore(ctx context.Context, serverID int64, before time.Time, kinds []model.ConnectivityEventKind) (model.ServerConnectivityEvent, error) {
-	row := s.db.QueryRowContext(ctx, `select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events where server_id=? and kind in (?,?) and effective_at<? order by effective_at desc,id desc limit 1`, serverID, kinds[0], kinds[1], before.UTC().Format(time.RFC3339Nano))
+	if len(kinds) == 0 {
+		return model.ServerConnectivityEvent{}, errors.New("connectivity event kinds are required")
+	}
+	placeholders := make([]string, len(kinds))
+	args := make([]any, 0, len(kinds)+2)
+	args = append(args, serverID)
+	for index, kind := range kinds {
+		placeholders[index] = "?"
+		args = append(args, kind)
+	}
+	args = append(args, before.UTC().Format(time.RFC3339Nano))
+	query := `select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events where server_id=? and kind in (` + strings.Join(placeholders, ",") + `) and effective_at<? order by effective_at desc,id desc limit 1`
+	row := s.db.QueryRowContext(ctx, query, args...)
 	return scanConnectivityEvent(row)
 }
 
