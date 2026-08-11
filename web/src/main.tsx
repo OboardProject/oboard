@@ -6174,7 +6174,23 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [detailServer, setDetailServer] = useState<Server | null>(null)
   const [timeDetailServer, setTimeDetailServer] = useState<Server | null>(null)
   const [connectivityServer, setConnectivityServer] = useState<{ server: Server } | null>(null)
-  const [view, setView] = useState<'grid' | 'list'>('grid')
+  const [view, setViewState] = useState<'grid' | 'list'>(() => {
+    try {
+      const saved = localStorage.getItem('oboard_server_view_mode')
+      if (saved === 'grid' || saved === 'list') return saved
+    } catch {
+      // ignore local storage errors
+    }
+    return 'grid'
+  })
+  const setView = (nextView: 'grid' | 'list') => {
+    setViewState(nextView)
+    try {
+      localStorage.setItem('oboard_server_view_mode', nextView)
+    } catch {
+      // ignore local storage errors
+    }
+  }
   const [serverQuery, setServerQuery] = useState('')
   const [serverStatusFilter, setServerStatusFilter] = useState<ServerStatusFilter>('all')
   const [serverRegionFilter, setServerRegionFilter] = useState('all')
@@ -7420,6 +7436,10 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
 
   if (layout === 'list') {
     const memPercent = server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0
+    const downRate = formatByteRate(server.network_download_bps || 0)
+    const upRate = formatByteRate(server.network_upload_bps || 0)
+    const totalTraffic = formatBytes((server.traffic_upload_bytes || 0) + (server.traffic_download_bytes || 0))
+
     return (
       <MotionCard tag="article" className="server-card server-list-row" hoverEffect={false}>
         <div className="server-list-identity">
@@ -7429,7 +7449,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
               <strong className="server-list-name">{server.name || `server-${server.id}`}</strong>
               <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
             </div>
-            <div style={{ fontSize: 11, color: 'var(--muted)', display: 'flex', gap: 6, alignItems: 'center', marginTop: 1 }}>
+            <div className="server-list-subinfo">
               <span>#{server.id}</span>
               <span>·</span>
               <span>{regionLabel(serverRegionCode(server))}</span>
@@ -7442,17 +7462,19 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
         <div className="server-list-metric-item">
           <span className="server-list-metric-label">CPU / 内存</span>
           <div className="server-list-metric-value">
-            <span style={{ fontWeight: 600 }}>{Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
-            <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>{serverMemoryLabel(server)} ({memPercent}%)</span>
+            <span style={{ fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>{Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
+            <span className="muted" style={{ fontSize: 11, marginLeft: 6, fontVariantNumeric: 'tabular-nums' }}>{serverMemoryLabel(server)} ({memPercent}%)</span>
           </div>
         </div>
 
         <div className="server-list-metric-item">
           <span className="server-list-metric-label">实时速率 / 本周期</span>
-          <div className="server-list-metric-value" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span>⬇ <strong>{formatByteRate(server.network_download_bps || 0)}</strong></span>
-            <span>⬆ <strong>{formatByteRate(server.network_upload_bps || 0)}</strong></span>
-            <span className="muted" style={{ fontSize: 11 }}>{formatBytes((server.traffic_upload_bytes || 0) + (server.traffic_download_bytes || 0))}</span>
+          <div className="server-list-network-row">
+            <div className="server-list-rate-group">
+              <span className="rate-sub down" title="下载速率"><ArrowDown size={12} /><strong>{downRate}</strong></span>
+              <span className="rate-sub up" title="上传速率"><ArrowUp size={12} /><strong>{upRate}</strong></span>
+            </div>
+            <span className="server-list-traffic-badge" title="本计费周期累计流量">{totalTraffic}</span>
           </div>
         </div>
 
@@ -7460,13 +7482,15 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
           <span className="server-list-metric-label">公网延时</span>
           {server.connectivity_probe_enabled ? (
             <button type="button" className="ghost server-list-latency-btn" onClick={() => onAction('connectivity-details', server)} title="查看 SLA 详情">
-              <strong style={{ fontSize: 13 }}>{server.connectivity_status === 'available' ? `${server.connectivity_latency_ms || 0} ms` : '—'}</strong>
-              <Badge variant={server.connectivity_status === 'available' ? 'success' : 'secondary'} style={{ fontSize: 10, padding: '0 4px' }}>
+              <strong>{server.connectivity_status === 'available' ? `${server.connectivity_latency_ms || 0} ms` : '—'}</strong>
+              <Badge variant={server.connectivity_status === 'available' ? 'success' : 'secondary'} className="latency-status-badge">
                 {server.connectivity_status === 'available' ? '可用' : '不可用'}
               </Badge>
             </button>
           ) : (
-            <span className="muted" style={{ fontSize: 12 }}>未配置</span>
+            <div className="server-list-latency-btn disabled">
+              <span className="muted" style={{ fontSize: 12 }}>未配置</span>
+            </div>
           )}
         </div>
 

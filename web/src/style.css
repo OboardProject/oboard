@@ -1507,25 +1507,30 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .server-card.server-list-row {
-  display: flex;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(160px, 1.1fr) minmax(260px, 1.5fr) 114px 38px;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
-  padding: 10px 16px;
+  padding: 10px 18px;
   border-radius: var(--radius-lg);
   background-color: var(--bg-card);
   border: 1px solid var(--border-color);
   box-shadow: none;
-  min-height: 56px;
-  flex-wrap: wrap;
+  min-height: 60px;
+}
+
+@media (max-width: 900px) {
+  .server-card.server-list-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
 }
 
 .server-list-identity {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 180px;
+  min-width: 0;
 }
 
 .server-list-name {
@@ -1534,34 +1539,140 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   color: var(--text-strong);
 }
 
+.server-list-subinfo {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
 .server-list-metric-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+  min-width: 0;
 }
 
 .server-list-metric-label {
   font-size: 11px;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
 .server-list-metric-value {
   font-size: 13px;
   color: var(--text-primary);
+  white-space: nowrap;
 }
 
+/* Rate & Traffic Row Styling */
+.server-list-network-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.server-list-rate-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.server-list-rate-group .rate-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.server-list-rate-group .rate-sub.down {
+  color: var(--text-strong, #0f172a);
+}
+
+.server-list-rate-group .rate-sub.down svg {
+  color: #10b981;
+  flex-shrink: 0;
+}
+
+.server-list-rate-group .rate-sub.up {
+  color: var(--text-strong, #0f172a);
+}
+
+.server-list-rate-group .rate-sub.up svg {
+  color: #3b82f6;
+  flex-shrink: 0;
+}
+
+.server-list-rate-group strong {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.server-list-traffic-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background-color: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 1px 7px;
+  border-radius: 9999px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Public Latency Pill Fixed Width Styling */
 .server-list-latency-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
-  padding: 2px 6px;
-  height: auto;
-  border-radius: var(--radius-sm);
+  width: 114px;
+  min-width: 114px;
+  max-width: 114px;
+  height: 30px;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background-color: var(--surface-2);
+  transition: all 0.15s ease;
+  box-sizing: border-box;
+}
+
+.server-list-latency-btn:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.server-list-latency-btn strong {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.server-list-latency-btn .latency-status-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 9999px;
+  line-height: 1.2;
+}
+
+.server-list-latency-btn.disabled {
+  justify-content: center;
+  background-color: transparent;
+  border-color: transparent;
 }
 
 .server-list-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
 }
 
