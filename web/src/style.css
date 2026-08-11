@@ -16330,12 +16330,15 @@ button.ui-btn-ghost:hover {
 
 .ui-switch.is-disabled {
   cursor: not-allowed;
-  opacity: 0.65;
+}
+
+.ui-switch.is-disabled:not(.is-checked) .ui-switch-track {
+  opacity: 0.55;
 }
 
 .ui-switch.is-checked.is-disabled .ui-switch-track {
   background-color: var(--primary, #0f172a);
-  opacity: 0.7;
+  opacity: 0.85;
 }
 
 .ui-switch-input {
