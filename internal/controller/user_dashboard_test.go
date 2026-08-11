@@ -2,7 +2,9 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,5 +139,56 @@ func TestUserDashboardPageDataIsSelfScopedForViewerAndNone(t *testing.T) {
 				t.Fatalf("%s dashboard leaked %s: %#v", role, secret, encoded)
 			}
 		}
+	}
+}
+
+func TestUserDashboardAnnouncementsAreSelfScoped(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	admin := &model.User{Username: "announcement-admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "admin-uuid", ProxyPassword: "admin-password"}
+	target := &model.User{Username: "announcement-target", PasswordHash: "unused", Role: model.RoleViewer, Status: "active", ProxyUUID: "target-uuid", ProxyPassword: "target-password"}
+	other := &model.User{Username: "announcement-other", PasswordHash: "unused", Role: model.RoleViewer, Status: "active", ProxyUUID: "other-uuid", ProxyPassword: "other-password"}
+	for _, user := range []*model.User{admin, target, other} {
+		if err := db.CreateUser(ctx, user); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, announcement := range []*model.NotificationAnnouncement{
+		{ActorUserID: admin.ID, ActorName: "系统管理员", Title: "目标用户旧公告", Body: "较早发布", UserIDs: []int64{target.ID}},
+		{ActorUserID: admin.ID, ActorName: "系统管理员", Title: "其他用户公告", Body: "不能泄露给目标用户", UserIDs: []int64{other.ID}},
+		{ActorUserID: admin.ID, ActorName: "系统管理员", Title: "目标用户公告", Body: "仅目标用户可见", UserIDs: []int64{target.ID}},
+	} {
+		if err := db.CreateNotificationAnnouncement(ctx, announcement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	token, err := security.SignSession("test-secret", security.TokenClaims{Subject: target.ID, Role: string(model.RoleViewer), ClientBinding: sessionClientBinding("test-secret", ""), Expiry: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := request(t, newTestServer(db, "test-secret", "").Handler(), "GET", "/api/v2/ui/page-data?page=dashboard", token, nil, 200)
+	items, ok := page["user_announcements"].([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("target announcements = %#v", page["user_announcements"])
+	}
+	item := items[0].(map[string]any)
+	if item["title"] != "目标用户公告" || item["body"] != "仅目标用户可见" || item["actor_name"] != "系统管理员" {
+		t.Fatalf("unexpected announcement = %#v", item)
+	}
+	for _, privateField := range []string{"actor_user_id", "user_ids", "queued_count"} {
+		if _, exists := item[privateField]; exists {
+			t.Fatalf("announcement leaked %s: %#v", privateField, item)
+		}
+	}
+	if older := items[1].(map[string]any); older["title"] != "目标用户旧公告" {
+		t.Fatalf("announcements are not newest first: %#v", items)
+	}
+	encoded, _ := json.Marshal(page)
+	if strings.Contains(string(encoded), "其他用户公告") || strings.Contains(string(encoded), "不能泄露给目标用户") {
+		t.Fatalf("dashboard leaked another user's announcement: %s", encoded)
 	}
 }

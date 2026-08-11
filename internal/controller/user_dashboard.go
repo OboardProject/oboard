@@ -19,14 +19,14 @@ const (
 	userDashboardReasonNoActivePlan          = "no_active_plan"
 	userDashboardReasonSubscriptionSuspended = "subscription_suspended"
 	userDashboardReasonQuotaExceeded         = "quota_exceeded"
-	userDashboardReasonAuditRisk              = "audit_risk"
+	userDashboardReasonAuditRisk             = "audit_risk"
 )
 
 type userDashboardTraffic struct {
 	UsedBytes  int64  `json:"used_bytes"`
 	LimitBytes int64  `json:"limit_bytes"`
 	QuotaState string `json:"quota_state"`
-	PeriodEnd string `json:"period_end,omitempty"`
+	PeriodEnd  string `json:"period_end,omitempty"`
 }
 
 type userDashboardAudit struct {
@@ -41,6 +41,22 @@ type userDashboardOverview struct {
 	HasActivePlan     bool                 `json:"has_active_plan"`
 	Traffic           userDashboardTraffic `json:"traffic"`
 	Audit             userDashboardAudit   `json:"audit"`
+}
+
+type userDashboardAnnouncement struct {
+	ID        int64     `json:"id"`
+	ActorName string    `json:"actor_name"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func userDashboardAnnouncements(items []model.NotificationAnnouncement) []userDashboardAnnouncement {
+	out := make([]userDashboardAnnouncement, 0, len(items))
+	for _, item := range items {
+		out = append(out, userDashboardAnnouncement{ID: item.ID, ActorName: item.ActorName, Title: item.Title, Body: item.Body, CreatedAt: item.CreatedAt})
+	}
+	return out
 }
 
 func (s *Server) userDashboardOverview(ctx context.Context, user model.User) (userDashboardOverview, error) {

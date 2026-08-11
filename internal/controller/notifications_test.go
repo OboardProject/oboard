@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -842,9 +843,18 @@ func TestTaskTimeoutAndAdminAnnouncementQueue(t *testing.T) {
 	waitNotificationCount(t, srv, &sentMu, &sent, 1)
 
 	request(t, h, http.MethodPost, "/api/v2/ui/notification-announcements", viewerToken, map[string]any{"title": "no", "body": "no", "user_ids": []int64{viewerID}}, http.StatusForbidden)
+	realtimeClient, _, ok := srv.realtime.subscribe(model.RoleViewer)
+	if !ok {
+		t.Fatal("subscribe viewer realtime client")
+	}
+	defer srv.realtime.unsubscribe(realtimeClient)
 	announcement := request(t, h, http.MethodPost, "/api/v2/ui/notification-announcements", adminToken, map[string]any{"title": "维护", "body": "今晚维护", "user_ids": []int64{viewerID}}, http.StatusAccepted)
 	if announcement["queued_count"].(float64) != 1 {
 		t.Fatalf("announcement queued = %#v", announcement)
+	}
+	realtimeEvent, ok := realtimeClient.drain()
+	if !ok || !slices.Contains(realtimeEvent.Resources, "user_overview") {
+		t.Fatalf("announcement realtime event = %#v", realtimeEvent)
 	}
 	waitNotificationCount(t, srv, &sentMu, &sent, 2)
 	history := request(t, h, http.MethodGet, "/api/v2/ui/notification-announcements", adminToken, nil, http.StatusOK)

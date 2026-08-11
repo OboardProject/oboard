@@ -1755,6 +1755,13 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			if err == nil {
 				out["user_overview"] = overview
 			}
+			if err == nil {
+				var announcements []model.NotificationAnnouncement
+				announcements, err = s.store.ListNotificationAnnouncementsForUser(ctx, user.ID, 20)
+				if err == nil {
+					out["user_announcements"] = userDashboardAnnouncements(announcements)
+				}
+			}
 			break
 		}
 		if err = require(model.RoleOperator); err == nil {

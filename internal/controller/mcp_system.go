@@ -898,6 +898,7 @@ func (s *Server) registerNotificationOperations() {
 			})
 		}
 		_ = s.store.UpdateNotificationAnnouncementQueuedCount(ctx, announcement.ID, queued)
+		s.publishRealtime("notifications", "user_overview")
 		return map[string]any{"announcement_id": announcement.ID, "queued_count": queued}, nil
 	})
 }

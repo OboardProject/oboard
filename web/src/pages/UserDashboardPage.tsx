@@ -1,4 +1,4 @@
-import { Activity, CircleAlert, Gauge, Link as LinkIcon, Network, ShieldCheck } from 'lucide-react'
+import { Activity, Bell, CircleAlert, Gauge, Link as LinkIcon, Network, ShieldCheck } from 'lucide-react'
 
 import { DashboardSkeleton } from '../components/ui/skeleton'
 
@@ -17,6 +17,14 @@ export type UserDashboardOverview = {
     enabled: boolean
     risk: boolean
   }
+}
+
+export type UserDashboardAnnouncement = {
+  id: number
+  actor_name: string
+  title: string
+  body: string
+  created_at: string
 }
 
 const statusReasonLabels: Record<string, string> = {
@@ -43,13 +51,22 @@ function auditLabel(overview: UserDashboardOverview) {
   return overview.audit.risk ? '审计存在风险' : '审计未发现风险'
 }
 
+function formatAnnouncementTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
 export function UserDashboardPage({
   overview,
+  announcements = [],
   displayName,
   loading = false,
   onNavigateSubscriptions,
 }: {
   overview?: UserDashboardOverview
+  announcements?: UserDashboardAnnouncement[]
   displayName: string
   loading?: boolean
   onNavigateSubscriptions?: () => void
@@ -113,6 +130,30 @@ export function UserDashboardPage({
             </div>
           ) : null}
         </div>
+      </section>
+
+      <section className="user-announcement-board" aria-labelledby="user-announcement-title">
+        <header className="user-announcement-head">
+          <div><Bell size={17} aria-hidden="true" /><h2 id="user-announcement-title">公告</h2></div>
+          <span>{announcements.length > 0 ? `${announcements.length} 条` : '暂无'}</span>
+        </header>
+        {announcements.length > 0 ? (
+          <ol className="user-announcement-list">
+            {announcements.map(announcement => (
+              <li key={announcement.id}>
+                <article className="user-announcement-item">
+                  <header>
+                    <div><h3>{announcement.title}</h3><span>来自 {announcement.actor_name}</span></div>
+                    <time dateTime={announcement.created_at}>{formatAnnouncementTime(announcement.created_at)}</time>
+                  </header>
+                  <p>{announcement.body}</p>
+                </article>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <div className="user-announcement-empty"><strong>暂无公告</strong><span>当前没有需要查看的消息。</span></div>
+        )}
       </section>
     </div>
   )

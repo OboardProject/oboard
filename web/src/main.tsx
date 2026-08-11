@@ -2487,7 +2487,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
     const displayName = sessionUser?.nickname || data.current_user?.nickname || sessionUser?.username || data.current_user?.username || '用户'
     return roleRanks[sessionUser?.role || 'viewer'] >= roleRanks.operator
       ? <Dashboard data={data} loading={loading} displayName={displayName} attention={dashboardAttention} dismissAttention={dismissDashboardAttention} />
-      : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('subscriptions')} />
+      : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} announcements={data.user_announcements || []} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('subscriptions')} />
   }
   if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={realtimeStatus} />
   if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} apply={apply} loading={loading} topbarTarget={proxyPathTopbarTarget} />

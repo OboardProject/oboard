@@ -44,6 +44,8 @@ describe('UserDashboardPage', () => {
     expect(container.querySelector('.dash-watermark')?.textContent).toBe('4')
     expect(container.textContent).toContain('订阅')
     expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('50')
+    expect(container.textContent).toContain('暂无公告')
+    expect(container.querySelector('.user-announcement-list')).toBeNull()
 
     const subButton = container.querySelector('.dash-welcome-actions button') as HTMLButtonElement
     expect(subButton).not.toBeNull()
@@ -79,5 +81,23 @@ describe('UserDashboardPage', () => {
     expect(container.textContent).toContain('总量 不限量')
     expect(container.textContent).toContain('审计未启用')
     expect(container.querySelector('[role="progressbar"]')).toBeNull()
+  })
+
+  it('renders targeted announcements as a semantic newest-first list', () => {
+    const announcements = [
+      { id: 2, actor_name: '系统管理员', title: '维护安排', body: '今晚 23:00 维护\n预计十分钟。', created_at: '2026-08-11T12:30:00Z' },
+      { id: 1, actor_name: '运营管理员', title: '套餐更新', body: '套餐节点已经更新。', created_at: '2026-08-10T08:00:00Z' },
+    ]
+    act(() => root.render(<UserDashboardPage overview={normalOverview} announcements={announcements} displayName="用户" />))
+
+    const board = container.querySelector('.user-announcement-board')
+    expect(board?.getAttribute('aria-labelledby')).toBe('user-announcement-title')
+    expect(board?.querySelector('h2')?.textContent).toBe('公告')
+    expect(board?.querySelectorAll('ol > li')).toHaveLength(2)
+    expect(board?.querySelector('li:first-child h3')?.textContent).toBe('维护安排')
+    expect(board?.querySelector('li:first-child p')?.textContent).toBe('今晚 23:00 维护\n预计十分钟。')
+    expect(board?.querySelector('li:first-child time')?.getAttribute('datetime')).toBe('2026-08-11T12:30:00Z')
+    expect(board?.textContent).toContain('来自 系统管理员')
+    expect(board?.textContent).toContain('2 条')
   })
 })

@@ -5193,6 +5193,25 @@ func (s *Store) ListNotificationAnnouncements(ctx context.Context, limit int) ([
 		return nil, err
 	}
 	defer rows.Close()
+	return scanNotificationAnnouncements(rows)
+}
+
+func (s *Store) ListNotificationAnnouncementsForUser(ctx context.Context, userID int64, limit int) ([]model.NotificationAnnouncement, error) {
+	if userID <= 0 {
+		return []model.NotificationAnnouncement{}, nil
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := s.db.QueryContext(ctx, `select a.id,a.actor_user_id,a.actor_name,a.title,a.body,a.user_ids_json,a.queued_count,a.created_at from notification_announcements a where exists(select 1 from json_each(a.user_ids_json) recipient where cast(recipient.value as integer)=?) order by a.id desc limit ?`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanNotificationAnnouncements(rows)
+}
+
+func scanNotificationAnnouncements(rows *sql.Rows) ([]model.NotificationAnnouncement, error) {
 	out := []model.NotificationAnnouncement{}
 	for rows.Next() {
 		var item model.NotificationAnnouncement

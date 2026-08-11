@@ -1283,6 +1283,7 @@ func (s *Server) notificationAnnouncements(w http.ResponseWriter, r *http.Reques
 		}
 		announcement.QueuedCount = queued
 		_ = s.store.UpdateNotificationAnnouncementQueuedCount(r.Context(), announcement.ID, queued)
+		s.publishRealtime("notifications", "user_overview")
 		auditReq(s, r, "notify", "notification_announcement", fmt.Sprintf("%d:%d", announcement.ID, len(targets)))
 		write(w, http.StatusAccepted, map[string]any{"notification_announcement": announcement, "queued_count": queued})
 	default:
