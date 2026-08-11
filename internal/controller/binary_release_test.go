@@ -20,7 +20,7 @@ func TestBinaryOnlyControllerReleaseAssets(t *testing.T) {
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	required := map[string][]string{
 		"scripts/build-release.sh":                                 {"create_tar_archive \"$stage\" \"$archive\" bin/oboard-controller", "${arch}_install.tar.gz", "oboard-subscription-relay", "install-subscription-relay.sh", "deploy/systemd", "deploy/openrc"},
-		"internal/controller/assets/install-subscription-relay.sh": {"OBOARD_SUBSCRIPTION_RELAY_ENROLLMENT_TOKEN", "stored_relay_secret", "sha256sums.txt", "oboard-subscription-relay-updater.service", "OBOARD_ACTION"},
+		"internal/controller/assets/install-subscription-relay.sh": {"OBOARD_SUBSCRIPTION_RELAY_ENROLLMENT_TOKEN", "stored_relay_secret", "OBOARD_SUBSCRIPTION_RELAY_ADDR:-${stored_relay_addr:-:2777}", "sha256sums.txt", "oboard-subscription-relay-updater.service", "OBOARD_ACTION"},
 		"scripts/install.sh":                                       {"OBOARD_UPDATE_CHANNEL", "oboard-controller-updater", "install_component controller", "prepare_controller_updater_runtime", "uninstall_controller", "OBOARD_PURGE_DATA", "resolve_purge_data", "drain_piped_script"},
 		"scripts/verify-release.sh":                                {"Testing Controller", "Building Web UI", "Building current-platform binaries", "cmd/controller-updater"},
 		"scripts/fetch-agent-release.sh":                           {"OBOARD_RELEASE_PUBLIC_KEY", "release-manifest.json.sig", "OBOARD_AGENT_CHANNEL", "OBOARD_AGENT_EXPECTED_COMMIT"},

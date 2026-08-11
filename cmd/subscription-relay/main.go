@@ -51,7 +51,7 @@ func main() {
 			return
 		}
 	}
-	address := flag.String("addr", env("OBOARD_SUBSCRIPTION_RELAY_ADDR", ":8080"), "listen address")
+	address := flag.String("addr", env("OBOARD_SUBSCRIPTION_RELAY_ADDR", ":2777"), "listen address")
 	upstreamValue := flag.String("upstream", env("OBOARD_CONTROLLER_URL", ""), "Controller base URL")
 	relayID := flag.String("relay-id", env("OBOARD_SUBSCRIPTION_RELAY_ID", ""), "managed relay ID")
 	secret := flag.String("secret", env("OBOARD_SUBSCRIPTION_RELAY_SECRET", ""), "shared relay secret")

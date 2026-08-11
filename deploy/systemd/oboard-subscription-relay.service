@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Environment=OBOARD_SUBSCRIPTION_RELAY_ADDR=:8080
+Environment=OBOARD_SUBSCRIPTION_RELAY_ADDR=:2777
 Environment=OBOARD_SUBSCRIPTION_RELAY_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128
 EnvironmentFile=/opt/oboard-subscription-relay/relay.env
 ExecStart=/opt/oboard-subscription-relay/oboard-subscription-relay
