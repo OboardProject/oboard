@@ -5051,6 +5051,42 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   min-width: 0;
 }
 
+.dns-zone-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.dns-zone-selector {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 300px;
+  max-width: 480px;
+}
+
+.dns-zone-selector label {
+  flex: 0 0 auto;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-strong);
+}
+
+.dns-zone-selector select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dns-zone-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .dns-record-filter-toolbar {
   display: flex;
   flex-wrap: wrap;

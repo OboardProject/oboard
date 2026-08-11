@@ -4585,15 +4585,39 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
   }
   const selectedOption = zoneOptions.find(item => item.zone.id === selectedZoneID)
   const serverName = (id?: number) => id ? serverNames.get(id) || '' : ''
+  const formatOptionLabel = (credential: DNSCredential, zone: DNSCredentialZone) => {
+    const accountName = credential.name?.trim()
+    const zoneName = zone.zone_name?.trim()
+    const namePart = accountName && accountName !== zoneName ? `${zoneName} (${accountName})` : zoneName
+    const serverPart = zone.server_id ? ` · ${serverName(zone.server_id)}` : ''
+    return `${namePart}${serverPart}`
+  }
   return <div className="settings-grid dns-management">
     <div className="settings-tabs dns-management-tabs" role="tablist" aria-label="域名解析视图">
       <button type="button" className={activeTab === 'records' ? 'active' : ''} onClick={() => setActiveTab('records')} role="tab" aria-selected={activeTab === 'records'}><Globe size={15} />域名解析</button>
       <button type="button" className={activeTab === 'settings' ? 'active' : ''} onClick={() => setActiveTab('settings')} role="tab" aria-selected={activeTab === 'settings'}><Settings2 size={15} />解析设置</button>
     </div>
     {activeTab === 'records' ? <section className="settings-card dns-management-card">
-      <div className="settings-card-head"><div><h3>域名当前记录</h3><p className="muted">{selectedOption ? `${dnsProviderLabels[selectedOption.credential.provider]} · ${selectedOption.credential.name}` : '先在解析设置中添加域名'}</p></div><div className="settings-card-actions"><button type="button" onClick={openCreateRecord} disabled={!zoneOptions.length}><Plus size={14} />添加记录</button><button type="button" className="ghost icon-button" onClick={() => void loadRecords()} disabled={!selectedZoneID || working === 'records-load'} aria-label="刷新记录" title="刷新记录"><RefreshCw size={15} className={working === 'records-load' ? 'spin' : ''} /></button></div></div>
-      <div className="form settings-form">
-        <FormField label="域名"><Select value={selectedZoneID} onChange={e => setSelectedZoneID(Number(e.target.value))}><option value={0}>选择域名</option>{zoneOptions.map(({ credential, zone }) => <option key={zone.id} value={zone.id}>{zone.zone_name} · {credential.name}{zone.server_id ? ` · ${serverName(zone.server_id)}` : ''}</option>)}</Select></FormField>
+      <div className="settings-card-head">
+        <div><h3>域名当前记录</h3><p className="muted">查看与管理云端 DNS 解析记录，关联服务器后系统可完成动态配置。</p></div>
+        <div className="settings-card-actions">
+          <button type="button" onClick={openCreateRecord} disabled={!zoneOptions.length}><Plus size={14} />添加记录</button>
+          <button type="button" className="ghost icon-button" onClick={() => void loadRecords()} disabled={!selectedZoneID || working === 'records-load'} aria-label="刷新记录" title="刷新记录"><RefreshCw size={15} className={working === 'records-load' ? 'spin' : ''} /></button>
+        </div>
+      </div>
+      <div className="dns-zone-bar">
+        <div className="dns-zone-selector">
+          <label htmlFor="dns-zone-select">域名</label>
+          <Select id="dns-zone-select" value={selectedZoneID} onChange={e => setSelectedZoneID(Number(e.target.value))}>
+            <option value={0}>选择域名</option>
+            {zoneOptions.map(({ credential, zone }) => <option key={zone.id} value={zone.id}>{formatOptionLabel(credential, zone)}</option>)}
+          </Select>
+        </div>
+        {selectedOption && <div className="dns-zone-badges">
+          <span className="status-pill">{dnsProviderLabels[selectedOption.credential.provider]}</span>
+          {selectedOption.credential.name && selectedOption.credential.name !== selectedOption.zone.zone_name && <span className="status-pill">{selectedOption.credential.name}</span>}
+          {selectedOption.zone.server_id && <span className="status-pill ok">关联服务器: {serverName(selectedOption.zone.server_id)}</span>}
+        </div>}
       </div>
       {records.length > 0 && <div className="dns-record-filter-toolbar">
         <label className="dns-record-search"><Search size={15} /><input value={recordQuery} onChange={event => setRecordQuery(event.target.value)} placeholder="搜索域名、记录值或服务器" aria-label="搜索解析记录" /></label>
@@ -4621,10 +4645,17 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
 function DNSRecordDialog({ zoneOptions, zoneID, setZoneID, draft, setDraft, serverName, saving, onCancel, onSubmit }: { zoneOptions: { credential: DNSCredential; zone: DNSCredentialZone }[]; zoneID: number; setZoneID: (zoneID: number) => void; draft: ReturnType<typeof emptyDNSRecordDraft>; setDraft: React.Dispatch<React.SetStateAction<ReturnType<typeof emptyDNSRecordDraft>>>; serverName: (serverID?: number) => string; saving: boolean; onCancel: () => void; onSubmit: () => Promise<void> }) {
   const selectedOption = zoneOptions.find(item => item.zone.id === zoneID)
   const update = (patch: Partial<typeof draft>) => setDraft(current => ({ ...current, ...patch }))
+  const formatOptionLabel = (credential: DNSCredential, zone: DNSCredentialZone) => {
+    const accountName = credential.name?.trim()
+    const zoneName = zone.zone_name?.trim()
+    const namePart = accountName && accountName !== zoneName ? `${zoneName} (${accountName})` : zoneName
+    const serverPart = zone.server_id ? ` · ${serverName(zone.server_id)}` : ''
+    return `${namePart}${serverPart}`
+  }
   return <MotionDialogPanel onCancel={onCancel} className="dns-record-dialog">
     <header className="dialog-head"><div><h2>添加解析记录</h2><p className="muted">为指定域名创建一条子域名解析。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body"><div className="form server-dialog-form labeled-form">
-      <FormField label="域名" required><Select value={zoneID} onChange={e => setZoneID(Number(e.target.value))}><option value={0}>选择域名</option>{zoneOptions.map(({ credential, zone }) => <option key={zone.id} value={zone.id}>{zone.zone_name} · {credential.name}{zone.server_id ? ` · ${serverName(zone.server_id)}` : ''}</option>)}</Select></FormField>
+      <FormField label="域名" required><Select value={zoneID} onChange={e => setZoneID(Number(e.target.value))}><option value={0}>选择域名</option>{zoneOptions.map(({ credential, zone }) => <option key={zone.id} value={zone.id}>{formatOptionLabel(credential, zone)}</option>)}</Select></FormField>
       <FormField label="记录类型" required><Select value={draft.type} onChange={e => update({ type: e.target.value })}>{['A', 'AAAA', 'CNAME', 'TXT'].map(type => <option key={type}>{type}</option>)}</Select></FormField>
       <FormField label="主机记录" required><input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="entry.example.com" autoCapitalize="none" /></FormField>
       <FormField label="记录值" required><input value={draft.content} onChange={e => update({ content: e.target.value })} autoCapitalize="none" /></FormField>
