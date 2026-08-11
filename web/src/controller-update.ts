@@ -9,6 +9,27 @@ export function isControllerUpdateInProgressStatus(status: string | undefined | 
 
 const EXPECTED_DISCONNECT_STATUSES = [502, 503, 504]
 
+export function createControllerUpdateRequestGuard() {
+  let latestRequest = 0
+  return {
+    beginRequest() {
+      latestRequest += 1
+      return latestRequest
+    },
+    invalidate() {
+      latestRequest += 1
+    },
+    isLatest(request: number) {
+      return request === latestRequest
+    },
+  }
+}
+
+export function shouldDeferControllerUpdateTerminalStatus(status: string, installRequestPending: boolean, cancelExpected: boolean): boolean {
+  if (!installRequestPending || cancelExpected) return false
+  return status === 'cancelled' || status === 'idle' || status === 'pinned' || status === 'available'
+}
+
 export function isExpectedControllerUpdateDisconnect(error: unknown): boolean {
   if (error instanceof TypeError) return true
   const status = Number((error as any)?.status)

@@ -103,7 +103,13 @@ import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { getServerTimeIssue } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
 import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
-import { controllerUpdatePendingToast, isControllerUpdateInProgressStatus, isExpectedControllerUpdateDisconnect } from './controller-update'
+import {
+  controllerUpdatePendingToast,
+  createControllerUpdateRequestGuard,
+  isControllerUpdateInProgressStatus,
+  isExpectedControllerUpdateDisconnect,
+  shouldDeferControllerUpdateTerminalStatus,
+} from './controller-update'
 import { subscriptionBaseURL, subscriptionRelayCommand, subscriptionRelayDomain, subscriptionRelayPublicURL, subscriptionRelayStatus, type SubscriptionRelay, type SubscriptionRelayAction } from './subscription-relay'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { connectivityBucketTone as backendConnectivityBucketTone, connectivityRequestPath, connectivitySlaDisplay, formatConnectivityDuration, type ConnectivityResponse, type ConnectivityWindowKey } from './connectivity-sla'
@@ -3629,6 +3635,8 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
   const [connectionInterrupted, setConnectionInterrupted] = useState(false)
   const [working, setWorking] = useState(false)
   const targetBuildRef = useRef('')
+  const installRequestPendingRef = useRef(false)
+  const statusRequestGuardRef = useRef(createControllerUpdateRequestGuard())
 
   useEffect(() => {
     if (tab === 'settings') {
@@ -3663,10 +3671,14 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
   }
 
   const refresh = async () => {
+    const request = statusRequestGuardRef.current.beginRequest()
     try {
       const result = await client.request('/controller-update') as ControllerUpdateStatus
+      if (!statusRequestGuardRef.current.isLatest(request)) return
+      if (shouldDeferControllerUpdateTerminalStatus(result.status, installRequestPendingRef.current, false)) return
       applyStatus(result)
     } catch (error: any) {
+      if (!statusRequestGuardRef.current.isLatest(request)) return
       if (working && isExpectedControllerUpdateDisconnect(error)) setConnectionInterrupted(true)
     }
   }
@@ -3674,11 +3686,12 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
   useEffect(() => {
     let cancelled = false
     const checkAfterLogin = async () => {
+      const request = statusRequestGuardRef.current.beginRequest()
       try {
         const result = await client.request('/controller-update/check', { method: 'POST' }) as ControllerUpdateStatus
-        if (!cancelled) setSnapshot(result)
+        if (!cancelled && statusRequestGuardRef.current.isLatest(request)) setSnapshot(result)
       } catch (error: any) {
-        if (!cancelled) notify?.(`自动检查更新失败：${localizeErrorMessage(error?.message || error)}`, 'warning')
+        if (!cancelled && statusRequestGuardRef.current.isLatest(request)) notify?.(`自动检查更新失败：${localizeErrorMessage(error?.message || error)}`, 'warning')
       }
     }
     void checkAfterLogin()
@@ -3699,17 +3712,21 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
 
   const install = async () => {
     if (working || !snapshot?.update_available) return
+    statusRequestGuardRef.current.invalidate()
     targetBuildRef.current = snapshot.available?.build || ''
     setFailure('')
     setConnectionInterrupted(false)
     setWorking(true)
     setPhase('starting')
     onControllerUpdateInProgressChange?.(true)
+    installRequestPendingRef.current = true
     try {
       const result = await client.request('/controller-update/install', { method: 'POST' }) as ControllerUpdateStatus
+      statusRequestGuardRef.current.invalidate()
       applyStatus(result)
       notify?.('更新已开始，主控将自动重启', 'success')
     } catch (error: any) {
+      statusRequestGuardRef.current.invalidate()
       if (isExpectedControllerUpdateDisconnect(error)) {
         setConnectionInterrupted(true)
         setPhase('installing')
@@ -3719,6 +3736,8 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
         setPhase('failed')
         onControllerUpdateInProgressChange?.(false)
       }
+    } finally {
+      installRequestPendingRef.current = false
     }
   }
 
@@ -3799,6 +3818,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   const cancelExpectedRef = useRef(false)
   const installRequestPendingRef = useRef(false)
   const installTargetBuildRef = useRef('')
+  const statusRequestGuardRef = useRef(createControllerUpdateRequestGuard())
   const updateInstallExpected = (value: boolean) => {
     installExpectedRef.current = value
     setInstallExpected(value)
@@ -3806,6 +3826,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   }
   const applyInstallStatus = (result: ControllerUpdateStatus) => {
     if (!installExpectedRef.current) return
+    if (shouldDeferControllerUpdateTerminalStatus(result.status, installRequestPendingRef.current, cancelExpectedRef.current)) return
     setInstallConnectionInterrupted(false)
     const targetReached = Boolean(installTargetBuildRef.current) && result.current?.build === installTargetBuildRef.current
     if (result.status === 'cancelled') {
@@ -3847,12 +3868,15 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     else setInstallPhase('starting')
   }
   const refresh = async (quiet = false) => {
+    const request = statusRequestGuardRef.current.beginRequest()
     if (!quiet) setWorking('load')
     try {
       const result = await client.request('/controller-update') as ControllerUpdateStatus
+      if (!statusRequestGuardRef.current.isLatest(request)) return
       setSnapshot(result)
       applyInstallStatus(result)
     } catch (error: any) {
+      if (!statusRequestGuardRef.current.isLatest(request)) return
       if (quiet && (installExpectedRef.current || isControllerUpdateInProgressStatus(snapshot.status)) && isExpectedControllerUpdateDisconnect(error)) {
         setInstallConnectionInterrupted(true)
       } else {
@@ -3883,9 +3907,11 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     await performCheck()
   }
   const performCheck = async () => {
+    const request = statusRequestGuardRef.current.beginRequest()
     setWorking('check')
     try {
       const result = await client.request('/controller-update/check', { method: 'POST' }) as ControllerUpdateStatus
+      if (!statusRequestGuardRef.current.isLatest(request)) return
       setSnapshot(result)
       notify?.(result.update_available ? '发现主控更新' : '当前已是最新版本', 'success')
     } catch (error: any) {
@@ -3905,7 +3931,9 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     if (!confirmed) return
     setWorking('channel')
     try {
+      const request = statusRequestGuardRef.current.beginRequest()
       const result = await client.request('/controller-update/channel', { method: 'POST', body: JSON.stringify({ channel }) }) as ControllerUpdateStatus
+      if (!statusRequestGuardRef.current.isLatest(request)) return
       setSnapshot(result)
       notify?.(switchingToDev ? '已切换到开发版通道' : '已切换到正式版通道', 'success')
     } catch (error: any) {
@@ -3931,6 +3959,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   }
   const install = async () => {
     if (working || snapshot.channel === 'pinned' || !snapshot.update_available) return
+    statusRequestGuardRef.current.invalidate()
     installTargetBuildRef.current = snapshot.available?.build || ''
     cancelExpectedRef.current = false
     updateInstallExpected(true)
@@ -3939,10 +3968,12 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     installRequestPendingRef.current = true
     try {
       const result = await client.request('/controller-update/install', { method: 'POST' }) as ControllerUpdateStatus
+      statusRequestGuardRef.current.invalidate()
       setSnapshot(result)
       applyInstallStatus(result)
       notify?.('更新已开始，主控将自动重启', 'success')
     } catch (error: any) {
+      statusRequestGuardRef.current.invalidate()
       if (isExpectedControllerUpdateDisconnect(error)) {
         setSnapshot(previous => ({ ...previous, status: 'installing' }))
         setInstallConnectionInterrupted(true)
@@ -3959,14 +3990,17 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   }
   const cancelInstall = async () => {
     if (working || !snapshot.can_cancel) return
+    statusRequestGuardRef.current.invalidate()
     setWorking('cancel')
     try {
       cancelExpectedRef.current = true
       const result = await client.request('/controller-update/cancel', { method: 'POST' }) as ControllerUpdateStatus
+      statusRequestGuardRef.current.invalidate()
       setSnapshot(result)
       setInstallPhase('cancelling')
       notify?.('正在中断更新', 'success')
     } catch (error: any) {
+      statusRequestGuardRef.current.invalidate()
       cancelExpectedRef.current = false
       notify?.(localizeErrorMessage(error?.message || error), 'error')
       await refresh(true)

@@ -1,8 +1,33 @@
 import { describe, expect, it } from 'vitest'
 
-import { CONTROLLER_UPDATE_PENDING_MESSAGE, controllerUpdatePendingToast, isControllerUpdateInProgressStatus } from './controller-update'
+import {
+  CONTROLLER_UPDATE_PENDING_MESSAGE,
+  controllerUpdatePendingToast,
+  createControllerUpdateRequestGuard,
+  isControllerUpdateInProgressStatus,
+  shouldDeferControllerUpdateTerminalStatus,
+} from './controller-update'
 
 describe('controller update pending toast', () => {
+  it('rejects an old cancelled response after a new install request starts', () => {
+    const guard = createControllerUpdateRequestGuard()
+    const staleRefresh = guard.beginRequest()
+    const installRequest = guard.beginRequest()
+
+    expect(guard.isLatest(staleRefresh)).toBe(false)
+    expect(guard.isLatest(installRequest)).toBe(true)
+
+    guard.invalidate()
+    expect(guard.isLatest(installRequest)).toBe(false)
+  })
+
+  it('defers an unrequested cancelled status while the install request is pending', () => {
+    expect(shouldDeferControllerUpdateTerminalStatus('cancelled', true, false)).toBe(true)
+    expect(shouldDeferControllerUpdateTerminalStatus('cancelled', true, true)).toBe(false)
+    expect(shouldDeferControllerUpdateTerminalStatus('cancelled', false, false)).toBe(false)
+    expect(shouldDeferControllerUpdateTerminalStatus('downloading', true, false)).toBe(false)
+  })
+
   it('shows the pending info toast during an update on TypeError', () => {
     expect(controllerUpdatePendingToast(true, new TypeError('Failed to fetch'))).toEqual({ message: CONTROLLER_UPDATE_PENDING_MESSAGE, kind: 'info' })
   })
