@@ -6870,29 +6870,34 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 
 .subscription-relay-locked-overlay {
   position: absolute;
-  inset: -6px -10px;
-  background: color-mix(in srgb, var(--surface) 55%, rgba(203, 213, 225, 0.85));
-  backdrop-filter: blur(4px);
-  border-radius: var(--radius-md, 8px);
-  border: 1px dashed var(--border-strong, #cbd5e1);
-  display: flex;
+  top: 50%;
+  right: -4px;
+  transform: translateY(-50%);
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  color: var(--text-muted, #475569);
-  font-size: 11px;
+  width: max-content;
+  min-height: 32px;
+  padding: 4px 12px;
+  background: color-mix(in srgb, var(--bg-card) 88%, var(--surface-2));
+  backdrop-filter: blur(8px);
+  border-radius: 9999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 12px;
   font-weight: 600;
   cursor: not-allowed;
   user-select: none;
   z-index: 10;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-sm);
   white-space: nowrap;
 }
 
 :root[data-theme="dark"] .subscription-relay-locked-overlay {
-  background: color-mix(in srgb, var(--surface) 60%, rgba(30, 41, 59, 0.9));
-  border-color: var(--border-strong, #475569);
-  color: var(--text-muted, #94a3b8);
+  background: color-mix(in srgb, var(--bg-card) 88%, var(--surface-2));
+  border-color: var(--border-strong);
+  color: var(--text-muted);
 }
 
 .subscription-relay-empty {
