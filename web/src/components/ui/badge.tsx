@@ -1,22 +1,23 @@
 import * as React from "react"
 
 export interface BadgeProps extends React.HTMLAttributes<HTMLDivElement> {
-  variant?: "default" | "secondary" | "destructive" | "outline" | "success" | "warning"
+  variant?: "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "soft"
 }
 
-export function Badge({ className = "", variant = "default", ...props }: BadgeProps) {
-  const baseStyles = "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors duration-200"
+export function Badge({ className = "", variant = "soft", ...props }: BadgeProps) {
+  const baseStyles = "relative isolate inline-flex shrink-0 items-center justify-center rounded-full whitespace-nowrap outline-offset-1 select-none font-medium px-3 py-0.5 text-xs transition duration-250 ease-[cubic-bezier(0.175,0.885,0.32,1.5)] active:scale-[0.97] active:translate-y-px"
 
   const variants = {
-    default: "border-transparent bg-primary text-primary-foreground",
-    secondary: "border-transparent bg-secondary text-secondary-foreground",
-    destructive: "border-transparent bg-destructive/15 text-destructive border-destructive/20",
-    success: "border-transparent bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20",
-    warning: "border-transparent bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20",
-    outline: "text-foreground border-border",
+    default: "bg-primary text-primary-foreground border border-transparent shadow-xs",
+    secondary: "bg-secondary text-secondary-foreground border border-transparent",
+    soft: "bg-background-muted/80 text-foreground-strong border border-border/60 backdrop-blur-md",
+    destructive: "bg-danger-soft text-danger border border-danger/20",
+    success: "bg-success-soft text-success border border-success/20",
+    warning: "bg-warning-soft text-warning border border-warning/20",
+    outline: "text-foreground-strong border border-border bg-background/50 backdrop-blur-sm",
   }
 
   return (
-    <div className={`${baseStyles} ${variants[variant]} ${className}`} {...props} />
+    <div data-slot="badge" data-variant={variant} className={`${baseStyles} ${variants[variant]} ${className}`} {...props} />
   )
 }

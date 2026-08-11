@@ -51,10 +51,10 @@ export function TabsTrigger({ value, className = "", children, ...props }: TabsT
       role="tab"
       aria-selected={isActive}
       onClick={() => context.onValueChange?.(value)}
-      className={`inline-flex items-center justify-center whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold ring-offset-background transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 min-h-0 shadow-none border-none
+      className={`inline-flex items-center justify-center whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold ring-offset-background transition-all duration-250 ease-[cubic-bezier(0.175,0.885,0.32,1.5)] active:scale-[0.97] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 min-h-0 shadow-none border-none
         ${isActive 
-          ? "bg-popover text-foreground shadow-sm" 
-          : "hover:bg-accent/40 text-muted-foreground hover:text-foreground"
+          ? "bg-popover text-foreground-intense shadow-xs font-bold" 
+          : "hover:bg-accent/40 text-foreground-muted hover:text-foreground-strong"
         } ${className}`}
       {...props}
     >

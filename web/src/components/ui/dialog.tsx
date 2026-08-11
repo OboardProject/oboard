@@ -97,12 +97,12 @@ export function Dialog({
       {isOpen && (
         <div className="dialog-root fixed inset-0 flex items-center justify-center p-4">
           <m.div
-            className="fixed inset-0 bg-black/40 backdrop-blur-sm"
+            className="fixed inset-0 bg-black/50 backdrop-blur-md"
             onClick={onClose}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: shouldReduceMotion ? 0.01 : 0.2, ease: "easeOut" }}
+            transition={{ duration: shouldReduceMotion ? 0.01 : 0.25, ease: "easeOut" }}
           />
 
           <m.div
@@ -112,10 +112,10 @@ export function Dialog({
             aria-modal="true"
             aria-labelledby={title ? titleID : undefined}
             tabIndex={-1}
-            initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.98 }}
+            initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 14, scale: 0.95 }}
             animate={shouldReduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
-            exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.985 }}
-            transition={{ duration: shouldReduceMotion ? 0.01 : 0.22, ease: easeOut as any }}
+            exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.96 }}
+            transition={{ duration: shouldReduceMotion ? 0.01 : 0.28, ease: [0.175, 0.885, 0.32, 1.5] as any }}
           >
             {title && (
               <div className={`flex items-center justify-between gap-3 ${isCompact ? "" : "border-b border-border pb-4 mb-4"}`}>

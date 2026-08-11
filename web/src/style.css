@@ -7,6 +7,11 @@
 /* Google Fonts Import for Inter and Outfit */
 
 :root {
+  /* Appica UI Spring Animation & Timing Variables */
+  --ease-appica-spring: cubic-bezier(0.175, 0.885, 0.32, 1.5);
+  --ease-appica-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-appica: 250ms;
+
   /* HyVPS-like light: black primary, soft gray surfaces */
   --bg-page: #f7f8fa;
   --bg-card: #ffffff;
@@ -183,6 +188,30 @@
   --graph-wireguard: #c4b5fd;
   --graph-ssh: #2dd4bf;
   --graph-unhealthy: #f87171;
+}
+
+/* Appica UI Interactive Element Spring Press Feedback */
+.btn,
+button,
+.ui-switch,
+.status-pill,
+[role="button"],
+.settings-tabs button {
+  transition: transform var(--duration-appica) var(--ease-appica-spring),
+              background-color var(--duration-appica) ease,
+              border-color var(--duration-appica) ease,
+              box-shadow var(--duration-appica) ease,
+              color var(--duration-appica) ease;
+}
+
+.btn:active:not(:disabled),
+button:active:not(:disabled),
+.ui-switch:active:not([data-disabled="true"]),
+.status-pill:active,
+[role="button"]:active:not([aria-disabled="true"]),
+.settings-tabs button:active {
+  transform: scale(0.97) translateY(1px);
+  transition-duration: 100ms;
 }
 
 * { box-sizing: border-box; }
@@ -11974,7 +12003,9 @@ button[aria-busy="true"] {
 .action-menu-popover,
 .graph-context-menu,
 .dropdown-menu-content {
-  animation: popover-in 180ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: popover-in var(--duration-appica) var(--ease-appica-spring) forwards;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   transform-origin: top right;
 }
 
@@ -14274,10 +14305,12 @@ button.ui-btn-ghost:hover {
   overflow: hidden;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--bg-card);
+  background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   box-shadow: var(--shadow-md);
   z-index: var(--z-popover);
-  animation: popover-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: popover-in var(--duration-appica) var(--ease-appica-spring) both;
   transform-origin: top center;
 }
 .custom-select-menu.placement-top { transform-origin: bottom center; }
@@ -14566,7 +14599,7 @@ button.ui-btn-ghost:hover {
   background: var(--primary);
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.14);
   transition:
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform var(--duration-appica) var(--ease-appica-spring),
     background 180ms ease;
 }
 .ui-segmented-select button {
