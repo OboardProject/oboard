@@ -12,7 +12,12 @@ import (
 
 func newConnectivityTestStore(t *testing.T) (*Store, *model.Server) {
 	t.Helper()
-	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	return newConnectivityTestStoreAtPath(t, filepath.Join(t.TempDir(), "oboard.sqlite"))
+}
+
+func newConnectivityTestStoreAtPath(t *testing.T, path string) (*Store, *model.Server) {
+	t.Helper()
+	db, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,6 +156,58 @@ func TestConnectivityProbeTargetMigratesFromPreviousSchema(t *testing.T) {
 	}
 	if stored.ConnectivityProbeTarget != model.ConnectivityProbeTargetGoogle {
 		t.Fatalf("connectivity probe target = %q, want google", stored.ConnectivityProbeTarget)
+	}
+}
+
+func TestConnectivityProbeTargetEventConstraintUpgrade(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	db, server := newConnectivityTestStoreAtPath(t, path)
+	initialEvents := connectivityEventCount(t, db, server.ID, model.ConnectivityEventProbeEnabled)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`drop index idx_server_connectivity_events_server_time`,
+		`drop index idx_server_connectivity_events_server_kind_time`,
+		`create table server_connectivity_events_v1 (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, kind text not null check(kind in ('probe_result','server_offline','probe_enabled','probe_disabled')), available integer check(available is null or available in (0,1)), latency_ms integer not null default 0, error text not null default '', source text not null default '', effective_at text not null, event_key text not null, created_at text not null, unique(server_id,event_key))`,
+		`insert into server_connectivity_events_v1 select * from server_connectivity_events`,
+		`drop table server_connectivity_events`,
+		`alter table server_connectivity_events_v1 rename to server_connectivity_events`,
+		`create index idx_server_connectivity_events_server_time on server_connectivity_events(server_id,effective_at)`,
+		`create index idx_server_connectivity_events_server_kind_time on server_connectivity_events(server_id,kind,effective_at desc)`,
+	} {
+		if _, err := raw.Exec(statement); err != nil {
+			t.Fatalf("prepare old connectivity event schema: %v", err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = Open(path)
+	if err != nil {
+		t.Fatalf("open with previous connectivity event constraint: %v", err)
+	}
+	defer db.Close()
+	stored, err := db.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.ConnectivityProbeTarget = model.ConnectivityProbeTargetGoogle
+	if err := db.UpdateServer(ctx, stored); err != nil {
+		t.Fatalf("update target after constraint migration: %v", err)
+	}
+	if got := connectivityEventCount(t, db, server.ID, model.ConnectivityEventProbeEnabled); got != initialEvents {
+		t.Fatalf("enabled events after migration = %d, want %d", got, initialEvents)
+	}
+	if got := connectivityEventCount(t, db, server.ID, model.ConnectivityEventProbeTargetChanged); got != 1 {
+		t.Fatalf("target change events after migration = %d, want 1", got)
 	}
 }
 

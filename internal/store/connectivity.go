@@ -14,6 +14,35 @@ import (
 
 const connectivityProbeRetention = 35 * 24 * time.Hour
 
+func (s *Store) ensureConnectivityEventKinds(ctx context.Context) error {
+	var schemaSQL string
+	if err := s.db.QueryRowContext(ctx, `select sql from sqlite_master where type='table' and name='server_connectivity_events'`).Scan(&schemaSQL); err != nil {
+		return err
+	}
+	if strings.Contains(schemaSQL, "'probe_target_changed'") {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	statements := []string{
+		`create table server_connectivity_events_v2 ` + serverConnectivityEventsColumnsSQL,
+		`insert into server_connectivity_events_v2(id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at) select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events`,
+		`drop table server_connectivity_events`,
+		`alter table server_connectivity_events_v2 rename to server_connectivity_events`,
+		`create index idx_server_connectivity_events_server_time on server_connectivity_events(server_id,effective_at)`,
+		`create index idx_server_connectivity_events_server_kind_time on server_connectivity_events(server_id,kind,effective_at desc)`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 type connectivityExecer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
