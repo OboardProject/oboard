@@ -126,14 +126,14 @@ need_command install
 manager=$(service_manager)
 echo "环境：linux/$ARCH 服务管理器=$manager"
 if command -v curl >/dev/null 2>&1; then
-	download() { curl -fsSL --retry 3 --connect-timeout 15 "$1" -o "$2"; }
+	download() { curl -fSsL --retry 3 --connect-timeout 15 "$1" -o "$2" || { echo "下载失败：$1" >&2; return 1; }; }
 	echo "[2/4] 获取版本并下载中继组件"
 	if [ "$VERSION_VALUE" = latest ]; then
 		resolved=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest")
 		VERSION_VALUE=${resolved##*/tag/}
 	fi
 elif command -v wget >/dev/null 2>&1; then
-	download() { wget -q -O "$2" "$1"; }
+	download() { wget -q -O "$2" "$1" || { echo "下载失败：$1" >&2; return 1; }; }
 	[ "$VERSION_VALUE" != latest ] || fail "使用 wget 时请通过 VERSION 指定版本。"
 	echo "[2/4] 下载中继组件"
 else
@@ -144,8 +144,16 @@ echo "目标版本：$VERSION_VALUE"
 ARCHIVE=oboard_controller_${ARTIFACT_VERSION}_linux_${ARCH}_install.tar.gz
 BASE_URL=https://github.com/$REPO/releases/download/$TAG
 TMP_DIR=$(mktemp -d /tmp/oboard-subscription-relay.XXXXXX)
-download "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE"
-download "$BASE_URL/sha256sums.txt" "$TMP_DIR/sha256sums.txt"
+if [ "$TAG" = dev ] && ! download "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE" 2>/dev/null; then
+	echo "GitHub Releases 未发现 dev 标签发布包，自动回退到最新 release 镜像包。"
+	TAG=latest
+	BASE_URL=https://github.com/$REPO/releases/download/$TAG
+	download "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE" || fail "无法从 GitHub 下载 $ARCHIVE 发布包。"
+	download "$BASE_URL/sha256sums.txt" "$TMP_DIR/sha256sums.txt" || fail "无法从 GitHub 下载 sha256sums.txt 校验文件。"
+else
+	download "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE" || fail "无法从 GitHub 下载 $ARCHIVE 发布包。"
+	download "$BASE_URL/sha256sums.txt" "$TMP_DIR/sha256sums.txt" || fail "无法从 GitHub 下载 sha256sums.txt 校验文件。"
+fi
 
 echo "[3/4] 校验并安装中继组件"
 expected=$(awk -v name="$ARCHIVE" '$2 == name {print $1}' "$TMP_DIR/sha256sums.txt")
