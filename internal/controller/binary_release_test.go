@@ -20,7 +20,7 @@ func TestBinaryOnlyControllerReleaseAssets(t *testing.T) {
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	required := map[string][]string{
 		"scripts/build-release.sh":                                 {"create_tar_archive \"$stage\" \"$archive\" bin/oboard-controller", "${arch}_install.tar.gz", "oboard-subscription-relay", "install-subscription-relay.sh", "deploy/systemd", "deploy/openrc"},
-		"internal/controller/assets/install-subscription-relay.sh": {"OBOARD_SUBSCRIPTION_RELAY_ENROLLMENT_TOKEN", "stored_relay_secret", "OBOARD_SUBSCRIPTION_RELAY_ADDR:-${stored_relay_addr:-:2777}", "sha256sums.txt", "oboard-subscription-relay-updater.service", "OBOARD_ACTION"},
+		"internal/controller/assets/install-subscription-relay.sh": {"OBOARD_SUBSCRIPTION_RELAY_ENROLLMENT_TOKEN", "stored_relay_secret", "OBOARD_SUBSCRIPTION_RELAY_ADDR:-${stored_relay_addr:-:2777}", "sha256sums.txt", "oboard-subscription-relay-updater.service", "OBOARD_ACTION", "[1/4] 检查运行环境", "[2/4] 获取版本并下载中继组件", "[3/4] 校验并安装中继组件", "[4/4] 接入主控并启动中继服务", "OBoard 订阅中继操作未完成", "OBoard 订阅中继安装完成", "OBoard 订阅中继更新完成"},
 		"scripts/install.sh":                                       {"OBOARD_UPDATE_CHANNEL", "oboard-controller-updater", "install_component controller", "prepare_controller_updater_runtime", "uninstall_controller", "OBOARD_PURGE_DATA", "resolve_purge_data", "drain_piped_script"},
 		"scripts/verify-release.sh":                                {"Testing Controller", "Building Web UI", "Building current-platform binaries", "cmd/controller-updater"},
 		"scripts/fetch-agent-release.sh":                           {"OBOARD_RELEASE_PUBLIC_KEY", "release-manifest.json.sig", "OBOARD_AGENT_CHANNEL", "OBOARD_AGENT_EXPECTED_COMMIT"},

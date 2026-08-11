@@ -13,6 +13,12 @@ TMP_DIR=
 cleanup() {
 	status=$?
 	[ -z "$TMP_DIR" ] || rm -rf "$TMP_DIR"
+	if [ "$status" -ne 0 ]; then
+		echo "" >&2
+		echo "OBoard 订阅中继操作未完成。" >&2
+		echo "请根据上方提示处理后重试。" >&2
+	fi
+	trap - EXIT
 	exit "$status"
 }
 trap cleanup EXIT
@@ -51,10 +57,17 @@ uninstall_relay() {
 	stored_relay_id=$(env_value OBOARD_SUBSCRIPTION_RELAY_ID)
 	stored_relay_token=$(env_value OBOARD_SUBSCRIPTION_RELAY_TOKEN)
 	stored_relay_secret=$(env_value OBOARD_SUBSCRIPTION_RELAY_SECRET)
+	manager=$(service_manager)
+	echo "OBoard 订阅中继"
+	echo "----------------"
+	echo "正在卸载订阅中继。"
+	echo "安装目录：$INSTALL_DIR"
+	echo "服务管理器：$manager"
+	echo ""
+	echo "[1/2] 通知主控并停止中继服务"
 	if [ -x "$INSTALL_DIR/oboard-subscription-relay" ]; then
 		OBOARD_CONTROLLER_URL=$stored_controller_url OBOARD_SUBSCRIPTION_RELAY_ID=$stored_relay_id OBOARD_SUBSCRIPTION_RELAY_TOKEN=$stored_relay_token OBOARD_SUBSCRIPTION_RELAY_SECRET=$stored_relay_secret "$INSTALL_DIR/oboard-subscription-relay" notify-uninstall >/dev/null 2>&1 || true
 	fi
-	manager=$(service_manager)
 	if [ "$manager" = systemd ]; then
 		systemctl disable --now oboard-subscription-relay-updater.service oboard-subscription-relay.service >/dev/null 2>&1 || true
 		rm -f /etc/systemd/system/oboard-subscription-relay-updater.service /etc/systemd/system/oboard-subscription-relay.service
@@ -66,8 +79,12 @@ uninstall_relay() {
 		rc-update del oboard-subscription-relay default >/dev/null 2>&1 || true
 		rm -f /etc/init.d/oboard-subscription-relay-updater /etc/init.d/oboard-subscription-relay
 	fi
+	echo "[2/2] 删除中继程序和本机配置"
 	rm -rf "$INSTALL_DIR"
-	echo "订阅中继已卸载。可以在主控中删除对应记录。"
+	echo ""
+	echo "OBoard 订阅中继卸载完成"
+	echo "------------------------"
+	echo "本机程序和接入凭据已删除，可以在主控中删除对应记录。"
 }
 
 if [ "$ACTION" = uninstall ]; then uninstall_relay; exit 0; fi
@@ -91,10 +108,26 @@ elif [ ! -r "$ENV_FILE" ]; then
 	fail "未找到现有中继配置，不能执行更新。"
 fi
 
+echo "OBoard 订阅中继"
+echo "----------------"
+if [ "$ACTION" = update ]; then
+	echo "正在更新，现有接入配置将保留。"
+else
+	echo "正在开始安装。"
+fi
+echo "主控地址：$CONTROLLER_URL"
+echo "安装目录：$INSTALL_DIR"
+echo "监听地址：$RELAY_ADDR"
+echo ""
+echo "[1/4] 检查运行环境"
 case "$(uname -m)" in x86_64|amd64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; *) fail "不支持当前架构：$(uname -m)" ;; esac
 need_command tar
+need_command install
+manager=$(service_manager)
+echo "环境：linux/$ARCH 服务管理器=$manager"
 if command -v curl >/dev/null 2>&1; then
 	download() { curl -fsSL --retry 3 --connect-timeout 15 "$1" -o "$2"; }
+	echo "[2/4] 获取版本并下载中继组件"
 	if [ "$VERSION_VALUE" = latest ]; then
 		resolved=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest")
 		VERSION_VALUE=${resolved##*/tag/}
@@ -102,16 +135,19 @@ if command -v curl >/dev/null 2>&1; then
 elif command -v wget >/dev/null 2>&1; then
 	download() { wget -q -O "$2" "$1"; }
 	[ "$VERSION_VALUE" != latest ] || fail "使用 wget 时请通过 VERSION 指定版本。"
+	echo "[2/4] 下载中继组件"
 else
 	fail "需要 curl 或 wget。"
 fi
 resolve_release_target
+echo "目标版本：$VERSION_VALUE"
 ARCHIVE=oboard_controller_${ARTIFACT_VERSION}_linux_${ARCH}_install.tar.gz
 BASE_URL=https://github.com/$REPO/releases/download/$TAG
 TMP_DIR=$(mktemp -d /tmp/oboard-subscription-relay.XXXXXX)
 download "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE"
 download "$BASE_URL/sha256sums.txt" "$TMP_DIR/sha256sums.txt"
 
+echo "[3/4] 校验并安装中继组件"
 expected=$(awk -v name="$ARCHIVE" '$2 == name {print $1}' "$TMP_DIR/sha256sums.txt")
 [ -n "$expected" ] || fail "发布校验和中缺少 $ARCHIVE。"
 if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$TMP_DIR/$ARCHIVE" | awk '{print $1}')
@@ -126,15 +162,17 @@ install -m 0755 "$TMP_DIR/bin/oboard-subscription-relay" "$INSTALL_DIR/oboard-su
 mv -f "$INSTALL_DIR/oboard-subscription-relay.new" "$INSTALL_DIR/oboard-subscription-relay"
 
 if [ "$ACTION" = install ]; then
+	echo "[4/4] 接入主控并启动中继服务"
 	"$INSTALL_DIR/oboard-subscription-relay" enroll --controller "$CONTROLLER_URL" --token "$ENROLLMENT_TOKEN" --env-output "$ENV_FILE"
 	{
 		printf 'OBOARD_SUBSCRIPTION_RELAY_ADDR=%s\n' "$RELAY_ADDR"
 		printf 'OBOARD_SUBSCRIPTION_RELAY_TRUSTED_PROXY_CIDRS=%s\n' "$TRUSTED_PROXIES"
 	} >> "$ENV_FILE"
 	chmod 0600 "$ENV_FILE"
+else
+	echo "[4/4] 刷新中继服务"
 fi
 
-manager=$(service_manager)
 if [ "$manager" = systemd ]; then
 	if [ "$MANAGED_UPDATE" = 0 ]; then
 		install -m 0644 "$TMP_DIR/deploy/systemd/oboard-subscription-relay.service" /etc/systemd/system/oboard-subscription-relay.service
@@ -157,8 +195,25 @@ else
 	fail "未识别 systemd 或 OpenRC；程序已安装但尚未启动。"
 fi
 
+echo ""
 if [ "$ACTION" = install ]; then
-	echo "订阅中继已接入并启动，请确认 HTTPS 反向代理指向本机监听端口。"
+	echo "OBoard 订阅中继安装完成"
 else
-	echo "订阅中继已更新到 $VERSION_VALUE。"
+	echo "OBoard 订阅中继更新完成"
+fi
+echo "------------------------"
+echo "当前版本：$VERSION_VALUE"
+echo "监听地址：$RELAY_ADDR"
+echo "服务管理器：$manager"
+if [ "$manager" = systemd ]; then
+	echo "查看状态：systemctl status oboard-subscription-relay --no-pager"
+	echo "查看日志：journalctl -u oboard-subscription-relay -f"
+else
+	echo "查看状态：rc-service oboard-subscription-relay status"
+	echo "查看日志：tail -f /var/log/oboard-subscription-relay.log"
+fi
+if [ "$ACTION" = install ]; then
+	echo "请确认 HTTPS 反向代理已指向本机监听地址。"
+else
+	echo "现有接入配置已保留，中继服务已重新启动。"
 fi
