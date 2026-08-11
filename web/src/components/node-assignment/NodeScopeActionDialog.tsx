@@ -5,6 +5,7 @@ import { Dialog } from '../ui/dialog'
 import { Select } from '../ui/select'
 import { Input } from '../ui/input'
 import { Switch } from '../ui/switch'
+import { DateTimePicker } from '../ui/datetime-picker'
 import { UserPicker, type UserOption } from './UserPicker'
 import type { NodeScopeRequest, ScopeNode } from './NodeScopeMenu'
 
@@ -300,8 +301,8 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                   <option value="deny">临时禁止</option>
                 </Select>
                 <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="原因（必填）" style={{ maxWidth: 220 }} />
-                <Input type="datetime-local" value={startsAt} onChange={e => setStartsAt(e.target.value)} aria-label="开始时间（可选）" title="开始时间（可选）" style={{ maxWidth: 190 }} />
-                <Input type="datetime-local" value={expiresAt} onChange={e => setExpiresAt(e.target.value)} aria-label="过期时间（必填）" title="过期时间（必填）" style={{ maxWidth: 190 }} />
+                <DateTimePicker value={startsAt} onChange={setStartsAt} placeholder="开始时间（可选）" aria-label="开始时间（可选）" title="开始时间（可选）" style={{ maxWidth: 190 }} />
+                <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="过期时间（必填）" aria-label="过期时间（必填）" title="过期时间（必填）" style={{ maxWidth: 190 }} />
                 <Button variant="outline" size="sm" busy={exBusy} onClick={() => void runExceptionPreview()}>预览</Button>
               </div>
               {exMessage && <p style={{ margin: '8px 0 0', color: exMessage.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{exMessage}</p>}

@@ -58,6 +58,7 @@ import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } fr
 import './style.css'
 import { Badge } from './components/ui/badge'
 import { Switch } from './components/ui/switch'
+import { DateTimePicker } from './components/ui/datetime-picker'
 import logo from './assets/logo.svg'
 import { 
   LayoutDashboard, Server as ServerIcon, Workflow, Users as UsersIcon, Link as LinkIcon, 
@@ -5650,7 +5651,7 @@ function AIAuditReviews({ data, client, notify }: any) {
         </div>
         <div className="ai-review-evidence-picker">{auditReviewEvidenceOptions.map(option => <label key={option.value} className={draft.evidenceTypes.includes(option.value) ? 'selected' : ''}><Switch size="sm" checked={draft.evidenceTypes.includes(option.value)} onChange={() => toggleEvidence(option.value)} /><span><strong>{option.label}</strong><small>{option.description}</small></span></label>)}</div>
         <FormField label="历史范围" required><Select variant="segmented" value={draft.timeMode === 'custom' ? 'custom' : draft.preset} onChange={event => event.target.value === 'custom' ? setDraft({ ...draft, timeMode: 'custom' }) : setDraft({ ...draft, timeMode: 'preset', preset: event.target.value })}><option value="1h">1 小时</option><option value="24h">24 小时</option><option value="7d">7 天</option><option value="30d">30 天</option><option value="custom">自定义</option></Select></FormField>
-        {draft.timeMode === 'custom' && <div className="two-column"><FormField label="开始时间" required><input type="datetime-local" required value={draft.startedAt} onChange={event => setDraft({ ...draft, startedAt: event.target.value })} /></FormField><FormField label="结束时间" required><input type="datetime-local" required value={draft.endedAt} onChange={event => setDraft({ ...draft, endedAt: event.target.value })} /></FormField></div>}
+        {draft.timeMode === 'custom' && <div className="two-column"><FormField label="开始时间" required><DateTimePicker value={draft.startedAt} onChange={val => setDraft({ ...draft, startedAt: val })} placeholder="选择开始时间" required /></FormField><FormField label="结束时间" required><DateTimePicker value={draft.endedAt} onChange={val => setDraft({ ...draft, endedAt: val })} placeholder="选择结束时间" required /></FormField></div>}
       </form></div>
       <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setCreateOpen(false)}>取消</button><button type="submit" form="ai-review-create-form" disabled={working === 'create' || !canCreate}><Bot size={15} />开始审查</button></footer>
     </MotionDialogPanel>}</AnimatePresence>

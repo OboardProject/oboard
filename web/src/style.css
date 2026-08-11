@@ -16515,3 +16515,275 @@ button.ui-btn-ghost:hover {
   min-width: 160px;
   max-width: 260px;
 }
+
+/* ==========================================================================
+   Appica UI DateTimePicker Component
+   ========================================================================== */
+.ui-datetime-picker {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+
+.ui-datetime-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 12px;
+  background-color: var(--surface-solid, #ffffff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--radius-md, 8px);
+  color: var(--text, #0f172a);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.ui-datetime-input-wrap:hover {
+  border-color: var(--border-strong, #cbd5e1);
+  background-color: var(--surface-hover, #f8fafc);
+}
+
+.ui-datetime-picker.is-open .ui-datetime-input-wrap {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft, rgba(15, 23, 42, 0.12));
+}
+
+.ui-datetime-picker.is-disabled .ui-datetime-input-wrap {
+  cursor: not-allowed;
+  opacity: 0.6;
+  background-color: var(--bg-muted, #f1f5f9);
+}
+
+.ui-datetime-icon {
+  flex: 0 0 auto;
+  color: var(--muted, #64748b);
+}
+
+.ui-datetime-value {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+.ui-datetime-value.is-placeholder {
+  color: var(--muted, #94a3b8);
+  font-family: inherit;
+}
+
+.ui-datetime-clear {
+  flex: 0 0 auto;
+  padding: 2px;
+  margin-left: 2px;
+  border-radius: 50%;
+  color: var(--muted);
+}
+.ui-datetime-clear:hover {
+  color: var(--danger, #ef4444);
+  background-color: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+/* Floating Popover */
+.ui-datetime-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 9999;
+  width: 310px;
+  padding: 14px;
+  background: var(--surface-solid, #ffffff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+  backdrop-filter: blur(16px);
+}
+
+:root[data-theme="dark"] .ui-datetime-popover {
+  background: var(--surface-solid, #1e293b);
+  border-color: var(--border, #334155);
+  box-shadow: 0 20px 30px -10px rgba(0, 0, 0, 0.5);
+}
+
+/* Header */
+.ui-datetime-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.ui-datetime-month-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-strong);
+}
+
+/* Presets */
+.ui-datetime-presets {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.ui-datetime-presets .sub-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: var(--bg-muted);
+  color: var(--text);
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.ui-datetime-presets .sub-chip:hover {
+  background: var(--primary);
+  color: #ffffff;
+}
+
+/* Weekdays */
+.ui-datetime-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+/* Days Grid */
+.ui-datetime-days-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-bottom: 12px;
+}
+
+.ui-datetime-day-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+
+.ui-datetime-day-cell:hover:not(.is-selected) {
+  background-color: var(--surface-hover, #f1f5f9);
+}
+
+.ui-datetime-day-cell.is-other-month {
+  color: var(--muted-light, #cbd5e1);
+  opacity: 0.6;
+}
+
+.ui-datetime-day-cell.is-today:not(.is-selected) {
+  font-weight: 700;
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.ui-datetime-day-cell.is-selected {
+  background-color: var(--primary, #0f172a) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* Time Picker Section */
+.ui-datetime-time-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  gap: 8px;
+}
+
+.ui-datetime-time-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.ui-datetime-time-input {
+  width: 38px;
+  height: 28px;
+  text-align: center;
+  padding: 2px 4px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-solid);
+  color: var(--text-strong);
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  font-weight: 600;
+}
+.ui-datetime-time-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.ui-datetime-time-presets {
+  display: flex;
+  gap: 4px;
+}
+.ui-datetime-time-presets .sub-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+/* Footer */
+.ui-datetime-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.ui-datetime-confirm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  background-color: var(--primary);
+  color: #ffffff;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.ui-datetime-confirm-btn:hover {
+  opacity: 0.9;
+}
+
+/* Styling Native Input[type="datetime-local"] Indicator Overrides */
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  filter: opacity(0.7);
+  transition: filter 0.2s ease;
+}
+input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  filter: opacity(1);
+}

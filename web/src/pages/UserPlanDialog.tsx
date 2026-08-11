@@ -4,6 +4,7 @@ import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
 import { Input } from '../components/ui/input'
+import { DateTimePicker } from '../components/ui/datetime-picker'
 import { RefreshCw, Trash2, Plus } from 'lucide-react'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
@@ -196,8 +197,8 @@ export function UserPlanDialog({ user, binding, plans, client, load, onClose }: 
               <option value={0}>选择套餐</option>
               {plans.filter(p => p.enabled).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </Select>
-            <Input type="datetime-local" value={startsAt} onChange={e => setStartsAt(e.target.value)} aria-label="生效时间" title="生效时间" />
-            <Input type="datetime-local" value={expiresAt} onChange={e => setExpiresAt(e.target.value)} aria-label="到期时间" title="到期时间" />
+            <DateTimePicker value={startsAt} onChange={setStartsAt} placeholder="生效时间（可选）" aria-label="生效时间" title="生效时间" />
+            <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="到期时间（可选）" aria-label="到期时间" title="到期时间" />
             <Button variant="outline" size="sm" disabled={previewBusy} onClick={() => void runPreview()}>预览影响</Button>
           </div>
           {preview && (
@@ -241,7 +242,7 @@ export function UserPlanDialog({ user, binding, plans, client, load, onClose }: 
             <Select value={exForm.effect} onChange={e => setExForm(f => ({ ...f, effect: e.target.value as 'allow' | 'deny' }))}>
               <option value="allow">允许</option><option value="deny">拒绝</option>
             </Select>
-            <Input type="datetime-local" value={exForm.expires_at} onChange={e => setExForm(f => ({ ...f, expires_at: e.target.value }))} aria-label="到期时间" title="到期时间" />
+            <DateTimePicker value={exForm.expires_at} onChange={val => setExForm(f => ({ ...f, expires_at: val }))} placeholder="到期时间（必填）" aria-label="到期时间" title="到期时间" style={{ maxWidth: 200 }} />
             <Input value={exForm.reason} onChange={e => setExForm(f => ({ ...f, reason: e.target.value }))} placeholder="原因（必填）" style={{ maxWidth: 200 }} />
             <Button size="sm" disabled={exBusy} onClick={() => void createException()}><Plus size={14} /> 创建例外</Button>
           </div>
