@@ -16330,7 +16330,12 @@ button.ui-btn-ghost:hover {
 
 .ui-switch.is-disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+  opacity: 0.65;
+}
+
+.ui-switch.is-checked.is-disabled .ui-switch-track {
+  background-color: var(--primary, #0f172a);
+  opacity: 0.7;
 }
 
 .ui-switch-input {
@@ -16351,10 +16356,10 @@ button.ui-btn-ghost:hover {
   display: inline-block;
   width: 38px;
   height: 22px;
-  border-radius: 11px;
+  border-radius: 9999px;
   background-color: var(--border-strong, #cbd5e1);
-  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition: background-color 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 .ui-switch.is-checked .ui-switch-track {

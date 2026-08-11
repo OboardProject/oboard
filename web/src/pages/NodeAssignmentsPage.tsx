@@ -4,6 +4,7 @@ import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
 import { Input } from '../components/ui/input'
+import { Switch } from '../components/ui/switch'
 import { NodeScopeMenu, type NodeScopeRequest, type ScopeNode } from '../components/node-assignment/NodeScopeMenu'
 import { NodeScopeActionDialog } from '../components/node-assignment/NodeScopeActionDialog'
 import { AssignPlanUsersDialog } from '../components/node-assignment/AssignPlanUsersDialog'
@@ -233,7 +234,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
           <Button variant="outline" size="sm" onClick={() => setFiltersOpen(v => !v)}><Filter size={14} /> 筛选</Button>
           <Button variant="ghost" size="sm" onClick={() => { setQuery(''); setEntryServerID(0); setEntryRegion(''); setExitRegion(''); setProtocol(''); setStatus(''); setPlanID(0); setUnassigned(false); setGroupBy(''); setSort('name'); setPage(1) }}><RefreshCw size={14} /> 重置</Button>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', userSelect: 'none', marginLeft: 4 }}>
-            <input type="checkbox" checked={showType} onChange={e => setShowType(e.target.checked)} />
+            <Switch size="sm" checked={showType} onChange={setShowType} ariaLabel="显示类型" />
             显示类型
           </label>
           {isAdmin && (
@@ -282,8 +283,8 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
               <option value={0}>套餐：全部</option>
               {plans.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </Select>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-              <input type="checkbox" checked={unassigned} onChange={e => setUnassigned(e.target.checked)} /> 仅看未分配节点
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+              <Switch size="sm" checked={unassigned} onChange={setUnassigned} ariaLabel="仅看未分配节点" /> 仅看未分配节点
             </label>
             <Select value={groupBy} onChange={e => setGroupBy(e.target.value)}>
               <option value="">分组：不分组</option>

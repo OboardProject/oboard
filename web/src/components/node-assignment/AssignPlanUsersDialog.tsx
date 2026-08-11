@@ -4,6 +4,7 @@ import { Button } from '../ui/button'
 import { Dialog } from '../ui/dialog'
 import { Select } from '../ui/select'
 import { Input } from '../ui/input'
+import { Switch } from '../ui/switch'
 import { UserPicker, type UserOption } from './UserPicker'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
@@ -133,8 +134,8 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
             <option value={0}>选择套餐</option>
             {plans.map(p => <option key={p.id} value={p.id}>{p.name}{p.enabled === false ? '（已停用）' : ''}</option>)}
           </Select>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-            <input type="checkbox" checked={deploy} onChange={e => setDeploy(e.target.checked)} /> 立即下发部署任务
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+            <Switch size="sm" checked={deploy} onChange={setDeploy} ariaLabel="立即下发部署任务" /> 立即下发部署任务
           </label>
         </div>
         <UserPicker users={users} selected={userIDs} onChange={setUserIDs} />

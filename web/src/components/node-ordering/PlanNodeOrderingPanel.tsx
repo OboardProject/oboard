@@ -3,6 +3,7 @@ import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
+import { Switch } from '../ui/switch'
 import {
   DndContext,
   KeyboardSensor,
@@ -477,11 +478,12 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
             <>
               <div>
                 <h3>入口地区顺序</h3>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginBottom: 8 }}>
-                  <input
-                    type="checkbox"
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginBottom: 8, cursor: 'pointer' }}>
+                  <Switch
+                    size="sm"
                     checked={workingPolicy.entry_region_order_mode !== 'custom'}
-                    onChange={e => setWorkingPolicy({ ...workingPolicy, entry_region_order_mode: e.target.checked ? 'inherit_exit' : 'custom' })}
+                    onChange={checked => setWorkingPolicy({ ...workingPolicy, entry_region_order_mode: checked ? 'inherit_exit' : 'custom' })}
+                    ariaLabel="入口地区顺序跟随出口地区顺序"
                   />
                   入口地区顺序跟随出口地区顺序
                 </label>

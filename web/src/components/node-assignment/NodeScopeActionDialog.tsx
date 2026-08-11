@@ -4,6 +4,7 @@ import { Button } from '../ui/button'
 import { Dialog } from '../ui/dialog'
 import { Select } from '../ui/select'
 import { Input } from '../ui/input'
+import { Switch } from '../ui/switch'
 import { UserPicker, type UserOption } from './UserPicker'
 import type { NodeScopeRequest, ScopeNode } from './NodeScopeMenu'
 
@@ -243,8 +244,8 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
               <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
                 <span style={{ fontWeight: 600 }}>已选择 {preview.count} 个节点</span>
                 <Badge variant="outline">{scopeName(preview)}</Badge>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginLeft: 'auto' }}>
-                  <input type="checkbox" checked={includeDisabled} onChange={e => setIncludeDisabled(e.target.checked)} /> 包含已禁用节点
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginLeft: 'auto', cursor: 'pointer' }}>
+                  <Switch size="sm" checked={includeDisabled} onChange={setIncludeDisabled} ariaLabel="包含已禁用节点" /> 包含已禁用节点
                 </label>
               </div>
               {preview.sample_nodes.length > 0 && (

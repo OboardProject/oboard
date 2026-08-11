@@ -13832,12 +13832,7 @@ function Subscriptions({ data, client, load, notify }: any) {
                   </div>
                   <div className="sub-security-stack">
                     <label className="subscription-burn-toggle" title="开启后，链接首次成功获取订阅内容便立即失效">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(user.subscription_burn_after_read)}
-                        onChange={() => void setSubscriptionBurnPolicy(client, user, !user.subscription_burn_after_read, load, dialogs, notify)}
-                      />
-                      <span className="setting-switch" aria-hidden="true"><span /></span>
+                      <Switch size="sm" checked={Boolean(user.subscription_burn_after_read)} onChange={checked => void setSubscriptionBurnPolicy(client, user, checked, load, dialogs, notify)} ariaLabel="阅后即焚" />
                       <span>阅后即焚</span>
                     </label>
                     <button type="button" className="age-key-status" onClick={() => void configureUserAge(user)}>
