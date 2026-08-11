@@ -1114,11 +1114,14 @@ function CopyBlock({ value }: { value: string }) {
   const copy = async () => {
     const ok = await copyText(value)
     setCopyState(ok ? 'copied' : 'failed')
-    window.setTimeout(() => setCopyState('idle'), 1400)
+    window.setTimeout(() => setCopyState('idle'), 1600)
   }
   return <div className="copy-block">
     <code>{value || '—'}</code>
-    <button type="button" className="copy-block-button" onClick={copy}>{copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制'}</button>
+    <button type="button" className={`copy-block-button ${copyState === 'copied' ? 'copied' : copyState === 'failed' ? 'failed' : ''}`} onClick={copy}>
+      {copyState === 'copied' ? <Check size={12} /> : copyState === 'failed' ? <Info size={12} /> : <Copy size={12} />}
+      <span>{copyState === 'copied' ? '已复制' : copyState === 'failed' ? '失败' : '复制'}</span>
+    </button>
   </div>
 }
 
@@ -6931,16 +6934,32 @@ function ServiceLogBlock({ title, value }: { title: string; value: any }) {
   </section>
 }
 
-function CommandCopyBlock({ value, buttonText = '复制命令' }: { value: string; buttonText?: string }) {
+function CommandCopyBlock({ value, buttonText = '复制命令', language = 'bash' }: { value: string; buttonText?: string; language?: string }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const copy = async () => {
     const ok = await copyText(value)
     setCopyState(ok ? 'copied' : 'failed')
-    window.setTimeout(() => setCopyState('idle'), 1400)
+    window.setTimeout(() => setCopyState('idle'), 1800)
   }
-  return <div className="command-copy">
-    <pre>{value}</pre>
-    <button onClick={copy}>{copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : buttonText}</button>
+  return <div className="command-copy-block">
+    <div className="command-copy-header">
+      <div className="command-copy-badge">
+        <Terminal size={13} />
+        <span>{language}</span>
+      </div>
+      <button
+        type="button"
+        className={`command-copy-btn ${copyState === 'copied' ? 'copied' : copyState === 'failed' ? 'failed' : ''}`}
+        onClick={copy}
+        aria-label={buttonText}
+      >
+        {copyState === 'copied' ? <Check size={13} /> : copyState === 'failed' ? <Info size={13} /> : <Copy size={13} />}
+        <span>{copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : buttonText}</span>
+      </button>
+    </div>
+    <div className="command-copy-body">
+      <pre>{value}</pre>
+    </div>
   </div>
 }
 

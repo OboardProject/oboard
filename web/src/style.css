@@ -4884,15 +4884,40 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 
 .copy-block {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  display: flex;
   align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
 }
 
 .copy-block code {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.copy-block-button {
+  flex: 0 0 68px;
+  width: 68px;
+  min-width: 68px;
+  max-width: 68px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   white-space: nowrap;
 }
 
@@ -5063,29 +5088,119 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 
 
 .command-copy {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
 }
 
-.command-copy pre {
-  min-height: 58px;
-  max-height: 190px;
-  margin: 0;
-  padding: 12px;
-  overflow: auto;
-  color: var(--text-strong);
+.command-copy-block {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border-radius: var(--radius-md, 8px);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
+  background: #0b1120;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.16);
+  overflow: hidden;
+}
+
+:root[data-theme="dark"] .command-copy-block {
+  background: #090d16;
+  border-color: var(--border);
+}
+
+.command-copy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #1e293b;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="dark"] .command-copy-header {
+  background: #111827;
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.command-copy-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+  user-select: none;
+}
+
+.command-copy-badge svg {
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.command-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  box-shadow: none;
+}
+
+.command-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: none;
+}
+
+.command-copy-btn.copied {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.command-copy-btn.failed {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.command-copy-body {
+  width: 100%;
+  overflow: hidden;
+}
+
+.command-copy-body pre,
+.command-copy pre {
+  margin: 0;
+  padding: 14px 16px;
+  min-height: 52px;
+  max-height: 240px;
+  overflow: auto;
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
-}
-
-.command-copy button {
-  min-width: 104px;
-  min-height: 42px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .deployment-summary {
