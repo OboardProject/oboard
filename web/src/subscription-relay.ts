@@ -23,6 +23,29 @@ export type SubscriptionRelay = {
 
 export type SubscriptionRelayAction = 'install' | 'update' | 'uninstall'
 
+export function subscriptionRelayDomain(publicURL: string) {
+  try {
+    return new URL(publicURL).hostname
+  } catch {
+    return ''
+  }
+}
+
+export function subscriptionRelayPublicURL(domain: string, basePath: string) {
+  const value = domain.trim()
+  if (!value || /[\s/@:?#]/.test(value)) return ''
+  try {
+    const target = new URL(`https://${value}`)
+    const labels = target.hostname.split('.')
+    if (target.hostname === '' || labels.length < 2 || labels.every(label => /^\d+$/.test(label))) return ''
+    if (labels.some(label => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))) return ''
+    const path = basePath.trim() === '/' ? '' : basePath.trim().replace(/\/+$/, '')
+    return `https://${target.hostname}${path}`
+  } catch {
+    return ''
+  }
+}
+
 function shellQuote(value: string) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`
 }

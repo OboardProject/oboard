@@ -6531,31 +6531,19 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   color: var(--primary-contrast);
   background: var(--primary);
 }
-.settings-card-head.subscription-security-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 480px);
-  align-items: start;
-  gap: 24px;
-}
-
-.subscription-security-summary {
-  min-width: 0;
-  display: grid;
-  justify-items: end;
-  gap: 10px;
-}
-
 .subscription-security-note {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  max-width: 480px;
-  padding: 2px 0 2px 16px;
-  border-left: 1px solid var(--border);
+  padding: 12px 14px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
   color: var(--muted);
+  margin-top: 4px;
 }
-.subscription-security-note svg { flex: 0 0 auto; margin-top: 1px; color: var(--primary); }
+.subscription-security-note svg { flex: 0 0 auto; margin-top: 2px; color: var(--primary); }
 .subscription-security-note strong,
 .subscription-security-note span { display: block; }
 .subscription-security-note strong { margin-bottom: 3px; color: var(--text-strong); font-size: 13px; }
@@ -6648,19 +6636,36 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 .subscription-relay-actions button { white-space: nowrap; }
 
+.subscription-relay-url-part {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-width: 0;
+  padding: 0 12px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.subscription-relay-url-part.scheme { border-right: 1px solid var(--border); }
+.subscription-relay-url-part.path {
+  max-width: 42%;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  text-overflow: ellipsis;
+}
+
+.subscription-relay-domain-input > input[aria-invalid="true"] { color: var(--danger); }
+.form-field small.subscription-relay-domain-error {
+  display: block;
+  margin-top: 6px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
 @media (max-width: 900px) {
-  .settings-card-head.subscription-security-head {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 14px;
-  }
-  .subscription-security-summary {
-    justify-items: start;
-  }
-  .subscription-security-note {
-    max-width: 620px;
-    padding-left: 0;
-    border-left: 0;
-  }
   .subscription-relay-row {
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { subscriptionRelayCommand, subscriptionRelayStatus } from './subscription-relay'
+import { subscriptionRelayCommand, subscriptionRelayDomain, subscriptionRelayPublicURL, subscriptionRelayStatus } from './subscription-relay'
 
 describe('subscription relay commands', () => {
   it('keeps enrollment credentials out of the URL', () => {
@@ -22,5 +22,18 @@ describe('subscription relay commands', () => {
   it('maps operational states to visible labels', () => {
     expect(subscriptionRelayStatus('online')).toEqual({ label: '在线', tone: 'ok' })
     expect(subscriptionRelayStatus('failed').label).toBe('更新失败')
+  })
+
+  it('builds the public URL from a domain and the current base path', () => {
+    expect(subscriptionRelayDomain('https://sub.example.com/qzq')).toBe('sub.example.com')
+    expect(subscriptionRelayPublicURL('Sub.Example.com', '/qzq')).toBe('https://sub.example.com/qzq')
+    expect(subscriptionRelayPublicURL('sub.example.com', '')).toBe('https://sub.example.com')
+  })
+
+  it('rejects protocol, port, IP and path values in the domain field', () => {
+    expect(subscriptionRelayPublicURL('https://sub.example.com', '/qzq')).toBe('')
+    expect(subscriptionRelayPublicURL('sub.example.com:8443', '/qzq')).toBe('')
+    expect(subscriptionRelayPublicURL('203.0.113.1', '/qzq')).toBe('')
+    expect(subscriptionRelayPublicURL('sub.example.com/path', '/qzq')).toBe('')
   })
 })

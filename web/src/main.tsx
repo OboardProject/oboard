@@ -103,7 +103,7 @@ import { getServerTimeIssue } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
 import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
 import { controllerUpdatePendingToast, isControllerUpdateInProgressStatus, isExpectedControllerUpdateDisconnect } from './controller-update'
-import { subscriptionRelayCommand, subscriptionRelayStatus, type SubscriptionRelay, type SubscriptionRelayAction } from './subscription-relay'
+import { subscriptionRelayCommand, subscriptionRelayDomain, subscriptionRelayPublicURL, subscriptionRelayStatus, type SubscriptionRelay, type SubscriptionRelayAction } from './subscription-relay'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { connectivityBucketTone as backendConnectivityBucketTone, connectivityRequestPath, connectivitySlaDisplay, formatConnectivityDuration, type ConnectivityResponse, type ConnectivityWindowKey } from './connectivity-sla'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
@@ -3150,15 +3150,24 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
 
 function SubscriptionRelayEditorDialog({ relay, currentBasePath, saving, onCancel, onSubmit }: { relay?: SubscriptionRelay; currentBasePath: string; saving: boolean; onCancel: () => void; onSubmit: (draft: { name: string; public_url: string }) => Promise<void> }) {
   const [name, setName] = useState(relay?.name || '')
-  const [publicURL, setPublicURL] = useState(relay?.public_url || '')
-  const submit = () => { if (name.trim() && publicURL.trim() && !saving) void onSubmit({ name: name.trim(), public_url: publicURL.trim() }) }
+  const [domain, setDomain] = useState(() => subscriptionRelayDomain(relay?.public_url || ''))
+  const publicURL = subscriptionRelayPublicURL(domain, currentBasePath)
+  const invalidDomain = Boolean(domain.trim()) && !publicURL
+  const submit = () => { if (name.trim() && publicURL && !saving) void onSubmit({ name: name.trim(), public_url: publicURL }) }
   return <MotionDialogPanel onCancel={onCancel} className="install-dialog">
     <header className="dialog-head"><div><h2>{relay ? '编辑订阅中继' : '创建订阅中继'}</h2><p className="muted">公开地址必须由 HTTPS 反向代理提供。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body form">
       <FormField label="名称"><input value={name} onChange={event => setName(event.target.value)} maxLength={80} autoFocus placeholder="国内订阅入口" /></FormField>
-      <FormField label="公开地址" hint="路径需与当前面板基础路径一致。"><input value={publicURL} onChange={event => setPublicURL(event.target.value)} spellCheck={false} placeholder={`https://sub.example.com${currentBasePath}`} /></FormField>
+      <FormField label="域名" required hint="只填写域名；HTTPS 和当前面板基础路径会自动补充。">
+        <div className="dns-domain-input subscription-relay-domain-input">
+          <span className="subscription-relay-url-part scheme" aria-hidden="true">https://</span>
+          <input value={domain} onChange={event => setDomain(event.target.value)} aria-label="订阅中继域名" aria-invalid={invalidDomain} autoCapitalize="none" autoComplete="url" spellCheck={false} placeholder="sub.example.com" />
+          {currentBasePath && <span className="subscription-relay-url-part path" title={currentBasePath} aria-hidden="true">{currentBasePath}</span>}
+        </div>
+        {invalidDomain && <small className="subscription-relay-domain-error" role="alert">请输入域名，不要包含协议、端口、IP 或路径。</small>}
+      </FormField>
     </div>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button><button type="button" onClick={submit} disabled={saving || !name.trim() || !publicURL.trim()}>{saving ? '保存中...' : relay ? '保存' : '创建并生成命令'}</button></footer>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button><button type="button" onClick={submit} disabled={saving || !name.trim() || !publicURL}>{saving ? '保存中...' : relay ? '保存' : '创建并生成命令'}</button></footer>
   </MotionDialogPanel>
 }
 
@@ -3328,9 +3337,10 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ traffic_timezone: trafficTimezone.trim() || 'Asia/Shanghai', traffic_enforcement_mode: trafficMode }) })
     }, '流量控制设置已保存')
   }
-  const saveSubscriptionAgePolicy = async () => {
+  const saveSubscriptionAgePolicy = async (nextPolicy?: 'optional' | 'required') => {
+    const targetPolicy = nextPolicy ?? subscriptionAgePolicy
     await runSave('subscription-age', async () => {
-      await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: subscriptionAgePolicy }) })
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: targetPolicy }) })
     }, '订阅加密策略已保存')
   }
   const saveControllerLogs = async () => {
@@ -3491,24 +3501,31 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       </section>}
       {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
       {activeSection === 'subscriptions' && <><section className="settings-card">
-        <div className="settings-card-head subscription-security-head">
+        <div className="settings-card-head">
           <div><h3>Mihomo Age 加密</h3><p className="muted">服务端只保存用户公钥，私钥始终留在客户端。</p></div>
-          <div className="subscription-security-summary">
-            <span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>
-            <div className="subscription-security-note">
-              <Shield size={18} />
-              <div><strong>{subscriptionAgePolicy === 'required' ? 'Mihomo 订阅必须加密' : '普通订阅与加密订阅并存'}</strong><span>{subscriptionAgePolicy === 'required' ? '没有配置 Age 公钥的用户将无法获取 Mihomo 格式，直到保存公钥。' : '用户可在自己的账户页面开启，已有普通订阅链接不会失效。'}</span></div>
-            </div>
-          </div>
+          <span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>
         </div>
         <div className="form settings-form single-field">
           <FormField label="加密策略" hint="仅影响 Mihomo 和 Clash 格式。">
-            <Select variant="segmented" value={subscriptionAgePolicy} onChange={e => setSubscriptionAgePolicy(e.target.value as 'optional' | 'required')} aria-label="Age 加密策略">
+            <Select
+              variant="segmented"
+              value={subscriptionAgePolicy}
+              onChange={e => {
+                const next = e.target.value as 'optional' | 'required'
+                setSubscriptionAgePolicy(next)
+                void saveSubscriptionAgePolicy(next)
+              }}
+              disabled={saving === 'subscription-age'}
+              aria-label="Age 加密策略"
+            >
               <option value="optional">用户可选</option>
               <option value="required">强制开启</option>
             </Select>
           </FormField>
-          <div className="settings-actions"><button onClick={() => void saveSubscriptionAgePolicy()} disabled={Boolean(saving)}>{saving === 'subscription-age' ? '保存中...' : '保存加密策略'}</button></div>
+          <div className="subscription-security-note">
+            <Shield size={18} />
+            <div><strong>{subscriptionAgePolicy === 'required' ? 'Mihomo 订阅必须加密' : '普通订阅与加密订阅并存'}</strong><span>{subscriptionAgePolicy === 'required' ? '没有配置 Age 公钥的用户将无法获取 Mihomo 格式，直到保存公钥。' : '用户可在自己的账户页面开启，已有普通订阅链接不会失效。'}</span></div>
+          </div>
         </div>
       </section>
       <SubscriptionRelayManager data={data} client={client} load={load} notify={notify} /></>}
