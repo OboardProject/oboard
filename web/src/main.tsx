@@ -3221,7 +3221,6 @@ function SubscriptionRelayCommandDialog({ relay, enrollmentToken, controllerURL,
     <header className="dialog-head"><div><h2>订阅中继命令</h2><p className="muted">{relay.name} · 在目标主机执行</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body">
       <Select variant="segmented" className="install-action-select" value={action} onChange={event => setAction(event.target.value as SubscriptionRelayAction)} aria-label="中继操作"><option value="install">安装</option><option value="update">更新</option><option value="uninstall">卸载</option></Select>
-      <p className="install-root-note">安装令牌仅使用一次，不会写入下载 URL。请在目标主机的 root SSH 中执行。</p>
       <InstallCommandCard title={title} desc={description} command={command} tone={action === 'uninstall' ? 'danger' : 'default'} />
     </div>
     <footer className="dialog-actions"><button type="button" onClick={onClose}>完成</button></footer>
