@@ -9,6 +9,7 @@ export type RegionMode = 'auto' | 'manual'
 export type DNSRecordTypes = 'auto' | 'a' | 'aaaa' | 'both'
 export type CertificateMode = 'external' | 'auto' | 'exact' | 'wildcard' | 'explicit'
 export type TimeCorrectionMode = 'off' | 'auto' | 'ntp'
+export type ConnectivityProbeTarget = 'auto' | 'cloudflare' | '12306' | 'google'
 
 export type Server = {
   id: number
@@ -63,6 +64,7 @@ export type Server = {
   traffic_period_start?: string
   traffic_period_end?: string
   connectivity_probe_enabled: boolean
+  connectivity_probe_target: ConnectivityProbeTarget
   connection_audit_enabled: boolean
   time_correction_mode: TimeCorrectionMode
   time_check_status: string

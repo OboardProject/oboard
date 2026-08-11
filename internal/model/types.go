@@ -119,6 +119,15 @@ const (
 	TimeCorrectionNTP  TimeCorrectionMode = "ntp"
 )
 
+type ConnectivityTarget string
+
+const (
+	ConnectivityProbeTargetAuto       ConnectivityTarget = "auto"
+	ConnectivityProbeTargetCloudflare ConnectivityTarget = "cloudflare"
+	ConnectivityProbeTarget12306      ConnectivityTarget = "12306"
+	ConnectivityProbeTargetGoogle     ConnectivityTarget = "google"
+)
+
 type RouteAction string
 
 const (
@@ -804,6 +813,7 @@ type Server struct {
 	TrafficPeriodStart       string             `json:"traffic_period_start"`
 	TrafficPeriodEnd         string             `json:"traffic_period_end"`
 	ConnectivityProbeEnabled bool               `json:"connectivity_probe_enabled"`
+	ConnectivityProbeTarget  ConnectivityTarget `json:"connectivity_probe_target"`
 	ConnectionAuditEnabled   bool               `json:"connection_audit_enabled"`
 	OfflineNotifyEnabled     bool               `json:"offline_notify_enabled"`
 	OfflineAfterSeconds      int                `json:"offline_after_seconds"`

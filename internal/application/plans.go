@@ -23,9 +23,10 @@ type PlanResult struct {
 
 func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal, raw json.RawMessage) (PlanResult, error) {
 	var input struct {
-		Name       string `json:"name"`
-		RegionCode string `json:"region_code"`
-		IPStack    string `json:"ip_stack"`
+		Name        string `json:"name"`
+		RegionCode  string `json:"region_code"`
+		IPStack     string `json:"ip_stack"`
+		ProbeTarget string `json:"connectivity_probe_target"`
 	}
 	if err := strictUnmarshal(raw, &input); err != nil {
 		return PlanResult{}, err
@@ -47,7 +48,11 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 	if input.IPStack == "" {
 		input.IPStack = string(model.IPStackAuto)
 	}
-	server := map[string]any{"name": input.Name, "region_code": strings.ToUpper(strings.TrimSpace(input.RegionCode)), "ip_stack": input.IPStack, "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 60000}
+	probeTarget := strings.ToLower(strings.TrimSpace(input.ProbeTarget))
+	if probeTarget == "" {
+		probeTarget = string(model.ConnectivityProbeTargetAuto)
+	}
+	server := map[string]any{"name": input.Name, "region_code": strings.ToUpper(strings.TrimSpace(input.RegionCode)), "ip_stack": input.IPStack, "connectivity_probe_target": probeTarget, "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 60000}
 	suggested := map[string]any{
 		"base_revisions": map[string]string{},
 		"operation":      map[string]any{"capability": "servers.onboard", "input": map[string]any{"server": server, "issue_enrollment_token": true}},

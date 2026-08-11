@@ -12,6 +12,7 @@ import type { EdgeProps, ReactFlowInstance } from 'reactflow'
 import 'reactflow/dist/style.css'
 import type {
   CertificateMode,
+  ConnectivityProbeTarget,
   DNSRecordTypes,
   EntryIPMode,
   ExternalOutbound,
@@ -640,6 +641,19 @@ function ServerRegionField({ draft, update, servers }: { draft: any; update: (pa
       </div>
     </FormField>
   )
+}
+
+function ConnectivityProbeTargetField({ draft, update }: { draft: any; update: (patch: any) => void }) {
+  if (!draft.connectivity_probe_enabled) return null
+  const automaticDomain = serverRegionCode(draft) === 'CN' ? '12306.cn' : 'cp.cloudflare.com'
+  return <FormField label="探测域名" hint="自动模式下，中国大陆使用 12306.cn，其他地区使用 cp.cloudflare.com。">
+    <Select value={draft.connectivity_probe_target || 'auto'} onChange={event => update({ connectivity_probe_target: event.target.value as ConnectivityProbeTarget })}>
+      <option value="auto">自动（当前：{automaticDomain}）</option>
+      <option value="cloudflare">cp.cloudflare.com</option>
+      <option value="12306">12306.cn</option>
+      <option value="google">www.gstatic.com</option>
+    </Select>
+  </FormField>
 }
 
 function exitRegionStatusLabel(status?: string, code?: string) {
@@ -6229,7 +6243,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number }) {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connectivity_probe_target: 'auto' as ConnectivityProbeTarget, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
 }
 
 function GridViewIcon() {
@@ -7070,6 +7084,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           <FormField label="公网可访问性" hint="每分钟检测公网连接和延迟。">
             <Switch checked={Boolean(draft.connectivity_probe_enabled)} onChange={checked => update({ connectivity_probe_enabled: checked })} ariaLabel="公网可访问性" />
           </FormField>
+          <ConnectivityProbeTargetField draft={draft} update={update} />
           <FormField label="连接审计" hint="记录来源 IP、目标与出口摘要。">
             <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} ariaLabel="连接审计" />
             {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
@@ -7160,6 +7175,7 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           <FormField label="公网可访问性" hint="每分钟检测公网连接和延迟。">
             <Switch checked={Boolean(draft.connectivity_probe_enabled)} onChange={checked => update({ connectivity_probe_enabled: checked })} ariaLabel="公网可访问性" />
           </FormField>
+          <ConnectivityProbeTargetField draft={draft} update={update} />
           <FormField label="连接审计" hint="关闭后 Agent 停止采集、上报和本地审计状态写入。">
             <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} ariaLabel="连接审计" />
             {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}

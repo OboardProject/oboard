@@ -28,6 +28,7 @@ type ServerDTO struct {
 	AgentBuild             string                   `json:"agent_build"`
 	KernelVersion          string                   `json:"kernel_version"`
 	ConnectionAuditEnabled bool                     `json:"connection_audit_enabled"`
+	ProbeTarget            model.ConnectivityTarget `json:"connectivity_probe_target"`
 	TimeCorrectionMode     model.TimeCorrectionMode `json:"time_correction_mode"`
 	TimeCheckStatus        string                   `json:"time_check_status"`
 	LastSeenAt             *time.Time               `json:"last_seen_at,omitempty"`
@@ -165,7 +166,7 @@ func serverDTO(item model.Server) ServerDTO {
 		UDPInboundMode: item.UDPInboundMode, MTUMode: item.MTUMode, MTUValue: item.MTUValue, BBREnabled: item.BBREnabled,
 		AgentConnected: item.AgentID != "", AgentVersion: item.AgentVersion, AgentBuild: item.AgentBuild,
 		KernelVersion: item.SingBoxVersion, ConnectionAuditEnabled: item.ConnectionAuditEnabled,
-		TimeCorrectionMode: item.TimeCorrectionMode, TimeCheckStatus: item.TimeCheckStatus,
+		ProbeTarget: item.ConnectivityProbeTarget, TimeCorrectionMode: item.TimeCorrectionMode, TimeCheckStatus: item.TimeCheckStatus,
 		LastSeenAt: item.LastSeenAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 	}
 }

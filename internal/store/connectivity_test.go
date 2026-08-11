@@ -67,6 +67,22 @@ func TestConnectivityProbeEventsTrackRealProbesOnly(t *testing.T) {
 	}
 }
 
+func TestConnectivityProbeTargetPersists(t *testing.T) {
+	ctx := context.Background()
+	db, server := newConnectivityTestStore(t)
+	server.ConnectivityProbeTarget = model.ConnectivityProbeTargetGoogle
+	if err := db.UpdateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := db.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ConnectivityProbeTarget != model.ConnectivityProbeTargetGoogle {
+		t.Fatalf("connectivity probe target = %q, want google", stored.ConnectivityProbeTarget)
+	}
+}
+
 func TestConnectivityProbeRetentionKeepsBoundaryEvents(t *testing.T) {
 	ctx := context.Background()
 	db, server := newConnectivityTestStore(t)

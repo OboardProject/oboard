@@ -34,6 +34,7 @@ type serverUpdateChanges struct {
 	InternalPortRangeStart *int                      `json:"internal_port_range_start,omitempty"`
 	InternalPortRangeEnd   *int                      `json:"internal_port_range_end,omitempty"`
 	ConnectionAuditEnabled *bool                     `json:"connection_audit_enabled,omitempty"`
+	ProbeTarget            *model.ConnectivityTarget `json:"connectivity_probe_target,omitempty"`
 	TimeCorrectionMode     *model.TimeCorrectionMode `json:"time_correction_mode,omitempty"`
 	OfflineNotifyEnabled   *bool                     `json:"offline_notify_enabled,omitempty"`
 	OfflineAfterSeconds    *int                      `json:"offline_after_seconds,omitempty"`
@@ -133,6 +134,7 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("internal_port_range_start", changes.InternalPortRangeStart != nil, func() { next.InternalPortRangeStart = *changes.InternalPortRangeStart })
 	set("internal_port_range_end", changes.InternalPortRangeEnd != nil, func() { next.InternalPortRangeEnd = *changes.InternalPortRangeEnd })
 	set("connection_audit_enabled", changes.ConnectionAuditEnabled != nil, func() { next.ConnectionAuditEnabled = *changes.ConnectionAuditEnabled })
+	set("connectivity_probe_target", changes.ProbeTarget != nil, func() { next.ConnectivityProbeTarget = *changes.ProbeTarget })
 	set("time_correction_mode", changes.TimeCorrectionMode != nil, func() { next.TimeCorrectionMode = *changes.TimeCorrectionMode })
 	set("offline_notify_enabled", changes.OfflineNotifyEnabled != nil, func() { next.OfflineNotifyEnabled = *changes.OfflineNotifyEnabled })
 	set("offline_after_seconds", changes.OfflineAfterSeconds != nil, func() { next.OfflineAfterSeconds = *changes.OfflineAfterSeconds })

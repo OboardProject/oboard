@@ -3180,6 +3180,7 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			MTUMode              *model.MTUMode            `json:"mtu_mode"`
 			BBREnabled           *bool                     `json:"bbr_enabled"`
 			TimeCorrectionMode   *model.TimeCorrectionMode `json:"time_correction_mode"`
+			ProbeTarget          *model.ConnectivityTarget `json:"connectivity_probe_target"`
 			OfflineNotifyEnabled *bool                     `json:"offline_notify_enabled"`
 			OfflineAfterSeconds  *int                      `json:"offline_after_seconds"`
 		}
@@ -3207,6 +3208,11 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			v.TimeCorrectionMode = current.TimeCorrectionMode
 		} else {
 			v.TimeCorrectionMode = *input.TimeCorrectionMode
+		}
+		if input.ProbeTarget == nil {
+			v.ConnectivityProbeTarget = current.ConnectivityProbeTarget
+		} else {
+			v.ConnectivityProbeTarget = *input.ProbeTarget
 		}
 		if input.OfflineNotifyEnabled == nil {
 			v.OfflineNotifyEnabled = current.OfflineNotifyEnabled
@@ -4182,6 +4188,13 @@ func validateServer(v *model.Server) error {
 	}
 	if v.OfflineAfterSeconds < 0 || v.OfflineAfterSeconds > 86400 {
 		return errors.New("offline_after_seconds must be between 0 and 86400")
+	}
+	switch v.ConnectivityProbeTarget {
+	case "", model.ConnectivityProbeTargetAuto:
+		v.ConnectivityProbeTarget = model.ConnectivityProbeTargetAuto
+	case model.ConnectivityProbeTargetCloudflare, model.ConnectivityProbeTarget12306, model.ConnectivityProbeTargetGoogle:
+	default:
+		return errors.New("connectivity_probe_target must be auto, cloudflare, 12306, or google")
 	}
 	if v.ListenIP == "" {
 		v.ListenIP = "0.0.0.0"
@@ -10541,7 +10554,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	if !auditEnabled {
 		_ = s.store.ClearConnectionPresenceForServer(r.Context(), server.ID)
 	}
-	_ = conn.WriteJSON(map[string]any{"type": "hello", "ts": time.Now().UTC(), "server_id": server.ID, "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connection_audit_enabled": auditEnabled})
+	_ = conn.WriteJSON(map[string]any{"type": "hello", "ts": time.Now().UTC(), "server_id": server.ID, "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connectivity_probe_target": effectiveConnectivityProbeTarget(server), "connection_audit_enabled": auditEnabled})
 	type agentSocketRead struct {
 		message map[string]json.RawMessage
 		err     error
@@ -10648,7 +10661,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			if !auditEnabled {
 				_ = s.store.ClearConnectionPresenceForServer(r.Context(), server.ID)
 			}
-			if err := conn.WriteJSON(map[string]any{"type": "heartbeat", "ts": time.Now().UTC(), "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connection_audit_enabled": auditEnabled}); err != nil {
+			if err := conn.WriteJSON(map[string]any{"type": "heartbeat", "ts": time.Now().UTC(), "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connectivity_probe_target": effectiveConnectivityProbeTarget(server), "connection_audit_enabled": auditEnabled}); err != nil {
 				return
 			}
 			heartbeatTimer.Reset(heartbeatInterval)
@@ -10664,6 +10677,21 @@ func serverMonitoringPolicy(server *model.Server) (string, time.Duration) {
 		return "standard", 10 * time.Second
 	}
 	return "lightweight", 20 * time.Second
+}
+
+func effectiveConnectivityProbeTarget(server *model.Server) model.ConnectivityTarget {
+	if server == nil {
+		return model.ConnectivityProbeTargetCloudflare
+	}
+	switch server.ConnectivityProbeTarget {
+	case model.ConnectivityProbeTargetCloudflare, model.ConnectivityProbeTarget12306, model.ConnectivityProbeTargetGoogle:
+		return server.ConnectivityProbeTarget
+	}
+	region, _ := core.EffectiveServerRegion(*server)
+	if region == "CN" {
+		return model.ConnectivityProbeTarget12306
+	}
+	return model.ConnectivityProbeTargetCloudflare
 }
 
 func signAgentTaskEnvelope(secret string, task model.AgentTask) string {
