@@ -841,10 +841,20 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .topbar-apply {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-height: 38px;
   padding: 8px 16px;
   white-space: nowrap;
   border-radius: var(--radius-full);
+}
+
+.topbar-apply svg {
+  display: block;
+  flex-shrink: 0;
+  transform: translate(0.75px, -1.25px);
 }
 
 .controller-update-prompt {
@@ -7916,14 +7926,15 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 999px;
+    border-radius: 9999px;
   }
   .topbar-apply span {
     display: none;
   }
   .topbar-apply svg {
-    width: 17px;
-    height: 17px;
+    width: 18px;
+    height: 18px;
+    transform: translate(0.75px, -1.25px);
   }
   .topbar-refresh {
     grid-area: refresh;
