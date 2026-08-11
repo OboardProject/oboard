@@ -854,7 +854,6 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .topbar-apply svg {
   display: block;
   flex-shrink: 0;
-  transform: translate(0.75px, -1.25px);
 }
 
 .controller-update-prompt {
@@ -6669,6 +6668,11 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   min-width: 0;
   padding: 14px 0;
   border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+.subscription-relay-access-row.is-locked {
+  opacity: 0.85;
 }
 
 .subscription-relay-access-row > div { min-width: 0; }
@@ -6677,6 +6681,40 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .subscription-relay-access-row strong { color: var(--text-strong); font-size: 13px; }
 .subscription-relay-access-row span { margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .subscription-relay-access-row .ui-switch { flex: 0 0 auto; }
+
+.subscription-relay-switch-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.subscription-relay-locked-overlay {
+  position: absolute;
+  inset: -6px -10px;
+  background: color-mix(in srgb, var(--surface) 55%, rgba(203, 213, 225, 0.85));
+  backdrop-filter: blur(4px);
+  border-radius: var(--radius-md, 8px);
+  border: 1px dashed var(--border-strong, #cbd5e1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: var(--text-muted, #475569);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: not-allowed;
+  user-select: none;
+  z-index: 10;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  white-space: nowrap;
+}
+
+:root[data-theme="dark"] .subscription-relay-locked-overlay {
+  background: color-mix(in srgb, var(--surface) 60%, rgba(30, 41, 59, 0.9));
+  border-color: var(--border-strong, #475569);
+  color: var(--text-muted, #94a3b8);
+}
 
 .subscription-relay-empty {
   display: flex;
@@ -7934,7 +7972,6 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .topbar-apply svg {
     width: 18px;
     height: 18px;
-    transform: translate(0.75px, -1.25px);
   }
   .topbar-refresh {
     grid-area: refresh;
@@ -9524,6 +9561,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .user-data-table th,
 .user-data-table td {
   padding: 12px 10px !important;
+  vertical-align: middle;
 }
 .user-data-table th:first-child,
 .user-data-table td:first-child { padding-left: 18px !important; }
@@ -14599,19 +14637,24 @@ button.ui-btn-ghost:hover {
 .ui-segmented-select {
   position: relative;
   isolation: isolate;
-  display: grid;
+  display: inline-grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-columns: minmax(72px, auto);
   align-items: stretch;
   gap: 4px;
-  width: 100%;
-  min-width: 0;
+  width: fit-content;
+  max-width: 100%;
   min-height: var(--control-height);
   padding: 4px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-2);
+}
+.ui-segmented-select.full-width {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  width: 100%;
 }
 .ui-segmented-select.disabled { opacity: 0.55; }
 .ui-segmented-indicator {
@@ -14638,7 +14681,7 @@ button.ui-btn-ghost:hover {
   min-height: 34px;
   justify-self: stretch;
   justify-content: center;
-  padding: 6px 9px;
+  padding: 6px 16px;
   border: 0;
   border-radius: calc(var(--radius-md) - 4px);
   color: var(--text-secondary);
@@ -14648,8 +14691,7 @@ button.ui-btn-ghost:hover {
   font-weight: 650;
   line-height: 1.25;
   text-align: center;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
   transition: color 180ms ease;
 }
 .ui-segmented-select button:hover,
@@ -16764,4 +16806,54 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
 }
 input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   filter: opacity(1);
+}
+
+/* Appica UI Plan Badges Layout & Multi-Plan Styling */
+.plan-badges-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.plan-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background-color: var(--surface-2, #f1f5f9);
+  color: var(--text-strong, #0f172a);
+  border: 1px solid var(--border, #cbd5e1);
+  white-space: nowrap;
+  line-height: 1.4;
+  transition: all 0.15s ease;
+}
+
+:root[data-theme="dark"] .plan-badge-pill {
+  background-color: var(--surface-2, #334155);
+  border-color: var(--border, #475569);
+  color: var(--text-strong, #f8fafc);
+}
+
+.plan-more-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  background-color: var(--primary-soft, rgba(15, 23, 42, 0.08));
+  color: var(--primary, #0f172a);
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent);
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.4;
+  transition: all 0.15s ease;
+}
+
+.plan-more-chip:hover {
+  background-color: var(--primary);
+  color: #ffffff;
 }

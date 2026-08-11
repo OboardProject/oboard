@@ -40,6 +40,59 @@ type DetailResponse = { node: any; users: DetailUser[]; plans: { plan_id: number
 const protocolOptions = ['vless', 'hysteria2', 'anytls', 'shadowsocks', 'mieru', 'socks', 'wireguard']
 const statusLabels: Record<string, string> = { ok: '正常', offline: '离线', disabled: '已禁用' }
 
+function PlanBadgesCell({ plans }: { plans: Array<{ plan_id: number; name: string }> }) {
+  const [expanded, setExpanded] = React.useState(false)
+  if (!plans || plans.length === 0) {
+    return <span className="muted" style={{ fontSize: 12 }}>未分配</span>
+  }
+
+  const allNames = plans.map(p => p.name).join('、')
+
+  if (plans.length <= 2 || expanded) {
+    return (
+      <div className="plan-badges-wrap" title={allNames}>
+        {plans.map(p => (
+          <span key={p.plan_id} className="plan-badge-pill">
+            {p.name}
+          </span>
+        ))}
+        {expanded && plans.length > 2 && (
+          <button
+            type="button"
+            className="plan-more-chip"
+            onClick={() => setExpanded(false)}
+            title="收起"
+            style={{ fontSize: 10, padding: '1px 5px' }}
+          >
+            收起
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  const visiblePlans = plans.slice(0, 2)
+  const remainingCount = plans.length - 2
+
+  return (
+    <div className="plan-badges-wrap" title={`包含全部 ${plans.length} 个套餐：${allNames}`}>
+      {visiblePlans.map(p => (
+        <span key={p.plan_id} className="plan-badge-pill">
+          {p.name}
+        </span>
+      ))}
+      <button
+        type="button"
+        className="plan-more-chip"
+        onClick={() => setExpanded(true)}
+        aria-label={`展开剩余 ${remainingCount} 个套餐：${allNames}`}
+      >
+        +{remainingCount}
+      </button>
+    </div>
+  )
+}
+
 function nodeTypeLabel(type: string) {
   if (type === 'proxy_path') return '代理链路'
   if (type === 'external_outbound') return '导入节点'
@@ -279,7 +332,19 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
         {error && <p style={{ color: 'var(--color-danger)' }}>{error}</p>}
 
         <div className="card-custom" style={{ marginTop: 12, overflow: 'auto' }}>
-          <table className="user-data-table node-catalog-table" style={{ minWidth: 840 }}>
+          <table className="user-data-table node-catalog-table" style={{ minWidth: 920, tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: 38 }} />
+              <col style={{ width: showType ? '18%' : '20%' }} />
+              {showType && <col style={{ width: '8%' }} />}
+              <col style={{ width: showType ? '11%' : '12%' }} />
+              <col style={{ width: showType ? '9%' : '10%' }} />
+              <col style={{ width: showType ? '8%' : '9%' }} />
+              <col style={{ width: showType ? '21%' : '23%' }} />
+              <col style={{ width: showType ? '7%' : '8%' }} />
+              <col style={{ width: showType ? '8%' : '8%' }} />
+              <col style={{ width: showType ? '10%' : '10%' }} />
+            </colgroup>
             <thead>
               <tr>
                 <th style={{ width: 32 }}><input type="checkbox" checked={nodes.length > 0 && selectedCount === nodes.length} onChange={e => toggleAll(e.target.checked)} aria-label="全选本页" /></th>
@@ -312,7 +377,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
                     </Badge>
                   </td>
                   <td>
-                    {n.plans.length === 0 ? <span className="muted">未分配</span> : n.plans.map(p => <Badge key={p.plan_id} variant="outline" style={{ marginRight: 4 }}>{p.name}</Badge>)}
+                    <PlanBadgesCell plans={n.plans} />
                   </td>
                   <td>{n.effective_users}</td>
                   <td>

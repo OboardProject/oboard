@@ -706,7 +706,16 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
         </div>}
 
         {!embedded && <div className="card-custom" style={{ overflow: 'auto', marginBottom: 16 }}>
-          <table className="user-data-table" style={{ minWidth: 780 }}>
+          <table className="user-data-table" style={{ minWidth: 780, tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: '20%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '22%' }} />
+              <col style={{ width: '10%' }} />
+              <col style={{ width: '13%' }} />
+              <col style={{ width: '13%' }} />
+              <col style={{ width: '10%' }} />
+            </colgroup>
             <thead>
               <tr>
                 <th>名称</th><th>状态</th><th>版本</th><th>节点</th><th>限速</th><th>流量</th><th style={{ textAlign: 'right' }}>操作</th>
@@ -725,7 +734,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                   <td>{p.speed_limit_mbps > 0 ? `${p.speed_limit_mbps} Mbps` : '不限'}</td>
                   <td>{fmtBytes(p.traffic_limit_bytes)}</td>
                   <td style={{ textAlign: 'right' }}>
-                    <Button variant="outline" size="sm" onClick={() => selectPlan(p.id)}>打开</Button>
+                    <Button variant="outline" size="sm" onClick={() => selectPlan(p.id)}>编辑</Button>
                   </td>
                 </tr>
               ))}

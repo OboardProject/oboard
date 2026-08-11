@@ -70,9 +70,9 @@ describe('SubscriptionPlansPage', () => {
     })
     await flushEffects()
 
-    const openButton = Array.from(container.querySelectorAll('button')).find(button => button.textContent === '打开')
-    expect(openButton).toBeTruthy()
-    act(() => openButton?.click())
+    const editButton = Array.from(container.querySelectorAll('button')).find(button => button.textContent === '编辑')
+    expect(editButton).toBeTruthy()
+    act(() => editButton?.click())
     await flushEffects()
 
     const assignButton = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent?.includes('分配用户'))

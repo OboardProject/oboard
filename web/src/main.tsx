@@ -3139,9 +3139,17 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
       <div><h3>订阅中继</h3><p className="muted">独立部署订阅入口，授权、审计和内容生成仍由主控实时处理。</p></div>
       <button type="button" onClick={() => setEditor({})}><Plus size={15} />创建中继</button>
     </div>
-    <div className="subscription-relay-access-row">
+    <div className={`subscription-relay-access-row ${!hasActiveRelay ? 'is-locked' : ''}`}>
       <div><strong>主控直连订阅</strong><span id="subscription-controller-direct-description">{!hasActiveRelay ? '没有当前中继，主控直连保持开启。' : effectiveControllerDirectEnabled ? '主控和当前中继地址都可获取订阅。' : '仅当前中继可获取订阅，主控直连返回 404。'}</span></div>
-      <Switch checked={effectiveControllerDirectEnabled} disabled={!hasActiveRelay || Boolean(busy)} onChange={checked => void saveControllerDirectAccess(checked)} ariaLabel="允许主控直连订阅" aria-describedby="subscription-controller-direct-description" />
+      <div className="subscription-relay-switch-wrap">
+        <Switch checked={effectiveControllerDirectEnabled} disabled={!hasActiveRelay || Boolean(busy)} onChange={checked => void saveControllerDirectAccess(checked)} ariaLabel="允许主控直连订阅" aria-describedby="subscription-controller-direct-description" />
+        {!hasActiveRelay && (
+          <div className="subscription-relay-locked-overlay" title="未接入中继时，主控直连强制开启不可编辑">
+            <Lock size={12} />
+            <span>不可编辑</span>
+          </div>
+        )}
+      </div>
     </div>
     {relays.length === 0
       ? <div className="subscription-relay-empty"><Network size={22} /><div><strong>尚未创建中继</strong><span>创建后，在国内主机执行一次安装命令即可接入。</span></div></div>
