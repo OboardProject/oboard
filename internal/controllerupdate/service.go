@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/version"
@@ -43,6 +45,7 @@ type ServiceConfig struct {
 	InstallGracePeriod time.Duration
 	Wait               func(context.Context, time.Duration) error
 	RunCommand         func(context.Context, string, ...string) error
+	ReexecUpdater      func(string, []string, []string) error
 }
 
 type Service struct {
@@ -87,6 +90,7 @@ func DefaultServiceConfig() ServiceConfig {
 			command.Stderr = os.Stderr
 			return command.Run()
 		},
+		ReexecUpdater: syscall.Exec,
 	}
 }
 
@@ -177,6 +181,9 @@ func NewService(config ServiceConfig) *Service {
 	}
 	if config.RunCommand == nil {
 		config.RunCommand = defaults.RunCommand
+	}
+	if config.ReexecUpdater == nil {
+		config.ReexecUpdater = defaults.ReexecUpdater
 	}
 	s := &Service{config: config, status: Status{State: "idle"}}
 	s.loadStatus()
@@ -539,12 +546,26 @@ func (s *Service) install(ctx context.Context, approval <-chan struct{}) (Status
 	if err := s.replaceBinaryProgram(ctx, stage); err != nil {
 		return s.finishInstallError(err)
 	}
+	if err := os.RemoveAll(stage); err != nil {
+		log.Printf("remove staged Controller update before updater re-exec: %v", err)
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	status = s.decorateStatus(s.status)
 	status.State, status.UpdateAvailable, status.CanCancel, status.LastError = "installed", false, false, ""
 	status.Current = available
-	return status, s.saveStatus(status)
+	if err := s.saveStatus(status); err != nil {
+		s.mu.Unlock()
+		return status, err
+	}
+	s.mu.Unlock()
+	s.reexecUpdater()
+	return status, nil
+}
+
+func (s *Service) reexecUpdater() {
+	if err := s.config.ReexecUpdater(s.config.UpdaterBinary, []string{s.config.UpdaterBinary}, os.Environ()); err != nil {
+		log.Printf("re-exec updated Controller updater: %v", err)
+	}
 }
 
 func (s *Service) prepareInstallation(ctx context.Context, available BuildInfo, approval <-chan struct{}) (Status, error) {

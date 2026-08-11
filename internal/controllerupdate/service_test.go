@@ -67,6 +67,23 @@ func TestDefaultServiceConfigUsesSelectedInstallDirectory(t *testing.T) {
 	}
 }
 
+func TestReexecUpdaterUsesInstalledBinary(t *testing.T) {
+	var path string
+	var args []string
+	service := NewService(ServiceConfig{
+		UpdaterBinary: "/opt/test/oboard-controller-updater",
+		ReexecUpdater: func(gotPath string, gotArgs, _ []string) error {
+			path = gotPath
+			args = append([]string(nil), gotArgs...)
+			return nil
+		},
+	})
+	service.reexecUpdater()
+	if path != "/opt/test/oboard-controller-updater" || len(args) != 1 || args[0] != path {
+		t.Fatalf("unexpected updater re-exec: path=%q args=%#v", path, args)
+	}
+}
+
 func TestNormalizeInstallDir(t *testing.T) {
 	for _, test := range []struct {
 		input string

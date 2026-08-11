@@ -205,6 +205,18 @@ func TestFallbackControllerUpdateStatus(t *testing.T) {
 	}
 }
 
+func TestControllerUpdaterPrepareUnsupported(t *testing.T) {
+	if !controllerUpdaterPrepareUnsupported(&controllerupdate.UpdaterStatusError{Code: http.StatusNotFound, Message: "404 page not found"}) {
+		t.Fatal("legacy updater 404 was not recognized")
+	}
+	if controllerUpdaterPrepareUnsupported(&controllerupdate.UpdaterStatusError{Code: http.StatusConflict}) {
+		t.Fatal("updater conflict was treated as a legacy updater")
+	}
+	if controllerUpdaterPrepareUnsupported(context.Canceled) {
+		t.Fatal("context cancellation was treated as a legacy updater")
+	}
+}
+
 func TestControllerUpdateChannelAPI(t *testing.T) {
 	root := t.TempDir()
 	binary := filepath.Join(root, "oboard-controller")

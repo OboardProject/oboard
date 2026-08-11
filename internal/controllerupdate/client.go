@@ -82,25 +82,38 @@ func (c *Client) callWithBody(ctx context.Context, method, path string, body []b
 		return Status{}, fmt.Errorf("controller updater unavailable: %w", err)
 	}
 	defer resp.Body.Close()
-	var result Status
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return Status{}, fmt.Errorf("decode controller updater response: %w", err)
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return Status{}, fmt.Errorf("read controller updater response: %w", err)
 	}
+	var result Status
+	decodeErr := json.Unmarshal(payload, &result)
 	if resp.StatusCode != http.StatusOK {
-		return result, &UpdaterStatusError{Code: resp.StatusCode, Status: result}
+		statusErr := &UpdaterStatusError{Code: resp.StatusCode, Status: result}
+		if decodeErr != nil {
+			statusErr.Message = strings.TrimSpace(string(payload))
+		}
+		return result, statusErr
+	}
+	if decodeErr != nil {
+		return Status{}, fmt.Errorf("decode controller updater response: %w", decodeErr)
 	}
 	return result, nil
 }
 
 // UpdaterStatusError reports a non-200 response from the controller updater.
 type UpdaterStatusError struct {
-	Code   int
-	Status Status
+	Code    int
+	Status  Status
+	Message string
 }
 
 func (e *UpdaterStatusError) Error() string {
 	if strings.TrimSpace(e.Status.LastError) != "" {
 		return "controller updater: " + e.Status.LastError
+	}
+	if strings.TrimSpace(e.Message) != "" {
+		return fmt.Sprintf("controller updater returned HTTP %d: %s", e.Code, e.Message)
 	}
 	return fmt.Sprintf("controller updater returned HTTP %d", e.Code)
 }
