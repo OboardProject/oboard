@@ -6193,7 +6193,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .managed-update-window { border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
 .managed-update-switches > label,
 .managed-update-window-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; padding: 12px 14px; }
-.managed-update-switches label > span,
+.managed-update-switches > label > span:not(.ui-switch-track),
 .managed-update-window-toggle > span { display: grid; gap: 3px; min-width: 0; }
 .managed-update-switches strong,
 .managed-update-window strong { color: var(--text-strong); font-size: 14px; }
@@ -7014,10 +7014,10 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 
 .subscription-relay-access-row > div { min-width: 0; }
-.subscription-relay-access-row strong,
-.subscription-relay-access-row span { display: block; }
-.subscription-relay-access-row strong { color: var(--text-strong); font-size: 13px; }
-.subscription-relay-access-row span { margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.subscription-relay-access-row > div > strong,
+.subscription-relay-access-row > div > span { display: block; }
+.subscription-relay-access-row > div > strong { color: var(--text-strong); font-size: 13px; }
+.subscription-relay-access-row > div > span { margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .subscription-relay-access-row .ui-switch { flex: 0 0 auto; }
 
 .subscription-relay-switch-wrap {
@@ -16759,11 +16759,12 @@ button.ui-btn-ghost:hover {
   box-sizing: border-box;
   width: 40px;
   height: 24px;
+  margin: 0;
+  padding: 0;
   border-radius: 9999px;
   background-color: var(--border-strong, #cbd5e1);
   transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
-  overflow: hidden;
 }
 
 .ui-switch.is-checked .ui-switch-track {
@@ -16774,6 +16775,8 @@ button.ui-btn-ghost:hover {
   position: absolute;
   top: 2px;
   left: 2px;
+  margin: 0;
+  padding: 0;
   display: block;
   box-sizing: border-box;
   width: 20px;
@@ -16798,12 +16801,16 @@ button.ui-btn-ghost:hover {
   width: 32px;
   height: 20px;
   border-radius: 9999px;
+  margin: 0;
+  padding: 0;
 }
 .ui-switch-sm .ui-switch-thumb {
   width: 16px;
   height: 16px;
   top: 2px;
   left: 2px;
+  margin: 0;
+  padding: 0;
 }
 .ui-switch-sm.is-checked .ui-switch-thumb {
   transform: translateX(12px);
@@ -16813,12 +16820,16 @@ button.ui-btn-ghost:hover {
   width: 48px;
   height: 28px;
   border-radius: 9999px;
+  margin: 0;
+  padding: 0;
 }
 .ui-switch-lg .ui-switch-thumb {
   width: 24px;
   height: 24px;
   top: 2px;
   left: 2px;
+  margin: 0;
+  padding: 0;
 }
 .ui-switch-lg.is-checked .ui-switch-thumb {
   transform: translateX(20px);
