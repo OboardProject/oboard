@@ -5087,6 +5087,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 
 
+/* Modern Theme-Adaptive Command Code Block (黑白自适应) */
 .command-copy {
   display: flex;
   flex-direction: column;
@@ -5099,14 +5100,9 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   width: 100%;
   border-radius: var(--radius-md, 8px);
   border: 1px solid var(--border);
-  background: #0b1120;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.16);
+  background: var(--surface-2, #f8fafc);
+  box-shadow: var(--shadow-sm);
   overflow: hidden;
-}
-
-:root[data-theme="dark"] .command-copy-block {
-  background: #090d16;
-  border-color: var(--border);
 }
 
 .command-copy-header {
@@ -5114,21 +5110,16 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 12px;
-  background: #1e293b;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-:root[data-theme="dark"] .command-copy-header {
-  background: #111827;
-  border-bottom-color: rgba(255, 255, 255, 0.06);
+  padding: 6px 12px;
+  background: var(--bg-soft, #f1f5f9);
+  border-bottom: 1px solid var(--border);
 }
 
 .command-copy-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #94a3b8;
+  color: var(--text-muted, #64748b);
   font-size: 11px;
   font-weight: 600;
   font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
@@ -5138,7 +5129,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 
 .command-copy-badge svg {
-  color: #64748b;
+  color: var(--muted, #94a3b8);
   flex-shrink: 0;
 }
 
@@ -5150,9 +5141,9 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   min-height: 28px;
   padding: 4px 10px;
   border-radius: 9999px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.08);
-  color: #cbd5e1;
+  border: 1px solid var(--border-strong, #cbd5e1);
+  background: var(--surface-solid, #ffffff);
+  color: var(--text-secondary, #475569);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
@@ -5162,22 +5153,22 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 
 .command-copy-btn:hover {
-  background: rgba(255, 255, 255, 0.16);
-  color: #ffffff;
-  border-color: rgba(255, 255, 255, 0.25);
+  background: var(--bg-hover, #f8fafc);
+  color: var(--text-strong, #0f172a);
+  border-color: var(--border-strong, #94a3b8);
   transform: none;
 }
 
 .command-copy-btn.copied {
-  background: rgba(16, 185, 129, 0.18);
-  color: #34d399;
-  border-color: rgba(16, 185, 129, 0.4);
+  background: color-mix(in srgb, var(--color-success, #10b981) 12%, transparent);
+  color: #059669;
+  border-color: rgba(16, 185, 129, 0.35);
 }
 
 .command-copy-btn.failed {
-  background: rgba(239, 68, 68, 0.18);
-  color: #f87171;
-  border-color: rgba(239, 68, 68, 0.4);
+  background: color-mix(in srgb, var(--color-danger, #ef4444) 12%, transparent);
+  color: #dc2626;
+  border-color: rgba(239, 68, 68, 0.35);
 }
 
 .command-copy-body {
@@ -5192,7 +5183,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   min-height: 52px;
   max-height: 240px;
   overflow: auto;
-  color: #e2e8f0;
+  color: var(--text-strong, #0f172a);
   font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 1.6;
@@ -5201,6 +5192,54 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   background: transparent;
   border: 0;
   border-radius: 0;
+}
+
+/* Dark Theme Overrides */
+:root[data-theme="dark"] .command-copy-block {
+  background: #090d16;
+  border-color: var(--border);
+}
+
+:root[data-theme="dark"] .command-copy-header {
+  background: #111827;
+  border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+
+:root[data-theme="dark"] .command-copy-badge {
+  color: #94a3b8;
+}
+
+:root[data-theme="dark"] .command-copy-badge svg {
+  color: #64748b;
+}
+
+:root[data-theme="dark"] .command-copy-btn {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+}
+
+:root[data-theme="dark"] .command-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+:root[data-theme="dark"] .command-copy-btn.copied {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+:root[data-theme="dark"] .command-copy-btn.failed {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+:root[data-theme="dark"] .command-copy-body pre,
+:root[data-theme="dark"] .command-copy pre {
+  color: #f8fafc;
 }
 
 .deployment-summary {

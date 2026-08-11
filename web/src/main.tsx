@@ -6799,10 +6799,9 @@ function AgentInstallDialog({ server, token, controllerURL, onClose }: { server:
   </MotionDialogPanel>
 }
 
-function InstallCommandCard({ title, desc, command, tone = 'default' }: { title: string; desc: string; command: string; tone?: 'default' | 'danger' }) {
+function InstallCommandCard({ title, command, tone = 'default' }: { title?: string; desc?: string; command: string; tone?: 'default' | 'danger' }) {
   return <section className={tone === 'danger' ? 'install-command-card danger' : 'install-command-card'}>
-    <div><h3>{title}</h3><p className="muted">{desc}</p></div>
-    <CommandCopyBlock value={command} buttonText={`复制${title}命令`} />
+    <CommandCopyBlock value={command} buttonText={title ? `复制${title}命令` : '复制命令'} />
   </section>
 }
 
