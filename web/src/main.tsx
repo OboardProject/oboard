@@ -3006,11 +3006,13 @@ function AIProviderRawLogDialog({ client, onClose }: { client: ReturnType<typeof
 function SubscriptionRelayManager({ data, client, load, notify }: { data: any; client: ReturnType<typeof api>; load: PageLoad; notify?: (message: string, kind?: ToastKind) => void }) {
   const dialogs = useDialogs()
   const [relays, setRelays] = useState<SubscriptionRelay[]>(data.subscription_relays || [])
+  const [controllerDirectEnabled, setControllerDirectEnabled] = useState(settingEnabled(data.settings?.subscription_controller_direct_enabled, false))
   const [editor, setEditor] = useState<{ relay?: SubscriptionRelay } | null>(null)
   const [commandTarget, setCommandTarget] = useState<{ relay: SubscriptionRelay; token: string } | null>(null)
   const [busy, setBusy] = useState('')
 
   useEffect(() => { setRelays(data.subscription_relays || []) }, [data.subscription_relays])
+  useEffect(() => { setControllerDirectEnabled(settingEnabled(data.settings?.subscription_controller_direct_enabled, false)) }, [data.settings?.subscription_controller_direct_enabled])
   useEffect(() => {
     let cancelled = false
     const refresh = async () => {
@@ -3025,7 +3027,22 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [client])
 
+  const hasActiveRelay = relays.some(relay => relay.active)
+  const effectiveControllerDirectEnabled = !hasActiveRelay || controllerDirectEnabled
   const reload = () => { void load('settings', { background: true, forceFresh: true }) }
+  const saveControllerDirectAccess = async (enabled: boolean) => {
+    setBusy('controller-direct')
+    try {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_controller_direct_enabled: enabled }) })
+      setControllerDirectEnabled(enabled)
+      notify?.(enabled ? '主控直连订阅已开启' : '主控直连订阅已关闭', 'success')
+      reload()
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setBusy('')
+    }
+  }
   const saveRelay = async (draft: { name: string; public_url: string }) => {
     setBusy('save')
     try {
@@ -3102,6 +3119,7 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
     try {
       await client.request(`/subscription-relays/${relay.id}`, { method: 'DELETE' })
       setRelays(current => current.filter(item => item.id !== relay.id))
+      if (relay.active) setControllerDirectEnabled(true)
       notify?.('中继记录已删除', 'success')
       reload()
     } catch (error: any) {
@@ -3115,6 +3133,10 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
     <div className="settings-card-head">
       <div><h3>订阅中继</h3><p className="muted">独立部署订阅入口，授权、审计和内容生成仍由主控实时处理。</p></div>
       <button type="button" onClick={() => setEditor({})}><Plus size={15} />创建中继</button>
+    </div>
+    <div className="subscription-relay-access-row">
+      <div><strong>主控直连订阅</strong><span id="subscription-controller-direct-description">{!hasActiveRelay ? '没有当前中继，主控直连保持开启。' : effectiveControllerDirectEnabled ? '主控和当前中继地址都可获取订阅。' : '仅当前中继可获取订阅，主控直连返回 404。'}</span></div>
+      <Switch checked={effectiveControllerDirectEnabled} disabled={!hasActiveRelay || Boolean(busy)} onChange={checked => void saveControllerDirectAccess(checked)} ariaLabel="允许主控直连订阅" aria-describedby="subscription-controller-direct-description" />
     </div>
     {relays.length === 0
       ? <div className="subscription-relay-empty"><Network size={22} /><div><strong>尚未创建中继</strong><span>创建后，在国内主机执行一次安装命令即可接入。</span></div></div>
@@ -4385,6 +4407,42 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
   </>
 }
 
+function DNSProviderIcon({ provider, size = 18 }: { provider: DNSProvider; size?: number }) {
+  switch (provider) {
+    case 'cloudflare':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M18.25 9.75a5.5 5.5 0 00-10.41-1.92A4.25 4.25 0 003.5 12.5c0 2.35 1.9 4.25 4.25 4.25h10.5a3.75 3.75 0 000-7.5h-.05z" fill="#F38020"/>
+          <path d="M17.65 14.5h-1c-.1 0-.15-.08-.12-.18.42-1.02.26-2.14-.38-2.92-.61-.75-1.57-1.12-2.58-1-.98.11-1.78.85-1.99 1.83-.03.13-.14.21-.27.21h-5.2c-.1 0-.15-.08-.12-.18.68-1.63 2.3-2.73 4.17-2.73 1.94 0 3.6 1.19 4.23 2.92.04.1.15.15.25.13 1.05-.23 2.16.14 2.84.95.64.76.84 1.79.52 2.72-.03.09.02.17.13.17z" fill="#FAAE40"/>
+        </svg>
+      )
+    case 'alidns':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="24" height="24" rx="5" fill="#FF6A00"/>
+          <path d="M6.5 8.5L10 6l3.5 2.5V11L10 8.5 6.5 11V8.5zm11 0L14 6l-3.5 2.5V11l3.5-2.5 3.5 2.5V8.5zM6.5 15.5L10 18l3.5-2.5V13L10 15.5 6.5 13v2.5zm11 0L14 18l-3.5-2.5V13l3.5 2.5 3.5-2.5v2.5z" fill="#FFFFFF"/>
+        </svg>
+      )
+    case 'tencent_dns':
+    case 'tencent_esa':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="24" height="24" rx="5" fill="#0052D9"/>
+          <path d="M12 6.5c-3.04 0-5.5 2.24-5.5 5 0 1.5.74 2.83 1.9 3.75A5.02 5.02 0 0012 16.5c1.33 0 2.54-.5 3.47-1.3A4.97 4.97 0 0017.5 11.5c0-2.76-2.46-5-5.5-5zm0 7.5c-1.66 0-3-1.12-3-2.5s1.34-2.5 3-2.5 3 1.12 3 2.5-1.34 2.5-3 2.5z" fill="#FFFFFF"/>
+        </svg>
+      )
+    case 'huawei_cloud':
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="24" height="24" rx="5" fill="#E60012"/>
+          <path d="M12 5.5v3.5m-4.24-1.76l2.47 2.47m-4.24 4.24h3.5m-1.73 4.24l2.47-2.47m4.24 4.24v-3.5m4.24 1.73l-2.47-2.47m4.24-4.24h-3.5m1.73-4.24l-2.47 2.47" stroke="#FFFFFF" strokeWidth="1.8" strokeLinecap="round"/>
+        </svg>
+      )
+    default:
+      return <Globe size={size} />
+  }
+}
+
 const dnsProviderLabels: Record<DNSProvider, string> = {
   cloudflare: 'Cloudflare',
   alidns: '阿里云 DNS',
@@ -4595,7 +4653,7 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
   return <div className="settings-grid dns-management">
     <div className="settings-tabs dns-management-tabs" role="tablist" aria-label="域名解析视图">
       <button type="button" className={activeTab === 'records' ? 'active' : ''} onClick={() => setActiveTab('records')} role="tab" aria-selected={activeTab === 'records'}><Globe size={15} />域名解析</button>
-      <button type="button" className={activeTab === 'settings' ? 'active' : ''} onClick={() => setActiveTab('settings')} role="tab" aria-selected={activeTab === 'settings'}><Settings2 size={15} />解析设置</button>
+      <button type="button" className={activeTab === 'settings' ? 'active' : ''} onClick={() => setActiveTab('settings')} role="tab" aria-selected={activeTab === 'settings'}><Settings2 size={15} />域名管理</button>
     </div>
     {activeTab === 'records' ? <section className="settings-card dns-management-card">
       <div className="settings-card-head">
@@ -4614,7 +4672,7 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
           </Select>
         </div>
         {selectedOption && <div className="dns-zone-badges">
-          <span className="status-pill">{dnsProviderLabels[selectedOption.credential.provider]}</span>
+          <span className="status-pill dns-provider-pill"><DNSProviderIcon provider={selectedOption.credential.provider} size={14} />{dnsProviderLabels[selectedOption.credential.provider]}</span>
           {selectedOption.credential.name && selectedOption.credential.name !== selectedOption.zone.zone_name && <span className="status-pill">{selectedOption.credential.name}</span>}
           {selectedOption.zone.server_id && <span className="status-pill ok">关联服务器: {serverName(selectedOption.zone.server_id)}</span>}
         </div>}
@@ -4632,10 +4690,10 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
         const linkedServerName = record.server_id ? serverName(record.server_id) : ''
         const detail = record.comment || `TTL ${record.ttl}`
         return <div className="dns-record-row" key={record.id}><span className="record-type">{record.type}</span><div className="record-main"><strong>{record.name}</strong><span>{record.content}</span><small>{detail}{linkedServerName && !detail.toLocaleLowerCase().includes(linkedServerName.toLocaleLowerCase()) ? ` · 服务器 ${linkedServerName}` : ''}</small></div><div className="record-badges"><span className={`status-pill ${isOBoardDNSRecord(record) ? 'managed' : ''}`}>{isOBoardDNSRecord(record) ? 'OBoard 管理' : '其他来源'}</span><span className={`status-pill ${record.proxied ? 'warning' : ''}`}>{record.proxied ? '已开启代理' : '仅域名解析'}</span></div><div className="record-actions"><button className="ghost icon-button" onClick={() => editRecord(record)} title="编辑"><Edit3 size={14} /></button><button className="ghost icon-button danger-text" onClick={() => deleteRecord(record)} title="删除"><Trash2 size={14} /></button></div></div>
-      })}</div> : <div className="dns-credential-empty">{!selectedZoneID ? '请先选择一个域名。' : records.length ? '没有符合条件的解析记录。' : '该域名当前没有解析记录。'}</div>}
+      })}</div> : <div className="dns-credential-empty">{!selectedZoneID ? '请先选择一个域名或在“域名管理”中添加账号。' : records.length ? '没有符合条件的解析记录。' : '该域名当前没有解析记录。'}</div>}
     </section> : <section className="settings-card dns-management-card">
       <div className="settings-card-head"><div><h3>域名与解析服务商</h3><p className="muted">一个账号可以管理多个域名，并分别关联服务器。</p></div><button className="ghost" onClick={openCreateCredential}><Plus size={14} />新建账号</button></div>
-      {credentials.length ? <div className="dns-record-list">{credentials.map(credential => <div className="dns-record-row" key={credential.id}><span className="record-type">{dnsProviderLabels[credential.provider]}</span><div className="record-main"><strong>{credential.name}</strong><span>{(credential.zones || []).map(zone => `${zone.zone_name}${zone.server_id ? `（${serverName(zone.server_id)}）` : ''}`).join(' · ')}</span><small>{credential.last_error || (credential.verified_at ? `${credential.zones.length} 个域名 · 已验证 ${formatTableTime(credential.verified_at)}` : `${credential.zones.length} 个域名 · 待验证`)}</small></div><span className={`status-pill ${credential.verified_at ? 'ok' : credential.last_error ? 'warning' : ''}`}>{credential.verified_at ? '可用' : '待验证'}</span><div className="record-actions"><button className="ghost icon-button" onClick={() => verifyCredential(credential)} title="验证"><RefreshCw size={14} className={working === `verify-${credential.id}` ? 'spin' : ''} /></button><button className="ghost icon-button" onClick={() => editCredential(credential)} title="编辑"><Edit3 size={14} /></button><button className="ghost icon-button danger-text" onClick={() => deleteCredential(credential)} title="删除"><Trash2 size={14} /></button></div></div>)}</div> : <div className="dns-credential-empty">还没有解析服务账号。</div>}
+      {credentials.length ? <div className="dns-record-list">{credentials.map(credential => <div className="dns-record-row dns-credential-row" key={credential.id}><div className="dns-provider-logo-box" title={dnsProviderLabels[credential.provider]}><DNSProviderIcon provider={credential.provider} size={22} /></div><div className="record-main"><strong>{credential.name}</strong><span><small className="dns-provider-sublabel">{dnsProviderLabels[credential.provider]}</small>{(credential.zones || []).length ? ` · ${(credential.zones || []).map(zone => `${zone.zone_name}${zone.server_id ? `（${serverName(zone.server_id)}）` : ''}`).join(' · ')}` : ''}</span><small>{credential.last_error || (credential.verified_at ? `${credential.zones.length} 个域名 · 已验证 ${formatTableTime(credential.verified_at)}` : `${credential.zones.length} 个域名 · 待验证`)}</small></div><span className={`status-pill ${credential.verified_at ? 'ok' : credential.last_error ? 'warning' : ''}`}>{credential.verified_at ? '可用' : '待验证'}</span><div className="record-actions"><button className="ghost icon-button" onClick={() => verifyCredential(credential)} title="验证"><RefreshCw size={14} className={working === `verify-${credential.id}` ? 'spin' : ''} /></button><button className="ghost icon-button" onClick={() => editCredential(credential)} title="编辑"><Edit3 size={14} /></button><button className="ghost icon-button danger-text" onClick={() => deleteCredential(credential)} title="删除"><Trash2 size={14} /></button></div></div>)}</div> : <div className="dns-credential-empty">还没有解析服务账号。</div>}
     </section>}
     <AnimatePresence>{recordDialogOpen && <DNSRecordDialog zoneOptions={zoneOptions} zoneID={recordDialogZoneID} setZoneID={setRecordDialogZoneID} draft={recordDraft} setDraft={setRecordDraft} serverName={serverName} saving={working === 'record-save'} onCancel={closeRecordDialog} onSubmit={createRecord} />}</AnimatePresence>
     <AnimatePresence>{credentialDialogOpen && <DNSCredentialDialog draft={draft} setDraft={setDraft} servers={servers} editing={editingID > 0} saving={working === 'credential-save'} onCancel={closeCredentialDialog} onSubmit={saveCredential} />}</AnimatePresence>
