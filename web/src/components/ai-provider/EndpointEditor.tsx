@@ -29,7 +29,7 @@ export function EndpointEditor({ endpoint, index, canDelete, testing, onChange, 
     </div>
     {needsCredential ? <FormField label="API Key" required={!endpoint.hasCredential} hint={endpoint.hasCredential ? '留空保留当前 Key' : undefined}>
       <div className="ai-endpoint-secret"><KeyRound size={15} aria-hidden="true" /><input required={!endpoint.hasCredential} type="password" autoComplete="new-password" value={endpoint.apiKey} disabled={endpoint.removeCredential} placeholder={endpoint.hasCredential ? '••••••••••' : ''} onChange={event => update('apiKey', event.target.value)} /></div>
-      {endpoint.hasCredential ? <label className="toggle-line ai-endpoint-remove-secret"><input type="checkbox" checked={endpoint.removeCredential} onChange={event => onChange({ ...endpoint, removeCredential: event.target.checked, apiKey: event.target.checked ? '' : endpoint.apiKey })} /><span>移除 Credential</span></label> : null}
+      {endpoint.hasCredential ? <div className="switch-form-row ai-endpoint-remove-secret"><span className="switch-form-label">移除 Credential</span><Switch size="sm" checked={endpoint.removeCredential} onChange={checked => onChange({ ...endpoint, removeCredential: checked, apiKey: checked ? '' : endpoint.apiKey })} ariaLabel="移除 Credential" /></div> : null}
     </FormField> : null}
     {endpoint.apiStyle === 'anthropic_messages' ? <FormField label="Anthropic Version" required><input required value={endpoint.anthropicVersion} onChange={event => update('anthropicVersion', event.target.value)} /></FormField> : null}
     <details className="automation-advanced">

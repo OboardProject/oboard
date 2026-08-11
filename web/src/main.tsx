@@ -2715,11 +2715,10 @@ function AccountPage({ data, client, load, notify }: any) {
         <section className="sub-section account-age-section">
           <div className="sub-section-head"><div><h3><Shield size={16} />订阅加密</h3><p className="muted">只填写客户端生成的公钥，私钥不要上传到面板。</p></div><span className={`sub-pill ${ageRequired ? 'warn' : ageReady ? 'ok' : ''}`}>{ageRequired ? '管理员强制' : ageReady ? '已开启' : '未开启'}</span></div>
           <div className="form account-form">
-            <label className="subscription-burn-toggle">
-              <input type="checkbox" checked={ageRequired || ageEnabled} disabled={ageRequired} onChange={event => setAgeEnabled(event.target.checked)} />
-              <span className="setting-switch" aria-hidden="true"><span /></span>
-              <span>{ageRequired ? '必须使用 Age 加密' : '为 Mihomo 开启 Age 加密'}</span>
-            </label>
+            <div className="switch-form-row subscription-burn-toggle">
+              <span className="switch-form-label">{ageRequired ? '必须使用 Age 加密' : '为 Mihomo 开启 Age 加密'}</span>
+              <Switch checked={ageRequired || ageEnabled} disabled={ageRequired} onChange={checked => setAgeEnabled(checked)} ariaLabel="为 Mihomo 开启 Age 加密" />
+            </div>
             <FormField label="Age 公钥" hint="只填写公钥，私钥留在客户端。">
               <textarea value={agePublicKey} onChange={event => setAgePublicKey(event.target.value)} rows={4} spellCheck={false} placeholder="age1..." />
             </FormField>
@@ -2938,11 +2937,11 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
             <div><span>客户端</span><div className="automation-connect-segments" role="radiogroup" aria-label="客户端">{([
               ['codex', 'Codex'], ['claude', 'Claude Code'], ['generic', '通用 MCP'],
             ] as [AutomationConnectClient, string][]).map(([value, label]) => <button type="button" role="radio" aria-checked={connectClient === value} className={connectClient === value ? 'active' : ''} key={value} onClick={() => setConnectClient(value)}>{label}</button>)}</div></div>
-            <div><span>权限范围</span><label className="automation-connect-permission" title="勾选后申请风险 2 级写权限：接入服务器、恢复订阅访问、订阅自定义路径">
-              <input type="checkbox" checked={connectRisk2} onChange={event => setConnectRisk2(event.target.checked)} />
+            <div><span>权限范围</span><div className="automation-connect-permission" title="勾选后申请风险 2 级写权限：接入服务器、恢复订阅访问、订阅自定义路径">
               <span><strong>风险 2 级写权限</strong><small>接入服务器、恢复订阅、订阅自定义路径</small></span>
               <em>风险 2</em>
-            </label></div>
+              <Switch checked={connectRisk2} onChange={setConnectRisk2} ariaLabel="申请风险 2 级写权限" />
+            </div></div>
           </div>
           <div className="automation-connect-endpoint"><span>MCP 地址</span><CopyBlock value={`${publicControllerURL}/mcp`} /></div>
           <div className="automation-connect-notice"><ShieldCheck size={18} /><div><strong>浏览器确认授权</strong><span>OBoard MCP 仅接受 OAuth Access Token。权限、资源范围和自动审批级别均由授权页和服务端策略决定。</span></div></div>
@@ -3487,7 +3486,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         <div className="settings-card-head"><div><h3>公开注册</h3><p className="muted">允许访客自助注册账号。注册用户默认不加入任何用户组、没有任何面板权限，需管理员分配用户组后才能使用。</p></div></div>
         <div className="form settings-form single-field">
           <FormField label="开放注册" hint="关闭后登录页不再显示注册入口，注册接口也会拒绝请求。">
-            <label className="notification-enable-row"><input type="checkbox" checked={registrationEnabled} onChange={event => setRegistrationEnabled(event.target.checked)} aria-label="开放注册" /></label>
+            <Switch checked={registrationEnabled} onChange={setRegistrationEnabled} ariaLabel="开放注册" />
           </FormField>
           <FormField label="默认注册用户组" hint="新注册用户自动加入该用户组并继承其权限；留空表示不自动分配（注册用户无任何权限）。系统管理员组不可选。">
             <Select value={registrationDefaultGroupID} onChange={event => setRegistrationDefaultGroupID(Number(event.target.value))} aria-label="默认注册用户组">
@@ -3509,7 +3508,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             </Select>
           </FormField>
           <FormField label="BBR + FQ" hint="首次安装 Agent 时尝试启用，失败不影响安装。">
-            <label className="notification-enable-row"><input type="checkbox" checked={serverDefaultBBREnabled} onChange={event => setServerDefaultBBREnabled(event.target.checked)} aria-label="新服务器默认启用 BBR + FQ" /></label>
+            <Switch checked={serverDefaultBBREnabled} onChange={setServerDefaultBBREnabled} ariaLabel="新服务器默认启用 BBR + FQ" />
           </FormField>
           <FormField label="时间校准" hint="新服务器默认关闭；所有在线服务器仍会每天检测偏差。">
             <TimeCorrectionSelector value={serverDefaultTimeCorrectionMode} onChange={setServerDefaultTimeCorrectionMode} compact />
@@ -3581,7 +3580,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             <input type="number" min={0} max={86400} value={notificationOnlineAfter} onChange={event => setNotificationOnlineAfter(Math.max(0, Number(event.target.value) || 0))} />
           </FormField>
           <FormField label="多台服务器同时离线时合并提醒" hint="开启后，同时失联的多台服务器会等各自的判断窗口结束，合并为一条通知发送。">
-            <label className="notification-enable-row"><input type="checkbox" checked={notificationMergeOffline} onChange={event => setNotificationMergeOffline(event.target.checked)} aria-label="合并离线提醒" /></label>
+            <Switch checked={notificationMergeOffline} onChange={setNotificationMergeOffline} ariaLabel="合并离线提醒" />
           </FormField>
           <div className="settings-actions"><button onClick={() => void saveNotificationSettings()} disabled={Boolean(saving)}>{saving === 'notifications' ? '保存中...' : '保存通知设置'}</button></div>
         </div>
@@ -4031,10 +4030,10 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       <span>当前为固定版本安装。选择上方更新通道后，即可在面板内检查并安装更新。</span>
     </div> : <div className="controller-update-schedule">
       <div className="controller-update-schedule-head">
-        <label className="controller-update-schedule-label">
-          <input type="checkbox" aria-label="启用定时自动更新" checked={snapshot.auto_update_enabled} disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress} onChange={event => void saveAutoUpdate(event.target.checked)} />
+        <div className="controller-update-schedule-label">
           <strong>定时自动更新</strong>
-        </label>
+          <Switch checked={snapshot.auto_update_enabled} disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress} onChange={checked => void saveAutoUpdate(checked)} ariaLabel="启用定时自动更新" />
+        </div>
       </div>
       <div className="controller-update-interval" role="radiogroup" aria-label="自动更新检查间隔">
         {controllerUpdateIntervalOptions.map(option => <button
@@ -4374,7 +4373,7 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
     <div className="dialog-body backup-settings-dialog-body">
       <form id="backup-settings-form" className="backup-settings-form" onSubmit={event => { event.preventDefault(); void saveSettings() }}>
         <section className="backup-form-section">
-          <div className="backup-form-section-head"><div><strong>自动创建</strong><span>开启后，系统会按您选择的时间创建加密备份。</span></div><label className="check-row"><input type="checkbox" checked={draft.enabled} onChange={event => setDraft(current => ({ ...current, enabled: event.target.checked }))} /><span>启用自动备份</span></label></div>
+          <div className="backup-form-section-head"><div><strong>自动创建</strong><span>开启后，系统会按您选择的时间创建加密备份。</span></div><Switch checked={draft.enabled} onChange={checked => setDraft(current => ({ ...current, enabled: checked }))} ariaLabel="启用自动备份" /></div>
           <div className="backup-dialog-grid">
             <FormField label="备份频率"><Select value={draft.schedule} disabled={!draft.enabled} onChange={event => setDraft(current => ({ ...current, schedule: event.target.value as 'daily' | 'weekly' }))}><option value="daily">每天</option><option value="weekly">每周</option></Select></FormField>
             {draft.schedule === 'weekly' && <FormField label="每周日期"><Select value={draft.weekday} disabled={!draft.enabled} onChange={event => setDraft(current => ({ ...current, weekday: Number(event.target.value) }))}>{weekdayNames.map((label, index) => <option key={label} value={index}>{label}</option>)}</Select></FormField>}
@@ -4390,13 +4389,13 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
           </div>
         </section>
         <section className="backup-form-section">
-          <div className="backup-form-section-head"><div><strong>第三方备份</strong><span>启用后，新备份会同时上传一份到您自己的存储中。</span></div><label className="check-row"><input type="checkbox" checked={destination.enabled} onChange={event => updateDestination({ enabled: event.target.checked })} /><span>启用第三方备份</span></label></div>
+          <div className="backup-form-section-head"><div><strong>第三方备份</strong><span>启用后，新备份会同时上传一份到您自己的存储中。</span></div><Switch checked={destination.enabled} onChange={checked => updateDestination({ enabled: checked })} ariaLabel="启用第三方备份" /></div>
           {destination.enabled && <div className="backup-dialog-grid">
             <FormField label="存储类型"><Select value={destination.provider} onChange={event => updateDestination({ provider: event.target.value as BackupDestination['provider'] })}><option value="">请选择</option><option value="s3">S3 兼容存储</option><option value="webdav">WebDAV</option></Select></FormField>
             <FormField label="第三方存储保留数量" hint="达到数量后，只清理当前存储位置中的旧备份"><input type="number" min={1} max={365} value={draft.remote_retention} onChange={event => setDraft(current => ({ ...current, remote_retention: Math.max(1, Math.min(365, Number(event.target.value) || 1)) }))} /></FormField>
             {destination.provider && <><FormField label={destination.provider === 'webdav' ? 'WebDAV 地址' : '服务地址'} hint="建议使用 HTTPS 地址"><input required value={destination.endpoint || ''} onChange={event => updateDestination({ endpoint: event.target.value })} placeholder={destination.provider === 'webdav' ? 'https://dav.example.com/oboard' : 'https://s3.example.com'} /></FormField>
             <FormField label="目录前缀" hint="系统只会管理此目录下由 OBoard 创建的备份"><input value={destination.prefix || ''} onChange={event => updateDestination({ prefix: event.target.value })} placeholder="oboard-backups" /></FormField></>}
-            {destination.provider === 's3' && <><FormField label="存储桶"><input required value={destination.bucket || ''} onChange={event => updateDestination({ bucket: event.target.value })} /></FormField><FormField label="区域"><input value={destination.region || ''} onChange={event => updateDestination({ region: event.target.value })} placeholder="us-east-1" /></FormField><FormField label="访问密钥"><input type="password" autoComplete="new-password" value={s3AccessKey} onChange={event => setS3AccessKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><FormField label="访问密钥密码"><input type="password" autoComplete="new-password" value={s3SecretKey} onChange={event => setS3SecretKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><label className="check-row backup-path-style"><input type="checkbox" checked={Boolean(destination.force_path_style)} onChange={event => updateDestination({ force_path_style: event.target.checked })} /><span><strong>使用路径风格地址</strong><small>存储服务要求存储桶名称出现在地址路径中时开启。</small></span></label></>}
+            {destination.provider === 's3' && <><FormField label="存储桶"><input required value={destination.bucket || ''} onChange={event => updateDestination({ bucket: event.target.value })} /></FormField><FormField label="区域"><input value={destination.region || ''} onChange={event => updateDestination({ region: event.target.value })} placeholder="us-east-1" /></FormField><FormField label="访问密钥"><input type="password" autoComplete="new-password" value={s3AccessKey} onChange={event => setS3AccessKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><FormField label="访问密钥密码"><input type="password" autoComplete="new-password" value={s3SecretKey} onChange={event => setS3SecretKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><div className="switch-form-row backup-path-style"><span><strong>使用路径风格地址</strong><small>存储服务要求存储桶名称出现在地址路径中时开启。</small></span><Switch checked={Boolean(destination.force_path_style)} onChange={checked => updateDestination({ force_path_style: checked })} ariaLabel="使用路径风格地址" /></div></>}
             {destination.provider === 'webdav' && <><FormField label="用户名"><input value={webdavUsername} autoComplete="username" onChange={event => setWebdavUsername(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><FormField label="密码"><input type="password" autoComplete="new-password" value={webdavPassword} onChange={event => setWebdavPassword(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField></>}
           </div>}
           {destination.enabled && <p className="backup-destination-note">更换存储位置后，旧位置中的备份不会被自动删除。</p>}
@@ -4719,7 +4718,7 @@ function DNSRecordDialog({ zoneOptions, zoneID, setZoneID, draft, setDraft, serv
       <FormField label="主机记录" required><input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="entry.example.com" autoCapitalize="none" /></FormField>
       <FormField label="记录值" required><input value={draft.content} onChange={e => update({ content: e.target.value })} autoCapitalize="none" /></FormField>
       <FormField label="解析备注" hint="备注属于这条子域名解析；自动创建时会写入入口和服务器信息。"><input value={draft.comment} maxLength={100} onChange={e => update({ comment: e.target.value })} placeholder="例如：东京入口" /></FormField>
-      {selectedOption?.credential.provider === 'cloudflare' && <label className="check-row"><input type="checkbox" checked={draft.proxied} onChange={e => update({ proxied: e.target.checked })} /><span>Cloudflare 代理</span></label>}
+      {selectedOption?.credential.provider === 'cloudflare' && <div className="switch-form-row"><span className="switch-form-label">Cloudflare 代理</span><Switch checked={draft.proxied} onChange={checked => update({ proxied: checked })} ariaLabel="Cloudflare 代理" /></div>}
     </div></div>
     <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" onClick={() => void onSubmit()} disabled={saving || !zoneID || !draft.name.trim() || !draft.content.trim()}>{saving ? '创建中...' : '添加记录'}</button></footer>
   </MotionDialogPanel>
@@ -4776,7 +4775,7 @@ function CertificateEABDialog({ keyID, hmacKey, remark, retain, retainLocked = f
       <div className="form server-dialog-form labeled-form">
         <FormField label="Key ID（密钥编号）" required hint="粘贴 Google 返回的 keyId。"><input value={keyID} onChange={event => onChange({ keyID: event.target.value })} autoComplete="off" spellCheck={false} /></FormField>
         <FormField label="HMAC Key（绑定密钥）" required={secretRequired} hint={retain && configured ? '长期保存需要重新填写 HMAC Key，原密钥无法再次查看。' : configured && !secretRequired ? '已保存。留空则保持当前值。' : configured ? '更换 Key ID 时，需要同时填写新的 HMAC Key。' : '粘贴 Google 返回的 b64MacKey。'}><input type="password" value={hmacKey} onChange={event => onChange({ hmacKey: event.target.value })} autoComplete="new-password" spellCheck={false} placeholder={configured && !secretRequired ? '留空保持当前值' : ''} /></FormField>
-        <label className="check-row"><input type="checkbox" checked={retain} disabled={retainLocked} onChange={event => onChange({ retain: event.target.checked })} /><span>保存到 EAB 列表，供以后签发使用</span></label>
+        <div className="switch-form-row"><span className="switch-form-label">保存到 EAB 列表，供以后签发使用</span><Switch checked={retain} disabled={retainLocked} onChange={checked => onChange({ retain: checked })} ariaLabel="保存到 EAB 列表" /></div>
         {retain && <FormField label="备注" hint="只用于区分不同 EAB。"><input value={remark} maxLength={120} onChange={event => onChange({ remark: event.target.value })} placeholder="例如：生产账号" /></FormField>}
       </div>
       <div className="certificate-eab-saved">
@@ -4979,7 +4978,7 @@ function CertificateSettings({ data, client, load, notify }: any) {
     <section className="settings-card">
       <div className="settings-card-head"><div><h3>自动匹配</h3><p className="muted">入口域名的全局默认策略</p></div><button onClick={saveMatching} disabled={autoIssueCA === 'google' && !autoIssueEABCredentialID}>保存</button></div>
       <div className="form settings-form">
-        <label className="check-row"><input type="checkbox" checked={autoMatch} onChange={e => setAutoMatch(e.target.checked)} /><span>启用自动匹配</span></label>
+        <div className="switch-form-row"><span className="switch-form-label">启用自动匹配</span><Switch checked={autoMatch} onChange={setAutoMatch} ariaLabel="启用自动匹配" /></div>
         <FormField label="默认策略"><Select variant="segmented" value={preference} onChange={e => setPreference(e.target.value)}><option value="subdomain">精确子域证书</option><option value="wildcard">泛域名证书</option></Select></FormField>
         <FormField label="自动签发 CA"><Select value={autoIssueCA} onChange={e => { setAutoIssueCA(e.target.value); if (e.target.value !== 'google') setAutoIssueEABCredentialID(0) }}><option value="letsencrypt">Let's Encrypt</option><option value="zerossl">ZeroSSL</option><option value="buypass">Buypass</option><option value="google">Google Trust Services</option></Select></FormField>
         {autoIssueCA === 'google' && <div className="certificate-eab-row"><div className="certificate-eab-state"><KeyRound size={16} /><span><strong>默认 Google EAB</strong><small>{autoIssueEABCredentialID ? '新建自动证书时使用此 EAB' : 'Google Trust Services 自动签发必须选择 EAB'}</small></span></div><div className="certificate-eab-controls"><Select value={autoIssueEABCredentialID || 0} onChange={event => setAutoIssueEABCredentialID(Number(event.target.value) || 0)}><option value={0}>选择已保存的 EAB</option>{eabCredentials.map(credential => <option key={credential.id} value={credential.id}>{credential.key_id}{credential.remark ? ` · ${credential.remark}` : ''}</option>)}</Select><button type="button" className="ghost" onClick={openAutoIssueEAB}><Plus size={14} />新增 EAB</button></div></div>}
@@ -5023,7 +5022,7 @@ function CertificateSettings({ data, client, load, notify }: any) {
           }}><option value="">选择已保存的 EAB</option>{draftDirectEABConfigured && <option value="direct">{draft.eab_key_id} · 仅本次使用</option>}{eabCredentials.map(credential => <option key={credential.id} value={credential.id}>{credential.key_id}{credential.remark ? ` · ${credential.remark}` : ''}</option>)}</Select><button type="button" className="ghost" onClick={openDraftEAB}><Plus size={14} />新增 EAB</button></div></div>}
           {googleHTTPUnsupported && <div className="certificate-eab-warning">Google Trust Services 暂不支持通过 Agent HTTP-01 验证，请改用面板 DNS-01 或手动 DNS-01。</div>}
           <FormField label="账户邮箱" hint="用于证书颁发机构发送账户和到期通知。"><input type="email" value={draft.account_email} onChange={e => setDraft({ ...draft, account_email: e.target.value })} placeholder={defaultCertificateAccountEmail(draft.domains) || 'admin@example.com'} /></FormField>
-          <label className="check-row certificate-renew-row"><input type="checkbox" checked={draft.auto_renew} onChange={e => setDraft({ ...draft, auto_renew: e.target.checked })} /><span>到期前自动续期</span></label>
+          <div className="switch-form-row certificate-renew-row"><span className="switch-form-label">到期前自动续期</span><Switch checked={draft.auto_renew} onChange={checked => setDraft({ ...draft, auto_renew: checked })} ariaLabel="到期前自动续期" /></div>
         </div>
       </form>
       <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setCreateDialogOpen(false)}>取消</button><button type="submit" form="certificate-create-form" disabled={working === 'create' || createBlocked}>{working === 'create' ? '申请中...' : '开始申请'}</button></footer>
@@ -5649,7 +5648,7 @@ function AIAuditReviews({ data, client, notify }: any) {
           <section><div><strong>用户范围</strong><Select variant="segmented" value={draft.userMode} onChange={event => setDraft({ ...draft, userMode: event.target.value as 'all' | 'selected' })}><option value="all">全部用户</option><option value="selected">指定用户</option></Select></div>{draft.userMode === 'selected' && <SearchableMultiSelect value={draft.userIDs} onChange={userIDs => setDraft({ ...draft, userIDs })} options={users.map(user => ({ value: String(user.id), label: user.nickname || user.username, keywords: `${user.username} ${user.id}` }))} placeholder="选择用户" searchPlaceholder="搜索用户" />}</section>
           <section><div><strong>服务器范围</strong><Select variant="segmented" value={draft.serverMode} onChange={event => setDraft({ ...draft, serverMode: event.target.value as 'all' | 'selected' })}><option value="all">全部服务器</option><option value="selected">指定服务器</option></Select></div>{draft.serverMode === 'selected' && <SearchableMultiSelect value={draft.serverIDs} onChange={serverIDs => setDraft({ ...draft, serverIDs })} options={servers.map(server => ({ value: String(server.id), label: server.name, keywords: `${server.id} ${server.public_ipv4 || ''} ${server.public_ipv6 || ''} ${server.interface_ipv6 || ''}` }))} placeholder="选择服务器" searchPlaceholder="搜索服务器" />}</section>
         </div>
-        <div className="ai-review-evidence-picker">{auditReviewEvidenceOptions.map(option => <label key={option.value} className={draft.evidenceTypes.includes(option.value) ? 'selected' : ''}><input type="checkbox" checked={draft.evidenceTypes.includes(option.value)} onChange={() => toggleEvidence(option.value)} /><span><strong>{option.label}</strong><small>{option.description}</small></span></label>)}</div>
+        <div className="ai-review-evidence-picker">{auditReviewEvidenceOptions.map(option => <label key={option.value} className={draft.evidenceTypes.includes(option.value) ? 'selected' : ''}><Switch size="sm" checked={draft.evidenceTypes.includes(option.value)} onChange={() => toggleEvidence(option.value)} /><span><strong>{option.label}</strong><small>{option.description}</small></span></label>)}</div>
         <FormField label="历史范围" required><Select variant="segmented" value={draft.timeMode === 'custom' ? 'custom' : draft.preset} onChange={event => event.target.value === 'custom' ? setDraft({ ...draft, timeMode: 'custom' }) : setDraft({ ...draft, timeMode: 'preset', preset: event.target.value })}><option value="1h">1 小时</option><option value="24h">24 小时</option><option value="7d">7 天</option><option value="30d">30 天</option><option value="custom">自定义</option></Select></FormField>
         {draft.timeMode === 'custom' && <div className="two-column"><FormField label="开始时间" required><input type="datetime-local" required value={draft.startedAt} onChange={event => setDraft({ ...draft, startedAt: event.target.value })} /></FormField><FormField label="结束时间" required><input type="datetime-local" required value={draft.endedAt} onChange={event => setDraft({ ...draft, endedAt: event.target.value })} /></FormField></div>}
       </form></div>
@@ -9644,7 +9643,7 @@ function GraphSourceSelectionDialog({ request, onCancel, onSubmit }: { request: 
 	  <div className="dialog-body">
 	    <div className="graph-source-options">
 	      {request.options.map(option => <label key={option.key} className={selected.includes(option.key) ? 'is-selected' : ''}>
-	        <input type="checkbox" checked={selected.includes(option.key)} onChange={() => toggle(option.key)} />
+	        <Switch size="sm" checked={selected.includes(option.key)} onChange={() => toggle(option.key)} />
 	        <span><strong>{option.label}</strong><small>{option.detail}</small></span>
 	      </label>)}
 	    </div>
@@ -10547,7 +10546,7 @@ function MieruConfigFields({ config, updateConfig, rangeKey, udpAllowed = true, 
     <FormField label="额外端口范围"><input value={rangeText} onChange={event => updateRanges(event.target.value)} placeholder="8965-8970, 9000-9002" /></FormField>
     <FormField label="复用级别"><Select value={String(config.multiplexing || 'MULTIPLEXING_DEFAULT')} onChange={event => updateConfig({ multiplexing: event.target.value })}>{mieruMultiplexingLevels.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}</Select></FormField>
     <FormField label="流量模式"><input value={String(config.traffic_pattern || '')} onChange={event => updateConfig({ traffic_pattern: event.target.value || undefined })} /></FormField>
-    {showUserHint && <label className="check-row"><input type="checkbox" checked={config.user_hint_is_mandatory !== false} onChange={event => updateConfig({ user_hint_is_mandatory: event.target.checked })} /><span>强制用户提示</span></label>}
+    {showUserHint && <div className="switch-form-row"><span className="switch-form-label">强制用户提示</span><Switch checked={config.user_hint_is_mandatory !== false} onChange={checked => updateConfig({ user_hint_is_mandatory: checked })} ariaLabel="强制用户提示" /></div>}
   </div>
 }
 
@@ -14434,7 +14433,7 @@ function NotificationChannelDialog({
           <div className="notification-event-options">
             {eventOptions.map(option => (
               <label key={option.value} className={`notification-event-option ${draft.events.includes(option.value) ? 'active' : ''}`}>
-                <input type="checkbox" checked={draft.events.includes(option.value)} onChange={() => toggleEvent(option.value)} />
+                <Switch size="sm" checked={draft.events.includes(option.value)} onChange={() => toggleEvent(option.value)} />
                 <span>
                   <strong>{option.label}</strong>
                   <small>{option.description}</small>
