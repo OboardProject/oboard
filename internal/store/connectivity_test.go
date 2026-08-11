@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -73,6 +74,57 @@ func TestConnectivityProbeTargetPersists(t *testing.T) {
 	server.ConnectivityProbeTarget = model.ConnectivityProbeTargetGoogle
 	if err := db.UpdateServer(ctx, server); err != nil {
 		t.Fatal(err)
+	}
+	stored, err := db.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ConnectivityProbeTarget != model.ConnectivityProbeTargetGoogle {
+		t.Fatalf("connectivity probe target = %q, want google", stored.ConnectivityProbeTarget)
+	}
+}
+
+func TestConnectivityProbeTargetMigratesFromPreviousSchema(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &model.Server{Name: "migration-node", AgentID: "migration-agent", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`alter table server_telemetry drop column connectivity_probe_target`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = Open(path)
+	if err != nil {
+		t.Fatalf("open with previous telemetry schema: %v", err)
+	}
+	defer db.Close()
+	servers, err := db.ListServers(ctx)
+	if err != nil {
+		t.Fatalf("list servers after migration: %v", err)
+	}
+	if len(servers) != 1 || servers[0].ConnectivityProbeTarget != model.ConnectivityProbeTargetAuto {
+		t.Fatalf("migrated servers = %#v", servers)
+	}
+	servers[0].ConnectivityProbeTarget = model.ConnectivityProbeTargetGoogle
+	if err := db.UpdateServer(ctx, &servers[0]); err != nil {
+		t.Fatalf("update migrated probe target: %v", err)
 	}
 	stored, err := db.GetServer(ctx, server.ID)
 	if err != nil {
