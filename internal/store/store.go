@@ -1272,6 +1272,15 @@ func (s *Store) ListSettings(ctx context.Context) (map[string]string, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `select value from app_settings where key=?`, key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return value, err
+}
+
 func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at`, key, value, now)

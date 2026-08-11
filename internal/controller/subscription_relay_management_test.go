@@ -31,9 +31,10 @@ func TestManagedSubscriptionRelayEnrollmentHeartbeatAndUpdate(t *testing.T) {
 	relay := created["subscription_relay"].(map[string]any)
 	relayID := int64(relay["id"].(float64))
 	enrollmentToken := created["enrollment_token"].(string)
-	if enrollmentToken == "" || relay["active"] != true || relay["enrolled"] != false {
+	if enrollmentToken == "" || relay["active"] != false || relay["enrolled"] != false {
 		t.Fatalf("unexpected created relay: %#v", created)
 	}
+	request(t, handler, http.MethodPost, "/api/v2/ui/subscription-relays/"+strconv.FormatInt(relayID, 10)+"/activate", token, map[string]any{}, http.StatusConflict)
 	request(t, handler, http.MethodPost, "/api/v2/ui/subscription-relays", token, map[string]any{"name": "duplicate", "public_url": "https://relay.example/"}, http.StatusConflict)
 
 	enrolled := request(t, handler, http.MethodPost, "/api/v1/subscription-relay/enroll", "", map[string]any{"enrollment_token": enrollmentToken}, http.StatusOK)
@@ -83,7 +84,7 @@ func TestManagedSubscriptionRelayEnrollmentHeartbeatAndUpdate(t *testing.T) {
 	}
 
 	listed := request(t, handler, http.MethodGet, "/api/v2/ui/subscription-relays", token, nil, http.StatusOK)["subscription_relays"].([]any)
-	if len(listed) != 1 || listed[0].(map[string]any)["status"] != "online" || listed[0].(map[string]any)["token_hash"] != nil {
+	if len(listed) != 1 || listed[0].(map[string]any)["status"] != "online" || listed[0].(map[string]any)["active"] != true || listed[0].(map[string]any)["token_hash"] != nil {
 		t.Fatalf("unexpected public relay list: %#v", listed)
 	}
 
@@ -111,5 +112,9 @@ func TestManagedSubscriptionRelayEnrollmentHeartbeatAndUpdate(t *testing.T) {
 	}
 	if response := heartbeat(version.Build); response.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked relay credentials status=%d body=%s", response.Code, response.Body.String())
+	}
+	settings, err := db.ListSettings(t.Context())
+	if err != nil || settings[settingSubscriptionRelayURL] != "" {
+		t.Fatalf("active relay setting was not cleared: value=%q err=%v", settings[settingSubscriptionRelayURL], err)
 	}
 }

@@ -36,6 +36,9 @@ func TestSubscriptionRelayAuthenticatesClientIPAndRejectsReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := db.SetSetting(context.Background(), settingSubscriptionRelayURL, relay.PublicURL); err != nil {
+		t.Fatal(err)
+	}
 	s := &Server{store: db, sessionSecret: masterSecret, subscriptionRelayNonces: map[string]time.Time{}}
 	handler := s.withSubscriptionRelay(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(clientIP(r)))
@@ -52,6 +55,12 @@ func TestSubscriptionRelayAuthenticatesClientIPAndRejectsReplay(t *testing.T) {
 	request.Header.Set(subrelay.HeaderRelayID, relayID)
 	request.Header.Set(subrelay.HeaderSignature, subrelay.Sign(secret, relayID, request.Method, request.URL.RequestURI(), timestamp, nonce, client, "", ""))
 
+	direct := httptest.NewRecorder()
+	handler.ServeHTTP(direct, httptest.NewRequest(http.MethodGet, "https://controller.example/api/v1/subscriptions/token?format=mihomo", nil))
+	if direct.Code != http.StatusNotFound {
+		t.Fatalf("direct subscription status = %d", direct.Code)
+	}
+
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != client {
@@ -61,6 +70,24 @@ func TestSubscriptionRelayAuthenticatesClientIPAndRejectsReplay(t *testing.T) {
 	handler.ServeHTTP(replay, request.Clone(request.Context()))
 	if replay.Code != http.StatusUnauthorized {
 		t.Fatalf("replay status = %d", replay.Code)
+	}
+}
+
+func TestSubscriptionRelayLeavesControllerRouteAvailableWithoutActiveRelay(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := &Server{store: db, subscriptionRelayNonces: map[string]time.Time{}}
+	handler := s.withSubscriptionRelay(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "https://controller.example/api/v1/subscriptions/token", nil))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("direct subscription status = %d", recorder.Code)
 	}
 }
 

@@ -62,12 +62,6 @@ func (s *Server) registerSubscriptionRelayOperations() {
 		if err := s.store.CreateSubscriptionRelay(ctx, &relay); err != nil {
 			return nil, err
 		}
-		settings, _ := s.store.ListSettings(ctx)
-		if strings.TrimSpace(settings[settingSubscriptionRelayURL]) == "" {
-			if err := s.store.SetSetting(ctx, settingSubscriptionRelayURL, normalized); err != nil {
-				return nil, err
-			}
-		}
 		items, err := s.publicSubscriptionRelays(ctx)
 		if err != nil {
 			return nil, err
@@ -145,7 +139,18 @@ func (s *Server) registerSubscriptionRelayOperations() {
 		return automation.MutationResult{Public: public, OneTime: oneTime}, nil
 	})
 
-	s.automation.RegisterValidator("subscription_relays.activate", s.validateSubscriptionRelayIDOperation)
+	s.automation.RegisterValidator("subscription_relays.activate", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		result, err := s.validateSubscriptionRelayIDOperation(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		request, _ := decodeSubscriptionRelayAutomationInput(input)
+		relay, _ := s.store.GetSubscriptionRelay(ctx, request.RelayID)
+		if relay.TokenHash == "" || relay.SigningSecretEncrypted == "" {
+			return nil, errors.New("中继尚未接入，不能设为订阅入口")
+		}
+		return result, nil
+	})
 	s.automation.Register("subscription_relays.activate", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		request, err := decodeSubscriptionRelayAutomationInput(input)
 		if err != nil {
@@ -154,6 +159,9 @@ func (s *Server) registerSubscriptionRelayOperations() {
 		relay, err := s.store.GetSubscriptionRelay(ctx, request.RelayID)
 		if err != nil {
 			return nil, err
+		}
+		if relay.TokenHash == "" || relay.SigningSecretEncrypted == "" {
+			return nil, errors.New("中继尚未接入，不能设为订阅入口")
 		}
 		if err := s.store.SetSetting(ctx, settingSubscriptionRelayURL, relay.PublicURL); err != nil {
 			return nil, err

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { subscriptionRelayCommand, subscriptionRelayDomain, subscriptionRelayPublicURL, subscriptionRelayStatus } from './subscription-relay'
+import { subscriptionBaseURL, subscriptionRelayCommand, subscriptionRelayDomain, subscriptionRelayPublicURL, subscriptionRelayStatus } from './subscription-relay'
 
 describe('subscription relay commands', () => {
   it('keeps enrollment credentials out of the URL', () => {
@@ -35,5 +35,10 @@ describe('subscription relay commands', () => {
     expect(subscriptionRelayPublicURL('sub.example.com:8443', '/qzq')).toBe('')
     expect(subscriptionRelayPublicURL('203.0.113.1', '/qzq')).toBe('')
     expect(subscriptionRelayPublicURL('sub.example.com/path', '/qzq')).toBe('')
+  })
+
+  it('uses the active relay as the subscription base URL', () => {
+    expect(subscriptionBaseURL('https://relay.example/qzq/', 'https://controller.example/qzq')).toBe('https://relay.example/qzq')
+    expect(subscriptionBaseURL('', 'https://controller.example/qzq/')).toBe('https://controller.example/qzq')
   })
 })

@@ -128,20 +128,35 @@ func (s *Store) RequestSubscriptionRelayUpdate(ctx context.Context, id int64, ta
 	return nil
 }
 
+func (s *Store) SetSubscriptionRelayActiveIfUnset(ctx context.Context, publicURL string) error {
+	ts := now()
+	_, err := s.db.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values('subscription_relay_url',?,?) on conflict(key) do update set value=excluded.value,updated_at=excluded.updated_at where trim(app_settings.value)=''`, publicURL, ts)
+	return err
+}
+
 func (s *Store) CompleteSubscriptionRelayUpdate(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `update subscription_relays set status='online',update_target_version='',update_target_build='',update_requested_at=NULL,last_update_error='',updated_at=? where id=?`, now(), id)
 	return err
 }
 
 func (s *Store) MarkSubscriptionRelayUninstalled(ctx context.Context, id int64) error {
-	result, err := s.db.ExecContext(ctx, `update subscription_relays set status='uninstalled',token_hash='',signing_secret_encrypted='',enrollment_hash=NULL,enrollment_expires_at=NULL,update_target_version='',update_target_build='',update_requested_at=NULL,last_update_error='',last_seen_at=?,updated_at=? where id=?`, now(), now(), id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ts := now()
+	result, err := tx.ExecContext(ctx, `update subscription_relays set status='uninstalled',token_hash='',signing_secret_encrypted='',enrollment_hash=NULL,enrollment_expires_at=NULL,update_target_version='',update_target_build='',update_requested_at=NULL,last_update_error='',last_seen_at=?,updated_at=? where id=?`, ts, ts, id)
 	if err != nil {
 		return err
 	}
 	if count, _ := result.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `update app_settings set value='',updated_at=? where key='subscription_relay_url' and rtrim(value,'/')=(select rtrim(public_url,'/') from subscription_relays where id=?)`, ts, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func scanSubscriptionRelays(rows *sql.Rows) ([]model.SubscriptionRelay, error) {

@@ -103,7 +103,7 @@ import { getServerTimeIssue } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
 import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
 import { controllerUpdatePendingToast, isControllerUpdateInProgressStatus, isExpectedControllerUpdateDisconnect } from './controller-update'
-import { subscriptionRelayCommand, subscriptionRelayDomain, subscriptionRelayPublicURL, subscriptionRelayStatus, type SubscriptionRelay, type SubscriptionRelayAction } from './subscription-relay'
+import { subscriptionBaseURL, subscriptionRelayCommand, subscriptionRelayDomain, subscriptionRelayPublicURL, subscriptionRelayStatus, type SubscriptionRelay, type SubscriptionRelayAction } from './subscription-relay'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { connectivityBucketTone as backendConnectivityBucketTone, connectivityRequestPath, connectivitySlaDisplay, formatConnectivityDuration, type ConnectivityResponse, type ConnectivityWindowKey } from './connectivity-sla'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
@@ -154,7 +154,7 @@ function appControllerURL() {
 let subscriptionPublicBaseURL = ''
 
 function appSubscriptionURL() {
-  return subscriptionPublicBaseURL || appControllerURL()
+  return subscriptionPublicBaseURL
 }
 
 function appWebSocketURL(path: string) {
@@ -1405,7 +1405,7 @@ function App() {
   }
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<any>({})
-  subscriptionPublicBaseURL = String(data.settings?.subscription_relay_url || '').replace(/\/+$/, '')
+  subscriptionPublicBaseURL = subscriptionBaseURL(String(data.subscription_public_base_url || data.settings?.subscription_relay_url || ''), appControllerURL())
   const [restoringSession, setRestoringSession] = useState(() => !sessionStorage.getItem('oboard.token'))
   const [restoreError, setRestoreError] = useState('')
   const [, setAttentionDismissRevision] = useState(0)

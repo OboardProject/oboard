@@ -23,6 +23,10 @@ export type SubscriptionRelay = {
 
 export type SubscriptionRelayAction = 'install' | 'update' | 'uninstall'
 
+export function subscriptionBaseURL(relayURL: string, controllerURL: string) {
+  return (relayURL.trim() || controllerURL.trim()).replace(/\/+$/, '')
+}
+
 export function subscriptionRelayDomain(publicURL: string) {
   try {
     return new URL(publicURL).hostname

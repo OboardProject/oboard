@@ -68,13 +68,6 @@ func (s *Server) subscriptionRelays(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, http.StatusInternalServerError)
 			return
 		}
-		settings, _ := s.store.ListSettings(r.Context())
-		if strings.TrimSpace(settings[settingSubscriptionRelayURL]) == "" {
-			if err := s.store.SetSetting(r.Context(), settingSubscriptionRelayURL, publicURL); err != nil {
-				fail(w, err, http.StatusInternalServerError)
-				return
-			}
-		}
 		auditReq(s, r, "create", "subscription-relay", strconv.FormatInt(relay.ID, 10))
 		items, _ := s.publicSubscriptionRelays(r.Context())
 		write(w, http.StatusCreated, map[string]any{"subscription_relay": findPublicSubscriptionRelay(items, relay.ID), "enrollment_token": token, "expires_at": expiresAt})
@@ -122,6 +115,10 @@ func (s *Server) subscriptionRelaySubroutes(w http.ResponseWriter, r *http.Reque
 		case "activate":
 			if r.Method != http.MethodPost {
 				method(w)
+				return
+			}
+			if relay.TokenHash == "" || relay.SigningSecretEncrypted == "" {
+				fail(w, errors.New("中继尚未接入，不能设为订阅入口"), http.StatusConflict)
 				return
 			}
 			if err := s.store.SetSetting(r.Context(), settingSubscriptionRelayURL, relay.PublicURL); err != nil {
@@ -291,6 +288,10 @@ func (s *Server) subscriptionRelayHeartbeat(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if err := s.store.UpdateSubscriptionRelayHeartbeat(r.Context(), relay); err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	if err := s.store.SetSubscriptionRelayActiveIfUnset(r.Context(), relay.PublicURL); err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}

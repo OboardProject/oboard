@@ -1408,6 +1408,18 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		out["reverse_proxy_status"] = s.reverseProxyStatus(r)
 		return nil
 	}
+	addSubscriptionPublicBaseURL := func() error {
+		configuredURL, err := s.store.GetSetting(ctx, settingSubscriptionRelayURL)
+		if err != nil {
+			return err
+		}
+		value := ""
+		if normalized, normalizeErr := s.normalizeSubscriptionRelayURL(configuredURL); normalizeErr == nil {
+			value = normalized
+		}
+		out["subscription_public_base_url"] = value
+		return nil
+	}
 	addServerCreationDefaults := func() error {
 		settings, err := s.store.ListSettings(ctx)
 		if err != nil {
@@ -1908,6 +1920,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 	case "subscriptions":
 		if err = require(model.RoleViewer); err != nil {
+			break
+		}
+		if err = addSubscriptionPublicBaseURL(); err != nil {
 			break
 		}
 		if !roleAllows(role, model.RoleAdmin) {

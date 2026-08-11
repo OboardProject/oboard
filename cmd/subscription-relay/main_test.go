@@ -119,10 +119,21 @@ func TestRelayControllerEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := db.SetSetting(context.Background(), "subscription_relay_url", managed.PublicURL); err != nil {
+		t.Fatal(err)
+	}
 	app := controller.New(db, masterSecret, "", "", nil)
 	defer app.Close()
 	upstream := httptest.NewServer(app.Handler())
 	defer upstream.Close()
+	direct, err := upstream.Client().Get(upstream.URL + "/api/v1/subscriptions/relay-subscription-token?format=sing-box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = direct.Body.Close()
+	if direct.StatusCode != http.StatusNotFound {
+		t.Fatalf("direct Controller subscription status=%d", direct.StatusCode)
+	}
 	target, err := validateUpstream(upstream.URL, true)
 	if err != nil {
 		t.Fatal(err)

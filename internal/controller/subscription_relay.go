@@ -16,14 +16,32 @@ const settingSubscriptionRelayURL = "subscription_relay_url"
 
 func (s *Server) withSubscriptionRelay(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(subrelay.HeaderSignature) == "" || !s.isSubscriptionRelayPath(r.URL.Path) {
+		if !s.isSubscriptionRelayPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
+			return
+		}
+		configuredURL, err := s.store.GetSetting(r.Context(), settingSubscriptionRelayURL)
+		if err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
+		activeURL := strings.TrimRight(strings.TrimSpace(configuredURL), "/")
+		if activeURL == "" {
+			if r.Header.Get(subrelay.HeaderSignature) != "" {
+				http.NotFound(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get(subrelay.HeaderSignature) == "" {
+			http.NotFound(w, r)
 			return
 		}
 		relayID := strings.TrimSpace(r.Header.Get(subrelay.HeaderRelayID))
 		id, idErr := strconv.ParseInt(relayID, 10, 64)
 		relay, relayErr := s.store.GetSubscriptionRelay(r.Context(), id)
-		if idErr != nil || relayErr != nil || relay.SigningSecretEncrypted == "" {
+		if idErr != nil || relayErr != nil || relay.SigningSecretEncrypted == "" || strings.TrimRight(relay.PublicURL, "/") != activeURL {
 			http.Error(w, "invalid subscription relay", http.StatusUnauthorized)
 			return
 		}

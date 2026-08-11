@@ -8,6 +8,7 @@ import (
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 )
 
 func TestSettingsCapabilities(t *testing.T) {
@@ -57,6 +58,13 @@ func TestSubscriptionRelayCapabilities(t *testing.T) {
 		t.Fatalf("relays=%#v err=%v", relays, err)
 	}
 	relayID := relays[0].ID
+	encrypted, err := security.EncryptSecret("test-secret", subscriptionRelaySecretPurpose, "0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClaimSubscriptionRelayEnrollment(ctx, relays[0].EnrollmentHash, security.HashSecret("relay-token"), encrypted); err != nil {
+		t.Fatal(err)
+	}
 	listed, err := server.application.Query(ctx, principal, "subscription_relays.list", json.RawMessage(`{}`))
 	if err != nil || len(listed.([]map[string]any)) != 1 {
 		t.Fatalf("relay query=%#v err=%v", listed, err)

@@ -521,6 +521,9 @@ func TestPageDataIncludesMinimalCurrentUser(t *testing.T) {
 	if err := db.CreateUser(context.Background(), viewer); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.SetSetting(context.Background(), settingSubscriptionRelayURL, "https://relay.example"); err != nil {
+		t.Fatal(err)
+	}
 	token, err := security.SignSession("test-secret", security.TokenClaims{Subject: viewer.ID, Role: string(model.RoleViewer), ClientBinding: sessionClientBinding("test-secret", ""), Expiry: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
@@ -545,6 +548,9 @@ func TestPageDataIncludesMinimalCurrentUser(t *testing.T) {
 	}
 
 	subscriptions := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=subscriptions", token, nil, http.StatusOK)
+	if subscriptions["subscription_public_base_url"] != "https://relay.example" {
+		t.Fatalf("viewer subscription base URL = %#v", subscriptions["subscription_public_base_url"])
+	}
 	self := subscriptions["account_user"].(map[string]any)
 	if self["subscription_token"] != "private-subscription" {
 		t.Fatalf("self subscription token missing: %#v", self)
