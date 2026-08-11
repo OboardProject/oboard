@@ -483,7 +483,7 @@ func (s *Server) prepareSettingsRecipe(ctx context.Context, principal applicatio
 	if nested, ok := input.Params["changes"].(map[string]any); ok {
 		changes = nested
 	}
-	for _, key := range []string{"audit_enabled", "subscription_audit_enabled", "connection_audit_enabled", "audit_action", "traffic_timezone", "traffic_enforcement_mode", "subscription_age_policy", "subscription_custom_path_mode", "server_default_mtu_mode", "server_default_bbr_enabled", "server_default_time_correction_mode", "time_check_ntp_servers", "trusted_proxy_cidrs", "controller_log_max_mb", "controller_log_backups", "registration_enabled"} {
+	for _, key := range []string{"audit_enabled", "subscription_audit_enabled", "connection_audit_enabled", "audit_action", "traffic_timezone", "traffic_enforcement_mode", "subscription_age_policy", "subscription_custom_path_mode", "server_default_mtu_mode", "server_default_bbr_enabled", "server_default_time_correction_mode", "time_check_ntp_servers", "trusted_proxy_cidrs", "controller_log_max_mb", "controller_log_backups", "agent_auto_update_enabled", "subscription_relay_auto_update_enabled", "update_window_enabled", "update_window_start_hour", "update_window_end_hour", "registration_enabled"} {
 		if value, ok := input.Params[key]; ok {
 			changes[key] = value
 		}

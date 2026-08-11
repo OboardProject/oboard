@@ -718,6 +718,11 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			ControllerLogBackups         *int               `json:"controller_log_backups"`
 			ControllerAutoUpdate         *bool              `json:"controller_auto_update_enabled"`
 			ControllerAutoUpdateInterval *int               `json:"controller_auto_update_interval_hours"`
+			AgentAutoUpdate              *bool              `json:"agent_auto_update_enabled"`
+			SubscriptionRelayAutoUpdate  *bool              `json:"subscription_relay_auto_update_enabled"`
+			UpdateWindowEnabled          *bool              `json:"update_window_enabled"`
+			UpdateWindowStartHour        *int               `json:"update_window_start_hour"`
+			UpdateWindowEndHour          *int               `json:"update_window_end_hour"`
 			ServerDefaultMTUMode         *string            `json:"server_default_mtu_mode"`
 			ServerDefaultBBREnabled      *bool              `json:"server_default_bbr_enabled"`
 			ServerDefaultTimeCorrection  *string            `json:"server_default_time_correction_mode"`
@@ -1012,6 +1017,37 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, controllerAutoUpdateIntervalSetting)
 		}
+		for key, value := range map[string]*bool{
+			agentAutoUpdateSetting:             req.AgentAutoUpdate,
+			subscriptionRelayAutoUpdateSetting: req.SubscriptionRelayAutoUpdate,
+			updateWindowEnabledSetting:         req.UpdateWindowEnabled,
+		} {
+			if value == nil {
+				continue
+			}
+			if err := s.store.SetSetting(r.Context(), key, strconv.FormatBool(*value)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, key)
+		}
+		for key, value := range map[string]*int{
+			updateWindowStartHourSetting: req.UpdateWindowStartHour,
+			updateWindowEndHourSetting:   req.UpdateWindowEndHour,
+		} {
+			if value == nil {
+				continue
+			}
+			if *value < 0 || *value > 23 {
+				fail(w, errors.New(key+" must be between 0 and 23"), http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), key, strconv.Itoa(*value)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, key)
+		}
 		if req.ServerDefaultMTUMode != nil {
 			mode := model.MTUMode(strings.ToLower(strings.TrimSpace(*req.ServerDefaultMTUMode)))
 			switch mode {
@@ -1149,6 +1185,11 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
 	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: false, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out[agentAutoUpdateSetting] = false
+	out[subscriptionRelayAutoUpdateSetting] = false
+	out[updateWindowEnabledSetting] = false
+	out[updateWindowStartHourSetting] = updateWindowDefaultStartHour
+	out[updateWindowEndHourSetting] = updateWindowDefaultEndHour
 	for key, value := range items {
 		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID {
 			continue
@@ -1157,6 +1198,11 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	}
 	out[controllerAutoUpdateSetting] = settingBool(items, controllerAutoUpdateSetting, false)
 	out[controllerAutoUpdateIntervalSetting] = controllerUpdateIntervalHours(items)
+	out[agentAutoUpdateSetting] = settingBool(items, agentAutoUpdateSetting, false)
+	out[subscriptionRelayAutoUpdateSetting] = settingBool(items, subscriptionRelayAutoUpdateSetting, false)
+	out[updateWindowEnabledSetting] = settingBool(items, updateWindowEnabledSetting, false)
+	out[updateWindowStartHourSetting] = updateWindowHour(items, updateWindowStartHourSetting, updateWindowDefaultStartHour)
+	out[updateWindowEndHourSetting] = updateWindowHour(items, updateWindowEndHourSetting, updateWindowDefaultEndHour)
 	out[settingSubscriptionControllerDirectEnabled] = settingBool(items, settingSubscriptionControllerDirectEnabled, false)
 	if raw := strings.TrimSpace(items[settingRegistrationEnabled]); raw != "" {
 		out[settingRegistrationEnabled] = settingBool(items, settingRegistrationEnabled, false)

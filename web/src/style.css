@@ -6033,6 +6033,22 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 .controller-update-interval button.active { background: var(--primary); color: var(--primary-contrast); }
 .controller-update-interval button:disabled { cursor: not-allowed; opacity: 0.6; }
+.managed-update-settings { display: grid; gap: 12px; }
+.managed-update-switches { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.managed-update-switches > label,
+.managed-update-window { border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+.managed-update-switches > label,
+.managed-update-window-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; padding: 12px 14px; }
+.managed-update-switches label > span,
+.managed-update-window-toggle > span { display: grid; gap: 3px; min-width: 0; }
+.managed-update-switches strong,
+.managed-update-window strong { color: var(--text-strong); font-size: 14px; }
+.managed-update-switches small,
+.managed-update-window small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.managed-update-window { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(280px, auto); align-items: center; }
+.managed-update-hours { display: grid; grid-template-columns: minmax(112px, 1fr) auto minmax(112px, 1fr); align-items: end; gap: 8px; padding: 10px 14px; border-left: 1px solid var(--border); }
+.managed-update-hours > span { padding-bottom: 10px; color: var(--muted); font-size: 13px; }
+.managed-update-hours .field { margin: 0; }
 .controller-update-actions { justify-content: flex-end; }
 .controller-update-actions button { display: inline-flex; align-items: center; gap: 6px; }
 
@@ -6044,6 +6060,9 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 
 @media (max-width: 640px) {
+  .managed-update-switches { grid-template-columns: 1fr; }
+  .managed-update-window { grid-template-columns: 1fr; }
+  .managed-update-hours { border-top: 1px solid var(--border); border-left: 0; }
   .controller-update-prompt {
     top: 8px;
     width: calc(100vw - 16px);

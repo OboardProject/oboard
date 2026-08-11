@@ -272,6 +272,9 @@ var settingsAutomationFields = map[string]bool{
 	"server_default_mtu_mode": true, "server_default_bbr_enabled": true,
 	"server_default_time_correction_mode": true, "time_check_ntp_servers": true,
 	"trusted_proxy_cidrs": true, "controller_log_max_mb": true, "controller_log_backups": true,
+	"agent_auto_update_enabled":              true,
+	"subscription_relay_auto_update_enabled": true, "update_window_enabled": true,
+	"update_window_start_hour": true, "update_window_end_hour": true,
 	"registration_enabled": true,
 }
 
@@ -411,6 +414,25 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 	if value, ok := fields["subscription_controller_direct_enabled"]; ok {
 		if err := setBool(settingSubscriptionControllerDirectEnabled, value); err != nil {
 			return nil, err
+		}
+	}
+	for _, key := range []string{agentAutoUpdateSetting, subscriptionRelayAutoUpdateSetting, updateWindowEnabledSetting} {
+		if value, ok := fields[key]; ok {
+			if err := setBool(key, value); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, key := range []string{updateWindowStartHourSetting, updateWindowEndHourSetting} {
+		if value, ok := fields[key]; ok {
+			var hour int
+			if err := json.Unmarshal(value, &hour); err != nil {
+				return nil, err
+			}
+			if hour < 0 || hour > 23 {
+				return nil, fmt.Errorf("%s must be between 0 and 23", key)
+			}
+			updates[key] = strconv.Itoa(hour)
 		}
 	}
 	if value, ok := fields["server_default_mtu_mode"]; ok {

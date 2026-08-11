@@ -21,12 +21,19 @@ import (
 const (
 	controllerAutoUpdateSetting          = "controller_auto_update_enabled"
 	controllerAutoUpdateIntervalSetting  = "controller_auto_update_interval_hours"
+	agentAutoUpdateSetting               = "agent_auto_update_enabled"
+	subscriptionRelayAutoUpdateSetting   = "subscription_relay_auto_update_enabled"
+	updateWindowEnabledSetting           = "update_window_enabled"
+	updateWindowStartHourSetting         = "update_window_start_hour"
+	updateWindowEndHourSetting           = "update_window_end_hour"
 	controllerBackupSetting              = "controller_update_backup_path"
 	controllerBackupTargetBuildSetting   = "controller_update_backup_target_build"
 	controllerUpdateErrorSetting         = "controller_update_controller_error"
 	controllerUpdateSchedulerPeriod      = time.Minute
 	controllerUpdatePanelIdlePeriod      = 5 * time.Minute
 	controllerUpdateDefaultIntervalHours = 24
+	updateWindowDefaultStartHour         = 3
+	updateWindowDefaultEndHour           = 7
 )
 
 func (s *Server) ConfigureControllerUpdates(dbPath, listenAddress string) {
@@ -65,6 +72,7 @@ func (s *Server) StartControllerUpdates(ctx context.Context) {
 		return
 	case <-initial.C:
 		go s.runScheduledControllerUpdate(ctx)
+		go s.runScheduledManagedUpdates(ctx)
 	}
 	ticker := time.NewTicker(controllerUpdateSchedulerPeriod)
 	defer ticker.Stop()
@@ -74,6 +82,7 @@ func (s *Server) StartControllerUpdates(ctx context.Context) {
 			return
 		case <-ticker.C:
 			go s.runScheduledControllerUpdate(ctx)
+			go s.runScheduledManagedUpdates(ctx)
 		}
 	}
 }
@@ -123,7 +132,38 @@ func (s *Server) runScheduledControllerUpdate(ctx context.Context) {
 	if !s.controllerPanelIdle(time.Now()) {
 		return
 	}
+	if !automaticUpdateAllowedAt(settings, time.Now()) {
+		return
+	}
 	s.installScheduledControllerUpdate(ctx, status)
+}
+
+func automaticUpdateAllowedAt(settings map[string]string, now time.Time) bool {
+	if !settingBool(settings, updateWindowEnabledSetting, false) {
+		return true
+	}
+	location, err := time.LoadLocation(strings.TrimSpace(settings["traffic_timezone"]))
+	if err != nil {
+		location, _ = time.LoadLocation("Asia/Shanghai")
+	}
+	start := updateWindowHour(settings, updateWindowStartHourSetting, updateWindowDefaultStartHour)
+	end := updateWindowHour(settings, updateWindowEndHourSetting, updateWindowDefaultEndHour)
+	hour := now.In(location).Hour()
+	if start == end {
+		return true
+	}
+	if start < end {
+		return hour >= start && hour < end
+	}
+	return hour >= start || hour < end
+}
+
+func updateWindowHour(settings map[string]string, key string, fallback int) int {
+	hour, err := strconv.Atoi(strings.TrimSpace(settings[key]))
+	if err != nil || hour < 0 || hour > 23 {
+		return fallback
+	}
+	return hour
 }
 
 func (s *Server) controllerScheduledCheckDue(now, checkedAt time.Time, interval time.Duration) bool {

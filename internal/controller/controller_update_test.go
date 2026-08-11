@@ -87,6 +87,20 @@ func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	if status["auto_update_interval_hours"] != float64(controllerUpdateDefaultIntervalHours) {
 		t.Fatalf("unexpected default update interval: %#v", status["auto_update_interval_hours"])
 	}
+	settingsResponse := request(t, handler, http.MethodGet, "/api/v2/ui/settings", adminToken, nil, http.StatusOK)
+	defaults := settingsResponse["settings"].(map[string]any)
+	if defaults[agentAutoUpdateSetting] != false || defaults[subscriptionRelayAutoUpdateSetting] != false || defaults[updateWindowEnabledSetting] != false || defaults[updateWindowStartHourSetting] != float64(3) || defaults[updateWindowEndHourSetting] != float64(7) {
+		t.Fatalf("unexpected managed update defaults: %#v", defaults)
+	}
+	settingsResponse = request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{
+		agentAutoUpdateSetting: true, subscriptionRelayAutoUpdateSetting: true,
+		updateWindowEnabledSetting: true, updateWindowStartHourSetting: 22, updateWindowEndHourSetting: 4,
+	}, http.StatusOK)
+	saved := settingsResponse["settings"].(map[string]any)
+	if saved[agentAutoUpdateSetting] != true || saved[subscriptionRelayAutoUpdateSetting] != true || saved[updateWindowEnabledSetting] != true || saved[updateWindowStartHourSetting] != float64(22) || saved[updateWindowEndHourSetting] != float64(4) {
+		t.Fatalf("unexpected managed update settings: %#v", saved)
+	}
+	request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{updateWindowStartHourSetting: 24}, http.StatusBadRequest)
 	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/check", adminToken, nil, http.StatusOK)
 	for _, interval := range []int{1, 6, 24, 72, 168} {
 		settings := request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"controller_auto_update_interval_hours": interval}, http.StatusOK)

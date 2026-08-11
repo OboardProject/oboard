@@ -3770,6 +3770,20 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   }
   const [snapshot, setSnapshot] = useState<ControllerUpdateStatus>(emptyStatus)
   const [working, setWorking] = useState('')
+  const updateSettings = data.settings || {}
+  const saveManagedUpdateSetting = async (changes: Record<string, boolean | number>) => {
+    if (working) return
+    setWorking('managed')
+    try {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify(changes) })
+      await load('settings', { background: true })
+      notify?.('自动更新设置已保存', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
   const [installExpected, setInstallExpected] = useState(false)
   const [installDialogOpen, setInstallDialogOpen] = useState(false)
   const [installPhase, setInstallPhase] = useState<ControllerUpdateInstallPhase>('confirm')
@@ -4044,7 +4058,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     </div> : <div className="controller-update-schedule">
       <div className="controller-update-schedule-head">
         <div className="controller-update-schedule-label">
-          <strong>定时自动更新</strong>
+          <strong>主控自动更新</strong>
           <Switch checked={snapshot.auto_update_enabled} disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress} onChange={checked => void saveAutoUpdate(checked)} ariaLabel="启用定时自动更新" />
         </div>
       </div>
@@ -4060,6 +4074,20 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
         >{option.label}</button>)}
       </div>
     </div>}
+    <div className="managed-update-settings" aria-label="组件自动更新设置">
+      <div className="managed-update-switches">
+        <label><span><strong>Agent 自动更新</strong><small>发现配套构建后下发更新任务</small></span><Switch checked={Boolean(updateSettings.agent_auto_update_enabled)} disabled={Boolean(working)} onChange={checked => void saveManagedUpdateSetting({ agent_auto_update_enabled: checked })} ariaLabel="启用 Agent 自动更新" /></label>
+        <label><span><strong>订阅中继自动更新</strong><small>发现主控配套构建后通过心跳更新</small></span><Switch checked={Boolean(updateSettings.subscription_relay_auto_update_enabled)} disabled={Boolean(working)} onChange={checked => void saveManagedUpdateSetting({ subscription_relay_auto_update_enabled: checked })} ariaLabel="启用订阅中继自动更新" /></label>
+      </div>
+      <div className="managed-update-window">
+        <label className="managed-update-window-toggle"><span><strong>仅在指定时段自动安装</strong><small>按主控时区 {String(updateSettings.traffic_timezone || 'Asia/Shanghai')}</small></span><Switch checked={Boolean(updateSettings.update_window_enabled)} disabled={Boolean(working)} onChange={checked => void saveManagedUpdateSetting({ update_window_enabled: checked })} ariaLabel="仅在指定时段自动安装" /></label>
+        <div className="managed-update-hours">
+          <FormField label="开始时间"><Select value={Number(updateSettings.update_window_start_hour ?? 3)} disabled={Boolean(working) || !updateSettings.update_window_enabled} onChange={event => void saveManagedUpdateSetting({ update_window_start_hour: Number(event.target.value) })} aria-label="自动更新开始小时">{Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{String(hour).padStart(2, '0')}:00</option>)}</Select></FormField>
+          <span aria-hidden="true">至</span>
+          <FormField label="结束时间"><Select value={Number(updateSettings.update_window_end_hour ?? 7)} disabled={Boolean(working) || !updateSettings.update_window_enabled} onChange={event => void saveManagedUpdateSetting({ update_window_end_hour: Number(event.target.value) })} aria-label="自动更新结束小时">{Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{String(hour).padStart(2, '0')}:00</option>)}</Select></FormField>
+        </div>
+      </div>
+    </div>
     <div className="settings-actions controller-update-actions">
       <button type="button" className="ghost" onClick={() => void check()} disabled={Boolean(working) || snapshot.channel === 'pinned' || updateInProgress}><RefreshCw size={14} className={working === 'check' ? 'spin' : ''} />{working === 'check' ? '检查中...' : '检查更新'}</button>
       <button type="button" onClick={openInstall} disabled={Boolean(working) || snapshot.channel === 'pinned' || (!snapshot.update_available && !updateInProgress)}><Download size={14} />{working === 'install' ? '准备中...' : updateInProgress ? '查看安装进度' : '备份并安装'}</button>
