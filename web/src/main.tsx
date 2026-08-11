@@ -6891,10 +6891,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
             <UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} />
           </FormField>
           <FormField label="BBR + FQ" hint="首次安装 Agent 时尝试启用，失败不影响安装。">
-            <div className="switch-form-row">
-              <span className="switch-form-label">安装时启用 BBR + FQ</span>
-              <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} />
-            </div>
+            <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
           </FormField>
           <FormField label="时间校准" hint="开启后，Agent 接入时会立即检测。" full>
             <TimeCorrectionSelector value={draft.time_correction_mode} onChange={value => update({ time_correction_mode: value })} />
@@ -6915,23 +6912,14 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           </FormField>
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
           <FormField label="公网可访问性" hint="每分钟检测公网连接和延迟。">
-            <div className="switch-form-row">
-              <span className="switch-form-label">启用公网可访问性</span>
-              <Switch checked={Boolean(draft.connectivity_probe_enabled)} onChange={checked => update({ connectivity_probe_enabled: checked })} />
-            </div>
+            <Switch checked={Boolean(draft.connectivity_probe_enabled)} onChange={checked => update({ connectivity_probe_enabled: checked })} ariaLabel="公网可访问性" />
           </FormField>
           <FormField label="连接审计" hint="记录来源 IP、目标与出口摘要。">
-            <div className="switch-form-row">
-              <span className="switch-form-label">启用连接审计</span>
-              <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} />
-            </div>
+            <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} ariaLabel="连接审计" />
             {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
           </FormField>
           <FormField label="离线与恢复提醒" hint="关闭后不再提醒这台服务器的离线与恢复。">
-            <div className="switch-form-row">
-              <span className="switch-form-label">启用离线与恢复提醒</span>
-              <Switch checked={Boolean(draft.offline_notify_enabled)} onChange={checked => update({ offline_notify_enabled: checked })} />
-            </div>
+            <Switch checked={Boolean(draft.offline_notify_enabled)} onChange={checked => update({ offline_notify_enabled: checked })} ariaLabel="离线与恢复提醒" />
           </FormField>
           {Boolean(draft.offline_notify_enabled) && <FormField label="离线判断时间（秒）" hint="留空或 0 表示使用设置中的默认值。">
             <input type="number" min={0} max={86400} value={Number(draft.offline_after_seconds) || 0} onChange={e => update({ offline_after_seconds: Math.max(0, Number(e.target.value) || 0) })} />
@@ -7003,10 +6991,7 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           <FormField label="出口解析策略" hint="选择出口优先使用的 IP 类型。"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
           <FormField label="BBR + FQ" hint="下次重新安装 Agent 时尝试启用，失败不影响安装。">
-            <div className="switch-form-row">
-              <span className="switch-form-label">安装时尝试启用 BBR + FQ</span>
-              <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} />
-            </div>
+            <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
           </FormField>
           <FormField label="时间校准" hint="切换模式后会立即检测时间偏差。" full><TimeCorrectionSelector value={draft.time_correction_mode || 'off'} onChange={value => update({ time_correction_mode: value })} /></FormField>
           <FormField label="公网端口范围" hint="自动托管的公网监听端口池；耗尽时部署会报错，不会越界回落。"><PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} /></FormField>
@@ -7017,23 +7002,14 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           </FormField>
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
           <FormField label="公网可访问性" hint="每分钟检测公网连接和延迟。">
-            <div className="switch-form-row">
-              <span className="switch-form-label">启用公网可访问性</span>
-              <Switch checked={Boolean(draft.connectivity_probe_enabled)} onChange={checked => update({ connectivity_probe_enabled: checked })} />
-            </div>
+            <Switch checked={Boolean(draft.connectivity_probe_enabled)} onChange={checked => update({ connectivity_probe_enabled: checked })} ariaLabel="公网可访问性" />
           </FormField>
           <FormField label="连接审计" hint="关闭后 Agent 停止采集、上报和本地审计状态写入。">
-            <div className="switch-form-row">
-              <span className="switch-form-label">启用连接审计</span>
-              <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} />
-            </div>
+            <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} ariaLabel="连接审计" />
             {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
           </FormField>
           <FormField label="离线与恢复提醒" hint="关闭后不再提醒这台服务器的离线与恢复。">
-            <div className="switch-form-row">
-              <span className="switch-form-label">启用离线与恢复提醒</span>
-              <Switch checked={Boolean(draft.offline_notify_enabled)} onChange={checked => update({ offline_notify_enabled: checked })} />
-            </div>
+            <Switch checked={Boolean(draft.offline_notify_enabled)} onChange={checked => update({ offline_notify_enabled: checked })} ariaLabel="离线与恢复提醒" />
           </FormField>
           {Boolean(draft.offline_notify_enabled) && <FormField label="离线判断时间（秒）" hint="留空或 0 表示使用设置中的默认值。">
             <input type="number" min={0} max={86400} value={Number(draft.offline_after_seconds) || 0} onChange={e => update({ offline_after_seconds: Math.max(0, Number(e.target.value) || 0) })} />
@@ -13067,10 +13043,7 @@ function DNSSettingsDialog({ server, policy, lists, benchmarks, client, onClose,
         <FormField label="基础解析服务列表" full><Select value={draft.bootstrapListID} onChange={event => setDraft({ ...draft, bootstrapListID: Number(event.target.value) })}>{lists.filter(list => list.kind === 'bootstrap' && (list.enabled || list.id === policy?.bootstrap_list_id)).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
         <FormField label="IP 类型"><Select value={draft.strategy} onChange={event => setDraft({ ...draft, strategy: event.target.value })}><option value="auto">跟随服务器</option><option value="prefer_ipv4">优先 IPv4</option><option value="prefer_ipv6">优先 IPv6</option><option value="ipv4_only">仅 IPv4</option><option value="ipv6_only">仅 IPv6</option></Select></FormField>
         <FormField label="每小时自动检查">
-          <div className="switch-form-row">
-            <span className="switch-form-label">启用每小时自动检查</span>
-            <Switch checked={draft.hourlyTest} onChange={checked => setDraft({ ...draft, hourlyTest: checked })} ariaLabel="启用每小时自动检查" />
-          </div>
+          <Switch checked={draft.hourlyTest} onChange={checked => setDraft({ ...draft, hourlyTest: checked })} ariaLabel="启用每小时自动检查" />
         </FormField>
         <div className="dns-list-preview"><span>{encryptedList?.candidates.map(candidate => dnsTransportLabel(candidate.transport)).join(' · ')}</span><span>{bootstrapList?.candidates.map(candidate => dnsTransportLabel(candidate.transport)).join(' · ')}</span></div>
       </div>
@@ -14423,10 +14396,7 @@ function NotificationChannelDialog({
         </FormField>
 
         <FormField label="启用通知">
-          <div className="switch-form-row">
-            <span className="switch-form-label">启用此通知通道</span>
-            <Switch checked={draft.enabled} onChange={checked => update({ enabled: checked })} ariaLabel="启用通知" />
-          </div>
+          <Switch checked={draft.enabled} onChange={checked => update({ enabled: checked })} ariaLabel="启用通知" />
         </FormField>
 
         <FormField label="通知事件" required hint="可多选。">
@@ -14479,10 +14449,7 @@ function NotificationChannelDialog({
             <input value={draft.chat_id} onChange={e => update({ chat_id: e.target.value })} placeholder="-1001234567890" autoComplete="off" />
           </FormField>
           <FormField label="启用互动指令" hint="开启后可在 Telegram 中向机器人发送指令查询状态、流量、用户和审计概览。">
-            <div className="switch-form-row">
-              <span className="switch-form-label">启用互动指令</span>
-              <Switch checked={draft.interactive} onChange={checked => update({ interactive: checked })} ariaLabel="启用互动指令" />
-            </div>
+            <Switch checked={draft.interactive} onChange={checked => update({ interactive: checked })} ariaLabel="启用互动指令" />
           </FormField>
           {draft.interactive && <FormField label="允许互动的 Chat ID" required hint="只有这些 Chat ID 能使用机器人指令，多个用英文逗号分隔。可在 @userinfobot 查询自己的 Chat ID。">
             <textarea rows={3} value={draft.allowed_chat_ids} onChange={e => update({ allowed_chat_ids: e.target.value })} placeholder="123456789, -1001234567890" autoComplete="off" />
