@@ -2443,3 +2443,42 @@ func TestUsernameExistsCaseInsensitive(t *testing.T) {
 		}
 	}
 }
+
+func TestListTaskTimelineOmitsPayloadsAndKeepsSummaryColumns(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "timeline-node", ListenIP: "0.0.0.0", Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	first := &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: `{"config":{"kernel":true}}`, Status: "succeeded", ResultJSON: `{"steps":[]}`, ConfigVersion: 7, Nonce: "secret-nonce"}
+	if err := s.CreateTask(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	second := &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeUpdateAgent, PayloadJSON: `{"source":"https://example.invalid/build.tar.gz"}`, Status: "pending", ConfigVersion: 0, Nonce: "secret-nonce-2"}
+	if err := s.CreateTask(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.ListTaskTimeline(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("timeline rows = %d, want 2", len(items))
+	}
+	for _, item := range items {
+		if item.PayloadJSON != "" || item.ResultJSON != "" || item.Nonce != "" {
+			t.Fatalf("timeline leaked payload/result/nonce for task %d: payload=%q result=%q nonce=%q", item.ID, item.PayloadJSON, item.ResultJSON, item.Nonce)
+		}
+	}
+	if items[0].Status != "pending" || items[0].Type != model.AgentTaskTypeUpdateAgent || items[0].ConfigVersion != 0 {
+		t.Fatalf("timeline newest row = %#v", items[0])
+	}
+	if items[1].Status != "succeeded" || items[1].Type != model.AgentTaskTypeApplyDeployment || items[1].ConfigVersion != 7 {
+		t.Fatalf("timeline older row = %#v", items[1])
+	}
+}

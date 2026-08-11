@@ -1675,23 +1675,26 @@ function App() {
     let cancelled = false
     const requestToken = token
     const warmCache = async () => {
-      for (const page of pages) {
+      // Fetch every preload page in parallel so a slow backend cannot serialize
+      // the whole warm-up behind one request; page switches then find their
+      // payload already cached.
+      await Promise.allSettled(pages.map(async page => {
         if (cancelled || requestToken !== activeTokenRef.current) return
         preloadedTabsRef.current.add(page)
         try {
           const response = await requestPageData(page)
           if (cancelled || requestToken !== activeTokenRef.current) return
-          if (!pageRequestsRef.current.isCurrent(page, response)) continue
+          if (!pageRequestsRef.current.isCurrent(page, response)) return
           if (dirtyPagesRef.current.has(page)) {
             preloadedTabsRef.current.delete(page)
-            continue
+            return
           }
           const next = response.data
           pageCacheRef.current[page] = { ...next, load_errors: [] as string[] }
         } catch {
           // Foreground navigation will retry and surface errors when needed.
         }
-      }
+      }))
     }
     const start = () => { void warmCache() }
     const idleWindow = window as unknown as {

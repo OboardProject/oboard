@@ -111,6 +111,11 @@ type Server struct {
 	notificationMu                sync.Mutex
 	connectionAuditNotificationMu sync.Mutex
 	connectionAuditActionMu       sync.Mutex
+	connectionAuditCacheMu        sync.Mutex
+	connectionAuditCacheAt        time.Time
+	connectionAuditCacheCount     int
+	connectionAuditCacheValid     bool
+	connectionAuditComputing      bool
 	notificationWG                sync.WaitGroup
 	notificationSender            func(context.Context, model.NotificationChannel, string, string) error
 	certificateIssueMu            sync.Mutex
@@ -1163,6 +1168,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			changed = append(changed, settingRegistrationDefaultGroupID)
 		}
 		if len(changed) > 0 {
+			s.invalidateConnectionAuditCache()
 			auditReq(s, r, "update", "settings", strings.Join(changed, ","))
 		}
 		items, err := s.store.ListSettings(r.Context())
@@ -1827,18 +1833,11 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			var tasks []model.AgentTask
-			tasks, err = s.store.ListTasks(ctx, 300)
+			tasks, err = s.store.ListTaskTimeline(ctx, 300)
 			out["agent_tasks"] = sanitizeTasksForRole(tasks, role)
 		}
 		if err == nil {
-			var overview model.ConnectionAuditOverview
-			overview, err = s.store.ConnectionAuditOverview(ctx, 24, s.connectionAuditEnabled(ctx), s.auditPolicy(ctx))
-			if err == nil {
-				out["connection_audit"] = map[string]any{
-					"window_hours":        overview.WindowHours,
-					"elevated_risk_count": overview.ElevatedRiskCount,
-				}
-			}
+			out["connection_audit"], err = s.dashboardConnectionAudit(ctx)
 		}
 		if err == nil {
 			err = addSettings()
@@ -2084,17 +2083,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err == nil && roleAllows(role, model.RoleAdmin) {
 			err = addUsers()
 		}
-		if err == nil {
-			var connectionOverview model.ConnectionAuditOverview
-			var subscriptionOverview model.SubscriptionAuditOverview
-			var combinedOverview model.CombinedAuditOverview
-			connectionOverview, subscriptionOverview, combinedOverview, err = s.auditOverviewData(ctx, intQuery(r, "window_hours", 24))
-			if err == nil {
-				out["connection_audit"] = connectionOverview
-				out["subscription_audit"] = subscriptionOverview
-				out["audit_risk"] = combinedOverview
-			}
-		}
+
 	case "account":
 		if user := currentUser(r); user != nil {
 			out["account_user"] = selfUserResponse(ctx, s.store, *user, role)

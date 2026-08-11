@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"math"
 	"net/http"
 	"net/netip"
@@ -416,4 +417,50 @@ func (s *Server) resumeUserSubscriptionAccess(w http.ResponseWriter, r *http.Req
 	auditReq(s, r, "resume", "subscription-access", strconv.FormatInt(userID, 10))
 	user, _ := s.store.GetUser(r.Context(), userID)
 	write(w, http.StatusOK, map[string]any{"subscription_access": state, "user": user})
+}
+
+// dashboardConnectionAudit returns the elevated connection-audit risk count for
+// the dashboard. The full overview runs per-user risk evaluation and is
+// expensive, so the count is refreshed in the background with a short cache
+// window and the request path never blocks on it. When connection audit is
+// disabled the count is always zero and no risk evaluation runs.
+func (s *Server) dashboardConnectionAudit(ctx context.Context) (map[string]any, error) {
+	const windowHours = 24
+	if !s.connectionAuditEnabled(ctx) {
+		return map[string]any{"window_hours": windowHours, "elevated_risk_count": 0}, nil
+	}
+	now := time.Now()
+	s.connectionAuditCacheMu.Lock()
+	startBackground := false
+	if !(s.connectionAuditCacheValid && now.Sub(s.connectionAuditCacheAt) < 15*time.Second) && !s.connectionAuditComputing {
+		s.connectionAuditComputing = true
+		startBackground = true
+	}
+	count := s.connectionAuditCacheCount
+	s.connectionAuditCacheMu.Unlock()
+	if startBackground {
+		go func() {
+			overview, err := s.store.ConnectionAuditOverview(context.Background(), windowHours, true, s.auditPolicy(context.Background()))
+			if err != nil {
+				s.connectionAuditCacheMu.Lock()
+				s.connectionAuditComputing = false
+				s.connectionAuditCacheMu.Unlock()
+				log.Printf("dashboard connection audit refresh failed: %v", err)
+				return
+			}
+			s.connectionAuditCacheMu.Lock()
+			s.connectionAuditCacheAt = time.Now()
+			s.connectionAuditCacheCount = overview.ElevatedRiskCount
+			s.connectionAuditCacheValid = true
+			s.connectionAuditComputing = false
+			s.connectionAuditCacheMu.Unlock()
+		}()
+	}
+	return map[string]any{"window_hours": windowHours, "elevated_risk_count": count}, nil
+}
+
+func (s *Server) invalidateConnectionAuditCache() {
+	s.connectionAuditCacheMu.Lock()
+	defer s.connectionAuditCacheMu.Unlock()
+	s.connectionAuditCacheValid = false
 }

@@ -4870,6 +4870,38 @@ func (s *Store) ListTasks(ctx context.Context, limit int) ([]model.AgentTask, er
 	return scanTasks(rows)
 }
 
+// ListTaskTimeline returns a light projection of recent tasks for summary
+// surfaces such as the dashboard. Payload and result JSON are intentionally
+// omitted: those bodies dominate page-data responses, and detail surfaces
+// fetch full tasks through ListTasks or the per-task endpoint.
+func (s *Store) ListTaskTimeline(ctx context.Context, limit int) ([]model.AgentTask, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx, `select id,server_id,type,status,config_version,created_at,updated_at,completed_at from agent_tasks order by id desc limit ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.AgentTask{}
+	for rows.Next() {
+		var item model.AgentTask
+		var createdAt, updatedAt string
+		var completedAt sql.NullString
+		if err := rows.Scan(&item.ID, &item.ServerID, &item.Type, &item.Status, &item.ConfigVersion, &createdAt, &updatedAt, &completedAt); err != nil {
+			return nil, err
+		}
+		item.CreatedAt = parseTime(createdAt)
+		item.UpdatedAt = parseTime(updatedAt)
+		item.CompletedAt = parseNullTime(completedAt)
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *Store) LatestDeploymentTasks(ctx context.Context) ([]model.AgentTask, error) {
 	var version sql.NullInt64
 	if err := s.db.QueryRowContext(ctx, `select max(config_version) from agent_tasks where config_version > 0 and type = ?`, model.AgentTaskTypeApplyDeployment).Scan(&version); err != nil {
