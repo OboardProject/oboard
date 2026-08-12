@@ -99,6 +99,7 @@ import egernClientIcon from './assets/subscription-clients/egern.jpg'
 import v2rayNClientIcon from './assets/subscription-clients/v2rayn.png'
 import clashClassicClientIcon from './assets/subscription-clients/clash-classic.png'
 import { PageDataRequestCoordinator } from './page-data'
+import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
 import { useRealtimeEvents, type RealtimeEvent, type RealtimeStatus } from './realtime'
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { getServerTimeIssue } from './server-time'
@@ -800,6 +801,14 @@ const preloadTabsByRole: Record<Role, string[]> = {
   admin: ['servers', 'proxy-paths', 'users', 'plans', 'nodes', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
 }
 
+// PAGE_CACHE_FRESH_TTL_MS: switching back inside this window issues no
+// page-data request at all. Realtime invalidation always overrides the TTL.
+const PAGE_CACHE_FRESH_TTL_MS = 12_000
+
+// MAX_PREFETCH_CONCURRENCY bounds simultaneous background page-data requests
+// so a heavy warm-up queue never starves foreground navigation.
+const MAX_PREFETCH_CONCURRENCY = 2
+
 const realtimeResourcePages: Record<string, string[]> = {
 	user_overview: ['dashboard'],
   account: ['account'],
@@ -1446,9 +1455,10 @@ function App() {
   const pageRequestsRef = useRef(new PageDataRequestCoordinator<any>())
   // Per-tab page-data cache so tab switches can crossfade into last-known content
   // instead of blanking the stage while the network request is in flight.
-  const pageCacheRef = useRef<Record<string, any>>({})
+  type PageCacheEntry = { data: any; fetchedAt: number }
+  const pageCacheRef = useRef<Record<string, PageCacheEntry>>({})
   const dirtyPagesRef = useRef(new Set<string>())
-  const preloadedTabsRef = useRef(new Set<string>())
+  const prefetchSchedulerRef = useRef<PagePrefetchScheduler | null>(null)
   const realtimeRefreshTimerRef = useRef<number | undefined>(undefined)
   const realtimeVisibleRefreshPendingRef = useRef(false)
   const [realtimeRevision, setRealtimeRevision] = useState(0)
@@ -1467,7 +1477,7 @@ function App() {
     pageCacheRef.current = {}
     pageRequestsRef.current.reset()
     dirtyPagesRef.current.clear()
-    preloadedTabsRef.current.clear()
+    prefetchSchedulerRef.current?.clear()
     showToast(setToast, '登录已过期，请重新登录')
     return true
   }), [token])
@@ -1580,8 +1590,42 @@ function App() {
     pageRequestsRef.current.invalidateActive()
   }
 
-  const requestPageData = (page: string, forceFresh = false) => {
-    return pageRequestsRef.current.request(page, () => client.request(`/page-data?page=${encodeURIComponent(page)}`), forceFresh)
+  const requestPageData = (page: string, forceFresh = false, priority: 'foreground' | 'prefetch' | 'background' = 'background') => {
+    return pageRequestsRef.current.request(page, signal => client.request(`/page-data?page=${encodeURIComponent(page)}`, signal ? { signal } : {}), { forceFresh, priority })
+  }
+
+  const cachePageData = (page: string, data: any) => {
+    pageCacheRef.current[page] = { data: { ...data, load_errors: [] as string[] }, fetchedAt: Date.now() }
+  }
+
+  // warmPage fetches a page in the background and stores it in the per-tab
+  // cache. It never surfaces errors: foreground navigation retries and shows
+  // them when needed, and aborted preloads are expected.
+  const warmPage = async (page: string) => {
+    try {
+      const response = await requestPageData(page, false, 'prefetch')
+      if (!pageRequestsRef.current.isCurrent(page, response)) return
+      if (dirtyPagesRef.current.has(page)) return
+      cachePageData(page, response.data)
+    } catch (e: any) {
+      if (e?.name === 'AbortError' || e instanceof SupersededAuthRequestError) return
+    }
+  }
+
+  // preloadIntent promotes or enqueues a page at HIGH priority when the user
+  // shows explicit navigation intent (hover/focus on a menu entry).
+  const preloadIntent = (page: string) => {
+    const scheduler = prefetchSchedulerRef.current
+    if (!scheduler || page === tab || page === 'automation') return
+    if (pageRequestsRef.current.pending(page)) {
+      scheduler.promote(page)
+      return
+    }
+    const entry = pageCacheRef.current[page]
+    if (entry && Date.now() - entry.fetchedAt < PAGE_CACHE_FRESH_TTL_MS) return
+    if (!scheduler.isEnabled) return
+    scheduler.enqueue(page, 'high', () => warmPage(page))
+    scheduler.pump()
   }
 
   const load: PageLoad = async (targetTab, opts) => {
@@ -1600,7 +1644,7 @@ function App() {
     // Background revalidation must not flash skeletons during a crossfade.
     if (!background) setLoading(true)
     try {
-      const response = await requestPageData(page, Boolean(opts?.forceFresh))
+      const response = await requestPageData(page, Boolean(opts?.forceFresh), background ? 'background' : 'foreground')
       if (!pageRequestsRef.current.isCurrent(page, response)) return
       const next = response.data
       if (requestToken !== activeTokenRef.current) return
@@ -1613,11 +1657,12 @@ function App() {
       const merged = { ...next, load_errors: [] as string[] }
       // Always warm the per-tab cache, even if the user has already navigated away.
       // That way a quick A→B→A return crossfades into fresh content without a blank stage.
-      pageCacheRef.current[page] = merged
+      pageCacheRef.current[page] = { data: merged, fetchedAt: Date.now() }
       if (seq !== loadSeq.current) return
       setData((old: any) => ({ ...old, ...merged }))
     } catch (e: any) {
       if (e instanceof SupersededAuthRequestError) return
+      if (e?.name === 'AbortError') return
       if (seq !== loadSeq.current) return
       const message = localizeErrorMessage(e?.message || e)
       setData((old: any) => ({ ...old, load_errors: [`${tabMeta[page]?.label || page}: ${message}`] }))
@@ -1628,6 +1673,7 @@ function App() {
       if (seq === loadSeq.current) {
         setLoading(false)
         setShowPortalLoader(false)
+        prefetchSchedulerRef.current?.resumeIdle()
       }
       if (page === activeTabRef.current && dirtyPagesRef.current.has(page)) scheduleRealtimePageRefresh(page)
     }
@@ -1670,7 +1716,7 @@ function App() {
     if (!pages.size) return
     pages.forEach(page => {
       dirtyPagesRef.current.add(page)
-      preloadedTabsRef.current.delete(page)
+      prefetchSchedulerRef.current?.remove(page)
     })
     if (!pages.has(tab)) return
     setRealtimeResources(resync ? ['all'] : event.resources || [])
@@ -1694,63 +1740,58 @@ function App() {
     if (realtimeRefreshTimerRef.current !== undefined) window.clearTimeout(realtimeRefreshTimerRef.current)
   }, [])
 
+  // Stable prefetch scheduler: created once per login/role instead of once per
+  // tab switch, so changing pages never tears down the warm-up pipeline. The
+  // active tab and cache freshness are re-checked at dequeue time.
   useEffect(() => {
     if (!token || !sessionUser || showPortalLoader) return
-    const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection
-    if (connection?.saveData || connection?.effectiveType === 'slow-2g' || connection?.effectiveType === '2g') return
-
-    const pages = preloadTabsByRole[sessionUser.role].filter(page => page !== tab && page !== 'automation' && !pageCacheRef.current[page] && !preloadedTabsRef.current.has(page))
-    if (!pages.length) return
-
-    let cancelled = false
-    const requestToken = token
-    const warmCache = async () => {
-      // Fetch every preload page in parallel so a slow backend cannot serialize
-      // the whole warm-up behind one request; page switches then find their
-      // payload already cached.
-      await Promise.allSettled(pages.map(async page => {
-        if (cancelled || requestToken !== activeTokenRef.current) return
-        preloadedTabsRef.current.add(page)
-        try {
-          const response = await requestPageData(page)
-          if (cancelled || requestToken !== activeTokenRef.current) return
-          if (!pageRequestsRef.current.isCurrent(page, response)) return
-          if (dirtyPagesRef.current.has(page)) {
-            preloadedTabsRef.current.delete(page)
-            return
-          }
-          const next = response.data
-          pageCacheRef.current[page] = { ...next, load_errors: [] as string[] }
-        } catch {
-          // Foreground navigation will retry and surface errors when needed.
-        }
-      }))
+    const guard = (page: string) => {
+      if (page === activeTabRef.current) return true
+      if (page === 'automation') return true
+      if (dirtyPagesRef.current.has(page)) return true
+      const entry = pageCacheRef.current[page]
+      if (entry && Date.now() - entry.fetchedAt < PAGE_CACHE_FRESH_TTL_MS) return true
+      if (pageRequestsRef.current.priority(page) === 'foreground') return true
+      return false
     }
-    const start = () => { void warmCache() }
+    const scheduler = new PagePrefetchScheduler(guard, { maxConcurrency: MAX_PREFETCH_CONCURRENCY })
+    prefetchSchedulerRef.current = scheduler
+    const pages = preloadTabsByRole[sessionUser.role].filter(page => page !== 'automation' && page !== tab)
+    pages.forEach(page => {
+      if (pageCacheRef.current[page]) return
+      scheduler.enqueue(page, 'idle', () => warmPage(page))
+    })
     const idleWindow = window as unknown as {
       requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number
       cancelIdleCallback?: (handle: number) => void
     }
+    const start = () => { scheduler.pump() }
     const idleHandle = idleWindow.requestIdleCallback
       ? idleWindow.requestIdleCallback(start, { timeout: 1500 })
       : window.setTimeout(start, 600)
-
     return () => {
-      cancelled = true
       if (idleWindow.cancelIdleCallback && idleWindow.requestIdleCallback) idleWindow.cancelIdleCallback(idleHandle)
       else window.clearTimeout(idleHandle)
+      scheduler.clear()
+      prefetchSchedulerRef.current = null
     }
-  }, [token, sessionUser?.role, showPortalLoader, tab])
+  }, [token, sessionUser?.role, showPortalLoader])
 
   useEffect(() => {
     if (!token) return
-    const cached = pageCacheRef.current[tab]
-    if (cached) {
-      // Instant paint from cache, then silent revalidate.
-      setData((old: any) => ({ ...old, ...cached, load_errors: [] }))
+    const entry = pageCacheRef.current[tab]
+    if (entry) {
+      // Instant paint from cache, then revalidate only when the realtime
+      // channel marked the page dirty or the cache is older than the fresh
+      // TTL; a quick A→B→A switch inside the TTL issues no request at all.
+      setData((old: any) => ({ ...old, ...entry.data, load_errors: [] }))
       setLoading(false)
-      const forceFresh = dirtyPagesRef.current.delete(tab)
-      void load(tab, { background: true, forceFresh })
+      const dirty = dirtyPagesRef.current.delete(tab)
+      if (dirty) {
+        void load(tab, { background: true, forceFresh: true })
+      } else if (Date.now() - entry.fetchedAt >= PAGE_CACHE_FRESH_TTL_MS) {
+        void load(tab, { background: true })
+      }
       return
     }
     const forceFresh = dirtyPagesRef.current.delete(tab)
@@ -1796,7 +1837,7 @@ function App() {
       if (next === tab) return
       const cached = pageCacheRef.current[next]
       if (cached) {
-        setData((old: any) => ({ ...old, ...cached, load_errors: [] }))
+        setData((old: any) => ({ ...old, ...cached.data, load_errors: [] }))
         setLoading(false)
       } else {
         setData((old: any) => ({
@@ -1822,12 +1863,16 @@ function App() {
       setIsSidebarOpen(false)
       return
     }
+    // Foreground navigation wins over background prefetch: no new low-priority
+    // preloads start until the entered page has settled.
+    prefetchSchedulerRef.current?.pauseIdle()
     // Seed the visible data from cache before React commits the new tab, so the
     // entering MotionPage paints with content rather than an empty shell.
     const cached = pageCacheRef.current[next]
     if (cached) {
-      setData((old: any) => ({ ...old, ...cached, load_errors: [] }))
+      setData((old: any) => ({ ...old, ...cached.data, load_errors: [] }))
       setLoading(false)
+      prefetchSchedulerRef.current?.resumeIdle()
     } else {
       // Keep shared chrome (version/settings/current_user) but drop list payloads
       // so the entering page does not briefly render the previous tab's rows.
@@ -1877,7 +1922,7 @@ function App() {
       pageCacheRef.current = {}
       pageRequestsRef.current.reset()
       dirtyPagesRef.current.clear()
-      preloadedTabsRef.current.clear()
+      prefetchSchedulerRef.current?.clear()
       setIsSidebarOpen(false)
     }
   }
@@ -1895,7 +1940,7 @@ function App() {
     pageCacheRef.current = {}
     pageRequestsRef.current.reset()
     dirtyPagesRef.current.clear()
-    preloadedTabsRef.current.clear()
+    prefetchSchedulerRef.current?.clear()
     setToast(null)
     setShowPortalLoader(true)
     setToken(v)
@@ -1903,7 +1948,8 @@ function App() {
 
   const rememberDeploymentStatus = (status: any) => {
     Object.keys(pageCacheRef.current).forEach(page => {
-      pageCacheRef.current[page] = { ...pageCacheRef.current[page], deployment_status: status }
+      const entry = pageCacheRef.current[page]
+      pageCacheRef.current[page] = { data: { ...entry.data, deployment_status: status }, fetchedAt: entry.fetchedAt }
     })
   }
 
@@ -2074,6 +2120,8 @@ function App() {
                 {group.tabs.map(x => <button
                   className={tab === x ? 'nav-item active' : 'nav-item'}
                   onClick={() => navigateTab(x)}
+                  onPointerEnter={() => preloadIntent(x)}
+                  onFocus={() => preloadIntent(x)}
                   key={x}
                   title={!isMobile && isSidebarCollapsed ? tabMeta[x]?.label || x : undefined}
                   aria-label={!isMobile && isSidebarCollapsed ? tabMeta[x]?.label || x : undefined}
@@ -9998,7 +10046,7 @@ function proxyPathNameReferenceLabel(part: ProxyPathNamePart, data: any) {
 function proxyPathNamePartKey(part: ProxyPathNamePart) {
   if (part.kind === 'server') return `server-${part.server_id}`
   if (part.kind === 'external_outbound') return `external-${part.external_outbound_id}`
-  return `literal-${part.value}`
+  return 'literal'
 }
 
 
