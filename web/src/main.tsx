@@ -6111,6 +6111,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
   const onlineServers = summary.servers_online ?? summary.online_agents ?? summary.online_servers ?? servers.filter((s: any) => s.status === 'online').length ?? 0
   const offlineServers = Math.max(0, Number(totalServers) - Number(onlineServers))
   const auditOverview = data.connection_audit || {}
+  const auditCalculating = auditOverview.ready === false
   const elevatedRiskCount = Number(auditOverview.elevated_risk_count || 0)
   const auditWindowHours = Number(auditOverview.window_hours || 24)
   const activeUsers = summary.users_active ?? summary.users_total ?? (data.users || []).length ?? 0
@@ -6184,8 +6185,8 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
             <span>高风险事件</span>
             <Shield size={16} />
           </div>
-          <strong>{elevatedRiskCount}</strong>
-          <small>{elevatedRiskCount === 0 ? `最近 ${auditWindowHours} 小时暂无高风险` : `最近 ${auditWindowHours} 小时 · 高风险与严重`}</small>
+          <strong>{auditCalculating ? '—' : elevatedRiskCount}</strong>
+          <small>{auditCalculating ? '风险统计计算中' : elevatedRiskCount === 0 ? `最近 ${auditWindowHours} 小时暂无高风险` : `最近 ${auditWindowHours} 小时 · 高风险与严重`}</small>
         </div>
         <div className="stat-cell">
           <div className="stat-cell-head">

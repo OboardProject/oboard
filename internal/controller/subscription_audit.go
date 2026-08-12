@@ -421,9 +421,13 @@ func (s *Server) resumeUserSubscriptionAccess(w http.ResponseWriter, r *http.Req
 
 // dashboardConnectionAudit returns the elevated connection-audit risk count for
 // the dashboard. The full overview runs per-user risk evaluation and is
-// expensive, so the count is refreshed in the background with a short cache
-// window and the request path never blocks on it. When connection audit is
-// disabled the count is always zero and no risk evaluation runs.
+// expensive, so the count is served from a short stale-while-revalidate cache:
+// a fresh value returns immediately, a stale value returns instantly with a
+// `stale` flag, and a cold Controller never blocks the first dashboard request.
+// A single background refresh (single-flight, bounded by its own timeout
+// context) repopulates the cache, and the realtime bus notifies the UI when the
+// count changes so the badge revalidates without polling. When connection
+// audit is disabled the count is always zero and no risk evaluation runs.
 func (s *Server) dashboardConnectionAudit(ctx context.Context) (map[string]any, error) {
 	const windowHours = 24
 	if !s.connectionAuditEnabled(ctx) {
@@ -432,31 +436,64 @@ func (s *Server) dashboardConnectionAudit(ctx context.Context) (map[string]any, 
 	now := time.Now()
 	s.connectionAuditCacheMu.Lock()
 	startBackground := false
-	if !(s.connectionAuditCacheValid && now.Sub(s.connectionAuditCacheAt) < 15*time.Second) && !s.connectionAuditComputing {
+	stale := true
+	ready := s.connectionAuditCacheValid
+	if ready && now.Sub(s.connectionAuditCacheAt) < dashboardAuditCacheTTL {
+		stale = false
+	}
+	if stale && !s.connectionAuditComputing {
 		s.connectionAuditComputing = true
 		startBackground = true
 	}
 	count := s.connectionAuditCacheCount
 	s.connectionAuditCacheMu.Unlock()
 	if startBackground {
-		go func() {
-			overview, err := s.store.ConnectionAuditOverview(context.Background(), windowHours, true, s.auditPolicy(context.Background()))
-			if err != nil {
-				s.connectionAuditCacheMu.Lock()
-				s.connectionAuditComputing = false
-				s.connectionAuditCacheMu.Unlock()
-				log.Printf("dashboard connection audit refresh failed: %v", err)
-				return
-			}
-			s.connectionAuditCacheMu.Lock()
-			s.connectionAuditCacheAt = time.Now()
-			s.connectionAuditCacheCount = overview.ElevatedRiskCount
-			s.connectionAuditCacheValid = true
-			s.connectionAuditComputing = false
-			s.connectionAuditCacheMu.Unlock()
-		}()
+		go s.refreshDashboardConnectionAudit()
 	}
-	return map[string]any{"window_hours": windowHours, "elevated_risk_count": count}, nil
+	out := map[string]any{"window_hours": windowHours, "elevated_risk_count": count}
+	if !ready {
+		out["ready"] = false
+	}
+	if stale {
+		out["stale"] = true
+	}
+	return out, nil
+}
+
+// dashboardAuditCacheTTL is how long a computed dashboard risk count is served
+// before the next request revalidates it in the background.
+const dashboardAuditCacheTTL = 45 * time.Second
+
+// dashboardAuditRefreshTimeout bounds one background overview run so the
+// goroutine cannot outlive a Controller shutdown by more than a refresh.
+const dashboardAuditRefreshTimeout = 12 * time.Second
+
+// refreshDashboardConnectionAudit recomputes the cached elevated risk count in
+// the background. It never uses an HTTP request context, is single-flight
+// through connectionAuditComputing, keeps the previous value on failure, and
+// publishes a realtime audit invalidation only when the count actually moved.
+func (s *Server) refreshDashboardConnectionAudit() {
+	const windowHours = 24
+	ctx, cancel := context.WithTimeout(context.Background(), dashboardAuditRefreshTimeout)
+	defer cancel()
+	overview, err := s.store.ConnectionAuditOverview(ctx, windowHours, true, s.auditPolicy(ctx))
+	if err != nil {
+		s.connectionAuditCacheMu.Lock()
+		s.connectionAuditComputing = false
+		s.connectionAuditCacheMu.Unlock()
+		log.Printf("dashboard connection audit refresh failed: %v", err)
+		return
+	}
+	s.connectionAuditCacheMu.Lock()
+	changed := !s.connectionAuditCacheValid || s.connectionAuditCacheCount != overview.ElevatedRiskCount
+	s.connectionAuditCacheAt = time.Now()
+	s.connectionAuditCacheCount = overview.ElevatedRiskCount
+	s.connectionAuditCacheValid = true
+	s.connectionAuditComputing = false
+	s.connectionAuditCacheMu.Unlock()
+	if changed {
+		s.publishRealtime("audit")
+	}
 }
 
 func (s *Server) invalidateConnectionAuditCache() {
