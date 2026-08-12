@@ -11736,8 +11736,8 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   })
   const directPaths = visiblePaths.filter(path => {
     if (path.kind !== 'direct') return false
-    if (!path.branch_source_step_id) return false
-    return Boolean(stepByID.get(path.branch_source_step_id))
+    if (path.branch_source_step_id) return Boolean(stepByID.get(path.branch_source_step_id))
+    return Boolean(inboundByID.get(path.inbound_id))
   })
   directPaths.forEach((path, index) => {
     const root = inboundByID.get(path.inbound_id)
