@@ -1890,7 +1890,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = timing.run("task_timeline", func() error {
 				var tasks []model.AgentTask
-				tasks, err = s.store.ListTaskTimeline(ctx, 300)
+				tasks, err = s.store.ListDashboardTaskTimeline(ctx, 6)
 				out["agent_tasks"] = sanitizeTasksForRole(tasks, role)
 				return err
 			})

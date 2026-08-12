@@ -16264,7 +16264,8 @@ button.ui-btn-ghost:hover {
 
 /* Node Catalog Table Customization */
 .node-catalog-table {
-  table-layout: auto !important;
+  table-layout: fixed !important;
+  width: 100%;
 }
 
 .node-catalog-table th,
@@ -16275,8 +16276,6 @@ button.ui-btn-ghost:hover {
 .node-catalog-table td.node-name-cell {
   white-space: normal !important;
   word-break: break-word !important;
-  min-width: 220px;
-  max-width: 440px;
 }
 /* Node catalog naming, order templates, and plan presentation. */
 .node-name-summary,

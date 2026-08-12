@@ -386,6 +386,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists access_changes (id integer primary key autoincrement, change_type text not null, source_plan_id integer references subscription_plans(id) on delete cascade, candidate_revision_id integer not null default 0, expected_active_revision_id integer not null default 0, status text not null default 'preparing', preview_hash text not null default '', affected_user_count integer not null default 0, activate_at text, payload_json text not null default '{}', prepare_projection_json text not null default '{}', finalize_projection_json text not null default '{}', error text not null default '', created_by integer references users(id) on delete set null, created_at text not null, activated_at text, finalized_at text, failed_at text, updated_at text not null)`,
 		`create table if not exists access_change_targets (access_change_id integer not null references access_changes(id) on delete cascade, server_id integer not null references servers(id) on delete cascade, prepare_task_id integer not null default 0, finalize_task_id integer not null default 0, status text not null default 'pending', error text not null default '', updated_at text not null, primary key(access_change_id, server_id))`,
 		`create index if not exists idx_tasks_server_status on agent_tasks(server_id, status)`,
+		`create index if not exists idx_tasks_status_updated on agent_tasks(status, updated_at)`,
+		`create index if not exists idx_tasks_config_version on agent_tasks(config_version desc)`,
 		`create index if not exists idx_controller_backups_created on controller_backups(created_at desc)`,
 		`create index if not exists idx_traffic_server on traffic_stats(server_id, created_at)`,
 		`create index if not exists idx_traffic_reports_user_period on traffic_reports(user_id, period_key)`,
@@ -395,6 +397,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_connection_audit_source_time on connection_audit_reports(source_ip, ended_at desc)`,
 		`create index if not exists idx_connection_audit_time on connection_audit_reports(ended_at desc)`,
 		`create index if not exists idx_traffic_periods_user on traffic_periods(user_id, period_key)`,
+		`create index if not exists idx_traffic_periods_user_started on traffic_periods(user_id, started_at desc)`,
 		`create index if not exists idx_traffic_period_transitions_target on traffic_period_transitions(user_id,target_period_key)`,
 		`create index if not exists idx_traffic_leases_server on traffic_leases(server_id, period_key)`,
 		`create index if not exists idx_server_metric_samples_server_time on server_metric_samples(server_id, sampled_at desc)`,
@@ -4940,7 +4943,55 @@ func (s *Store) ListTaskTimeline(ctx context.Context, limit int) ([]model.AgentT
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	rows, err := s.db.QueryContext(ctx, `select id,server_id,type,status,config_version,created_at,updated_at,completed_at from agent_tasks order by id desc limit ?`, limit)
+	return s.listTaskTimelinePage(ctx, 0, limit)
+}
+
+// dashboardTimelineChunkSize and dashboardTimelineMaxRows bound the adaptive
+// fetch used by ListDashboardTaskTimeline: pages of newest tasks by id are
+// grouped until the most recent groupLimit timeline groups converge, capped so
+// a pathological history cannot balloon a page load.
+const (
+	dashboardTimelineChunkSize = 100
+	dashboardTimelineMaxRows   = 600
+)
+
+// ListDashboardTaskTimeline returns the newest tasks needed to form the
+// groupLimit most recent dashboard timeline groups. It mirrors the grouping
+// semantics of web/src/task-groups.ts (config-version deployment bundles,
+// batchable types bucketed by two-minute creation windows, single tasks) so
+// the dashboard can render its recent activity from a small row set instead of
+// the full 300-task timeline. A deployment spanning many servers is never
+// truncated to one task: the group only forms once every member task has been
+// read.
+func (s *Store) ListDashboardTaskTimeline(ctx context.Context, groupLimit int) ([]model.AgentTask, error) {
+	if groupLimit <= 0 {
+		groupLimit = 6
+	}
+	seen := []model.AgentTask{}
+	var previousTop []string
+	for offset := 0; offset < dashboardTimelineMaxRows; offset += dashboardTimelineChunkSize {
+		rows, err := s.listTaskTimelinePage(ctx, offset, dashboardTimelineChunkSize)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) == 0 {
+			break
+		}
+		seen = append(seen, rows...)
+		top := timelineGroupKeys(seen, groupLimit)
+		if len(top) == groupLimit && len(previousTop) == groupLimit && stringSlicesEqual(top, previousTop) {
+			// The top groups did not change after one more chunk of older
+			// tasks; older rows can only add members to already-formed groups
+			// and cannot reorder or replace the headline groups.
+			break
+		}
+		previousTop = top
+	}
+	return seen, nil
+}
+
+func (s *Store) listTaskTimelinePage(ctx context.Context, offset, limit int) ([]model.AgentTask, error) {
+	rows, err := s.db.QueryContext(ctx, `select id,server_id,type,status,config_version,created_at,updated_at,completed_at from agent_tasks order by id desc limit ? offset ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -4962,6 +5013,18 @@ func (s *Store) ListTaskTimeline(ctx context.Context, limit int) ([]model.AgentT
 		return nil, err
 	}
 	return out, nil
+}
+
+func stringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Store) LatestDeploymentTasks(ctx context.Context) ([]model.AgentTask, error) {
@@ -5620,20 +5683,24 @@ func (s *Store) Dashboard(ctx context.Context) (model.DashboardSummary, error) {
 		query string
 		dest  []any
 	}{
-		{`select count(*) from servers`, []any{&d.ServersTotal}},
-		{`select count(*) from servers where status='online'`, []any{&d.ServersOnline}},
-		{`select count(*) from servers where status='offline'`, []any{&d.ServersOffline}},
-		{`select count(*) from servers where status='degraded'`, []any{&d.ServersDegraded}},
-		{`select count(*) from users`, []any{&d.UsersTotal}},
-		{`select count(*) from users where status='active'`, []any{&d.UsersActive}},
+		{`select count(*),
+			coalesce(sum(case when status='online' then 1 else 0 end),0),
+			coalesce(sum(case when status='offline' then 1 else 0 end),0),
+			coalesce(sum(case when status='degraded' then 1 else 0 end),0)
+			from servers`, []any{&d.ServersTotal, &d.ServersOnline, &d.ServersOffline, &d.ServersDegraded}},
+		{`select count(*),
+			coalesce(sum(case when status='active' then 1 else 0 end),0)
+			from users`, []any{&d.UsersTotal, &d.UsersActive}},
 		{`select coalesce(sum(p.upload_bytes),0),coalesce(sum(p.download_bytes),0)
 			from traffic_periods p
 			join (select user_id,max(started_at) as started_at from traffic_periods group by user_id) latest
 			  on latest.user_id=p.user_id and latest.started_at=p.started_at`, []any{&d.TrafficUpload, &d.TrafficDownload}},
-		{`select count(*) from agent_tasks where status='pending'`, []any{&d.PendingTasks}},
-		{`select count(*) from agent_tasks where status='running'`, []any{&d.RunningTasks}},
-		{`select count(*) from agent_tasks where status in ('failed','rollback_failed')`, []any{&d.FailedTasks}},
-		{`select coalesce(max(config_version),0) from agent_tasks`, []any{&d.LastConfigVersion}},
+		{`select
+			coalesce(sum(case when status='pending' then 1 else 0 end),0),
+			coalesce(sum(case when status='running' then 1 else 0 end),0),
+			coalesce(sum(case when status in ('failed','rollback_failed') then 1 else 0 end),0),
+			coalesce(max(config_version),0)
+			from agent_tasks`, []any{&d.PendingTasks, &d.RunningTasks, &d.FailedTasks, &d.LastConfigVersion}},
 	}
 	for _, item := range queries {
 		if err := s.db.QueryRowContext(ctx, item.query).Scan(item.dest...); err != nil {

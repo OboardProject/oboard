@@ -332,10 +332,10 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
         {error && <p style={{ color: 'var(--color-danger)' }}>{error}</p>}
 
         <div className="card-custom" style={{ marginTop: 12, overflow: 'auto' }}>
-          <table className="user-data-table node-catalog-table" style={{ minWidth: 920, tableLayout: 'fixed' }}>
+          <table className="user-data-table node-catalog-table" style={{ minWidth: 980, tableLayout: 'fixed' }}>
             <colgroup>
-              <col style={{ width: 38 }} />
-              <col style={{ width: showType ? '18%' : '20%' }} />
+              <col style={{ width: 44 }} />
+              <col style={{ width: showType ? '17%' : '19%' }} />
               {showType && <col style={{ width: '8%' }} />}
               <col style={{ width: showType ? '11%' : '12%' }} />
               <col style={{ width: showType ? '9%' : '10%' }} />
@@ -343,11 +343,11 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
               <col style={{ width: showType ? '21%' : '23%' }} />
               <col style={{ width: showType ? '7%' : '8%' }} />
               <col style={{ width: showType ? '8%' : '8%' }} />
-              <col style={{ width: showType ? '10%' : '10%' }} />
+              <col style={{ width: showType ? '11%' : '11%' }} />
             </colgroup>
             <thead>
               <tr>
-                <th style={{ width: 32 }}><input type="checkbox" checked={nodes.length > 0 && selectedCount === nodes.length} onChange={e => toggleAll(e.target.checked)} aria-label="全选本页" /></th>
+                <th style={{ width: 44 }}><input type="checkbox" checked={nodes.length > 0 && selectedCount === nodes.length} onChange={e => toggleAll(e.target.checked)} aria-label="全选本页" /></th>
                 <th>节点</th>
                 {showType && <th>类型</th>}
                 <th>所属服务器</th>
