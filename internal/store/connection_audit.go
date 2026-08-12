@@ -219,6 +219,14 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 	if err != nil {
 		return overview, err
 	}
+	userIDs := make([]int64, 0, len(overview.Users))
+	for index := range overview.Users {
+		userIDs = append(userIDs, overview.Users[index].UserID)
+	}
+	batch, err := s.loadConnectionAuditOverviewBatch(ctx, userIDs, nowTime.Add(-time.Duration(windowHours)*time.Hour), nowTime)
+	if err != nil {
+		return overview, err
+	}
 	for index := range overview.Users {
 		item := &overview.Users[index]
 		presence := presenceByUser[item.UserID]
@@ -230,36 +238,7 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 		}
 		item.SourceSubnetCount = len(subnetsByUser[item.UserID])
 		item.SharedSourceIPCount = len(sharedIPsByUser[item.UserID])
-		selectedReports, loadErr := s.listConnectionAuditReportsForRisk(ctx, item.UserID, nowTime.Add(-time.Duration(windowHours)*time.Hour), 50000)
-		if loadErr != nil {
-			return overview, loadErr
-		}
-		item.SourceRegionCount = connectionAuditDistinctCountries(selectedReports)
-		episodes, loadErr := s.listConnectionProbeEpisodes(ctx, item.UserID, nowTime.Add(-time.Duration(windowHours)*time.Hour), 200)
-		if loadErr != nil {
-			return overview, loadErr
-		}
-		events := buildConnectionAuditRiskEvents(selectedReports, policy, sharedRoutes)
-		var strongest *model.ConnectionAuditRiskEvent
-		for eventIndex := range events {
-			event := &events[eventIndex]
-			if strongest == nil || strongerConnectionAuditRiskEvent(*event, *strongest) {
-				strongest = event
-			}
-		}
-		if strongest != nil {
-			item.RiskSourceIPCount = strongest.SourceIPCount
-			item.RiskRegionCount = strongest.RegionCount
-			item.RiskRegions = append([]string(nil), strongest.Regions...)
-			startedAt, endedAt := strongest.StartedAt, strongest.EndedAt
-			item.RiskWindowStartedAt = &startedAt
-			item.RiskWindowEndedAt = &endedAt
-		}
-		robustZ, loadErr := s.connectionAuditRobustZ(ctx, item.UserID, nowTime)
-		if loadErr != nil {
-			return overview, loadErr
-		}
-		evaluateConnectionAuditRisk(item, selectedReports, robustZ, presence, episodes, policy, strongest, sharedRoutes, nowTime)
+		evaluateConnectionAuditUser(item, batch.reportsByUser[item.UserID], batch.episodesByUser[item.UserID], batch.robustZByUser[item.UserID], presence, policy, sharedRoutes, nowTime)
 		overview.TotalConnections += item.ConnectionCount
 		if item.RiskScore >= 55 {
 			overview.ElevatedRiskCount++
@@ -274,6 +253,31 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 		return overview.Users[i].LastSeenAt.After(overview.Users[j].LastSeenAt)
 	})
 	return overview, nil
+}
+
+// evaluateConnectionAuditUser computes every derived risk field for one user
+// from its already-loaded inputs. It is the single per-user evaluation shared
+// by the batched overview driver and the parity reference implementation, so
+// batching queries can never drift from the per-user algorithm.
+func evaluateConnectionAuditUser(item *model.ConnectionAuditUserSummary, selectedReports []model.ConnectionAuditReport, episodes []model.ConnectionProbeEpisode, robustZ float64, presence []model.ConnectionPresenceEvent, policy model.AuditPolicy, sharedRoutes map[string]int, at time.Time) {
+	item.SourceRegionCount = connectionAuditDistinctCountries(selectedReports)
+	events := buildConnectionAuditRiskEvents(selectedReports, policy, sharedRoutes)
+	var strongest *model.ConnectionAuditRiskEvent
+	for eventIndex := range events {
+		event := &events[eventIndex]
+		if strongest == nil || strongerConnectionAuditRiskEvent(*event, *strongest) {
+			strongest = event
+		}
+	}
+	if strongest != nil {
+		item.RiskSourceIPCount = strongest.SourceIPCount
+		item.RiskRegionCount = strongest.RegionCount
+		item.RiskRegions = append([]string(nil), strongest.Regions...)
+		startedAt, endedAt := strongest.StartedAt, strongest.EndedAt
+		item.RiskWindowStartedAt = &startedAt
+		item.RiskWindowEndedAt = &endedAt
+	}
+	evaluateConnectionAuditRisk(item, selectedReports, robustZ, presence, episodes, policy, strongest, sharedRoutes, at)
 }
 
 func (s *Store) ConnectionAuditUserDetail(ctx context.Context, userID int64, windowHours int, policy model.AuditPolicy) (model.ConnectionAuditUserDetail, error) {
@@ -486,42 +490,52 @@ func (s *Store) listConnectionAuditsByTime(ctx context.Context, userID int64, ti
 	defer rows.Close()
 	out := []model.ConnectionAuditReport{}
 	for rows.Next() {
-		var item model.ConnectionAuditReport
-		var inboundID, pathID sql.NullInt64
-		var collectionStartedAt, collectionEndedAt, startedAt, endedAt, createdAt string
-		var payloadFirstAt, payloadLastAt sql.NullString
-		var internalProbe int
-		if err := rows.Scan(
-			&item.ReportID, &item.ServerID, &item.UserID, &inboundID, &pathID, &item.DeviceIDHash, &item.CredentialEpoch, &item.ClientInstanceIDHash,
-			&item.SourceIP, &item.RouteID, &item.SourceGeoCode, &item.SourceCountryCode, &item.SourceCountry, &item.SourceProvince, &item.SourceCity, &item.SourceISP, &item.GeoDatabaseRevision,
-			&item.Network, &item.Destination, &item.DestinationPort, &item.OutboundTag, &item.OutboundType, &item.ConnectionCount, &item.ClosedCount, &item.DurationTotalMS, &item.DurationMaxMS,
-			&item.UploadBytes, &item.DownloadBytes, &payloadFirstAt, &payloadLastAt, &item.DurationLE1SCount, &item.DurationLE5SCount, &item.DurationLE20SCount, &item.DurationGT20SCount,
-			&item.ProbeState, &internalProbe, &item.PresenceSequence, &item.ActivePeak, &item.ActiveAtEnd, &item.CollectionGeneration, &item.BucketCapacity, &item.DroppedBucketCount,
-			&collectionStartedAt, &collectionEndedAt, &startedAt, &endedAt, &createdAt,
-		); err != nil {
-			return nil, err
+		item, scanErr := scanConnectionAuditReportRow(rows)
+		if scanErr != nil {
+			return nil, scanErr
 		}
-		if inboundID.Valid {
-			item.InboundID = &inboundID.Int64
-		}
-		if pathID.Valid {
-			item.PathID = &pathID.Int64
-		}
-		item.StartedAt = parseTime(startedAt)
-		item.EndedAt = parseTime(endedAt)
-		item.CollectionStartedAt = parseTime(collectionStartedAt)
-		item.CollectionEndedAt = parseTime(collectionEndedAt)
-		if parsed := parseNullTime(payloadFirstAt); parsed != nil {
-			item.PayloadFirstAt = *parsed
-		}
-		if parsed := parseNullTime(payloadLastAt); parsed != nil {
-			item.PayloadLastAt = *parsed
-		}
-		item.InternalProbe = internalProbe != 0
-		item.CreatedAt = parseTime(createdAt)
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+// scanConnectionAuditReportRow scans one connection_audit_reports row with the
+// canonical 47-column projection shared by the per-user and batch loaders.
+func scanConnectionAuditReportRow(rows *sql.Rows) (model.ConnectionAuditReport, error) {
+	var item model.ConnectionAuditReport
+	var inboundID, pathID sql.NullInt64
+	var collectionStartedAt, collectionEndedAt, startedAt, endedAt, createdAt string
+	var payloadFirstAt, payloadLastAt sql.NullString
+	var internalProbe int
+	if err := rows.Scan(
+		&item.ReportID, &item.ServerID, &item.UserID, &inboundID, &pathID, &item.DeviceIDHash, &item.CredentialEpoch, &item.ClientInstanceIDHash,
+		&item.SourceIP, &item.RouteID, &item.SourceGeoCode, &item.SourceCountryCode, &item.SourceCountry, &item.SourceProvince, &item.SourceCity, &item.SourceISP, &item.GeoDatabaseRevision,
+		&item.Network, &item.Destination, &item.DestinationPort, &item.OutboundTag, &item.OutboundType, &item.ConnectionCount, &item.ClosedCount, &item.DurationTotalMS, &item.DurationMaxMS,
+		&item.UploadBytes, &item.DownloadBytes, &payloadFirstAt, &payloadLastAt, &item.DurationLE1SCount, &item.DurationLE5SCount, &item.DurationLE20SCount, &item.DurationGT20SCount,
+		&item.ProbeState, &internalProbe, &item.PresenceSequence, &item.ActivePeak, &item.ActiveAtEnd, &item.CollectionGeneration, &item.BucketCapacity, &item.DroppedBucketCount,
+		&collectionStartedAt, &collectionEndedAt, &startedAt, &endedAt, &createdAt,
+	); err != nil {
+		return model.ConnectionAuditReport{}, err
+	}
+	if inboundID.Valid {
+		item.InboundID = &inboundID.Int64
+	}
+	if pathID.Valid {
+		item.PathID = &pathID.Int64
+	}
+	item.StartedAt = parseTime(startedAt)
+	item.EndedAt = parseTime(endedAt)
+	item.CollectionStartedAt = parseTime(collectionStartedAt)
+	item.CollectionEndedAt = parseTime(collectionEndedAt)
+	if parsed := parseNullTime(payloadFirstAt); parsed != nil {
+		item.PayloadFirstAt = *parsed
+	}
+	if parsed := parseNullTime(payloadLastAt); parsed != nil {
+		item.PayloadLastAt = *parsed
+	}
+	item.InternalProbe = internalProbe != 0
+	item.CreatedAt = parseTime(createdAt)
+	return item, nil
 }
 
 func (s *Store) ConnectionAuditSourceIPsForGeoRevision(ctx context.Context, revision string) ([]string, error) {
@@ -1161,6 +1175,214 @@ func connectionAuditNonProbeActivePeak(reports []model.ConnectionAuditReport) in
 	return peak
 }
 
+// connectionAuditUserBatchSize bounds how many users share one batch query so
+// the IN clause and result sets stay bounded as the user count grows.
+const connectionAuditUserBatchSize = 100
+
+type connectionAuditOverviewBatch struct {
+	reportsByUser  map[int64][]model.ConnectionAuditReport
+	episodesByUser map[int64][]model.ConnectionProbeEpisode
+	robustZByUser  map[int64]float64
+}
+
+// loadConnectionAuditOverviewBatch replaces the per-user N+1 report, probe
+// episode, and robust-Z queries with a handful of batch queries. Results are
+// grouped by user_id in Go and truncated with the exact same per-user limits
+// and ordering the per-user queries used, so the risk engine inputs are
+// identical.
+func (s *Store) loadConnectionAuditOverviewBatch(ctx context.Context, userIDs []int64, since time.Time, at time.Time) (*connectionAuditOverviewBatch, error) {
+	out := &connectionAuditOverviewBatch{
+		reportsByUser:  make(map[int64][]model.ConnectionAuditReport, len(userIDs)),
+		episodesByUser: make(map[int64][]model.ConnectionProbeEpisode, len(userIDs)),
+		robustZByUser:  make(map[int64]float64, len(userIDs)),
+	}
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	sinceText := since.UTC().Format(time.RFC3339Nano)
+	for offset := 0; offset < len(userIDs); offset += connectionAuditUserBatchSize {
+		end := offset + connectionAuditUserBatchSize
+		if end > len(userIDs) {
+			end = len(userIDs)
+		}
+		batch := userIDs[offset:end]
+		reports, err := s.batchConnectionAuditReportsForRisk(ctx, batch, sinceText, 50000)
+		if err != nil {
+			return nil, err
+		}
+		for userID, items := range reports {
+			out.reportsByUser[userID] = items
+		}
+		episodes, err := s.batchConnectionProbeEpisodes(ctx, batch, sinceText, 200)
+		if err != nil {
+			return nil, err
+		}
+		for userID, items := range episodes {
+			out.episodesByUser[userID] = items
+		}
+		buckets, err := s.batchConnectionAuditRobustZBuckets(ctx, batch, at)
+		if err != nil {
+			return nil, err
+		}
+		for userID, items := range buckets {
+			out.robustZByUser[userID] = computeConnectionAuditRobustZ(items, at)
+		}
+	}
+	return out, nil
+}
+
+func inClause(count int) string {
+	placeholders := make([]string, count)
+	for index := range placeholders {
+		placeholders[index] = "?"
+	}
+	return strings.Join(placeholders, ",")
+}
+
+// batchConnectionAuditReportsForRisk loads the most recent risk-limit reports
+// per user in one query, preserving the per-user ended_at DESC truncation of
+// listConnectionAuditReportsForRisk.
+func (s *Store) batchConnectionAuditReportsForRisk(ctx context.Context, userIDs []int64, since string, limit int) (map[int64][]model.ConnectionAuditReport, error) {
+	args := []any{since}
+	for _, userID := range userIDs {
+		args = append(args, userID)
+	}
+	args = append(args, limit)
+	query := `select
+		report_id,server_id,user_id,inbound_id,path_id,device_id_hash,credential_epoch,client_instance_id_hash,
+		source_ip,route_id,source_geo_code,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,
+		network,destination,destination_port,outbound_tag,outbound_type,connection_count,closed_count,duration_total_ms,duration_max_ms,
+		upload_bytes,download_bytes,payload_first_at,payload_last_at,duration_le_1s_count,duration_le_5s_count,duration_le_20s_count,duration_gt_20s_count,
+		probe_state,internal_probe,presence_sequence,active_peak,active_at_end,collection_generation,bucket_capacity,dropped_bucket_count,
+		collection_started_at,collection_ended_at,started_at,ended_at,created_at
+		from (
+			select r.report_id,r.server_id,r.user_id,r.inbound_id,r.path_id,r.device_id_hash,r.credential_epoch,r.client_instance_id_hash,
+			r.source_ip,r.route_id,r.source_geo_code,r.source_country_code,r.source_country,r.source_province,r.source_city,r.source_isp,r.geo_database_revision,
+			r.network,r.destination,r.destination_port,r.outbound_tag,r.outbound_type,r.connection_count,r.closed_count,r.duration_total_ms,r.duration_max_ms,
+			r.upload_bytes,r.download_bytes,r.payload_first_at,r.payload_last_at,r.duration_le_1s_count,r.duration_le_5s_count,r.duration_le_20s_count,r.duration_gt_20s_count,
+			r.probe_state,r.internal_probe,r.presence_sequence,r.active_peak,r.active_at_end,r.collection_generation,r.bucket_capacity,r.dropped_bucket_count,
+			r.collection_started_at,r.collection_ended_at,r.started_at,r.ended_at,r.created_at,
+			row_number() over (partition by r.user_id order by r.ended_at desc) as _rn
+			from connection_audit_reports r
+			where r.ended_at>=? and r.user_id in (` + inClause(len(userIDs)) + `)
+		) where _rn<=?` // #nosec G201 -- placeholders are generated as ?,? only.
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]model.ConnectionAuditReport{}
+	for rows.Next() {
+		item, scanErr := scanConnectionAuditReportRow(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out[item.UserID] = append(out[item.UserID], item)
+	}
+	return out, rows.Err()
+}
+
+// batchConnectionProbeEpisodes loads probe episodes for many users in one
+// query, ordered per user by ended_at DESC like listConnectionProbeEpisodes.
+func (s *Store) batchConnectionProbeEpisodes(ctx context.Context, userIDs []int64, since string, limit int) (map[int64][]model.ConnectionProbeEpisode, error) {
+	args := []any{}
+	for _, userID := range userIDs {
+		args = append(args, userID)
+	}
+	args = append(args, since)
+	query := `select id,user_id,device_id_hash,state,score,node_count,connection_count,upload_bytes,download_bytes,started_at,ended_at,updated_at
+		from connection_probe_episodes where user_id in (` + inClause(len(userIDs)) + `) and ended_at>=? order by user_id,ended_at desc` // #nosec G201 -- placeholders are generated as ?,? only.
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]model.ConnectionProbeEpisode{}
+	for rows.Next() {
+		var episode model.ConnectionProbeEpisode
+		var startedAt, endedAt, updatedAt string
+		if err := rows.Scan(&episode.ID, &episode.UserID, &episode.DeviceIDHash, &episode.State, &episode.Score, &episode.NodeCount, &episode.ConnectionCount, &episode.UploadBytes, &episode.DownloadBytes, &startedAt, &endedAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		episode.StartedAt = parseTime(startedAt)
+		episode.EndedAt = parseTime(endedAt)
+		episode.UpdatedAt = parseTime(updatedAt)
+		if len(out[episode.UserID]) < limit {
+			out[episode.UserID] = append(out[episode.UserID], episode)
+		}
+	}
+	return out, rows.Err()
+}
+
+type auditHourBucket struct {
+	at    time.Time
+	value float64
+}
+
+// batchConnectionAuditRobustZBuckets loads the 28-day hourly connection-count
+// buckets for many users in one grouped query, mirroring the WHERE filters of
+// connectionAuditRobustZ.
+func (s *Store) batchConnectionAuditRobustZBuckets(ctx context.Context, userIDs []int64, at time.Time) (map[int64][]auditHourBucket, error) {
+	at = at.UTC()
+	currentStart := time.Date(at.Year(), at.Month(), at.Day(), at.Hour(), 0, 0, 0, time.UTC)
+	args := []any{currentStart.Add(-28 * 24 * time.Hour).Format(time.RFC3339Nano), currentStart.Add(time.Hour).Format(time.RFC3339Nano)}
+	for _, userID := range userIDs {
+		args = append(args, userID)
+	}
+	query := `select user_id,strftime('%Y-%m-%dT%H:00:00Z',started_at) as hour_bucket,coalesce(sum(connection_count),0)
+		from connection_audit_reports
+		where started_at>=? and started_at<? and internal_probe=0 and probe_state not in ('confirmed','candidate') and dropped_bucket_count=0 and user_id in (` + inClause(len(userIDs)) + `)
+		group by user_id,hour_bucket` // #nosec G201 -- placeholders are generated as ?,? only.
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]auditHourBucket{}
+	for rows.Next() {
+		var userID int64
+		var rawBucket string
+		var value float64
+		if err := rows.Scan(&userID, &rawBucket, &value); err != nil {
+			return nil, err
+		}
+		out[userID] = append(out[userID], auditHourBucket{at: parseTime(rawBucket), value: value})
+	}
+	return out, rows.Err()
+}
+
+// computeConnectionAuditRobustZ applies the median/MAD robust-Z math to the
+// hourly buckets of one user, replicating connectionAuditRobustZ exactly.
+func computeConnectionAuditRobustZ(buckets []auditHourBucket, at time.Time) float64 {
+	at = at.UTC()
+	currentStart := time.Date(at.Year(), at.Month(), at.Day(), at.Hour(), 0, 0, 0, time.UTC)
+	current := 0.0
+	history := []float64{}
+	for _, bucket := range buckets {
+		if bucket.at.Equal(currentStart) {
+			current = bucket.value
+			continue
+		}
+		if bucket.at.Before(currentStart) && bucket.at.Weekday() == at.Weekday() && bucket.at.Hour() == at.Hour() {
+			history = append(history, bucket.value)
+		}
+	}
+	if len(history) < 3 {
+		return 0
+	}
+	median := medianAuditValues(history)
+	deviations := make([]float64, 0, len(history))
+	for _, value := range history {
+		deviations = append(deviations, math.Abs(value-median))
+	}
+	mad := medianAuditValues(deviations)
+	robustZ := (current - median) / (1.4826*mad + math.Max(1, 0.1*median))
+	if robustZ < 0 {
+		return 0
+	}
+	return math.Round(robustZ*10) / 10
+}
+
 func (s *Store) connectionAuditRobustZ(ctx context.Context, userID int64, at time.Time) (float64, error) {
 	at = at.UTC()
 	currentStart := time.Date(at.Year(), at.Month(), at.Day(), at.Hour(), 0, 0, 0, time.UTC)
@@ -1172,40 +1394,19 @@ func (s *Store) connectionAuditRobustZ(ctx context.Context, userID int64, at tim
 		return 0, err
 	}
 	defer rows.Close()
-	current := 0.0
-	history := []float64{}
+	buckets := []auditHourBucket{}
 	for rows.Next() {
 		var rawBucket string
 		var value float64
 		if err := rows.Scan(&rawBucket, &value); err != nil {
 			return 0, err
 		}
-		bucket := parseTime(rawBucket)
-		if bucket.Equal(currentStart) {
-			current = value
-			continue
-		}
-		if bucket.Before(currentStart) && bucket.Weekday() == at.Weekday() && bucket.Hour() == at.Hour() {
-			history = append(history, value)
-		}
+		buckets = append(buckets, auditHourBucket{at: parseTime(rawBucket), value: value})
 	}
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-	if len(history) < 3 {
-		return 0, nil
-	}
-	median := medianAuditValues(history)
-	deviations := make([]float64, 0, len(history))
-	for _, value := range history {
-		deviations = append(deviations, math.Abs(value-median))
-	}
-	mad := medianAuditValues(deviations)
-	robustZ := (current - median) / (1.4826*mad + math.Max(1, 0.1*median))
-	if robustZ < 0 {
-		return 0, nil
-	}
-	return math.Round(robustZ*10) / 10, nil
+	return computeConnectionAuditRobustZ(buckets, at), nil
 }
 
 func medianAuditValues(values []float64) float64 {
