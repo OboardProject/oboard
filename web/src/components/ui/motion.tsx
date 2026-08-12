@@ -17,8 +17,8 @@ export function MotionPage({
   [key: string]: any
 }) {
   const shouldReduceMotion = useReducedMotion()
-  const duration = shouldReduceMotion ? 0.01 : 0.24
-  const exitDuration = shouldReduceMotion ? 0.01 : 0.16
+  const duration = shouldReduceMotion ? 0.01 : 0.11
+  const exitDuration = shouldReduceMotion ? 0.01 : 0.07
 
   return (
     <m.div
