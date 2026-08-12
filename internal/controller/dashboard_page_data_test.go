@@ -3,7 +3,9 @@ package controller
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -58,6 +60,37 @@ func TestDashboardPageDataUsesLightTaskProjection(t *testing.T) {
 	for _, key := range []string{"connection_audit", "subscription_audit", "audit_risk"} {
 		if value, exists := auditPage[key]; exists && value != nil {
 			t.Fatalf("audit page-data should not embed the heavy risk overview (%q present: %#v); the console refetches /audit/risk-overview", key, value)
+		}
+	}
+}
+
+// TestDashboardPageDataSendsServerTiming proves the instrumentation header is
+// present and shaped like "stage;dur=..., total;dur=..." without payload data.
+func TestDashboardPageDataSendsServerTiming(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/ui/page-data?page=dashboard", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("page-data status = %d", rr.Code)
+	}
+	header := rr.Header().Get("Server-Timing")
+	if !strings.HasPrefix(header, "summary;dur=") || !strings.Contains(header, "total;dur=") {
+		t.Fatalf("Server-Timing header = %q", header)
+	}
+	for _, chunk := range strings.Split(header, ",") {
+		if !strings.Contains(chunk, ";dur=") {
+			t.Fatalf("malformed timing chunk %q", chunk)
 		}
 	}
 }
