@@ -1531,17 +1531,6 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err := timing.run("servers", addServers); err != nil {
 			return err
 		}
-		if err := timing.run("repair", func() error {
-			if err := s.store.PruneOrphanedProxyPathSteps(ctx); err != nil {
-				return err
-			}
-			if err := s.reconcileProxyPathNameTemplates(ctx); err != nil {
-				return err
-			}
-			return s.normalizeEnabledProxyPathProcessingRoles(ctx)
-		}); err != nil {
-			return err
-		}
 		if err := timing.run("inbounds", func() error {
 			var listErr error
 			inbounds, listErr = s.store.ListInbounds(ctx)
@@ -2132,7 +2121,6 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 	case "tasks":
 		if err = require(model.RoleOperator); err == nil {
-			s.expireTimedOutTasks(ctx)
 			err = addServers()
 		}
 		if err == nil {
@@ -3063,8 +3051,6 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
-	s.checkOffline(r.Context())
-	s.expireTimedOutTasks(r.Context())
 	d, err := s.store.Dashboard(r.Context())
 	if err != nil {
 		fail(w, err, 500)
@@ -3076,7 +3062,6 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		s.checkOffline(r.Context())
 		items, err := s.store.ListServers(r.Context())
 		if err != nil {
 			fail(w, err, 500)
@@ -3402,7 +3387,6 @@ func (s *Server) serverTasks(w http.ResponseWriter, r *http.Request, id int64) {
 		fail(w, err, 404)
 		return
 	}
-	s.expireTimedOutTasks(r.Context())
 	items, err := s.store.ListTasksByServer(r.Context(), id, intQuery(r, "limit", 100))
 	if err != nil {
 		fail(w, err, 500)
@@ -9823,7 +9807,6 @@ func (s *Server) deployment(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
-	s.expireTimedOutTasks(r.Context())
 	tasks, err := s.store.ListTasksByConfigVersion(r.Context(), id)
 	if err != nil {
 		fail(w, err, 500)
@@ -9913,7 +9896,6 @@ func (s *Server) agentTasks(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
-	s.expireTimedOutTasks(r.Context())
 	items, err := s.store.ListTasks(r.Context(), intQuery(r, "limit", 300))
 	if err != nil {
 		fail(w, err, 500)
@@ -9927,7 +9909,6 @@ func (s *Server) agentTask(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
-	s.expireTimedOutTasks(r.Context())
 	id := idFromPath(r.URL.Path, "/api/v1/agent-tasks/")
 	if id == 0 {
 		fail(w, errors.New("missing id"), 400)

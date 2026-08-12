@@ -4757,6 +4757,32 @@ func (s *Store) SetTaskStateForTest(ctx context.Context, id int64, status string
 	return err
 }
 
+// SetProxyPathStepServerForTest rewrites a step's server_id on a connection
+// with foreign-key enforcement disabled so cross-package tests can seed the
+// orphaned topology PruneOrphanedProxyPathSteps repairs. Regular pool
+// connections keep enforcement on; the update cannot otherwise introduce an
+// orphaned reference.
+func (s *Store) SetProxyPathStepServerForTest(ctx context.Context, stepID, serverID int64) error {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `pragma foreign_keys=off`); err != nil {
+		return err
+	}
+	_, err = conn.ExecContext(ctx, `update proxy_path_steps set server_id=? where id=?`, serverID, stepID)
+	return err
+}
+
+// SetProxyPathStepProcessingRoleForTest rewrites a step's derived processing
+// role so cross-package tests can seed a state that
+// normalizeEnabledProxyPathProcessingRoles repairs.
+func (s *Store) SetProxyPathStepProcessingRoleForTest(ctx context.Context, stepID int64, role bool) error {
+	_, err := s.db.ExecContext(ctx, `update proxy_path_steps set processing_role=? where id=?`, boolInt(role), stepID)
+	return err
+}
+
 func (s *Store) FailTimedOutTasks(ctx context.Context, pendingOlderThan, runningOlderThan time.Time, pendingResult, runningResult string) ([]model.AgentTask, error) {
 	ts := now()
 	failed := []model.AgentTask{}

@@ -490,7 +490,6 @@ func (s *Server) serverConnectivity(w http.ResponseWriter, r *http.Request, serv
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
-	s.checkOffline(r.Context())
 	if _, err := s.store.GetServer(r.Context(), serverID); err != nil {
 		fail(w, err, http.StatusNotFound)
 		return
