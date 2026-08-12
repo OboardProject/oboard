@@ -9898,7 +9898,59 @@ function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: Prox
   const addReference = (key: string) => {
     const reference = references.find(item => item.key === key)
     if (!reference) return
-    setParts(current => [...current, reference.part])
+    const targetIndex = references.findIndex(item => item.key === key)
+
+    setParts(current => {
+      const alreadyPresent = current.some(part => {
+        if (part.kind === 'server' && reference.part.kind === 'server') return part.server_id === reference.part.server_id
+        if (part.kind === 'external_outbound' && reference.part.kind === 'external_outbound') return part.external_outbound_id === reference.part.external_outbound_id
+        return false
+      })
+      if (alreadyPresent) return current
+
+      const currentRefPositions = current.map((part, index) => {
+        if (part.kind === 'literal') return null
+        const refIdx = references.findIndex(ref => {
+          if (ref.part.kind === 'server' && part.kind === 'server') return ref.part.server_id === part.server_id
+          if (ref.part.kind === 'external_outbound' && part.kind === 'external_outbound') return ref.part.external_outbound_id === part.external_outbound_id
+          return false
+        })
+        return refIdx >= 0 ? { partIndex: index, refIdx } : null
+      }).filter((item): item is { partIndex: number; refIdx: number } => item !== null)
+
+      const preceding = currentRefPositions.filter(item => item.refIdx < targetIndex).pop()
+      const succeeding = currentRefPositions.find(item => item.refIdx > targetIndex)
+
+      if (preceding !== undefined) {
+        let insertAt = preceding.partIndex + 1
+        const targetPart = current[insertAt]
+        if (targetPart && targetPart.kind === 'literal' && (targetPart.value === '｜' || targetPart.value === '|')) {
+          insertAt += 1
+          const next = current.slice()
+          next.splice(insertAt, 0, reference.part, { kind: 'literal', value: '｜' })
+          return next
+        }
+        const next = current.slice()
+        if (insertAt >= current.length) {
+          next.splice(insertAt, 0, { kind: 'literal', value: '｜' }, reference.part)
+        } else {
+          next.splice(insertAt, 0, reference.part, { kind: 'literal', value: '｜' })
+        }
+        return next
+      } else if (succeeding !== undefined) {
+        let insertAt = succeeding.partIndex
+        const next = current.slice()
+        next.splice(insertAt, 0, reference.part, { kind: 'literal', value: '｜' })
+        return next
+      } else {
+        if (!current.length) return [reference.part]
+        const last = current[current.length - 1]
+        if (last?.kind === 'literal' && (last.value.endsWith('｜') || last.value.endsWith('|'))) {
+          return [...current, reference.part]
+        }
+        return [...current, { kind: 'literal', value: '｜' }, reference.part]
+      }
+    })
   }
   const addLiteral = () => setParts(current => [...current, { kind: 'literal', value: '' }])
   const updateLiteral = (index: number, value: string) => setParts(current => current.map((part, partIndex) => partIndex === index ? { kind: 'literal', value } : part))
@@ -9956,11 +10008,11 @@ function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: Prox
       <div className="proxy-path-name-preview"><span>名称预览</span><strong>{preview || '链路名称'}</strong></div>
       {mode === 'custom' && <>
         <div className="proxy-path-name-insert">
-          <Select value="" onChange={event => addReference(event.target.value)} aria-label="插入链路节点">
-            <option value="">插入链路节点</option>
+          <Select value="" onChange={event => addReference(event.target.value)} aria-label="添加节点名">
+            <option value="">添加节点名...</option>
             {references.map(reference => <option key={reference.key} value={reference.key}>{reference.label}</option>)}
           </Select>
-          <button type="button" className="ghost" onClick={addLiteral}><Plus size={14} />添加文字</button>
+          <button type="button" className="ghost" onClick={addLiteral}><Plus size={14} />添加</button>
         </div>
         <div className="proxy-path-name-parts">
           {parts.map((part, index) => <div className="proxy-path-name-part" key={`${proxyPathNamePartKey(part)}-${index}`}>
