@@ -46,9 +46,6 @@ export function AccountSummaryCard({
             {user?.role === 'admin' ? '管理员' : '普通用户'}
           </Badge>
         </div>
-        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          维护个人信息、登录安全、双重认证与订阅加密。
-        </p>
       </div>
       <div className="account-profile-badges">
         <button
