@@ -14269,20 +14269,104 @@ select:-webkit-autofill {
 }
 .account-layout {
   display: grid;
-  gap: 16px;
+  gap: 20px;
+}
+
+.account-profile-hero {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 20px 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: var(--shadow-sm);
+  flex-wrap: wrap;
+}
+
+.account-profile-avatar {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--primary) 0%, color-mix(in srgb, var(--primary) 70%, #000) 100%);
+  color: #ffffff;
+  font-size: 22px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 25%, transparent);
+  flex-shrink: 0;
+}
+
+.account-profile-info {
+  flex: 1 1 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-profile-name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.account-profile-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-strong);
+  letter-spacing: -0.02em;
+}
+
+.account-profile-handle {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.account-profile-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.account-profile-badges .sub-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.account-profile-badges .sub-pill.ok {
+  background: color-mix(in srgb, var(--success, #16a34a) 12%, transparent);
+  color: var(--success, #16a34a);
+  border-color: color-mix(in srgb, var(--success, #16a34a) 30%, transparent);
+}
+
+.account-profile-badges .sub-pill.warn {
+  background: color-mix(in srgb, var(--warning, #eab308) 12%, transparent);
+  color: var(--warning, #ca8a04);
+  border-color: color-mix(in srgb, var(--warning, #eab308) 30%, transparent);
 }
 
 .account-settings-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 20px;
+  align-items: start;
 }
 
 .account-age-section {
-  grid-column: 1 / -1;
-}
-
-.account-login-security {
   grid-column: 1 / -1;
 }
 

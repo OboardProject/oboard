@@ -2778,13 +2778,52 @@ function AccountPage({ data, client, load, notify }: any) {
 
   return <><Panel title="我的账户" className="account-panel">
     <div className="account-layout">
+      {/* 顶部个人身份卡片 */}
+      <div className="account-profile-hero">
+        <div className="account-profile-avatar">
+          {user?.nickname ? user.nickname.slice(0, 1) : (user?.username ? user.username.slice(0, 1).toUpperCase() : 'U')}
+        </div>
+        <div className="account-profile-info">
+          <div className="account-profile-name-row">
+            <h2 className="account-profile-title">{user?.nickname || user?.username || '用户'}</h2>
+            {user?.username && <span className="account-profile-handle">@{user.username}</span>}
+            <Badge variant={user?.role === 'admin' ? 'default' : 'secondary'}>
+              {user?.role === 'admin' ? '管理员' : '普通用户'}
+            </Badge>
+          </div>
+          <p className="muted" style={{ margin: 0, fontSize: 13 }}>维护个人信息、登录安全、双重认证与订阅加密。</p>
+        </div>
+        <div className="account-profile-badges">
+          <span className={`sub-pill ${authentication.totp_enabled ? 'ok' : ''}`}>
+            <Smartphone size={13} /> {authentication.totp_enabled ? 'TOTP 已开启' : '未开启 2FA'}
+          </span>
+          <span className={`sub-pill ${authentication.passkeys.length ? 'ok' : ''}`}>
+            <Fingerprint size={13} /> {authentication.passkeys.length ? `${authentication.passkeys.length} 个通行密钥` : '无通行密钥'}
+          </span>
+          <span className={`sub-pill ${ageRequired ? 'warn' : ageReady ? 'ok' : ''}`}>
+            <Shield size={13} /> {ageRequired ? 'Age 强制加密' : ageReady ? 'Age 已开启' : 'Age 未加密'}
+          </span>
+        </div>
+      </div>
+
       <div className="account-settings-grid">
+        {/* 左侧卡片 1：个人信息 */}
+        <section className="sub-section">
+          <div className="sub-section-head"><div><h3><User size={16} />个人信息</h3><p className="muted">登录用户名不可自行修改，昵称可随时更新。</p></div></div>
+          <div className="form account-form">
+            <FormField label="登录用户名"><input value={user?.username || ''} disabled /></FormField>
+            <FormField label="昵称"><input value={nickname} onChange={event => setNickname(event.target.value)} maxLength={40} placeholder="设置一个昵称" /></FormField>
+            <button onClick={saveProfile}>保存个人信息</button>
+          </div>
+        </section>
+
+        {/* 右侧卡片：登录安全 */}
         <section className="sub-section account-login-security">
           <div className="sub-section-head"><div><h3><ShieldCheck size={16} />登录安全</h3><p className="muted">管理双重认证、恢复码和通行密钥。</p></div></div>
           <div className="account-security-list">
             <div className="account-security-item">
               <div className="account-security-icon"><Smartphone size={19} /></div>
-              <div className="account-security-copy"><strong>认证器验证码</strong><span>{authentication.totp_enabled ? `已开启 · 剩余 ${authentication.recovery_codes_remaining} 枚恢复码` : '未开启'}</span></div>
+              <div className="account-security-copy"><strong>认证器验证码</strong><span>{authentication.totp_enabled ? `已开启 · 剩余 ${authentication.recovery_codes_remaining} 枚恢复码` : '未开启双重认证'}</span></div>
               <div className="account-security-actions">
                 {authentication.totp_enabled ? <><button type="button" className="ghost" onClick={() => void regenerateRecoveryCodes()} disabled={Boolean(securityWorking)}>生成新恢复码</button><button type="button" className="ghost danger-text" onClick={() => void disableTOTP()} disabled={Boolean(securityWorking)}>停用</button></> : <button type="button" onClick={() => void beginTOTPSetup()} disabled={Boolean(securityWorking)}>{securityWorking === 'totp-setup' ? '准备中…' : '开启'}</button>}
               </div>
@@ -2798,27 +2837,8 @@ function AccountPage({ data, client, load, notify }: any) {
             </div>
           </div>
         </section>
-        <section className="sub-section account-age-section">
-          <div className="sub-section-head"><div><h3><Shield size={16} />订阅加密</h3><p className="muted">只填写客户端生成的公钥，私钥不要上传到面板。</p></div><span className={`sub-pill ${ageRequired ? 'warn' : ageReady ? 'ok' : ''}`}>{ageRequired ? '管理员强制' : ageReady ? '已开启' : '未开启'}</span></div>
-          <div className="form account-form">
-            <div className="switch-form-row subscription-burn-toggle">
-              <span className="switch-form-label">{ageRequired ? '必须使用 Age 加密' : '为 Mihomo 开启 Age 加密'}</span>
-              <Switch checked={ageRequired || ageEnabled} disabled={ageRequired} onChange={checked => setAgeEnabled(checked)} ariaLabel="为 Mihomo 开启 Age 加密" />
-            </div>
-            <FormField label="Age 公钥" hint="只填写公钥，私钥留在客户端。">
-              <textarea value={agePublicKey} onChange={event => setAgePublicKey(event.target.value)} rows={4} spellCheck={false} placeholder="age1..." />
-            </FormField>
-            <button onClick={saveAge}>保存订阅加密</button>
-          </div>
-        </section>
-        <section className="sub-section">
-          <div className="sub-section-head"><div><h3><User size={16} />个人信息</h3><p className="muted">登录用户名不可自行修改，昵称可随时更新。</p></div></div>
-          <div className="form account-form">
-            <FormField label="登录用户名"><input value={user?.username || ''} disabled /></FormField>
-            <FormField label="昵称"><input value={nickname} onChange={event => setNickname(event.target.value)} maxLength={40} placeholder="设置一个昵称" /></FormField>
-            <button onClick={saveProfile}>保存个人信息</button>
-          </div>
-        </section>
+
+        {/* 左侧卡片 2：修改密码 */}
         <section className="sub-section">
           <div className="sub-section-head"><div><h3><Lock size={16} />修改密码</h3><p className="muted">修改后下次登录使用新密码。</p></div></div>
           <div className="form account-form">
@@ -2827,11 +2847,29 @@ function AccountPage({ data, client, load, notify }: any) {
             <button onClick={savePassword} disabled={!currentPassword || !newPassword}>修改密码</button>
           </div>
         </section>
+      </div>
+
+      {/* 底部全宽区块：订阅加密 */}
+      <section className="sub-section account-age-section">
+        <div className="sub-section-head"><div><h3><Shield size={16} />订阅加密</h3><p className="muted">只填写客户端生成的公钥，私钥不要上传到面板。</p></div><span className={`sub-pill ${ageRequired ? 'warn' : ageReady ? 'ok' : ''}`}>{ageRequired ? '管理员强制' : ageReady ? '已开启' : '未开启'}</span></div>
+        <div className="form account-form">
+          <div className="switch-form-row subscription-burn-toggle">
+            <span className="switch-form-label">{ageRequired ? '必须使用 Age 加密' : '为 Mihomo 开启 Age 加密'}</span>
+            <Switch checked={ageRequired || ageEnabled} disabled={ageRequired} onChange={checked => setAgeEnabled(checked)} ariaLabel="为 Mihomo 开启 Age 加密" />
+          </div>
+          <FormField label="Age 公钥" hint="只填写公钥，私钥留在客户端。">
+            <textarea value={agePublicKey} onChange={event => setAgePublicKey(event.target.value)} rows={3} spellCheck={false} placeholder="age1..." />
+          </FormField>
+          <button onClick={saveAge}>保存订阅加密</button>
+        </div>
+      </section>
+
+      {sshAccesses.length > 0 && (
         <section className="sub-section">
           <div className="sub-section-head"><div><h3><Lock size={16} />SSH 代理</h3><p className="muted">使用代理用户名和密码连接已授权的隔离 SSH 入口。</p></div></div>
-          {sshAccesses.length > 0 ? <div className="sub-user-actions"><span className="muted">已授权入口</span>{sshAccesses.map(access => <button type="button" className="ghost" key={access.inbound_id} onClick={() => void copySSHURI(access)}>复制 {access.name} 链接</button>)}</div> : <span className="muted">暂无已授权入口</span>}
+          <div className="sub-user-actions"><span className="muted">已授权入口</span>{sshAccesses.map(access => <button type="button" className="ghost" key={access.inbound_id} onClick={() => void copySSHURI(access)}>复制 {access.name} 链接</button>)}</div>
         </section>
-      </div>
+      )}
     </div>
   </Panel>
   <AnimatePresence>{totpSetup && <TOTPSetupDialog setup={totpSetup} client={client} onCancel={() => setTOTPSetup(null)} onComplete={completeTOTPSetup} />}</AnimatePresence>
