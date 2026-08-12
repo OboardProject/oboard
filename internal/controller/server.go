@@ -1447,6 +1447,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 	if user := currentUser(r); user != nil {
 		out["current_user"] = sessionUserResponse(*user, role)
 	}
+	timing := newPageStageTimer(page)
 	ctx := r.Context()
 	addServerSnapshot := func() error {
 		items, err := s.store.ListServers(ctx)
@@ -1457,7 +1458,6 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 	addServers := func() error {
-		s.checkOffline(ctx)
 		return addServerSnapshot()
 	}
 	addSettings := func() error {
@@ -1511,75 +1511,129 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		out["user_group_members"] = members
 		return nil
 	}
+	var (
+		inbounds        []model.Inbound
+		outbounds       []model.Outbound
+		rules           []model.RoutingRule
+		externals       []model.ExternalOutbound
+		paths           []model.ProxyPath
+		steps           []model.ProxyPathStep
+		egressResults   []model.ProxyPathEgressResult
+		forwards        []model.PortForward
+		tunnels         []model.Tunnel
+		warps           []model.WARPProfile
+		dnsLists        []model.DNSList
+		dnsPolicies     []model.ServerDNSPolicy
+		inboundProbes   []model.InboundProbeResult
+		forwardProbes   []model.PortForwardProbeResult
+	)
 	addProxy := func() error {
-		if err := addServers(); err != nil {
+		if err := timing.run("servers", addServers); err != nil {
 			return err
 		}
-		if err := s.store.PruneOrphanedProxyPathSteps(ctx); err != nil {
+		if err := timing.run("repair", func() error {
+			if err := s.store.PruneOrphanedProxyPathSteps(ctx); err != nil {
+				return err
+			}
+			if err := s.reconcileProxyPathNameTemplates(ctx); err != nil {
+				return err
+			}
+			return s.normalizeEnabledProxyPathProcessingRoles(ctx)
+		}); err != nil {
 			return err
 		}
-		if err := s.reconcileProxyPathNameTemplates(ctx); err != nil {
+		if err := timing.run("inbounds", func() error {
+			var listErr error
+			inbounds, listErr = s.store.ListInbounds(ctx)
+			return listErr
+		}); err != nil {
 			return err
 		}
-		inbounds, err := s.store.ListInbounds(ctx)
-		if err != nil {
+		if err := timing.run("outbounds", func() error {
+			var listErr error
+			outbounds, listErr = s.store.ListOutbounds(ctx)
+			return listErr
+		}); err != nil {
 			return err
 		}
-		outbounds, err := s.store.ListOutbounds(ctx)
-		if err != nil {
+		if err := timing.run("routing_rules", func() error {
+			var listErr error
+			rules, listErr = s.store.ListRoutingRules(ctx)
+			return listErr
+		}); err != nil {
 			return err
 		}
-		rules, err := s.store.ListRoutingRules(ctx)
-		if err != nil {
+		if err := timing.run("external_outbounds", func() error {
+			var listErr error
+			externals, listErr = s.store.ListExternalOutbounds(ctx)
+			return listErr
+		}); err != nil {
 			return err
 		}
-		externals, err := s.store.ListExternalOutbounds(ctx)
-		if err != nil {
+		if err := timing.run("proxy_paths", func() error {
+			var listErr error
+			paths, listErr = s.store.ListProxyPaths(ctx)
+			return listErr
+		}); err != nil {
 			return err
 		}
-		if err := s.normalizeEnabledProxyPathProcessingRoles(ctx); err != nil {
-			return err
-		}
-		paths, err := s.store.ListProxyPaths(ctx)
-		if err != nil {
-			return err
-		}
-		steps, err := s.store.ListProxyPathSteps(ctx)
-		if err != nil {
+		if err := timing.run("proxy_steps", func() error {
+			var listErr error
+			steps, listErr = s.store.ListProxyPathSteps(ctx)
+			return listErr
+		}); err != nil {
 			return err
 		}
 		paths = core.ResolveProxyPathNames(paths, steps, out["servers"].([]model.Server), inbounds, externals)
-		egressResults, err := s.store.ListProxyPathEgressResults(ctx)
-		if err != nil {
+		if err := timing.run("egress", func() error {
+			var listErr error
+			egressResults, listErr = s.store.ListProxyPathEgressResults(ctx)
+			return listErr
+		}); err != nil {
 			return err
 		}
 		paths, externals = core.ResolveProxyPathExitRegions(paths, steps, out["servers"].([]model.Server), inbounds, externals, egressResults)
-		forwards, err := s.store.ListPortForwards(ctx)
-		if err != nil {
+		if err := timing.run("forwards", func() error {
+			var listErr error
+			forwards, listErr = s.store.ListPortForwards(ctx)
+			return listErr
+		}); err != nil {
 			return err
 		}
-		tunnels, err := s.store.ListTunnels(ctx)
-		if err != nil {
+		if err := timing.run("tunnels", func() error {
+			var listErr error
+			tunnels, listErr = s.store.ListTunnels(ctx)
+			return listErr
+		}); err != nil {
 			return err
 		}
-		warps, err := s.store.ListWARPProfiles(ctx)
-		if err != nil {
+		if err := timing.run("warp", func() error {
+			var listErr error
+			warps, listErr = s.store.ListWARPProfiles(ctx)
+			return listErr
+		}); err != nil {
 			return err
 		}
-		dnsLists, err := s.store.ListDNSLists(ctx, false)
-		if err != nil {
+		if err := timing.run("dns", func() error {
+			var listErr error
+			dnsLists, listErr = s.store.ListDNSLists(ctx, false)
+			if listErr != nil {
+				return listErr
+			}
+			dnsPolicies, listErr = s.store.ListServerDNSPolicies(ctx)
+			return listErr
+		}); err != nil {
 			return err
 		}
-		dnsPolicies, err := s.store.ListServerDNSPolicies(ctx)
-		if err != nil {
-			return err
-		}
-		inboundProbes, err := s.store.ListInboundProbeResults(ctx, 0, 0, 200)
-		if err != nil {
-			return err
-		}
-		forwardProbes, err := s.store.ListPortForwardProbeResults(ctx, 0, 0, 200)
-		if err != nil {
+		if err := timing.run("probes", func() error {
+			var listErr error
+			inboundProbes, listErr = s.store.ListInboundProbeResults(ctx, 0, 0, 200)
+			if listErr != nil {
+				return listErr
+			}
+			forwardProbes, listErr = s.store.ListPortForwardProbeResults(ctx, 0, 0, 200)
+			return listErr
+		}); err != nil {
 			return err
 		}
 		out["inbounds"] = inbounds
@@ -1596,41 +1650,46 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		out["inbound_probes"] = inboundProbes
 		out["port_forward_probes"] = forwardProbes
 		if roleAllows(role, model.RoleAdmin) {
-			dnsCredentials, err := s.store.ListDNSCredentials(ctx)
-			if err != nil {
+			if err := timing.run("admin_extras", func() error {
+				dnsCredentials, listErr := s.store.ListDNSCredentials(ctx)
+				if listErr != nil {
+					return listErr
+				}
+				certificates, listErr := s.store.ListCertificates(ctx)
+				if listErr != nil {
+					return listErr
+				}
+				out["dns_credentials"] = dnsCredentials
+				out["certificates"] = certificates
+				users, listErr := s.store.ListUsers(ctx)
+				if listErr != nil {
+					return listErr
+				}
+				groups, listErr := s.store.ListUserGroups(ctx)
+				if listErr != nil {
+					return listErr
+				}
+				members, listErr := s.store.ListUserGroupMembers(ctx)
+				if listErr != nil {
+					return listErr
+				}
+				settings, listErr := s.store.ListSettings(ctx)
+				if listErr != nil {
+					return listErr
+				}
+				users = s.withTrafficStatus(ctx, users)
+				if err := s.enrichSubscriptionCustomPaths(ctx, users, groups, members); err != nil {
+					return err
+				}
+				out["users"] = users
+				out["user_groups"] = groups
+				out["user_group_members"] = members
+				out["settings"] = s.publicSettings(ctx, settings)
+				out["reverse_proxy_status"] = s.reverseProxyStatus(r)
+				return nil
+			}); err != nil {
 				return err
 			}
-			certificates, err := s.store.ListCertificates(ctx)
-			if err != nil {
-				return err
-			}
-			out["dns_credentials"] = dnsCredentials
-			out["certificates"] = certificates
-			users, err := s.store.ListUsers(ctx)
-			if err != nil {
-				return err
-			}
-			groups, err := s.store.ListUserGroups(ctx)
-			if err != nil {
-				return err
-			}
-			members, err := s.store.ListUserGroupMembers(ctx)
-			if err != nil {
-				return err
-			}
-			settings, err := s.store.ListSettings(ctx)
-			if err != nil {
-				return err
-			}
-			users = s.withTrafficStatus(ctx, users)
-			if err := s.enrichSubscriptionCustomPaths(ctx, users, groups, members); err != nil {
-				return err
-			}
-			out["users"] = users
-			out["user_groups"] = groups
-			out["user_group_members"] = members
-			out["settings"] = s.publicSettings(ctx, settings)
-			out["reverse_proxy_status"] = s.reverseProxyStatus(r)
 		}
 		return nil
 	}
@@ -1802,45 +1861,59 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				err = errors.New("invalid session")
 				break
 			}
-			var overview userDashboardOverview
-			overview, err = s.userDashboardOverview(ctx, *user)
-			if err == nil {
-				out["user_overview"] = overview
-			}
-			if err == nil {
-				var announcements []model.NotificationAnnouncement
-				announcements, err = s.store.ListNotificationAnnouncementsForUser(ctx, user.ID, 20)
-				if err == nil {
-					out["user_announcements"] = userDashboardAnnouncements(announcements)
+			err = timing.run("user_overview", func() error {
+				overview, overviewErr := s.userDashboardOverview(ctx, *user)
+				if overviewErr == nil {
+					out["user_overview"] = overview
 				}
+				return overviewErr
+			})
+			if err == nil {
+				err = timing.run("user_announcements", func() error {
+					announcements, announcementsErr := s.store.ListNotificationAnnouncementsForUser(ctx, user.ID, 20)
+					if announcementsErr == nil {
+						out["user_announcements"] = userDashboardAnnouncements(announcements)
+					}
+					return announcementsErr
+				})
 			}
 			break
 		}
 		if err = require(model.RoleOperator); err == nil {
-			s.checkOffline(ctx)
-			s.expireTimedOutTasks(ctx)
-			var summary any
-			summary, err = s.store.Dashboard(ctx)
-			out["summary"] = summary
+			err = timing.run("summary", func() error {
+				var summary any
+				summary, err = s.store.Dashboard(ctx)
+				out["summary"] = summary
+				return err
+			})
 		}
 		if err == nil {
-			err = addServerSnapshot()
+			err = timing.run("servers", addServerSnapshot)
 		}
 		if err == nil {
-			var inbounds []model.Inbound
-			inbounds, err = s.store.ListInbounds(ctx)
-			out["inbounds"] = inbounds
+			err = timing.run("inbounds", func() error {
+				var inbounds []model.Inbound
+				inbounds, err = s.store.ListInbounds(ctx)
+				out["inbounds"] = inbounds
+				return err
+			})
 		}
 		if err == nil {
-			var tasks []model.AgentTask
-			tasks, err = s.store.ListTaskTimeline(ctx, 300)
-			out["agent_tasks"] = sanitizeTasksForRole(tasks, role)
+			err = timing.run("task_timeline", func() error {
+				var tasks []model.AgentTask
+				tasks, err = s.store.ListTaskTimeline(ctx, 300)
+				out["agent_tasks"] = sanitizeTasksForRole(tasks, role)
+				return err
+			})
 		}
 		if err == nil {
-			out["connection_audit"], err = s.dashboardConnectionAudit(ctx)
+			err = timing.run("audit_badge", func() error {
+				out["connection_audit"], err = s.dashboardConnectionAudit(ctx)
+				return err
+			})
 		}
 		if err == nil {
-			err = addSettings()
+			err = timing.run("settings", addSettings)
 		}
 	case "servers":
 		if err = require(model.RoleOperator); err == nil {
@@ -2203,6 +2276,8 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		out["deployment_status"] = deploymentStatus
 	}
+	w.Header().Set("Server-Timing", timing.serverTiming())
+	timing.logSlowIfNeeded()
 	write(w, 200, out)
 }
 
