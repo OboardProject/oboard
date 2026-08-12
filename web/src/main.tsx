@@ -6418,16 +6418,11 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     return grouped
   }, [serverMetrics])
   const serverRegions = useMemo(() => {
-    const counts = new Map<string, number>()
-    servers.forEach(server => {
-      const code = serverRegionCode(server)
-      counts.set(code, (counts.get(code) || 0) + 1)
-    })
-    return Array.from(counts, ([code, count]) => ({ code, count, label: regionLabel(code) })).sort((a, b) => {
-      if (!a.code) return 1
-      if (!b.code) return -1
-      return a.label.localeCompare(b.label, 'zh-CN')
-    })
+    return orderServerRegions(servers, regionLabel).map(({ code, count }) => ({
+      code,
+      count,
+      label: regionLabel(code),
+    }))
   }, [servers])
   const orderedServers = useMemo(
     () => sortServerList(servers, listPreferences.sortMode, listPreferences.customOrder, serverListRegion),
@@ -6707,8 +6702,20 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
           <option value="unenrolled">未接入</option>
         </Select>
         <Select value={serverRegionFilter} onChange={event => setServerRegionFilter(event.target.value)} aria-label="按国家筛选">
-          <option value="all">全部国家</option>
-          {serverRegions.map(region => <option key={region.code || 'pending'} value={region.code}>{region.label} ({region.count})</option>)}
+          <option value="all">
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+              <Globe size={16} aria-hidden="true" />
+              <span>全部国家</span>
+            </span>
+          </option>
+          {serverRegions.map(region => (
+            <option key={region.code || 'pending'} value={region.code}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                <RegionFlag code={region.code} size={18} />
+                <span>{region.label} ({region.count})</span>
+              </span>
+            </option>
+          ))}
         </Select>
       </div>
       <div className="server-list-sort">
