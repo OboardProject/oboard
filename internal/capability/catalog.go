@@ -206,7 +206,11 @@ func defaultDescriptors() []Descriptor {
 		"agent_connected": boolValue, "agent_version": stringValue, "agent_build": stringValue,
 		"kernel_version": stringValue, "connection_audit_enabled": boolValue,
 		"connectivity_probe_target": stringValue,
-		"time_correction_mode":      stringValue, "time_check_status": stringValue,
+		"latency_probe_enabled":     boolValue, "latency_probe_interval_seconds": map[string]any{"type": "integer"},
+		"latency_probe_sample_count": map[string]any{"type": "integer"}, "latency_probe_provinces": stringArray(0, 40),
+		"latency_probe_carriers": stringArray(0, 8), "latency_probe_max_targets": map[string]any{"type": "integer"},
+		"latency_probe_resource_version": stringValue,
+		"time_correction_mode":           stringValue, "time_check_status": stringValue,
 		"last_seen_at": nullableString(), "created_at": stringValue, "updated_at": stringValue,
 	})
 	user := closedObject(map[string]any{
@@ -535,7 +539,10 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"internal_port_range_start": map[string]any{"type": "integer"}, "internal_port_range_end": map[string]any{"type": "integer"},
 			"connection_audit_enabled": boolValue, "time_correction_mode": stringValue,
 			"connectivity_probe_target": probeTarget,
-			"offline_notify_enabled":    boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
+			"latency_probe_enabled":     boolValue, "latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400},
+			"latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10}, "latency_probe_provinces": stringArray(0, 40),
+			"latency_probe_carriers": stringArray(0, 8), "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
+			"offline_notify_enabled": boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
 		})
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "deployments.apply":

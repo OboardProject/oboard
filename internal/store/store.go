@@ -255,6 +255,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	}
 	schema := []string{
 		`create table if not exists app_settings (key text primary key, value text not null, updated_at text not null)`,
+		`create table if not exists server_latency_probe_settings (server_id integer primary key references servers(id) on delete cascade, enabled integer not null default 0, interval_seconds integer not null default 300, sample_count integer not null default 3, provinces_json text not null default '[]', carriers_json text not null default '[]', max_targets integer not null default 64, resource_version text not null default '', updated_at text not null)`,
+		`create table if not exists server_latency_probe_results (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, resource_version text not null, probe_id text not null, province text not null, carrier text not null, ip text not null, available integer not null default 0, latency_ms integer not null default 0, min_latency_ms integer not null default 0, p95_latency_ms integer not null default 0, jitter_ms integer not null default 0, sample_count integer not null default 0, success_count integer not null default 0, error text not null default '', checked_at text not null, created_at text not null, unique(server_id,resource_version,probe_id,checked_at))`,
+		`create index if not exists idx_server_latency_probe_results_server_checked on server_latency_probe_results(server_id,checked_at desc)`,
 		`create table if not exists controller_backups (id text primary key, name text not null, origin text not null, local_path text not null default '', local_status text not null default 'available', remote_key text not null default '', remote_target text not null default '', remote_status text not null default 'disabled', remote_error text not null default '', size_bytes integer not null default 0, source_version text not null default '', format_version integer not null default 1, protected integer not null default 0, created_at text not null, updated_at text not null)`,
 		`create table if not exists rate_limits (key_hash text primary key, window_start text not null, count integer not null, updated_at text not null)`,
 		`create table if not exists api_principals (id text primary key, owner_user_id integer references users(id) on delete set null, name text not null, type text not null, enabled integer not null default 1, scopes_json text not null default '[]', resource_filter_json text not null default '{}', allowed_cidrs_json text not null default '[]', rate_limit_per_minute integer not null default 60, max_concurrency integer not null default 4, expires_at text, last_used_at text, created_at text not null, updated_at text not null)`,
@@ -1970,6 +1973,9 @@ func (s *Store) CreateServer(ctx context.Context, v *model.Server) error {
 	if err := s.initializeServerTelemetrySettings(ctx, v); err != nil {
 		return err
 	}
+	if err := s.UpdateServerLatencyProbeSettings(ctx, v); err != nil {
+		return err
+	}
 	_, err = s.EnsureServerDNSPolicy(ctx, v.ID)
 	return err
 }
@@ -1985,7 +1991,10 @@ func (s *Store) UpdateServer(ctx context.Context, v *model.Server) error {
 	if err != nil {
 		return err
 	}
-	return s.updateServerTelemetrySettingsWithTransition(ctx, v)
+	if err := s.updateServerTelemetrySettingsWithTransition(ctx, v); err != nil {
+		return err
+	}
+	return s.UpdateServerLatencyProbeSettings(ctx, v)
 }
 
 // UpdateServerRuntimeState persists Agent health-report state without touching
@@ -1998,7 +2007,10 @@ func (s *Store) UpdateServerRuntimeState(ctx context.Context, v *model.Server) e
 	if err != nil {
 		return err
 	}
-	return s.updateServerTelemetrySettingsWithTransition(ctx, v)
+	if err := s.updateServerTelemetrySettingsWithTransition(ctx, v); err != nil {
+		return err
+	}
+	return nil
 }
 
 // SetServerEnrollmentHash stores or clears a one-time enrollment hash.
@@ -2051,7 +2063,10 @@ func (s *Store) ListServers(ctx context.Context) ([]model.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return items, s.attachServerTelemetry(ctx, items)
+	if err := s.attachServerTelemetry(ctx, items); err != nil {
+		return nil, err
+	}
+	return items, s.attachServerLatencySettings(ctx, items)
 }
 
 func (s *Store) GetServer(ctx context.Context, id int64) (*model.Server, error) {
@@ -2068,6 +2083,9 @@ func (s *Store) GetServer(ctx context.Context, id int64) (*model.Server, error) 
 		return nil, sql.ErrNoRows
 	}
 	if err := s.attachServerTelemetry(ctx, items); err != nil {
+		return nil, err
+	}
+	if err := s.attachServerLatencySettings(ctx, items); err != nil {
 		return nil, err
 	}
 	return &items[0], nil
@@ -2087,6 +2105,9 @@ func (s *Store) GetServerByAgent(ctx context.Context, agentID string) (*model.Se
 		return nil, sql.ErrNoRows
 	}
 	if err := s.attachServerTelemetry(ctx, items); err != nil {
+		return nil, err
+	}
+	if err := s.attachServerLatencySettings(ctx, items); err != nil {
 		return nil, err
 	}
 	return &items[0], nil
@@ -4687,6 +4708,22 @@ func IsTerminalTaskStatus(status string) bool { return isTerminalTaskStatus(stat
 
 func (s *Store) ActiveTaskByServerType(ctx context.Context, serverID int64, taskType string) (*model.AgentTask, error) {
 	rows, err := s.db.QueryContext(ctx, `select id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at from agent_tasks where server_id=? and type=? and status in ('pending','running') order by id desc limit 1`, serverID, taskType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items, err := scanTasks(rows)
+	if err != nil || len(items) == 0 {
+		if err != nil {
+			return nil, err
+		}
+		return nil, sql.ErrNoRows
+	}
+	return &items[0], nil
+}
+
+func (s *Store) LatestTaskByServerType(ctx context.Context, serverID int64, taskType string) (*model.AgentTask, error) {
+	rows, err := s.db.QueryContext(ctx, `select id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at from agent_tasks where server_id=? and type=? order by id desc limit 1`, serverID, taskType)
 	if err != nil {
 		return nil, err
 	}

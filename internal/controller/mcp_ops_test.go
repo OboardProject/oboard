@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/model"
@@ -74,6 +75,47 @@ func TestOpsTaskTriggerCapabilities(t *testing.T) {
 	encoded, _ := json.Marshal(payload)
 	if contains(encoded, "nonce") && contains(encoded, "token") {
 		t.Fatalf("agent task output may leak material: %s", encoded)
+	}
+}
+
+func TestLatencyProbeCapabilityDeduplicatesActiveTask(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "latency-admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	node := &model.Server{Name: "latency-entry", Status: model.ServerOnline, AgentID: "latency-agent", AgentBuild: agentBuildMinLatencyProbe, LatencyProbeEnabled: true, LatencyProbeSampleCount: 3, LatencyProbeMaxTargets: 8}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	resource, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["192.0.2.1"]}}`), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	latencyProbeCache.Lock()
+	latencyProbeCache.resource = resource
+	latencyProbeCache.fetched = time.Now()
+	latencyProbeCache.Unlock()
+	t.Cleanup(resetLatencyProbeCacheForTest)
+	input, _ := json.Marshal(map[string]any{"server_id": node.ID})
+	operation := automation.OperationRequest{Capability: "servers.probe_latency", Input: input}
+	applyAutomationChangeset(t, server, principal, "latency-probe-1", operation)
+	applyAutomationChangeset(t, server, principal, "latency-probe-2", operation)
+	tasks, err := db.ListTasksByServer(ctx, node.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, task := range tasks {
+		if task.Type == model.AgentTaskTypeProbeLatencyTargets {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("latency probe tasks = %d, want 1", count)
 	}
 }
 

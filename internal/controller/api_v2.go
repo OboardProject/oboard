@@ -31,6 +31,7 @@ func (s *Server) registerAPIV2Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v2/query", s.apiAuth(s.apiV2Query, model.RoleViewer))
 	mux.HandleFunc("/api/v2/servers", s.apiAuth(s.apiV2Servers, model.RoleViewer))
 	mux.HandleFunc("/api/v2/servers/", s.apiAuth(s.apiV2Server, model.RoleViewer))
+	mux.HandleFunc("/api/v2/latency-probes", s.apiAuth(s.apiV2LatencyProbes, model.RoleViewer))
 	mux.HandleFunc("/api/v2/users", s.apiAuth(s.apiV2Users, model.RoleViewer))
 	mux.HandleFunc("/api/v2/topology", s.apiAuth(s.apiV2Topology, model.RoleViewer))
 	mux.HandleFunc("/api/v2/audit/incidents", s.apiAuth(s.apiV2AuditIncidents, model.RoleViewer))
@@ -47,6 +48,29 @@ func (s *Server) registerAPIV2Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v2/approval-policies", s.auth(s.apiV2ApprovalPolicies, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/approval-policies/", s.auth(s.apiV2ApprovalPolicy, model.RoleAdmin))
 	mux.HandleFunc("/api/v2/tool-audits", s.auth(s.apiV2ToolAudits, model.RoleAdmin))
+}
+
+func (s *Server) apiV2LatencyProbes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
+		return
+	}
+	principal, _ := apiPrincipal(r)
+	if !principal.HasScope("servers:read") {
+		v2Error(w, r, http.StatusForbidden, "scope_denied", "缺少 servers:read 权限")
+		return
+	}
+	serverID, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("server_id")), 10, 64)
+	if err != nil || serverID <= 0 || !principal.AllowsInt64("server_ids", serverID) {
+		v2Error(w, r, http.StatusBadRequest, "invalid_server", "server_id 无效")
+		return
+	}
+	items, err := s.store.ListLatencyProbeResults(r.Context(), serverID, queryLimit(r, 512))
+	if err != nil {
+		v2HandleError(w, r, err)
+		return
+	}
+	v2Write(w, r, http.StatusOK, map[string]any{"server_id": serverID, "results": items}, nil)
 }
 
 func (s *Server) apiV2AuditIncidents(w http.ResponseWriter, r *http.Request) {

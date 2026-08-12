@@ -108,6 +108,7 @@ type Server struct {
 	realtime                      *realtimeBroker
 	probeMu                       sync.Mutex
 	activeProbes                  map[int64]bool
+	latencyProbeMu                sync.Mutex
 	notificationMu                sync.Mutex
 	connectionAuditNotificationMu sync.Mutex
 	connectionAuditActionMu       sync.Mutex
@@ -306,6 +307,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/notification-announcements", s.auth(s.notificationAnnouncements, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/port-forward-probes", s.auth(s.portForwardProbes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/inbound-probes", s.auth(s.inboundProbes, model.RoleOperator))
+	mux.HandleFunc("/api/v1/latency-probe-resource", s.auth(s.latencyProbeResource, model.RoleViewer))
 	mux.HandleFunc("/api/v1/deployments/apply", s.auth(s.applyDeployment, model.RoleOperator))
 	mux.HandleFunc("/api/v1/deployments/", s.auth(s.deployment, model.RoleOperator))
 	mux.HandleFunc("/api/v1/agent-tasks", s.auth(s.agentTasks, model.RoleOperator))
@@ -3189,6 +3191,10 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.serverConnectivity(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "latency-probe" {
+		s.serverLatencyProbe(w, r, id)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "mtu-detect" {
 		s.serverMTUDetect(w, r, id)
 		return
@@ -3237,12 +3243,18 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPatch {
 		var input struct {
 			model.Server
-			MTUMode              *model.MTUMode            `json:"mtu_mode"`
-			BBREnabled           *bool                     `json:"bbr_enabled"`
-			TimeCorrectionMode   *model.TimeCorrectionMode `json:"time_correction_mode"`
-			ProbeTarget          *model.ConnectivityTarget `json:"connectivity_probe_target"`
-			OfflineNotifyEnabled *bool                     `json:"offline_notify_enabled"`
-			OfflineAfterSeconds  *int                      `json:"offline_after_seconds"`
+			MTUMode                *model.MTUMode            `json:"mtu_mode"`
+			BBREnabled             *bool                     `json:"bbr_enabled"`
+			TimeCorrectionMode     *model.TimeCorrectionMode `json:"time_correction_mode"`
+			ProbeTarget            *model.ConnectivityTarget `json:"connectivity_probe_target"`
+			LatencyProbeEnabled    *bool                     `json:"latency_probe_enabled"`
+			LatencyProbeInterval   *int                      `json:"latency_probe_interval_seconds"`
+			LatencyProbeSamples    *int                      `json:"latency_probe_sample_count"`
+			LatencyProbeProvinces  *[]string                 `json:"latency_probe_provinces"`
+			LatencyProbeCarriers   *[]string                 `json:"latency_probe_carriers"`
+			LatencyProbeMaxTargets *int                      `json:"latency_probe_max_targets"`
+			OfflineNotifyEnabled   *bool                     `json:"offline_notify_enabled"`
+			OfflineAfterSeconds    *int                      `json:"offline_after_seconds"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -3283,6 +3295,31 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			v.OfflineAfterSeconds = current.OfflineAfterSeconds
 		} else {
 			v.OfflineAfterSeconds = *input.OfflineAfterSeconds
+		}
+		v.LatencyProbeEnabled = current.LatencyProbeEnabled
+		v.LatencyProbeIntervalSeconds = current.LatencyProbeIntervalSeconds
+		v.LatencyProbeSampleCount = current.LatencyProbeSampleCount
+		v.LatencyProbeProvinces = current.LatencyProbeProvinces
+		v.LatencyProbeCarriers = current.LatencyProbeCarriers
+		v.LatencyProbeMaxTargets = current.LatencyProbeMaxTargets
+		v.LatencyProbeResourceVersion = current.LatencyProbeResourceVersion
+		if input.LatencyProbeEnabled != nil {
+			v.LatencyProbeEnabled = *input.LatencyProbeEnabled
+		}
+		if input.LatencyProbeInterval != nil {
+			v.LatencyProbeIntervalSeconds = *input.LatencyProbeInterval
+		}
+		if input.LatencyProbeSamples != nil {
+			v.LatencyProbeSampleCount = *input.LatencyProbeSamples
+		}
+		if input.LatencyProbeProvinces != nil {
+			v.LatencyProbeProvinces = *input.LatencyProbeProvinces
+		}
+		if input.LatencyProbeCarriers != nil {
+			v.LatencyProbeCarriers = *input.LatencyProbeCarriers
+		}
+		if input.LatencyProbeMaxTargets != nil {
+			v.LatencyProbeMaxTargets = *input.LatencyProbeMaxTargets
 		}
 		// Automatic region is Agent telemetry. Panel edits may select auto or a
 		// manual region, but cannot replace the last detected value.
@@ -3400,6 +3437,7 @@ const (
 	agentBuildMinTrustedForward    = "20260729000000"
 	agentBuildMinSSHPathRelay      = "20260804000000"
 	agentBuildMinNetworkInterfaces = "20260804155957"
+	agentBuildMinLatencyProbe      = "20260812000000"
 	// Pending and running tasks both expire after 5 minutes so the panel does
 	// not keep "waiting" forever for dead Agents or stuck executions.
 	agentTaskPendingTimeout = 5 * time.Minute
@@ -4248,6 +4286,33 @@ func validateServer(v *model.Server) error {
 	if v.OfflineAfterSeconds < 0 || v.OfflineAfterSeconds > 86400 {
 		return errors.New("offline_after_seconds must be between 0 and 86400")
 	}
+	if v.LatencyProbeIntervalSeconds != 0 && (v.LatencyProbeIntervalSeconds < 30 || v.LatencyProbeIntervalSeconds > 86400) {
+		return errors.New("区域延迟测试间隔必须在 30 到 86400 秒之间")
+	}
+	if v.LatencyProbeIntervalSeconds == 0 {
+		v.LatencyProbeIntervalSeconds = 300
+	}
+	if v.LatencyProbeSampleCount < 0 || v.LatencyProbeSampleCount > 10 {
+		return errors.New("区域延迟测试的每个 IP 样本数必须在 1 到 10 之间")
+	}
+	if v.LatencyProbeSampleCount == 0 {
+		v.LatencyProbeSampleCount = 3
+	}
+	if v.LatencyProbeMaxTargets < 0 || v.LatencyProbeMaxTargets > 256 {
+		return errors.New("区域延迟测试的单次目标数必须在 1 到 256 之间")
+	}
+	if v.LatencyProbeMaxTargets == 0 {
+		v.LatencyProbeMaxTargets = 64
+	}
+	var err error
+	v.LatencyProbeProvinces, err = normalizeLatencyProbeFilter(v.LatencyProbeProvinces, 40)
+	if err != nil {
+		return fmt.Errorf("latency_probe_provinces: %w", err)
+	}
+	v.LatencyProbeCarriers, err = normalizeLatencyProbeFilter(v.LatencyProbeCarriers, 8)
+	if err != nil {
+		return fmt.Errorf("latency_probe_carriers: %w", err)
+	}
 	switch v.ConnectivityProbeTarget {
 	case "", model.ConnectivityProbeTargetAuto:
 		v.ConnectivityProbeTarget = model.ConnectivityProbeTargetAuto
@@ -4331,6 +4396,23 @@ func validateServer(v *model.Server) error {
 		return err
 	}
 	return core.ValidatePortRange(v.InternalPortRangeStart, v.InternalPortRangeEnd)
+}
+
+func normalizeLatencyProbeFilter(values []string, max int) ([]string, error) {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+		if len(out) > max {
+			return nil, fmt.Errorf("最多选择 %d 项", max)
+		}
+	}
+	return out, nil
 }
 
 func portPolicyChanged(current, next model.Server) bool {
@@ -10971,6 +11053,12 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 	}
 	if task.Type == model.AgentTaskTypeProbeExternalEgress || task.Type == model.AgentTaskTypeApplyDeployment {
 		if err := s.applyExternalEgressTaskResults(r.Context(), server.ID, *task, req.Status, req.ResultJSON); err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+	}
+	if task.Type == model.AgentTaskTypeProbeLatencyTargets {
+		if err := s.applyLatencyProbeTaskResult(r.Context(), server.ID, *task, req.Status, req.ResultJSON); err != nil {
 			fail(w, err, http.StatusBadRequest)
 			return
 		}

@@ -35,6 +35,12 @@ type serverUpdateChanges struct {
 	InternalPortRangeEnd   *int                      `json:"internal_port_range_end,omitempty"`
 	ConnectionAuditEnabled *bool                     `json:"connection_audit_enabled,omitempty"`
 	ProbeTarget            *model.ConnectivityTarget `json:"connectivity_probe_target,omitempty"`
+	LatencyProbeEnabled    *bool                     `json:"latency_probe_enabled,omitempty"`
+	LatencyProbeInterval   *int                      `json:"latency_probe_interval_seconds,omitempty"`
+	LatencyProbeSamples    *int                      `json:"latency_probe_sample_count,omitempty"`
+	LatencyProbeProvinces  *[]string                 `json:"latency_probe_provinces,omitempty"`
+	LatencyProbeCarriers   *[]string                 `json:"latency_probe_carriers,omitempty"`
+	LatencyProbeMaxTargets *int                      `json:"latency_probe_max_targets,omitempty"`
 	TimeCorrectionMode     *model.TimeCorrectionMode `json:"time_correction_mode,omitempty"`
 	OfflineNotifyEnabled   *bool                     `json:"offline_notify_enabled,omitempty"`
 	OfflineAfterSeconds    *int                      `json:"offline_after_seconds,omitempty"`
@@ -135,6 +141,12 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("internal_port_range_end", changes.InternalPortRangeEnd != nil, func() { next.InternalPortRangeEnd = *changes.InternalPortRangeEnd })
 	set("connection_audit_enabled", changes.ConnectionAuditEnabled != nil, func() { next.ConnectionAuditEnabled = *changes.ConnectionAuditEnabled })
 	set("connectivity_probe_target", changes.ProbeTarget != nil, func() { next.ConnectivityProbeTarget = *changes.ProbeTarget })
+	set("latency_probe_enabled", changes.LatencyProbeEnabled != nil, func() { next.LatencyProbeEnabled = *changes.LatencyProbeEnabled })
+	set("latency_probe_interval_seconds", changes.LatencyProbeInterval != nil, func() { next.LatencyProbeIntervalSeconds = *changes.LatencyProbeInterval })
+	set("latency_probe_sample_count", changes.LatencyProbeSamples != nil, func() { next.LatencyProbeSampleCount = *changes.LatencyProbeSamples })
+	set("latency_probe_provinces", changes.LatencyProbeProvinces != nil, func() { next.LatencyProbeProvinces = *changes.LatencyProbeProvinces })
+	set("latency_probe_carriers", changes.LatencyProbeCarriers != nil, func() { next.LatencyProbeCarriers = *changes.LatencyProbeCarriers })
+	set("latency_probe_max_targets", changes.LatencyProbeMaxTargets != nil, func() { next.LatencyProbeMaxTargets = *changes.LatencyProbeMaxTargets })
 	set("time_correction_mode", changes.TimeCorrectionMode != nil, func() { next.TimeCorrectionMode = *changes.TimeCorrectionMode })
 	set("offline_notify_enabled", changes.OfflineNotifyEnabled != nil, func() { next.OfflineNotifyEnabled = *changes.OfflineNotifyEnabled })
 	set("offline_after_seconds", changes.OfflineAfterSeconds != nil, func() { next.OfflineAfterSeconds = *changes.OfflineAfterSeconds })

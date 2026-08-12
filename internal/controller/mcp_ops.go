@@ -305,6 +305,54 @@ func (s *Server) registerLogOperations() {
 // ---- probe operations ----
 
 func (s *Server) registerProbeOperations() {
+	s.automation.RegisterValidator("servers.probe_latency", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		server, err := s.serverTaskBoundary(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		if !server.LatencyProbeEnabled {
+			return nil, errors.New("服务器未启用区域延迟测试")
+		}
+		if reason := agentTaskImmediateFailure(server); reason != "" {
+			return nil, errors.New(reason)
+		}
+		if latencyProbeAgentUpgradeRequired(*server) {
+			return nil, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再执行区域延迟测试")
+		}
+		return map[string]any{"server_id": server.ID}, nil
+	})
+	s.automation.RegisterRevisionResolver("servers.probe_latency", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		return s.serverTaskAutomationRevision(ctx, principal, input)
+	})
+	s.automation.Register("servers.probe_latency", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		server, err := s.serverTaskBoundary(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		if !server.LatencyProbeEnabled {
+			return nil, errors.New("服务器未启用区域延迟测试")
+		}
+		if reason := agentTaskImmediateFailure(server); reason != "" {
+			return nil, errors.New(reason)
+		}
+		if latencyProbeAgentUpgradeRequired(*server) {
+			return nil, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再执行区域延迟测试")
+		}
+		resource, err := loadLatencyProbeResource(ctx, false)
+		if err != nil {
+			return nil, err
+		}
+		targets := latencyProbeTargets(resource, *server)
+		if len(targets) == 0 {
+			return nil, errors.New("没有匹配的省份或运营商探针")
+		}
+		task, existing, err := s.queueLatencyProbeTask(ctx, server, resource, targets)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"task_id": task.ID, "task_status": task.Status, "target_count": latencyProbeTaskTargetCount(task, len(targets)), "existing": existing}, nil
+	})
+
 	s.automation.RegisterValidator("inbounds.probe", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		inbound, err := s.inboundProbeBoundary(ctx, principal, input)
 		if err != nil {

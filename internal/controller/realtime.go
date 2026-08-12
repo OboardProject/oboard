@@ -217,7 +217,7 @@ func realtimeResourcesForTask(taskType string) []string {
 		resources = append(resources, "server_runtime")
 	case model.AgentTaskTypeUpdateAgentConfig:
 		resources = append(resources, "settings", "server_runtime")
-	case model.AgentTaskTypeProbeInbounds, model.AgentTaskTypeProbeInboundsExternal, model.AgentTaskTypeProbeExternalEgress:
+	case model.AgentTaskTypeProbeInbounds, model.AgentTaskTypeProbeInboundsExternal, model.AgentTaskTypeProbeExternalEgress, model.AgentTaskTypeProbeLatencyTargets:
 		resources = append(resources, "probes", "topology")
 	case model.AgentTaskTypeProbePortForwards:
 		resources = append(resources, "probes", "port_forwards")

@@ -65,6 +65,13 @@ export type Server = {
   traffic_period_end?: string
   connectivity_probe_enabled: boolean
   connectivity_probe_target: ConnectivityProbeTarget
+  latency_probe_enabled?: boolean
+  latency_probe_interval_seconds?: number
+  latency_probe_sample_count?: number
+  latency_probe_provinces?: string[]
+  latency_probe_carriers?: string[]
+  latency_probe_max_targets?: number
+  latency_probe_resource_version?: string
   connection_audit_enabled: boolean
   time_correction_mode: TimeCorrectionMode
   time_check_status: string

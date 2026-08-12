@@ -17457,3 +17457,87 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   background-color: var(--primary);
   color: #ffffff;
 }
+
+.latency-probe-settings {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  min-width: 0;
+}
+
+.latency-probe-settings .form-field:has(.chip-checkboxes),
+.latency-probe-settings > .danger-text {
+  grid-column: 1 / -1;
+}
+
+.chip-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.chip-checkboxes label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-solid);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip-checkboxes label:focus-within {
+  border-color: var(--primary);
+  outline: 2px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  outline-offset: 1px;
+}
+
+.chip-checkboxes input {
+  margin: 0;
+}
+
+.latency-probe-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.latency-probe-table {
+  width: 100%;
+  min-width: 660px;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.latency-probe-table th,
+.latency-probe-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.latency-probe-table th {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.latency-probe-table code {
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .latency-probe-settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .latency-probe-settings .form-field:has(.chip-checkboxes),
+  .latency-probe-settings > .danger-text {
+    grid-column: auto;
+  }
+}

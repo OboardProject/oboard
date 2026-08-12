@@ -36,6 +36,7 @@ func opsDescriptors(positiveID map[string]any, stringValue, boolValue map[string
 		{"deployments.dismiss_failure", "忽略当前最新部署失败的提醒", schemaObject(nil), schemaObject(map[string]any{"dismissed": boolValue, "deployment_status": stringValue}, "dismissed"), 2, false},
 		{"inbounds.probe", "对指定入口发起本地与公网探测任务", schemaObject(map[string]any{"inbound_id": positiveID}, "inbound_id"), schemaObject(map[string]any{"task_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}}, "entry_target_count": map[string]any{"type": "integer"}}, "task_ids"), 2, false},
 		{"proxy_paths.probe_egress", "对已部署的代理分支手动重探测出口地区", schemaObject(map[string]any{"path_id": positiveID}, "path_id"), schemaObject(map[string]any{"task_id": positiveID, "region_code": stringValue, "status": stringValue}, "task_id"), 2, false},
+		{"servers.probe_latency", "对指定服务器发起区域延迟测试", schemaObject(map[string]any{"server_id": positiveID}, "server_id"), schemaObject(map[string]any{"task_id": positiveID, "task_status": stringValue, "target_count": map[string]any{"type": "integer"}, "existing": boolValue}, "task_id"), 2, false},
 	}
 	for _, write := range writes {
 		descriptor := Descriptor{
@@ -63,6 +64,8 @@ func opsScopeFor(name string) string {
 		return "topology:write"
 	case name == "proxy_paths.probe_egress":
 		return "topology:write"
+	case name == "servers.probe_latency":
+		return "tasks:write"
 	default:
 		return "tasks:write"
 	}

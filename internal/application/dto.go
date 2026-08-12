@@ -7,33 +7,40 @@ import (
 )
 
 type ServerDTO struct {
-	ID                     int64                    `json:"id"`
-	Revision               string                   `json:"revision"`
-	Name                   string                   `json:"name"`
-	Status                 model.ServerStatus       `json:"status"`
-	EntryAddress           string                   `json:"entry_address"`
-	PublicIPv4             string                   `json:"public_ipv4"`
-	PublicIPv6             string                   `json:"public_ipv6"`
-	InterfaceIPv6          string                   `json:"interface_ipv6"`
-	RegionCode             string                   `json:"region_code"`
-	DetectedRegionCode     string                   `json:"detected_region_code"`
-	IPStack                model.IPStack            `json:"ip_stack"`
-	ListenMode             model.ListenMode         `json:"listen_mode"`
-	UDPInboundMode         model.UDPInboundMode     `json:"udp_inbound_mode"`
-	MTUMode                model.MTUMode            `json:"mtu_mode"`
-	MTUValue               int                      `json:"mtu_value"`
-	BBREnabled             bool                     `json:"bbr_enabled"`
-	AgentConnected         bool                     `json:"agent_connected"`
-	AgentVersion           string                   `json:"agent_version"`
-	AgentBuild             string                   `json:"agent_build"`
-	KernelVersion          string                   `json:"kernel_version"`
-	ConnectionAuditEnabled bool                     `json:"connection_audit_enabled"`
-	ProbeTarget            model.ConnectivityTarget `json:"connectivity_probe_target"`
-	TimeCorrectionMode     model.TimeCorrectionMode `json:"time_correction_mode"`
-	TimeCheckStatus        string                   `json:"time_check_status"`
-	LastSeenAt             *time.Time               `json:"last_seen_at,omitempty"`
-	CreatedAt              time.Time                `json:"created_at"`
-	UpdatedAt              time.Time                `json:"updated_at"`
+	ID                          int64                    `json:"id"`
+	Revision                    string                   `json:"revision"`
+	Name                        string                   `json:"name"`
+	Status                      model.ServerStatus       `json:"status"`
+	EntryAddress                string                   `json:"entry_address"`
+	PublicIPv4                  string                   `json:"public_ipv4"`
+	PublicIPv6                  string                   `json:"public_ipv6"`
+	InterfaceIPv6               string                   `json:"interface_ipv6"`
+	RegionCode                  string                   `json:"region_code"`
+	DetectedRegionCode          string                   `json:"detected_region_code"`
+	IPStack                     model.IPStack            `json:"ip_stack"`
+	ListenMode                  model.ListenMode         `json:"listen_mode"`
+	UDPInboundMode              model.UDPInboundMode     `json:"udp_inbound_mode"`
+	MTUMode                     model.MTUMode            `json:"mtu_mode"`
+	MTUValue                    int                      `json:"mtu_value"`
+	BBREnabled                  bool                     `json:"bbr_enabled"`
+	AgentConnected              bool                     `json:"agent_connected"`
+	AgentVersion                string                   `json:"agent_version"`
+	AgentBuild                  string                   `json:"agent_build"`
+	KernelVersion               string                   `json:"kernel_version"`
+	ConnectionAuditEnabled      bool                     `json:"connection_audit_enabled"`
+	ProbeTarget                 model.ConnectivityTarget `json:"connectivity_probe_target"`
+	LatencyProbeEnabled         bool                     `json:"latency_probe_enabled"`
+	LatencyProbeIntervalSeconds int                      `json:"latency_probe_interval_seconds"`
+	LatencyProbeSampleCount     int                      `json:"latency_probe_sample_count"`
+	LatencyProbeProvinces       []string                 `json:"latency_probe_provinces"`
+	LatencyProbeCarriers        []string                 `json:"latency_probe_carriers"`
+	LatencyProbeMaxTargets      int                      `json:"latency_probe_max_targets"`
+	LatencyProbeResourceVersion string                   `json:"latency_probe_resource_version"`
+	TimeCorrectionMode          model.TimeCorrectionMode `json:"time_correction_mode"`
+	TimeCheckStatus             string                   `json:"time_check_status"`
+	LastSeenAt                  *time.Time               `json:"last_seen_at,omitempty"`
+	CreatedAt                   time.Time                `json:"created_at"`
+	UpdatedAt                   time.Time                `json:"updated_at"`
 }
 
 type UserDTO struct {
@@ -166,7 +173,12 @@ func serverDTO(item model.Server) ServerDTO {
 		UDPInboundMode: item.UDPInboundMode, MTUMode: item.MTUMode, MTUValue: item.MTUValue, BBREnabled: item.BBREnabled,
 		AgentConnected: item.AgentID != "", AgentVersion: item.AgentVersion, AgentBuild: item.AgentBuild,
 		KernelVersion: item.SingBoxVersion, ConnectionAuditEnabled: item.ConnectionAuditEnabled,
-		ProbeTarget: item.ConnectivityProbeTarget, TimeCorrectionMode: item.TimeCorrectionMode, TimeCheckStatus: item.TimeCheckStatus,
+		ProbeTarget:         item.ConnectivityProbeTarget,
+		LatencyProbeEnabled: item.LatencyProbeEnabled, LatencyProbeIntervalSeconds: item.LatencyProbeIntervalSeconds,
+		LatencyProbeSampleCount: item.LatencyProbeSampleCount, LatencyProbeProvinces: item.LatencyProbeProvinces,
+		LatencyProbeCarriers: item.LatencyProbeCarriers, LatencyProbeMaxTargets: item.LatencyProbeMaxTargets,
+		LatencyProbeResourceVersion: item.LatencyProbeResourceVersion,
+		TimeCorrectionMode:          item.TimeCorrectionMode, TimeCheckStatus: item.TimeCheckStatus,
 		LastSeenAt: item.LastSeenAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 	}
 }

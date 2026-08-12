@@ -251,7 +251,7 @@ func hasServerManageParams(params map[string]any) bool {
 		"mtu_mode", "mtu_value", "bbr_enabled", "time_correction_mode", "entry_address", "entry_ip_mode",
 		"region_code", "region_mode", "port_range_start", "port_range_end", "internal_port_range_start",
 		"internal_port_range_end", "connection_audit_enabled",
-		"connectivity_probe_target", "server.connectivity_probe_target",
+		"connectivity_probe_target", "server.connectivity_probe_target", "latency_probe_enabled", "latency_probe_interval_seconds", "latency_probe_sample_count", "latency_probe_provinces", "latency_probe_carriers", "latency_probe_max_targets",
 	} {
 		if _, ok := params[key]; ok {
 			return true
@@ -327,7 +327,7 @@ func (s *Server) prepareServerManageRecipe(ctx context.Context, principal applic
 			changes[key] = value
 		}
 	}
-	copyTaskParams(changes, input.Params, map[string]string{"name": "name", "server.name": "name", "ip_stack": "ip_stack", "server.ip_stack": "ip_stack", "listen_mode": "listen_mode", "udp_inbound_mode": "udp_inbound_mode", "mtu_mode": "mtu_mode", "mtu_value": "mtu_value", "bbr_enabled": "bbr_enabled", "time_correction_mode": "time_correction_mode", "entry_address": "entry_address", "entry_ip_mode": "entry_ip_mode", "region_code": "region_code", "region_mode": "region_mode", "port_range_start": "port_range_start", "port_range_end": "port_range_end", "internal_port_range_start": "internal_port_range_start", "internal_port_range_end": "internal_port_range_end", "connection_audit_enabled": "connection_audit_enabled", "connectivity_probe_target": "connectivity_probe_target", "server.connectivity_probe_target": "connectivity_probe_target"})
+	copyTaskParams(changes, input.Params, map[string]string{"name": "name", "server.name": "name", "ip_stack": "ip_stack", "server.ip_stack": "ip_stack", "listen_mode": "listen_mode", "udp_inbound_mode": "udp_inbound_mode", "mtu_mode": "mtu_mode", "mtu_value": "mtu_value", "bbr_enabled": "bbr_enabled", "time_correction_mode": "time_correction_mode", "entry_address": "entry_address", "entry_ip_mode": "entry_ip_mode", "region_code": "region_code", "region_mode": "region_mode", "port_range_start": "port_range_start", "port_range_end": "port_range_end", "internal_port_range_start": "internal_port_range_start", "internal_port_range_end": "internal_port_range_end", "connection_audit_enabled": "connection_audit_enabled", "connectivity_probe_target": "connectivity_probe_target", "server.connectivity_probe_target": "connectivity_probe_target", "latency_probe_enabled": "latency_probe_enabled", "latency_probe_interval_seconds": "latency_probe_interval_seconds", "latency_probe_sample_count": "latency_probe_sample_count", "latency_probe_provinces": "latency_probe_provinces", "latency_probe_carriers": "latency_probe_carriers", "latency_probe_max_targets": "latency_probe_max_targets"})
 	if _, ok := changes["ip_stack"]; !ok {
 		if value := inferredIPStack(input.Goal); value != "" {
 			changes["ip_stack"] = value

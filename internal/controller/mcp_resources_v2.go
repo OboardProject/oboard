@@ -103,6 +103,7 @@ func (s *Server) mcpResourceTemplateDefs() []mcpResourceDef {
 	return []mcpResourceDef{
 		{uri: "oboard://servers/{id}", title: "Server by ID", name: "Server by ID", description: "Return one authorized server with its current revision, status, supported capabilities, and non-secret configuration summary.", capability: "servers.get", template: true, kind: "query_id"},
 		{uri: "oboard://servers/{id}/health", title: "Server Health", name: "Server health", description: "Return one authorized server's Agent connectivity, version, build, kernel, last-seen time, and non-secret health status.", capability: "servers.get", template: true, kind: "query_health"},
+		{uri: "oboard://servers/{id}/latency-probes", title: "Server Regional Latency", name: "Server regional latency", description: "Return the latest regional latency probe results for one authorized server, including province, carrier, target IP, sample statistics, and bounded errors.", capability: "servers.get", template: true, kind: "query_server_latency"},
 		{uri: "oboard://users/{id}", title: "User by ID", name: "User by ID", description: "Return one authorized user's management summary: role, status, limits, subscription state, and revision. Never includes credentials or tokens.", capability: "users.get", template: true, kind: "query_user_by_id"},
 		{uri: "oboard://users/{id}/devices", title: "User Devices by ID", name: "User devices by ID", description: "Return one authorized user's registered devices with status, proxy access state, and last activity. Never includes device tokens.", capability: "user_devices.list", template: true, kind: "query_user_devices"},
 		{uri: "oboard://servers/{id}/dns-policy", title: "Server DNS Policy by ID", name: "Server DNS policy by ID", description: "Return one authorized server's DNS policy with list bindings and last check state.", capability: "servers.dns_policy.get", template: true, kind: "query_server_dns_policy"},
@@ -185,6 +186,24 @@ func (s *Server) readMCPResource(ctx context.Context, principal application.Prin
 			return nil, err
 		}
 		return mcpServerHealthPayload(payload), nil
+	case "query_server_latency":
+		id, err := mcpTemplateID(uri, "oboard://servers/", "/latency-probes")
+		if err != nil {
+			return nil, err
+		}
+		serverID, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || serverID <= 0 || !principal.AllowsInt64("server_ids", serverID) {
+			return nil, errors.New("invalid server id")
+		}
+		items, err := s.store.ListLatencyProbeResults(ctx, serverID, 512)
+		if err != nil {
+			return nil, err
+		}
+		server, err := s.store.GetServer(ctx, serverID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"server_id": serverID, "enabled": server.LatencyProbeEnabled, "resource_version": server.LatencyProbeResourceVersion, "results": items, "count": len(items)}, nil
 	case "query_user":
 		return s.queryMCPResource(ctx, "users.list", json.RawMessage(`{}`))
 	case "query_user_by_id":
@@ -565,6 +584,7 @@ func (s *Server) listAgentTasksMCP(ctx context.Context, principal application.Pr
 	}
 	return map[string]any{"tasks": views, "count": len(views)}, nil
 }
+
 // listAccessChangesMCP returns access-change (套餐发布) records with their
 // durable failure text so MCP clients can diagnose a failed release before
 // deciding to retry it.
@@ -587,9 +607,9 @@ func (s *Server) listAccessChangesMCP(ctx context.Context, principal application
 	for _, change := range items {
 		views = append(views, map[string]any{
 			"id": change.ID, "change_type": change.ChangeType, "source_plan_id": change.SourcePlanID,
-			"candidate_revision_id": change.CandidateRevisionID,
+			"candidate_revision_id":       change.CandidateRevisionID,
 			"expected_active_revision_id": change.ExpectedActiveRevisionID,
-			"status": change.Status, "affected_user_count": change.AffectedUserCount,
+			"status":                      change.Status, "affected_user_count": change.AffectedUserCount,
 			"activate_at": change.ActivateAt, "error": change.Error,
 			"created_by": change.CreatedBy, "created_at": change.CreatedAt,
 			"activated_at": change.ActivatedAt, "finalized_at": change.FinalizedAt, "failed_at": change.FailedAt,
@@ -651,7 +671,9 @@ func (s *Server) authorizeResourceRead(ctx context.Context, capabilityName, uri 
 	var input any
 	switch capabilityName {
 	case "servers.get":
-		id := strings.TrimSuffix(strings.TrimPrefix(uri, "oboard://servers/"), "/health")
+		id := strings.TrimPrefix(uri, "oboard://servers/")
+		id = strings.TrimSuffix(id, "/health")
+		id = strings.TrimSuffix(id, "/latency-probes")
 		value, parseErr := strconv.ParseInt(id, 10, 64)
 		if parseErr != nil || value <= 0 {
 			return errors.New("invalid server id")
