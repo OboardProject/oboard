@@ -98,12 +98,15 @@ func TestExtractControllerArchiveAcceptsSelfUpdatePayload(t *testing.T) {
 		{name: "downloads/geoip/manifest.json", content: "{}"},
 		{name: "downloads/geoip/ip2region_v4.xdb", content: "v4"},
 		{name: "downloads/geoip/ip2region_v6.xdb", content: "v6"},
+		{name: "downloads/oboard-subscription-relay-linux-amd64.tar.gz", content: "relay-amd64"},
+		{name: "downloads/oboard-subscription-relay-linux-arm64.tar.gz", content: "relay-arm64"},
+		{name: "downloads/subscription-relay-sha256s.txt", content: "checksums"},
 	})
 	stage := t.TempDir()
 	if err := extractControllerArchive(archive, stage); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "bin/oboard-ai-worker", "web/dist/index.html", "downloads/release-manifest.json", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb"} {
+	for _, name := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "bin/oboard-ai-worker", "web/dist/index.html", "downloads/release-manifest.json", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb", "downloads/oboard-subscription-relay-linux-amd64.tar.gz", "downloads/oboard-subscription-relay-linux-arm64.tar.gz", "downloads/subscription-relay-sha256s.txt"} {
 		if info, err := os.Stat(filepath.Join(stage, filepath.FromSlash(name))); err != nil || !info.Mode().IsRegular() {
 			t.Fatalf("self-update payload did not extract %s: %v", name, err)
 		}
@@ -125,6 +128,9 @@ func TestSelfUpdateAssetModesIgnoreRestrictiveUmask(t *testing.T) {
 		{name: "downloads/geoip/manifest.json", content: "{}"},
 		{name: "downloads/geoip/ip2region_v4.xdb", content: "v4"},
 		{name: "downloads/geoip/ip2region_v6.xdb", content: "v6"},
+		{name: "downloads/oboard-subscription-relay-linux-amd64.tar.gz", content: "relay-amd64"},
+		{name: "downloads/oboard-subscription-relay-linux-arm64.tar.gz", content: "relay-arm64"},
+		{name: "downloads/subscription-relay-sha256s.txt", content: "checksums"},
 	})
 	stage := t.TempDir()
 	if err := extractControllerArchive(archive, stage); err != nil {

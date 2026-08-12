@@ -90,6 +90,8 @@ package_controller() {
   for f in "$OUT_DIR"/agent-release/oboard-agent-* "$OUT_DIR"/agent-release/oboard-sb-*; do
     if [ -f "$f" ]; then cp "$f" "$stage/downloads/"; fi
   done
+  cp "$OUT_DIR"/relay-release/oboard-subscription-relay-*.tar.gz "$stage/downloads/"
+  cp "$OUT_DIR/relay-release/subscription-relay-sha256s.txt" "$stage/downloads/"
   cp "$CONTROLLER_DIR/deploy/systemd/oboard-controller.service" "$stage/deploy/systemd/"
   cp "$CONTROLLER_DIR/deploy/systemd/oboard-controller-updater.service" "$stage/deploy/systemd/"
   cp "$CONTROLLER_DIR/deploy/systemd/oboard-ai-worker.service" "$stage/deploy/systemd/"
@@ -114,6 +116,21 @@ package_controller() {
   echo "$archive"
 }
 
+package_subscription_relay() {
+  local os=$1 arch=$2
+  local stage archive
+  stage=$(mktemp -d)
+  archive="$OUT_DIR/relay-release/oboard-subscription-relay-${os}-${arch}.tar.gz"
+  mkdir -p "$stage/bin" "$stage/deploy/systemd" "$stage/deploy/openrc"
+  cp "$OUT_DIR/bin/$os-$arch/oboard-subscription-relay" "$stage/bin/oboard-subscription-relay"
+  cp "$CONTROLLER_DIR/deploy/systemd/oboard-subscription-relay.service" "$stage/deploy/systemd/"
+  cp "$CONTROLLER_DIR/deploy/systemd/oboard-subscription-relay-updater.service" "$stage/deploy/systemd/"
+  cp "$CONTROLLER_DIR/deploy/openrc/oboard-subscription-relay" "$stage/deploy/openrc/"
+  cp "$CONTROLLER_DIR/deploy/openrc/oboard-subscription-relay-updater" "$stage/deploy/openrc/"
+  create_tar_archive "$stage" "$archive" .
+  rm -rf "$stage"
+}
+
 for platform in $PLATFORMS; do
   os=${platform%/*}
   arch=${platform#*/}
@@ -124,6 +141,22 @@ for platform in $PLATFORMS; do
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-controller-updater" ./cmd/controller-updater
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-ai-worker" ./cmd/ai-worker
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go -C "$CONTROLLER_DIR" build -trimpath -ldflags "$CONTROLLER_LDFLAGS" -o "$OUT_DIR/bin/$os-$arch/oboard-subscription-relay" ./cmd/subscription-relay
+done
+
+mkdir -p "$OUT_DIR/relay-release"
+for platform in $PLATFORMS; do
+  os=${platform%/*}
+  arch=${platform#*/}
+  package_subscription_relay "$os" "$arch"
+done
+(
+  cd "$OUT_DIR/relay-release"
+  find . -maxdepth 1 -name '*.tar.gz' -print0 | sort -z | xargs -0 shasum -a 256 | sed 's#  \./#  #'
+) > "$OUT_DIR/relay-release/subscription-relay-sha256s.txt"
+
+for platform in $PLATFORMS; do
+  os=${platform%/*}
+  arch=${platform#*/}
   package_controller "$os" "$arch" "$OUT_DIR/bin/$os-$arch/oboard-controller" >/dev/null
 done
 

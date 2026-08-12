@@ -278,6 +278,9 @@ func TestBasePathProtectsEveryControllerSurface(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(downloadDir, "release-manifest.json"), []byte(`{"version":"test"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(downloadDir, "oboard-subscription-relay-linux-amd64.tar.gz"), []byte("relay-package"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("OBOARD_DOWNLOADS", downloadDir)
 	if err := db.SetSetting(context.Background(), "controller_url", "http://example.com/hidden-panel"); err != nil {
 		t.Fatal(err)
@@ -313,6 +316,7 @@ func TestBasePathProtectsEveryControllerSurface(t *testing.T) {
 		{"/hidden-panel/api/v1/agent/connect", http.StatusUnauthorized, "invalid agent credentials"},
 		{"/hidden-panel/install/agent.sh", http.StatusOK, "http://example.com/hidden-panel"},
 		{"/hidden-panel/downloads/release-manifest.json", http.StatusOK, `"version":"test"`},
+		{"/hidden-panel/downloads/oboard-subscription-relay-linux-amd64.tar.gz", http.StatusOK, "relay-package"},
 	}
 	for _, check := range checks {
 		response := httptest.NewRecorder()

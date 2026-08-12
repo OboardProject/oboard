@@ -19,8 +19,8 @@ func TestBinaryOnlyControllerReleaseAssets(t *testing.T) {
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	required := map[string][]string{
-		"scripts/build-release.sh":                                 {"create_tar_archive \"$stage\" \"$archive\" bin/oboard-controller", "${arch}_install.tar.gz", "oboard-subscription-relay", "install-subscription-relay.sh", "deploy/systemd", "deploy/openrc"},
-		"internal/controller/assets/install-subscription-relay.sh": {"OBOARD_SUBSCRIPTION_RELAY_ENROLLMENT_TOKEN", "stored_relay_secret", "OBOARD_SUBSCRIPTION_RELAY_ADDR:-${stored_relay_addr:-:2777}", "sha256sums.txt", "oboard-subscription-relay-updater.service", "OBOARD_ACTION", "[1/4] 检查运行环境", "[2/4] 获取版本并下载中继组件", "[3/4] 校验并安装中继组件", "[4/4] 接入主控并启动中继服务", "OBoard 订阅中继操作未完成", "OBoard 订阅中继安装完成", "OBoard 订阅中继更新完成"},
+		"scripts/build-release.sh":                                 {"create_tar_archive \"$stage\" \"$archive\" bin/oboard-controller", "${arch}_install.tar.gz", "package_subscription_relay", "relay-release/oboard-subscription-relay-", "subscription-relay-sha256s.txt", "install-subscription-relay.sh", "deploy/systemd", "deploy/openrc"},
+		"internal/controller/assets/install-subscription-relay.sh": {"OBOARD_SUBSCRIPTION_RELAY_ENROLLMENT_TOKEN", "stored_relay_secret", "OBOARD_SUBSCRIPTION_RELAY_ADDR:-${stored_relay_addr:-:2777}", "${CONTROLLER_URL%/}/downloads", "subscription-relay-sha256s.txt", "oboard-subscription-relay-updater.service", "OBOARD_ACTION", "[1/4] 检查运行环境", "[2/4] 从主控下载中继组件", "[3/4] 校验并安装中继组件", "[4/4] 接入主控并启动中继服务", "OBoard 订阅中继操作未完成", "OBoard 订阅中继安装完成", "OBoard 订阅中继更新完成"},
 		"scripts/install.sh":                                       {"OBOARD_UPDATE_CHANNEL", "oboard-controller-updater", "install_component controller", "prepare_controller_updater_runtime", "uninstall_controller", "OBOARD_PURGE_DATA", "resolve_purge_data", "drain_piped_script"},
 		"scripts/verify-release.sh":                                {"Testing Controller", "Building Web UI", "Building current-platform binaries", "cmd/controller-updater"},
 		"scripts/fetch-agent-release.sh":                           {"OBOARD_RELEASE_PUBLIC_KEY", "release-manifest.json.sig", "OBOARD_AGENT_CHANNEL", "OBOARD_AGENT_EXPECTED_COMMIT"},
@@ -274,7 +274,7 @@ exit 1
 	}
 }
 
-func TestSubscriptionRelayInstallerResolvesReleaseTarget(t *testing.T) {
+func TestSubscriptionRelayInstallerDownloadsFromController(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("unable to locate repository")
@@ -284,19 +284,18 @@ func TestSubscriptionRelayInstallerResolvesReleaseTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	function := extractShellFunction(t, string(content), "resolve_release_target")
-	for _, test := range []struct {
-		version string
-		want    string
-	}{
-		{version: "dev-5e1ebffaa8b1", want: "dev dev"},
-		{version: "v1.2.3", want: "v1.2.3 1.2.3"},
+	script := string(content)
+	for _, fragment := range []string{
+		"BASE_URL=${CONTROLLER_URL%/}/downloads",
+		"ARCHIVE=oboard-subscription-relay-linux-${ARCH}.tar.gz",
+		"download \"$BASE_URL/subscription-relay-sha256s.txt\"",
 	} {
-		command := exec.Command("sh", "-c", function+"\nVERSION_VALUE=$1\nresolve_release_target\nprintf '%s %s\\n' \"$TAG\" \"$ARTIFACT_VERSION\"\n", "test", test.version)
-		output, err := command.CombinedOutput()
-		if err != nil || strings.TrimSpace(string(output)) != test.want {
-			t.Errorf("release target for %q = %q, err=%v; want %q", test.version, strings.TrimSpace(string(output)), err, test.want)
+		if !strings.Contains(script, fragment) {
+			t.Errorf("subscription relay installer missing %q", fragment)
 		}
+	}
+	if strings.Contains(script, "github.com") || strings.Contains(script, "OBOARD_REPO") {
+		t.Fatal("subscription relay installer still depends on GitHub releases")
 	}
 }
 

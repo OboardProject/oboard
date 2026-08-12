@@ -2,7 +2,6 @@
 set -eu
 (set -o pipefail) 2>/dev/null && set -o pipefail
 
-REPO=${OBOARD_REPO:-OboardProject/oboard}
 VERSION_VALUE=${VERSION:-latest}
 ACTION=${OBOARD_ACTION:-install}
 MANAGED_UPDATE=${OBOARD_MANAGED_UPDATE:-0}
@@ -26,16 +25,7 @@ trap cleanup EXIT
 fail() { echo "$*" >&2; exit 1; }
 need_command() { command -v "$1" >/dev/null 2>&1 || fail "缺少命令：$1"; }
 
-resolve_release_target() {
-	VERSION_VALUE=${VERSION_VALUE#v}
-	case "$VERSION_VALUE" in
-		*dev*) TAG=dev; ARTIFACT_VERSION=dev ;;
-		*) TAG=v$VERSION_VALUE; ARTIFACT_VERSION=$VERSION_VALUE ;;
-	esac
-}
-
 [ "$(id -u)" -eq 0 ] || fail "安装订阅中继需要 root 权限。"
-case "$REPO" in [A-Za-z0-9_.-]*/[A-Za-z0-9_.-]*) ;; *) fail "OBOARD_REPO 格式无效。" ;; esac
 case "$ACTION" in install|update|uninstall) ;; *) fail "OBOARD_ACTION 必须是 install、update 或 uninstall。" ;; esac
 case "$MANAGED_UPDATE" in 0|1) ;; *) fail "OBOARD_MANAGED_UPDATE 必须是 0 或 1。" ;; esac
 
@@ -127,33 +117,18 @@ manager=$(service_manager)
 echo "环境：linux/$ARCH 服务管理器=$manager"
 if command -v curl >/dev/null 2>&1; then
 	download() { curl -fSsL --retry 3 --connect-timeout 15 "$1" -o "$2" || { echo "下载失败：$1" >&2; return 1; }; }
-	echo "[2/4] 获取版本并下载中继组件"
-	if [ "$VERSION_VALUE" = latest ]; then
-		resolved=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest")
-		VERSION_VALUE=${resolved##*/tag/}
-	fi
 elif command -v wget >/dev/null 2>&1; then
 	download() { wget -q -O "$2" "$1" || { echo "下载失败：$1" >&2; return 1; }; }
-	[ "$VERSION_VALUE" != latest ] || fail "使用 wget 时请通过 VERSION 指定版本。"
-	echo "[2/4] 下载中继组件"
 else
 	fail "需要 curl 或 wget。"
 fi
-resolve_release_target
+echo "[2/4] 从主控下载中继组件"
 echo "目标版本：$VERSION_VALUE"
-ARCHIVE=oboard_controller_${ARTIFACT_VERSION}_linux_${ARCH}_install.tar.gz
-BASE_URL=https://github.com/$REPO/releases/download/$TAG
+ARCHIVE=oboard-subscription-relay-linux-${ARCH}.tar.gz
+BASE_URL=${CONTROLLER_URL%/}/downloads
 TMP_DIR=$(mktemp -d /tmp/oboard-subscription-relay.XXXXXX)
-if [ "$TAG" = dev ] && ! download "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE" 2>/dev/null; then
-	echo "GitHub Releases 未发现 dev 标签发布包，自动回退到最新 release 镜像包。"
-	TAG=latest
-	BASE_URL=https://github.com/$REPO/releases/download/$TAG
-	download "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE" || fail "无法从 GitHub 下载 $ARCHIVE 发布包。"
-	download "$BASE_URL/sha256sums.txt" "$TMP_DIR/sha256sums.txt" || fail "无法从 GitHub 下载 sha256sums.txt 校验文件。"
-else
-	download "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE" || fail "无法从 GitHub 下载 $ARCHIVE 发布包。"
-	download "$BASE_URL/sha256sums.txt" "$TMP_DIR/sha256sums.txt" || fail "无法从 GitHub 下载 sha256sums.txt 校验文件。"
-fi
+download "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE" || fail "无法从主控下载 $ARCHIVE。"
+download "$BASE_URL/subscription-relay-sha256s.txt" "$TMP_DIR/sha256sums.txt" || fail "无法从主控下载订阅中继校验文件。"
 
 echo "[3/4] 校验并安装中继组件"
 expected=$(awk -v name="$ARCHIVE" '$2 == name {print $1}' "$TMP_DIR/sha256sums.txt")

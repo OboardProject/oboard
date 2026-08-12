@@ -13424,7 +13424,7 @@ func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	name := urlpath.Base(r.URL.Path)
 	switch name {
-	case "oboard-agent-linux-amd64", "oboard-agent-linux-arm64", "oboard-sb-linux-amd64", "oboard-sb-linux-arm64", "release-manifest.json", "release-manifest.json.sig":
+	case "oboard-agent-linux-amd64", "oboard-agent-linux-arm64", "oboard-sb-linux-amd64", "oboard-sb-linux-arm64", "release-manifest.json", "release-manifest.json.sig", "oboard-subscription-relay-linux-amd64.tar.gz", "oboard-subscription-relay-linux-arm64.tar.gz", "subscription-relay-sha256s.txt":
 	default:
 		http.NotFound(w, r)
 		return
