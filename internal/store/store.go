@@ -4948,11 +4948,12 @@ func (s *Store) ListTaskTimeline(ctx context.Context, limit int) ([]model.AgentT
 
 // dashboardTimelineChunkSize and dashboardTimelineMaxRows bound the adaptive
 // fetch used by ListDashboardTaskTimeline: pages of newest tasks by id are
-// grouped until the most recent groupLimit timeline groups converge, capped so
-// a pathological history cannot balloon a page load.
+// grouped until the most recent groupLimit timeline groups converge, capped at
+// the 300-row reference timeline so a pathological history can never read more
+// than the old query.
 const (
 	dashboardTimelineChunkSize = 100
-	dashboardTimelineMaxRows   = 600
+	dashboardTimelineMaxRows   = 300
 )
 
 // ListDashboardTaskTimeline returns the newest tasks needed to form the
@@ -5696,11 +5697,10 @@ func (s *Store) Dashboard(ctx context.Context) (model.DashboardSummary, error) {
 			join (select user_id,max(started_at) as started_at from traffic_periods group by user_id) latest
 			  on latest.user_id=p.user_id and latest.started_at=p.started_at`, []any{&d.TrafficUpload, &d.TrafficDownload}},
 		{`select
-			coalesce(sum(case when status='pending' then 1 else 0 end),0),
-			coalesce(sum(case when status='running' then 1 else 0 end),0),
-			coalesce(sum(case when status in ('failed','rollback_failed') then 1 else 0 end),0),
-			coalesce(max(config_version),0)
-			from agent_tasks`, []any{&d.PendingTasks, &d.RunningTasks, &d.FailedTasks, &d.LastConfigVersion}},
+			(select count(*) from agent_tasks where status='pending'),
+			(select count(*) from agent_tasks where status='running'),
+			(select count(*) from agent_tasks where status in ('failed','rollback_failed')),
+			(select coalesce(max(config_version),0) from agent_tasks)`, []any{&d.PendingTasks, &d.RunningTasks, &d.FailedTasks, &d.LastConfigVersion}},
 	}
 	for _, item := range queries {
 		if err := s.db.QueryRowContext(ctx, item.query).Scan(item.dest...); err != nil {

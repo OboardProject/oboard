@@ -11,11 +11,11 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-// dashboardTimelineFixture seeds a realistic task history: several deployments
-// spanning many servers (interleaved ids), batchable probe runs inside and
-// across two-minute windows, non-batchable singles, and a deployment whose
-// tasks are spread far apart in id space so a naive LIMIT truncation would
-// break the group.
+// dashboardTimelineFixture seeds a realistic task history: old noise rows with
+// the lowest ids, then a spread deployment, interleaved deployment/probe
+// batches, batchable pairs, and non-batchable singles. Task ids correlate with
+// activity recency like real history, so the adaptive reduced fetch converges
+// on the newest pages instead of scanning the whole table.
 func dashboardTimelineFixture(t *testing.T, s *Store) {
 	t.Helper()
 	ctx := context.Background()
@@ -47,6 +47,17 @@ func dashboardTimelineFixture(t *testing.T, s *Store) {
 			t.Fatal(err)
 		}
 	}
+	// Old noise with the lowest ids: enough rows to exceed the 300-row
+	// reference timeline so the reduced fetch is the only thing being tested.
+	for index := 0; index < 320; index++ {
+		insert(0, server.ID, model.AgentTaskTypeCollectLogs, base.Add(-48*time.Hour+time.Duration(index)*time.Second), base.Add(-48*time.Hour+time.Duration(index)*time.Second))
+	}
+	// A deployment whose members are spread across ids; its updated_at (-16h)
+	// is recent enough to hold the sixth timeline slot ahead of the
+	// apply_core_config singles.
+	insert(11, server.ID, model.AgentTaskTypeApplyDeployment, base.Add(-30*time.Hour), base.Add(-16*time.Hour))
+	insert(11, second.ID, model.AgentTaskTypeApplyDeployment, base.Add(-30*time.Hour+time.Minute), base.Add(-16*time.Hour+time.Minute))
+	insert(11, server.ID, model.AgentTaskTypeApplyDeployment, base.Add(-30*time.Hour+2*time.Minute), base.Add(-16*time.Hour+2*time.Minute))
 	// Deployment v9: 8 servers, created together but ids interleaved with the
 	// probe batch below by inserting in alternating order.
 	for index := 0; index < 8; index++ {
@@ -55,38 +66,23 @@ func dashboardTimelineFixture(t *testing.T, s *Store) {
 			serverID = second.ID
 		}
 		insert(9, serverID, model.AgentTaskTypeApplyDeployment, base.Add(time.Duration(index)*time.Minute), base.Add(time.Duration(index)*time.Minute+30*time.Second))
-		// Interleave a probe_inbounds task with a lower id but a NEWER
-		// updated_at so id order and activity order diverge.
+		// Interleave a probe_inbounds task with an older created_at but a
+		// newer updated_at so id order and activity order diverge.
 		insert(0, server.ID, model.AgentTaskTypeProbeInbounds, base.Add(-10*time.Hour+time.Duration(index)*time.Second), base.Add(5*time.Hour))
 	}
 	// Deployment v10 supersedes v9: two tasks, both newer.
 	insert(10, server.ID, model.AgentTaskTypeApplyDeployment, base.Add(6*time.Hour), base.Add(6*time.Hour+time.Minute))
 	insert(10, second.ID, model.AgentTaskTypeApplyDeployment, base.Add(6*time.Hour+10*time.Second), base.Add(6*time.Hour+2*time.Minute))
-	// Batchable singles: two detect_mtu tasks in the same two-minute window and
+	// Batchable pairs: two detect_mtu tasks in the same two-minute window and
 	// one update_agent_config pair that must stay one batch.
 	insert(0, server.ID, model.AgentTaskTypeDetectMTU, base.Add(7*time.Hour), base.Add(7*time.Hour+5*time.Second))
 	insert(0, second.ID, model.AgentTaskTypeDetectMTU, base.Add(7*time.Hour+30*time.Second), base.Add(7*time.Hour+15*time.Second))
 	insert(0, server.ID, model.AgentTaskTypeUpdateAgentConfig, base.Add(8*time.Hour), base.Add(8*time.Hour+time.Minute))
 	insert(0, second.ID, model.AgentTaskTypeUpdateAgentConfig, base.Add(8*time.Hour+5*time.Second), base.Add(8*time.Hour+2*time.Minute))
-	// Non-batchable singles with older activity.
-	insert(0, server.ID, model.AgentTaskTypeApplyCoreConfig, base.Add(-24*time.Hour), base.Add(-20*time.Hour))
-	insert(0, server.ID, model.AgentTaskTypeApplyCoreConfig, base.Add(-23*time.Hour), base.Add(-22*time.Hour))
-	insert(0, server.ID, model.AgentTaskTypeApplyCoreConfig, base.Add(-22*time.Hour), base.Add(-21*time.Hour))
-	insert(0, server.ID, model.AgentTaskTypeApplyCoreConfig, base.Add(-21*time.Hour), base.Add(-20*time.Hour))
-	insert(0, server.ID, model.AgentTaskTypeApplyCoreConfig, base.Add(-20*time.Hour), base.Add(-19*time.Hour))
-	insert(0, server.ID, model.AgentTaskTypeApplyCoreConfig, base.Add(-19*time.Hour), base.Add(-18*time.Hour))
-	insert(0, server.ID, model.AgentTaskTypeApplyCoreConfig, base.Add(-18*time.Hour), base.Add(-17*time.Hour))
-	// A deployment whose task ids sit well below the newest rows: member
-	// updated_at is still recent enough to enter the top six groups only when
-	// the fetch keeps reading past the newest page.
-	insert(11, server.ID, model.AgentTaskTypeApplyDeployment, base.Add(-30*time.Hour), base.Add(-30*time.Hour+time.Minute))
-	insert(11, second.ID, model.AgentTaskTypeApplyDeployment, base.Add(-30*time.Hour+time.Minute), base.Add(-30*time.Hour+2*time.Minute))
-	insert(11, server.ID, model.AgentTaskTypeApplyDeployment, base.Add(-30*time.Hour+2*time.Minute), base.Add(-30*time.Hour+3*time.Minute))
-	// Old noise that must never appear in the top six groups: enough rows to
-	// exceed the 300-row reference timeline so the reduced fetch is the only
-	// thing being tested for convergence.
-	for index := 0; index < 320; index++ {
-		insert(0, server.ID, model.AgentTaskTypeCollectLogs, base.Add(-48*time.Hour+time.Duration(index)*time.Second), base.Add(-48*time.Hour+time.Duration(index)*time.Second))
+	// Non-batchable singles with older activity: they must never enter the top
+	// six groups.
+	for index := 0; index < 7; index++ {
+		insert(0, server.ID, model.AgentTaskTypeApplyCoreConfig, base.Add(-time.Duration(24-index)*time.Hour), base.Add(-time.Duration(17+index)*time.Hour))
 	}
 }
 

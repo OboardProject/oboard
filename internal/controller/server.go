@@ -1512,20 +1512,20 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 	var (
-		inbounds        []model.Inbound
-		outbounds       []model.Outbound
-		rules           []model.RoutingRule
-		externals       []model.ExternalOutbound
-		paths           []model.ProxyPath
-		steps           []model.ProxyPathStep
-		egressResults   []model.ProxyPathEgressResult
-		forwards        []model.PortForward
-		tunnels         []model.Tunnel
-		warps           []model.WARPProfile
-		dnsLists        []model.DNSList
-		dnsPolicies     []model.ServerDNSPolicy
-		inboundProbes   []model.InboundProbeResult
-		forwardProbes   []model.PortForwardProbeResult
+		inbounds      []model.Inbound
+		outbounds     []model.Outbound
+		rules         []model.RoutingRule
+		externals     []model.ExternalOutbound
+		paths         []model.ProxyPath
+		steps         []model.ProxyPathStep
+		egressResults []model.ProxyPathEgressResult
+		forwards      []model.PortForward
+		tunnels       []model.Tunnel
+		warps         []model.WARPProfile
+		dnsLists      []model.DNSList
+		dnsPolicies   []model.ServerDNSPolicy
+		inboundProbes []model.InboundProbeResult
+		forwardProbes []model.PortForwardProbeResult
 	)
 	addProxy := func() error {
 		if err := timing.run("servers", addServers); err != nil {
