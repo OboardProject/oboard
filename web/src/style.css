@@ -14267,6 +14267,13 @@ select:-webkit-autofill {
     display: inline-flex;
   }
 }
+
+.account-panel {
+  max-width: 1180px;
+  width: 100%;
+  margin: 0 auto;
+}
+
 .account-layout {
   display: grid;
   gap: 20px;
@@ -14345,6 +14352,17 @@ select:-webkit-autofill {
   background: var(--surface-2);
   color: var(--text-secondary);
   border: 1px solid var(--border);
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.account-profile-badges .sub-pill:hover {
+  opacity: 0.85;
+  transform: translateY(-1px);
+}
+
+.account-profile-badges .sub-pill:active {
+  transform: translateY(0);
 }
 
 .account-profile-badges .sub-pill.ok {
@@ -14359,40 +14377,61 @@ select:-webkit-autofill {
   border-color: color-mix(in srgb, var(--warning, #eab308) 30%, transparent);
 }
 
+.account-profile-badges .sub-pill.neutral {
+  background: var(--surface-2);
+  color: var(--muted);
+  border-color: var(--border);
+}
+
 .account-settings-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
+  grid-template-columns: minmax(340px, 5fr) minmax(480px, 7fr);
+  gap: 16px;
   align-items: start;
 }
 
-.account-age-section {
-  grid-column: 1 / -1;
+.account-card {
+  padding: 20px;
 }
 
-.account-security-list {
-  display: grid;
+.setting-row {
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+  transition: background-color 0.2s ease, padding 0.2s ease;
 }
 
-.account-security-item {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-  padding: 15px 0;
-  border-top: 1px solid var(--border-color);
-}
-
-.account-security-item:first-child {
-  padding-top: 0;
+.setting-row:first-child {
   border-top: 0;
+  padding-top: 0;
 }
 
-.account-security-item:last-child {
+.setting-row:last-child {
   padding-bottom: 0;
 }
 
-.account-security-icon {
+.setting-row.row-highlight {
+  animation: rowHighlightPulse 1.5s ease;
+}
+
+@keyframes rowHighlightPulse {
+  0% {
+    background-color: color-mix(in srgb, var(--primary) 15%, transparent);
+    box-shadow: 0 0 0 2px var(--primary);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+.setting-row__main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+}
+
+.setting-row__icon {
   width: 34px;
   height: 34px;
   display: grid;
@@ -14400,76 +14439,215 @@ select:-webkit-autofill {
   color: var(--text-secondary);
   background: var(--surface-2);
   border: 1px solid var(--border);
+  border-radius: 8px;
+  flex-shrink: 0;
 }
 
-.account-security-copy {
+.setting-row__content {
+  flex: 1 1 auto;
   min-width: 0;
-  display: grid;
-  gap: 3px;
 }
 
-.account-security-copy strong {
-  color: var(--text-strong);
+.setting-row__title {
   font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong);
 }
 
-.account-security-copy span,
-.account-security-note,
-.account-passkey-list small {
+.setting-row__description {
+  font-size: 12px;
   color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.setting-row__status {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.setting-row__action {
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.setting-row__expanded {
+  margin-top: 12px;
+  padding: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-badge.ok {
+  background: color-mix(in srgb, var(--success, #16a34a) 12%, transparent);
+  color: var(--success, #16a34a);
+}
+
+.status-badge.neutral {
+  background: var(--surface-3, var(--border));
+  color: var(--muted);
+}
+
+.status-badge.warn {
+  background: color-mix(in srgb, var(--warning, #eab308) 12%, transparent);
+  color: var(--warning, #ca8a04);
+}
+
+.secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-md, 6px);
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--surface);
+  color: var(--text-strong);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.secondary-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--border-hover, var(--border));
+}
+
+.secondary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.readonly-input {
+  background: var(--surface-2) !important;
+  color: var(--text-secondary) !important;
+  cursor: text !important;
+  border-color: var(--border) !important;
+}
+
+.readonly-input:focus {
+  outline: none;
+  border-color: var(--border) !important;
+  box-shadow: none !important;
+}
+
+.account-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.account-password-form,
+.account-age-form {
+  display: grid;
+  gap: 14px;
+}
+
+.age-public-key-textarea {
+  min-height: 72px;
+  max-height: 120px;
+  resize: vertical;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
-.account-security-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+.account-passkey-panel,
+.account-ssh-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.account-passkey-list,
+.account-ssh-list {
+  display: grid;
   gap: 8px;
 }
 
-.account-security-actions button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.account-security-note,
-.account-passkey-list {
-  grid-column: 2 / -1;
-  margin: 0;
-}
-
-.account-passkey-list {
-  display: grid;
-  margin-top: 2px;
-  border-top: 1px solid var(--border-color);
-}
-
-.account-passkey-list > div {
-  min-width: 0;
+.account-passkey-item,
+.account-ssh-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border-color);
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
 }
 
-.account-passkey-list > div:last-child {
-  border-bottom: 0;
-}
-
-.account-passkey-list span {
-  min-width: 0;
-  display: grid;
+.account-passkey-info,
+.account-ssh-info {
+  display: flex;
+  flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
-.account-passkey-list strong {
-  overflow-wrap: anywhere;
-  color: var(--text);
+.account-passkey-info strong,
+.account-ssh-info strong {
   font-size: 13px;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-passkey-info small,
+.account-ssh-info small {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.add-passkey-btn {
+  justify-self: start;
+}
+
+.input-error {
+  border-color: var(--danger, #ef4444) !important;
+}
+
+.account-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 1199px) {
+  .account-settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 767px) {
+  .setting-row__main {
+    flex-wrap: wrap;
+  }
+
+  .setting-row__status {
+    margin-left: 0;
+  }
+
+  .setting-row__action {
+    margin-left: auto;
+  }
 }
 
 .totp-setup-dialog,
@@ -14548,25 +14726,6 @@ select:-webkit-autofill {
 @media (max-width: 760px) {
   .account-settings-grid {
     grid-template-columns: 1fr;
-  }
-
-  .account-security-item {
-    grid-template-columns: 34px minmax(0, 1fr);
-  }
-
-  .account-security-actions,
-  .account-security-note,
-  .account-passkey-list {
-    grid-column: 1 / -1;
-  }
-
-  .account-security-actions {
-    justify-content: stretch;
-  }
-
-  .account-security-actions button {
-    flex: 1 1 auto;
-    justify-content: center;
   }
 
   .recovery-code-grid {

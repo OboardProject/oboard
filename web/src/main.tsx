@@ -145,6 +145,7 @@ import { NodeAssignmentsPage } from './pages/NodeAssignmentsPage'
 import { SubscriptionPlansPage } from './pages/SubscriptionPlansPage'
 import { UserPlanDialog } from './pages/UserPlanDialog'
 import { UserDashboardPage, type UserDashboardOverview } from './pages/UserDashboardPage'
+import { AccountPage } from './pages/AccountPage'
 
 const appBasePath = (() => {
   const href = document.querySelector('base')?.getAttribute('href') || '/'
@@ -2567,7 +2568,24 @@ $ _`}</pre>
 }
 
 function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange) {
-  if (tab === 'account') return <AccountPage data={data} client={client} load={load} notify={notify} />
+  if (tab === 'account') return (
+    <AccountPage
+      data={data}
+      client={client}
+      load={load}
+      notify={notify}
+      useDialogs={useDialogs}
+      passkeyAvailable={passkeyAvailable}
+      createPasskeyCredential={createPasskeyCredential}
+      sshShareURI={sshShareURI}
+      copyText={copyText}
+      formatDate={formatDate}
+      localizeErrorMessage={localizeErrorMessage}
+      Panel={Panel}
+      TOTPSetupDialog={TOTPSetupDialog}
+      RecoveryCodesDialog={RecoveryCodesDialog}
+    />
+  )
   if (tab === 'dashboard') {
     const displayName = sessionUser?.nickname || data.current_user?.nickname || sessionUser?.username || data.current_user?.username || '用户'
     return roleRanks[sessionUser?.role || 'viewer'] >= roleRanks.operator
@@ -2598,283 +2616,6 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'automation') return <AutomationWorkspace data={data} client={client} notify={notify} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
   if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />
   return null
-}
-
-function AccountPage({ data, client, load, notify }: any) {
-  const dialogs = useDialogs()
-  const user: User | undefined = data.account_user || data.current_user
-  const sshAccesses: SSHAccess[] = data.ssh_accesses || []
-  const [nickname, setNickname] = useState(user?.nickname || '')
-  const [currentPassword, setCurrentPassword] = useState('')
-  const [newPassword, setNewPassword] = useState('')
-  const [ageEnabled, setAgeEnabled] = useState(Boolean(user?.subscription_age_enabled))
-  const [agePublicKey, setAgePublicKey] = useState(user?.subscription_age_public_key || '')
-  const [authentication, setAuthentication] = useState<AuthenticationStatus>({
-    totp_enabled: Boolean(user?.totp_enabled),
-    recovery_codes_remaining: 0,
-    passkeys: data.passkeys || [],
-    passkey_supported: passkeyAvailable(),
-  })
-  const [totpSetup, setTOTPSetup] = useState<{ secret: string; qr_data_url: string } | null>(null)
-  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
-  const [securityWorking, setSecurityWorking] = useState('')
-
-  useEffect(() => setNickname(user?.nickname || ''), [user?.nickname])
-  useEffect(() => {
-    setAgeEnabled(Boolean(user?.subscription_age_enabled))
-    setAgePublicKey(user?.subscription_age_public_key || '')
-  }, [user?.subscription_age_enabled, user?.subscription_age_public_key])
-  const refreshAuthentication = async () => {
-    const result = await client.request('/me/authentication') as AuthenticationStatus
-    setAuthentication(result)
-  }
-
-  useEffect(() => {
-    let active = true
-    client.request('/me/authentication').then((result: AuthenticationStatus) => { if (active) setAuthentication(result) }).catch(() => undefined)
-    return () => { active = false }
-  }, [user?.id])
-
-  const agePolicy = user?.subscription_age_policy || 'optional'
-  const ageRequired = agePolicy === 'required'
-  const ageReady = Boolean(user?.subscription_age_public_key) && (ageRequired || Boolean(user?.subscription_age_enabled))
-
-  const saveProfile = async () => {
-    await client.request('/me', { method: 'PATCH', body: JSON.stringify({ nickname }) })
-    await load()
-    notify?.('个人信息已更新', 'success')
-  }
-
-  const saveAge = async () => {
-    if ((ageEnabled || ageRequired) && !agePublicKey.trim()) {
-      notify?.('请填写 Age 公钥；私钥只保留在客户端', 'warning')
-      return
-    }
-    await client.request('/me/subscription-age', { method: 'PATCH', body: JSON.stringify({ enabled: ageRequired || ageEnabled, public_key: agePublicKey.trim() }) })
-    await load()
-    notify?.('订阅加密设置已保存', 'success')
-  }
-
-  const savePassword = async () => {
-    if (newPassword.length < 8) {
-      notify?.('新密码至少需要 8 个字符', 'warning')
-      return
-    }
-    await client.request('/auth/password', { method: 'POST', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) })
-    setCurrentPassword('')
-    setNewPassword('')
-    notify?.('密码已修改', 'success')
-  }
-
-  const beginTOTPSetup = async () => {
-    const currentPassword = await dialogs.prompt({ title: '开启双重认证', message: '先验证当前登录密码，再绑定认证器。', placeholder: '当前密码', inputType: 'password', confirmText: '继续' })
-    if (currentPassword === null) return
-    setSecurityWorking('totp-setup')
-    try {
-      const result = await client.request('/me/totp/setup/begin', { method: 'POST', body: JSON.stringify({ current_password: currentPassword }) }) as { secret: string; qr_data_url: string }
-      setTOTPSetup(result)
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setSecurityWorking('')
-    }
-  }
-
-  const completeTOTPSetup = async (result: { recovery_codes: string[]; csrf_token?: string }) => {
-    if (result.csrf_token) sessionStorage.setItem('oboard.csrf', result.csrf_token)
-    setTOTPSetup(null)
-    setRecoveryCodes(result.recovery_codes)
-    await refreshAuthentication()
-    await load()
-    notify?.('双重认证已开启', 'success')
-  }
-
-  const disableTOTP = async () => {
-    const confirmed = await dialogs.confirm({ title: '停用双重认证？', message: '停用后，账号只需要密码或通行密钥即可登录。', confirmText: '继续停用', tone: 'danger' })
-    if (!confirmed) return
-    const currentPassword = await dialogs.prompt({ title: '验证登录密码', placeholder: '当前密码', inputType: 'password', confirmText: '下一步' })
-    if (currentPassword === null) return
-    const code = await dialogs.prompt({ title: '验证认证器', message: '输入六位验证码，也可以使用一枚恢复码。', placeholder: '验证码或恢复码', inputType: 'text', confirmText: '停用' })
-    if (code === null) return
-    setSecurityWorking('totp-disable')
-    try {
-      const result = await client.request('/me/totp/disable', { method: 'POST', body: JSON.stringify({ current_password: currentPassword, code }) }) as { csrf_token?: string }
-      if (result.csrf_token) sessionStorage.setItem('oboard.csrf', result.csrf_token)
-      await refreshAuthentication()
-      await load()
-      notify?.('双重认证已停用', 'success')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setSecurityWorking('')
-    }
-  }
-
-  const regenerateRecoveryCodes = async () => {
-    const currentPassword = await dialogs.prompt({ title: '生成新的恢复码', message: '生成后，之前的恢复码会立即失效。', placeholder: '当前密码', inputType: 'password', confirmText: '下一步' })
-    if (currentPassword === null) return
-    const code = await dialogs.prompt({ title: '验证认证器', placeholder: '六位验证码或恢复码', inputType: 'text', confirmText: '生成' })
-    if (code === null) return
-    setSecurityWorking('totp-recovery')
-    try {
-      const result = await client.request('/me/totp/recovery-codes', { method: 'POST', body: JSON.stringify({ current_password: currentPassword, code }) }) as { recovery_codes: string[] }
-      setRecoveryCodes(result.recovery_codes)
-      await refreshAuthentication()
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setSecurityWorking('')
-    }
-  }
-
-  const addPasskey = async () => {
-    const name = await dialogs.prompt({ title: '添加通行密钥', message: '名称用于区分这台设备或密码管理器。', defaultValue: '我的通行密钥', placeholder: '例如：MacBook', confirmText: '下一步' })
-    if (name === null) return
-    const currentPassword = await dialogs.prompt({ title: '验证登录密码', placeholder: '当前密码', inputType: 'password', confirmText: '添加' })
-    if (currentPassword === null) return
-    const code = authentication.totp_enabled ? await dialogs.prompt({ title: '验证认证器', message: '输入六位验证码，也可以使用一枚恢复码。', placeholder: '验证码或恢复码', confirmText: '添加' }) : ''
-    if (code === null) return
-    setSecurityWorking('passkey-add')
-    try {
-      const begin = await client.request('/me/passkeys/register/begin', { method: 'POST', body: JSON.stringify({ name, current_password: currentPassword, code }) }) as { options: any; challenge_token: string }
-      const credential = await createPasskeyCredential(begin.options)
-      await client.request('/me/passkeys/register/finish', { method: 'POST', body: JSON.stringify({ challenge_token: begin.challenge_token, credential }) })
-      await refreshAuthentication()
-      await load()
-      notify?.('通行密钥已添加', 'success')
-    } catch (error: any) {
-      const message = String(error?.name || '') === 'NotAllowedError' ? '未完成通行密钥创建' : localizeErrorMessage(error?.message || error)
-      notify?.(message, 'error')
-    } finally {
-      setSecurityWorking('')
-    }
-  }
-
-  const removePasskey = async (passkey: PasskeyCredential) => {
-    const confirmed = await dialogs.confirm({ title: '移除通行密钥？', message: `将移除“${passkey.name}”，这台设备之后不能再用它登录。`, confirmText: '移除', tone: 'danger' })
-    if (!confirmed) return
-    const currentPassword = await dialogs.prompt({ title: '验证登录密码', placeholder: '当前密码', inputType: 'password', confirmText: '移除' })
-    if (currentPassword === null) return
-    const code = authentication.totp_enabled ? await dialogs.prompt({ title: '验证认证器', message: '输入六位验证码，也可以使用一枚恢复码。', placeholder: '验证码或恢复码', confirmText: '移除' }) : ''
-    if (code === null) return
-    setSecurityWorking(`passkey-${passkey.id}`)
-    try {
-      await client.request(`/me/passkeys/${passkey.id}`, { method: 'DELETE', body: JSON.stringify({ current_password: currentPassword, code }) })
-      await refreshAuthentication()
-      await load()
-      notify?.('通行密钥已移除', 'success')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setSecurityWorking('')
-    }
-  }
-
-  const copySSHURI = async (access: SSHAccess) => {
-    const uri = sshShareURI(access.address, access.port, access.username, user?.proxy_password || '')
-    const ok = await copyText(uri)
-    notify?.(ok ? 'SSH 链接已复制' : '复制失败，请手动复制', ok ? 'success' : 'error')
-  }
-
-  return <><Panel title="我的账户" className="account-panel">
-    <div className="account-layout">
-      {/* 顶部个人身份卡片 */}
-      <div className="account-profile-hero">
-        <div className="account-profile-avatar">
-          {user?.nickname ? user.nickname.slice(0, 1) : (user?.username ? user.username.slice(0, 1).toUpperCase() : 'U')}
-        </div>
-        <div className="account-profile-info">
-          <div className="account-profile-name-row">
-            <h2 className="account-profile-title">{user?.nickname || user?.username || '用户'}</h2>
-            {user?.username && <span className="account-profile-handle">@{user.username}</span>}
-            <Badge variant={user?.role === 'admin' ? 'default' : 'secondary'}>
-              {user?.role === 'admin' ? '管理员' : '普通用户'}
-            </Badge>
-          </div>
-          <p className="muted" style={{ margin: 0, fontSize: 13 }}>维护个人信息、登录安全、双重认证与订阅加密。</p>
-        </div>
-        <div className="account-profile-badges">
-          <span className={`sub-pill ${authentication.totp_enabled ? 'ok' : ''}`}>
-            <Smartphone size={13} /> {authentication.totp_enabled ? 'TOTP 已开启' : '未开启 2FA'}
-          </span>
-          <span className={`sub-pill ${authentication.passkeys.length ? 'ok' : ''}`}>
-            <Fingerprint size={13} /> {authentication.passkeys.length ? `${authentication.passkeys.length} 个通行密钥` : '无通行密钥'}
-          </span>
-          <span className={`sub-pill ${ageRequired ? 'warn' : ageReady ? 'ok' : ''}`}>
-            <Shield size={13} /> {ageRequired ? 'Age 强制加密' : ageReady ? 'Age 已开启' : 'Age 未加密'}
-          </span>
-        </div>
-      </div>
-
-      <div className="account-settings-grid">
-        {/* 左侧卡片 1：个人信息 */}
-        <section className="sub-section">
-          <div className="sub-section-head"><div><h3><User size={16} />个人信息</h3><p className="muted">登录用户名不可自行修改，昵称可随时更新。</p></div></div>
-          <div className="form account-form">
-            <FormField label="登录用户名"><input value={user?.username || ''} disabled /></FormField>
-            <FormField label="昵称"><input value={nickname} onChange={event => setNickname(event.target.value)} maxLength={40} placeholder="设置一个昵称" /></FormField>
-            <button onClick={saveProfile}>保存个人信息</button>
-          </div>
-        </section>
-
-        {/* 右侧卡片：登录安全 */}
-        <section className="sub-section account-login-security">
-          <div className="sub-section-head"><div><h3><ShieldCheck size={16} />登录安全</h3><p className="muted">管理双重认证、恢复码和通行密钥。</p></div></div>
-          <div className="account-security-list">
-            <div className="account-security-item">
-              <div className="account-security-icon"><Smartphone size={19} /></div>
-              <div className="account-security-copy"><strong>认证器验证码</strong><span>{authentication.totp_enabled ? `已开启 · 剩余 ${authentication.recovery_codes_remaining} 枚恢复码` : '未开启双重认证'}</span></div>
-              <div className="account-security-actions">
-                {authentication.totp_enabled ? <><button type="button" className="ghost" onClick={() => void regenerateRecoveryCodes()} disabled={Boolean(securityWorking)}>生成新恢复码</button><button type="button" className="ghost danger-text" onClick={() => void disableTOTP()} disabled={Boolean(securityWorking)}>停用</button></> : <button type="button" onClick={() => void beginTOTPSetup()} disabled={Boolean(securityWorking)}>{securityWorking === 'totp-setup' ? '准备中…' : '开启'}</button>}
-              </div>
-            </div>
-            <div className="account-security-item passkeys">
-              <div className="account-security-icon"><Fingerprint size={19} /></div>
-              <div className="account-security-copy"><strong>通行密钥</strong><span>{authentication.passkeys.length ? `已添加 ${authentication.passkeys.length} 个` : '使用设备解锁直接登录'}</span></div>
-              <div className="account-security-actions"><button type="button" className="ghost" onClick={() => void addPasskey()} disabled={Boolean(securityWorking) || !authentication.passkey_supported || !passkeyAvailable()}><Plus size={15} />添加</button></div>
-              {!authentication.passkey_supported || !passkeyAvailable() ? <p className="account-security-note">通行密钥需要通过 HTTPS 访问面板。</p> : null}
-              {authentication.passkeys.length > 0 && <div className="account-passkey-list">{authentication.passkeys.map(passkey => <div key={passkey.id}><span><strong>{passkey.name}</strong><small>{passkey.last_used_at ? `最近使用 ${formatDate(passkey.last_used_at)}` : `添加于 ${formatDate(passkey.created_at)}`}</small></span><button type="button" className="ghost danger-text" onClick={() => void removePasskey(passkey)} disabled={Boolean(securityWorking)}>移除</button></div>)}</div>}
-            </div>
-          </div>
-        </section>
-
-        {/* 左侧卡片 2：修改密码 */}
-        <section className="sub-section">
-          <div className="sub-section-head"><div><h3><Lock size={16} />修改密码</h3><p className="muted">修改后下次登录使用新密码。</p></div></div>
-          <div className="form account-form">
-            <FormField label="当前密码"><input type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} /></FormField>
-            <FormField label="新密码" hint="至少 8 个字符"><input type="password" autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} /></FormField>
-            <button onClick={savePassword} disabled={!currentPassword || !newPassword}>修改密码</button>
-          </div>
-        </section>
-      </div>
-
-      {/* 底部全宽区块：订阅加密 */}
-      <section className="sub-section account-age-section">
-        <div className="sub-section-head"><div><h3><Shield size={16} />订阅加密</h3><p className="muted">只填写客户端生成的公钥，私钥不要上传到面板。</p></div><span className={`sub-pill ${ageRequired ? 'warn' : ageReady ? 'ok' : ''}`}>{ageRequired ? '管理员强制' : ageReady ? '已开启' : '未开启'}</span></div>
-        <div className="form account-form">
-          <div className="switch-form-row subscription-burn-toggle">
-            <span className="switch-form-label">{ageRequired ? '必须使用 Age 加密' : '为 Mihomo 开启 Age 加密'}</span>
-            <Switch checked={ageRequired || ageEnabled} disabled={ageRequired} onChange={checked => setAgeEnabled(checked)} ariaLabel="为 Mihomo 开启 Age 加密" />
-          </div>
-          <FormField label="Age 公钥" hint="只填写公钥，私钥留在客户端。">
-            <textarea value={agePublicKey} onChange={event => setAgePublicKey(event.target.value)} rows={3} spellCheck={false} placeholder="age1..." />
-          </FormField>
-          <button onClick={saveAge}>保存订阅加密</button>
-        </div>
-      </section>
-
-      {sshAccesses.length > 0 && (
-        <section className="sub-section">
-          <div className="sub-section-head"><div><h3><Lock size={16} />SSH 代理</h3><p className="muted">使用代理用户名和密码连接已授权的隔离 SSH 入口。</p></div></div>
-          <div className="sub-user-actions"><span className="muted">已授权入口</span>{sshAccesses.map(access => <button type="button" className="ghost" key={access.inbound_id} onClick={() => void copySSHURI(access)}>复制 {access.name} 链接</button>)}</div>
-        </section>
-      )}
-    </div>
-  </Panel>
-  <AnimatePresence>{totpSetup && <TOTPSetupDialog setup={totpSetup} client={client} onCancel={() => setTOTPSetup(null)} onComplete={completeTOTPSetup} />}</AnimatePresence>
-  <AnimatePresence>{recoveryCodes && <RecoveryCodesDialog codes={recoveryCodes} onClose={() => setRecoveryCodes(null)} />}</AnimatePresence>
-  </>
 }
 
 function TOTPSetupDialog({ setup, client, onCancel, onComplete }: { setup: { secret: string; qr_data_url: string }; client: ReturnType<typeof api>; onCancel: () => void; onComplete: (result: { recovery_codes: string[]; csrf_token?: string }) => Promise<void> }) {
