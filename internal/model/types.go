@@ -804,6 +804,10 @@ type Server struct {
 	MemoryTotalBytes            uint64               `json:"memory_total_bytes"`
 	AgentMemoryBytes            uint64               `json:"agent_memory_bytes"`
 	DiskBytes                   uint64               `json:"disk_bytes"`
+	DiskTotalBytes              uint64               `json:"disk_total_bytes"`
+	TCPConnectionCount          uint64               `json:"tcp_connection_count"`
+	UDPConnectionCount          uint64               `json:"udp_connection_count"`
+	ProcessCount                uint64               `json:"process_count"`
 	AgentVersion                string               `json:"agent_version"`
 	AgentBuild                  string               `json:"agent_build"`
 	SingBoxVersion              string               `json:"sing_box_version"`
@@ -2530,6 +2534,10 @@ type HealthReport struct {
 	MemoryTotalBytes          uint64       `json:"memory_total_bytes"`
 	AgentMemoryBytes          uint64       `json:"agent_memory_bytes"`
 	DiskBytes                 uint64       `json:"disk_bytes"`
+	DiskTotalBytes            uint64       `json:"disk_total_bytes"`
+	TCPConnectionCount        uint64       `json:"tcp_connection_count"`
+	UDPConnectionCount        uint64       `json:"udp_connection_count"`
+	ProcessCount              uint64       `json:"process_count"`
 	AgentVersion              string       `json:"agent_version"`
 	AgentBuild                string       `json:"agent_build"`
 	SingBoxVersion            string       `json:"sing_box_version"`
@@ -2558,6 +2566,11 @@ type ServerMetricSample struct {
 	CPUUsagePercent       float64   `json:"cpu_usage_percent"`
 	MemoryUsedBytes       uint64    `json:"memory_used_bytes"`
 	MemoryTotalBytes      uint64    `json:"memory_total_bytes"`
+	DiskUsedBytes         uint64    `json:"disk_used_bytes"`
+	DiskTotalBytes        uint64    `json:"disk_total_bytes"`
+	TCPConnectionCount    uint64    `json:"tcp_connection_count"`
+	UDPConnectionCount    uint64    `json:"udp_connection_count"`
+	ProcessCount          uint64    `json:"process_count"`
 	NetworkUploadBPS      uint64    `json:"network_upload_bps"`
 	NetworkDownloadBPS    uint64    `json:"network_download_bps"`
 	TrafficUploadBytes    uint64    `json:"traffic_upload_bytes"`
@@ -2569,10 +2582,17 @@ type ServerMetricSample struct {
 }
 
 type ServerResourceMetricPoint struct {
-	SampledAt        time.Time `json:"sampled_at"`
-	CPUUsagePercent  float64   `json:"cpu_usage_percent"`
-	MemoryUsedBytes  uint64    `json:"memory_used_bytes"`
-	MemoryTotalBytes uint64    `json:"memory_total_bytes"`
+	SampledAt          time.Time `json:"sampled_at"`
+	CPUUsagePercent    float64   `json:"cpu_usage_percent"`
+	MemoryUsedBytes    uint64    `json:"memory_used_bytes"`
+	MemoryTotalBytes   uint64    `json:"memory_total_bytes"`
+	DiskUsedBytes      uint64    `json:"disk_used_bytes"`
+	DiskTotalBytes     uint64    `json:"disk_total_bytes"`
+	TCPConnectionCount uint64    `json:"tcp_connection_count"`
+	UDPConnectionCount uint64    `json:"udp_connection_count"`
+	ProcessCount       uint64    `json:"process_count"`
+	NetworkUploadBPS   uint64    `json:"network_upload_bps"`
+	NetworkDownloadBPS uint64    `json:"network_download_bps"`
 }
 
 type DashboardSummary struct {

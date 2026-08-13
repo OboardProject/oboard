@@ -1358,13 +1358,16 @@ func TestServerMonitoringPolicyAndHealthSanitization(t *testing.T) {
 	if mode != "lightweight" || interval != 20*time.Second {
 		t.Fatalf("lightweight policy mode=%s interval=%s", mode, interval)
 	}
-	report := model.HealthReport{CPUUsagePercent: 180, MemoryUsedBytes: 200, MemoryTotalBytes: 100, NetworkUploadBPS: 101 << 30, Timestamp: time.Now().Add(-time.Hour)}
+	report := model.HealthReport{CPUUsagePercent: 180, MemoryUsedBytes: 200, MemoryTotalBytes: 100, DiskBytes: 200, DiskTotalBytes: 100, TCPConnectionCount: 10_000_001, UDPConnectionCount: 10_000_001, ProcessCount: 10_000_001, NetworkUploadBPS: 101 << 30, Timestamp: time.Now().Add(-time.Hour)}
 	sanitizeServerHealthReport(&report)
 	if report.CPUUsagePercent != 100 || report.MemoryUsedBytes != 100 {
 		t.Fatalf("resource sanitization = %#v", report)
 	}
 	if report.NetworkUploadBPS != 0 {
 		t.Fatalf("network rate was not bounded: %d", report.NetworkUploadBPS)
+	}
+	if report.DiskBytes != 100 || report.TCPConnectionCount != 0 || report.UDPConnectionCount != 0 || report.ProcessCount != 0 {
+		t.Fatalf("extended resource sanitization = %#v", report)
 	}
 	if time.Since(report.Timestamp) > 5*time.Second {
 		t.Fatalf("timestamp was not normalized: %s", report.Timestamp)

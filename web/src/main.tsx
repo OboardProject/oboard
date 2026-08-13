@@ -217,13 +217,13 @@ type ControllerBackup = { id: string; name: string; origin: 'manual' | 'automati
 type ControllerBackupSettings = { enabled: boolean; schedule: 'daily' | 'weekly'; time: string; weekday: number; local_retention: number; remote_retention: number; destination: BackupDestination; password_configured: boolean; destination_configured: boolean; last_success_at?: string; last_error?: string }
 type ControllerBackupSnapshot = { settings: ControllerBackupSettings; backups: ControllerBackup[] }
 type ServerMetricSample = { id: number; server_id: number; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; resource_recorded: boolean; network_upload_bps: number; network_download_bps: number; traffic_upload_bytes: number; traffic_download_bytes: number; connectivity_available?: boolean; connectivity_latency_ms: number; sampled_at: string }
-type ServerResourceMetricPoint = { sampled_at: string; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number }
+type ServerResourceMetricPoint = { sampled_at: string; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; disk_used_bytes: number; disk_total_bytes: number; tcp_connection_count: number; udp_connection_count: number; process_count: number; network_upload_bps: number; network_download_bps: number }
 type ServerResourceMetricsResponse = {
   history_enabled: boolean
   window_hours: number
   bucket_seconds: number
   points: ServerResourceMetricPoint[]
-  current: { cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; sampled_at?: string }
+  current: { cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; disk_used_bytes: number; disk_total_bytes: number; tcp_connection_count: number; udp_connection_count: number; process_count: number; network_upload_bps: number; network_download_bps: number; sampled_at?: string }
 }
 type LatencyProbeMode = 'tcp' | 'icmp'
 type LatencyProbeRegion = { province: string; carrier: string }
@@ -6103,7 +6103,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [mtuServer, setMtuServer] = useState<Server | null>(null)
   const [dnsServer, setDNSServer] = useState<Server | null>(null)
   const [detailServer, setDetailServer] = useState<Server | null>(null)
-  const [resourceServer, setResourceServer] = useState<Server | null>(null)
   const [timeDetailServer, setTimeDetailServer] = useState<Server | null>(null)
   const [connectivityServer, setConnectivityServer] = useState<{ server: Server } | null>(null)
   const [view, setViewState] = useState<'grid' | 'list'>(() => {
@@ -6542,7 +6541,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} onClose={() => setDetailServer(null)} />}</AnimatePresence>
-    <AnimatePresence>{resourceServer && <ServerResourceDialog server={resourceServer} client={client} onClose={() => setResourceServer(null)} />}</AnimatePresence>
     <AnimatePresence>{timeDetailServer && <ServerTimeDetailDialog
       server={timeDetailServer}
       role={role}
@@ -6897,8 +6895,8 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
               <option value="standard">标准</option>
             </Select>
           </FormField>
-          <FormField label="CPU / 内存历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
-            <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="CPU / 内存历史" />
+          <FormField label="负载历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
+            <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
           </FormField>
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
           <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
@@ -6991,8 +6989,8 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           <FormField label="回报模式" hint="轻量 20 秒，标准 10 秒。">
             <Select variant="segmented" value={draft.monitoring_mode || 'lightweight'} onChange={e => update({ monitoring_mode: e.target.value })}><option value="lightweight">轻量</option><option value="standard">标准</option></Select>
           </FormField>
-          <FormField label="CPU / 内存历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
-            <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="CPU / 内存历史" />
+          <FormField label="负载历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
+            <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
           </FormField>
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
           <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
@@ -7365,105 +7363,96 @@ function ServerTelemetryChart({ samples, type }: { samples: ServerMetricSample[]
   </div>
 }
 
-function ServerResourceHistoryChart({ points, type }: { points: ServerResourceMetricPoint[]; type: 'cpu' | 'memory' }) {
-  const values = points.map(point => type === 'cpu'
-    ? Number(point.cpu_usage_percent || 0)
-    : point.memory_total_bytes > 0 ? Number(point.memory_used_bytes || 0) / Number(point.memory_total_bytes) * 100 : 0)
-  const average = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0
-  const peak = values.length ? Math.max(...values) : 0
-  if (points.length < 2) {
-    return <div className="resource-history-empty"><Activity size={18} aria-hidden="true" /><span>等待更多历史数据</span></div>
-  }
-  return <section className={`resource-history-chart ${type}`}>
-    <div className="resource-history-chart-head">
-      <div><strong>{type === 'cpu' ? 'CPU 使用率' : '内存使用率'}</strong><span>平均 {average.toFixed(1)}%</span></div>
-      <b>{peak.toFixed(1)}% 峰值</b>
-    </div>
-    <div className="resource-history-plot">
-      <svg viewBox="0 0 640 128" preserveAspectRatio="none" role="img" aria-label={`${type === 'cpu' ? 'CPU' : '内存'}使用率历史趋势`}>
-        <line x1="0" y1="32" x2="640" y2="32" className="resource-history-grid" />
-        <line x1="0" y1="64" x2="640" y2="64" className="resource-history-grid" />
-        <line x1="0" y1="96" x2="640" y2="96" className="resource-history-grid" />
-        <polyline points={telemetryPolyline(values, 640, 128, 100)} className="resource-history-line" vectorEffect="non-scaling-stroke" />
-      </svg>
-      <span className="resource-history-scale top">100%</span>
-      <span className="resource-history-scale middle">50%</span>
-      <span className="resource-history-scale bottom">0%</span>
-    </div>
-    <div className="resource-history-axis"><time>{formatTableTime(points[0].sampled_at)}</time><time>{formatTableTime(points[points.length - 1].sampled_at)}</time></div>
+type ServerMonitorMetricCardProps = {
+  title: string
+  value: string
+  detail?: string
+  points?: ServerResourceMetricPoint[]
+  primary?: number[]
+  secondary?: number[]
+  primaryLabel?: string
+  secondaryLabel?: string
+  scaleMax?: number
+  formatScale?: (value: number) => string
+  tone?: 'cpu' | 'memory' | 'disk' | 'network' | 'connections' | 'processes'
+  emptyMessage?: string
+}
+
+function ServerMonitorMetricCard({ title, value, detail, points = [], primary = [], secondary = [], primaryLabel, secondaryLabel, scaleMax, formatScale = value => `${Math.round(value)}%`, tone = 'cpu', emptyMessage = '等待更多历史数据' }: ServerMonitorMetricCardProps) {
+  const hasChart = points.length > 1 && primary.length === points.length
+  const max = Math.max(1, scaleMax || 0, ...primary, ...secondary)
+  return <section className={`server-monitor-metric-card ${tone}`}>
+    <header>
+      <h3>{title}</h3>
+      <div><strong>{value}</strong>{detail ? <small>{detail}</small> : null}</div>
+    </header>
+    {hasChart ? <>
+      <div className="server-monitor-metric-plot">
+        <svg viewBox="0 0 420 150" preserveAspectRatio="none" role="img" aria-label={`${title}历史趋势`}>
+          <line x1="0" y1="37.5" x2="420" y2="37.5" className="server-monitor-grid-line" />
+          <line x1="0" y1="75" x2="420" y2="75" className="server-monitor-grid-line" />
+          <line x1="0" y1="112.5" x2="420" y2="112.5" className="server-monitor-grid-line" />
+          <polyline points={telemetryPolyline(primary, 420, 150, max)} className="server-monitor-line primary" vectorEffect="non-scaling-stroke" />
+          {secondary.length === primary.length ? <polyline points={telemetryPolyline(secondary, 420, 150, max)} className="server-monitor-line secondary" vectorEffect="non-scaling-stroke" /> : null}
+        </svg>
+        <span className="server-monitor-scale top">{formatScale(max)}</span>
+        <span className="server-monitor-scale middle">{formatScale(max / 2)}</span>
+      </div>
+      <div className="server-monitor-metric-axis"><time>{formatTableTime(points[0].sampled_at)}</time><time>{formatTableTime(points[points.length - 1].sampled_at)}</time></div>
+      {(primaryLabel || secondaryLabel) ? <div className="server-monitor-metric-legend">{primaryLabel ? <span><i className="primary" />{primaryLabel}</span> : null}{secondaryLabel ? <span><i className="secondary" />{secondaryLabel}</span> : null}</div> : null}
+    </> : <div className="server-monitor-metric-empty"><Activity size={17} aria-hidden="true" /><span>{emptyMessage}</span></div>}
   </section>
 }
 
-function ServerResourceDialog({ server, client, onClose }: { server: Server; client: any; onClose: () => void }) {
-  const [windowHours, setWindowHours] = useState(24)
-  const [response, setResponse] = useState<ServerResourceMetricsResponse | null>(null)
-  const [loading, setLoading] = useState(Boolean(server.resource_history_enabled))
-  const [error, setError] = useState('')
-
-  const loadResourceHistory = React.useCallback(async (hours: number) => {
-    if (!server.resource_history_enabled) {
-      setResponse({
-        history_enabled: false,
-        window_hours: hours,
-        bucket_seconds: 0,
-        points: [],
-        current: {
-          cpu_usage_percent: server.cpu_usage_percent || 0,
-          memory_used_bytes: server.memory_used_bytes || 0,
-          memory_total_bytes: server.memory_total_bytes || 0,
-          sampled_at: server.telemetry_updated_at,
-        },
-      })
-      setLoading(false)
-      return
-    }
-    setLoading(true)
-    setError('')
-    try {
-      const result = await client.request(`/servers/${server.id}/resource-metrics?hours=${hours}`) as ServerResourceMetricsResponse
-      setResponse(result)
-    } catch (loadError: any) {
-      setError(localizeErrorMessage(loadError?.message || loadError))
-    } finally {
-      setLoading(false)
-    }
-  }, [client, server])
-
-  useEffect(() => { void loadResourceHistory(windowHours) }, [loadResourceHistory, windowHours])
-
+function ServerLoadPanel({ server, response, loading, error, windowHours, onWindowChange, onRetry }: { server: Server; response: ServerResourceMetricsResponse | null; loading: boolean; error: string; windowHours: number; onWindowChange: (hours: number) => void; onRetry: () => void }) {
+  const points = response?.points || []
   const current = response?.current || {
     cpu_usage_percent: server.cpu_usage_percent || 0,
     memory_used_bytes: server.memory_used_bytes || 0,
     memory_total_bytes: server.memory_total_bytes || 0,
+    disk_used_bytes: server.disk_bytes || 0,
+    disk_total_bytes: server.disk_total_bytes || 0,
+    tcp_connection_count: server.tcp_connection_count || 0,
+    udp_connection_count: server.udp_connection_count || 0,
+    process_count: server.process_count || 0,
+    network_upload_bps: server.network_upload_bps || 0,
+    network_download_bps: server.network_download_bps || 0,
     sampled_at: server.telemetry_updated_at,
   }
   const memoryPercent = current.memory_total_bytes > 0 ? current.memory_used_bytes / current.memory_total_bytes * 100 : 0
+  const cpuValues = points.map(point => Number(point.cpu_usage_percent || 0))
+  const memoryValues = points.map(point => point.memory_total_bytes > 0 ? Number(point.memory_used_bytes || 0) / Number(point.memory_total_bytes) * 100 : 0)
+  const diskPercent = current.disk_total_bytes > 0 ? current.disk_used_bytes / current.disk_total_bytes * 100 : 0
+  const diskValues = points.map(point => point.disk_total_bytes > 0 ? Number(point.disk_used_bytes || 0) / Number(point.disk_total_bytes) * 100 : 0)
+  const tcpValues = points.map(point => Number(point.tcp_connection_count || 0))
+  const udpValues = points.map(point => Number(point.udp_connection_count || 0))
+  const processValues = points.map(point => Number(point.process_count || 0))
+  const downloadValues = points.map(point => Number(point.network_download_bps || 0))
+  const uploadValues = points.map(point => Number(point.network_upload_bps || 0))
+  const networkMax = Math.max(1, ...downloadValues, ...uploadValues)
+  const windowOptions = [{ hours: 1, label: '实时' }, { hours: 4, label: '4 小时' }, { hours: 24, label: '1 天' }, { hours: 168, label: '7 天' }, { hours: 720, label: '30 天' }]
 
-  return <MotionDialogPanel onCancel={onClose} className="server-resource-dialog">
-    <header className="dialog-head resource-dialog-head">
-      <div className="resource-dialog-title"><Gauge size={22} aria-hidden="true" /><div><h2>{server.name || `server-${server.id}`} · 系统资源</h2><p>{server.resource_history_enabled ? 'CPU 与内存历史' : 'CPU 与内存实时状态'}</p></div></div>
-      <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
-    </header>
-    <div className="dialog-body resource-dialog-body">
-      <section className="resource-live-summary" aria-label="当前系统资源">
-        <div><span>CPU</span><strong>{Number(current.cpu_usage_percent).toFixed(1)}%</strong></div>
-        <div><span>内存</span><strong>{memoryPercent.toFixed(1)}%</strong><small>{current.memory_total_bytes ? `${formatBytes(current.memory_used_bytes)} / ${formatBytes(current.memory_total_bytes)}` : '—'}</small></div>
-        <time dateTime={current.sampled_at || undefined}>{current.sampled_at ? `更新于 ${formatTableTime(current.sampled_at)}` : '等待实时数据'}</time>
-      </section>
-      {server.resource_history_enabled ? <>
-        <div className="resource-history-toolbar">
-          <div className="resource-window-toggle" role="radiogroup" aria-label="资源历史时间范围">
-            {[1, 6, 24, 48].map(hours => <button key={hours} type="button" role="radio" aria-checked={windowHours === hours} className={windowHours === hours ? 'active' : ''} onClick={() => setWindowHours(hours)}>{hours} 小时</button>)}
-          </div>
-          <button type="button" className="ghost icon-button" onClick={() => void loadResourceHistory(windowHours)} disabled={loading} aria-label="刷新资源历史" title="刷新"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
-        </div>
-        {error ? <div className="resource-history-state error"><AlertTriangle size={18} aria-hidden="true" /><span>{error}</span><button type="button" className="ghost" onClick={() => void loadResourceHistory(windowHours)}>重试</button></div>
-          : loading && !response ? <div className="resource-history-state"><Loader2 size={20} className="spin" aria-hidden="true" /><span>正在读取历史数据</span></div>
-          : <div className="resource-history-charts"><ServerResourceHistoryChart points={response?.points || []} type="cpu" /><ServerResourceHistoryChart points={response?.points || []} type="memory" /></div>}
-      </> : <div className="resource-history-state disabled"><Database size={20} aria-hidden="true" /><strong>历史记录已关闭</strong><span>主控只显示 Agent 最新上报的 CPU 和内存，不保存历史数据。</span></div>}
+  return <div className="server-monitor-panel" role="tabpanel" id="server-monitor-load-panel" aria-labelledby="server-monitor-load-tab">
+    <div className="server-monitor-window-row">
+      <div className="server-monitor-window-toggle" role="radiogroup" aria-label="负载时间范围">
+        {windowOptions.map(option => <button key={option.hours} type="button" role="radio" aria-checked={windowHours === option.hours} className={windowHours === option.hours ? 'active' : ''} onClick={() => onWindowChange(option.hours)}>{option.label}</button>)}
+      </div>
+      <button type="button" className="ghost icon-button" onClick={onRetry} disabled={loading} aria-label="刷新负载数据" title="刷新"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
     </div>
-    <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
-  </MotionDialogPanel>
+    {error ? <div className="resource-history-state error"><AlertTriangle size={18} aria-hidden="true" /><span>{error}</span><button type="button" className="ghost" onClick={onRetry}>重试</button></div>
+      : loading && !response ? <div className="resource-history-state"><Loader2 size={20} className="spin" aria-hidden="true" /><span>正在读取负载数据</span></div>
+      : <>
+        {!server.resource_history_enabled ? <div className="server-monitor-notice"><Database size={15} aria-hidden="true" /><span>历史记录已关闭，当前只显示 Agent 最新上报值。</span></div> : null}
+        <div className="server-monitor-metric-grid">
+          <ServerMonitorMetricCard title="CPU" value={`${Number(current.cpu_usage_percent || 0).toFixed(1)}%`} points={points} primary={cpuValues} scaleMax={100} tone="cpu" />
+          <ServerMonitorMetricCard title="内存" value={current.memory_total_bytes ? `${formatBytes(current.memory_used_bytes)} / ${formatBytes(current.memory_total_bytes)}` : '—'} detail={`${memoryPercent.toFixed(1)}%`} points={points} primary={memoryValues} scaleMax={100} tone="memory" />
+          <ServerMonitorMetricCard title="磁盘" value={current.disk_total_bytes ? `${formatBytes(current.disk_used_bytes)} / ${formatBytes(current.disk_total_bytes)}` : formatBytes(current.disk_used_bytes || 0)} detail={`${diskPercent.toFixed(1)}%`} points={points} primary={diskValues} scaleMax={100} tone="disk" />
+          <ServerMonitorMetricCard title="网络" value={`↓ ${formatByteRate(current.network_download_bps || 0)}`} detail={`↑ ${formatByteRate(current.network_upload_bps || 0)}`} points={points} primary={downloadValues} secondary={uploadValues} scaleMax={networkMax} formatScale={formatByteRate} primaryLabel="下载" secondaryLabel="上传" tone="network" />
+          <ServerMonitorMetricCard title="连接数" value={`TCP ${Math.round(current.tcp_connection_count || 0)}`} detail={`UDP ${Math.round(current.udp_connection_count || 0)}`} points={points} primary={tcpValues} secondary={udpValues} formatScale={value => `${Math.round(value)}`} primaryLabel="TCP" secondaryLabel="UDP" tone="connections" />
+          <ServerMonitorMetricCard title="进程数" value={`${Math.round(current.process_count || 0)}`} points={points} primary={processValues} formatScale={value => `${Math.round(value)}`} tone="processes" />
+        </div>
+      </>}
+  </div>
 }
 
 function serverTrafficPeriodLabel(server: Server) {
@@ -7508,7 +7497,8 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
     const totalTraffic = formatBytes((server.traffic_upload_bytes || 0) + (server.traffic_download_bytes || 0))
 
     return (
-      <MotionCard tag="article" className="server-card server-list-row" hoverEffect={false}>
+      <MotionCard tag="article" className="server-card server-list-row server-card-monitorable" hoverEffect={false}>
+        <button type="button" className="server-monitor-open-overlay" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${server.name || `服务器 #${server.id}`} 的负载与延迟`} />
         <div className="server-list-identity">
           <RegionFlag code={serverRegionCode(server)} size={24} />
           <div>
@@ -7526,13 +7516,13 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
           </div>
         </div>
 
-        <button type="button" className="server-list-metric-item server-resource-open" onClick={() => onAction('resource-details', server)} aria-label="查看 CPU 和内存详情">
+        <div className="server-list-metric-item server-resource-open">
           <span className="server-list-metric-label">CPU / 内存</span>
           <div className="server-list-metric-value">
             <span style={{ fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>{Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
             <span className="muted" style={{ fontSize: 11, marginLeft: 6, fontVariantNumeric: 'tabular-nums' }}>{serverMemoryLabel(server)} ({memPercent}%)</span>
           </div>
-        </button>
+        </div>
 
         <div className="server-list-metric-item">
           <span className="server-list-metric-label">实时速率 / 本周期</span>
@@ -7548,12 +7538,12 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
         <div className="server-list-metric-item">
           <span className="server-list-metric-label">延迟测试</span>
           {server.latency_probe_enabled ? (
-            <button type="button" className="ghost server-list-latency-btn" onClick={() => onAction('connectivity-details', server)} title="查看 SLA 详情">
+            <div className="server-list-latency-btn">
               <strong>{connectivityLatencyLabel(server.connectivity_status, server.connectivity_latency_ms)}</strong>
               <Badge variant={server.connectivity_status === 'available' ? 'success' : server.connectivity_status === 'unavailable' || server.connectivity_status === 'offline' ? 'destructive' : 'secondary'} className="latency-status-badge">
                 {connectivityStatusLabel(server.connectivity_status)}
               </Badge>
-            </button>
+            </div>
           ) : (
             <div className="server-list-latency-btn disabled">
               <span className="muted" style={{ fontSize: 12 }}>未配置</span>
@@ -7568,7 +7558,8 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
   }
 
   return (
-    <MotionCard tag="article" className="server-card" hoverEffect={false}>
+    <MotionCard tag="article" className="server-card server-card-monitorable" hoverEffect={false}>
+      <button type="button" className="server-monitor-open-overlay" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${server.name || `服务器 #${server.id}`} 的负载与延迟`} />
       {/* Header */}
       <div className="server-card-head">
         <div className="server-card-title">
@@ -7613,7 +7604,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
         fontSize: '12px'
       }}>
         {/* CPU & Memory bars */}
-        <button type="button" className="server-resource-summary" style={{ gridColumn: 'span 2' }} onClick={() => onAction('resource-details', server)} aria-label="查看 CPU 和内存详情">
+        <div className="server-resource-summary" style={{ gridColumn: 'span 2' }}>
           <div className="server-resource-summary-head">
             <span>系统资源</span>
             <div className="server-resource-summary-head-badge">
@@ -7621,14 +7612,14 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
               <ChevronRight size={13} aria-hidden="true" />
             </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
             {/* CPU Progress */}
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+            <div style={{ width: '100%' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', width: '100%' }}>
                 <span>CPU 使用率</span>
                 <span style={{ fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>{Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
               </div>
-              <div style={{ height: '6px', backgroundColor: 'var(--surface-3, rgba(0,0,0,0.06))', borderRadius: '3px', overflow: 'hidden' }}>
+              <div style={{ height: '6px', width: '100%', backgroundColor: 'var(--surface-3, rgba(0,0,0,0.06))', borderRadius: '3px', overflow: 'hidden' }}>
                 <div style={{
                   height: '100%',
                   width: `${Math.max(server.cpu_usage_percent || 0, (server.cpu_usage_percent && server.cpu_usage_percent > 0) ? 2 : 0)}%`,
@@ -7640,12 +7631,12 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
             </div>
 
             {/* Memory Progress */}
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+            <div style={{ width: '100%' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', width: '100%' }}>
                 <span>内存 ({serverMemoryLabel(server)})</span>
                 <span style={{ fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>{server.memory_total_bytes ? `${((server.memory_used_bytes / server.memory_total_bytes) * 100).toFixed(0)}%` : '—'}</span>
               </div>
-              <div style={{ height: '6px', backgroundColor: 'var(--surface-3, rgba(0,0,0,0.06))', borderRadius: '3px', overflow: 'hidden' }}>
+              <div style={{ height: '6px', width: '100%', backgroundColor: 'var(--surface-3, rgba(0,0,0,0.06))', borderRadius: '3px', overflow: 'hidden' }}>
                 <div style={{
                   height: '100%',
                   width: `${server.memory_total_bytes ? Math.max((server.memory_used_bytes / server.memory_total_bytes) * 100, 2) : 0}%`,
@@ -7656,7 +7647,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
               </div>
             </div>
           </div>
-        </button>
+        </div>
 
         <div className="server-telemetry" style={{ gridColumn: 'span 2' }}>
           <div className="server-telemetry-heading">
@@ -7672,7 +7663,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
           <div className="server-chart-caption"><span><i className="download" />下载</span><span><i className="upload" />上传</span><small>{serverTrafficPeriodLabel(server)}</small></div>
         </div>
 
-        <button type="button" className="server-connectivity" style={{ gridColumn: 'span 2' }} onClick={() => onAction('connectivity-details', server)} aria-label="查看历史与延迟测试" title="查看历史与延迟测试">
+        <div className="server-connectivity" style={{ gridColumn: 'span 2' }}>
           <span className="server-telemetry-heading">
             <span className="server-telemetry-title">
               <span>延迟测试</span>
@@ -7685,7 +7676,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
             <span>{connectivityProbeDomain(server)} · {server.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'}</span>
           </span>
           <ServerTelemetryChart samples={samples.filter(x => x.connectivity_available !== undefined)} type="latency" />
-        </button>
+        </div>
       </div>
     </MotionCard>
   )
@@ -7754,16 +7745,18 @@ function ServerUnifiedTelemetryChart({
   resourcePoints = [],
   latencyPoints = [],
   regionalProbes = [],
+  includeResources = true,
   windowHours = 24,
 }: {
   resourcePoints?: ServerResourcePoint[]
   latencyPoints?: ServerLatencyPoint[]
   regionalProbes?: LatencyProbeResultSample[]
+  includeResources?: boolean
   windowHours?: number
 }) {
   const { seriesList, buckets } = useMemo(() => {
-    return alignUnifiedMetrics({ resourcePoints, latencyPoints, regionalProbes, windowHours })
-  }, [resourcePoints, latencyPoints, regionalProbes, windowHours])
+    return alignUnifiedMetrics({ resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours })
+  }, [resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours])
 
   const [enabledSeries, setEnabledSeries] = useState<Record<string, boolean>>({})
 
@@ -7993,9 +7986,13 @@ function ServerUnifiedTelemetryChart({
 }
 
 function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { server: Server; client: any; onClose: () => void; onUpdated: () => void }) {
-  const [windowKey, setWindowKey] = useState<ConnectivityWindowKey>('24h')
+  const [activeView, setActiveView] = useState<'load' | 'latency'>('load')
+  const [loadWindowHours, setLoadWindowHours] = useState(1)
+  const [windowKey, setWindowKey] = useState<ConnectivityWindowKey>('1h')
   const [response, setResponse] = useState<ConnectivityResponse | null>(null)
   const [resourceResponse, setResourceResponse] = useState<ServerResourceMetricsResponse | null>(null)
+  const [resourceLoading, setResourceLoading] = useState(Boolean(server.resource_history_enabled))
+  const [resourceError, setResourceError] = useState('')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [probeItems, setProbeItems] = useState<LatencyProbeResult[]>([])
@@ -8004,27 +8001,23 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
   const [probeError, setProbeError] = useState('')
   const mounted = useRef(true)
   const requestSequence = useRef(0)
+  const resourceRequestSequence = useRef(0)
 
-  const windowHoursMap: Record<ConnectivityWindowKey, number> = { '24h': 24, '7d': 168, '30d': 720 }
+  const windowHoursMap: Record<ConnectivityWindowKey, number> = { '1h': 1, '6h': 6, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
   const currentWindowHours = windowHoursMap[windowKey] || 24
 
   const loadAllData = async (key: ConnectivityWindowKey) => {
     const sequence = ++requestSequence.current
     setLoading(true)
     setLoadError('')
-    const hours = windowHoursMap[key] || 24
     try {
-      const [connRes, resRes, probeRes] = await Promise.all([
+      const [connRes, probeRes] = await Promise.all([
         client.request(connectivityRequestPath(server.id, key)) as Promise<ConnectivityResponse>,
-        server.resource_history_enabled
-          ? (client.request(`/servers/${server.id}/resource-metrics?hours=${hours}`) as Promise<ServerResourceMetricsResponse>)
-          : Promise.resolve<ServerResourceMetricsResponse | null>(null),
         client.request(`/servers/${server.id}/latency-probe?limit=512`).catch(() => ({ results: [] })),
       ])
 
       if (sequence === requestSequence.current && mounted.current) {
         setResponse(connRes)
-        setResourceResponse(resRes)
         setProbeItems(probeRes?.results || [])
         setProbeLoading(false)
       }
@@ -8038,6 +8031,43 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
       }
     }
   }
+
+  const loadResourceData = React.useCallback(async (hours: number) => {
+    const sequence = ++resourceRequestSequence.current
+    if (!server.resource_history_enabled) {
+      setResourceResponse({
+        history_enabled: false,
+        window_hours: hours,
+        bucket_seconds: 0,
+        points: [],
+        current: {
+          cpu_usage_percent: server.cpu_usage_percent || 0,
+          memory_used_bytes: server.memory_used_bytes || 0,
+          memory_total_bytes: server.memory_total_bytes || 0,
+          disk_used_bytes: server.disk_bytes || 0,
+          disk_total_bytes: server.disk_total_bytes || 0,
+          tcp_connection_count: server.tcp_connection_count || 0,
+          udp_connection_count: server.udp_connection_count || 0,
+          process_count: server.process_count || 0,
+          network_upload_bps: server.network_upload_bps || 0,
+          network_download_bps: server.network_download_bps || 0,
+          sampled_at: server.telemetry_updated_at,
+        },
+      })
+      setResourceLoading(false)
+      return
+    }
+    setResourceLoading(true)
+    setResourceError('')
+    try {
+      const result = await client.request(`/servers/${server.id}/resource-metrics?hours=${hours}`) as ServerResourceMetricsResponse
+      if (sequence === resourceRequestSequence.current && mounted.current) setResourceResponse(result)
+    } catch (error: any) {
+      if (sequence === resourceRequestSequence.current && mounted.current) setResourceError(localizeErrorMessage(error?.message || error))
+    } finally {
+      if (sequence === resourceRequestSequence.current && mounted.current) setResourceLoading(false)
+    }
+  }, [client, server])
 
   const runProbe = async () => {
     setProbeRunning(true)
@@ -8072,8 +8102,11 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
     return () => {
       mounted.current = false
       requestSequence.current++
+      resourceRequestSequence.current++
     }
   }, [windowKey, server.id])
+
+  useEffect(() => { void loadResourceData(loadWindowHours) }, [loadResourceData, loadWindowHours])
 
   const currentStatusLabels: Record<ConnectivityResponse['current']['status'], string> = {
     available: '可用',
@@ -8089,7 +8122,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
   const firstBucket = buckets[0]
   const midBucket = buckets[Math.floor(buckets.length / 2)]
   const lastBucket = buckets[buckets.length - 1]
-  const windowLabels: Record<ConnectivityWindowKey, string> = { '24h': '24 小时', '7d': '7 天', '30d': '30 天' }
+  const windowLabels: Record<ConnectivityWindowKey, string> = { '1h': '1 小时', '6h': '6 小时', '12h': '12 小时', '24h': '1 天', '7d': '7 天', '30d': '30 天' }
   const causeLabels: Record<string, string> = { probe_failed: '公网探测失败', controller_disconnected: '主控连接断开', server_offline: '服务器离线', mixed: '多种可用性异常' }
   const formatLatency = (value: number | null | undefined) => value == null ? '—' : `${Math.round(value)} ms`
   const bucketTitle = (bucket: ConnectivityResponse['buckets'][number]) => {
@@ -8103,19 +8136,33 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
   const memoryTotal = server.memory_total_bytes || resourceResponse?.current.memory_total_bytes || 0
   const memoryUsed = server.memory_used_bytes || resourceResponse?.current.memory_used_bytes || 0
   const memoryPct = memoryTotal > 0 ? ((memoryUsed / memoryTotal) * 100).toFixed(1) : '0'
+  const selectMonitorView = (view: 'load' | 'latency') => {
+    setActiveView(view)
+    window.requestAnimationFrame(() => document.getElementById(`server-monitor-${view}-tab`)?.focus())
+  }
+  const handleMonitorTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home' && event.key !== 'End') return
+    event.preventDefault()
+    selectMonitorView(event.key === 'ArrowRight' || event.key === 'End' ? 'latency' : 'load')
+  }
 
   return <MotionDialogPanel onCancel={onClose} className="connectivity-dialog">
     <header className="dialog-head connectivity-head">
       <div className="connectivity-title">
         <span className={`connectivity-head-icon ${currentTone}`}><Activity size={17} aria-hidden="true" /></span>
         <div>
-          <h2>{server.name || `服务器 #${server.id}`} · 历史与延迟测试</h2>
-          <p>#{server.id} · {server.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'} · 每 {server.latency_probe_interval_seconds || 60} 秒</p>
+          <h2>{server.name || `服务器 #${server.id}`} · 监控</h2>
+          <p>#{server.id} · {regionLabel(serverRegionCode(server))}</p>
         </div>
       </div>
       <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
     <div className="dialog-body connectivity-body">
+      <div className="server-monitor-tabs" role="tablist" aria-label="服务器监控视图">
+        <button id="server-monitor-load-tab" type="button" role="tab" tabIndex={activeView === 'load' ? 0 : -1} aria-selected={activeView === 'load'} aria-controls="server-monitor-load-panel" className={activeView === 'load' ? 'active' : ''} onClick={() => setActiveView('load')} onKeyDown={handleMonitorTabKeyDown}>负载</button>
+        <button id="server-monitor-latency-tab" type="button" role="tab" tabIndex={activeView === 'latency' ? 0 : -1} aria-selected={activeView === 'latency'} aria-controls="server-monitor-latency-panel" className={activeView === 'latency' ? 'active' : ''} onClick={() => setActiveView('latency')} onKeyDown={handleMonitorTabKeyDown}>延迟</button>
+      </div>
+      {activeView === 'load' ? <ServerLoadPanel server={server} response={resourceResponse} loading={resourceLoading} error={resourceError} windowHours={loadWindowHours} onWindowChange={setLoadWindowHours} onRetry={() => void loadResourceData(loadWindowHours)} /> : <div className="server-monitor-panel" role="tabpanel" id="server-monitor-latency-panel" aria-labelledby="server-monitor-latency-tab">
       {/* Live Resource & Connectivity Cards Bar */}
       <div className="connectivity-live-grid">
         <div className="connectivity-live-card">
@@ -8146,7 +8193,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
       </div>
 
       <div className="connectivity-window-switch" role="radiogroup" aria-label="统计时间范围">
-        {(['24h', '7d', '30d'] as ConnectivityWindowKey[]).map(key => <button key={key} type="button" role="radio" aria-checked={windowKey === key} className={windowKey === key ? 'active' : ''} onClick={() => setWindowKey(key)} disabled={loading && windowKey === key}>{windowLabels[key]}</button>)}
+        {(['1h', '6h', '12h', '24h'] as ConnectivityWindowKey[]).map(key => <button key={key} type="button" role="radio" aria-checked={windowKey === key} className={windowKey === key ? 'active' : ''} onClick={() => setWindowKey(key)} disabled={loading && windowKey === key}>{windowLabels[key]}</button>)}
       </div>
 
       {loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载监控与延迟统计</strong></div>
@@ -8154,9 +8201,9 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
         : response ? <>
           {/* Komari Style Unified Telemetry Chart */}
           <ServerUnifiedTelemetryChart
-            resourcePoints={resourceResponse?.points || []}
             latencyPoints={response.latency_points || []}
             regionalProbes={probeItems || []}
+            includeResources={false}
             windowHours={currentWindowHours}
           />
 
@@ -8222,9 +8269,10 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
 
           <div className="connectivity-explanation"><Info size={14} aria-hidden="true" /><p><strong>延迟不参与 SLA。</strong> Agent 与主控保持连接时计为在线；断开主控后，公网目标测试成功的时段仍计为在线，本地保存的结果会在恢复连接后自动补报。地区目标只用于比较延迟，不影响 SLA。</p></div>
         </> : null}
+      </div>}
     </div>
     <span className="sr-only" role="status" aria-live="polite">{probeRunning ? '延迟测试正在执行' : ''}</span>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => void loadAllData(windowKey)} disabled={loading || probeLoading || probeRunning} aria-label="刷新数据"><RefreshCw size={14} className={loading || probeLoading ? 'spin' : ''} />刷新</button><button type="button" onClick={() => void runProbe()} disabled={probeRunning || !server.latency_probe_enabled} aria-busy={probeRunning}>{probeRunning ? '测试中...' : '立即测试'}</button><button type="button" className="ghost" onClick={onClose}>关闭</button></footer>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={activeView === 'load' ? () => void loadResourceData(loadWindowHours) : () => void loadAllData(windowKey)} disabled={activeView === 'load' ? resourceLoading : loading || probeLoading || probeRunning} aria-label="刷新数据"><RefreshCw size={14} className={(activeView === 'load' ? resourceLoading : loading || probeLoading) ? 'spin' : ''} />刷新</button>{activeView === 'latency' ? <button type="button" onClick={() => void runProbe()} disabled={probeRunning || !server.latency_probe_enabled} aria-busy={probeRunning}>{probeRunning ? '测试中...' : '立即测试'}</button> : null}<button type="button" className="ghost" onClick={onClose}>关闭</button></footer>
   </MotionDialogPanel>
 }
 

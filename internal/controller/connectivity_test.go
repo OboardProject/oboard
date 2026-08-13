@@ -228,7 +228,7 @@ func TestServerConnectivityAPIWindowsAndErrors(t *testing.T) {
 	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 
-	for _, key := range []string{"", "24h", "7d", "30d"} {
+	for _, key := range []string{"", "1h", "6h", "12h", "24h", "7d", "30d"} {
 		path := "/api/v2/ui/servers/" + strconv.FormatInt(server.ID, 10) + "/connectivity"
 		if key != "" {
 			path += "?window=" + key

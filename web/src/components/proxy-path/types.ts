@@ -52,6 +52,11 @@ export type Server = {
   memory_used_bytes: number
   memory_total_bytes: number
   agent_memory_bytes: number
+  disk_bytes: number
+  disk_total_bytes: number
+  tcp_connection_count: number
+  udp_connection_count: number
+  process_count: number
   agent_id?: string
   agent_version: string
   agent_build: string

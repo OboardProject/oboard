@@ -30,6 +30,13 @@ export interface ServerResourcePoint {
   cpu_usage_percent: number
   memory_used_bytes: number
   memory_total_bytes: number
+  disk_used_bytes?: number
+  disk_total_bytes?: number
+  tcp_connection_count?: number
+  udp_connection_count?: number
+  process_count?: number
+  network_upload_bps?: number
+  network_download_bps?: number
 }
 
 export interface ServerLatencyPoint {
@@ -71,6 +78,7 @@ export function alignUnifiedMetrics({
   resourcePoints = [],
   latencyPoints = [],
   regionalProbes = [],
+  includeResources = true,
   windowHours = 24,
   bucketCount = 60,
   now = Date.now(),
@@ -78,6 +86,7 @@ export function alignUnifiedMetrics({
   resourcePoints?: ServerResourcePoint[]
   latencyPoints?: ServerLatencyPoint[]
   regionalProbes?: LatencyProbeResultSample[]
+  includeResources?: boolean
   windowHours?: number
   bucketCount?: number
   now?: number
@@ -101,9 +110,11 @@ export function alignUnifiedMetrics({
   })
 
   // 2. Build series list
-  const seriesList: MetricSeries[] = [
+  const seriesList: MetricSeries[] = includeResources ? [
     { id: 'cpu', label: 'CPU 使用率', color: '#3b82f6', unit: '%', yAxis: 'left' },
     { id: 'memory', label: '内存使用率', color: '#10b981', unit: '%', yAxis: 'left' },
+    { id: 'public_latency', label: '公网延迟', color: '#f59e0b', unit: 'ms', yAxis: 'right' },
+  ] : [
     { id: 'public_latency', label: '公网延迟', color: '#f59e0b', unit: 'ms', yAxis: 'right' },
   ]
 
@@ -139,7 +150,7 @@ export function alignUnifiedMetrics({
   }
 
   // 4. Map resourcePoints (CPU & Memory)
-  resourcePoints.forEach(pt => {
+  if (includeResources) resourcePoints.forEach(pt => {
     const ts = new Date(pt.sampled_at).getTime()
     const idx = getBucketIndex(ts)
     if (idx >= 0) {

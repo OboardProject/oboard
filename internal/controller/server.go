@@ -3208,14 +3208,18 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		hours := intQuery(r, "hours", 24)
-		if hours != 1 && hours != 6 && hours != 24 && hours != 48 {
+		if hours != 1 && hours != 4 && hours != 24 && hours != 168 && hours != 720 {
 			hours = 24
 		}
 		bucket := time.Minute
-		if hours >= 24 {
+		if hours >= 720 {
+			bucket = 4 * time.Hour
+		} else if hours >= 168 {
+			bucket = time.Hour
+		} else if hours >= 24 {
 			bucket = 10 * time.Minute
-		} else if hours >= 6 {
-			bucket = 5 * time.Minute
+		} else if hours >= 4 {
+			bucket = 2 * time.Minute
 		}
 		points := []model.ServerResourceMetricPoint{}
 		if server.ResourceHistoryEnabled {
@@ -3231,10 +3235,17 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			"bucket_seconds":  int(bucket.Seconds()),
 			"points":          points,
 			"current": map[string]any{
-				"cpu_usage_percent":  server.CPUUsagePercent,
-				"memory_used_bytes":  server.MemoryUsedBytes,
-				"memory_total_bytes": server.MemoryTotalBytes,
-				"sampled_at":         server.TelemetryUpdatedAt,
+				"cpu_usage_percent":    server.CPUUsagePercent,
+				"memory_used_bytes":    server.MemoryUsedBytes,
+				"memory_total_bytes":   server.MemoryTotalBytes,
+				"disk_used_bytes":      server.DiskBytes,
+				"disk_total_bytes":     server.DiskTotalBytes,
+				"tcp_connection_count": server.TCPConnectionCount,
+				"udp_connection_count": server.UDPConnectionCount,
+				"process_count":        server.ProcessCount,
+				"network_upload_bps":   server.NetworkUploadBPS,
+				"network_download_bps": server.NetworkDownloadBPS,
+				"sampled_at":           server.TelemetryUpdatedAt,
 			},
 		})
 		return
@@ -11002,6 +11013,19 @@ func sanitizeServerHealthReport(report *model.HealthReport) {
 	}
 	if report.MemoryTotalBytes > 0 && report.MemoryUsedBytes > report.MemoryTotalBytes {
 		report.MemoryUsedBytes = report.MemoryTotalBytes
+	}
+	if report.DiskTotalBytes > 0 && report.DiskBytes > report.DiskTotalBytes {
+		report.DiskBytes = report.DiskTotalBytes
+	}
+	const maxPlausibleSystemCount = uint64(10_000_000)
+	if report.TCPConnectionCount > maxPlausibleSystemCount {
+		report.TCPConnectionCount = 0
+	}
+	if report.UDPConnectionCount > maxPlausibleSystemCount {
+		report.UDPConnectionCount = 0
+	}
+	if report.ProcessCount > maxPlausibleSystemCount {
+		report.ProcessCount = 0
 	}
 	const maxPlausibleNetworkBPS = uint64(100 << 30)
 	if report.NetworkUploadBPS > maxPlausibleNetworkBPS {

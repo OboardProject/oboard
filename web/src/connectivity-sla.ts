@@ -1,4 +1,4 @@
-export type ConnectivityWindowKey = '24h' | '7d' | '30d'
+export type ConnectivityWindowKey = '1h' | '6h' | '12h' | '24h' | '7d' | '30d'
 
 export type ConnectivityWindow = {
   key: ConnectivityWindowKey

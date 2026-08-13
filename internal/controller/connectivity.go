@@ -121,6 +121,15 @@ func parseConnectivityWindow(key string, now time.Time) (connectivityWindow, err
 	}
 	window := connectivityWindow{Key: key, To: now.UTC()}
 	switch key {
+	case "1h":
+		window.Duration = time.Hour
+		window.BucketDuration = 5 * time.Minute
+	case "6h":
+		window.Duration = 6 * time.Hour
+		window.BucketDuration = 15 * time.Minute
+	case "12h":
+		window.Duration = 12 * time.Hour
+		window.BucketDuration = 30 * time.Minute
 	case "24h":
 		window.Duration = 24 * time.Hour
 		window.BucketDuration = time.Hour
@@ -131,7 +140,7 @@ func parseConnectivityWindow(key string, now time.Time) (connectivityWindow, err
 		window.Duration = 30 * 24 * time.Hour
 		window.BucketDuration = 24 * time.Hour
 	default:
-		return connectivityWindow{}, errors.New("window must be one of 24h, 7d, or 30d")
+		return connectivityWindow{}, errors.New("window must be one of 1h, 6h, 12h, 24h, 7d, or 30d")
 	}
 	window.From = window.To.Add(-window.Duration)
 	window.BucketSeconds = int64(window.BucketDuration / time.Second)

@@ -29,12 +29,12 @@ func TestServerResourceHistoryCanBeDisabledWithoutStoppingNetworkSamples(t *test
 		t.Fatal("new servers must record resource history by default")
 	}
 	at := time.Date(2026, 8, 13, 2, 0, 0, 0, time.UTC)
-	report := model.HealthReport{AgentID: server.AgentID, Status: model.ServerOnline, CPUUsagePercent: 42, MemoryUsedBytes: 400, MemoryTotalBytes: 1000, NetworkTotalUploadBytes: 100, NetworkTotalDownloadBytes: 200, Timestamp: at}
+	report := model.HealthReport{AgentID: server.AgentID, Status: model.ServerOnline, CPUUsagePercent: 42, MemoryUsedBytes: 400, MemoryTotalBytes: 1000, DiskBytes: 600, DiskTotalBytes: 2000, TCPConnectionCount: 12, UDPConnectionCount: 3, ProcessCount: 48, NetworkUploadBPS: 12, NetworkDownloadBPS: 34, NetworkTotalUploadBytes: 100, NetworkTotalDownloadBytes: 200, Timestamp: at}
 	if _, _, err := db.UpsertHealthTransition(ctx, report, resourceHistoryWindow(at)); err != nil {
 		t.Fatal(err)
 	}
 	points, err := db.ListServerResourceMetricPoints(ctx, server.ID, at.Add(-time.Hour), time.Minute)
-	if err != nil || len(points) != 1 || points[0].CPUUsagePercent != 42 {
+	if err != nil || len(points) != 1 || points[0].CPUUsagePercent != 42 || points[0].DiskUsedBytes != 600 || points[0].DiskTotalBytes != 2000 || points[0].TCPConnectionCount != 12 || points[0].UDPConnectionCount != 3 || points[0].ProcessCount != 48 || points[0].NetworkUploadBPS != 12 || points[0].NetworkDownloadBPS != 34 {
 		t.Fatalf("initial resource points = %#v, err=%v", points, err)
 	}
 
@@ -64,7 +64,7 @@ func TestServerResourceHistoryCanBeDisabledWithoutStoppingNetworkSamples(t *test
 		t.Fatalf("network samples stopped after disabling resource history: len=%d err=%v", len(samples), err)
 	}
 	for _, sample := range samples {
-		if sample.ResourceRecorded || sample.CPUUsagePercent != 0 || sample.MemoryUsedBytes != 0 || sample.MemoryTotalBytes != 0 {
+		if sample.ResourceRecorded || sample.CPUUsagePercent != 0 || sample.MemoryUsedBytes != 0 || sample.MemoryTotalBytes != 0 || sample.DiskUsedBytes != 0 || sample.DiskTotalBytes != 0 || sample.TCPConnectionCount != 0 || sample.UDPConnectionCount != 0 || sample.ProcessCount != 0 {
 			t.Fatalf("resource history survived disabled state: %#v", sample)
 		}
 	}
@@ -103,6 +103,16 @@ func TestServerResourceHistoryColumnsMigrateEnabledFromPreviousSchema(t *testing
 	if _, err := raw.Exec(`alter table server_metric_samples drop column resource_recorded`); err != nil {
 		t.Fatal(err)
 	}
+	for _, column := range []string{"disk_total_bytes", "tcp_connection_count", "udp_connection_count", "process_count"} {
+		if _, err := raw.Exec(`alter table servers drop column ` + column); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, column := range []string{"disk_used_bytes", "disk_total_bytes", "tcp_connection_count", "udp_connection_count", "process_count"} {
+		if _, err := raw.Exec(`alter table server_metric_samples drop column ` + column); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := raw.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -119,5 +129,12 @@ func TestServerResourceHistoryColumnsMigrateEnabledFromPreviousSchema(t *testing
 	samples, err := db.ListServerMetricSamples(ctx, server.ID, 10)
 	if err != nil || len(samples) != 1 || !samples[0].ResourceRecorded || samples[0].CPUUsagePercent != 30 {
 		t.Fatalf("migrated resource sample = %#v, err=%v", samples, err)
+	}
+	stored.DiskTotalBytes = 2000
+	stored.TCPConnectionCount = 12
+	stored.UDPConnectionCount = 3
+	stored.ProcessCount = 48
+	if err := db.UpdateServerRuntimeState(ctx, stored); err != nil {
+		t.Fatalf("write migrated server resource columns: %v", err)
 	}
 }

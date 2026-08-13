@@ -103,7 +103,7 @@ func (s *Server) mcpResourceTemplateDefs() []mcpResourceDef {
 	return []mcpResourceDef{
 		{uri: "oboard://servers/{id}", title: "Server by ID", name: "Server by ID", description: "Return one authorized server with its current revision, status, supported capabilities, and non-secret configuration summary.", capability: "servers.get", template: true, kind: "query_id"},
 		{uri: "oboard://servers/{id}/health", title: "Server Health", name: "Server health", description: "Return one authorized server's Agent connectivity, version, build, kernel, last-seen time, and non-secret health status.", capability: "servers.get", template: true, kind: "query_health"},
-		{uri: "oboard://servers/{id}/resource-metrics", title: "Server Resource Metrics", name: "Server resource metrics", description: "Return one authorized server's current CPU and memory usage plus the last 24 hours of aggregated history when recording is enabled. When disabled, history is empty and current values remain available.", capability: "servers.get", template: true, kind: "query_server_resource_metrics"},
+		{uri: "oboard://servers/{id}/resource-metrics", title: "Server Resource Metrics", name: "Server resource metrics", description: "Return one authorized server's current CPU, memory, disk, network-rate, TCP/UDP connection, and process metrics plus the last 24 hours of aggregated history when recording is enabled. When disabled, history is empty and current values remain available.", capability: "servers.get", template: true, kind: "query_server_resource_metrics"},
 		{uri: "oboard://servers/{id}/latency-probes", title: "Server Latency Test", name: "Server latency test", description: "Return the latest public and selected province-carrier latency results for one authorized server, including mode, target, sample statistics, and bounded errors.", capability: "servers.get", template: true, kind: "query_server_latency"},
 		{uri: "oboard://users/{id}", title: "User by ID", name: "User by ID", description: "Return one authorized user's management summary: role, status, limits, subscription state, and revision. Never includes credentials or tokens.", capability: "users.get", template: true, kind: "query_user_by_id"},
 		{uri: "oboard://users/{id}/devices", title: "User Devices by ID", name: "User devices by ID", description: "Return one authorized user's registered devices with status, proxy access state, and last activity. Never includes device tokens.", capability: "user_devices.list", template: true, kind: "query_user_devices"},
@@ -232,10 +232,17 @@ func (s *Server) readMCPResource(ctx context.Context, principal application.Prin
 			"bucket_seconds":  600,
 			"points":          points,
 			"current": map[string]any{
-				"cpu_usage_percent":  server.CPUUsagePercent,
-				"memory_used_bytes":  server.MemoryUsedBytes,
-				"memory_total_bytes": server.MemoryTotalBytes,
-				"sampled_at":         server.TelemetryUpdatedAt,
+				"cpu_usage_percent":    server.CPUUsagePercent,
+				"memory_used_bytes":    server.MemoryUsedBytes,
+				"memory_total_bytes":   server.MemoryTotalBytes,
+				"disk_used_bytes":      server.DiskBytes,
+				"disk_total_bytes":     server.DiskTotalBytes,
+				"tcp_connection_count": server.TCPConnectionCount,
+				"udp_connection_count": server.UDPConnectionCount,
+				"process_count":        server.ProcessCount,
+				"network_upload_bps":   server.NetworkUploadBPS,
+				"network_download_bps": server.NetworkDownloadBPS,
+				"sampled_at":           server.TelemetryUpdatedAt,
 			},
 		}, nil
 	case "query_user":
