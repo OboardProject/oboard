@@ -9076,6 +9076,9 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 @media (max-width: 640px) {
+  .connectivity-head { flex-wrap: wrap; }
+  .connectivity-head .server-monitor-tabs { order: 3; width: 100%; justify-content: center; margin-top: 4px; }
+  .connectivity-head .dialog-close { margin-left: auto; }
   .server-monitor-window-row { flex-direction: column; align-items: stretch; }
   .server-monitor-window-toggle { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); text-align: center; }
   .server-monitor-window-toggle button { min-width: 0; padding-inline: 4px; font-size: 10.5px; }
@@ -9089,7 +9092,16 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   align-items: center;
 }
 
-.connectivity-head { gap: 10px; }
+.connectivity-head {
+  justify-content: space-between;
+  gap: 12px;
+}
+.connectivity-head .server-monitor-tabs {
+  margin: 0;
+}
+.connectivity-head .dialog-close {
+  margin-left: 0;
+}
 .connectivity-title { min-width: 0; gap: 9px; }
 .connectivity-title > div { min-width: 0; }
 .connectivity-title h2 { margin: 0; font-size: 15px; }

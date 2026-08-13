@@ -8456,13 +8456,13 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
           <p>#{server.id} · {regionLabel(serverRegionCode(server))}</p>
         </div>
       </div>
-      <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
-    </header>
-    <div className="dialog-body connectivity-body">
       <div className="server-monitor-tabs" role="tablist" aria-label="服务器监控视图">
         <button id="server-monitor-load-tab" type="button" role="tab" tabIndex={activeView === 'load' ? 0 : -1} aria-selected={activeView === 'load'} aria-controls="server-monitor-load-panel" className={activeView === 'load' ? 'active' : ''} onClick={() => setActiveView('load')} onKeyDown={handleMonitorTabKeyDown}><Activity size={14} aria-hidden="true" />负载</button>
         <button id="server-monitor-latency-tab" type="button" role="tab" tabIndex={activeView === 'latency' ? 0 : -1} aria-selected={activeView === 'latency'} aria-controls="server-monitor-latency-panel" className={activeView === 'latency' ? 'active' : ''} onClick={() => setActiveView('latency')} onKeyDown={handleMonitorTabKeyDown}><Gauge size={14} aria-hidden="true" />延迟</button>
       </div>
+      <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body connectivity-body">
       {activeView === 'load' ? <ServerLoadPanel server={server} response={resourceResponse} loading={resourceLoading} error={resourceError} windowHours={loadWindowHours} onWindowChange={setLoadWindowHours} onRetry={() => void loadResourceData(loadWindowHours)} /> : <div className="server-monitor-panel" role="tabpanel" id="server-monitor-latency-panel" aria-labelledby="server-monitor-latency-tab">
         <div className="server-monitor-window-row">
           <div className="server-monitor-window-toggle" role="radiogroup" aria-label="延迟时间范围">
