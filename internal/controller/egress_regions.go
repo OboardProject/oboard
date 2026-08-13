@@ -69,7 +69,7 @@ func (s *Server) probeProxyPathEgress(w http.ResponseWriter, r *http.Request, pa
 		return
 	}
 	if !unchanged {
-		fail(w, errors.New("代理链路配置尚未部署或已经变更；请先执行完整部署"), http.StatusConflict)
+		fail(w, errors.New("代理拓扑配置尚未部署或已经变更；请先执行完整部署"), http.StatusConflict)
 		return
 	}
 	baseline, err := s.store.LastSuccessfulConfigTaskByServer(r.Context(), server.ID)

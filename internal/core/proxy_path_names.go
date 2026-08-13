@@ -299,7 +299,7 @@ func proxyPathServerLabel(server model.Server, id int64) string {
 
 func automaticProxyPathName(route []string, middleDepth int) string {
 	if len(route) == 0 {
-		return "代理链路"
+		return "代理拓扑"
 	}
 	if len(route) == 1 {
 		return route[0]
@@ -329,7 +329,7 @@ func recomputeProxyPathNames(states []proxyPathNameState) {
 		}
 		state.path.Name = strings.TrimSpace(name)
 		if state.path.Name == "" {
-			state.path.Name = "代理链路"
+			state.path.Name = "代理拓扑"
 		}
 	}
 }

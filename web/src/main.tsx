@@ -718,7 +718,7 @@ function exitRegionStatusLabel(status?: string, code?: string) {
   if (status === 'conflict') return '分支地区不一致'
   if (status === 'incomplete') return '部分分支待探测'
   if (status === 'stale') return '链路变更后待重探测'
-  if (status === 'unlinked') return '尚未用于代理链路'
+  if (status === 'unlinked') return '尚未用于代理拓扑'
   if (status === 'pending') return effectiveCode ? `${regionLabel(effectiveCode)} · 等待更新` : '待探测'
   if (status === 'failed') return effectiveCode ? `${regionLabel(effectiveCode)} · 最近探测失败` : '未识别'
   if (effectiveCode) return regionLabel(effectiveCode)
@@ -801,7 +801,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   dashboard: { label: '总览', desc: '全局健康、版本、部署状态和关键指标。', group: '总览' },
   account: { label: '我的账户', desc: '维护个人信息、登录安全和订阅加密。', group: '账户' },
   servers: { label: '服务器管理', desc: '', group: '' },
-  'proxy-paths': { label: '代理链路', desc: '', group: '' },
+  'proxy-paths': { label: '代理拓扑', desc: '', group: '' },
   inbounds: { label: '入口', desc: '统一编排 sing-box 入站监听、协议和端口。', group: '代理' },
   outbounds: { label: '出口', desc: '配置服务器出口、下一跳和协议认证参数。', group: '代理' },
   routing: { label: '分流规则', desc: '为任意服务器配置分流规则、直连、链路或导入节点。', group: '流量' },
@@ -2027,7 +2027,7 @@ function App() {
   const tabTitles: { [key: string]: string } = {
     dashboard: '系统总览',
     servers: '服务器管理',
-    'proxy-paths': '代理链路',
+    'proxy-paths': '代理拓扑',
     users: '用户与分组管理',
     plans: '套餐管理',
     dns: 'DNS 设置',
@@ -5934,7 +5934,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 
   const quickActions = [
     { key: 'servers', title: '管理服务器', desc: '查看状态、安装 Agent 与端口策略', icon: <ServerIcon size={18} /> },
-    { key: 'proxy-paths', title: '代理链路', desc: '编排入口、跳点与第三方出口', icon: <Workflow size={18} /> },
+    { key: 'proxy-paths', title: '代理拓扑', desc: '编排入口、跳点与第三方出口', icon: <Workflow size={18} /> },
     { key: 'users', title: '用户与分组', desc: '用户与分组', icon: <UsersIcon size={18} /> },
     { key: 'tasks', title: '任务记录', desc: '查看配置下发与执行回执', icon: <CheckSquare size={18} /> },
   ]
@@ -8405,7 +8405,7 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
   render() {
     if (this.state.error) {
       return <div className="empty proxy-graph-error">
-        <strong>代理链路暂时无法显示</strong>
+        <strong>代理拓扑暂时无法显示</strong>
         <span>数据没有丢失。请刷新链路图；若问题持续，请查看浏览器控制台或联系管理员。</span>
         <button onClick={this.retry}>重新加载</button>
       </div>
@@ -9994,7 +9994,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			  <button type="button" className="ghost danger-text" onClick={() => void deleteActiveGraphEntity()}><Trash2 size={13} />{activeGraphEntity.node_id?.startsWith('canvas-server-') || activeGraphEntity.node_id?.startsWith('direct-exit-canvas-') || activeGraphEntity.node_id?.startsWith('warp-canvas-') ? '移出画布' : activeGraphEntity.type === 'proxy-path-step' ? '断开后续' : '删除'}</button>
 		  <button type="button" className="ghost icon-button" onClick={clearGraphSelection} aria-label="取消选择" title="取消选择"><X size={13} /></button>
         </div>}
-        {!nodes.length && <div className="graph-empty-state"><ServerIcon size={22} /><strong>还没有服务器</strong><span>添加服务器后即可创建入口和代理链路。</span><button onClick={() => addServer()}>添加服务器</button></div>}
+        {!nodes.length && <div className="graph-empty-state"><ServerIcon size={22} /><strong>还没有服务器</strong><span>添加服务器后即可创建入口和代理拓扑。</span><button onClick={() => addServer()}>添加服务器</button></div>}
 
         {graphMenu && <div className="graph-context-menu" style={{ left: graphMenu.x, top: graphMenu.y }} onContextMenu={e => e.preventDefault()}>
           <div className="graph-context-menu-title">{graphMenu.entity.label}</div>
@@ -10657,7 +10657,7 @@ function ImportedNodeConfigDialog({ node, data, client, load, onClose }: { node:
 			onCodeChange={setRegionCode}
 		  />
 		  {regionMode === 'auto' && <div className="imported-region-branches">
-			{linkedPaths.length ? linkedPaths.map(path => <div key={path.id}><span>{path.name || `路径 ${path.id}`}</span><ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact /></div>) : <span className="muted">连接到代理链路后会自动探测。</span>}
+			{linkedPaths.length ? linkedPaths.map(path => <div key={path.id}><span>{path.name || `路径 ${path.id}`}</span><ExitRegionBadge code={path.effective_exit_region_code} status={path.exit_region_status} compact /></div>) : <span className="muted">连接到代理拓扑后会自动探测。</span>}
 		  </div>}
 		</div>
         <div className="compact-panel">
@@ -12516,7 +12516,7 @@ function Inbounds({ data, client, load }: any) {
     const probe = latestInboundProbeSummary(data, inbound.id)
     return { id: inbound.id, name: inbound.name, protocol: inbound.protocol, endpoint: formatHostPort(inboundEntryAddress(data, inbound), inbound.port), probe_status: probe.label, probe_detail: probe.detail, enabled: inbound.enabled, _raw: inbound }
   })
-  return <Panel title="入口节点"><p className="muted">每个入口节点都是一条代理链路的第一个节点。下发完成后会自动检查本机监听和公网端口，在线入口每 5 分钟复检一次。</p><ProtocolForm value={f} setValue={setF} servers={data.servers || []} submit={async () => { await client.request('/inbounds', { method: 'POST', body: JSON.stringify(f) }); await load() }} /><Table rows={rows} actions={(r: any) => <><button onClick={async () => { await client.request(`/inbounds/${r._raw.id}/probe`, { method: 'POST', body: '{}' }); await load() }}>立即探测</button><button onClick={() => remove(client, `/inbounds/${r._raw.id}`, load, dialogs, r._raw)}>删除</button></>} /></Panel>
+  return <Panel title="入口节点"><p className="muted">每个入口节点都是一条代理拓扑的第一个节点。下发完成后会自动检查本机监听和公网端口，在线入口每 5 分钟复检一次。</p><ProtocolForm value={f} setValue={setF} servers={data.servers || []} submit={async () => { await client.request('/inbounds', { method: 'POST', body: JSON.stringify(f) }); await load() }} /><Table rows={rows} actions={(r: any) => <><button onClick={async () => { await client.request(`/inbounds/${r._raw.id}/probe`, { method: 'POST', body: '{}' }); await load() }}>立即探测</button><button onClick={() => remove(client, `/inbounds/${r._raw.id}`, load, dialogs, r._raw)}>删除</button></>} /></Panel>
 }
 
 function Outbounds({ data, client, load }: any) {
@@ -12568,7 +12568,7 @@ function ExternalOutbounds({ data, client, load }: any) {
     if (next !== f.config_json) setF({ ...f, config_json: next })
   }, [f.protocol])
   return <Panel title="导入节点">
-    <p className="muted">导入或创建可被链路图使用的第三方节点，也可以限制为单台服务器使用。推荐在“代理链路”图内操作。</p>
+    <p className="muted">导入或创建可被拓扑图使用的第三方节点，也可以限制为单台服务器使用。推荐在“代理拓扑”图内操作。</p>
     <div className="form">
       <Select variant="segmented" value={f.scope} onChange={e => setF({ ...f, scope: e.target.value })}>{outboundScopes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
       {f.scope === 'server' && <Select value={f.server_id} onChange={e => setF({ ...f, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select>}

@@ -455,7 +455,7 @@ func (s *Server) registerProbeOperations() {
 			return nil, err
 		}
 		if !unchanged {
-			return nil, errors.New("代理链路配置尚未部署或已经变更；请先执行完整部署")
+			return nil, errors.New("代理拓扑配置尚未部署或已经变更；请先执行完整部署")
 		}
 		baseline, err := s.store.LastSuccessfulConfigTaskByServer(ctx, server.ID)
 		if err != nil {

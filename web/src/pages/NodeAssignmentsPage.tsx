@@ -94,7 +94,7 @@ function PlanBadgesCell({ plans }: { plans: Array<{ plan_id: number; name: strin
 }
 
 function nodeTypeLabel(type: string) {
-  if (type === 'proxy_path') return '代理链路'
+  if (type === 'proxy_path') return '代理拓扑'
   if (type === 'external_outbound') return '导入节点'
   if (type === 'inbound') return '独立入口'
   return type

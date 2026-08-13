@@ -176,7 +176,7 @@ func (s *Service) PlanProxyPath(ctx context.Context, principal Principal, raw js
 	}
 	warnings := []string{}
 	if len(entryInbounds) == 0 {
-		warnings = append(warnings, "入口服务器没有可用于代理链路的已启用入站")
+		warnings = append(warnings, "入口服务器没有可用于代理拓扑的已启用入站")
 	} else if len(candidates) == 0 {
 		warnings = append(warnings, "没有满足地域和在线状态约束的出口节点")
 	}

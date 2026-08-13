@@ -1230,7 +1230,7 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 				continue
 			}
 			if path.Kind != "" && path.Kind != model.ProxyPathKindChain {
-				return fmt.Errorf("WARP 只能作为普通代理链路的出口")
+				return fmt.Errorf("WARP 只能作为普通代理拓扑的出口")
 			}
 			if index != len(ordered)-1 {
 				return fmt.Errorf("代理路径 %s 的 WARP 必须是最后一个节点", path.Name)
