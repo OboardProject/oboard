@@ -10,6 +10,8 @@ export type DNSRecordTypes = 'auto' | 'a' | 'aaaa' | 'both'
 export type CertificateMode = 'external' | 'auto' | 'exact' | 'wildcard' | 'explicit'
 export type TimeCorrectionMode = 'off' | 'auto' | 'ntp'
 export type ConnectivityProbeTarget = 'auto' | 'cloudflare' | '12306' | 'google'
+export type LatencyProbeMode = 'tcp' | 'icmp'
+export type LatencyProbeRegion = { province: string; carrier: string }
 
 export type Server = {
   id: number
@@ -63,13 +65,12 @@ export type Server = {
   traffic_download_bytes: number
   traffic_period_start?: string
   traffic_period_end?: string
-  connectivity_probe_enabled: boolean
-  connectivity_probe_target: ConnectivityProbeTarget
-  latency_probe_enabled?: boolean
+  latency_probe_enabled: boolean
+  latency_probe_mode: LatencyProbeMode
+  latency_probe_public_target: ConnectivityProbeTarget
   latency_probe_interval_seconds?: number
   latency_probe_sample_count?: number
-  latency_probe_provinces?: string[]
-  latency_probe_carriers?: string[]
+  latency_probe_regions?: LatencyProbeRegion[]
   latency_probe_max_targets?: number
   latency_probe_resource_version?: string
   connection_audit_enabled: boolean

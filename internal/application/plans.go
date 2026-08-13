@@ -23,10 +23,16 @@ type PlanResult struct {
 
 func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal, raw json.RawMessage) (PlanResult, error) {
 	var input struct {
-		Name        string `json:"name"`
-		RegionCode  string `json:"region_code"`
-		IPStack     string `json:"ip_stack"`
-		ProbeTarget string `json:"connectivity_probe_target"`
+		Name                        string                     `json:"name"`
+		RegionCode                  string                     `json:"region_code"`
+		IPStack                     string                     `json:"ip_stack"`
+		LatencyProbeEnabled         *bool                      `json:"latency_probe_enabled"`
+		LatencyProbeMode            model.LatencyProbeMode     `json:"latency_probe_mode"`
+		LatencyProbePublicTarget    model.ConnectivityTarget   `json:"latency_probe_public_target"`
+		LatencyProbeIntervalSeconds int                        `json:"latency_probe_interval_seconds"`
+		LatencyProbeSampleCount     int                        `json:"latency_probe_sample_count"`
+		LatencyProbeRegions         []model.LatencyProbeRegion `json:"latency_probe_regions"`
+		LatencyProbeMaxTargets      int                        `json:"latency_probe_max_targets"`
 	}
 	if err := strictUnmarshal(raw, &input); err != nil {
 		return PlanResult{}, err
@@ -48,11 +54,32 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 	if input.IPStack == "" {
 		input.IPStack = string(model.IPStackAuto)
 	}
-	probeTarget := strings.ToLower(strings.TrimSpace(input.ProbeTarget))
-	if probeTarget == "" {
-		probeTarget = string(model.ConnectivityProbeTargetAuto)
+	latencyEnabled := true
+	if input.LatencyProbeEnabled != nil {
+		latencyEnabled = *input.LatencyProbeEnabled
 	}
-	server := map[string]any{"name": input.Name, "region_code": strings.ToUpper(strings.TrimSpace(input.RegionCode)), "ip_stack": input.IPStack, "connectivity_probe_target": probeTarget, "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 60000}
+	if input.LatencyProbeMode == "" {
+		input.LatencyProbeMode = model.LatencyProbeModeTCP
+	}
+	if input.LatencyProbePublicTarget == "" {
+		input.LatencyProbePublicTarget = model.ConnectivityProbeTargetAuto
+	}
+	if input.LatencyProbeIntervalSeconds == 0 {
+		input.LatencyProbeIntervalSeconds = 60
+	}
+	if input.LatencyProbeSampleCount == 0 {
+		input.LatencyProbeSampleCount = 3
+	}
+	if input.LatencyProbeMaxTargets == 0 {
+		input.LatencyProbeMaxTargets = 64
+	}
+	server := map[string]any{
+		"name": input.Name, "region_code": strings.ToUpper(strings.TrimSpace(input.RegionCode)), "ip_stack": input.IPStack,
+		"latency_probe_enabled": latencyEnabled, "latency_probe_mode": input.LatencyProbeMode, "latency_probe_public_target": input.LatencyProbePublicTarget,
+		"latency_probe_interval_seconds": input.LatencyProbeIntervalSeconds, "latency_probe_sample_count": input.LatencyProbeSampleCount,
+		"latency_probe_regions": input.LatencyProbeRegions, "latency_probe_max_targets": input.LatencyProbeMaxTargets,
+		"listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 60000,
+	}
 	suggested := map[string]any{
 		"base_revisions": map[string]string{},
 		"operation":      map[string]any{"capability": "servers.onboard", "input": map[string]any{"server": server, "issue_enrollment_token": true}},

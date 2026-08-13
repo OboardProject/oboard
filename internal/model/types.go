@@ -121,11 +121,15 @@ const (
 
 type ConnectivityTarget string
 
+type LatencyProbeMode string
+
 const (
 	ConnectivityProbeTargetAuto       ConnectivityTarget = "auto"
 	ConnectivityProbeTargetCloudflare ConnectivityTarget = "cloudflare"
 	ConnectivityProbeTarget12306      ConnectivityTarget = "12306"
 	ConnectivityProbeTargetGoogle     ConnectivityTarget = "google"
+	LatencyProbeModeTCP               LatencyProbeMode   = "tcp"
+	LatencyProbeModeICMP              LatencyProbeMode   = "icmp"
 )
 
 type RouteAction string
@@ -753,94 +757,95 @@ type SubscriptionRelay struct {
 }
 
 type Server struct {
-	ID                          int64              `json:"id"`
-	Name                        string             `json:"name"`
-	AgentID                     string             `json:"agent_id"`
-	AgentTokenHash              string             `json:"-"`
-	ChainSecret                 string             `json:"-"`
-	EnrollmentHash              string             `json:"-"`
-	EnrollmentExpiresAt         *time.Time         `json:"-"`
-	EntryAddress                string             `json:"entry_address"`
-	PublicIPv4                  string             `json:"public_ipv4"`
-	PublicIPv6                  string             `json:"public_ipv6"`
-	InterfaceIPv6               string             `json:"interface_ipv6"`
-	RegionCode                  string             `json:"region_code"`
-	DetectedRegionCode          string             `json:"detected_region_code"`
-	RegionMode                  string             `json:"region_mode"`
-	EntryIPMode                 EntryIPMode        `json:"entry_ip_mode"`
-	ListenIP                    string             `json:"listen_ip"`
-	ListenMode                  ListenMode         `json:"listen_mode"`
-	IPStack                     IPStack            `json:"ip_stack"`
-	UDPInboundMode              UDPInboundMode     `json:"udp_inbound_mode"`
-	MTUMode                     MTUMode            `json:"mtu_mode"`
-	MTUValue                    int                `json:"mtu_value"`
-	MTUProbeHost                string             `json:"mtu_probe_host"`
-	MTUProbePort                int                `json:"mtu_probe_port"`
-	MTUOverheadBytes            int                `json:"mtu_overhead_bytes"`
-	BBREnabled                  bool               `json:"bbr_enabled"`
-	PortRangeStart              int                `json:"port_range_start"`
-	PortRangeEnd                int                `json:"port_range_end"`
-	InternalPortRangeStart      int                `json:"internal_port_range_start"`
-	InternalPortRangeEnd        int                `json:"internal_port_range_end"`
-	PortPolicyRevision          int64              `json:"port_policy_revision"`
-	Status                      ServerStatus       `json:"status"`
-	OS                          string             `json:"os"`
-	DistroID                    string             `json:"distro_id"`
-	DistroVersion               string             `json:"distro_version"`
-	DistroName                  string             `json:"distro_name"`
-	Libc                        string             `json:"libc"`
-	ServiceManager              string             `json:"service_manager"`
-	PackageManager              string             `json:"package_manager"`
-	Arch                        string             `json:"arch"`
-	Kernel                      string             `json:"kernel"`
-	CPU                         string             `json:"cpu"`
-	MemoryBytes                 uint64             `json:"memory_bytes"`
-	CPUUsagePercent             float64            `json:"cpu_usage_percent"`
-	MemoryUsedBytes             uint64             `json:"memory_used_bytes"`
-	MemoryTotalBytes            uint64             `json:"memory_total_bytes"`
-	AgentMemoryBytes            uint64             `json:"agent_memory_bytes"`
-	DiskBytes                   uint64             `json:"disk_bytes"`
-	AgentVersion                string             `json:"agent_version"`
-	AgentBuild                  string             `json:"agent_build"`
-	SingBoxVersion              string             `json:"sing_box_version"`
-	MonitoringMode              string             `json:"monitoring_mode"`
-	TrafficResetMode            string             `json:"traffic_reset_mode"`
-	TrafficResetDay             int                `json:"traffic_reset_day"`
-	NetworkUploadBPS            uint64             `json:"network_upload_bps"`
-	NetworkDownloadBPS          uint64             `json:"network_download_bps"`
-	TrafficUploadBytes          uint64             `json:"traffic_upload_bytes"`
-	TrafficDownloadBytes        uint64             `json:"traffic_download_bytes"`
-	TrafficPeriodStart          string             `json:"traffic_period_start"`
-	TrafficPeriodEnd            string             `json:"traffic_period_end"`
-	ConnectivityProbeEnabled    bool               `json:"connectivity_probe_enabled"`
-	ConnectivityProbeTarget     ConnectivityTarget `json:"connectivity_probe_target"`
-	LatencyProbeEnabled         bool               `json:"latency_probe_enabled"`
-	LatencyProbeIntervalSeconds int                `json:"latency_probe_interval_seconds"`
-	LatencyProbeSampleCount     int                `json:"latency_probe_sample_count"`
-	LatencyProbeProvinces       []string           `json:"latency_probe_provinces,omitempty"`
-	LatencyProbeCarriers        []string           `json:"latency_probe_carriers,omitempty"`
-	LatencyProbeMaxTargets      int                `json:"latency_probe_max_targets"`
-	LatencyProbeResourceVersion string             `json:"latency_probe_resource_version,omitempty"`
-	ConnectionAuditEnabled      bool               `json:"connection_audit_enabled"`
-	OfflineNotifyEnabled        bool               `json:"offline_notify_enabled"`
-	OfflineAfterSeconds         int                `json:"offline_after_seconds"`
-	TimeCorrectionMode          TimeCorrectionMode `json:"time_correction_mode"`
-	TimeCheckStatus             string             `json:"time_check_status"`
-	TimeOffsetMS                int64              `json:"time_offset_ms"`
-	TimeEffectiveOffsetMS       int64              `json:"time_effective_offset_ms"`
-	TimeCheckSource             string             `json:"time_check_source"`
-	TimeCheckError              string             `json:"time_check_error"`
-	TimeLogicalActive           bool               `json:"time_logical_active"`
-	TimeUnsupportedPaths        []string           `json:"time_unsupported_paths,omitempty"`
-	TimeCheckedAt               *time.Time         `json:"time_checked_at,omitempty"`
-	ConnectivityStatus          string             `json:"connectivity_status"`
-	ConnectivityLatencyMS       int64              `json:"connectivity_latency_ms"`
-	ConnectivityCheckedAt       *time.Time         `json:"connectivity_checked_at,omitempty"`
-	ConnectivityError           string             `json:"connectivity_error"`
-	TelemetryUpdatedAt          *time.Time         `json:"telemetry_updated_at,omitempty"`
-	LastSeenAt                  *time.Time         `json:"last_seen_at,omitempty"`
-	CreatedAt                   time.Time          `json:"created_at"`
-	UpdatedAt                   time.Time          `json:"updated_at"`
+	ID                          int64                `json:"id"`
+	Name                        string               `json:"name"`
+	AgentID                     string               `json:"agent_id"`
+	AgentTokenHash              string               `json:"-"`
+	ChainSecret                 string               `json:"-"`
+	EnrollmentHash              string               `json:"-"`
+	EnrollmentExpiresAt         *time.Time           `json:"-"`
+	EntryAddress                string               `json:"entry_address"`
+	PublicIPv4                  string               `json:"public_ipv4"`
+	PublicIPv6                  string               `json:"public_ipv6"`
+	InterfaceIPv6               string               `json:"interface_ipv6"`
+	RegionCode                  string               `json:"region_code"`
+	DetectedRegionCode          string               `json:"detected_region_code"`
+	RegionMode                  string               `json:"region_mode"`
+	EntryIPMode                 EntryIPMode          `json:"entry_ip_mode"`
+	ListenIP                    string               `json:"listen_ip"`
+	ListenMode                  ListenMode           `json:"listen_mode"`
+	IPStack                     IPStack              `json:"ip_stack"`
+	UDPInboundMode              UDPInboundMode       `json:"udp_inbound_mode"`
+	MTUMode                     MTUMode              `json:"mtu_mode"`
+	MTUValue                    int                  `json:"mtu_value"`
+	MTUProbeHost                string               `json:"mtu_probe_host"`
+	MTUProbePort                int                  `json:"mtu_probe_port"`
+	MTUOverheadBytes            int                  `json:"mtu_overhead_bytes"`
+	BBREnabled                  bool                 `json:"bbr_enabled"`
+	PortRangeStart              int                  `json:"port_range_start"`
+	PortRangeEnd                int                  `json:"port_range_end"`
+	InternalPortRangeStart      int                  `json:"internal_port_range_start"`
+	InternalPortRangeEnd        int                  `json:"internal_port_range_end"`
+	PortPolicyRevision          int64                `json:"port_policy_revision"`
+	Status                      ServerStatus         `json:"status"`
+	OS                          string               `json:"os"`
+	DistroID                    string               `json:"distro_id"`
+	DistroVersion               string               `json:"distro_version"`
+	DistroName                  string               `json:"distro_name"`
+	Libc                        string               `json:"libc"`
+	ServiceManager              string               `json:"service_manager"`
+	PackageManager              string               `json:"package_manager"`
+	Arch                        string               `json:"arch"`
+	Kernel                      string               `json:"kernel"`
+	CPU                         string               `json:"cpu"`
+	MemoryBytes                 uint64               `json:"memory_bytes"`
+	CPUUsagePercent             float64              `json:"cpu_usage_percent"`
+	MemoryUsedBytes             uint64               `json:"memory_used_bytes"`
+	MemoryTotalBytes            uint64               `json:"memory_total_bytes"`
+	AgentMemoryBytes            uint64               `json:"agent_memory_bytes"`
+	DiskBytes                   uint64               `json:"disk_bytes"`
+	AgentVersion                string               `json:"agent_version"`
+	AgentBuild                  string               `json:"agent_build"`
+	SingBoxVersion              string               `json:"sing_box_version"`
+	MonitoringMode              string               `json:"monitoring_mode"`
+	TrafficResetMode            string               `json:"traffic_reset_mode"`
+	TrafficResetDay             int                  `json:"traffic_reset_day"`
+	NetworkUploadBPS            uint64               `json:"network_upload_bps"`
+	NetworkDownloadBPS          uint64               `json:"network_download_bps"`
+	TrafficUploadBytes          uint64               `json:"traffic_upload_bytes"`
+	TrafficDownloadBytes        uint64               `json:"traffic_download_bytes"`
+	TrafficPeriodStart          string               `json:"traffic_period_start"`
+	TrafficPeriodEnd            string               `json:"traffic_period_end"`
+	ConnectivityProbeEnabled    bool                 `json:"-"`
+	ConnectivityProbeTarget     ConnectivityTarget   `json:"-"`
+	LatencyProbeEnabled         bool                 `json:"latency_probe_enabled"`
+	LatencyProbeMode            LatencyProbeMode     `json:"latency_probe_mode"`
+	LatencyProbePublicTarget    ConnectivityTarget   `json:"latency_probe_public_target"`
+	LatencyProbeIntervalSeconds int                  `json:"latency_probe_interval_seconds"`
+	LatencyProbeSampleCount     int                  `json:"latency_probe_sample_count"`
+	LatencyProbeRegions         []LatencyProbeRegion `json:"latency_probe_regions,omitempty"`
+	LatencyProbeMaxTargets      int                  `json:"latency_probe_max_targets"`
+	LatencyProbeResourceVersion string               `json:"latency_probe_resource_version,omitempty"`
+	ConnectionAuditEnabled      bool                 `json:"connection_audit_enabled"`
+	OfflineNotifyEnabled        bool                 `json:"offline_notify_enabled"`
+	OfflineAfterSeconds         int                  `json:"offline_after_seconds"`
+	TimeCorrectionMode          TimeCorrectionMode   `json:"time_correction_mode"`
+	TimeCheckStatus             string               `json:"time_check_status"`
+	TimeOffsetMS                int64                `json:"time_offset_ms"`
+	TimeEffectiveOffsetMS       int64                `json:"time_effective_offset_ms"`
+	TimeCheckSource             string               `json:"time_check_source"`
+	TimeCheckError              string               `json:"time_check_error"`
+	TimeLogicalActive           bool                 `json:"time_logical_active"`
+	TimeUnsupportedPaths        []string             `json:"time_unsupported_paths,omitempty"`
+	TimeCheckedAt               *time.Time           `json:"time_checked_at,omitempty"`
+	ConnectivityStatus          string               `json:"connectivity_status"`
+	ConnectivityLatencyMS       int64                `json:"connectivity_latency_ms"`
+	ConnectivityCheckedAt       *time.Time           `json:"connectivity_checked_at,omitempty"`
+	ConnectivityError           string               `json:"connectivity_error"`
+	TelemetryUpdatedAt          *time.Time           `json:"telemetry_updated_at,omitempty"`
+	LastSeenAt                  *time.Time           `json:"last_seen_at,omitempty"`
+	CreatedAt                   time.Time            `json:"created_at"`
+	UpdatedAt                   time.Time            `json:"updated_at"`
 }
 
 type Inbound struct {
@@ -1747,14 +1752,25 @@ type ExternalEgressProbePlan struct {
 
 type LatencyProbeTarget struct {
 	ProbeID  string `json:"probe_id"`
+	Kind     string `json:"kind"`
+	Province string `json:"province,omitempty"`
+	Carrier  string `json:"carrier,omitempty"`
+	Host     string `json:"host"`
+	IP       string `json:"ip,omitempty"`
+	Port     int    `json:"port"`
+}
+
+type LatencyProbeRegion struct {
 	Province string `json:"province"`
 	Carrier  string `json:"carrier"`
-	IP       string `json:"ip"`
 }
 
 type LatencyProbeTargetsPlan struct {
 	Version         int64                `json:"version"`
 	ResourceVersion string               `json:"resource_version"`
+	Mode            LatencyProbeMode     `json:"mode"`
+	Enabled         bool                 `json:"enabled"`
+	IntervalSeconds int                  `json:"interval_seconds"`
 	SampleCount     int                  `json:"sample_count"`
 	IntervalMS      int                  `json:"interval_ms"`
 	TimeoutMS       int                  `json:"timeout_ms"`
@@ -1763,9 +1779,13 @@ type LatencyProbeTargetsPlan struct {
 
 type LatencyProbeResult struct {
 	ProbeID      string    `json:"probe_id"`
+	Kind         string    `json:"kind"`
+	Mode         string    `json:"mode"`
 	Province     string    `json:"province"`
 	Carrier      string    `json:"carrier"`
+	Host         string    `json:"host"`
 	IP           string    `json:"ip"`
+	Port         int       `json:"port"`
 	Available    bool      `json:"available"`
 	LatencyMS    int64     `json:"latency_ms"`
 	MinLatencyMS int64     `json:"min_latency_ms"`
@@ -1778,6 +1798,7 @@ type LatencyProbeResult struct {
 }
 
 type LatencyProbeResultReport struct {
+	ReportID        string               `json:"report_id"`
 	ResourceVersion string               `json:"resource_version"`
 	CheckedAt       time.Time            `json:"checked_at"`
 	Items           []LatencyProbeResult `json:"items"`
@@ -2514,12 +2535,12 @@ type HealthReport struct {
 	NetworkDownloadBPS        uint64       `json:"network_download_bps"`
 	NetworkTotalUploadBytes   uint64       `json:"network_total_upload_bytes"`
 	NetworkTotalDownloadBytes uint64       `json:"network_total_download_bytes"`
-	ConnectivityProbeEnabled  bool         `json:"connectivity_probe_enabled"`
-	ConnectivityProbeTarget   string       `json:"connectivity_probe_target"`
-	ConnectivityAvailable     bool         `json:"connectivity_available"`
-	ConnectivityLatencyMS     int64        `json:"connectivity_latency_ms"`
-	ConnectivityCheckedAt     time.Time    `json:"connectivity_checked_at"`
-	ConnectivityError         string       `json:"connectivity_error"`
+	ConnectivityProbeEnabled  bool         `json:"-"`
+	ConnectivityProbeTarget   string       `json:"-"`
+	ConnectivityAvailable     bool         `json:"-"`
+	ConnectivityLatencyMS     int64        `json:"-"`
+	ConnectivityCheckedAt     time.Time    `json:"-"`
+	ConnectivityError         string       `json:"-"`
 	Timestamp                 time.Time    `json:"timestamp"`
 }
 

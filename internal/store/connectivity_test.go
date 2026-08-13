@@ -76,13 +76,17 @@ func TestConnectivityProbeEventsTrackRealProbesOnly(t *testing.T) {
 func TestConnectivityProbeTargetPersists(t *testing.T) {
 	ctx := context.Background()
 	db, server := newConnectivityTestStore(t)
+	server.LatencyProbeEnabled = true
+	if err := db.UpdateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
 	checkedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
-	report := model.HealthReport{ConnectivityProbeEnabled: true, ConnectivityAvailable: true, ConnectivityLatencyMS: 23, ConnectivityCheckedAt: checkedAt, Timestamp: checkedAt}
-	if err := db.UpdateServerTelemetryReport(ctx, server.ID, report, telemetryWindow(checkedAt)); err != nil {
+	report := model.LatencyProbeResultReport{ReportID: "target-before-change", ResourceVersion: "resource-v1", CheckedAt: checkedAt, Items: []model.LatencyProbeResult{{ProbeID: "public-auto", Kind: "public", Mode: "tcp", Host: "cp.cloudflare.com", Port: 443, Available: true, LatencyMS: 23, SampleCount: 3, SuccessCount: 3}}}
+	if err := db.SaveLatencyProbeResults(ctx, server.ID, report); err != nil {
 		t.Fatal(err)
 	}
 	initialBoundaries := connectivityEventCount(t, db, server.ID, model.ConnectivityEventProbeTargetChanged)
-	server.ConnectivityProbeTarget = model.ConnectivityProbeTargetGoogle
+	server.LatencyProbePublicTarget = model.ConnectivityProbeTargetGoogle
 	if err := db.UpdateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
@@ -90,8 +94,8 @@ func TestConnectivityProbeTargetPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.ConnectivityProbeTarget != model.ConnectivityProbeTargetGoogle {
-		t.Fatalf("connectivity probe target = %q, want google", stored.ConnectivityProbeTarget)
+	if stored.LatencyProbePublicTarget != model.ConnectivityProbeTargetGoogle {
+		t.Fatalf("latency probe public target = %q, want google", stored.LatencyProbePublicTarget)
 	}
 	if stored.ConnectivityStatus != "pending" || stored.ConnectivityCheckedAt != nil {
 		t.Fatalf("target change retained old connectivity state: status=%q checked_at=%v", stored.ConnectivityStatus, stored.ConnectivityCheckedAt)
@@ -143,19 +147,26 @@ func TestConnectivityProbeTargetMigratesFromPreviousSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list servers after migration: %v", err)
 	}
-	if len(servers) != 1 || servers[0].ConnectivityProbeTarget != model.ConnectivityProbeTargetAuto {
+	if len(servers) != 1 {
 		t.Fatalf("migrated servers = %#v", servers)
 	}
-	servers[0].ConnectivityProbeTarget = model.ConnectivityProbeTargetGoogle
+	var legacyTarget string
+	if err := db.db.QueryRowContext(ctx, `select connectivity_probe_target from server_telemetry where server_id=?`, server.ID).Scan(&legacyTarget); err != nil {
+		t.Fatal(err)
+	}
+	if legacyTarget != string(model.ConnectivityProbeTargetAuto) {
+		t.Fatalf("restored legacy probe target column = %q, want auto", legacyTarget)
+	}
+	servers[0].LatencyProbePublicTarget = model.ConnectivityProbeTargetGoogle
 	if err := db.UpdateServer(ctx, &servers[0]); err != nil {
-		t.Fatalf("update migrated probe target: %v", err)
+		t.Fatalf("update unified latency probe target: %v", err)
 	}
 	stored, err := db.GetServer(ctx, server.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.ConnectivityProbeTarget != model.ConnectivityProbeTargetGoogle {
-		t.Fatalf("connectivity probe target = %q, want google", stored.ConnectivityProbeTarget)
+	if stored.LatencyProbePublicTarget != model.ConnectivityProbeTargetGoogle {
+		t.Fatalf("latency probe public target = %q, want google", stored.LatencyProbePublicTarget)
 	}
 }
 
@@ -163,6 +174,10 @@ func TestConnectivityProbeTargetEventConstraintUpgrade(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "oboard.sqlite")
 	db, server := newConnectivityTestStoreAtPath(t, path)
+	server.LatencyProbeEnabled = true
+	if err := db.UpdateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
 	initialEvents := connectivityEventCount(t, db, server.ID, model.ConnectivityEventProbeEnabled)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
@@ -199,7 +214,7 @@ func TestConnectivityProbeTargetEventConstraintUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored.ConnectivityProbeTarget = model.ConnectivityProbeTargetGoogle
+	stored.LatencyProbePublicTarget = model.ConnectivityProbeTargetGoogle
 	if err := db.UpdateServer(ctx, stored); err != nil {
 		t.Fatalf("update target after constraint migration: %v", err)
 	}

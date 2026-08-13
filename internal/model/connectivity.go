@@ -5,11 +5,13 @@ import "time"
 type ConnectivityEventKind string
 
 const (
-	ConnectivityEventProbeResult        ConnectivityEventKind = "probe_result"
-	ConnectivityEventServerOffline      ConnectivityEventKind = "server_offline"
-	ConnectivityEventProbeEnabled       ConnectivityEventKind = "probe_enabled"
-	ConnectivityEventProbeDisabled      ConnectivityEventKind = "probe_disabled"
-	ConnectivityEventProbeTargetChanged ConnectivityEventKind = "probe_target_changed"
+	ConnectivityEventProbeResult            ConnectivityEventKind = "probe_result"
+	ConnectivityEventServerOffline          ConnectivityEventKind = "server_offline"
+	ConnectivityEventProbeEnabled           ConnectivityEventKind = "probe_enabled"
+	ConnectivityEventProbeDisabled          ConnectivityEventKind = "probe_disabled"
+	ConnectivityEventProbeTargetChanged     ConnectivityEventKind = "probe_target_changed"
+	ConnectivityEventControllerConnected    ConnectivityEventKind = "controller_connected"
+	ConnectivityEventControllerDisconnected ConnectivityEventKind = "controller_disconnected"
 )
 
 type ServerConnectivityEvent struct {

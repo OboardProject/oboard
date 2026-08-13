@@ -311,13 +311,13 @@ func (s *Server) registerProbeOperations() {
 			return nil, err
 		}
 		if !server.LatencyProbeEnabled {
-			return nil, errors.New("服务器未启用区域延迟测试")
+			return nil, errors.New("服务器未启用延迟测试")
 		}
 		if reason := agentTaskImmediateFailure(server); reason != "" {
 			return nil, errors.New(reason)
 		}
 		if latencyProbeAgentUpgradeRequired(*server) {
-			return nil, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再执行区域延迟测试")
+			return nil, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再执行延迟测试")
 		}
 		return map[string]any{"server_id": server.ID}, nil
 	})
@@ -330,13 +330,13 @@ func (s *Server) registerProbeOperations() {
 			return nil, err
 		}
 		if !server.LatencyProbeEnabled {
-			return nil, errors.New("服务器未启用区域延迟测试")
+			return nil, errors.New("服务器未启用延迟测试")
 		}
 		if reason := agentTaskImmediateFailure(server); reason != "" {
 			return nil, errors.New(reason)
 		}
 		if latencyProbeAgentUpgradeRequired(*server) {
-			return nil, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再执行区域延迟测试")
+			return nil, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再执行延迟测试")
 		}
 		resource, err := loadLatencyProbeResource(ctx, false)
 		if err != nil {

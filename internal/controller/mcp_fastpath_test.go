@@ -89,19 +89,40 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 	if err := s.applyServerOnboardingDefaults(ctx, json.RawMessage(`{"server":{"name":"Tokyo-01"}}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	if !request.Server.ConnectivityProbeEnabled || !request.Server.ConnectionAuditEnabled {
-		t.Fatalf("missing controller defaults: connectivity_probe_enabled=%v connection_audit_enabled=%v", request.Server.ConnectivityProbeEnabled, request.Server.ConnectionAuditEnabled)
+	if !request.Server.LatencyProbeEnabled || !request.Server.ConnectionAuditEnabled {
+		t.Fatalf("missing controller defaults: latency_probe_enabled=%v connection_audit_enabled=%v", request.Server.LatencyProbeEnabled, request.Server.ConnectionAuditEnabled)
 	}
 
-	request, err = decodeServerOnboardingOperation(json.RawMessage(`{"server":{"name":"Tokyo-02","connectivity_probe_enabled":false,"connection_audit_enabled":false}}`))
+	request, err = decodeServerOnboardingOperation(json.RawMessage(`{"server":{"name":"Tokyo-02","latency_probe_enabled":false,"connection_audit_enabled":false}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.applyServerOnboardingDefaults(ctx, json.RawMessage(`{"server":{"name":"Tokyo-02","connectivity_probe_enabled":false,"connection_audit_enabled":false}}`), &request); err != nil {
+	if err := s.applyServerOnboardingDefaults(ctx, json.RawMessage(`{"server":{"name":"Tokyo-02","latency_probe_enabled":false,"connection_audit_enabled":false}}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	if request.Server.ConnectivityProbeEnabled || request.Server.ConnectionAuditEnabled {
-		t.Fatalf("explicit false values were replaced: connectivity_probe_enabled=%v connection_audit_enabled=%v", request.Server.ConnectivityProbeEnabled, request.Server.ConnectionAuditEnabled)
+	if request.Server.LatencyProbeEnabled || request.Server.ConnectionAuditEnabled {
+		t.Fatalf("explicit false values were replaced: latency_probe_enabled=%v connection_audit_enabled=%v", request.Server.LatencyProbeEnabled, request.Server.ConnectionAuditEnabled)
+	}
+
+	prepared, err := s.prepareServerOnboardRecipe(ctx, application.Principal{}, mcpTaskInput{Params: map[string]any{
+		"name":                           "Tokyo-03",
+		"latency_probe_enabled":          true,
+		"latency_probe_mode":             "icmp",
+		"latency_probe_public_target":    "google",
+		"latency_probe_interval_seconds": 90,
+		"latency_probe_sample_count":     5,
+		"latency_probe_regions":          []any{map[string]any{"province": "广东", "carrier": "中国电信"}, map[string]any{"province": "浙江", "carrier": "中国联通"}},
+		"latency_probe_max_targets":      16,
+	}})
+	if err != nil || len(prepared.Operations) != 1 {
+		t.Fatalf("prepared=%#v err=%v", prepared, err)
+	}
+	serverInput := prepared.Operations[0].Input["server"].(map[string]any)
+	if serverInput["latency_probe_mode"] != "icmp" || serverInput["latency_probe_public_target"] != "google" || serverInput["latency_probe_interval_seconds"] != 90 || serverInput["latency_probe_sample_count"] != 5 || serverInput["latency_probe_max_targets"] != 16 {
+		t.Fatalf("latency settings were not forwarded: %#v", serverInput)
+	}
+	if regions, ok := serverInput["latency_probe_regions"].([]any); !ok || len(regions) != 2 {
+		t.Fatalf("latency regions were not forwarded: %#v", serverInput["latency_probe_regions"])
 	}
 }
 

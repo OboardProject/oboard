@@ -1198,8 +1198,8 @@ func (s *Server) applyServerOnboardingDefaults(ctx context.Context, input json.R
 	if _, ok := envelope.Server["offline_notify_enabled"]; !ok {
 		request.Server.OfflineNotifyEnabled = true
 	}
-	if _, ok := envelope.Server["connectivity_probe_enabled"]; !ok {
-		request.Server.ConnectivityProbeEnabled = true
+	if _, ok := envelope.Server["latency_probe_enabled"]; !ok {
+		request.Server.LatencyProbeEnabled = true
 	}
 	if _, ok := envelope.Server["connection_audit_enabled"]; !ok {
 		request.Server.ConnectionAuditEnabled = settingBool(settings, settingConnectionAuditEnabled, true)

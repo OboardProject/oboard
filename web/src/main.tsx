@@ -215,7 +215,9 @@ type ControllerBackup = { id: string; name: string; origin: 'manual' | 'automati
 type ControllerBackupSettings = { enabled: boolean; schedule: 'daily' | 'weekly'; time: string; weekday: number; local_retention: number; remote_retention: number; destination: BackupDestination; password_configured: boolean; destination_configured: boolean; last_success_at?: string; last_error?: string }
 type ControllerBackupSnapshot = { settings: ControllerBackupSettings; backups: ControllerBackup[] }
 type ServerMetricSample = { id: number; server_id: number; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; network_upload_bps: number; network_download_bps: number; traffic_upload_bytes: number; traffic_download_bytes: number; connectivity_available?: boolean; connectivity_latency_ms: number; sampled_at: string }
-type LatencyProbeResult = { probe_id: string; province: string; carrier: string; ip: string; available: boolean; latency_ms: number; min_latency_ms: number; p95_latency_ms: number; jitter_ms: number; sample_count: number; success_count: number; error?: string; checked_at: string }
+type LatencyProbeMode = 'tcp' | 'icmp'
+type LatencyProbeRegion = { province: string; carrier: string }
+type LatencyProbeResult = { probe_id: string; kind: 'public' | 'regional'; mode: LatencyProbeMode; province: string; carrier: string; host: string; ip: string; port: number; available: boolean; latency_ms: number; min_latency_ms: number; p95_latency_ms: number; jitter_ms: number; sample_count: number; success_count: number; error?: string; checked_at: string }
 type DNSProvider = 'cloudflare' | 'alidns' | 'tencent_dns' | 'tencent_esa' | 'huawei_cloud'
 type DNSCredentialZone = { id: number; credential_id: number; zone_name: string; provider_zone_id?: string; server_id?: number }
 type DNSCredential = { id: number; name: string; provider: DNSProvider; zones: DNSCredentialZone[]; configured: boolean; enabled: boolean; verified_at?: string; last_error?: string }
@@ -646,45 +648,36 @@ function ServerRegionField({ draft, update, servers }: { draft: any; update: (pa
   )
 }
 
-function ConnectivityProbeTargetField({ draft, update }: { draft: any; update: (patch: any) => void }) {
-  if (!draft.connectivity_probe_enabled) return null
-  const automaticDomain = connectivityProbeDomain(draft)
-  return <FormField label="探测域名" hint="自动模式下，中国大陆使用 12306.cn，其他地区使用 cp.cloudflare.com。">
-    <Select value={draft.connectivity_probe_target || 'auto'} onChange={event => update({ connectivity_probe_target: event.target.value as ConnectivityProbeTarget })}>
-      <option value="auto">自动（当前：{automaticDomain}）</option>
-      <option value="cloudflare">cp.cloudflare.com</option>
-      <option value="12306">12306.cn</option>
-      <option value="google">www.gstatic.com</option>
-    </Select>
-  </FormField>
-}
-
-function LatencyProbeSettingsField({ draft, update, provinces, carriers, loading, error }: { draft: any; update: (patch: any) => void; provinces: string[]; carriers: string[]; loading?: boolean; error?: string }) {
-  const toggle = (key: 'latency_probe_provinces' | 'latency_probe_carriers', value: string) => {
-    const current = Array.isArray(draft[key]) ? draft[key] : []
-    update({ [key]: current.includes(value) ? current.filter((item: string) => item !== value) : [...current, value] })
-  }
+function LatencyProbeSettingsField({ draft, update, regions, loading, error }: { draft: any; update: (patch: any) => void; regions: LatencyProbeRegion[]; loading?: boolean; error?: string }) {
   if (!draft.latency_probe_enabled) return null
-  const selectedProvinces: string[] = Array.isArray(draft.latency_probe_provinces) ? draft.latency_probe_provinces : []
-  const selectedCarriers: string[] = Array.isArray(draft.latency_probe_carriers) ? draft.latency_probe_carriers : []
-  const provinceOptions = Array.from(new Set([...provinces, ...selectedProvinces])).sort((a, b) => a.localeCompare(b, 'zh-CN'))
-  const carrierOptions = Array.from(new Set([...carriers, ...selectedCarriers])).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+  const selected: LatencyProbeRegion[] = Array.isArray(draft.latency_probe_regions) ? draft.latency_probe_regions : []
+  const keyOf = (region: LatencyProbeRegion) => `${region.province}\u0000${region.carrier}`
+  const availableKeys = new Set(regions.map(keyOf))
+  const options = Array.from(new Map([...regions, ...selected].map(region => [keyOf(region), region])).values()).sort((a, b) => a.province.localeCompare(b.province, 'zh-CN') || a.carrier.localeCompare(b.carrier, 'zh-CN'))
+  const selectedKeys = new Set(selected.map(keyOf))
+  const grouped = options.reduce<Record<string, LatencyProbeRegion[]>>((result, region) => {
+    ;(result[region.province] ||= []).push(region)
+    return result
+  }, {})
+  const toggle = (region: LatencyProbeRegion) => update({ latency_probe_regions: selectedKeys.has(keyOf(region)) ? selected.filter(item => keyOf(item) !== keyOf(region)) : [...selected, region] })
+  const automaticDomain = connectivityProbeDomain(draft)
   return <div className="latency-probe-settings">
-    <FormField label="采样间隔（秒）" hint="每台服务器按此间隔自动测试一次，范围 30 到 86400 秒。"><input aria-label="延迟测试采样间隔（秒）" type="number" min={30} max={86400} value={draft.latency_probe_interval_seconds || 300} onChange={e => update({ latency_probe_interval_seconds: Math.max(30, Math.min(86400, Number(e.target.value) || 300)) })} /></FormField>
-    <FormField label="每个 IP 样本数" hint="每个目标连续发送 ICMP 请求并计算平均、P95 与抖动。"><input aria-label="每个 IP 样本数" type="number" min={1} max={10} value={draft.latency_probe_sample_count || 3} onChange={e => update({ latency_probe_sample_count: Math.max(1, Math.min(10, Number(e.target.value) || 3)) })} /></FormField>
-    <FormField label="省份" hint="不选择表示使用资源列表中的全部省份。"><div className="chip-checkboxes" role="group" aria-label="延迟测试省份" aria-busy={loading}>{provinceOptions.map(value => <label key={value}><input type="checkbox" checked={selectedProvinces.includes(value)} onChange={() => toggle('latency_probe_provinces', value)} />{value}{!provinces.includes(value) ? '（当前资源无此项）' : ''}</label>)}{!loading && !provinceOptions.length && <span className="muted">暂无资源</span>}</div></FormField>
-    <FormField label="运营商" hint="不选择表示使用资源列表中的全部运营商。"><div className="chip-checkboxes" role="group" aria-label="延迟测试运营商" aria-busy={loading}>{carrierOptions.map(value => <label key={value}><input type="checkbox" checked={selectedCarriers.includes(value)} onChange={() => toggle('latency_probe_carriers', value)} />{value}{!carriers.includes(value) ? '（当前资源无此项）' : ''}</label>)}{!loading && !carrierOptions.length && <span className="muted">暂无资源</span>}</div></FormField>
+    <FormField label="测试方式" hint="TCP Ping 测试端口连接时间；ICMP Ping 测试 Echo 往返时间。"><Select aria-label="延迟测试方式" variant="segmented" value={draft.latency_probe_mode || 'tcp'} onChange={event => update({ latency_probe_mode: event.target.value as LatencyProbeMode })}><option value="tcp">TCP Ping</option><option value="icmp">ICMP Ping</option></Select></FormField>
+    <FormField label="公网目标" hint="用于断线期间判断公网是否可用。"><Select aria-label="延迟测试公网目标" value={draft.latency_probe_public_target || 'auto'} onChange={event => update({ latency_probe_public_target: event.target.value as ConnectivityProbeTarget })}><option value="auto">自动（当前：{automaticDomain}）</option><option value="cloudflare">cp.cloudflare.com</option><option value="12306">www.12306.cn</option><option value="google">www.gstatic.com</option></Select></FormField>
+    <FormField label="采样间隔（秒）" hint="Agent 按此间隔自动测试，断开主控后仍会继续。"><input aria-label="延迟测试采样间隔（秒）" type="number" min={30} max={86400} value={draft.latency_probe_interval_seconds || 60} onChange={e => update({ latency_probe_interval_seconds: Math.max(30, Math.min(86400, Number(e.target.value) || 60)) })} /></FormField>
+    <FormField label="每个目标样本数" hint="连续测试并计算平均、P95 与抖动。"><input aria-label="每个延迟目标样本数" type="number" min={1} max={10} value={draft.latency_probe_sample_count || 3} onChange={e => update({ latency_probe_sample_count: Math.max(1, Math.min(10, Number(e.target.value) || 3)) })} /></FormField>
+    <FormField label="地区目标" hint="按省份单独选择运营商；不选择时只测试公网目标。"><div className="latency-region-groups" aria-label="延迟测试地区目标" aria-busy={loading}>{Object.entries(grouped).map(([province, entries]) => <fieldset key={province}><legend>{province}</legend><div className="chip-checkboxes">{entries.map(region => { const key = keyOf(region); return <label key={key}><input type="checkbox" checked={selectedKeys.has(key)} onChange={() => toggle(region)} />{region.carrier}{!availableKeys.has(key) ? '（资源中已移除）' : ''}</label> })}</div></fieldset>)}{!loading && !options.length && <span className="muted">暂无可选地区</span>}</div></FormField>
     {error && <p className="danger-text" role="alert">资源列表加载失败：{error}</p>}
-    <FormField label="单次最多目标数" hint="限制单次任务规模，避免占用过多连接。"><input aria-label="单次最多目标数" type="number" min={1} max={256} value={draft.latency_probe_max_targets || 64} onChange={e => update({ latency_probe_max_targets: Math.max(1, Math.min(256, Number(e.target.value) || 64)) })} /></FormField>
+    <FormField label="单次最多目标数" hint="包含一个公网目标，限制总测试规模。"><input aria-label="单次最多目标数" type="number" min={1} max={256} value={draft.latency_probe_max_targets || 64} onChange={e => update({ latency_probe_max_targets: Math.max(1, Math.min(256, Number(e.target.value) || 64)) })} /></FormField>
   </div>
 }
 
 function useLatencyProbeResource(client: any) {
-  const [resource, setResource] = useState<{ provinces: string[]; carriers: string[]; loading: boolean; error: string }>({ provinces: [], carriers: [], loading: true, error: '' })
+  const [resource, setResource] = useState<{ regions: LatencyProbeRegion[]; loading: boolean; error: string }>({ regions: [], loading: true, error: '' })
   useEffect(() => {
     let cancelled = false
     void client.request('/latency-probe-resource').then((response: any) => {
-      if (!cancelled) setResource({ provinces: response.provinces || [], carriers: response.carriers || [], loading: false, error: '' })
+      if (!cancelled) setResource({ regions: response.regions || [], loading: false, error: '' })
     }).catch((error: any) => {
       if (!cancelled) setResource(current => ({ ...current, loading: false, error: localizeErrorMessage(error?.message || error) }))
     })
@@ -693,11 +686,21 @@ function useLatencyProbeResource(client: any) {
   return resource
 }
 
-function connectivityProbeDomain(server: Pick<Server, 'connectivity_probe_target' | 'region_mode' | 'region_code' | 'detected_region_code'>) {
-  if (server.connectivity_probe_target === '12306') return '12306.cn'
-  if (server.connectivity_probe_target === 'google') return 'www.gstatic.com'
-  if (server.connectivity_probe_target === 'cloudflare') return 'cp.cloudflare.com'
-  return serverRegionCode(server) === 'CN' ? '12306.cn' : 'cp.cloudflare.com'
+function connectivityProbeDomain(server: Pick<Server, 'latency_probe_public_target' | 'region_mode' | 'region_code' | 'detected_region_code'>) {
+  if (server.latency_probe_public_target === '12306') return 'www.12306.cn'
+  if (server.latency_probe_public_target === 'google') return 'www.gstatic.com'
+  if (server.latency_probe_public_target === 'cloudflare') return 'cp.cloudflare.com'
+  return serverRegionCode(server) === 'CN' ? 'www.12306.cn' : 'cp.cloudflare.com'
+}
+
+function connectivityStatusLabel(status: string) {
+  if (status === 'available') return '可用'
+  if (status === 'unavailable' || status === 'offline') return '不可用'
+  return '等待检测'
+}
+
+function connectivityLatencyLabel(status: string, latencyMS: number | null | undefined) {
+  return status === 'available' && Number(latencyMS) > 0 ? `${Math.round(Number(latencyMS))} ms` : '—'
 }
 
 function exitRegionStatusLabel(status?: string, code?: string) {
@@ -6113,7 +6116,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, connectivity_probe_enabled: true, connectivity_probe_target: 'auto' as ConnectivityProbeTarget, latency_probe_enabled: false, latency_probe_interval_seconds: 300, latency_probe_sample_count: 3, latency_probe_provinces: [], latency_probe_carriers: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
 }
 
 function GridViewIcon() {
@@ -6170,7 +6173,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [detailServer, setDetailServer] = useState<Server | null>(null)
   const [timeDetailServer, setTimeDetailServer] = useState<Server | null>(null)
   const [connectivityServer, setConnectivityServer] = useState<{ server: Server } | null>(null)
-  const [latencyServer, setLatencyServer] = useState<Server | null>(null)
   const [view, setViewState] = useState<'grid' | 'list'>(() => {
     try {
       const saved = localStorage.getItem('oboard_server_view_mode')
@@ -6469,7 +6471,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     if (type === 'details') setDetailServer(s)
     else if (type === 'time-details') setTimeDetailServer(s)
     else if (type === 'connectivity-details') setConnectivityServer({ server: s })
-    else if (type === 'latency-details') setLatencyServer(s)
     else if (type === 'edit') setEditServer(s)
     else if (type === 'mtu') setMtuServer(s)
     else if (type === 'dns') setDNSServer(s)
@@ -6616,8 +6617,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       }}
       onClose={() => setTimeDetailServer(null)}
     />}</AnimatePresence>
-    <AnimatePresence>{connectivityServer && <ServerConnectivityDialog server={connectivityServer.server} client={client} onClose={() => setConnectivityServer(null)} />}</AnimatePresence>
-    <AnimatePresence>{latencyServer && <ServerLatencyProbeDialog server={latencyServer} client={client} onClose={() => setLatencyServer(null)} onUpdated={() => { void refreshServers() }} />}</AnimatePresence>
+    <AnimatePresence>{connectivityServer && <ServerConnectivityDialog server={connectivityServer.server} client={client} onClose={() => setConnectivityServer(null)} onUpdated={() => { void refreshServers() }} />}</AnimatePresence>
     <AnimatePresence>{agentConfigServer && <AgentConfigDialog server={agentConfigServer} controllerURL={effectiveControllerURL(data)} onCancel={() => setAgentConfigServer(null)} onSubmit={cfg => syncAgentConfig(agentConfigServer, cfg)} />}</AnimatePresence>
     <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} token={installTarget.token} controllerURL={effectiveControllerURL(data)} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
@@ -6664,7 +6664,7 @@ function appendLiveServerMetrics(current: ServerMetricSample[], servers: Server[
       network_download_bps: server.network_download_bps || 0,
       traffic_upload_bytes: server.traffic_upload_bytes || 0,
       traffic_download_bytes: server.traffic_download_bytes || 0,
-      connectivity_available: server.connectivity_probe_enabled && server.connectivity_status !== 'pending' ? server.connectivity_status === 'available' : undefined,
+      connectivity_available: server.latency_probe_enabled && server.connectivity_status !== 'pending' ? server.connectivity_status === 'available' : undefined,
       connectivity_latency_ms: server.connectivity_latency_ms || 0,
       sampled_at: sampledAt,
     })
@@ -6890,7 +6890,7 @@ function CommandCopyBlock({ value, buttonText = '复制命令', language = 'bash
   </div>
 }
 
-function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, connectionAuditGated, latencyProbeResource }: { draft: any; setDraft: React.Dispatch<React.SetStateAction<any>>; onCancel: () => void; onSubmit: () => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean; latencyProbeResource: { provinces: string[]; carriers: string[]; loading: boolean; error: string } }) {
+function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, connectionAuditGated, latencyProbeResource }: { draft: any; setDraft: React.Dispatch<React.SetStateAction<any>>; onCancel: () => void; onSubmit: () => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean; latencyProbeResource: { regions: LatencyProbeRegion[]; loading: boolean; error: string } }) {
   const update = (patch: Record<string, any>) => setDraft((old: any) => ({ ...old, ...patch }))
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
@@ -6962,12 +6962,8 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
             </Select>
           </FormField>
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
-          <FormField label="公网可访问性" hint="每分钟检测公网连接和延迟。">
-            <Switch checked={Boolean(draft.connectivity_probe_enabled)} onChange={checked => update({ connectivity_probe_enabled: checked })} ariaLabel="公网可访问性" />
-          </FormField>
-          <ConnectivityProbeTargetField draft={draft} update={update} />
-          <FormField label="区域延迟测试" hint="从服务器向资源仓库中的省份与运营商 IP 发起 ICMP 测试，自动记录平均、P95 和抖动。">
-            <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="区域延迟测试" />
+          <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
+            <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
           </FormField>
           <LatencyProbeSettingsField draft={draft} update={update} {...latencyProbeResource} />
           <FormField label="连接审计" hint="记录来源 IP、目标与出口摘要。">
@@ -7007,7 +7003,7 @@ function serverToDraft(server: Server) {
   }
 }
 
-function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAuditGated, latencyProbeResource }: { server: Server; onCancel: () => void; onSubmit: (server: any) => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean; latencyProbeResource: { provinces: string[]; carriers: string[]; loading: boolean; error: string } }) {
+function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAuditGated, latencyProbeResource }: { server: Server; onCancel: () => void; onSubmit: (server: any) => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean; latencyProbeResource: { regions: LatencyProbeRegion[]; loading: boolean; error: string } }) {
   const [draft, setDraft] = useState<any>(() => serverToDraft(server))
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
@@ -7057,12 +7053,8 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
             <Select variant="segmented" value={draft.monitoring_mode || 'lightweight'} onChange={e => update({ monitoring_mode: e.target.value })}><option value="lightweight">轻量</option><option value="standard">标准</option></Select>
           </FormField>
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
-          <FormField label="公网可访问性" hint="每分钟检测公网连接和延迟。">
-            <Switch checked={Boolean(draft.connectivity_probe_enabled)} onChange={checked => update({ connectivity_probe_enabled: checked })} ariaLabel="公网可访问性" />
-          </FormField>
-          <ConnectivityProbeTargetField draft={draft} update={update} />
-          <FormField label="区域延迟测试" hint="从服务器向资源仓库中的省份与运营商 IP 发起 ICMP 测试，自动记录平均、P95 和抖动。">
-            <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="区域延迟测试" />
+          <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
+            <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
           </FormField>
           <LatencyProbeSettingsField draft={draft} update={update} {...latencyProbeResource} />
           <FormField label="连接审计" hint="关闭后 Agent 停止采集、上报和本地审计状态写入。">
@@ -7511,12 +7503,12 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
         </div>
 
         <div className="server-list-metric-item">
-          <span className="server-list-metric-label">公网延时</span>
-          {server.connectivity_probe_enabled ? (
+          <span className="server-list-metric-label">延迟测试</span>
+          {server.latency_probe_enabled ? (
             <button type="button" className="ghost server-list-latency-btn" onClick={() => onAction('connectivity-details', server)} title="查看 SLA 详情">
-              <strong>{server.connectivity_status === 'available' ? `${server.connectivity_latency_ms || 0} ms` : '—'}</strong>
-              <Badge variant={server.connectivity_status === 'available' ? 'success' : 'secondary'} className="latency-status-badge">
-                {server.connectivity_status === 'available' ? '可用' : '不可用'}
+              <strong>{connectivityLatencyLabel(server.connectivity_status, server.connectivity_latency_ms)}</strong>
+              <Badge variant={server.connectivity_status === 'available' ? 'success' : server.connectivity_status === 'unavailable' || server.connectivity_status === 'offline' ? 'destructive' : 'secondary'} className="latency-status-badge">
+                {connectivityStatusLabel(server.connectivity_status)}
               </Badge>
             </button>
           ) : (
@@ -7525,11 +7517,6 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
             </div>
           )}
         </div>
-        <div className="server-list-metric-item">
-          <span className="server-list-metric-label">区域延迟</span>
-          {server.latency_probe_enabled ? <button type="button" className="ghost server-list-latency-btn" onClick={() => onAction('latency-details', server)} aria-label="查看区域延迟测试结果" title="查看区域延迟测试结果"><strong>{server.latency_probe_resource_version ? '查看结果' : '待首次测试'}</strong><Badge variant="secondary">省份 / 运营商</Badge></button> : <span className="muted">未配置</span>}
-        </div>
-
         <div className="server-list-actions">
           <ServerActionsDropdown server={server} role={role} onAction={onAction} />
         </div>
@@ -7636,24 +7623,20 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
           <div className="server-chart-caption"><span><i className="download" />下载</span><span><i className="upload" />上传</span><small>{serverTrafficPeriodLabel(server)}</small></div>
         </div>
 
-        {server.connectivity_probe_enabled && <button type="button" className="server-connectivity" style={{ gridColumn: 'span 2' }} onClick={() => onAction('connectivity-details', server)} aria-label="查看公网可访问性详情与 SLA" title="点击查看公网可访问性详情与 SLA">
+        {server.latency_probe_enabled && <button type="button" className="server-connectivity" style={{ gridColumn: 'span 2' }} onClick={() => onAction('connectivity-details', server)} aria-label="查看延迟测试与 SLA" title="查看延迟测试与 SLA">
           <span className="server-telemetry-heading">
             <span className="server-telemetry-title">
-              <span>公网可访问性</span>
+              <span>延迟测试</span>
               <small className={server.connectivity_status === 'available' ? 'is-ok' : server.connectivity_status === 'unavailable' ? 'is-error' : ''}>{server.connectivity_status === 'available' ? '可用' : server.connectivity_status === 'unavailable' ? '不可用' : '等待检测'}</small>
             </span>
             <ChevronRight size={13} className="connectivity-open-chevron" aria-hidden="true" />
           </span>
           <span className="server-latency-value">
-            <strong>{server.connectivity_status === 'available' ? `${server.connectivity_latency_ms || 0} ms` : '—'}</strong>
-            <span>cp.cloudflare.com · 每分钟</span>
+            <strong>{connectivityLatencyLabel(server.connectivity_status, server.connectivity_latency_ms)}</strong>
+            <span>{connectivityProbeDomain(server)} · {server.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'}</span>
           </span>
           <ServerTelemetryChart samples={samples.filter(x => x.connectivity_available !== undefined)} type="latency" />
         </button>}
-        {server.latency_probe_enabled && <button type="button" className="server-connectivity" style={{ gridColumn: 'span 2' }} onClick={() => onAction('latency-details', server)} aria-label="查看区域延迟测试结果" title="点击查看区域延迟测试结果">
-          <Gauge size={13} aria-hidden="true" /><span>区域延迟</span><small>{server.latency_probe_resource_version ? `资源 ${server.latency_probe_resource_version}` : '等待首次测试'}</small><ChevronRight size={13} aria-hidden="true" />
-        </button>}
-
       </div>
     </MotionCard>
   )
@@ -7711,8 +7694,6 @@ function ServerTimeDetailDialog({ server, role = 'viewer', onEnableAuto, onClose
   </MotionDialogPanel>
 }
 
-let connectivityGradientSeq = 0
-
 function connectivitySlaTone(rate: number | null | undefined) {
   if (rate == null) return 'fair'
   if (rate >= 99.9) return 'great'
@@ -7720,13 +7701,57 @@ function connectivitySlaTone(rate: number | null | undefined) {
   return 'poor'
 }
 
-function ServerConnectivityDialog({ server, client, onClose }: { server: Server; client: any; onClose: () => void }) {
+function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { server: Server; client: any; onClose: () => void; onUpdated: () => void }) {
   const [windowKey, setWindowKey] = useState<ConnectivityWindowKey>('24h')
   const [response, setResponse] = useState<ConnectivityResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
+  const [probeItems, setProbeItems] = useState<LatencyProbeResult[]>([])
+  const [probeLoading, setProbeLoading] = useState(true)
+  const [probeRunning, setProbeRunning] = useState(false)
+  const [probeError, setProbeError] = useState('')
+  const mounted = useRef(true)
   const requestSequence = useRef(0)
-  const gradientId = useMemo(() => `connectivity-latency-gradient-${++connectivityGradientSeq}`, [])
+
+  const loadProbeResults = async () => {
+    setProbeLoading(true)
+    setProbeError('')
+    try {
+      const result = await client.request(`/servers/${server.id}/latency-probe?limit=512`)
+      if (mounted.current) setProbeItems(result.results || [])
+    } catch (error: any) {
+      if (mounted.current) setProbeError(localizeErrorMessage(error?.message || error))
+    } finally {
+      if (mounted.current) setProbeLoading(false)
+    }
+  }
+
+  const runProbe = async () => {
+    setProbeRunning(true)
+    setProbeError('')
+    try {
+      const queued = await client.request(`/servers/${server.id}/latency-probe`, { method: 'POST', body: '{}' })
+      onUpdated()
+      const taskID = Number(queued.task_id || 0)
+      if (!taskID) throw new Error('未能创建延迟测试任务')
+      let terminalStatus = ''
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        if (!mounted.current) return
+        const taskResult = await client.request(`/agent-tasks/${taskID}`)
+        terminalStatus = String(taskResult.task?.status || '')
+        if (['succeeded', 'failed', 'rollback_failed'].includes(terminalStatus)) break
+        await sleep(1500)
+      }
+      if (!mounted.current) return
+      await Promise.all([loadProbeResults(), loadConnectivity(windowKey)])
+      if (!['succeeded', 'failed', 'rollback_failed'].includes(terminalStatus)) setProbeError('测试任务仍在执行，可稍后刷新结果')
+      else if (terminalStatus !== 'succeeded') setProbeError('测试已完成，但有目标未响应；已保留本轮结果')
+    } catch (error: any) {
+      if (mounted.current) setProbeError(localizeErrorMessage(error?.message || error))
+    } finally {
+      if (mounted.current) setProbeRunning(false)
+    }
+  }
 
   const loadConnectivity = async (key: ConnectivityWindowKey) => {
     const sequence = ++requestSequence.current
@@ -7748,6 +7773,12 @@ function ServerConnectivityDialog({ server, client, onClose }: { server: Server;
     return () => { requestSequence.current++ }
   }, [windowKey, server.id])
 
+  useEffect(() => {
+    mounted.current = true
+    void loadProbeResults()
+    return () => { mounted.current = false }
+  }, [server.id])
+
   const currentStatusLabels: Record<ConnectivityResponse['current']['status'], string> = {
     available: '可用',
     unavailable: '公网不可用',
@@ -7755,33 +7786,34 @@ function ServerConnectivityDialog({ server, client, onClose }: { server: Server;
     disabled: '检测已关闭',
     pending: '等待首次检测',
   }
-  const currentStatus = response?.current.status || (server.connectivity_probe_enabled ? 'pending' : 'disabled')
+  const currentStatus = response?.current.status || (server.latency_probe_enabled ? 'pending' : 'disabled')
   const currentTone = currentStatus === 'available' ? 'great' : currentStatus === 'unavailable' || currentStatus === 'offline' ? 'poor' : 'fair'
   const slaTone = connectivitySlaTone(response?.summary.sla_percent)
   const latencyValues = response?.latency_points.map(point => Number(point.avg_ms)) || []
   const latencyMax = Math.max(1, ...latencyValues)
   const latencyPolyline = telemetryPolyline(latencyValues, 480, 110, latencyMax)
-  const latencyArea = latencyValues.length >= 2 ? `M0,110 ${latencyPolyline} L480,110 Z` : ''
   const buckets = response?.buckets || []
   const firstBucket = buckets[0]
   const midBucket = buckets[Math.floor(buckets.length / 2)]
   const lastBucket = buckets[buckets.length - 1]
   const windowLabels: Record<ConnectivityWindowKey, string> = { '24h': '24 小时', '7d': '7 天', '30d': '30 天' }
-  const causeLabels: Record<string, string> = { probe_failed: '公网探测失败', server_offline: '服务器离线', mixed: '公网异常 / 服务器离线' }
+  const causeLabels: Record<string, string> = { probe_failed: '公网探测失败', controller_disconnected: '主控连接断开', server_offline: '服务器离线', mixed: '多种可用性异常' }
   const formatLatency = (value: number | null | undefined) => value == null ? '—' : `${Math.round(value)} ms`
   const bucketTitle = (bucket: ConnectivityResponse['buckets'][number]) => {
     const observed = bucket.available_seconds + bucket.unavailable_seconds
     const coverage = observed + bucket.unknown_seconds > 0 ? observed / (observed + bucket.unknown_seconds) * 100 : 0
     return `${formatTableTime(bucket.start_at)} 至 ${formatTableTime(bucket.end_at)} · SLA ${connectivitySlaDisplay(bucket.sla_percent)} · 可用 ${formatConnectivityDuration(bucket.available_seconds)} · 不可用 ${formatConnectivityDuration(bucket.unavailable_seconds)} · 未观测 ${formatConnectivityDuration(bucket.unknown_seconds)} · 覆盖率 ${coverage.toFixed(1)}%`
   }
+  const latestCheckedAt = probeItems[0]?.checked_at
+  const latestRegionalItems = probeItems.filter(item => item.checked_at === latestCheckedAt && item.kind === 'regional').sort((a, b) => a.province.localeCompare(b.province, 'zh-CN') || a.carrier.localeCompare(b.carrier, 'zh-CN') || a.host.localeCompare(b.host))
 
   return <MotionDialogPanel onCancel={onClose} className="connectivity-dialog">
     <header className="dialog-head connectivity-head">
       <div className="connectivity-title">
         <span className={`connectivity-head-icon ${currentTone}`}><Activity size={17} aria-hidden="true" /></span>
         <div>
-          <h2>SLA（公网可用率）</h2>
-          <p>{server.name || `服务器 #${server.id}`} · {connectivityProbeDomain(server)} · 每分钟检测</p>
+          <h2>延迟测试与 SLA</h2>
+          <p>{server.name || `服务器 #${server.id}`} · {server.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'} · 每 {server.latency_probe_interval_seconds || 60} 秒</p>
         </div>
       </div>
       <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
@@ -7791,14 +7823,14 @@ function ServerConnectivityDialog({ server, client, onClose }: { server: Server;
         {(['24h', '7d', '30d'] as ConnectivityWindowKey[]).map(key => <button key={key} type="button" role="radio" aria-checked={windowKey === key} className={windowKey === key ? 'active' : ''} onClick={() => setWindowKey(key)} disabled={loading && windowKey === key}>{windowLabels[key]}</button>)}
       </div>
 
-      {loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载公网可用率</strong></div>
-        : loadError && !response ? <div className="connectivity-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载公网可用率</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => void loadConnectivity(windowKey)}>重试</button></div>
+		{loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载可用性统计</strong></div>
+		  : loadError && !response ? <div className="connectivity-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载可用性统计</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => void loadConnectivity(windowKey)}>重试</button></div>
         : response ? <>
           <div className="connectivity-hero">
             <div className={`connectivity-sla-bar-card ${slaTone}`} role="img" aria-label={`统计期 SLA ${connectivitySlaDisplay(response.summary.sla_percent)}`}>
               <div className="connectivity-sla-bar-head">
-                <div className="connectivity-sla-value-block"><span className="sla-rate-number">{connectivitySlaDisplay(response.summary.sla_percent)}</span><span className="sla-rate-label">公网 SLA</span></div>
-                <div className="connectivity-hero-status-row"><span className={`connectivity-status-chip ${currentTone}`}><i aria-hidden="true" />{currentStatusLabels[currentStatus]}</span><span className="connectivity-current-latency">{currentStatus === 'available' ? formatLatency(response.current.latency_ms) : '—'}</span></div>
+				<div className="connectivity-sla-value-block"><span className="sla-rate-number">{connectivitySlaDisplay(response.summary.sla_percent)}</span><span className="sla-rate-label">可用性 SLA</span></div>
+                <div className="connectivity-hero-status-row"><span className={`connectivity-status-chip ${currentTone}`}><i aria-hidden="true" />{currentStatusLabels[currentStatus]}</span><span className="connectivity-current-latency">{connectivityLatencyLabel(currentStatus, response.current.latency_ms)}</span></div>
               </div>
               <div className="connectivity-sla-progress-track" aria-hidden="true">{response.summary.sla_percent != null && <div className={`connectivity-sla-progress-fill ${slaTone}`} style={{ width: `${Math.min(100, Math.max(0, response.summary.sla_percent))}%` }} />}</div>
               <dl className="connectivity-hero-grid">
@@ -7813,8 +7845,8 @@ function ServerConnectivityDialog({ server, client, onClose }: { server: Server;
           </div>
 
           <section className="connectivity-section">
-            <div className="connectivity-section-head"><Activity size={14} aria-hidden="true" /><h3>公网可用时间线</h3><span className="connectivity-section-note">{buckets.length} 个时间段</span></div>
-            <div className="connectivity-hour-strip" style={{ gridTemplateColumns: `repeat(${Math.max(1, buckets.length)}, minmax(0, 1fr))` }} role="img" aria-label={`近 ${windowLabels[windowKey]}公网可用率分段`}>
+			<div className="connectivity-section-head"><Activity size={14} aria-hidden="true" /><h3>可用性时间线</h3><span className="connectivity-section-note">{buckets.length} 个时间段</span></div>
+			<div className="connectivity-hour-strip" style={{ gridTemplateColumns: `repeat(${Math.max(1, buckets.length)}, minmax(0, 1fr))` }} role="img" aria-label={`近 ${windowLabels[windowKey]}可用性分段`}>
               {buckets.map(bucket => {
                 const observed = bucket.available_seconds + bucket.unavailable_seconds
                 return <span key={bucket.start_at} className={`connectivity-hour-cell ${backendConnectivityBucketTone(bucket.sla_percent, bucket.unknown_seconds, observed)}`} title={bucketTitle(bucket)} aria-label={bucketTitle(bucket)} />
@@ -7827,10 +7859,9 @@ function ServerConnectivityDialog({ server, client, onClose }: { server: Server;
           <section className="connectivity-section">
             <div className="connectivity-section-head"><Gauge size={14} aria-hidden="true" /><h3>公网探测延迟</h3><span className="connectivity-section-note">{formatLatency(response.latency.avg_ms)} 平均</span></div>
             {latencyValues.length < 2 ? <div className="server-chart-empty">暂无足够的成功探测数据</div> : <div className="connectivity-latency-chart">
-              <svg viewBox="0 0 480 110" preserveAspectRatio="none" role="img" aria-label="公网 HTTPS 探测延迟走势">
-                <defs><linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" className="connectivity-gradient-stop-top" /><stop offset="100%" className="connectivity-gradient-stop-bottom" /></linearGradient></defs>
-                <line x1="0" y1="36.67" x2="480" y2="36.67" className="connectivity-latency-grid" /><line x1="0" y1="73.33" x2="480" y2="73.33" className="connectivity-latency-grid" />
-                <path d={latencyArea} fill={`url(#${gradientId})`} /><polyline points={latencyPolyline} className="connectivity-latency-line" vectorEffect="non-scaling-stroke" />
+			  <svg viewBox="0 0 480 110" preserveAspectRatio="none" role="img" aria-label={`公网 ${server.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'} 延迟走势`}>
+				<line x1="0" y1="36.67" x2="480" y2="36.67" className="connectivity-latency-grid" /><line x1="0" y1="73.33" x2="480" y2="73.33" className="connectivity-latency-grid" />
+				<polyline points={latencyPolyline} className="connectivity-latency-line" vectorEffect="non-scaling-stroke" />
               </svg>
               <span className="connectivity-latency-scale high" aria-hidden="true">{Math.round(latencyMax * 2 / 3)} ms</span><span className="connectivity-latency-scale low" aria-hidden="true">{Math.round(latencyMax / 3)} ms</span>
             </div>}
@@ -7860,83 +7891,26 @@ function ServerConnectivityDialog({ server, client, onClose }: { server: Server;
             <ul className="connectivity-outages">{response.outages.map((outage, index) => <li key={`${outage.started_at}-${index}`}><span>{formatTableTime(outage.started_at)} 至 {outage.ended_at ? formatTableTime(outage.ended_at) : '持续中'} · {causeLabels[outage.cause] || '公网异常'}{outage.started_before_window ? ' · 开始于窗口前' : ''}</span><strong>{formatConnectivityDuration(outage.duration_seconds)}</strong></li>)}</ul>
           </section>}
 
-          <div className="connectivity-explanation"><Info size={14} aria-hidden="true" /><p><strong>SLA 仅按公网可用时间计算，延迟不参与 SLA。</strong> 延迟表示该服务器从自身公网出口访问 cp.cloudflare.com 的 HTTPS 探测耗时；检测目标统一，但它不是所有服务器的“统一网络延迟”，也不是 Controller 与 Agent 之间的网络延迟。</p></div>
+          <section className="connectivity-section">
+            <div className="connectivity-section-head"><Gauge size={14} aria-hidden="true" /><h3>地区延迟</h3><span className="connectivity-section-note">{latestRegionalItems.length} 个目标</span></div>
+            {probeLoading ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载地区结果</strong></div> : <div className="latency-probe-table-wrap"><table className="latency-probe-table"><thead><tr><th scope="col">地区</th><th scope="col">目标</th><th scope="col">平均</th><th scope="col">P95</th><th scope="col">抖动</th><th scope="col">状态</th></tr></thead><tbody>{latestRegionalItems.map(value => <tr key={value.probe_id}><td>{value.province} · {value.carrier}</td><td><code>{value.host}{value.mode === 'tcp' ? `:${value.port}` : ''}</code></td><td>{value.available ? `${value.latency_ms} ms` : '—'}</td><td>{value.available ? `${value.p95_latency_ms} ms` : '—'}</td><td>{value.available ? `${value.jitter_ms} ms` : '—'}</td><td title={value.error || undefined}><Badge variant={value.available ? 'success' : 'destructive'}>{value.available ? `${value.success_count}/${value.sample_count} 成功` : value.error || '目标未响应'}</Badge></td></tr>)}</tbody></table>{!latestRegionalItems.length && <div className="server-chart-empty">尚未选择地区目标，当前只测试公网目标。</div>}</div>}
+            {probeError && <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} aria-hidden="true" /><span>{probeError}</span></div>}
+          </section>
+
+          <div className="connectivity-explanation"><Info size={14} aria-hidden="true" /><p><strong>延迟不参与 SLA。</strong> Agent 与主控保持连接时计为在线；断开主控后，公网目标测试成功的时段仍计为在线，本地保存的结果会在恢复连接后自动补报。地区目标只用于比较延迟，不影响 SLA。</p></div>
         </> : null}
     </div>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => void loadConnectivity(windowKey)} disabled={loading} aria-label="刷新数据"><RefreshCw size={14} className={loading ? 'spin' : ''} />刷新</button><button type="button" onClick={onClose}>关闭</button></footer>
-  </MotionDialogPanel>
-}
-
-function ServerLatencyProbeDialog({ server, client, onClose, onUpdated }: { server: Server; client: any; onClose: () => void; onUpdated: () => void }) {
-  const [items, setItems] = useState<LatencyProbeResult[]>([])
-  const [loading, setLoading] = useState(true)
-  const [running, setRunning] = useState(false)
-  const [error, setError] = useState('')
-  const loadResults = async () => {
-    setLoading(true); setError('')
-    try { const response = await client.request(`/servers/${server.id}/latency-probe?limit=512`); setItems(response.results || []) }
-    catch (err: any) { setError(localizeErrorMessage(err?.message || err)) }
-    finally { setLoading(false) }
-  }
-  const mounted = useRef(true)
-  useEffect(() => {
-    mounted.current = true
-    void loadResults()
-    return () => { mounted.current = false }
-  }, [server.id])
-  const run = async () => {
-    setRunning(true); setError('')
-    try {
-      const queued = await client.request(`/servers/${server.id}/latency-probe`, { method: 'POST', body: '{}' })
-      onUpdated()
-      const taskID = Number(queued.task_id || 0)
-      if (!taskID) throw new Error('未能创建区域延迟测试任务')
-      let settled = false
-      let terminalStatus = ''
-      for (let attempt = 0; attempt < 80; attempt += 1) {
-        if (!mounted.current) return
-        const response = await client.request(`/agent-tasks/${taskID}`)
-        const status = String(response.task?.status || '')
-        if (['succeeded', 'failed', 'rollback_failed'].includes(status)) {
-          settled = true
-          terminalStatus = status
-          break
-        }
-        await sleep(1500)
-      }
-      if (!mounted.current) return
-      await loadResults()
-      if (!settled) setError('测试任务仍在执行，可稍后刷新结果')
-      else if (terminalStatus !== 'succeeded') setError('测试已完成，但有目标未响应；已保留本轮可用结果')
-    }
-    catch (err: any) { setError(localizeErrorMessage(err?.message || err)) }
-    finally { if (mounted.current) setRunning(false) }
-  }
-  const latestItems = useMemo(() => {
-    const checkedAt = items[0]?.checked_at
-    return items.filter(item => item.checked_at === checkedAt).sort((a, b) => {
-      if (a.province !== b.province) return a.province.localeCompare(b.province, 'zh-CN')
-      if (a.carrier !== b.carrier) return a.carrier.localeCompare(b.carrier, 'zh-CN')
-      return a.ip.localeCompare(b.ip)
-    })
-  }, [items])
-  return <MotionDialogPanel onCancel={onClose} className="connectivity-dialog" ariaLabel="区域延迟测试">
-    <header className="dialog-head connectivity-head"><div className="connectivity-title"><span className="connectivity-head-icon great"><Gauge size={17} aria-hidden="true" /></span><div><h2>区域延迟测试</h2><p>{server.name || `服务器 #${server.id}`} · {server.latency_probe_resource_version ? `资源版本 ${server.latency_probe_resource_version}` : '等待资源版本'}</p></div></div><button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>
-    <div className="dialog-body connectivity-body">
-      <div className="connectivity-hero"><div className="connectivity-sla-bar-card fair"><div className="connectivity-sla-bar-head"><div className="connectivity-sla-value-block"><span className="sla-rate-number">{server.latency_probe_enabled ? latestItems.length : 0}</span><span className="sla-rate-label">最近目标</span></div><div className="connectivity-hero-status-row"><span className="connectivity-status-chip fair"><i aria-hidden="true" />{server.latency_probe_enabled ? '已启用' : '未启用'}</span><span className="connectivity-current-latency">{server.latency_probe_interval_seconds || 300}s</span></div></div><dl className="connectivity-hero-grid"><div><dt>省份筛选</dt><dd>{server.latency_probe_provinces?.length ? server.latency_probe_provinces.join('、') : '全部'}</dd></div><div><dt>运营商筛选</dt><dd>{server.latency_probe_carriers?.length ? server.latency_probe_carriers.join('、') : '全部'}</dd></div><div><dt>最近采样</dt><dd>{items[0]?.checked_at ? formatTableTime(items[0].checked_at) : '尚未采样'}</dd></div><div><dt>目标上限</dt><dd>{server.latency_probe_max_targets || 64}</dd></div></dl></div></div>
-      {loading ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载延迟结果</strong></div> : error && !items.length ? <div className="connectivity-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载延迟结果</strong><span>{error}</span><button type="button" className="ghost" onClick={() => void loadResults}>重试</button></div> : <section className="connectivity-section"><div className="connectivity-section-head"><Gauge size={14} aria-hidden="true" /><h3>省份 / 运营商 ICMP 结果</h3><span className="connectivity-section-note">{latestItems.length} 个目标</span></div><div className="latency-probe-table-wrap"><table className="latency-probe-table"><thead><tr><th scope="col">地区</th><th scope="col">IP</th><th scope="col">平均</th><th scope="col">P95</th><th scope="col">抖动</th><th scope="col">状态</th></tr></thead><tbody>{latestItems.map(value => <tr key={value.probe_id}><td>{value.province} · {value.carrier}</td><td><code>{value.ip}</code></td><td>{value.available ? `${value.latency_ms} ms` : '—'}</td><td>{value.available ? `${value.p95_latency_ms} ms` : '—'}</td><td>{value.available ? `${value.jitter_ms} ms` : '—'}</td><td title={value.error || undefined}><Badge variant={value.available ? 'success' : 'destructive'}>{value.available ? `${value.success_count}/${value.sample_count} 成功` : value.error || '目标未响应'}</Badge></td></tr>)}</tbody></table></div>{!latestItems.length && <div className="server-chart-empty">暂无结果。启用测试后会按设定周期自动采样。</div>}</section>}
-      {error && items.length > 0 && <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} aria-hidden="true" /><span>{error}</span></div>}
-      <span className="sr-only" role="status" aria-live="polite">{running ? '区域延迟测试正在执行' : ''}</span>
-    </div><footer className="dialog-actions"><button type="button" className="ghost" onClick={() => void loadResults()} disabled={loading || running}><RefreshCw size={14} className={loading ? 'spin' : ''} aria-hidden="true" />刷新</button><button type="button" onClick={() => void run()} disabled={running || !server.latency_probe_enabled} aria-busy={running}>{running ? '测试中...' : '立即测试'}</button><button type="button" className="ghost" onClick={onClose}>关闭</button></footer>
+    <span className="sr-only" role="status" aria-live="polite">{probeRunning ? '延迟测试正在执行' : ''}</span>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => void Promise.all([loadConnectivity(windowKey), loadProbeResults()])} disabled={loading || probeLoading || probeRunning} aria-label="刷新数据"><RefreshCw size={14} className={loading || probeLoading ? 'spin' : ''} />刷新</button><button type="button" onClick={() => void runProbe()} disabled={probeRunning || !server.latency_probe_enabled} aria-busy={probeRunning}>{probeRunning ? '测试中...' : '立即测试'}</button><button type="button" className="ghost" onClick={onClose}>关闭</button></footer>
   </MotionDialogPanel>
 }
 
 function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () => void }) {
   const isOnline = String(server.status || '').toLowerCase() === 'online'
-  const connectivityLabel = !server.connectivity_probe_enabled
+  const connectivityLabel = !server.latency_probe_enabled
     ? '未启用检测'
     : server.connectivity_status === 'available'
-      ? `可用 · ${server.connectivity_latency_ms || 0} ms`
+      ? `可用${server.connectivity_latency_ms > 0 ? ` · ${server.connectivity_latency_ms} ms` : ''}`
       : server.connectivity_status === 'unavailable' ? '不可用' : '等待检测'
 
   return (
@@ -7986,7 +7960,7 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
             <ServerDetailItem label="公网端口范围" value={portRangeLabel(server)} />
             <ServerDetailItem label="内部回环端口范围" value={internalPortRangeLabel(server)} />
             <ServerDetailItem label="安装时尝试 BBR + FQ" value={server.bbr_enabled ? '是' : '否'} />
-            <ServerDetailItem label="公网可访问性" value={connectivityLabel} />
+            <ServerDetailItem label="延迟测试" value={connectivityLabel} />
           </dl>
         </section>
 

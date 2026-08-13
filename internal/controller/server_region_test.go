@@ -41,7 +41,7 @@ func TestValidateServerAutoRegionClearsManualOverride(t *testing.T) {
 	}
 }
 
-func TestEffectiveConnectivityProbeTarget(t *testing.T) {
+func TestEffectiveLatencyProbePublicTarget(t *testing.T) {
 	tests := []struct {
 		name   string
 		server model.Server
@@ -50,29 +50,29 @@ func TestEffectiveConnectivityProbeTarget(t *testing.T) {
 		{name: "detected mainland China", server: model.Server{RegionMode: "auto", DetectedRegionCode: "CN"}, want: model.ConnectivityProbeTarget12306},
 		{name: "manual mainland China", server: model.Server{RegionMode: "manual", RegionCode: "CN", DetectedRegionCode: "US"}, want: model.ConnectivityProbeTarget12306},
 		{name: "non-China automatic", server: model.Server{RegionMode: "auto", DetectedRegionCode: "JP"}, want: model.ConnectivityProbeTargetCloudflare},
-		{name: "explicit Google", server: model.Server{RegionMode: "auto", DetectedRegionCode: "CN", ConnectivityProbeTarget: model.ConnectivityProbeTargetGoogle}, want: model.ConnectivityProbeTargetGoogle},
+		{name: "explicit Google", server: model.Server{RegionMode: "auto", DetectedRegionCode: "CN", LatencyProbePublicTarget: model.ConnectivityProbeTargetGoogle}, want: model.ConnectivityProbeTargetGoogle},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := effectiveConnectivityProbeTarget(&test.server); got != test.want {
+			if got := effectiveLatencyProbePublicTarget(test.server); got != test.want {
 				t.Fatalf("effective target = %q, want %q", got, test.want)
 			}
 		})
 	}
 }
 
-func TestValidateConnectivityProbeTarget(t *testing.T) {
+func TestValidateLatencyProbePublicTarget(t *testing.T) {
 	server := validRegionTestServer()
-	server.ConnectivityProbeTarget = "arbitrary"
+	server.LatencyProbePublicTarget = "arbitrary"
 	if err := validateServer(&server); err == nil {
 		t.Fatal("arbitrary connectivity probe target was accepted")
 	}
-	server.ConnectivityProbeTarget = ""
+	server.LatencyProbePublicTarget = ""
 	if err := validateServer(&server); err != nil {
 		t.Fatal(err)
 	}
-	if server.ConnectivityProbeTarget != model.ConnectivityProbeTargetAuto {
-		t.Fatalf("default connectivity probe target = %q, want auto", server.ConnectivityProbeTarget)
+	if server.LatencyProbePublicTarget != model.ConnectivityProbeTargetAuto {
+		t.Fatalf("default latency probe public target = %q, want auto", server.LatencyProbePublicTarget)
 	}
 }
 

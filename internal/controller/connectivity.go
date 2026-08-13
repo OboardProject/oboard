@@ -99,13 +99,15 @@ const (
 )
 
 type connectivityState struct {
-	probeEnabled      bool
-	probeEnabledKnown bool
-	availability      connectivityAvailability
-	cause             string
-	lastProbeAt       *time.Time
-	lastProbeLatency  int
-	lastProbeError    string
+	probeEnabled              bool
+	probeEnabledKnown         bool
+	controllerConnected       bool
+	controllerConnectionKnown bool
+	availability              connectivityAvailability
+	cause                     string
+	lastProbeAt               *time.Time
+	lastProbeLatency          int
+	lastProbeError            string
 }
 
 type connectivitySegment struct {
@@ -141,23 +143,36 @@ func applyConnectivityEvent(state *connectivityState, event model.ServerConnecti
 	case model.ConnectivityEventProbeEnabled:
 		state.probeEnabledKnown = true
 		state.probeEnabled = true
-		state.availability = connectivityUnknown
-		state.cause = ""
+		if state.controllerConnectionKnown && !state.controllerConnected {
+			state.availability = connectivityUnavailable
+			state.cause = "controller_disconnected"
+		} else if !state.controllerConnectionKnown {
+			state.availability = connectivityUnknown
+			state.cause = ""
+		}
 		state.lastProbeAt = nil
 		state.lastProbeLatency = 0
 		state.lastProbeError = ""
 	case model.ConnectivityEventProbeDisabled:
 		state.probeEnabledKnown = true
 		state.probeEnabled = false
-		state.availability = connectivityUnknown
-		state.cause = ""
+		if state.controllerConnectionKnown && !state.controllerConnected {
+			state.availability = connectivityUnavailable
+			state.cause = "controller_disconnected"
+		} else if !state.controllerConnectionKnown {
+			state.availability = connectivityUnknown
+			state.cause = ""
+		}
 		state.lastProbeAt = nil
 		state.lastProbeLatency = 0
 		state.lastProbeError = ""
 	case model.ConnectivityEventProbeTargetChanged:
 		state.probeEnabledKnown = true
 		state.probeEnabled = true
-		if state.cause != "server_offline" {
+		if state.controllerConnectionKnown && !state.controllerConnected {
+			state.availability = connectivityUnavailable
+			state.cause = "controller_disconnected"
+		} else if !state.controllerConnectionKnown && state.cause != "server_offline" {
 			state.availability = connectivityUnknown
 			state.cause = ""
 		}
@@ -171,7 +186,10 @@ func applyConnectivityEvent(state *connectivityState, event model.ServerConnecti
 		state.lastProbeAt = &checkedAt
 		state.lastProbeLatency = event.LatencyMS
 		state.lastProbeError = event.Error
-		if event.Available != nil && *event.Available {
+		if state.controllerConnectionKnown && state.controllerConnected {
+			state.availability = connectivityAvailable
+			state.cause = "controller_connected"
+		} else if event.Available != nil && *event.Available {
 			state.availability = connectivityAvailable
 			state.cause = "probe_success"
 		} else {
@@ -179,10 +197,20 @@ func applyConnectivityEvent(state *connectivityState, event model.ServerConnecti
 			state.cause = "probe_failed"
 		}
 	case model.ConnectivityEventServerOffline:
-		if state.probeEnabledKnown && state.probeEnabled {
+		if !state.controllerConnectionKnown && state.probeEnabledKnown && state.probeEnabled {
 			state.availability = connectivityUnavailable
 			state.cause = "server_offline"
 		}
+	case model.ConnectivityEventControllerConnected:
+		state.controllerConnectionKnown = true
+		state.controllerConnected = true
+		state.availability = connectivityAvailable
+		state.cause = "controller_connected"
+	case model.ConnectivityEventControllerDisconnected:
+		state.controllerConnectionKnown = true
+		state.controllerConnected = false
+		state.availability = connectivityUnavailable
+		state.cause = "controller_disconnected"
 	}
 }
 
@@ -440,7 +468,10 @@ func BuildConnectivityResponse(serverID int64, window connectivityWindow, histor
 	}
 	successfulProbes := successfulConnectivityProbes(history.Events)
 	current := connectivityCurrent{Status: "pending"}
-	if currentState.probeEnabledKnown && !currentState.probeEnabled {
+	if currentState.controllerConnectionKnown && currentState.controllerConnected {
+		current.Status = "available"
+		current.LatencyMS = currentState.lastProbeLatency
+	} else if !currentState.controllerConnectionKnown && currentState.probeEnabledKnown && !currentState.probeEnabled {
 		current.Status = "disabled"
 	} else {
 		switch currentState.availability {

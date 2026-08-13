@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -62,7 +63,7 @@ func loadLatencyProbeResource(ctx context.Context, force bool) (latencyProbeReso
 			if hasCached {
 				return cached, nil
 			}
-			return latencyProbeResource{}, errors.New("区域延迟测试资源更新已取消")
+			return latencyProbeResource{}, errors.New("延迟测试资源更新已取消")
 		case <-refreshed:
 			latencyProbeCache.Lock()
 			resource := latencyProbeCache.resource
@@ -72,9 +73,9 @@ func loadLatencyProbeResource(ctx context.Context, force bool) (latencyProbeReso
 				return resource, nil
 			}
 			if lastError != nil {
-				return latencyProbeResource{}, errors.New("暂时无法更新区域延迟测试资源，请稍后重试")
+				return latencyProbeResource{}, errors.New("暂时无法更新延迟测试资源，请稍后重试")
 			}
-			return latencyProbeResource{}, errors.New("区域延迟测试资源暂不可用")
+			return latencyProbeResource{}, errors.New("延迟测试资源暂不可用")
 		}
 	}
 	latencyProbeCache.refreshing = true
@@ -97,7 +98,7 @@ func loadLatencyProbeResource(ctx context.Context, force bool) (latencyProbeReso
 		if hasCached {
 			return cached, nil
 		}
-		return latencyProbeResource{}, errors.New("暂时无法更新区域延迟测试资源，请稍后重试")
+		return latencyProbeResource{}, errors.New("暂时无法更新延迟测试资源，请稍后重试")
 	}
 	return resource, nil
 }
@@ -165,53 +166,39 @@ func validLatencyProbeResourceIPv4(addr netip.Addr) bool {
 }
 
 func latencyProbeTargets(resource latencyProbeResource, server model.Server) []model.LatencyProbeTarget {
-	provinces := map[string]bool{}
-	for _, value := range server.LatencyProbeProvinces {
-		provinces[value] = true
+	publicTarget := effectiveLatencyProbePublicTarget(server)
+	publicHost := "cp.cloudflare.com"
+	if publicTarget == model.ConnectivityProbeTarget12306 {
+		publicHost = "www.12306.cn"
+	} else if publicTarget == model.ConnectivityProbeTargetGoogle {
+		publicHost = "www.gstatic.com"
 	}
-	carriers := map[string]bool{}
-	for _, value := range server.LatencyProbeCarriers {
-		carriers[value] = true
+	publicPort, regionalPort := 443, 80
+	if server.LatencyProbeMode == model.LatencyProbeModeICMP {
+		publicPort, regionalPort = 0, 0
 	}
-	provinceNames := make([]string, 0, len(resource.Provinces))
-	for province := range resource.Provinces {
-		if len(provinces) == 0 || provinces[province] {
-			provinceNames = append(provinceNames, province)
-		}
+	items := []model.LatencyProbeTarget{{ProbeID: "public-" + string(publicTarget), Kind: "public", Host: publicHost, Port: publicPort}}
+	if server.LatencyProbeMaxTargets == 1 {
+		return items
 	}
-	sort.Strings(provinceNames)
 	type targetGroup struct {
 		province string
 		carrier  string
 		ips      []string
 	}
-	carriersByProvince := make(map[string][]string, len(provinceNames))
-	maxCarriers := 0
-	for _, province := range provinceNames {
-		carrierNames := make([]string, 0, len(resource.Provinces[province]))
-		for carrier := range resource.Provinces[province] {
-			if len(carriers) == 0 || carriers[carrier] {
-				carrierNames = append(carrierNames, carrier)
-			}
-		}
-		sort.Strings(carrierNames)
-		carriersByProvince[province] = carrierNames
-		if len(carrierNames) > maxCarriers {
-			maxCarriers = len(carrierNames)
+	groups := make([]targetGroup, 0, len(server.LatencyProbeRegions))
+	for _, region := range server.LatencyProbeRegions {
+		ips := resource.Provinces[region.Province][region.Carrier]
+		if len(ips) > 0 {
+			groups = append(groups, targetGroup{province: region.Province, carrier: region.Carrier, ips: ips})
 		}
 	}
-	groups := make([]targetGroup, 0)
-	for carrierRound := 0; carrierRound < maxCarriers; carrierRound++ {
-		for provinceIndex, province := range provinceNames {
-			carrierNames := carriersByProvince[province]
-			if carrierRound >= len(carrierNames) {
-				continue
-			}
-			carrier := carrierNames[(provinceIndex+carrierRound)%len(carrierNames)]
-			groups = append(groups, targetGroup{province: province, carrier: carrier, ips: resource.Provinces[province][carrier]})
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].province == groups[j].province {
+			return groups[i].carrier < groups[j].carrier
 		}
-	}
-	items := []model.LatencyProbeTarget{}
+		return groups[i].province < groups[j].province
+	})
 	for ipIndex := 0; ; ipIndex++ {
 		added := false
 		for _, group := range groups {
@@ -219,16 +206,44 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server) []m
 				continue
 			}
 			added = true
-			items = append(items, model.LatencyProbeTarget{ProbeID: fmt.Sprintf("%s-%s-%d", group.province, group.carrier, ipIndex), Province: group.province, Carrier: group.carrier, IP: group.ips[ipIndex]})
 			if server.LatencyProbeMaxTargets > 0 && len(items) >= server.LatencyProbeMaxTargets {
 				return items
 			}
+			items = append(items, model.LatencyProbeTarget{ProbeID: fmt.Sprintf("%s-%s-%d", group.province, group.carrier, ipIndex), Kind: "regional", Province: group.province, Carrier: group.carrier, Host: group.ips[ipIndex], IP: group.ips[ipIndex], Port: regionalPort})
 		}
 		if !added {
 			break
 		}
 	}
 	return items
+}
+
+func effectiveLatencyProbePublicTarget(server model.Server) model.ConnectivityTarget {
+	switch server.LatencyProbePublicTarget {
+	case model.ConnectivityProbeTargetCloudflare, model.ConnectivityProbeTarget12306, model.ConnectivityProbeTargetGoogle:
+		return server.LatencyProbePublicTarget
+	}
+	region, _ := core.EffectiveServerRegion(server)
+	if region == "CN" {
+		return model.ConnectivityProbeTarget12306
+	}
+	return model.ConnectivityProbeTargetCloudflare
+}
+
+func latencyProbeRegionOptions(resource latencyProbeResource) []model.LatencyProbeRegion {
+	options := make([]model.LatencyProbeRegion, 0)
+	for province, carriers := range resource.Provinces {
+		for carrier := range carriers {
+			options = append(options, model.LatencyProbeRegion{Province: province, Carrier: carrier})
+		}
+	}
+	sort.Slice(options, func(i, j int) bool {
+		if options[i].Province == options[j].Province {
+			return options[i].Carrier < options[j].Carrier
+		}
+		return options[i].Province < options[j].Province
+	})
+	return options
 }
 
 func (s *Server) serverLatencyProbe(w http.ResponseWriter, r *http.Request, serverID int64) {
@@ -245,26 +260,14 @@ func (s *Server) serverLatencyProbe(w http.ResponseWriter, r *http.Request, serv
 			fail(w, resultErr, 500)
 			return
 		}
-		provinces := []string{}
-		carriers := map[string]bool{}
+		regions := []model.LatencyProbeRegion{}
 		if resourceErr == nil {
-			for province, entries := range resource.Provinces {
-				provinces = append(provinces, province)
-				for carrier := range entries {
-					carriers[carrier] = true
-				}
-			}
-			sort.Strings(provinces)
+			regions = latencyProbeRegionOptions(resource)
 		}
-		carrierList := make([]string, 0, len(carriers))
-		for carrier := range carriers {
-			carrierList = append(carrierList, carrier)
-		}
-		sort.Strings(carrierList)
-		write(w, 200, map[string]any{"server": server, "resource_version": resource.Version, "resource_updated_at": resource.UpdatedAt, "resource_error": errorString(resourceErr), "provinces": provinces, "carriers": carrierList, "results": results})
+		write(w, 200, map[string]any{"server": server, "resource_version": resource.Version, "resource_updated_at": resource.UpdatedAt, "resource_error": errorString(resourceErr), "regions": regions, "results": results})
 	case http.MethodPost:
 		if !server.LatencyProbeEnabled {
-			fail(w, errors.New("服务器未启用区域延迟测试"), http.StatusConflict)
+			fail(w, errors.New("服务器未启用延迟测试"), http.StatusConflict)
 			return
 		}
 		if reason := agentTaskImmediateFailure(server); reason != "" {
@@ -272,7 +275,7 @@ func (s *Server) serverLatencyProbe(w http.ResponseWriter, r *http.Request, serv
 			return
 		}
 		if latencyProbeAgentUpgradeRequired(*server) {
-			fail(w, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再执行区域延迟测试"), http.StatusConflict)
+			fail(w, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再执行延迟测试"), http.StatusConflict)
 			return
 		}
 		resource, err := loadLatencyProbeResource(r.Context(), true)
@@ -313,25 +316,10 @@ func (s *Server) latencyProbeResource(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, http.StatusServiceUnavailable)
 		return
 	}
-	provinces := make([]string, 0, len(resource.Provinces))
-	carriers := map[string]bool{}
-	for province, entries := range resource.Provinces {
-		provinces = append(provinces, province)
-		for carrier := range entries {
-			carriers[carrier] = true
-		}
-	}
-	sort.Strings(provinces)
-	carrierList := make([]string, 0, len(carriers))
-	for carrier := range carriers {
-		carrierList = append(carrierList, carrier)
-	}
-	sort.Strings(carrierList)
 	write(w, http.StatusOK, map[string]any{
 		"resource_version":    resource.Version,
 		"resource_updated_at": resource.UpdatedAt,
-		"provinces":           provinces,
-		"carriers":            carrierList,
+		"regions":             latencyProbeRegionOptions(resource),
 	})
 }
 
@@ -360,7 +348,7 @@ func (s *Server) applyLatencyProbeTaskResult(ctx context.Context, serverID int64
 	seen := make(map[string]bool, len(report.Items))
 	for _, item := range report.Items {
 		target, ok := expected[item.ProbeID]
-		if !ok || seen[item.ProbeID] || item.Province != target.Province || item.Carrier != target.Carrier || item.IP != target.IP {
+		if !ok || seen[item.ProbeID] || item.Kind != target.Kind || item.Mode != string(plan.Mode) || item.Province != target.Province || item.Carrier != target.Carrier || item.Host != target.Host || item.IP != target.IP || item.Port != target.Port {
 			return errors.New("latency probe result contains an unexpected target")
 		}
 		if item.SampleCount < 1 || item.SampleCount > 10 || item.SuccessCount < 0 || item.SuccessCount > item.SampleCount || item.Available != (item.SuccessCount > 0) || item.LatencyMS < 0 || item.MinLatencyMS < 0 || item.P95LatencyMS < 0 || item.JitterMS < 0 {
@@ -375,33 +363,88 @@ func (s *Server) applyLatencyProbeTaskResult(ctx context.Context, serverID int64
 	return s.store.SaveLatencyProbeResults(ctx, serverID, report)
 }
 
-func (s *Server) enqueueConfiguredLatencyProbe(ctx context.Context, server model.Server, force bool) error {
-	if !server.LatencyProbeEnabled || strings.TrimSpace(server.AgentID) == "" || server.Status == model.ServerOffline || latencyProbeAgentUpgradeRequired(server) {
-		return nil
-	}
+func latencyProbePlanForServer(ctx context.Context, server model.Server) (model.LatencyProbeTargetsPlan, error) {
 	resource, err := loadLatencyProbeResource(ctx, false)
 	if err != nil {
-		return err
-	}
-	if !force && server.LatencyProbeResourceVersion == resource.Version {
-		results, _ := s.store.ListLatencyProbeResults(ctx, server.ID, 1)
-		if len(results) > 0 && time.Since(results[0].CheckedAt) < time.Duration(server.LatencyProbeIntervalSeconds)*time.Second {
-			return nil
+		if server.LatencyProbeEnabled {
+			return model.LatencyProbeTargetsPlan{}, err
 		}
-		latest, latestErr := s.store.LatestTaskByServerType(ctx, server.ID, model.AgentTaskTypeProbeLatencyTargets)
-		if latestErr == nil && time.Since(latest.CreatedAt) < time.Duration(server.LatencyProbeIntervalSeconds)*time.Second {
-			return nil
+		resource.Version = strings.TrimSpace(server.LatencyProbeResourceVersion)
+		resource.UpdatedAt = server.UpdatedAt.UTC()
+	}
+	if resource.Version == "" {
+		resource.Version = "public"
+	}
+	version := server.UpdatedAt.UnixNano()
+	if resourceVersion := resource.UpdatedAt.UnixNano(); resourceVersion > version {
+		version = resourceVersion
+	}
+	if version < 1 {
+		version = 1
+	}
+	return model.LatencyProbeTargetsPlan{
+		Version:         version,
+		ResourceVersion: resource.Version,
+		Mode:            server.LatencyProbeMode,
+		Enabled:         server.LatencyProbeEnabled,
+		IntervalSeconds: server.LatencyProbeIntervalSeconds,
+		SampleCount:     server.LatencyProbeSampleCount,
+		IntervalMS:      150,
+		TimeoutMS:       3000,
+		Targets:         latencyProbeTargets(resource, server),
+	}, nil
+}
+
+func validateAutonomousLatencyProbeReport(report *model.LatencyProbeResultReport) error {
+	if report == nil || strings.TrimSpace(report.ReportID) == "" || strings.TrimSpace(report.ResourceVersion) == "" || len(report.Items) == 0 || len(report.Items) > 256 {
+		return errors.New("延迟测试回报不完整")
+	}
+	now := time.Now().UTC()
+	checkedAt := report.CheckedAt.UTC()
+	if checkedAt.IsZero() || checkedAt.Before(now.Add(-35*24*time.Hour)) || checkedAt.After(now.Add(2*time.Minute)) {
+		return errors.New("延迟测试回报时间无效")
+	}
+	publicCount := 0
+	seen := make(map[string]bool, len(report.Items))
+	for index := range report.Items {
+		item := &report.Items[index]
+		item.ProbeID = strings.TrimSpace(item.ProbeID)
+		item.Host = strings.TrimSpace(item.Host)
+		item.IP = strings.TrimSpace(item.IP)
+		if item.ProbeID == "" || seen[item.ProbeID] || (item.Mode != string(model.LatencyProbeModeTCP) && item.Mode != string(model.LatencyProbeModeICMP)) || item.SampleCount < 1 || item.SampleCount > 10 || item.SuccessCount < 0 || item.SuccessCount > item.SampleCount || item.Available != (item.SuccessCount > 0) || item.LatencyMS < 0 || item.MinLatencyMS < 0 || item.P95LatencyMS < 0 || item.JitterMS < 0 {
+			return errors.New("延迟测试回报包含无效结果")
 		}
-		if latestErr != nil && !errors.Is(latestErr, sql.ErrNoRows) {
-			return latestErr
+		seen[item.ProbeID] = true
+		if item.Kind == "public" {
+			publicCount++
+			if item.Host != "cp.cloudflare.com" && item.Host != "www.12306.cn" && item.Host != "www.gstatic.com" {
+				return errors.New("公网延迟目标无效")
+			}
+		} else if item.Kind == "regional" {
+			addr, err := netip.ParseAddr(item.IP)
+			if err != nil || !validLatencyProbeResourceIPv4(addr) || item.Host != item.IP || item.Province == "" || item.Carrier == "" {
+				return errors.New("地区延迟目标无效")
+			}
+		} else {
+			return errors.New("延迟测试目标类型无效")
+		}
+		if item.Mode == string(model.LatencyProbeModeTCP) && (item.Port < 1 || item.Port > 65535) {
+			return errors.New("TCP 延迟目标端口无效")
+		}
+		if item.Mode == string(model.LatencyProbeModeICMP) {
+			item.Port = 0
+		}
+		if item.SuccessCount == 0 && (item.LatencyMS != 0 || item.MinLatencyMS != 0 || item.P95LatencyMS != 0 || item.JitterMS != 0) {
+			return errors.New("失败结果不能包含延迟统计")
+		}
+		if len(item.Error) > 240 {
+			item.Error = item.Error[:240]
 		}
 	}
-	targets := latencyProbeTargets(resource, server)
-	if len(targets) == 0 {
-		return nil
+	if publicCount != 1 {
+		return errors.New("每次延迟测试必须包含一个公网目标")
 	}
-	_, _, err = s.queueLatencyProbeTask(ctx, &server, resource, targets)
-	return err
+	return nil
 }
 
 func latencyProbeAgentUpgradeRequired(server model.Server) bool {
@@ -422,7 +465,7 @@ func (s *Server) queueLatencyProbeTask(ctx context.Context, server *model.Server
 	if err != nil {
 		return model.AgentTask{}, false, err
 	}
-	plan := model.LatencyProbeTargetsPlan{Version: version, ResourceVersion: resource.Version, SampleCount: server.LatencyProbeSampleCount, IntervalMS: 150, TimeoutMS: 3000, Targets: targets}
+	plan := model.LatencyProbeTargetsPlan{Version: version, ResourceVersion: resource.Version, Mode: server.LatencyProbeMode, Enabled: server.LatencyProbeEnabled, IntervalSeconds: server.LatencyProbeIntervalSeconds, SampleCount: server.LatencyProbeSampleCount, IntervalMS: 150, TimeoutMS: 3000, Targets: targets}
 	server.LatencyProbeResourceVersion = resource.Version
 	if err := s.store.UpdateServerLatencyProbeSettings(ctx, server); err != nil {
 		return model.AgentTask{}, false, err

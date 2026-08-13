@@ -1249,7 +1249,7 @@ func TestControllerFormalAPI(t *testing.T) {
 	if serverPayload["mtu_mode"] != "detect" || serverPayload["mtu_probe_host"] == "" {
 		t.Fatalf("server MTU defaults missing: %#v", serverPayload)
 	}
-	if serverPayload["monitoring_mode"] != "lightweight" || serverPayload["traffic_reset_mode"] != "monthly" || serverPayload["connectivity_probe_enabled"] != true {
+	if serverPayload["monitoring_mode"] != "lightweight" || serverPayload["traffic_reset_mode"] != "monthly" || serverPayload["latency_probe_enabled"] != true {
 		t.Fatalf("server telemetry defaults missing: %#v", serverPayload)
 	}
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
@@ -1358,34 +1358,16 @@ func TestServerMonitoringPolicyAndHealthSanitization(t *testing.T) {
 	if mode != "lightweight" || interval != 20*time.Second {
 		t.Fatalf("lightweight policy mode=%s interval=%s", mode, interval)
 	}
-	report := model.HealthReport{CPUUsagePercent: 180, MemoryUsedBytes: 200, MemoryTotalBytes: 100, NetworkUploadBPS: 101 << 30, ConnectivityLatencyMS: -1, Timestamp: time.Now().Add(-time.Hour), ConnectivityCheckedAt: time.Now().Add(time.Hour)}
+	report := model.HealthReport{CPUUsagePercent: 180, MemoryUsedBytes: 200, MemoryTotalBytes: 100, NetworkUploadBPS: 101 << 30, Timestamp: time.Now().Add(-time.Hour)}
 	sanitizeServerHealthReport(&report)
 	if report.CPUUsagePercent != 100 || report.MemoryUsedBytes != 100 {
 		t.Fatalf("resource sanitization = %#v", report)
-	}
-	if report.ConnectivityLatencyMS != 0 || report.ConnectivityAvailable || !report.ConnectivityCheckedAt.IsZero() {
-		t.Fatalf("connectivity sanitization = %#v", report)
 	}
 	if report.NetworkUploadBPS != 0 {
 		t.Fatalf("network rate was not bounded: %d", report.NetworkUploadBPS)
 	}
 	if time.Since(report.Timestamp) > 5*time.Second {
 		t.Fatalf("timestamp was not normalized: %s", report.Timestamp)
-	}
-}
-
-func TestConnectivityProbePolicyRejectsStaleTarget(t *testing.T) {
-	checkedAt := time.Now().UTC()
-	server := &model.Server{ConnectivityProbeEnabled: true, ConnectivityProbeTarget: model.ConnectivityProbeTargetGoogle}
-	report := model.HealthReport{ConnectivityProbeTarget: "cloudflare", ConnectivityAvailable: true, ConnectivityLatencyMS: 20, ConnectivityCheckedAt: checkedAt}
-	applyConnectivityProbePolicy(&report, server)
-	if report.ConnectivityAvailable || report.ConnectivityLatencyMS != 0 || !report.ConnectivityCheckedAt.IsZero() {
-		t.Fatalf("stale target result was accepted: %#v", report)
-	}
-	report = model.HealthReport{ConnectivityProbeTarget: "google", ConnectivityAvailable: true, ConnectivityLatencyMS: 20, ConnectivityCheckedAt: checkedAt}
-	applyConnectivityProbePolicy(&report, server)
-	if !report.ConnectivityAvailable || report.ConnectivityLatencyMS != 20 || !report.ConnectivityCheckedAt.Equal(checkedAt) {
-		t.Fatalf("current target result was rejected: %#v", report)
 	}
 }
 

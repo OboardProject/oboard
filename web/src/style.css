@@ -8539,7 +8539,6 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .server-time-detail-actions { justify-content: flex-end; }
-/* 公网可访问性卡片与详情弹窗 */
 .server-connectivity {
   border: 1px solid var(--border);
   width: 100%;
@@ -17466,9 +17465,31 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   min-width: 0;
 }
 
-.latency-probe-settings .form-field:has(.chip-checkboxes),
+.latency-probe-settings .form-field:has(.latency-region-groups),
 .latency-probe-settings > .danger-text {
   grid-column: 1 / -1;
+}
+
+.latency-region-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.latency-region-groups fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.latency-region-groups legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .chip-checkboxes {
@@ -17536,7 +17557,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .latency-probe-settings .form-field:has(.chip-checkboxes),
+  .latency-probe-settings .form-field:has(.latency-region-groups),
   .latency-probe-settings > .danger-text {
     grid-column: auto;
   }

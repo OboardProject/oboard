@@ -119,6 +119,27 @@ func TestConnectivitySLADurationIntegration(t *testing.T) {
 	})
 }
 
+func TestConnectivityConnectionAndOfflineProbeStateMachine(t *testing.T) {
+	from := time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
+	window := connectivityTestWindow(from, time.Hour, 15*time.Minute)
+	history := model.ServerConnectivityHistory{Events: []model.ServerConnectivityEvent{
+		connectivityTestEvent(1, from, model.ConnectivityEventControllerConnected, nil, 0),
+		connectivityTestEvent(2, from.Add(5*time.Minute), model.ConnectivityEventProbeTargetChanged, nil, 0),
+		connectivityTestEvent(3, from.Add(10*time.Minute), model.ConnectivityEventControllerDisconnected, nil, 0),
+		connectivityTestEvent(4, from.Add(15*time.Minute), model.ConnectivityEventProbeResult, boolPointer(true), 30),
+		connectivityTestEvent(5, from.Add(30*time.Minute), model.ConnectivityEventProbeResult, boolPointer(false), 0),
+		connectivityTestEvent(6, from.Add(45*time.Minute), model.ConnectivityEventControllerConnected, nil, 0),
+	}}
+	response := BuildConnectivityResponse(1, window, history)
+	assertNear(t, response.Summary.AvailableSeconds, 40*60, 0.001)
+	assertNear(t, response.Summary.UnavailableSeconds, 20*60, 0.001)
+	assertNear(t, response.Summary.UnknownSeconds, 0, 0.001)
+	if response.Current.Status != "available" || response.Summary.SLAPercent == nil {
+		t.Fatalf("state machine response = %#v", response)
+	}
+	assertNear(t, *response.Summary.SLAPercent, 66.6666667, 0.0001)
+}
+
 func TestConnectivityPendingUnknownAndBaseline(t *testing.T) {
 	from := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
 	window := connectivityTestWindow(from, time.Hour, 15*time.Minute)

@@ -117,7 +117,6 @@ func main() {
 	go app.StartAccessChangeWorker(ctx)
 	go app.StartAccessLifecycleWorker(ctx)
 	go app.StartPlanRuleReconciler(ctx)
-	go app.StartLatencyProbeScheduler(ctx)
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           app.Handler(),

@@ -20,36 +20,20 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
-func TestLatencyProbeTargetsFilterAndLimit(t *testing.T) {
+func TestLatencyProbeTargetsUseExactProvinceCarrierPairs(t *testing.T) {
 	resource := latencyProbeResource{Version: "v1", Provinces: map[string]map[string][]string{
 		"广东": {"中国电信": {"192.0.2.1", "192.0.2.2"}, "中国联通": {"192.0.2.3"}},
-		"浙江": {"中国电信": {"192.0.2.4"}},
+		"浙江": {"中国电信": {"192.0.2.4"}, "中国联通": {"192.0.2.5"}},
 	}}
-	server := model.Server{LatencyProbeProvinces: []string{"广东"}, LatencyProbeCarriers: []string{"中国电信"}, LatencyProbeMaxTargets: 1}
+	server := model.Server{LatencyProbeRegions: []model.LatencyProbeRegion{{Province: "广东", Carrier: "中国电信"}, {Province: "浙江", Carrier: "中国联通"}}, LatencyProbeMaxTargets: 3}
 	targets := latencyProbeTargets(resource, server)
-	if len(targets) != 1 || targets[0].Province != "广东" || targets[0].Carrier != "中国电信" || targets[0].IP != "192.0.2.1" {
+	if len(targets) != 3 || targets[0].Kind != "public" || targets[1].Province != "广东" || targets[1].Carrier != "中国电信" || targets[2].Province != "浙江" || targets[2].Carrier != "中国联通" {
 		t.Fatalf("targets = %#v", targets)
 	}
-}
-
-func TestLatencyProbeTargetsDistributeLimitAcrossProvincesAndCarriers(t *testing.T) {
-	resource := latencyProbeResource{Version: "v1", Provinces: map[string]map[string][]string{
-		"安徽": {"中国电信": {"192.0.2.1"}, "中国联通": {"192.0.2.2"}},
-		"广东": {"中国电信": {"192.0.2.3"}, "中国联通": {"192.0.2.4"}},
-		"浙江": {"中国电信": {"192.0.2.5"}, "中国联通": {"192.0.2.6"}},
-	}}
-	targets := latencyProbeTargets(resource, model.Server{LatencyProbeMaxTargets: 3})
-	if len(targets) != 3 {
-		t.Fatalf("targets = %#v", targets)
-	}
-	provinces := map[string]bool{}
-	carriers := map[string]bool{}
 	for _, target := range targets {
-		provinces[target.Province] = true
-		carriers[target.Carrier] = true
-	}
-	if len(provinces) != 3 || len(carriers) != 2 {
-		t.Fatalf("limit distribution provinces=%#v carriers=%#v targets=%#v", provinces, carriers, targets)
+		if (target.Province == "广东" && target.Carrier == "中国联通") || (target.Province == "浙江" && target.Carrier == "中国电信") {
+			t.Fatalf("generated an unselected pair: %#v", target)
+		}
 	}
 }
 
@@ -124,7 +108,7 @@ func TestLatencyProbeManualRunDeduplicatesAndStoresCallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	server := &model.Server{Name: "latency-edge", AgentID: "latency-agent", AgentTokenHash: security.HashSecret("latency-token"), Status: model.ServerOnline, LatencyProbeEnabled: true, LatencyProbeSampleCount: 3, LatencyProbeMaxTargets: 8}
+	server := &model.Server{Name: "latency-edge", AgentID: "latency-agent", AgentTokenHash: security.HashSecret("latency-token"), Status: model.ServerOnline, LatencyProbeEnabled: true, LatencyProbeMode: model.LatencyProbeModeICMP, LatencyProbeSampleCount: 3, LatencyProbeRegions: []model.LatencyProbeRegion{{Province: "广东", Carrier: "中国电信"}}, LatencyProbeMaxTargets: 8}
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +145,8 @@ func TestLatencyProbeManualRunDeduplicatesAndStoresCallback(t *testing.T) {
 	if err := json.Unmarshal([]byte(task.PayloadJSON), &plan); err != nil {
 		t.Fatal(err)
 	}
-	report := model.LatencyProbeResultReport{ResourceVersion: plan.ResourceVersion, CheckedAt: time.Now().UTC(), Items: []model.LatencyProbeResult{{ProbeID: plan.Targets[0].ProbeID, Province: plan.Targets[0].Province, Carrier: plan.Targets[0].Carrier, IP: plan.Targets[0].IP, Available: true, LatencyMS: 12, MinLatencyMS: 10, P95LatencyMS: 14, JitterMS: 2, SampleCount: 3, SuccessCount: 3}}}
+	target := plan.Targets[1]
+	report := model.LatencyProbeResultReport{ReportID: "manual-report", ResourceVersion: plan.ResourceVersion, CheckedAt: time.Now().UTC(), Items: []model.LatencyProbeResult{{ProbeID: target.ProbeID, Kind: target.Kind, Mode: string(plan.Mode), Province: target.Province, Carrier: target.Carrier, Host: target.Host, IP: target.IP, Port: 0, Available: true, LatencyMS: 12, MinLatencyMS: 10, P95LatencyMS: 14, JitterMS: 2, SampleCount: 3, SuccessCount: 3}}}
 	raw, _ := json.Marshal(report)
 	if err := app.applyLatencyProbeTaskResult(ctx, server.ID, *task, "succeeded", string(raw)); err != nil {
 		t.Fatal(err)
@@ -181,41 +166,6 @@ func TestLatencyProbeAgentVersionGate(t *testing.T) {
 	}
 }
 
-func TestLatencyProbeSchedulerWaitsAfterFailedTask(t *testing.T) {
-	ctx := context.Background()
-	db, err := store.Open(filepath.Join(t.TempDir(), "latency-retry.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	server := &model.Server{Name: "latency-retry", AgentID: "latency-agent", AgentBuild: agentBuildMinLatencyProbe, Status: model.ServerOnline, LatencyProbeEnabled: true, LatencyProbeIntervalSeconds: 300, LatencyProbeSampleCount: 3, LatencyProbeMaxTargets: 8, LatencyProbeResourceVersion: "v1"}
-	if err := db.CreateServer(ctx, server); err != nil {
-		t.Fatal(err)
-	}
-	resource, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["192.0.2.1"]}}`), time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	resource.Version = "v1"
-	latencyProbeCache.Lock()
-	latencyProbeCache.resource = resource
-	latencyProbeCache.fetched = time.Now()
-	latencyProbeCache.Unlock()
-	t.Cleanup(resetLatencyProbeCacheForTest)
-	failed := &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeProbeLatencyTargets, PayloadJSON: `{}`, Status: "failed", ResultJSON: `{}`, ConfigVersion: 1, Nonce: "failed-latency"}
-	if err := db.CreateTask(ctx, failed); err != nil {
-		t.Fatal(err)
-	}
-	app := newTestServer(db, "test-secret", "")
-	if err := app.enqueueConfiguredLatencyProbe(ctx, *server, false); err != nil {
-		t.Fatal(err)
-	}
-	tasks, err := db.ListTasksByServer(ctx, server.ID, 10)
-	if err != nil || len(tasks) != 1 {
-		t.Fatalf("tasks=%#v err=%v", tasks, err)
-	}
-}
-
 func TestLatencyProbeMCPResourceHonorsServerBoundary(t *testing.T) {
 	ctx := context.Background()
 	db, err := store.Open(filepath.Join(t.TempDir(), "latency-mcp.sqlite"))
@@ -231,7 +181,7 @@ func TestLatencyProbeMCPResourceHonorsServerBoundary(t *testing.T) {
 	if err := db.CreateServer(ctx, denied); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SaveLatencyProbeResults(ctx, allowed.ID, model.LatencyProbeResultReport{ResourceVersion: "v1", Items: []model.LatencyProbeResult{{ProbeID: "p1", Province: "广东", Carrier: "中国电信", IP: "192.0.2.1", Available: true, LatencyMS: 12, MinLatencyMS: 10, P95LatencyMS: 14, JitterMS: 2, SampleCount: 3, SuccessCount: 3}}}); err != nil {
+	if err := db.SaveLatencyProbeResults(ctx, allowed.ID, model.LatencyProbeResultReport{ReportID: "mcp-report", ResourceVersion: "v1", CheckedAt: time.Now().UTC(), Items: []model.LatencyProbeResult{{ProbeID: "p1", Kind: "regional", Mode: "icmp", Province: "广东", Carrier: "中国电信", Host: "192.0.2.1", IP: "192.0.2.1", Available: true, LatencyMS: 12, MinLatencyMS: 10, P95LatencyMS: 14, JitterMS: 2, SampleCount: 3, SuccessCount: 3}}}); err != nil {
 		t.Fatal(err)
 	}
 	app := newTestServer(db, "test-secret", "")

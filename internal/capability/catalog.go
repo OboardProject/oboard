@@ -205,10 +205,10 @@ func defaultDescriptors() []Descriptor {
 		"mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"}, "bbr_enabled": boolValue,
 		"agent_connected": boolValue, "agent_version": stringValue, "agent_build": stringValue,
 		"kernel_version": stringValue, "connection_audit_enabled": boolValue,
-		"connectivity_probe_target": stringValue,
-		"latency_probe_enabled":     boolValue, "latency_probe_interval_seconds": map[string]any{"type": "integer"},
-		"latency_probe_sample_count": map[string]any{"type": "integer"}, "latency_probe_provinces": stringArray(0, 40),
-		"latency_probe_carriers": stringArray(0, 8), "latency_probe_max_targets": map[string]any{"type": "integer"},
+		"latency_probe_enabled": boolValue, "latency_probe_mode": stringValue, "latency_probe_public_target": stringValue,
+		"latency_probe_interval_seconds": map[string]any{"type": "integer"}, "latency_probe_sample_count": map[string]any{"type": "integer"},
+		"latency_probe_regions":          map[string]any{"type": "array", "items": closedObject(map[string]any{"province": stringValue, "carrier": stringValue}, "province", "carrier")},
+		"latency_probe_max_targets":      map[string]any{"type": "integer"},
 		"latency_probe_resource_version": stringValue,
 		"time_correction_mode":           stringValue, "time_check_status": stringValue,
 		"last_seen_at": nullableString(), "created_at": stringValue, "updated_at": stringValue,
@@ -255,7 +255,12 @@ func defaultDescriptors() []Descriptor {
 		"valid":    boolValue,
 		"warnings": stringArray(0, 100),
 		"candidates": map[string]any{"type": "array", "maxItems": 100, "items": closedObject(map[string]any{
-			"server":                    closedObject(map[string]any{"name": stringValue, "region_code": stringValue, "ip_stack": stringValue, "listen_ip": stringValue, "port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"}}),
+			"server": closedObject(map[string]any{
+				"name": stringValue, "region_code": stringValue, "ip_stack": stringValue, "listen_ip": stringValue, "port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"},
+				"latency_probe_enabled": boolValue, "latency_probe_mode": stringValue, "latency_probe_public_target": stringValue,
+				"latency_probe_interval_seconds": map[string]any{"type": "integer"}, "latency_probe_sample_count": map[string]any{"type": "integer"},
+				"latency_probe_regions": map[string]any{"type": "array", "items": closedObject(map[string]any{"province": stringValue, "carrier": stringValue}, "province", "carrier")}, "latency_probe_max_targets": map[string]any{"type": "integer"},
+			}),
 			"requires_external_install": boolValue, "entry_server_id": positiveID, "entry_inbound_id": positiveID,
 			"exit_server_id": positiveID, "exit_region": stringValue, "hops": map[string]any{"type": "integer"},
 			"objective": stringValue, "requires_topology_changeset": boolValue, "server_id": positiveID,
@@ -266,7 +271,15 @@ func defaultDescriptors() []Descriptor {
 		})},
 		"suggested_changeset": suggestedChangesetSchema(),
 	}, "kind", "valid", "warnings", "candidates")
-	serverOnboardingInput := schemaObject(map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "region_code": map[string]any{"type": "string", "pattern": "^[A-Za-z]{2}$"}, "ip_stack": map[string]any{"type": "string", "enum": []string{"auto", "ipv4_only", "ipv6_only", "dual_stack", "prefer_ipv4", "prefer_ipv6"}}, "connectivity_probe_target": map[string]any{"type": "string", "enum": []string{"auto", "cloudflare", "12306", "google"}}}, "name")
+	probeTarget := map[string]any{"type": "string", "enum": []string{"auto", "cloudflare", "12306", "google"}}
+	probeRegion := closedObject(map[string]any{"province": map[string]any{"type": "string", "minLength": 1}, "carrier": map[string]any{"type": "string", "minLength": 1}}, "province", "carrier")
+	serverOnboardingInput := schemaObject(map[string]any{
+		"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "region_code": map[string]any{"type": "string", "pattern": "^[A-Za-z]{2}$"},
+		"ip_stack":              map[string]any{"type": "string", "enum": []string{"auto", "ipv4_only", "ipv6_only", "dual_stack", "prefer_ipv4", "prefer_ipv6"}},
+		"latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}}, "latency_probe_public_target": probeTarget,
+		"latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
+		"latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion}, "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
+	}, "name")
 	proxyPlanInput := schemaObject(map[string]any{"entry_server_id": positiveID, "exit_region": map[string]any{"type": "string", "maxLength": 2}, "preferred_relay_regions": stringArray(0, 32), "max_hops": map[string]any{"type": "integer", "minimum": 1, "maximum": 5}, "avoid_server_ids": idArray(0, 100), "objective": map[string]any{"type": "string", "maxLength": 500}}, "entry_server_id")
 	deploymentInput := schemaObject(map[string]any{"server_ids": idArray(1, 100), "reason": map[string]any{"type": "string", "maxLength": 500}}, "server_ids")
 	incidentPlanInput := schemaObject(map[string]any{"incident_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "user_id": positiveID, "rule_score": map[string]any{"type": "number", "minimum": 0, "maximum": 100}, "anomaly_score": map[string]any{"type": "number", "minimum": 0, "maximum": 100}, "evidence_refs": stringArray(0, 128)}, "incident_id", "user_id")
@@ -524,10 +537,18 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			}), "subscription_plan_ids"
 	case "servers.onboard":
 		probeTarget := map[string]any{"type": "string", "enum": []string{"auto", "cloudflare", "12306", "google"}}
-		serverInput := closedObject(map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "region_code": stringValue, "ip_stack": stringValue, "listen_ip": stringValue, "listen_mode": stringValue, "entry_address": stringValue, "port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"}, "udp_inbound_mode": stringValue, "mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"}, "bbr_enabled": boolValue, "connectivity_probe_target": probeTarget})
+		probeRegion := closedObject(map[string]any{"province": map[string]any{"type": "string", "minLength": 1}, "carrier": map[string]any{"type": "string", "minLength": 1}}, "province", "carrier")
+		serverInput := closedObject(map[string]any{
+			"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "region_code": stringValue, "ip_stack": stringValue, "listen_ip": stringValue, "listen_mode": stringValue, "entry_address": stringValue,
+			"port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"}, "udp_inbound_mode": stringValue, "mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"}, "bbr_enabled": boolValue,
+			"latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}}, "latency_probe_public_target": probeTarget,
+			"latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
+			"latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion}, "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
+		})
 		return schemaObject(map[string]any{"server": serverInput, "issue_enrollment_token": boolValue}, "server"), simpleOutput(map[string]any{"server": serverInput, "enrollment_expires_at": stringValue, "enrollment_token": stringValue}), "servers.allow_create"
 	case "servers.update":
 		probeTarget := map[string]any{"type": "string", "enum": []string{"auto", "cloudflare", "12306", "google"}}
+		probeRegion := closedObject(map[string]any{"province": map[string]any{"type": "string", "minLength": 1}, "carrier": map[string]any{"type": "string", "minLength": 1}}, "province", "carrier")
 		changes := closedObject(map[string]any{
 			"name": stringValue, "entry_address": stringValue, "entry_ip_mode": stringValue,
 			"region_mode": stringValue, "region_code": stringValue, "listen_ip": stringValue,
@@ -538,11 +559,11 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"},
 			"internal_port_range_start": map[string]any{"type": "integer"}, "internal_port_range_end": map[string]any{"type": "integer"},
 			"connection_audit_enabled": boolValue, "time_correction_mode": stringValue,
-			"connectivity_probe_target": probeTarget,
-			"latency_probe_enabled":     boolValue, "latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400},
-			"latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10}, "latency_probe_provinces": stringArray(0, 40),
-			"latency_probe_carriers": stringArray(0, 8), "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
-			"offline_notify_enabled": boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
+			"latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}},
+			"latency_probe_public_target": probeTarget, "latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400},
+			"latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10}, "latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion},
+			"latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
+			"offline_notify_enabled":    boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
 		})
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "deployments.apply":

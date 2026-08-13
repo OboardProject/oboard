@@ -109,6 +109,8 @@ type Server struct {
 	probeMu                       sync.Mutex
 	activeProbes                  map[int64]bool
 	latencyProbeMu                sync.Mutex
+	agentConnectionMu             sync.Mutex
+	agentConnectionCount          map[int64]int
 	notificationMu                sync.Mutex
 	connectionAuditNotificationMu sync.Mutex
 	connectionAuditActionMu       sync.Mutex
@@ -166,7 +168,8 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	socketPath := strings.TrimSpace(os.Getenv("OBOARD_CONTROLLER_UPDATER_SOCKET"))
 	catalog := capability.NewCatalog()
 	auditIntel := auditintel.New(store, sessionSecret)
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}}
+	_ = store.CloseOpenControllerConnections(context.Background(), time.Now().UTC())
 	s.initializeTrustedProxies()
 	s.registerAutomationHandlers()
 	s.restoreBasePathState(context.Background(), basePath)
@@ -3082,13 +3085,13 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var input struct {
 			model.Server
-			MTUMode                  *model.MTUMode            `json:"mtu_mode"`
-			BBREnabled               *bool                     `json:"bbr_enabled"`
-			TimeCorrectionMode       *model.TimeCorrectionMode `json:"time_correction_mode"`
-			ConnectivityProbeEnabled *bool                     `json:"connectivity_probe_enabled"`
-			ConnectionAuditEnabled   *bool                     `json:"connection_audit_enabled"`
-			OfflineNotifyEnabled     *bool                     `json:"offline_notify_enabled"`
-			OfflineAfterSeconds      *int                      `json:"offline_after_seconds"`
+			MTUMode                *model.MTUMode            `json:"mtu_mode"`
+			BBREnabled             *bool                     `json:"bbr_enabled"`
+			TimeCorrectionMode     *model.TimeCorrectionMode `json:"time_correction_mode"`
+			LatencyProbeEnabled    *bool                     `json:"latency_probe_enabled"`
+			ConnectionAuditEnabled *bool                     `json:"connection_audit_enabled"`
+			OfflineNotifyEnabled   *bool                     `json:"offline_notify_enabled"`
+			OfflineAfterSeconds    *int                      `json:"offline_after_seconds"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -3115,10 +3118,10 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 		} else {
 			v.TimeCorrectionMode = *input.TimeCorrectionMode
 		}
-		if input.ConnectivityProbeEnabled == nil {
-			v.ConnectivityProbeEnabled = true
+		if input.LatencyProbeEnabled == nil {
+			v.LatencyProbeEnabled = true
 		} else {
-			v.ConnectivityProbeEnabled = *input.ConnectivityProbeEnabled
+			v.LatencyProbeEnabled = *input.LatencyProbeEnabled
 		}
 		if input.ConnectionAuditEnabled == nil {
 			v.ConnectionAuditEnabled = settingBool(settings, settingConnectionAuditEnabled, true)
@@ -3243,18 +3246,18 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPatch {
 		var input struct {
 			model.Server
-			MTUMode                *model.MTUMode            `json:"mtu_mode"`
-			BBREnabled             *bool                     `json:"bbr_enabled"`
-			TimeCorrectionMode     *model.TimeCorrectionMode `json:"time_correction_mode"`
-			ProbeTarget            *model.ConnectivityTarget `json:"connectivity_probe_target"`
-			LatencyProbeEnabled    *bool                     `json:"latency_probe_enabled"`
-			LatencyProbeInterval   *int                      `json:"latency_probe_interval_seconds"`
-			LatencyProbeSamples    *int                      `json:"latency_probe_sample_count"`
-			LatencyProbeProvinces  *[]string                 `json:"latency_probe_provinces"`
-			LatencyProbeCarriers   *[]string                 `json:"latency_probe_carriers"`
-			LatencyProbeMaxTargets *int                      `json:"latency_probe_max_targets"`
-			OfflineNotifyEnabled   *bool                     `json:"offline_notify_enabled"`
-			OfflineAfterSeconds    *int                      `json:"offline_after_seconds"`
+			MTUMode                  *model.MTUMode              `json:"mtu_mode"`
+			BBREnabled               *bool                       `json:"bbr_enabled"`
+			TimeCorrectionMode       *model.TimeCorrectionMode   `json:"time_correction_mode"`
+			LatencyProbeEnabled      *bool                       `json:"latency_probe_enabled"`
+			LatencyProbeMode         *model.LatencyProbeMode     `json:"latency_probe_mode"`
+			LatencyProbePublicTarget *model.ConnectivityTarget   `json:"latency_probe_public_target"`
+			LatencyProbeInterval     *int                        `json:"latency_probe_interval_seconds"`
+			LatencyProbeSamples      *int                        `json:"latency_probe_sample_count"`
+			LatencyProbeRegions      *[]model.LatencyProbeRegion `json:"latency_probe_regions"`
+			LatencyProbeMaxTargets   *int                        `json:"latency_probe_max_targets"`
+			OfflineNotifyEnabled     *bool                       `json:"offline_notify_enabled"`
+			OfflineAfterSeconds      *int                        `json:"offline_after_seconds"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -3281,11 +3284,6 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		} else {
 			v.TimeCorrectionMode = *input.TimeCorrectionMode
 		}
-		if input.ProbeTarget == nil {
-			v.ConnectivityProbeTarget = current.ConnectivityProbeTarget
-		} else {
-			v.ConnectivityProbeTarget = *input.ProbeTarget
-		}
 		if input.OfflineNotifyEnabled == nil {
 			v.OfflineNotifyEnabled = current.OfflineNotifyEnabled
 		} else {
@@ -3297,14 +3295,21 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			v.OfflineAfterSeconds = *input.OfflineAfterSeconds
 		}
 		v.LatencyProbeEnabled = current.LatencyProbeEnabled
+		v.LatencyProbeMode = current.LatencyProbeMode
+		v.LatencyProbePublicTarget = current.LatencyProbePublicTarget
 		v.LatencyProbeIntervalSeconds = current.LatencyProbeIntervalSeconds
 		v.LatencyProbeSampleCount = current.LatencyProbeSampleCount
-		v.LatencyProbeProvinces = current.LatencyProbeProvinces
-		v.LatencyProbeCarriers = current.LatencyProbeCarriers
+		v.LatencyProbeRegions = current.LatencyProbeRegions
 		v.LatencyProbeMaxTargets = current.LatencyProbeMaxTargets
 		v.LatencyProbeResourceVersion = current.LatencyProbeResourceVersion
 		if input.LatencyProbeEnabled != nil {
 			v.LatencyProbeEnabled = *input.LatencyProbeEnabled
+		}
+		if input.LatencyProbeMode != nil {
+			v.LatencyProbeMode = *input.LatencyProbeMode
+		}
+		if input.LatencyProbePublicTarget != nil {
+			v.LatencyProbePublicTarget = *input.LatencyProbePublicTarget
 		}
 		if input.LatencyProbeInterval != nil {
 			v.LatencyProbeIntervalSeconds = *input.LatencyProbeInterval
@@ -3312,11 +3317,8 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		if input.LatencyProbeSamples != nil {
 			v.LatencyProbeSampleCount = *input.LatencyProbeSamples
 		}
-		if input.LatencyProbeProvinces != nil {
-			v.LatencyProbeProvinces = *input.LatencyProbeProvinces
-		}
-		if input.LatencyProbeCarriers != nil {
-			v.LatencyProbeCarriers = *input.LatencyProbeCarriers
+		if input.LatencyProbeRegions != nil {
+			v.LatencyProbeRegions = *input.LatencyProbeRegions
 		}
 		if input.LatencyProbeMaxTargets != nil {
 			v.LatencyProbeMaxTargets = *input.LatencyProbeMaxTargets
@@ -4287,38 +4289,41 @@ func validateServer(v *model.Server) error {
 		return errors.New("offline_after_seconds must be between 0 and 86400")
 	}
 	if v.LatencyProbeIntervalSeconds != 0 && (v.LatencyProbeIntervalSeconds < 30 || v.LatencyProbeIntervalSeconds > 86400) {
-		return errors.New("区域延迟测试间隔必须在 30 到 86400 秒之间")
+		return errors.New("延迟测试间隔必须在 30 到 86400 秒之间")
 	}
 	if v.LatencyProbeIntervalSeconds == 0 {
-		v.LatencyProbeIntervalSeconds = 300
+		v.LatencyProbeIntervalSeconds = 60
 	}
 	if v.LatencyProbeSampleCount < 0 || v.LatencyProbeSampleCount > 10 {
-		return errors.New("区域延迟测试的每个 IP 样本数必须在 1 到 10 之间")
+		return errors.New("延迟测试的每个目标样本数必须在 1 到 10 之间")
 	}
 	if v.LatencyProbeSampleCount == 0 {
 		v.LatencyProbeSampleCount = 3
 	}
 	if v.LatencyProbeMaxTargets < 0 || v.LatencyProbeMaxTargets > 256 {
-		return errors.New("区域延迟测试的单次目标数必须在 1 到 256 之间")
+		return errors.New("延迟测试的单次目标数必须在 1 到 256 之间")
 	}
 	if v.LatencyProbeMaxTargets == 0 {
 		v.LatencyProbeMaxTargets = 64
 	}
 	var err error
-	v.LatencyProbeProvinces, err = normalizeLatencyProbeFilter(v.LatencyProbeProvinces, 40)
+	v.LatencyProbeRegions, err = normalizeLatencyProbeRegions(v.LatencyProbeRegions)
 	if err != nil {
-		return fmt.Errorf("latency_probe_provinces: %w", err)
+		return fmt.Errorf("latency_probe_regions: %w", err)
 	}
-	v.LatencyProbeCarriers, err = normalizeLatencyProbeFilter(v.LatencyProbeCarriers, 8)
-	if err != nil {
-		return fmt.Errorf("latency_probe_carriers: %w", err)
+	switch v.LatencyProbeMode {
+	case "", model.LatencyProbeModeTCP:
+		v.LatencyProbeMode = model.LatencyProbeModeTCP
+	case model.LatencyProbeModeICMP:
+	default:
+		return errors.New("延迟测试方式必须是 TCP Ping 或 ICMP Ping")
 	}
-	switch v.ConnectivityProbeTarget {
+	switch v.LatencyProbePublicTarget {
 	case "", model.ConnectivityProbeTargetAuto:
-		v.ConnectivityProbeTarget = model.ConnectivityProbeTargetAuto
+		v.LatencyProbePublicTarget = model.ConnectivityProbeTargetAuto
 	case model.ConnectivityProbeTargetCloudflare, model.ConnectivityProbeTarget12306, model.ConnectivityProbeTargetGoogle:
 	default:
-		return errors.New("connectivity_probe_target must be auto, cloudflare, 12306, or google")
+		return errors.New("公网延迟目标必须是自动、Cloudflare、12306 或 Google")
 	}
 	if v.ListenIP == "" {
 		v.ListenIP = "0.0.0.0"
@@ -4398,20 +4403,31 @@ func validateServer(v *model.Server) error {
 	return core.ValidatePortRange(v.InternalPortRangeStart, v.InternalPortRangeEnd)
 }
 
-func normalizeLatencyProbeFilter(values []string, max int) ([]string, error) {
+func normalizeLatencyProbeRegions(values []model.LatencyProbeRegion) ([]model.LatencyProbeRegion, error) {
 	seen := map[string]bool{}
-	out := make([]string, 0, len(values))
+	out := make([]model.LatencyProbeRegion, 0, len(values))
 	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
+		value.Province = strings.TrimSpace(value.Province)
+		value.Carrier = strings.TrimSpace(value.Carrier)
+		if value.Province == "" || value.Carrier == "" {
+			return nil, errors.New("每个地区目标都必须同时选择省份和运营商")
+		}
+		key := value.Province + "\x00" + value.Carrier
+		if seen[key] {
 			continue
 		}
-		seen[value] = true
+		seen[key] = true
 		out = append(out, value)
-		if len(out) > max {
-			return nil, fmt.Errorf("最多选择 %d 项", max)
+		if len(out) > 200 {
+			return nil, errors.New("地区延迟目标最多选择 200 组")
 		}
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Province == out[j].Province {
+			return out[i].Carrier < out[j].Carrier
+		}
+		return out[i].Province < out[j].Province
+	})
 	return out, nil
 }
 
@@ -10668,6 +10684,26 @@ func cleanPublicEntryIP(raw string) (string, string) {
 	return addr.String(), "ipv6"
 }
 
+func (s *Server) trackAgentConnection(ctx context.Context, serverID int64, connected bool, effectiveAt time.Time) {
+	s.agentConnectionMu.Lock()
+	previous := s.agentConnectionCount[serverID]
+	next := previous
+	if connected {
+		next++
+	} else if next > 0 {
+		next--
+	}
+	if next == 0 {
+		delete(s.agentConnectionCount, serverID)
+	} else {
+		s.agentConnectionCount[serverID] = next
+	}
+	s.agentConnectionMu.Unlock()
+	if (connected && previous == 0) || (!connected && previous > 0 && next == 0) {
+		_ = s.store.RecordControllerConnectionEvent(ctx, serverID, connected, effectiveAt.UTC())
+	}
+}
+
 func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	server, ok := s.authAgent(w, r)
 	if !ok {
@@ -10684,7 +10720,9 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(1 << 20) // 1 MiB max agent websocket frame
 	log.Printf("agent connected server=%d(%s) agent_id=%s remote=%s", server.ID, safeLogField(server.Name), safeLogField(server.AgentID), safeLogField(clientIP(r)))
 	connectedAt := time.Now()
+	s.trackAgentConnection(r.Context(), server.ID, true, connectedAt.UTC())
 	defer func() {
+		s.trackAgentConnection(context.Background(), server.ID, false, time.Now().UTC())
 		log.Printf("agent disconnected server=%d(%s) connected_for=%s", server.ID, safeLogField(server.Name), time.Since(connectedAt).Round(time.Second))
 	}()
 	mode, _ := serverMonitoringPolicy(server)
@@ -10692,7 +10730,11 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	if !auditEnabled {
 		_ = s.store.ClearConnectionPresenceForServer(r.Context(), server.ID)
 	}
-	_ = conn.WriteJSON(map[string]any{"type": "hello", "ts": time.Now().UTC(), "server_id": server.ID, "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connectivity_probe_target": effectiveConnectivityProbeTarget(server), "connection_audit_enabled": auditEnabled})
+	hello := map[string]any{"type": "hello", "ts": time.Now().UTC(), "server_id": server.ID, "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
+	if plan, err := latencyProbePlanForServer(r.Context(), *server); err == nil {
+		hello["latency_probe_plan"] = plan
+	}
+	_ = conn.WriteJSON(hello)
 	type agentSocketRead struct {
 		message map[string]json.RawMessage
 		err     error
@@ -10768,7 +10810,12 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 					inFlightTimeout = nil
 				}
 			}
-			s.processAgentSocketMessage(r.Context(), server, received.message, clientIP(r))
+			acceptedReportID := s.processAgentSocketMessage(r.Context(), server, received.message, clientIP(r))
+			if acceptedReportID != "" {
+				if err := conn.WriteJSON(map[string]any{"type": "latency_probe_ack", "report_id": acceptedReportID, "ts": time.Now().UTC()}); err != nil {
+					return
+				}
+			}
 		case <-taskTicker.C:
 			if inFlightTaskID != 0 {
 				continue
@@ -10799,7 +10846,11 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			if !auditEnabled {
 				_ = s.store.ClearConnectionPresenceForServer(r.Context(), server.ID)
 			}
-			if err := conn.WriteJSON(map[string]any{"type": "heartbeat", "ts": time.Now().UTC(), "monitoring_mode": mode, "connectivity_probe_enabled": server.ConnectivityProbeEnabled, "connectivity_probe_target": effectiveConnectivityProbeTarget(server), "connection_audit_enabled": auditEnabled}); err != nil {
+			heartbeat := map[string]any{"type": "heartbeat", "ts": time.Now().UTC(), "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
+			if plan, planErr := latencyProbePlanForServer(r.Context(), *server); planErr == nil {
+				heartbeat["latency_probe_plan"] = plan
+			}
+			if err := conn.WriteJSON(heartbeat); err != nil {
 				return
 			}
 			heartbeatTimer.Reset(heartbeatInterval)
@@ -10817,37 +10868,25 @@ func serverMonitoringPolicy(server *model.Server) (string, time.Duration) {
 	return "lightweight", 20 * time.Second
 }
 
-func effectiveConnectivityProbeTarget(server *model.Server) model.ConnectivityTarget {
-	if server == nil {
-		return model.ConnectivityProbeTargetCloudflare
-	}
-	switch server.ConnectivityProbeTarget {
-	case model.ConnectivityProbeTargetCloudflare, model.ConnectivityProbeTarget12306, model.ConnectivityProbeTargetGoogle:
-		return server.ConnectivityProbeTarget
-	}
-	region, _ := core.EffectiveServerRegion(*server)
-	if region == "CN" {
-		return model.ConnectivityProbeTarget12306
-	}
-	return model.ConnectivityProbeTargetCloudflare
-}
-
-func applyConnectivityProbePolicy(report *model.HealthReport, server *model.Server) {
-	report.ConnectivityProbeEnabled = server != nil && server.ConnectivityProbeEnabled
-	if report.ConnectivityProbeEnabled && report.ConnectivityProbeTarget == string(effectiveConnectivityProbeTarget(server)) {
-		return
-	}
-	report.ConnectivityAvailable = false
-	report.ConnectivityLatencyMS = 0
-	report.ConnectivityCheckedAt = time.Time{}
-	report.ConnectivityError = ""
-}
-
 func signAgentTaskEnvelope(secret string, task model.AgentTask) string {
 	return security.SignTaskEnvelope(secret, security.TaskEnvelope{ID: task.ID, ServerID: task.ServerID, Type: task.Type, ConfigVersion: task.ConfigVersion, Nonce: task.Nonce, PayloadJSON: task.PayloadJSON})
 }
 
-func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Server, msg map[string]json.RawMessage, remoteIP string) {
+func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Server, msg map[string]json.RawMessage, remoteIP string) string {
+	acceptedReportID := ""
+	if raw, ok := msg["latency_probe_report"]; ok {
+		var report model.LatencyProbeResultReport
+		if err := json.Unmarshal(raw, &report); err != nil {
+			log.Printf("reject latency probe report server=%d: %v", server.ID, err)
+		} else if err := validateAutonomousLatencyProbeReport(&report); err != nil {
+			log.Printf("reject latency probe report server=%d: %v", server.ID, err)
+		} else if err := s.store.SaveLatencyProbeResults(ctx, server.ID, report); err != nil {
+			log.Printf("save latency probe report server=%d: %v", server.ID, err)
+		} else {
+			acceptedReportID = report.ReportID
+			s.publishRealtime("server_runtime", "server_metrics", "latency_probes")
+		}
+	}
 	if raw, ok := msg["presence_delta"]; ok {
 		var delta connectionPresenceDelta
 		if err := json.Unmarshal(raw, &delta); err == nil {
@@ -10874,9 +10913,8 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 			}
 			current, currentErr := s.store.GetServer(ctx, server.ID)
 			if currentErr != nil {
-				return
+				return acceptedReportID
 			}
-			applyConnectivityProbePolicy(&h, current)
 			settings, _ := s.store.ListSettings(ctx)
 			_, start, end := trafficWindow(time.Now(), current.TrafficResetMode, current.TrafficResetDay, time.Time{}, trafficLocation(settings))
 			window := model.ServerTrafficWindow{Key: start.Format("2006-01-02"), Start: start, End: end}
@@ -10891,6 +10929,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 			}
 		}
 	}
+	return acceptedReportID
 }
 
 func sanitizeServerHealthReport(report *model.HealthReport) {
@@ -10915,27 +10954,6 @@ func sanitizeServerHealthReport(report *model.HealthReport) {
 	}
 	if report.NetworkDownloadBPS > maxPlausibleNetworkBPS {
 		report.NetworkDownloadBPS = 0
-	}
-	if report.ConnectivityLatencyMS < 0 || report.ConnectivityLatencyMS > 60_000 {
-		report.ConnectivityLatencyMS = 0
-		report.ConnectivityAvailable = false
-		report.ConnectivityError = "invalid connectivity probe latency"
-	}
-	switch report.ConnectivityProbeTarget {
-	case string(model.ConnectivityProbeTargetCloudflare), string(model.ConnectivityProbeTarget12306), string(model.ConnectivityProbeTargetGoogle):
-	default:
-		report.ConnectivityProbeTarget = ""
-	}
-	if !report.ConnectivityCheckedAt.IsZero() {
-		checked := report.ConnectivityCheckedAt.UTC()
-		if checked.Before(now.Add(-10*time.Minute)) || checked.After(now.Add(2*time.Minute)) {
-			report.ConnectivityCheckedAt = time.Time{}
-		} else {
-			report.ConnectivityCheckedAt = checked
-		}
-	}
-	if len(report.ConnectivityError) > 240 {
-		report.ConnectivityError = report.ConnectivityError[:240]
 	}
 	report.RegionCode = normalizeControllerRegionCode(report.RegionCode)
 }

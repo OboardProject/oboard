@@ -251,7 +251,7 @@ func hasServerManageParams(params map[string]any) bool {
 		"mtu_mode", "mtu_value", "bbr_enabled", "time_correction_mode", "entry_address", "entry_ip_mode",
 		"region_code", "region_mode", "port_range_start", "port_range_end", "internal_port_range_start",
 		"internal_port_range_end", "connection_audit_enabled",
-		"connectivity_probe_target", "server.connectivity_probe_target", "latency_probe_enabled", "latency_probe_interval_seconds", "latency_probe_sample_count", "latency_probe_provinces", "latency_probe_carriers", "latency_probe_max_targets",
+		"latency_probe_enabled", "latency_probe_mode", "latency_probe_public_target", "latency_probe_interval_seconds", "latency_probe_sample_count", "latency_probe_regions", "latency_probe_max_targets",
 	} {
 		if _, ok := params[key]; ok {
 			return true
@@ -290,8 +290,32 @@ func (s *Server) prepareServerOnboardRecipe(_ context.Context, _ application.Pri
 	}
 	bbr := taskBoolParam(input.Params, false, "server.bbr_enabled", "bbr_enabled") || containsAnyFold(input.Goal, "开启 bbr", "打开 bbr", "enable bbr", "with bbr", "bbr")
 	server := map[string]any{"name": name, "ip_stack": ipStack, "bbr_enabled": bbr}
-	if target := taskStringParam(input.Params, "server.connectivity_probe_target", "connectivity_probe_target"); target != "" {
-		server["connectivity_probe_target"] = target
+	copyTaskParams(server, input.Params, map[string]string{
+		"server.latency_probe_enabled":          "latency_probe_enabled",
+		"latency_probe_enabled":                 "latency_probe_enabled",
+		"server.latency_probe_mode":             "latency_probe_mode",
+		"latency_probe_mode":                    "latency_probe_mode",
+		"server.latency_probe_public_target":    "latency_probe_public_target",
+		"latency_probe_public_target":           "latency_probe_public_target",
+		"server.latency_probe_interval_seconds": "latency_probe_interval_seconds",
+		"latency_probe_interval_seconds":        "latency_probe_interval_seconds",
+		"server.latency_probe_sample_count":     "latency_probe_sample_count",
+		"latency_probe_sample_count":            "latency_probe_sample_count",
+		"server.latency_probe_regions":          "latency_probe_regions",
+		"latency_probe_regions":                 "latency_probe_regions",
+		"server.latency_probe_max_targets":      "latency_probe_max_targets",
+		"latency_probe_max_targets":             "latency_probe_max_targets",
+	})
+	if nested, ok := input.Params["server"].(map[string]any); ok {
+		copyTaskParams(server, nested, map[string]string{
+			"latency_probe_enabled":          "latency_probe_enabled",
+			"latency_probe_mode":             "latency_probe_mode",
+			"latency_probe_public_target":    "latency_probe_public_target",
+			"latency_probe_interval_seconds": "latency_probe_interval_seconds",
+			"latency_probe_sample_count":     "latency_probe_sample_count",
+			"latency_probe_regions":          "latency_probe_regions",
+			"latency_probe_max_targets":      "latency_probe_max_targets",
+		})
 	}
 	if region != "" {
 		server["region_code"] = region
@@ -327,7 +351,7 @@ func (s *Server) prepareServerManageRecipe(ctx context.Context, principal applic
 			changes[key] = value
 		}
 	}
-	copyTaskParams(changes, input.Params, map[string]string{"name": "name", "server.name": "name", "ip_stack": "ip_stack", "server.ip_stack": "ip_stack", "listen_mode": "listen_mode", "udp_inbound_mode": "udp_inbound_mode", "mtu_mode": "mtu_mode", "mtu_value": "mtu_value", "bbr_enabled": "bbr_enabled", "time_correction_mode": "time_correction_mode", "entry_address": "entry_address", "entry_ip_mode": "entry_ip_mode", "region_code": "region_code", "region_mode": "region_mode", "port_range_start": "port_range_start", "port_range_end": "port_range_end", "internal_port_range_start": "internal_port_range_start", "internal_port_range_end": "internal_port_range_end", "connection_audit_enabled": "connection_audit_enabled", "connectivity_probe_target": "connectivity_probe_target", "server.connectivity_probe_target": "connectivity_probe_target", "latency_probe_enabled": "latency_probe_enabled", "latency_probe_interval_seconds": "latency_probe_interval_seconds", "latency_probe_sample_count": "latency_probe_sample_count", "latency_probe_provinces": "latency_probe_provinces", "latency_probe_carriers": "latency_probe_carriers", "latency_probe_max_targets": "latency_probe_max_targets"})
+	copyTaskParams(changes, input.Params, map[string]string{"name": "name", "server.name": "name", "ip_stack": "ip_stack", "server.ip_stack": "ip_stack", "listen_mode": "listen_mode", "udp_inbound_mode": "udp_inbound_mode", "mtu_mode": "mtu_mode", "mtu_value": "mtu_value", "bbr_enabled": "bbr_enabled", "time_correction_mode": "time_correction_mode", "entry_address": "entry_address", "entry_ip_mode": "entry_ip_mode", "region_code": "region_code", "region_mode": "region_mode", "port_range_start": "port_range_start", "port_range_end": "port_range_end", "internal_port_range_start": "internal_port_range_start", "internal_port_range_end": "internal_port_range_end", "connection_audit_enabled": "connection_audit_enabled", "latency_probe_enabled": "latency_probe_enabled", "latency_probe_mode": "latency_probe_mode", "latency_probe_public_target": "latency_probe_public_target", "latency_probe_interval_seconds": "latency_probe_interval_seconds", "latency_probe_sample_count": "latency_probe_sample_count", "latency_probe_regions": "latency_probe_regions", "latency_probe_max_targets": "latency_probe_max_targets"})
 	if _, ok := changes["ip_stack"]; !ok {
 		if value := inferredIPStack(input.Goal); value != "" {
 			changes["ip_stack"] = value

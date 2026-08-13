@@ -19,7 +19,7 @@ func (s *Store) ensureConnectivityEventKinds(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, `select sql from sqlite_master where type='table' and name='server_connectivity_events'`).Scan(&schemaSQL); err != nil {
 		return err
 	}
-	if strings.Contains(schemaSQL, "'probe_target_changed'") {
+	if strings.Contains(schemaSQL, "'controller_connected'") && strings.Contains(schemaSQL, "'controller_disconnected'") {
 		return nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -68,21 +68,6 @@ func insertConnectivityEvent(ctx context.Context, exec connectivityExecer, event
 	return rows == 1, err
 }
 
-func recordConnectivityProbeResult(ctx context.Context, exec connectivityExecer, serverID int64, report model.HealthReport) (bool, error) {
-	checkedAt := report.ConnectivityCheckedAt.UTC()
-	available := report.ConnectivityAvailable
-	return insertConnectivityEvent(ctx, exec, model.ServerConnectivityEvent{
-		ServerID:    serverID,
-		Kind:        model.ConnectivityEventProbeResult,
-		Available:   &available,
-		LatencyMS:   int(report.ConnectivityLatencyMS),
-		Error:       report.ConnectivityError,
-		Source:      "agent_probe",
-		EffectiveAt: checkedAt,
-		EventKey:    "probe:" + checkedAt.Format(time.RFC3339Nano),
-	})
-}
-
 func recordConnectivitySettingEvent(ctx context.Context, exec connectivityExecer, serverID int64, enabled bool, effectiveAt time.Time, eventKey, source string) (bool, error) {
 	kind := model.ConnectivityEventProbeDisabled
 	if enabled {
@@ -106,11 +91,70 @@ func (s *Store) RecordConnectivityProbeSettingEvent(ctx context.Context, serverI
 	return err
 }
 
+func (s *Store) RecordControllerConnectionEvent(ctx context.Context, serverID int64, connected bool, effectiveAt time.Time) error {
+	kind := model.ConnectivityEventControllerDisconnected
+	state := "disconnected"
+	available := 0
+	statusError := "主控连接已断开"
+	if connected {
+		kind = model.ConnectivityEventControllerConnected
+		state = "connected"
+		available = 1
+		statusError = ""
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	inserted, err := insertConnectivityEvent(ctx, tx, model.ServerConnectivityEvent{
+		ServerID:    serverID,
+		Kind:        kind,
+		Source:      "agent_socket",
+		EffectiveAt: effectiveAt.UTC(),
+		EventKey:    "controller:" + state + ":" + effectiveAt.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return err
+	}
+	if inserted {
+		if _, err := tx.ExecContext(ctx, `update server_telemetry set connectivity_available=?,connectivity_error=?,updated_at=? where server_id=?`, available, statusError, time.Now().UTC().Format(time.RFC3339Nano), serverID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) CloseOpenControllerConnections(ctx context.Context, effectiveAt time.Time) error {
+	rows, err := s.db.QueryContext(ctx, `select e.server_id from server_connectivity_events e where e.kind=? and not exists(select 1 from server_connectivity_events newer where newer.server_id=e.server_id and newer.kind in (?,?) and (newer.effective_at>e.effective_at or (newer.effective_at=e.effective_at and newer.id>e.id)))`, model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerDisconnected)
+	if err != nil {
+		return err
+	}
+	serverIDs := make([]int64, 0)
+	for rows.Next() {
+		var serverID int64
+		if err := rows.Scan(&serverID); err != nil {
+			return errors.Join(err, rows.Close())
+		}
+		serverIDs = append(serverIDs, serverID)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, serverID := range serverIDs {
+		if err := s.RecordControllerConnectionEvent(ctx, serverID, false, effectiveAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) ListConnectivityHistory(ctx context.Context, serverID int64, from, to time.Time) (model.ServerConnectivityHistory, error) {
 	var history model.ServerConnectivityHistory
 	for _, kinds := range [][]model.ConnectivityEventKind{
 		{model.ConnectivityEventProbeEnabled, model.ConnectivityEventProbeDisabled, model.ConnectivityEventProbeTargetChanged},
 		{model.ConnectivityEventProbeResult, model.ConnectivityEventServerOffline},
+		{model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerDisconnected},
 	} {
 		event, err := s.latestConnectivityEventBefore(ctx, serverID, from, kinds)
 		if err != nil && err != sql.ErrNoRows {

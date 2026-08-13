@@ -43,12 +43,12 @@ const (
 	UserGroupSystemUsers               = "users"
 	bootstrapAdminSetting              = "system.bootstrap_admin_user_id"
 	configVersionSetting               = "system.config_version_sequence"
-	serverConnectivityEventsColumnsSQL = `(id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, kind text not null check(kind in ('probe_result','server_offline','probe_enabled','probe_disabled','probe_target_changed')), available integer check(available is null or available in (0,1)), latency_ms integer not null default 0, error text not null default '', source text not null default '', effective_at text not null, event_key text not null, created_at text not null, unique(server_id,event_key))`
+	serverConnectivityEventsColumnsSQL = `(id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, kind text not null check(kind in ('probe_result','server_offline','probe_enabled','probe_disabled','probe_target_changed','controller_connected','controller_disconnected')), available integer check(available is null or available in (0,1)), latency_ms integer not null default 0, error text not null default '', source text not null default '', effective_at text not null, event_key text not null, created_at text not null, unique(server_id,event_key))`
 )
 
 const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_token_hash,''),chain_secret,coalesce(enrollment_hash,''),enrollment_expires_at,entry_address,coalesce(public_ipv4,''),coalesce(public_ipv6,''),coalesce(interface_ipv6,''),coalesce(region_code,''),coalesce(detected_region_code,''),coalesce(region_mode,'auto'),coalesce(entry_ip_mode,'auto'),listen_ip,coalesce(listen_mode,'auto'),ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,internal_port_range_start,internal_port_range_end,port_policy_revision,status,os,coalesce(distro_id,''),coalesce(distro_version,''),coalesce(distro_name,''),coalesce(libc,''),coalesce(service_manager,''),coalesce(package_manager,''),arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,coalesce(agent_version,''),coalesce(agent_build,''),sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at from servers`
 
-const serverTelemetrySelectSQL = `select server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,connectivity_probe_target,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error,offline_notify_enabled,offline_after_seconds from server_telemetry`
+const serverTelemetrySelectSQL = `select server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error,offline_notify_enabled,offline_after_seconds from server_telemetry`
 
 const userSelectSQL = `select u.id,u.username,u.nickname,u.password_hash,coalesce(u.session_version,0),u.role,u.status,u.proxy_uuid,u.proxy_password,coalesce(sua.random_id,''),u.speed_limit_mbps,u.traffic_limit_bytes,u.traffic_used_bytes,u.traffic_reset_mode,u.traffic_reset_day,coalesce(u.subscription_token,''),coalesce(p.burn_after_read,0),p.burned_at,coalesce(a.enabled,0),coalesce(a.public_key,''),coalesce(sa.suspended,0),sa.suspended_at,coalesce(sa.suspension_reason,''),coalesce(u.device_limit,0),coalesce(u.legacy_proxy_enabled,1),u.created_at,u.updated_at from users u left join ssh_user_aliases sua on sua.user_id=u.id left join subscription_token_policies p on p.user_id=u.id left join subscription_age_keys a on a.user_id=u.id left join subscription_access_states sa on sa.user_id=u.id`
 
@@ -255,8 +255,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	}
 	schema := []string{
 		`create table if not exists app_settings (key text primary key, value text not null, updated_at text not null)`,
-		`create table if not exists server_latency_probe_settings (server_id integer primary key references servers(id) on delete cascade, enabled integer not null default 0, interval_seconds integer not null default 300, sample_count integer not null default 3, provinces_json text not null default '[]', carriers_json text not null default '[]', max_targets integer not null default 64, resource_version text not null default '', updated_at text not null)`,
-		`create table if not exists server_latency_probe_results (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, resource_version text not null, probe_id text not null, province text not null, carrier text not null, ip text not null, available integer not null default 0, latency_ms integer not null default 0, min_latency_ms integer not null default 0, p95_latency_ms integer not null default 0, jitter_ms integer not null default 0, sample_count integer not null default 0, success_count integer not null default 0, error text not null default '', checked_at text not null, created_at text not null, unique(server_id,resource_version,probe_id,checked_at))`,
+		`create table if not exists server_latency_probe_settings (server_id integer primary key references servers(id) on delete cascade, enabled integer not null default 1, mode text not null default 'tcp', public_target text not null default 'auto', interval_seconds integer not null default 60, sample_count integer not null default 3, regions_json text not null default '[]', provinces_json text not null default '[]', carriers_json text not null default '[]', max_targets integer not null default 64, resource_version text not null default '', updated_at text not null)`,
+		`create table if not exists server_latency_probe_results (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, report_id text not null default '', resource_version text not null, probe_id text not null, kind text not null default 'regional', mode text not null default 'icmp', province text not null, carrier text not null, host text not null default '', ip text not null, port integer not null default 0, available integer not null default 0, latency_ms integer not null default 0, min_latency_ms integer not null default 0, p95_latency_ms integer not null default 0, jitter_ms integer not null default 0, sample_count integer not null default 0, success_count integer not null default 0, error text not null default '', checked_at text not null, created_at text not null, unique(server_id,resource_version,probe_id,checked_at))`,
 		`create index if not exists idx_server_latency_probe_results_server_checked on server_latency_probe_results(server_id,checked_at desc)`,
 		`create table if not exists controller_backups (id text primary key, name text not null, origin text not null, local_path text not null default '', local_status text not null default 'available', remote_key text not null default '', remote_target text not null default '', remote_status text not null default 'disabled', remote_error text not null default '', size_bytes integer not null default 0, source_version text not null default '', format_version integer not null default 1, protected integer not null default 0, created_at text not null, updated_at text not null)`,
 		`create table if not exists rate_limits (key_hash text primary key, window_start text not null, count integer not null, updated_at text not null)`,
@@ -452,6 +452,28 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
+	}
+	for _, column := range []struct {
+		table, name, statement string
+	}{
+		{"server_latency_probe_settings", "mode", `alter table server_latency_probe_settings add column mode text not null default 'tcp'`},
+		{"server_latency_probe_settings", "public_target", `alter table server_latency_probe_settings add column public_target text not null default 'auto'`},
+		{"server_latency_probe_settings", "regions_json", `alter table server_latency_probe_settings add column regions_json text not null default '[]'`},
+		{"server_latency_probe_results", "report_id", `alter table server_latency_probe_results add column report_id text not null default ''`},
+		{"server_latency_probe_results", "kind", `alter table server_latency_probe_results add column kind text not null default 'regional'`},
+		{"server_latency_probe_results", "mode", `alter table server_latency_probe_results add column mode text not null default 'icmp'`},
+		{"server_latency_probe_results", "host", `alter table server_latency_probe_results add column host text not null default ''`},
+		{"server_latency_probe_results", "port", `alter table server_latency_probe_results add column port integer not null default 0`},
+	} {
+		if err := s.ensureColumn(ctx, column.table, column.name, column.statement); err != nil {
+			return err
+		}
+	}
+	if err := s.migrateUnifiedLatencyProbeSettings(ctx); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_server_latency_probe_results_report_target on server_latency_probe_results(server_id,report_id,probe_id) where report_id<>''`); err != nil {
+		return err
 	}
 	if err := s.ensureConnectivityEventKinds(ctx); err != nil {
 		return err
@@ -2200,9 +2222,8 @@ func (s *Store) UpdateServerTelemetrySettings(ctx context.Context, server *model
 	server.TrafficResetMode = normalizeTrafficResetMode(server.TrafficResetMode)
 	server.TrafficResetDay = normalizeTrafficResetDay(server.TrafficResetDay)
 	server.TimeCorrectionMode = normalizeTimeCorrectionMode(server.TimeCorrectionMode)
-	server.ConnectivityProbeTarget = normalizeConnectivityProbeTarget(server.ConnectivityProbeTarget)
-	_, err := s.db.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,connectivity_probe_target,time_correction_mode,offline_notify_enabled,offline_after_seconds,updated_at) values(?,?,?,?,?,?,?,?,?,?)
-		on conflict(server_id) do update set monitoring_mode=excluded.monitoring_mode,traffic_reset_mode=excluded.traffic_reset_mode,traffic_reset_day=excluded.traffic_reset_day,connectivity_probe_enabled=excluded.connectivity_probe_enabled,connectivity_probe_target=excluded.connectivity_probe_target,time_correction_mode=excluded.time_correction_mode,offline_notify_enabled=excluded.offline_notify_enabled,offline_after_seconds=excluded.offline_after_seconds,updated_at=excluded.updated_at`, server.ID, server.MonitoringMode, server.TrafficResetMode, server.TrafficResetDay, boolInt(server.ConnectivityProbeEnabled), server.ConnectivityProbeTarget, server.TimeCorrectionMode, boolInt(server.OfflineNotifyEnabled), server.OfflineAfterSeconds, now())
+	_, err := s.db.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,time_correction_mode,offline_notify_enabled,offline_after_seconds,updated_at) values(?,?,?,?,?,?,?,?)
+		on conflict(server_id) do update set monitoring_mode=excluded.monitoring_mode,traffic_reset_mode=excluded.traffic_reset_mode,traffic_reset_day=excluded.traffic_reset_day,time_correction_mode=excluded.time_correction_mode,offline_notify_enabled=excluded.offline_notify_enabled,offline_after_seconds=excluded.offline_after_seconds,updated_at=excluded.updated_at`, server.ID, server.MonitoringMode, server.TrafficResetMode, server.TrafficResetDay, server.TimeCorrectionMode, boolInt(server.OfflineNotifyEnabled), server.OfflineAfterSeconds, now())
 	return err
 }
 
@@ -2212,14 +2233,7 @@ func (s *Store) initializeServerTelemetrySettings(ctx context.Context, server *m
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,connectivity_probe_target,time_correction_mode,offline_notify_enabled,offline_after_seconds,updated_at) values(?,?,?,?,?,?,?,?,?,?)`, server.ID, normalizeServerMonitoringMode(server.MonitoringMode), normalizeTrafficResetMode(server.TrafficResetMode), normalizeTrafficResetDay(server.TrafficResetDay), boolInt(server.ConnectivityProbeEnabled), normalizeConnectivityProbeTarget(server.ConnectivityProbeTarget), normalizeTimeCorrectionMode(server.TimeCorrectionMode), boolInt(server.OfflineNotifyEnabled), server.OfflineAfterSeconds, server.CreatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
-		return err
-	}
-	value := 0
-	if server.ConnectivityProbeEnabled {
-		value = 1
-	}
-	if _, err := recordConnectivitySettingEvent(ctx, tx, server.ID, server.ConnectivityProbeEnabled, server.CreatedAt, fmt.Sprintf("setting:%s:%d", server.CreatedAt.UTC().Format(time.RFC3339Nano), value), "setting_change"); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,time_correction_mode,offline_notify_enabled,offline_after_seconds,updated_at) values(?,?,?,?,?,?,?,?)`, server.ID, normalizeServerMonitoringMode(server.MonitoringMode), normalizeTrafficResetMode(server.TrafficResetMode), normalizeTrafficResetDay(server.TrafficResetDay), normalizeTimeCorrectionMode(server.TimeCorrectionMode), boolInt(server.OfflineNotifyEnabled), server.OfflineAfterSeconds, server.CreatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -2234,48 +2248,17 @@ func (s *Store) updateServerTelemetrySettingsWithTransition(ctx context.Context,
 		return err
 	}
 	defer tx.Rollback()
-	var oldEnabled int
-	var oldTarget string
-	oldErr := tx.QueryRowContext(ctx, `select connectivity_probe_enabled,connectivity_probe_target from server_telemetry where server_id=?`, server.ID).Scan(&oldEnabled, &oldTarget)
-	if oldErr != nil && oldErr != sql.ErrNoRows {
-		return oldErr
-	}
-	oldKnown := oldErr == nil
 	server.MonitoringMode = normalizeServerMonitoringMode(server.MonitoringMode)
 	server.TrafficResetMode = normalizeTrafficResetMode(server.TrafficResetMode)
 	server.TrafficResetDay = normalizeTrafficResetDay(server.TrafficResetDay)
 	server.TimeCorrectionMode = normalizeTimeCorrectionMode(server.TimeCorrectionMode)
-	server.ConnectivityProbeTarget = normalizeConnectivityProbeTarget(server.ConnectivityProbeTarget)
-	targetChanged := oldKnown && normalizeConnectivityProbeTarget(model.ConnectivityTarget(oldTarget)) != server.ConnectivityProbeTarget
 	updatedAt := server.UpdatedAt.UTC()
 	if updatedAt.IsZero() {
 		updatedAt = time.Now().UTC()
 	}
-	if _, err := tx.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,connectivity_probe_enabled,connectivity_probe_target,time_correction_mode,offline_notify_enabled,offline_after_seconds,updated_at) values(?,?,?,?,?,?,?,?,?,?)
-		on conflict(server_id) do update set monitoring_mode=excluded.monitoring_mode,traffic_reset_mode=excluded.traffic_reset_mode,traffic_reset_day=excluded.traffic_reset_day,connectivity_probe_enabled=excluded.connectivity_probe_enabled,connectivity_probe_target=excluded.connectivity_probe_target,time_correction_mode=excluded.time_correction_mode,offline_notify_enabled=excluded.offline_notify_enabled,offline_after_seconds=excluded.offline_after_seconds,updated_at=excluded.updated_at`, server.ID, server.MonitoringMode, server.TrafficResetMode, server.TrafficResetDay, boolInt(server.ConnectivityProbeEnabled), server.ConnectivityProbeTarget, server.TimeCorrectionMode, boolInt(server.OfflineNotifyEnabled), server.OfflineAfterSeconds, updatedAt.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,time_correction_mode,offline_notify_enabled,offline_after_seconds,updated_at) values(?,?,?,?,?,?,?,?)
+		on conflict(server_id) do update set monitoring_mode=excluded.monitoring_mode,traffic_reset_mode=excluded.traffic_reset_mode,traffic_reset_day=excluded.traffic_reset_day,time_correction_mode=excluded.time_correction_mode,offline_notify_enabled=excluded.offline_notify_enabled,offline_after_seconds=excluded.offline_after_seconds,updated_at=excluded.updated_at`, server.ID, server.MonitoringMode, server.TrafficResetMode, server.TrafficResetDay, server.TimeCorrectionMode, boolInt(server.OfflineNotifyEnabled), server.OfflineAfterSeconds, updatedAt.Format(time.RFC3339Nano)); err != nil {
 		return err
-	}
-	newEnabled := boolInt(server.ConnectivityProbeEnabled)
-	if targetChanged {
-		if _, err := tx.ExecContext(ctx, `update server_telemetry set connectivity_available=-1,connectivity_latency_ms=0,connectivity_checked_at=null,connectivity_error='' where server_id=?`, server.ID); err != nil {
-			return err
-		}
-		if oldEnabled == 1 && newEnabled == 1 {
-			if _, err := insertConnectivityEvent(ctx, tx, model.ServerConnectivityEvent{
-				ServerID:    server.ID,
-				Kind:        model.ConnectivityEventProbeTargetChanged,
-				Source:      "target_change",
-				EffectiveAt: updatedAt,
-				EventKey:    fmt.Sprintf("target:%s:%s", updatedAt.Format(time.RFC3339Nano), server.ConnectivityProbeTarget),
-			}); err != nil {
-				return err
-			}
-		}
-	}
-	if oldKnown && oldEnabled != newEnabled {
-		if _, err := recordConnectivitySettingEvent(ctx, tx, server.ID, server.ConnectivityProbeEnabled, updatedAt, fmt.Sprintf("setting:%s:%d", updatedAt.Format(time.RFC3339Nano), newEnabled), "setting_change"); err != nil {
-			return err
-		}
 	}
 	return tx.Commit()
 }
@@ -2304,13 +2287,13 @@ func (s *Store) attachServerTelemetry(ctx context.Context, servers []model.Serve
 	defer rows.Close()
 	for rows.Next() {
 		var id int64
-		var mode, resetMode, probeTarget, correctionMode, timeStatus, timeSource, timeError, timeUnsupportedPathsJSON, periodStart, periodEnd, reportedAt, checkedAt, connectivityError string
-		var resetDay, probeEnabled, logicalActive, available, offlineNotifyEnabled, offlineAfterSeconds int
+		var mode, resetMode, correctionMode, timeStatus, timeSource, timeError, timeUnsupportedPathsJSON, periodStart, periodEnd, reportedAt, checkedAt, connectivityError string
+		var resetDay, logicalActive, available, offlineNotifyEnabled, offlineAfterSeconds int
 		var timeOffset, timeEffectiveOffset int64
 		var up, down, upBPS, downBPS uint64
 		var latency int64
 		var timeChecked, reported, checked sql.NullString
-		if err := rows.Scan(&id, &mode, &resetMode, &resetDay, &probeEnabled, &probeTarget, &correctionMode, &timeStatus, &timeOffset, &timeEffectiveOffset, &timeSource, &timeError, &logicalActive, &timeUnsupportedPathsJSON, &timeChecked, &periodStart, &periodEnd, &up, &down, &upBPS, &downBPS, &reported, &available, &latency, &checked, &connectivityError, &offlineNotifyEnabled, &offlineAfterSeconds); err != nil {
+		if err := rows.Scan(&id, &mode, &resetMode, &resetDay, &correctionMode, &timeStatus, &timeOffset, &timeEffectiveOffset, &timeSource, &timeError, &logicalActive, &timeUnsupportedPathsJSON, &timeChecked, &periodStart, &periodEnd, &up, &down, &upBPS, &downBPS, &reported, &available, &latency, &checked, &connectivityError, &offlineNotifyEnabled, &offlineAfterSeconds); err != nil {
 			return err
 		}
 		server := byID[id]
@@ -2320,8 +2303,6 @@ func (s *Store) attachServerTelemetry(ctx context.Context, servers []model.Serve
 		server.MonitoringMode = normalizeServerMonitoringMode(mode)
 		server.TrafficResetMode = normalizeTrafficResetMode(resetMode)
 		server.TrafficResetDay = normalizeTrafficResetDay(resetDay)
-		server.ConnectivityProbeEnabled = probeEnabled == 1
-		server.ConnectivityProbeTarget = normalizeConnectivityProbeTarget(model.ConnectivityTarget(probeTarget))
 		server.OfflineNotifyEnabled = offlineNotifyEnabled != 0
 		server.OfflineAfterSeconds = offlineAfterSeconds
 		server.TimeCorrectionMode = normalizeTimeCorrectionMode(model.TimeCorrectionMode(correctionMode))
@@ -2340,9 +2321,7 @@ func (s *Store) attachServerTelemetry(ctx context.Context, servers []model.Serve
 		server.NetworkDownloadBPS = downBPS
 		server.ConnectivityLatencyMS = latency
 		server.ConnectivityError = connectivityError
-		if !server.ConnectivityProbeEnabled {
-			server.ConnectivityStatus = "disabled"
-		} else if available == 1 {
+		if available == 1 {
 			server.ConnectivityStatus = "available"
 		} else if available == 0 {
 			server.ConnectivityStatus = "unavailable"
@@ -2465,24 +2444,6 @@ func (s *Store) UpdateServerTelemetryReport(ctx context.Context, serverID int64,
 		}
 	}
 	available, latency, checkedAt, connectivityError := previousAvailable, previousLatency, previousChecked, previousError
-	isNewProbe := false
-	if !report.ConnectivityProbeEnabled {
-		available, latency, checkedAt, connectivityError = -1, 0, sql.NullString{}, ""
-	} else if !report.ConnectivityCheckedAt.IsZero() {
-		nextCheckedAt := report.ConnectivityCheckedAt.UTC()
-		nextChecked := nextCheckedAt.Format(time.RFC3339Nano)
-		isNewProbe = !previousChecked.Valid || nextCheckedAt.After(parseTime(previousChecked.String))
-		if isNewProbe {
-			if report.ConnectivityAvailable {
-				available = 1
-			} else {
-				available = 0
-			}
-			latency = report.ConnectivityLatencyMS
-			checkedAt = sql.NullString{String: nextChecked, Valid: true}
-			connectivityError = report.ConnectivityError
-		}
-	}
 	_, err = tx.ExecContext(ctx, `update server_telemetry set period_key=?,period_start=?,period_end=?,traffic_upload_bytes=?,traffic_download_bytes=?,raw_upload_bytes=?,raw_download_bytes=?,network_upload_bps=?,network_download_bps=?,last_reported_at=?,connectivity_available=?,connectivity_latency_ms=?,connectivity_checked_at=?,connectivity_error=?,updated_at=? where server_id=?`, window.Key, window.Start.UTC().Format(time.RFC3339Nano), window.End.UTC().Format(time.RFC3339Nano), periodUp, periodDown, report.NetworkTotalUploadBytes, report.NetworkTotalDownloadBytes, uploadBPS, downloadBPS, nowText, available, latency, nullableString(checkedAt), connectivityError, nowText, serverID)
 	if err != nil {
 		return err
@@ -2492,17 +2453,6 @@ func (s *Store) UpdateServerTelemetryReport(ctx context.Context, serverID int64,
 	}
 	if _, err := tx.ExecContext(ctx, `delete from server_metric_samples where server_id=? and sampled_at<?`, serverID, ts.Add(-48*time.Hour).Format(time.RFC3339Nano)); err != nil {
 		return err
-	}
-	if isNewProbe {
-		inserted, err := recordConnectivityProbeResult(ctx, tx, serverID, report)
-		if err != nil {
-			return err
-		}
-		if inserted {
-			if _, err := tx.ExecContext(ctx, `delete from server_connectivity_events where kind=? and effective_at<?`, model.ConnectivityEventProbeResult, time.Now().UTC().Add(-connectivityProbeRetention).Format(time.RFC3339Nano)); err != nil {
-				return err
-			}
-		}
 	}
 	return tx.Commit()
 }
