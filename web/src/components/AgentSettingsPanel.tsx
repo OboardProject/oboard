@@ -228,7 +228,6 @@ export function AgentSettingsPanel({ data, client, load, notify }: AgentSettings
                     />
                   ))}
                 </div>
-                <div className="agent-settings-help">每天检测时并发查询，至少两个时间源返回结果后才使用。</div>
                 <div className="agent-ntp-actions">
                   <button
                     type="button"
