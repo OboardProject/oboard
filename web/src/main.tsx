@@ -57,6 +57,7 @@ import { roundedOrthogonalPath, type GraphRect } from './components/proxy-path/g
 import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
 import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
 import './style.css'
+import { alignUnifiedMetrics, computeMaxLatency, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
 import { Badge } from './components/ui/badge'
 import { Switch } from './components/ui/switch'
 import { DateTimePicker } from './components/ui/datetime-picker'
@@ -3381,6 +3382,36 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         </div>
       </section>}
       {activeSection === 'servers' && <AgentSettingsPanel data={data} client={client} load={load} notify={notify} />}
+      {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
+      {activeSection === 'subscriptions' && <><section className="settings-card">
+        <div className="settings-card-head">
+          <div><h3>Mihomo Age 加密</h3><p className="muted">服务端只保存用户公钥，私钥始终留在客户端。</p></div>
+          <span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>
+        </div>
+        <div className="form settings-form single-field">
+          <FormField label="加密策略" hint="仅影响 Mihomo 和 Clash 格式。">
+            <Select
+              variant="segmented"
+              value={subscriptionAgePolicy}
+              onChange={e => {
+                const next = e.target.value as 'optional' | 'required'
+                setSubscriptionAgePolicy(next)
+                void saveSubscriptionAgePolicy(next)
+              }}
+              disabled={saving === 'subscription-age'}
+              aria-label="Age 加密策略"
+            >
+              <option value="optional">用户可选</option>
+              <option value="required">强制开启</option>
+            </Select>
+          </FormField>
+          <div className="subscription-security-note">
+            <Shield size={18} />
+            <div><strong>{subscriptionAgePolicy === 'required' ? 'Mihomo 订阅必须加密' : '普通订阅与加密订阅并存'}</strong><span>{subscriptionAgePolicy === 'required' ? '没有配置 Age 公钥的用户将无法获取 Mihomo 格式，直到保存公钥。' : '用户可在自己的账户页面开启，已有普通订阅链接不会失效。'}</span></div>
+          </div>
+        </div>
+      </section>
+      <SubscriptionRelayManager data={data} client={client} load={load} notify={notify} /></>}
       {activeSection === 'notifications' && <section className="settings-card">
         <div className="settings-card-head"><div><h3>服务器离线与恢复提醒</h3><p className="muted">统一控制离线判断时间和恢复提醒的延迟窗口，也可以为单台服务器单独覆盖。</p></div></div>
         <div className="form settings-form single-field">
@@ -6371,7 +6402,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   }
   const handleServerAction = async (type: string, s: Server) => {
     if (type === 'details') setDetailServer(s)
-    else if (type === 'resource-details') setResourceServer(s)
+    else if (type === 'resource-details') setConnectivityServer({ server: s })
     else if (type === 'time-details') setTimeDetailServer(s)
     else if (type === 'connectivity-details') setConnectivityServer({ server: s })
     else if (type === 'edit') setEditServer(s)
@@ -7635,11 +7666,11 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
           <div className="server-chart-caption"><span><i className="download" />下载</span><span><i className="upload" />上传</span><small>{serverTrafficPeriodLabel(server)}</small></div>
         </div>
 
-        {server.latency_probe_enabled && <button type="button" className="server-connectivity" style={{ gridColumn: 'span 2' }} onClick={() => onAction('connectivity-details', server)} aria-label="查看延迟测试与 SLA" title="查看延迟测试与 SLA">
+        <button type="button" className="server-connectivity" style={{ gridColumn: 'span 2' }} onClick={() => onAction('connectivity-details', server)} aria-label="查看历史与延迟测试" title="查看历史与延迟测试">
           <span className="server-telemetry-heading">
             <span className="server-telemetry-title">
               <span>延迟测试</span>
-              <small className={server.connectivity_status === 'available' ? 'is-ok' : server.connectivity_status === 'unavailable' ? 'is-error' : ''}>{server.connectivity_status === 'available' ? '可用' : server.connectivity_status === 'unavailable' ? '不可用' : '等待检测'}</small>
+              <small className={server.connectivity_status === 'available' ? 'is-ok' : server.connectivity_status === 'unavailable' ? 'is-error' : ''}>{server.latency_probe_enabled ? (server.connectivity_status === 'available' ? '可用' : server.connectivity_status === 'unavailable' ? '不可用' : '等待检测') : '未配置'}</small>
             </span>
             <ChevronRight size={13} className="connectivity-open-chevron" aria-hidden="true" />
           </span>
@@ -7648,7 +7679,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
             <span>{connectivityProbeDomain(server)} · {server.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'}</span>
           </span>
           <ServerTelemetryChart samples={samples.filter(x => x.connectivity_available !== undefined)} type="latency" />
-        </button>}
+        </button>
       </div>
     </MotionCard>
   )
@@ -7713,9 +7744,252 @@ function connectivitySlaTone(rate: number | null | undefined) {
   return 'poor'
 }
 
+function ServerUnifiedTelemetryChart({
+  resourcePoints = [],
+  latencyPoints = [],
+  regionalProbes = [],
+  windowHours = 24,
+}: {
+  resourcePoints?: ServerResourcePoint[]
+  latencyPoints?: ServerLatencyPoint[]
+  regionalProbes?: LatencyProbeResultSample[]
+  windowHours?: number
+}) {
+  const { seriesList, buckets } = useMemo(() => {
+    return alignUnifiedMetrics({ resourcePoints, latencyPoints, regionalProbes, windowHours })
+  }, [resourcePoints, latencyPoints, regionalProbes, windowHours])
+
+  const [enabledSeries, setEnabledSeries] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    setEnabledSeries(prev => {
+      const next = { ...prev }
+      seriesList.forEach(s => {
+        if (next[s.id] === undefined) {
+          next[s.id] = true
+        }
+      })
+      return next
+    })
+  }, [seriesList])
+
+  const toggleSeries = (id: string) => {
+    setEnabledSeries(prev => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  const toggleAll = (enable: boolean) => {
+    const next: Record<string, boolean> = {}
+    seriesList.forEach(s => { next[s.id] = enable })
+    setEnabledSeries(next)
+  }
+
+  const maxLatency = useMemo(() => computeMaxLatency(buckets, enabledSeries), [buckets, enabledSeries])
+
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const svgRef = useRef<SVGSVGElement | null>(null)
+
+  const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!svgRef.current || !buckets.length) return
+    const rect = svgRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const padL = 40
+    const plotW = rect.width - 80
+    if (plotW <= 0) return
+    const fraction = Math.max(0, Math.min(1, (x - padL) / plotW))
+    const idx = Math.round(fraction * (buckets.length - 1))
+    setHoveredIdx(idx)
+  }
+
+  const handlePointerLeave = () => {
+    setHoveredIdx(null)
+  }
+
+  const W = 680
+  const H = 200
+  const padL = 40
+  const padR = 40
+  const padT = 20
+  const padB = 165
+  const plotW = W - padL - padR
+  const plotH = padB - padT
+
+  const getX = (idx: number) => padL + (idx / Math.max(1, buckets.length - 1)) * plotW
+
+  const getY = (val: number, s: MetricSeries) => {
+    if (s.yAxis === 'left') {
+      const clamped = Math.max(0, Math.min(100, val))
+      return padB - (clamped / 100) * plotH
+    } else {
+      const clamped = Math.max(0, Math.min(maxLatency, val))
+      return padB - (clamped / maxLatency) * plotH
+    }
+  }
+
+  const activeSeries = seriesList.filter(s => enabledSeries[s.id] !== false)
+  const hoveredBucket = hoveredIdx !== null ? buckets[hoveredIdx] : null
+
+  return (
+    <div className="komari-chart-container">
+      <div className="komari-chart-header">
+        <div className="komari-chart-title">
+          <Activity size={16} aria-hidden="true" />
+          <span>多维监控趋势汇总 (Komari 图表)</span>
+        </div>
+        <div className="komari-chart-legend">
+          {seriesList.map(s => {
+            const active = enabledSeries[s.id] !== false
+            return (
+              <button
+                key={s.id}
+                type="button"
+                className={`komari-legend-chip${active ? ' active' : ''}`}
+                onClick={() => toggleSeries(s.id)}
+                title={`点击切换 ${s.label} 显示`}
+              >
+                <span className="komari-legend-dot" style={{ backgroundColor: s.color }} />
+                <span>{s.label}</span>
+              </button>
+            )
+          })}
+          <div className="komari-legend-actions">
+            <button type="button" className="komari-legend-action-btn" onClick={() => toggleAll(true)}>全选</button>
+            <button type="button" className="komari-legend-action-btn" onClick={() => toggleAll(false)}>清空</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="komari-chart-canvas-wrap">
+        <svg
+          ref={svgRef}
+          className="komari-chart-svg"
+          viewBox={`0 0 ${W} ${H}`}
+          preserveAspectRatio="none"
+          onPointerMove={handlePointerMove}
+          onPointerLeave={handlePointerLeave}
+        >
+          {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
+            const y = padB - pct * plotH
+            return (
+              <g key={i}>
+                <line x1={padL} y1={y} x2={W - padR} y2={y} className="komari-chart-grid-line" />
+                <text x={padL - 6} y={y + 3} textAnchor="end" className="komari-chart-axis-text">
+                  {Math.round(pct * 100)}%
+                </text>
+                <text x={W - padR + 6} y={y + 3} textAnchor="start" className="komari-chart-axis-text">
+                  {Math.round(pct * maxLatency)} ms
+                </text>
+              </g>
+            )
+          })}
+
+          {activeSeries.map(s => {
+            const points: string[] = []
+            buckets.forEach((b, idx) => {
+              const val = b.values[s.id]
+              if (val != null) {
+                const px = getX(idx)
+                const py = getY(val, s)
+                points.push(`${px.toFixed(1)},${py.toFixed(1)}`)
+              }
+            })
+            if (points.length < 2) return null
+            return (
+              <polyline
+                key={s.id}
+                points={points.join(' ')}
+                fill="none"
+                stroke={s.color}
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="komari-chart-polyline"
+              />
+            )
+          })}
+
+          {hoveredIdx !== null && (
+            <g>
+              <line
+                x1={getX(hoveredIdx)}
+                y1={padT}
+                x2={getX(hoveredIdx)}
+                y2={padB}
+                className="komari-crosshair"
+              />
+              {activeSeries.map(s => {
+                const val = buckets[hoveredIdx]?.values[s.id]
+                if (val == null) return null
+                const px = getX(hoveredIdx)
+                const py = getY(val, s)
+                return (
+                  <circle
+                    key={s.id}
+                    cx={px}
+                    cy={py}
+                    r="4.5"
+                    fill={s.color}
+                    stroke="#ffffff"
+                    strokeWidth="2"
+                  />
+                )
+              })}
+            </g>
+          )}
+
+          {buckets.length > 0 && (
+            <g>
+              <text x={padL} y={H - 5} textAnchor="start" className="komari-chart-axis-text">
+                {buckets[0].timeLabel}
+              </text>
+              <text x={W / 2} y={H - 5} textAnchor="middle" className="komari-chart-axis-text">
+                {buckets[Math.floor(buckets.length / 2)].timeLabel}
+              </text>
+              <text x={W - padR} y={H - 5} textAnchor="end" className="komari-chart-axis-text">
+                {buckets[buckets.length - 1].timeLabel}
+              </text>
+            </g>
+          )}
+        </svg>
+
+        {hoveredBucket && (
+          <div
+            className="komari-tooltip-popover"
+            style={{
+              left: `${Math.max(15, Math.min(85, (hoveredIdx! / Math.max(1, buckets.length - 1)) * 100))}%`,
+              top: '10px',
+            }}
+          >
+            <div className="komari-tooltip-time">{hoveredBucket.timeLabel}</div>
+            <div className="komari-tooltip-list">
+              {activeSeries.map(s => {
+                const val = hoveredBucket.values[s.id]
+                if (val == null) return null
+                let formattedVal = s.unit === '%' ? `${val.toFixed(1)}%` : `${Math.round(val)} ms`
+                if (s.id === 'memory' && hoveredBucket.memoryUsedBytes && hoveredBucket.memoryTotalBytes) {
+                  formattedVal = `${val.toFixed(1)}% (${formatBytes(hoveredBucket.memoryUsedBytes)} / ${formatBytes(hoveredBucket.memoryTotalBytes)})`
+                }
+                return (
+                  <div key={s.id} className="komari-tooltip-row">
+                    <span className="komari-tooltip-label">
+                      <span className="komari-legend-dot" style={{ backgroundColor: s.color }} />
+                      {s.label}
+                    </span>
+                    <span className="komari-tooltip-val">{formattedVal}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { server: Server; client: any; onClose: () => void; onUpdated: () => void }) {
   const [windowKey, setWindowKey] = useState<ConnectivityWindowKey>('24h')
   const [response, setResponse] = useState<ConnectivityResponse | null>(null)
+  const [resourceResponse, setResourceResponse] = useState<ServerResourceMetricsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [probeItems, setProbeItems] = useState<LatencyProbeResult[]>([])
@@ -7725,16 +7999,37 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
   const mounted = useRef(true)
   const requestSequence = useRef(0)
 
-  const loadProbeResults = async () => {
-    setProbeLoading(true)
-    setProbeError('')
+  const windowHoursMap: Record<ConnectivityWindowKey, number> = { '24h': 24, '7d': 168, '30d': 720 }
+  const currentWindowHours = windowHoursMap[windowKey] || 24
+
+  const loadAllData = async (key: ConnectivityWindowKey) => {
+    const sequence = ++requestSequence.current
+    setLoading(true)
+    setLoadError('')
+    const hours = windowHoursMap[key] || 24
     try {
-      const result = await client.request(`/servers/${server.id}/latency-probe?limit=512`)
-      if (mounted.current) setProbeItems(result.results || [])
+      const [connRes, resRes, probeRes] = await Promise.all([
+        client.request(connectivityRequestPath(server.id, key)) as Promise<ConnectivityResponse>,
+        server.resource_history_enabled
+          ? (client.request(`/servers/${server.id}/resource-metrics?hours=${hours}`) as Promise<ServerResourceMetricsResponse>)
+          : Promise.resolve<ServerResourceMetricsResponse | null>(null),
+        client.request(`/servers/${server.id}/latency-probe?limit=512`).catch(() => ({ results: [] })),
+      ])
+
+      if (sequence === requestSequence.current && mounted.current) {
+        setResponse(connRes)
+        setResourceResponse(resRes)
+        setProbeItems(probeRes?.results || [])
+        setProbeLoading(false)
+      }
     } catch (error: any) {
-      if (mounted.current) setProbeError(localizeErrorMessage(error?.message || error))
+      if (sequence === requestSequence.current && mounted.current) {
+        setLoadError(localizeErrorMessage(error?.message || error))
+      }
     } finally {
-      if (mounted.current) setProbeLoading(false)
+      if (sequence === requestSequence.current && mounted.current) {
+        setLoading(false)
+      }
     }
   }
 
@@ -7755,7 +8050,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
         await sleep(1500)
       }
       if (!mounted.current) return
-      await Promise.all([loadProbeResults(), loadConnectivity(windowKey)])
+      await loadAllData(windowKey)
       if (!['succeeded', 'failed', 'rollback_failed'].includes(terminalStatus)) setProbeError('测试任务仍在执行，可稍后刷新结果')
       else if (terminalStatus !== 'succeeded') setProbeError('测试已完成，但有目标未响应；已保留本轮结果')
     } catch (error: any) {
@@ -7765,31 +8060,14 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
     }
   }
 
-  const loadConnectivity = async (key: ConnectivityWindowKey) => {
-    const sequence = ++requestSequence.current
-    setResponse(current => current?.window.key === key ? current : null)
-    setLoading(true)
-    setLoadError('')
-    try {
-      const result = await client.request(connectivityRequestPath(server.id, key)) as ConnectivityResponse
-      if (sequence === requestSequence.current) setResponse(result)
-    } catch (error: any) {
-      if (sequence === requestSequence.current) setLoadError(localizeErrorMessage(error?.message || error))
-    } finally {
-      if (sequence === requestSequence.current) setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    void loadConnectivity(windowKey)
-    return () => { requestSequence.current++ }
-  }, [windowKey, server.id])
-
   useEffect(() => {
     mounted.current = true
-    void loadProbeResults()
-    return () => { mounted.current = false }
-  }, [server.id])
+    void loadAllData(windowKey)
+    return () => {
+      mounted.current = false
+      requestSequence.current++
+    }
+  }, [windowKey, server.id])
 
   const currentStatusLabels: Record<ConnectivityResponse['current']['status'], string> = {
     available: '可用',
@@ -7801,9 +8079,6 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
   const currentStatus = response?.current.status || (server.latency_probe_enabled ? 'pending' : 'disabled')
   const currentTone = currentStatus === 'available' ? 'great' : currentStatus === 'unavailable' || currentStatus === 'offline' ? 'poor' : 'fair'
   const slaTone = connectivitySlaTone(response?.summary.sla_percent)
-  const latencyValues = response?.latency_points.map(point => Number(point.avg_ms)) || []
-  const latencyMax = Math.max(1, ...latencyValues)
-  const latencyPolyline = telemetryPolyline(latencyValues, 480, 110, latencyMax)
   const buckets = response?.buckets || []
   const firstBucket = buckets[0]
   const midBucket = buckets[Math.floor(buckets.length / 2)]
@@ -7819,29 +8094,70 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
   const latestCheckedAt = probeItems[0]?.checked_at
   const latestRegionalItems = probeItems.filter(item => item.checked_at === latestCheckedAt && item.kind === 'regional').sort((a, b) => a.province.localeCompare(b.province, 'zh-CN') || a.carrier.localeCompare(b.carrier, 'zh-CN') || a.host.localeCompare(b.host))
 
+  const memoryTotal = server.memory_total_bytes || resourceResponse?.current.memory_total_bytes || 0
+  const memoryUsed = server.memory_used_bytes || resourceResponse?.current.memory_used_bytes || 0
+  const memoryPct = memoryTotal > 0 ? ((memoryUsed / memoryTotal) * 100).toFixed(1) : '0'
+
   return <MotionDialogPanel onCancel={onClose} className="connectivity-dialog">
     <header className="dialog-head connectivity-head">
       <div className="connectivity-title">
         <span className={`connectivity-head-icon ${currentTone}`}><Activity size={17} aria-hidden="true" /></span>
         <div>
-          <h2>延迟测试与 SLA</h2>
-          <p>{server.name || `服务器 #${server.id}`} · {server.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'} · 每 {server.latency_probe_interval_seconds || 60} 秒</p>
+          <h2>{server.name || `服务器 #${server.id}`} · 历史与延迟测试</h2>
+          <p>#{server.id} · {server.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'} · 每 {server.latency_probe_interval_seconds || 60} 秒</p>
         </div>
       </div>
       <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
     <div className="dialog-body connectivity-body">
+      {/* Live Resource & Connectivity Cards Bar */}
+      <div className="connectivity-live-grid">
+        <div className="connectivity-live-card">
+          <span>CPU 使用率</span>
+          <strong>{Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</strong>
+          <small>{server.resource_history_enabled ? '历史已保存' : '仅实时'}</small>
+        </div>
+        <div className="connectivity-live-card">
+          <span>内存使用率</span>
+          <strong>{memoryTotal ? `${memoryPct}%` : '—'}</strong>
+          <small>{memoryTotal ? `${formatBytes(memoryUsed)} / ${formatBytes(memoryTotal)}` : '—'}</small>
+        </div>
+        <div className="connectivity-live-card">
+          <span>可用性 SLA</span>
+          <strong className={slaTone}>{connectivitySlaDisplay(response?.summary.sla_percent)}</strong>
+          <small>统计期内 SLA</small>
+        </div>
+        <div className="connectivity-live-card">
+          <span>公网延迟</span>
+          <strong>{connectivityLatencyLabel(currentStatus, response?.current.latency_ms ?? server.connectivity_latency_ms)}</strong>
+          <small>{connectivityProbeDomain(server)}</small>
+        </div>
+        <div className="connectivity-live-card">
+          <span>地区测试目标</span>
+          <strong>{latestRegionalItems.length} 个</strong>
+          <small>{server.latency_probe_enabled ? '延迟测试已开启' : '未开启'}</small>
+        </div>
+      </div>
+
       <div className="connectivity-window-switch" role="radiogroup" aria-label="统计时间范围">
         {(['24h', '7d', '30d'] as ConnectivityWindowKey[]).map(key => <button key={key} type="button" role="radio" aria-checked={windowKey === key} className={windowKey === key ? 'active' : ''} onClick={() => setWindowKey(key)} disabled={loading && windowKey === key}>{windowLabels[key]}</button>)}
       </div>
 
-		{loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载可用性统计</strong></div>
-		  : loadError && !response ? <div className="connectivity-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载可用性统计</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => void loadConnectivity(windowKey)}>重试</button></div>
+      {loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载监控与延迟统计</strong></div>
+        : loadError && !response ? <div className="connectivity-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载监控与延迟统计</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => void loadAllData(windowKey)}>重试</button></div>
         : response ? <>
+          {/* Komari Style Unified Telemetry Chart */}
+          <ServerUnifiedTelemetryChart
+            resourcePoints={resourceResponse?.points || []}
+            latencyPoints={response.latency_points || []}
+            regionalProbes={probeItems || []}
+            windowHours={currentWindowHours}
+          />
+
           <div className="connectivity-hero">
             <div className={`connectivity-sla-bar-card ${slaTone}`} role="img" aria-label={`统计期 SLA ${connectivitySlaDisplay(response.summary.sla_percent)}`}>
               <div className="connectivity-sla-bar-head">
-				<div className="connectivity-sla-value-block"><span className="sla-rate-number">{connectivitySlaDisplay(response.summary.sla_percent)}</span><span className="sla-rate-label">可用性 SLA</span></div>
+                <div className="connectivity-sla-value-block"><span className="sla-rate-number">{connectivitySlaDisplay(response.summary.sla_percent)}</span><span className="sla-rate-label">可用性 SLA</span></div>
                 <div className="connectivity-hero-status-row"><span className={`connectivity-status-chip ${currentTone}`}><i aria-hidden="true" />{currentStatusLabels[currentStatus]}</span><span className="connectivity-current-latency">{connectivityLatencyLabel(currentStatus, response.current.latency_ms)}</span></div>
               </div>
               <div className="connectivity-sla-progress-track" aria-hidden="true">{response.summary.sla_percent != null && <div className={`connectivity-sla-progress-fill ${slaTone}`} style={{ width: `${Math.min(100, Math.max(0, response.summary.sla_percent))}%` }} />}</div>
@@ -7857,8 +8173,8 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
           </div>
 
           <section className="connectivity-section">
-			<div className="connectivity-section-head"><Activity size={14} aria-hidden="true" /><h3>可用性时间线</h3><span className="connectivity-section-note">{buckets.length} 个时间段</span></div>
-			<div className="connectivity-hour-strip" style={{ gridTemplateColumns: `repeat(${Math.max(1, buckets.length)}, minmax(0, 1fr))` }} role="img" aria-label={`近 ${windowLabels[windowKey]}可用性分段`}>
+            <div className="connectivity-section-head"><Activity size={14} aria-hidden="true" /><h3>可用性时间线</h3><span className="connectivity-section-note">{buckets.length} 个时间段</span></div>
+            <div className="connectivity-hour-strip" style={{ gridTemplateColumns: `repeat(${Math.max(1, buckets.length)}, minmax(0, 1fr))` }} role="img" aria-label={`近 ${windowLabels[windowKey]}可用性分段`}>
               {buckets.map(bucket => {
                 const observed = bucket.available_seconds + bucket.unavailable_seconds
                 return <span key={bucket.start_at} className={`connectivity-hour-cell ${backendConnectivityBucketTone(bucket.sla_percent, bucket.unknown_seconds, observed)}`} title={bucketTitle(bucket)} aria-label={bucketTitle(bucket)} />
@@ -7866,17 +8182,6 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
             </div>
             {firstBucket && midBucket && lastBucket && <div className="connectivity-hour-axis"><span>{formatTableTime(firstBucket.start_at)}</span><span>{formatTableTime(midBucket.start_at)}</span><span>{formatTableTime(lastBucket.end_at)}</span></div>}
             <div className="connectivity-hour-legend"><span><i className="great" />正常</span><span><i className="fair" />波动</span><span><i className="poor" />不可用</span><span><i className="none" />无数据</span></div>
-          </section>
-
-          <section className="connectivity-section">
-            <div className="connectivity-section-head"><Gauge size={14} aria-hidden="true" /><h3>公网探测延迟</h3><span className="connectivity-section-note">{formatLatency(response.latency.avg_ms)} 平均</span></div>
-            {latencyValues.length < 2 ? <div className="server-chart-empty">暂无足够的成功探测数据</div> : <div className="connectivity-latency-chart">
-			  <svg viewBox="0 0 480 110" preserveAspectRatio="none" role="img" aria-label={`公网 ${server.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'} 延迟走势`}>
-				<line x1="0" y1="36.67" x2="480" y2="36.67" className="connectivity-latency-grid" /><line x1="0" y1="73.33" x2="480" y2="73.33" className="connectivity-latency-grid" />
-				<polyline points={latencyPolyline} className="connectivity-latency-line" vectorEffect="non-scaling-stroke" />
-              </svg>
-              <span className="connectivity-latency-scale high" aria-hidden="true">{Math.round(latencyMax * 2 / 3)} ms</span><span className="connectivity-latency-scale low" aria-hidden="true">{Math.round(latencyMax / 3)} ms</span>
-            </div>}
           </section>
 
           <section className="connectivity-section">
@@ -7913,7 +8218,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
         </> : null}
     </div>
     <span className="sr-only" role="status" aria-live="polite">{probeRunning ? '延迟测试正在执行' : ''}</span>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => void Promise.all([loadConnectivity(windowKey), loadProbeResults()])} disabled={loading || probeLoading || probeRunning} aria-label="刷新数据"><RefreshCw size={14} className={loading || probeLoading ? 'spin' : ''} />刷新</button><button type="button" onClick={() => void runProbe()} disabled={probeRunning || !server.latency_probe_enabled} aria-busy={probeRunning}>{probeRunning ? '测试中...' : '立即测试'}</button><button type="button" className="ghost" onClick={onClose}>关闭</button></footer>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => void loadAllData(windowKey)} disabled={loading || probeLoading || probeRunning} aria-label="刷新数据"><RefreshCw size={14} className={loading || probeLoading ? 'spin' : ''} />刷新</button><button type="button" onClick={() => void runProbe()} disabled={probeRunning || !server.latency_probe_enabled} aria-busy={probeRunning}>{probeRunning ? '测试中...' : '立即测试'}</button><button type="button" className="ghost" onClick={onClose}>关闭</button></footer>
   </MotionDialogPanel>
 }
 
