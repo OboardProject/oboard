@@ -37,12 +37,15 @@ export type GraphRoutingEdgeData = {
 export type RoutingNode = {
   id: string
   rect: GraphRect
+  handles?: Record<string, GraphPoint>
 }
 
 export type RoutingEdge = {
   id: string
   source: string
   target: string
+  sourceHandle?: string
+  targetHandle?: string
   routingClass: GraphRoutingClass
   pathIDs: number[]
   sourceRank?: number
@@ -203,7 +206,22 @@ function allocateSidePorts(
     if (!node) return
     const side = edgeSide(first.routingClass, endpoint)
     const oppositeEndpoint = endpoint === 'source' ? 'target' : 'source'
-    const ordered = groupedEdges.slice().sort((left, right) => {
+    const handleKey = endpoint === 'source' ? 'sourceHandle' : 'targetHandle'
+
+    const unhandledEdges: RoutingEdge[] = []
+    groupedEdges.forEach(edge => {
+      const specifiedHandle = edge[handleKey]
+      const handlePoint = specifiedHandle ? node.handles?.[specifiedHandle] : undefined
+      if (handlePoint) {
+        ports.set(edge.id, { edgeID: edge.id, nodeID, side, point: { x: routingCoordinate(handlePoint.x), y: routingCoordinate(handlePoint.y) } })
+      } else {
+        unhandledEdges.push(edge)
+      }
+    })
+
+    if (!unhandledEdges.length) return
+
+    const ordered = unhandledEdges.slice().sort((left, right) => {
       const leftNode = nodeByID.get(left[oppositeEndpoint])
       const rightNode = nodeByID.get(right[oppositeEndpoint])
       const leftCenter = leftNode ? nodeCenter(leftNode.rect) : { x: 0, y: 0 }
@@ -569,6 +587,12 @@ export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
         right: routingCoordinate(node.rect.right),
         bottom: routingCoordinate(node.rect.bottom),
       },
+      handles: node.handles ? Object.fromEntries(
+        Object.entries(node.handles).map(([key, point]) => [
+          key,
+          { x: routingCoordinate(point.x), y: routingCoordinate(point.y) },
+        ])
+      ) : undefined,
     })),
   }
   const routingInput = inferPrimaryRoutingMetadata(quantizedInput)

@@ -21,9 +21,9 @@ describe('proxy graph server layout', () => {
     expect(right.y).toBe(130)
   })
 
-  it('keeps independent entry handles apart from the batch handle', () => {
-    expect(graphEntryHandleLeft(0, 2, true)).toBe('21%')
-    expect(graphEntryHandleLeft(1, 2, true)).toBe('79%')
+  it('spaces independent entry handles evenly across the card width', () => {
+    expect(graphEntryHandleLeft(0, 2)).toBe('20%')
+    expect(graphEntryHandleLeft(1, 2)).toBe('80%')
   })
 
   it('orders child branches to match their parent order', () => {

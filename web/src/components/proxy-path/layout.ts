@@ -347,15 +347,11 @@ export function graphServerNodeWidth(_entryCount: number) {
 
 export function graphPathHandleLeft(index: number, count: number) {
   if (count <= 1) return '50%'
-  return `${15 + (index * 70) / (count - 1)}%`
+  return `${20 + (index * 60) / (count - 1)}%`
 }
 
-export function graphEntryHandleLeft(index: number, count: number, reserveCenter = false) {
-  if (!reserveCenter) return graphPathHandleLeft(index, count)
-  const leftCount = Math.ceil(count / 2)
-  if (index < leftCount) return `${((index + 1) / (leftCount + 1)) * 42}%`
-  const rightCount = count - leftCount
-  return `${58 + ((index - leftCount + 1) / (rightCount + 1)) * 42}%`
+export function graphEntryHandleLeft(index: number, count: number, _reserveCenter = false) {
+  return graphPathHandleLeft(index, count)
 }
 
 export function defaultServerGraphPosition(index: number): GraphPosition {

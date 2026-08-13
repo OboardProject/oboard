@@ -11731,15 +11731,46 @@ function routingRectForNode(node: Node): GraphRect {
   return { left, top, right: left + width, bottom: top + height }
 }
 
+function nodeHandles(node: Node, rect: GraphRect): Record<string, GraphPoint> {
+  const handles: Record<string, GraphPoint> = {
+    'target-top': { x: (rect.left + rect.right) / 2, y: rect.top },
+    'source-bottom': { x: (rect.left + rect.right) / 2, y: rect.bottom },
+  }
+  const data = node.data as any
+  const entryHandles: GraphEntrySource[] = data?.entryHandles || []
+  const pathHandles: GraphPathSource[] = data?.pathHandles || []
+  const count = entryHandles.length + pathHandles.length
+  if (count > 0) {
+    const width = rect.right - rect.left
+    entryHandles.forEach((entry, index) => {
+      const percent = Number.parseFloat(graphEntryHandleLeft(index, count)) / 100
+      const x = rect.left + width * percent
+      handles[serverEntryHandleID(entry.id)] = { x, y: rect.bottom }
+      handles[serverEntryTargetHandleID(entry.id)] = { x, y: rect.top }
+    })
+    pathHandles.forEach((path, index) => {
+      const percent = Number.parseFloat(graphEntryHandleLeft(entryHandles.length + index, count)) / 100
+      const x = rect.left + width * percent
+      handles[pathStepHandleID(path.step_id)] = { x, y: rect.bottom }
+    })
+  }
+  return handles
+}
+
 function applyProxyGraphRouting(nodes: Node[], edges: Edge[]): Edge[] {
   const input = {
-    nodes: nodes.map(node => ({ id: node.id, rect: routingRectForNode(node) })),
+    nodes: nodes.map(node => {
+      const rect = routingRectForNode(node)
+      return { id: node.id, rect, handles: nodeHandles(node, rect) }
+    }),
     edges: edges.map(edge => {
       const data = edge.data as GraphTransportEdgeData | undefined
       return {
         id: edge.id,
         source: edge.source,
         target: edge.target,
+        sourceHandle: edge.sourceHandle || undefined,
+        targetHandle: edge.targetHandle || undefined,
         routingClass: data?.routingClass || 'auxiliary' as GraphRoutingClass,
         pathIDs: data?.pathIDs || [],
       }
@@ -12140,7 +12171,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     serverWidths.set(s.id, serverWidth)
 	    const entrySources = serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))
 	    const pathSources = continuationByNode.get(id) || []
-	    nodes.push({ id, className: 'graph-node server-graph-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: s.id, label: s.name || `服务器 ${s.id}` } as GraphEntity, pathIDs: pathIDsByServer.get(s.id) || [], sourceOptions: graphServerSourceOptions(entrySources, pathSources), label: <GraphNode kind={s.id === rootID ? '一级服务器' : '服务器'} title={s.name} meta={`${labelValue(s.status || 'unknown')} · ${serverDefaultEntryAddress(s) || '无公网 IP'}`} entryHandles={entrySources} pathHandles={pathSources} role={displayRole(s.id, s.id === rootID)} status={s.status} ipv4={s.public_ipv4 || '未检测'} cpu={Math.round(s.cpu_usage_percent || 0)} memory={s.memory_total_bytes ? Math.round((s.memory_used_bytes / s.memory_total_bytes) * 100) : 0} /> } })
+	    nodes.push({ id, className: 'graph-node server-graph-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: s.id, label: s.name || `服务器 ${s.id}` } as GraphEntity, pathIDs: pathIDsByServer.get(s.id) || [], entryHandles: entrySources, pathHandles: pathSources, sourceOptions: graphServerSourceOptions(entrySources, pathSources), label: <GraphNode kind={s.id === rootID ? '一级服务器' : '服务器'} title={s.name} meta={`${labelValue(s.status || 'unknown')} · ${serverDefaultEntryAddress(s) || '无公网 IP'}`} entryHandles={entrySources} pathHandles={pathSources} role={displayRole(s.id, s.id === rootID)} status={s.status} ipv4={s.public_ipv4 || '未检测'} cpu={Math.round(s.cpu_usage_percent || 0)} memory={s.memory_total_bytes ? Math.round((s.memory_used_bytes / s.memory_total_bytes) * 100) : 0} /> } })
   })
   canvasServerInstances.forEach((instance, index) => {
     const server = (data.servers || []).find((item: Server) => item.id === instance.server_id) as Server | undefined
@@ -12150,7 +12181,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const serverWidth = graphServerNodeWidth(serverEntries.length)
     const position = positions[id] || defaultServerGraphPosition(visibleServers.length + index)
 	    const entrySources = serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))
-	    nodes.push({ id, className: 'graph-node server-graph-node canvas-server-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: server.id, label: server.name || `服务器 ${server.id}`, node_id: id } as GraphEntity, sourceOptions: graphServerSourceOptions(entrySources, []), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${serverDefaultEntryAddress(server) || '无公网 IP'}`} entryHandles={entrySources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
+	    nodes.push({ id, className: 'graph-node server-graph-node canvas-server-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: server.id, label: server.name || `服务器 ${server.id}`, node_id: id } as GraphEntity, entryHandles: entrySources, pathHandles: [], sourceOptions: graphServerSourceOptions(entrySources, []), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${serverDefaultEntryAddress(server) || '无公网 IP'}`} entryHandles={entrySources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
   })
   const entryIndexesByServer = new Map<number, number>()
   visibleEntries.forEach((x: Inbound, i: number) => {
@@ -12300,7 +12331,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       const target = stepNodeID(step)
       if (!target) return
       const transport = proxyPathTransportPresentation(step)
-      const sharedEdgeKey = `${source}\u001f${target}\u001f${transport.kind}`
+      const sharedEdgeKey = `${source}\u001f${sourceHandle || ''}\u001f${target}\u001f${transport.kind}`
 	    const existingEdge = renderedPathEdges.get(sharedEdgeKey)
       const stepPathIDs = expandedPathIDsByStep.get(step.id) || [path.id]
       if (existingEdge) {
@@ -12602,7 +12633,6 @@ function GraphNode({
   const entryAccess = entryDetails?.access || subtitle4
   const entryProbeTone = /正常|可用|成功|在线/.test(entryProbe) ? 'ok' : /异常|失败|不可用/.test(entryProbe) ? 'danger' : 'neutral'
   const independentSourceCount = entryHandles.length + pathHandles.length
-  const hasBatchSource = isServer && independentSourceCount > 1
   const showSourceLabels = independentSourceCount <= 6
   return (
     <div className={`rf-node-custom graph-card-${variant}`}>
@@ -12610,7 +12640,7 @@ function GraphNode({
       <Handle id="target-top" className="connect-handle connect-target connect-target-top" type="target" position={Position.Top} />
 
       {entryHandles.map((entry, index) => {
-        const left = graphEntryHandleLeft(index, independentSourceCount, hasBatchSource)
+        const left = graphEntryHandleLeft(index, independentSourceCount)
         return <React.Fragment key={entry.id}>
           <Handle id={serverEntryTargetHandleID(entry.id)} className="connect-handle connect-target server-entry-target-handle" type="target" position={Position.Top} style={{ left }} />
           <Handle id={serverEntryHandleID(entry.id)} className="connect-handle connect-source server-entry-source-handle" type="source" position={Position.Bottom} style={{ left }} title={`${entry.title} / ${entry.label}`} />
@@ -12618,7 +12648,7 @@ function GraphNode({
         </React.Fragment>
       })}
       {pathHandles.map((path, index) => {
-        const left = graphEntryHandleLeft(entryHandles.length + index, independentSourceCount, hasBatchSource)
+        const left = graphEntryHandleLeft(entryHandles.length + index, independentSourceCount)
         return (
           <React.Fragment key={path.step_id}>
             <Handle id={pathStepHandleID(path.step_id)} className="connect-handle connect-source path-step-source-handle" type="source" position={Position.Bottom} style={{ left }} />
@@ -12626,10 +12656,6 @@ function GraphNode({
           </React.Fragment>
         )
 	  })}
-      {hasBatchSource && <>
-        <Handle id={SERVER_GRAPH_SOURCE_HANDLE} className="connect-handle connect-source server-shared-source-handle" type="source" position={Position.Bottom} title="连接后选择一个或多个来源" />
-        <span className="server-shared-source-label">批量</span>
-      </>}
       {!independentSourceCount && <Handle id="source-bottom" className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} />}
 
       {/* Header */}
