@@ -87,6 +87,7 @@ import { CustomSelect } from './components/ui/CustomSelect'
 import { SearchableMultiSelect } from './components/ui/SearchableMultiSelect'
 import { SearchableCombobox } from './components/ui/SearchableCombobox'
 import { NetworkInterfacePicker } from './components/NetworkInterfacePicker'
+import { AgentSettingsPanel } from './components/AgentSettingsPanel'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
 import clashMetaClientIcon from './assets/subscription-clients/clash-meta.png'
 import stashClientIcon from './assets/subscription-clients/stash.jpg'
@@ -3132,14 +3133,8 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [basePath, setBasePath] = useState(currentBasePath)
   const [trustedProxyCIDRs, setTrustedProxyCIDRs] = useState<string>(configuredTrustedProxyCIDRs.join('\n'))
   const [subscriptionAgePolicy, setSubscriptionAgePolicy] = useState<'optional' | 'required'>(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional')
-  const [trafficTimezone, setTrafficTimezone] = useState(data.settings?.traffic_timezone || 'Asia/Shanghai')
-  const [trafficMode, setTrafficMode] = useState(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
   const [controllerLogMaxMB, setControllerLogMaxMB] = useState(Number(data.settings?.controller_log_max_mb || 32))
   const [controllerLogBackups, setControllerLogBackups] = useState(Number(data.settings?.controller_log_backups || 5))
-  const [serverDefaultMTUMode, setServerDefaultMTUMode] = useState(String(data.settings?.server_default_mtu_mode || 'detect'))
-  const [serverDefaultBBREnabled, setServerDefaultBBREnabled] = useState(String(data.settings?.server_default_bbr_enabled || 'false') === 'true')
-  const [serverDefaultTimeCorrectionMode, setServerDefaultTimeCorrectionMode] = useState<TimeCorrectionMode>((data.settings?.server_default_time_correction_mode || 'off') as TimeCorrectionMode)
-  const [timeCheckNTPServers, setTimeCheckNTPServers] = useState<string[]>(() => timeCheckNTPServerSettings(data.settings?.time_check_ntp_servers))
   const [notificationOfflineAfter, setNotificationOfflineAfter] = useState(Number(data.settings?.notification_server_offline_after_seconds || 120))
   const [notificationOnlineAfter, setNotificationOnlineAfter] = useState(Number(data.settings?.notification_server_online_after_seconds || 60))
   const [notificationMergeOffline, setNotificationMergeOffline] = useState(data.settings?.notification_server_merge_offline !== false)
@@ -3164,17 +3159,10 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     setRegistrationEnabled(settingEnabled(data.settings?.registration_enabled))
     setRegistrationDefaultGroupID(Number(data.settings?.registration_default_group_id || 0))
   }, [data.settings?.registration_enabled, data.settings?.registration_default_group_id])
-  useEffect(() => { setTrafficTimezone(data.settings?.traffic_timezone || 'Asia/Shanghai'); setTrafficMode(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject') }, [data.settings?.traffic_timezone, data.settings?.traffic_enforcement_mode])
   useEffect(() => {
     setControllerLogMaxMB(Number(data.settings?.controller_log_max_mb || 32))
     setControllerLogBackups(Number(data.settings?.controller_log_backups || 5))
   }, [data.settings?.controller_log_max_mb, data.settings?.controller_log_backups])
-  useEffect(() => {
-    setServerDefaultMTUMode(String(data.settings?.server_default_mtu_mode || 'detect'))
-    setServerDefaultBBREnabled(String(data.settings?.server_default_bbr_enabled || 'false') === 'true')
-    setServerDefaultTimeCorrectionMode((data.settings?.server_default_time_correction_mode || 'off') as TimeCorrectionMode)
-    setTimeCheckNTPServers(timeCheckNTPServerSettings(data.settings?.time_check_ntp_servers))
-  }, [data.settings?.server_default_mtu_mode, data.settings?.server_default_bbr_enabled, data.settings?.server_default_time_correction_mode, data.settings?.time_check_ntp_servers])
   const runSave = async (key: string, action: () => Promise<void>, success: string) => {
     if (saving) return
     setSaving(key)
@@ -3263,11 +3251,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const migrationStatusLabel = (status: string) => ({
     pending: '等待中', running: '更新中', succeeded: '已更新', failed: '失败', removed: '已移除',
   } as Record<string, string>)[status] || status
-  const saveTraffic = async () => {
-    await runSave('traffic', async () => {
-      await client.request('/settings', { method: 'POST', body: JSON.stringify({ traffic_timezone: trafficTimezone.trim() || 'Asia/Shanghai', traffic_enforcement_mode: trafficMode }) })
-    }, '流量控制设置已保存')
-  }
   const saveSubscriptionAgePolicy = async (nextPolicy?: 'optional' | 'required') => {
     const targetPolicy = nextPolicy ?? subscriptionAgePolicy
     await runSave('subscription-age', async () => {
@@ -3278,16 +3261,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     await runSave('controller-logs', async () => {
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ controller_log_max_mb: controllerLogMaxMB, controller_log_backups: controllerLogBackups }) })
     }, '主控日志保留策略已保存')
-  }
-  const saveServerDefaults = async () => {
-    await runSave('server-defaults', async () => {
-      await client.request('/settings', { method: 'POST', body: JSON.stringify({
-        server_default_mtu_mode: serverDefaultMTUMode,
-        server_default_bbr_enabled: serverDefaultBBREnabled,
-        server_default_time_correction_mode: serverDefaultTimeCorrectionMode,
-        time_check_ntp_servers: timeCheckNTPServers.map(value => value.trim()),
-      }) })
-    }, '新服务器默认设置已保存')
   }
   const saveNotificationSettings = async () => {
     await runSave('notifications', async () => {
@@ -3407,47 +3380,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <div className="settings-actions"><button onClick={() => void saveRegistration()} disabled={Boolean(saving)}>{saving === 'registration' ? '保存中...' : '保存注册设置'}</button></div>
         </div>
       </section>}
-      {activeSection === 'servers' && <><section className="settings-card">
-        <div className="settings-card-head"><div><h3>新服务器默认值</h3><p className="muted">创建服务器时自动带入，可在创建窗口中单独修改。</p></div></div>
-        <div className="form settings-form single-field">
-          <FormField label="MTU" hint="首次部署或设置变化时执行。">
-            <Select variant="segmented" value={serverDefaultMTUMode} onChange={event => setServerDefaultMTUMode(event.target.value)}>
-              {mtuModes.map(mode => <option value={mode} key={mode}>{labelValue(mode)}</option>)}
-            </Select>
-          </FormField>
-          <FormField label="BBR + FQ" hint="首次安装 Agent 时尝试启用，失败不影响安装。">
-            <Switch checked={serverDefaultBBREnabled} onChange={setServerDefaultBBREnabled} ariaLabel="新服务器默认启用 BBR + FQ" />
-          </FormField>
-          <FormField label="时间校准" hint="新服务器默认关闭；所有在线服务器仍会每天检测偏差。">
-            <TimeCorrectionSelector value={serverDefaultTimeCorrectionMode} onChange={setServerDefaultTimeCorrectionMode} compact />
-          </FormField>
-          <FormField label="NTP 时间源" hint="每天检测时并发查询，至少两个时间源返回结果后才使用。" full>
-            <div className="ntp-server-grid">
-              {timeCheckNTPServers.map((value, index) => <input key={index} value={value} onChange={event => setTimeCheckNTPServers(current => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} placeholder={defaultTimeCheckNTPServers[index]} aria-label={`NTP 时间源 ${index + 1}`} />)}
-            </div>
-          </FormField>
-          <div className="settings-actions"><button onClick={() => void saveServerDefaults()} disabled={Boolean(saving)}>{saving === 'server-defaults' ? '保存中...' : '保存默认值'}</button></div>
-        </div>
-      </section>
-      <section className="settings-card">
-        <div className="settings-card-head"><div><h3>流量控制</h3><p className="muted">用于计算用户当前周期流量，并在达量后暂停节点使用。</p></div></div>
-        <div className="form settings-form two-column">
-          <FormField label="统计时区" hint="用于计算流量重置时间。">
-            <Select value={trafficTimezone} onChange={e => setTrafficTimezone(e.target.value)} aria-label="统计时区">
-              {!trafficTimezones.includes(trafficTimezone) && <option value={trafficTimezone}>{trafficTimezoneLabel(trafficTimezone)}</option>}
-              {trafficTimezones.map(timezone => <option key={timezone} value={timezone}>{trafficTimezoneLabel(timezone)}</option>)}
-            </Select>
-          </FormField>
-          <FormField label="达量后处理">
-            <Select variant="segmented" value={trafficMode} onChange={e => setTrafficMode(e.target.value)}>
-              <option value="disconnect_and_reject">断开并拒绝</option>
-              <option value="reject_new">仅拒绝新连接</option>
-            </Select>
-          </FormField>
-          <div className="settings-actions"><button onClick={saveTraffic} disabled={Boolean(saving)}>{saving === 'traffic' ? '保存中...' : '保存流量设置'}</button></div>
-          <p className="muted">Agent 会保留本地可用额度；面板暂时不可达时，节点仍会按已下发额度暂停超量用户。</p>
-        </div>
-      </section></>}
+      {activeSection === 'servers' && <AgentSettingsPanel data={data} client={client} load={load} notify={notify} />}
       {activeSection === 'notifications' && <section className="settings-card">
         <div className="settings-card-head"><div><h3>服务器离线与恢复提醒</h3><p className="muted">统一控制离线判断时间和恢复提醒的延迟窗口，也可以为单台服务器单独覆盖。</p></div></div>
         <div className="form settings-form single-field">

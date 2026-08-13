@@ -17685,3 +17685,126 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
     grid-column: auto;
   }
 }
+
+/* Agent Settings Layout Refactoring */
+.agent-settings-card {
+  padding: 24px;
+}
+
+.agent-settings-container {
+  max-width: 960px;
+  width: 100%;
+  margin-right: auto;
+}
+
+.agent-settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.agent-section-header {
+  margin-bottom: 0;
+}
+
+.agent-section-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.agent-section-desc {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.agent-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.agent-settings-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  column-gap: 32px;
+  align-items: start;
+}
+
+.agent-settings-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-strong);
+  line-height: 36px;
+}
+
+.agent-settings-control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.agent-select-field,
+.agent-settings-control select,
+.agent-settings-control input[type="text"] {
+  max-width: 520px;
+  width: 100%;
+}
+
+.agent-settings-help {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 560px;
+}
+
+.agent-ntp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 520px;
+  width: 100%;
+}
+
+.agent-ntp-list input {
+  max-width: 520px;
+  width: 100%;
+}
+
+.agent-ntp-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-start;
+  max-width: 520px;
+  width: 100%;
+}
+
+.agent-settings-divider {
+  margin: 40px 0;
+  border-top: 1px solid var(--border-subtle, var(--border));
+}
+
+@media (max-width: 768px) {
+  .agent-settings-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 6px;
+  }
+
+  .agent-settings-label {
+    line-height: 1.4;
+  }
+
+  .agent-select-field,
+  .agent-settings-control select,
+  .agent-settings-control input[type="text"],
+  .agent-ntp-list,
+  .agent-ntp-list input,
+  .agent-ntp-actions {
+    max-width: 100%;
+  }
+}
+

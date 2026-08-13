@@ -1,0 +1,297 @@
+import React, { useState, useEffect, useMemo } from 'react'
+import { Switch } from './ui/switch'
+import { Select } from './ui/select'
+
+export interface AgentSettingsPanelProps {
+  data: any
+  client: any
+  load: (section?: string, options?: any) => Promise<void>
+  notify: (message: string, tone?: 'success' | 'warning' | 'danger' | 'error' | 'info') => void
+}
+
+type TimeCorrectionMode = 'off' | 'auto' | 'ntp'
+
+const mtuModes = ['disabled', 'detect', 'apply']
+const mtuLabels: Record<string, string> = {
+  disabled: '已禁用',
+  detect: '仅检测',
+  apply: '检测并应用',
+}
+
+const trafficTimezones = [
+  'Asia/Shanghai', 'UTC', 'Asia/Hong_Kong', 'Asia/Taipei', 'Asia/Tokyo', 'Asia/Seoul', 'Asia/Singapore', 'Asia/Bangkok', 'Asia/Jakarta', 'Asia/Kolkata', 'Asia/Dubai',
+  'Australia/Sydney', 'Pacific/Auckland',
+  'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Moscow',
+  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Toronto', 'America/Vancouver', 'America/Mexico_City', 'America/Sao_Paulo',
+  'Africa/Johannesburg',
+]
+
+const trafficTimezoneNames: Record<string, string> = {
+  UTC: '协调世界时',
+  'Asia/Shanghai': '北京时间',
+  'Asia/Hong_Kong': '香港时间',
+  'Asia/Taipei': '台北时间',
+  'Asia/Tokyo': '东京时间',
+  'Asia/Seoul': '首尔时间',
+  'Asia/Singapore': '新加坡时间',
+  'Asia/Bangkok': '曼谷时间',
+  'Asia/Jakarta': '雅加达时间',
+  'Asia/Kolkata': '印度时间',
+  'Asia/Dubai': '迪拜时间',
+  'Australia/Sydney': '悉尼时间',
+  'Pacific/Auckland': '奥克兰时间',
+  'Europe/London': '伦敦时间',
+  'Europe/Paris': '巴黎时间',
+  'Europe/Berlin': '柏林时间',
+  'Europe/Moscow': '莫斯科时间',
+  'America/New_York': '美国东部时间',
+  'America/Chicago': '美国中部时间',
+  'America/Denver': '美国山地时间',
+  'America/Los_Angeles': '美国西部时间',
+  'America/Toronto': '多伦多时间',
+  'America/Vancouver': '温哥华时间',
+  'America/Mexico_City': '墨西哥城时间',
+  'America/Sao_Paulo': '圣保罗时间',
+  'Africa/Johannesburg': '约翰内斯堡时间',
+}
+
+function getTrafficTimezoneLabel(timezone: string) {
+  try {
+    const offset = new Intl.DateTimeFormat('zh-CN', { timeZone: timezone, timeZoneName: 'longOffset' as any })
+      .formatToParts(new Date())
+      .find(part => part.type === 'timeZoneName')?.value
+      ?.replace('GMT', 'UTC')
+    return [trafficTimezoneNames[timezone], timezone, offset].filter(Boolean).join(' · ')
+  } catch {
+    return timezone
+  }
+}
+
+const defaultTimeCheckNTPServers = ['time.cloudflare.com', 'time.google.com', 'ntp.aliyun.com']
+
+function parseNTPServers(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length !== 3) return [...defaultTimeCheckNTPServers]
+  return value.map(item => String(item || ''))
+}
+
+export function AgentSettingsPanel({ data, client, load, notify }: AgentSettingsPanelProps) {
+  const [serverDefaultMTUMode, setServerDefaultMTUMode] = useState<string>(String(data.settings?.server_default_mtu_mode || 'detect'))
+  const [serverDefaultBBREnabled, setServerDefaultBBREnabled] = useState<boolean>(String(data.settings?.server_default_bbr_enabled || 'false') === 'true')
+  const [serverDefaultTimeCorrectionMode, setServerDefaultTimeCorrectionMode] = useState<TimeCorrectionMode>((data.settings?.server_default_time_correction_mode || 'off') as TimeCorrectionMode)
+  const [timeCheckNTPServers, setTimeCheckNTPServers] = useState<string[]>(() => parseNTPServers(data.settings?.time_check_ntp_servers))
+  const [trafficTimezone, setTrafficTimezone] = useState<string>(data.settings?.traffic_timezone || 'Asia/Shanghai')
+  const [trafficMode, setTrafficMode] = useState<string>(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
+
+  const [savingKey, setSavingKey] = useState<string>('')
+
+  useEffect(() => {
+    setServerDefaultMTUMode(String(data.settings?.server_default_mtu_mode || 'detect'))
+    setServerDefaultBBREnabled(String(data.settings?.server_default_bbr_enabled || 'false') === 'true')
+    setServerDefaultTimeCorrectionMode((data.settings?.server_default_time_correction_mode || 'off') as TimeCorrectionMode)
+    setTimeCheckNTPServers(parseNTPServers(data.settings?.time_check_ntp_servers))
+  }, [data.settings?.server_default_mtu_mode, data.settings?.server_default_bbr_enabled, data.settings?.server_default_time_correction_mode, data.settings?.time_check_ntp_servers])
+
+  useEffect(() => {
+    setTrafficTimezone(data.settings?.traffic_timezone || 'Asia/Shanghai')
+    setTrafficMode(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
+  }, [data.settings?.traffic_timezone, data.settings?.traffic_enforcement_mode])
+
+  const originalNTPServers = useMemo(() => parseNTPServers(data.settings?.time_check_ntp_servers), [data.settings?.time_check_ntp_servers])
+  const isNTPDirty = useMemo(() => {
+    return timeCheckNTPServers.some((val, idx) => val.trim() !== (originalNTPServers[idx] || '').trim())
+  }, [timeCheckNTPServers, originalNTPServers])
+
+  const autoSaveSetting = async (payload: Record<string, any>, successMessage: string) => {
+    if (savingKey) return
+    setSavingKey('auto-save')
+    try {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify(payload) })
+      await load()
+      notify(successMessage, 'success')
+    } catch (error: any) {
+      notify(error?.message || String(error), 'error')
+    } finally {
+      setSavingKey('')
+    }
+  }
+
+  const handleMTUChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value
+    setServerDefaultMTUMode(val)
+    void autoSaveSetting({ server_default_mtu_mode: val }, 'MTU 设置已保存')
+  }
+
+  const handleBBRChange = (checked: boolean) => {
+    setServerDefaultBBREnabled(checked)
+    void autoSaveSetting({ server_default_bbr_enabled: checked }, 'BBR + FQ 设置已保存')
+  }
+
+  const handleTimeCorrectionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value as TimeCorrectionMode
+    setServerDefaultTimeCorrectionMode(val)
+    void autoSaveSetting({ server_default_time_correction_mode: val }, '时间校准设置已保存')
+  }
+
+  const handleTimezoneChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value
+    setTrafficTimezone(val)
+    void autoSaveSetting({ traffic_timezone: val }, '统计时区已保存')
+  }
+
+  const handleTrafficModeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value
+    setTrafficMode(val)
+    void autoSaveSetting({ traffic_enforcement_mode: val }, '达量后处理已保存')
+  }
+
+  const saveNTPServers = async () => {
+    if (savingKey) return
+    setSavingKey('ntp-servers')
+    try {
+      await client.request('/settings', {
+        method: 'POST',
+        body: JSON.stringify({
+          time_check_ntp_servers: timeCheckNTPServers.map(v => v.trim()),
+        }),
+      })
+      await load()
+      notify('NTP 时间源已保存', 'success')
+    } catch (error: any) {
+      notify(error?.message || String(error), 'error')
+    } finally {
+      setSavingKey('')
+    }
+  }
+
+  return (
+    <section className="settings-card agent-settings-card">
+      <div className="agent-settings-container">
+        {/* Section 1: 新服务器默认值 */}
+        <div className="agent-settings-section">
+          <div className="agent-section-header">
+            <h3 className="agent-section-title">新服务器默认值</h3>
+            <p className="agent-section-desc">创建服务器时自动带入，可在创建窗口中单独修改。</p>
+          </div>
+
+          <div className="agent-settings-form">
+            {/* MTU */}
+            <div className="agent-settings-row">
+              <label className="agent-settings-label">MTU</label>
+              <div className="agent-settings-control">
+                <Select variant="segmented" value={serverDefaultMTUMode} onChange={handleMTUChange} disabled={Boolean(savingKey)}>
+                  {mtuModes.map(mode => (
+                    <option key={mode} value={mode}>{mtuLabels[mode] || mode}</option>
+                  ))}
+                </Select>
+                <div className="agent-settings-help">根据节点网络环境检测 MTU，并决定是否自动应用检测结果。</div>
+              </div>
+            </div>
+
+            {/* BBR + FQ */}
+            <div className="agent-settings-row">
+              <label className="agent-settings-label">BBR + FQ</label>
+              <div className="agent-settings-control">
+                <Switch checked={serverDefaultBBREnabled} onChange={handleBBRChange} disabled={Boolean(savingKey)} ariaLabel="新服务器默认启用 BBR + FQ" />
+                <div className="agent-settings-help">在支持的 Linux 节点上启用 BBR 与 FQ 网络优化。</div>
+              </div>
+            </div>
+
+            {/* 时间校准 */}
+            <div className="agent-settings-row">
+              <label className="agent-settings-label">时间校准</label>
+              <div className="agent-settings-control">
+                <Select variant="segmented" value={serverDefaultTimeCorrectionMode} onChange={handleTimeCorrectionChange} disabled={Boolean(savingKey)} aria-label="时间校准模式">
+                  <option value="off">关闭</option>
+                  <option value="auto">自动</option>
+                  <option value="ntp">逻辑校时</option>
+                </Select>
+                <div className="agent-settings-help">控制 Agent 的系统时间同步策略。</div>
+              </div>
+            </div>
+
+            {/* NTP 时间源 */}
+            <div className="agent-settings-row">
+              <label className="agent-settings-label">NTP 时间源</label>
+              <div className="agent-settings-control">
+                <div className="agent-ntp-list">
+                  {timeCheckNTPServers.map((value, index) => (
+                    <input
+                      key={index}
+                      value={value}
+                      onChange={event => {
+                        const newVal = event.target.value
+                        setTimeCheckNTPServers(current => current.map((item, itemIndex) => itemIndex === index ? newVal : item))
+                      }}
+                      placeholder={defaultTimeCheckNTPServers[index]}
+                      aria-label={`NTP 时间源 ${index + 1}`}
+                      className="agent-input-field"
+                    />
+                  ))}
+                </div>
+                <div className="agent-settings-help">每天检测时并发查询，至少两个时间源返回结果后才使用。</div>
+                <div className="agent-ntp-actions">
+                  <button
+                    type="button"
+                    onClick={() => void saveNTPServers()}
+                    disabled={!isNTPDirty || Boolean(savingKey)}
+                  >
+                    {savingKey === 'ntp-servers' ? '保存中...' : '保存 NTP 时间源'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Subtle Divider */}
+        <div className="agent-settings-divider" />
+
+        {/* Section 2: 流量控制 */}
+        <div className="agent-settings-section">
+          <div className="agent-section-header">
+            <h3 className="agent-section-title">流量控制</h3>
+            <p className="agent-section-desc">用于计算用户当前周期流量，并在达量后暂停节点使用。</p>
+          </div>
+
+          <div className="agent-settings-form">
+            {/* 统计时区 */}
+            <div className="agent-settings-row">
+              <label className="agent-settings-label">统计时区</label>
+              <div className="agent-settings-control">
+                <Select
+                  value={trafficTimezone}
+                  onChange={handleTimezoneChange}
+                  disabled={Boolean(savingKey)}
+                  aria-label="统计时区"
+                  className="agent-select-field"
+                >
+                  {!trafficTimezones.includes(trafficTimezone) && (
+                    <option value={trafficTimezone}>{getTrafficTimezoneLabel(trafficTimezone)}</option>
+                  )}
+                  {trafficTimezones.map(timezone => (
+                    <option key={timezone} value={timezone}>{getTrafficTimezoneLabel(timezone)}</option>
+                  ))}
+                </Select>
+                <div className="agent-settings-help">用于计算流量重置时间。</div>
+              </div>
+            </div>
+
+            {/* 达量后处理 */}
+            <div className="agent-settings-row">
+              <label className="agent-settings-label">达量后处理</label>
+              <div className="agent-settings-control">
+                <Select variant="segmented" value={trafficMode} onChange={handleTrafficModeChange} disabled={Boolean(savingKey)}>
+                  <option value="disconnect_and_reject">断开并拒绝</option>
+                  <option value="reject_new">仅拒绝新连接</option>
+                </Select>
+                <div className="agent-settings-help">
+                  Agent 会保留本地可用额度；面板暂时不可达时，节点仍会按已下发额度暂停超量用户。
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
