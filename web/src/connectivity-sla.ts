@@ -60,9 +60,8 @@ export function connectivitySlaDisplay(value: number | null | undefined) {
 
 export function connectivityBucketTone(slaPercent: number | null, unknownSeconds: number, observedSeconds: number) {
   if (observedSeconds <= 0 || slaPercent == null) return 'none'
-  if (slaPercent >= 99.5) return 'great'
-  if (slaPercent >= 90) return 'good'
-  if (slaPercent >= 50) return 'fair'
+  if (slaPercent >= 99) return 'great'
+  if (slaPercent >= 95) return 'fair'
   if (slaPercent > 0) return 'poor'
   return unknownSeconds > observedSeconds ? 'poor' : 'down'
 }

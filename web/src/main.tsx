@@ -71,7 +71,8 @@ import {
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
-  ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network, Package
+  ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network, Package,
+  ArrowUpCircle, SlidersHorizontal
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -971,7 +972,7 @@ const fieldLabels: Record<string, string> = {
   backend: '后端', probe_mode: '探测模式', probe_interval_seconds: '探测间隔秒', sample_rate: '采样率',
   local_address: '本地地址', peer_address: '对端地址', interface_name: '网卡', current_mtu: '当前 MTU', path_mtu: '路径 MTU', recommended_mtu: '建议 MTU', applied_mtu: '已应用 MTU', confidence: '可信度', error: '错误',
   format: '格式', group_name: '分组名', description: '描述', subscription_format: '订阅格式', subscription_url: '订阅链接', outbound_tag: '出口标签',
-  created_at: '创建时间', updated_at: '更新时间', completed_at: '完成时间', config_version: '配置版本', task_id: '任务 ID', payload_json: '任务内容 JSON', nonce: '随机数', result: '结果',
+  created_at: '创建时间', updated_at: '更新时间', completed_at: '完成时间', last_success_at: '最近成功时间', last_attempt_at: '最近检查时间', config_version: '配置版本', task_id: '任务 ID', payload_json: '任务内容 JSON', nonce: '随机数', result: '结果',
   total: '总数', pending: '等待中', running: '执行中', succeeded: '成功', failed: '失败', partial_failed: '部分失败', timeout: '超时', latency_ms: '平均延迟', min_latency_ms: '最低延迟', p95_latency_ms: 'P95 延迟', jitter_ms: '抖动', success_count: '成功次数', sample_count: '样本数', endpoint: '探测端点', probe_status: '端口状态', probe_detail: '探测明细', checked_at: '检测时间', message: '消息'
 }
 
@@ -4602,7 +4603,7 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
     </div>
     {activeTab === 'records' ? <section className="settings-card dns-management-card">
       <div className="settings-card-head">
-        <div><h3>域名当前记录</h3><p className="muted">查看与管理云端 DNS 解析记录，关联服务器后系统可完成动态配置。</p></div>
+        <div><h3>域名当前记录</h3></div>
         <div className="settings-card-actions">
           <button type="button" onClick={openCreateRecord} disabled={!zoneOptions.length}><Plus size={14} />添加记录</button>
           <button type="button" className="ghost icon-button" onClick={() => void loadRecords()} disabled={!selectedZoneID || working === 'records-load'} aria-label="刷新记录" title="刷新记录"><RefreshCw size={15} className={working === 'records-load' ? 'spin' : ''} /></button>
@@ -4637,7 +4638,7 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
         return <div className="dns-record-row" key={record.id}><span className="record-type">{record.type}</span><div className="record-main"><strong>{record.name}</strong><span>{record.content}</span><small>{detail}{linkedServerName && !detail.toLocaleLowerCase().includes(linkedServerName.toLocaleLowerCase()) ? ` · 服务器 ${linkedServerName}` : ''}</small></div><div className="record-badges"><span className={`status-pill ${isOBoardDNSRecord(record) ? 'managed' : ''}`}>{isOBoardDNSRecord(record) ? 'OBoard 管理' : '其他来源'}</span><span className={`status-pill ${record.proxied ? 'warning' : ''}`}>{record.proxied ? '已开启代理' : '仅域名解析'}</span></div><div className="record-actions"><button className="ghost icon-button" onClick={() => editRecord(record)} title="编辑"><Edit3 size={14} /></button><button className="ghost icon-button danger-text" onClick={() => deleteRecord(record)} title="删除"><Trash2 size={14} /></button></div></div>
       })}</div> : <div className="dns-credential-empty">{!selectedZoneID ? '请先选择一个域名或在“域名管理”中添加账号。' : records.length ? '没有符合条件的解析记录。' : '该域名当前没有解析记录。'}</div>}
     </section> : <section className="settings-card dns-management-card">
-      <div className="settings-card-head"><div><h3>域名与解析服务商</h3><p className="muted">一个账号可以管理多个域名，并分别关联服务器。</p></div><button className="ghost" onClick={openCreateCredential}><Plus size={14} />新建账号</button></div>
+      <div className="settings-card-head"><div><h3>域名与解析服务商</h3></div><button className="ghost" onClick={openCreateCredential}><Plus size={14} />新建账号</button></div>
       {credentials.length ? <div className="dns-record-list">{credentials.map(credential => <div className="dns-record-row dns-credential-row" key={credential.id}><div className="dns-provider-logo-box" title={dnsProviderLabels[credential.provider]}><DNSProviderIcon provider={credential.provider} size={22} /></div><div className="record-main"><strong>{credential.name}</strong><span><small className="dns-provider-sublabel">{dnsProviderLabels[credential.provider]}</small>{(credential.zones || []).length ? ` · ${(credential.zones || []).map(zone => `${zone.zone_name}${zone.server_id ? `（${serverName(zone.server_id)}）` : ''}`).join(' · ')}` : ''}</span><small>{credential.last_error || (credential.verified_at ? `${credential.zones.length} 个域名 · 已验证 ${formatTableTime(credential.verified_at)}` : `${credential.zones.length} 个域名 · 待验证`)}</small></div><span className={`status-pill ${credential.verified_at ? 'ok' : credential.last_error ? 'warning' : ''}`}>{credential.verified_at ? '可用' : '待验证'}</span><div className="record-actions"><button className="ghost icon-button" onClick={() => verifyCredential(credential)} title="验证"><RefreshCw size={14} className={working === `verify-${credential.id}` ? 'spin' : ''} /></button><button className="ghost icon-button" onClick={() => editCredential(credential)} title="编辑"><Edit3 size={14} /></button><button className="ghost icon-button danger-text" onClick={() => deleteCredential(credential)} title="删除"><Trash2 size={14} /></button></div></div>)}</div> : <div className="dns-credential-empty">还没有解析服务账号。</div>}
     </section>}
     <AnimatePresence>{recordDialogOpen && <DNSRecordDialog zoneOptions={zoneOptions} zoneID={recordDialogZoneID} setZoneID={setRecordDialogZoneID} draft={recordDraft} setDraft={setRecordDraft} serverName={serverName} saving={working === 'record-save'} onCancel={closeRecordDialog} onSubmit={createRecord} />}</AnimatePresence>
@@ -6127,6 +6128,9 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [serverQuery, setServerQuery] = useState('')
   const [serverStatusFilter, setServerStatusFilter] = useState<ServerStatusFilter>('all')
   const [serverRegionFilter, setServerRegionFilter] = useState('all')
+  const [filterExpanded, setFilterExpanded] = useState(false)
+  const [serverActionOpen, setServerActionOpen] = useState(false)
+  const serverActionRef = useRef<HTMLDivElement>(null)
   const [listPreferences, setListPreferences] = useState<ServerListPreferences>(loadServerListPreferences)
   const [draggedServerID, setDraggedServerID] = useState<number | null>(null)
   const [dragOverServerID, setDragOverServerID] = useState<number | null>(null)
@@ -6139,6 +6143,17 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const serverRequestInFlightRef = useRef(false)
   const serversMountedRef = useRef(false)
   const pendingDeleteServerIDsRef = useRef(new Set<number>())
+
+  useEffect(() => {
+    if (!serverActionOpen) return
+    const onDocClick = (e: MouseEvent) => {
+      if (serverActionRef.current && !serverActionRef.current.contains(e.target as Node)) {
+        setServerActionOpen(false)
+      }
+    }
+    document.addEventListener('click', onDocClick)
+    return () => document.removeEventListener('click', onDocClick)
+  }, [serverActionOpen])
 
   useEffect(() => {
     setServers(((data.servers || []) as Server[]).filter(server => !pendingDeleteServerIDsRef.current.has(server.id)))
@@ -6476,13 +6491,46 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
         </div>
       </div>
       <div className="section-actions">
-        {role === 'admin' && (
-          <button type="button" className="ghost" onClick={() => void updateAllAgents()} disabled={!enrolledCount} title={enrolledCount ? `为 ${enrolledCount} 台已接入 Agent 创建更新任务` : '没有已接入的 Agent'}>
-            <RefreshCw size={14} />
-            <span>一键更新 Agent</span>
+        <div className="server-action-group" ref={serverActionRef}>
+          <button
+            type="button"
+            className="server-add-button"
+            onClick={() => { setDraft(defaultServerDraft(creationDefaults)); setCreateOpen(true) }}
+          >
+            <Plus size={15} />
+            <span>添加服务器</span>
           </button>
-        )}
-        <button onClick={() => { setDraft(defaultServerDraft(creationDefaults)); setCreateOpen(true) }}>添加服务器</button>
+          {role === 'admin' && (
+            <>
+              <button
+                type="button"
+                className={`server-action-trigger ${serverActionOpen ? 'active' : ''}`}
+                onClick={(e) => { e.stopPropagation(); setServerActionOpen(v => !v) }}
+                aria-label="更多操作"
+                aria-haspopup="menu"
+                aria-expanded={serverActionOpen}
+                title="更多操作"
+              >
+                <ChevronDown size={14} />
+              </button>
+              {serverActionOpen && (
+                <div className="server-action-popover" role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!enrolledCount}
+                    onClick={() => { setServerActionOpen(false); void updateAllAgents() }}
+                    title={enrolledCount ? `为 ${enrolledCount} 台已接入 Agent 创建更新任务` : '没有已接入的 Agent'}
+                  >
+                    <ArrowUpCircle size={15} />
+                    <span>一键更新 Agent</span>
+                    {enrolledCount > 0 && <span className="server-action-popover-badge">{enrolledCount}</span>}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
         <div className="view-mode-toggle" role="radiogroup" aria-label="显示方式">
           <button type="button" role="radio" aria-checked={view === 'grid'} className={view === 'grid' ? 'active' : ''} onClick={() => setView('grid')} aria-label="平铺模式" title="平铺模式"><GridViewIcon /></button>
           <button type="button" role="radio" aria-checked={view === 'list'} className={view === 'list' ? 'active' : ''} onClick={() => setView('list')} aria-label="列表模式" title="列表模式"><ListViewIcon /></button>
@@ -6495,41 +6543,56 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
         <input type="search" value={serverQuery} onChange={event => setServerQuery(event.target.value)} placeholder="搜索名称、IP、编号或国家" aria-label="搜索服务器" />
         {serverQuery && <button type="button" className="ghost icon-button" onClick={() => setServerQuery('')} aria-label="清除搜索" title="清除搜索"><X size={14} /></button>}
       </div>
-      <div className="server-list-filters" role="group" aria-label="服务器筛选">
-        <ListFilter size={15} aria-hidden="true" />
-        <Select value={serverStatusFilter} onChange={event => setServerStatusFilter(event.target.value as ServerStatusFilter)} aria-label="按状态筛选">
-          <option value="all">全部状态</option>
-          <option value="online">在线</option>
-          <option value="offline">离线</option>
-          <option value="unenrolled">未接入</option>
-        </Select>
-        <Select value={serverRegionFilter} onChange={event => setServerRegionFilter(event.target.value)} aria-label="按国家筛选">
-          <option value="all">
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-              <Globe size={16} aria-hidden="true" />
-              <span>全部国家</span>
-            </span>
-          </option>
-          {serverRegions.map(region => (
-            <option key={region.code || 'pending'} value={region.code}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                <RegionFlag code={region.code} size={18} />
-                <span>{region.label} ({region.count})</span>
-              </span>
-            </option>
-          ))}
-        </Select>
-      </div>
-      <div className="server-list-sort">
-        <ArrowUpDown size={15} aria-hidden="true" />
-        <Select value={listPreferences.sortMode} onChange={event => setListPreferences(current => ({ ...current, sortMode: event.target.value as ServerSortMode }))} aria-label="服务器排序方式">
-          <option value="created">创建顺序</option>
-          <option value="country">按国家</option>
-          <option value="custom">自定义排序</option>
-        </Select>
-      </div>
-      {hasServerFilters && <button type="button" className="ghost icon-button server-list-filter-clear" onClick={clearServerFilters} aria-label="清除筛选" title="清除筛选"><Eraser size={15} /></button>}
+      <button
+        type="button"
+        className={`ghost icon-button server-filter-toggle-btn ${filterExpanded || (serverStatusFilter !== 'all' || serverRegionFilter !== 'all' || listPreferences.sortMode !== 'created') ? 'is-active' : ''}`}
+        onClick={() => setFilterExpanded(v => !v)}
+        aria-label={filterExpanded ? '收起筛选' : '展开筛选'}
+        title={filterExpanded ? '收起筛选' : '展开筛选'}
+      >
+        <SlidersHorizontal size={15} />
+        {(serverStatusFilter !== 'all' || serverRegionFilter !== 'all' || listPreferences.sortMode !== 'created') && (
+          <span className="server-filter-badge" />
+        )}
+      </button>
       <span className="server-list-result-count">{visibleServers.length} / {servers.length}</span>
+      {filterExpanded && (
+        <div className="server-list-filter-drawer" role="group" aria-label="服务器筛选">
+          <div className="server-list-filters">
+            <Select value={serverStatusFilter} onChange={event => setServerStatusFilter(event.target.value as ServerStatusFilter)} aria-label="按状态筛选">
+              <option value="all">全部状态</option>
+              <option value="online">在线</option>
+              <option value="offline">离线</option>
+              <option value="unenrolled">未接入</option>
+            </Select>
+            <Select value={serverRegionFilter} onChange={event => setServerRegionFilter(event.target.value)} aria-label="按国家筛选">
+              <option value="all">
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                  <Globe size={16} aria-hidden="true" />
+                  <span>全部国家</span>
+                </span>
+              </option>
+              {serverRegions.map(region => (
+                <option key={region.code || 'pending'} value={region.code}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                    <RegionFlag code={region.code} size={18} />
+                    <span>{region.label} ({region.count})</span>
+                  </span>
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="server-list-sort">
+            <ArrowUpDown size={15} aria-hidden="true" />
+            <Select value={listPreferences.sortMode} onChange={event => setListPreferences(current => ({ ...current, sortMode: event.target.value as ServerSortMode }))} aria-label="服务器排序方式">
+              <option value="created">创建顺序</option>
+              <option value="country">按国家</option>
+              <option value="custom">自定义排序</option>
+            </Select>
+          </div>
+          {hasServerFilters && <button type="button" className="ghost icon-button server-list-filter-clear" onClick={clearServerFilters} aria-label="清除筛选" title="清除筛选"><Eraser size={15} /></button>}
+        </div>
+      )}
     </div>}
     {loading && !servers.length
       ? <CardSkeleton />
@@ -7815,7 +7878,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
           </div>
         </div>
 
-        <div className="server-list-metric-item">
+        <div className="server-list-metric-item server-list-metric-net">
           <span className="server-list-metric-label">实时速率 / 本周期</span>
           <div className="server-list-network-row">
             <div className="server-list-rate-group">
@@ -7826,7 +7889,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
           </div>
         </div>
 
-        <div className="server-list-metric-item">
+        <div className="server-list-metric-item server-list-metric-latency">
           <span className="server-list-metric-label">延迟测试</span>
           {server.latency_probe_enabled ? (
             <div className="server-list-latency-btn">
@@ -8027,8 +8090,8 @@ function ServerTimeDetailDialog({ server, role = 'viewer', onEnableAuto, onClose
 
 function connectivitySlaTone(rate: number | null | undefined) {
   if (rate == null) return 'fair'
-  if (rate >= 99.9) return 'great'
-  if (rate >= 99) return 'fair'
+  if (rate >= 99) return 'great'
+  if (rate >= 95) return 'fair'
   return 'poor'
 }
 
@@ -14467,6 +14530,12 @@ function Subscriptions({ data, client, load, notify }: any) {
   const [customPathBusy, setCustomPathBusy] = useState('')
 
   const users: User[] = data.users || []
+  const [userSearchQuery, setUserSearchQuery] = useState('')
+  const filteredUsers = users.filter(user => {
+    if (!userSearchQuery.trim()) return true
+    const q = userSearchQuery.trim().toLowerCase()
+    return String(user.username || '').toLowerCase().includes(q) || String(user.id).includes(q)
+  })
   const sshInbounds: Inbound[] = (data.inbounds || []).filter((x: Inbound) => x.enabled !== false && x.protocol === 'ssh')
   const userGroups: UserGroup[] = data.user_groups || []
   const agePolicy = data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional'
@@ -14656,6 +14725,21 @@ function Subscriptions({ data, client, load, notify }: any) {
                 <h3><UsersIcon size={16} />用户订阅</h3>
                 <p className="muted">不直接展示完整链接，按需复制即可。当前格式：{subscriptionFormats.find(x => x.value === subscriptionFormat)?.label || subscriptionFormat}</p>
               </div>
+              <div className="sub-user-search-wrap">
+                <Search size={14} aria-hidden="true" />
+                <input
+                  type="search"
+                  value={userSearchQuery}
+                  onChange={event => setUserSearchQuery(event.target.value)}
+                  placeholder="搜索用户或编号..."
+                  aria-label="搜索用户订阅"
+                />
+                {userSearchQuery && (
+                  <button type="button" className="ghost icon-button" onClick={() => setUserSearchQuery('')} aria-label="清除搜索" title="清除搜索">
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
             </div>
             <div className="sub-user-table">
               <div className="sub-user-table-head">
@@ -14665,7 +14749,7 @@ function Subscriptions({ data, client, load, notify }: any) {
                 <span>安全策略</span>
                 <span>操作</span>
               </div>
-              {users.length ? users.map(user => (
+              {filteredUsers.length ? filteredUsers.map(user => (
                 <div className="sub-user-row" key={user.id}>
                   <div className="sub-user-main">
                     <span className="sub-user-avatar">{String(user.username || '?').slice(0, 1).toUpperCase()}</span>
@@ -14674,7 +14758,7 @@ function Subscriptions({ data, client, load, notify }: any) {
                       <small>#{user.id}</small>
                     </div>
                   </div>
-                  <div>{user.subscription_suspended ? <span className="status-pill danger">订阅暂停</span> : cell(user.status, 'status')}</div>
+                  <div className="sub-status-col">{user.subscription_suspended ? <span className="status-pill danger">订阅暂停</span> : cell(user.status, 'status')}</div>
                   <div className="sub-user-token-state">
                     {user.subscription_suspended
                       ? <span className="sub-pill danger">风控暂停</span>
@@ -14714,7 +14798,7 @@ function Subscriptions({ data, client, load, notify }: any) {
                     <button type="button" className="ghost danger-text" onClick={() => void revokeSub(client, user, load, dialogs, notify)} disabled={!user.subscription_token && !user.subscription_custom_path}>吊销</button>
                   </div>
                 </div>
-              )) : <div className="sub-empty">暂无用户</div>}
+              )) : <div className="sub-empty">{userSearchQuery ? '没有找到匹配的用户' : '暂无用户'}</div>}
             </div>
           </section>
 
@@ -16130,7 +16214,7 @@ function humanLabel(k: string) {
   const tokens: Record<string, string> = {
     server: '服务器', servers: '服务器', agent: 'Agent', agents: 'Agent', user: '用户', users: '用户', inbound: '入口', inbounds: '入口', outbounds: '出口', outbound: '出口', chain: '链路', chains: '链路', route: '路由', routing: '分流', rule: '规则', rules: '规则', source: '源', target: '目标',
     traffic: '流量', upload: '上传', download: '下载', bytes: '字节', total: '总数', active: '活跃', online: '在线', offline: '离线', degraded: '异常', healthy: '健康', unhealthy: '异常',
-    pending: '等待中', running: '执行中', failed: '失败', succeeded: '成功', task: '任务', tasks: '任务', config: '配置', version: '版本', last: '最新', current: '当前', result: '结果', payload: '内容', json: 'JSON',
+    pending: '等待中', running: '执行中', failed: '失败', succeeded: '成功', success: '成功', attempt: '检查', task: '任务', tasks: '任务', config: '配置', version: '版本', last: '最近', current: '当前', result: '结果', payload: '内容', json: 'JSON',
     created: '创建', updated: '更新', completed: '完成', at: '时间', id: 'ID', token: '令牌', status: '状态', type: '类型', mode: '模式', enabled: '启用', disabled: '禁用', latency: '延迟', ms: '毫秒', error: '错误', message: '消息', count: '数量'
   }
   return k.split('_').map(x => tokens[x] || x).join('')

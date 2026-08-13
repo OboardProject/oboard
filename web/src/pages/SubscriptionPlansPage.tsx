@@ -705,43 +705,105 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
           <Button onClick={openCreate}><Plus size={14} /> 新建套餐</Button>
         </div>}
 
-        {!embedded && <div className="card-custom" style={{ overflow: 'auto', marginBottom: 16 }}>
-          <table className="user-data-table" style={{ minWidth: 780, tableLayout: 'fixed' }}>
-            <colgroup>
-              <col style={{ width: '20%' }} />
-              <col style={{ width: '12%' }} />
-              <col style={{ width: '22%' }} />
-              <col style={{ width: '10%' }} />
-              <col style={{ width: '13%' }} />
-              <col style={{ width: '13%' }} />
-              <col style={{ width: '10%' }} />
-            </colgroup>
-            <thead>
-              <tr>
-                <th>名称</th><th>状态</th><th>版本</th><th>节点</th><th>限速</th><th>流量</th><th style={{ textAlign: 'right' }}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
+        {!embedded && (
+          <>
+            {/* Desktop Table View */}
+            <div className="card-custom plan-table-card plan-desktop-table" style={{ padding: 0, overflow: 'auto', marginBottom: 16 }}>
+              <table className="plan-list-table" style={{ width: '100%', minWidth: 700, borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left', padding: '12px 16px' }}>名称</th>
+                    <th style={{ textAlign: 'left', padding: '12px 12px' }}>状态</th>
+                    <th style={{ textAlign: 'left', padding: '12px 12px' }}>版本</th>
+                    <th style={{ textAlign: 'left', padding: '12px 12px' }}>节点</th>
+                    <th style={{ textAlign: 'left', padding: '12px 12px' }}>限速</th>
+                    <th style={{ textAlign: 'left', padding: '12px 12px' }}>流量</th>
+                    <th style={{ textAlign: 'right', padding: '12px 16px', minWidth: 90 }}>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {plans.map(p => (
+                    <tr
+                      key={p.id}
+                      className="table-row-hover plan-table-row"
+                      style={{
+                        backgroundColor: p.id === selectedID && detailOpen ? 'var(--bg-hover, rgba(0,0,0,0.03))' : 'transparent',
+                        borderTop: '1px solid var(--border)',
+                      }}
+                    >
+                      <td style={{ fontWeight: 600, padding: '12px 16px' }}>{p.name}</td>
+                      <td style={{ padding: '12px 12px' }}>
+                        <Badge variant={p.enabled ? 'success' : 'secondary'}>{p.enabled ? '启用' : '已停用'}</Badge>
+                        {p.pending_revision_id ? <Badge variant="warning" style={{ marginLeft: 4 }}>正在应用</Badge> : null}
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontVariantNumeric: 'tabular-nums', padding: '12px 12px' }}>
+                        {formatPlanVersion(p.latest_version_created_at)}
+                      </td>
+                      <td style={{ padding: '12px 12px' }}>{p.node_count ?? '—'}</td>
+                      <td style={{ padding: '12px 12px' }}>{p.speed_limit_mbps > 0 ? `${p.speed_limit_mbps} Mbps` : '不限'}</td>
+                      <td style={{ padding: '12px 12px' }}>{fmtBytes(p.traffic_limit_bytes)}</td>
+                      <td style={{ textAlign: 'right', padding: '12px 16px', whiteSpace: 'nowrap' }}>
+                        <Button variant="outline" size="sm" onClick={() => selectPlan(p.id)}>编辑</Button>
+                      </td>
+                    </tr>
+                  ))}
+                  {plans.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 28 }}>
+                        还没有套餐，点击“新建套餐”开始。
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Card View */}
+            <div className="plan-mobile-cards">
               {plans.map(p => (
-                <tr key={p.id} className="table-row-hover" style={{ backgroundColor: p.id === selectedID && detailOpen ? 'var(--bg-hover, rgba(0,0,0,0.03))' : 'transparent' }}>
-                  <td style={{ fontWeight: 600 }}>{p.name}</td>
-                  <td>
-                    <Badge variant={p.enabled ? 'success' : 'secondary'}>{p.enabled ? '启用' : '已停用'}</Badge>
-                    {p.pending_revision_id ? <Badge variant="warning" style={{ marginLeft: 4 }}>正在应用</Badge> : null}
-                  </td>
-                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>{formatPlanVersion(p.latest_version_created_at)}</td>
-                  <td>{p.node_count ?? '—'}</td>
-                  <td>{p.speed_limit_mbps > 0 ? `${p.speed_limit_mbps} Mbps` : '不限'}</td>
-                  <td>{fmtBytes(p.traffic_limit_bytes)}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    <Button variant="outline" size="sm" onClick={() => selectPlan(p.id)}>编辑</Button>
-                  </td>
-                </tr>
+                <div
+                  key={p.id}
+                  className="card-custom plan-mobile-card"
+                  style={{
+                    backgroundColor: p.id === selectedID && detailOpen ? 'var(--bg-hover, rgba(0,0,0,0.03))' : 'var(--surface-solid)',
+                    padding: '14px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                  }}
+                  onClick={() => selectPlan(p.id)}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-strong)' }}>{p.name}</span>
+                      <Badge variant={p.enabled ? 'success' : 'secondary'}>{p.enabled ? '启用' : '已停用'}</Badge>
+                      {p.pending_revision_id ? <Badge variant="warning">正在应用</Badge> : null}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={(e) => { e.stopPropagation(); selectPlan(p.id) }}
+                      style={{ flexShrink: 0 }}
+                    >
+                      编辑
+                    </Button>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px 12px', fontSize: 12.5, color: 'var(--muted)', background: 'var(--surface-2)', padding: '8px 12px', borderRadius: 'var(--radius-md)' }}>
+                    <div>版本：<span style={{ color: 'var(--text-strong)', fontFamily: 'var(--font-mono)' }}>{formatPlanVersion(p.latest_version_created_at)}</span></div>
+                    <div>节点：<span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{p.node_count ?? '—'}</span></div>
+                    <div>限速：<span style={{ color: 'var(--text-strong)' }}>{p.speed_limit_mbps > 0 ? `${p.speed_limit_mbps} Mbps` : '不限'}</span></div>
+                    <div>流量：<span style={{ color: 'var(--text-strong)' }}>{fmtBytes(p.traffic_limit_bytes)}</span></div>
+                  </div>
+                </div>
               ))}
-              {plans.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 24 }}>还没有套餐，点击“新建套餐”开始。</td></tr>}
-            </tbody>
-          </table>
-        </div>}
+              {plans.length === 0 && (
+                <div className="card-custom" style={{ textAlign: 'center', padding: 24, color: 'var(--muted)', fontSize: 13 }}>
+                  还没有套餐，点击“新建套餐”开始。
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       <PlanDetailShell inline={embedded} open={detailOpen && selectedID > 0} onClose={closeDetail} title={plan ? `方案详情：${plan.name}` : '方案详情'}>

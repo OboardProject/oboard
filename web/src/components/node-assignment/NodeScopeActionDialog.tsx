@@ -364,19 +364,16 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                             </span>
                           )}
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          busy={planActionBusyId === p.plan_id}
+                        <button
+                          type="button"
                           disabled={addingPlan || planActionBusyId !== null}
                           onClick={() => void handleRemovePlan(p.plan_id, p.name)}
-                          style={{ width: 26, height: 26, minWidth: 26, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-sm)' }}
                           className="plan-remove-icon-btn"
                           title={`从套餐【${p.name}】移出此节点`}
                           aria-label={`从套餐【${p.name}】移出此节点`}
                         >
-                          <Trash2 size={13.5} />
-                        </Button>
+                          <Trash2 size={14} />
+                        </button>
                       </div>
                     ))}
                   </div>
