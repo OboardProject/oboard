@@ -9422,21 +9422,6 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 .server-monitor-metric-empty svg { opacity: 0.5; }
 
-@media (max-width: 900px) {
-  .server-monitor-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-@media (max-width: 640px) {
-  .connectivity-head { flex-wrap: wrap; }
-  .connectivity-head .server-monitor-tabs { order: 3; width: 100%; justify-content: center; margin-top: 4px; }
-  .connectivity-head .dialog-close { margin-left: auto; }
-  .server-monitor-window-row { flex-direction: column; align-items: stretch; }
-  .server-monitor-window-toggle { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); text-align: center; }
-  .server-monitor-window-toggle button { min-width: 0; padding-inline: 4px; font-size: 10.5px; }
-  .server-monitor-metric-grid { grid-template-columns: minmax(0, 1fr); }
-  .server-monitor-metric-card { min-height: 180px; }
-}
-
 .connectivity-head,
 .connectivity-title {
   display: flex;
@@ -9463,6 +9448,64 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .server-monitor-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  .connectivity-head {
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 12px;
+  }
+  .connectivity-head .connectivity-title {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .connectivity-head .dialog-close {
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  .connectivity-head .server-monitor-tabs {
+    order: 3;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin-top: 6px;
+    padding: 3px;
+    box-sizing: border-box;
+  }
+  .connectivity-head .server-monitor-tabs button {
+    width: 100%;
+    justify-content: center;
+    min-height: 32px;
+    padding: 4px 10px;
+    font-size: 13px;
+    border-radius: var(--radius-full);
+  }
+  .server-monitor-window-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .server-monitor-window-toggle {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+    text-align: center;
+    width: 100%;
+  }
+  .server-monitor-window-toggle button {
+    min-width: 0;
+    padding-inline: 4px;
+    font-size: 11px;
+    justify-content: center;
+  }
+  .server-monitor-metric-grid { grid-template-columns: minmax(0, 1fr); }
+  .server-monitor-metric-card { min-height: 180px; }
 }
 
 .connectivity-head-icon {
