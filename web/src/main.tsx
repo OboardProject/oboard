@@ -53,7 +53,7 @@ import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetO
 import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
 import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphFocusState, graphPathEdgeLabels, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
 import type { GraphFocusScope, GraphPathFocusState } from './components/proxy-path/graph-topology'
-import { curvedGraphPath, roundedOrthogonalPath, type GraphRect } from './components/proxy-path/graph-geometry'
+import { curvedGraphPath, roundedOrthogonalPath, type GraphPoint, type GraphRect } from './components/proxy-path/graph-geometry'
 import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
 import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
 import './style.css'
