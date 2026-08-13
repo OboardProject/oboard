@@ -8,6 +8,7 @@ import { Switch } from '../ui/switch'
 import { DateTimePicker } from '../ui/datetime-picker'
 import { UserPicker, type UserOption } from './UserPicker'
 import type { NodeScopeRequest, ScopeNode } from './NodeScopeMenu'
+import { Package, Plus, Trash2, UserCheck, AlertTriangle, Info, Sparkles } from 'lucide-react'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -33,6 +34,12 @@ type PlanChangePreview = {
   capacity_issues: string[]
 }
 
+type AssignedPlan = {
+  plan_id: number
+  name: string
+  display_group?: string
+}
+
 const SCOPE_LABELS: Record<string, string> = {
   node: '仅此节点',
   entry_inbound: '同一入口',
@@ -41,14 +48,6 @@ const SCOPE_LABELS: Record<string, string> = {
   exit_server: '同一出口服务器',
   exit_region: '同一出口地区',
   external_outbound: '同一导入出口',
-}
-
-function toLocalInputValue(iso?: string) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 function fromLocalInputValue(value: string): string | undefined {
@@ -79,14 +78,17 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
   const [scopeBusy, setScopeBusy] = React.useState(false)
   const [scopeError, setScopeError] = React.useState('')
 
-  const [planID, setPlanID] = React.useState(0)
-  const [planOp, setPlanOp] = React.useState<'add' | 'remove' | 'replace'>('add')
-  const [displayGroup, setDisplayGroup] = React.useState('')
-  const [planPreview, setPlanPreview] = React.useState<{ preview: PlanChangePreview; expected_revision: number; expected_lock_version: number; base_revision_id: number; node_count: number } | null>(null)
-  const [planBusy, setPlanBusy] = React.useState(false)
-  const [planApplyBusy, setPlanApplyBusy] = React.useState(false)
-  const [planMessage, setPlanMessage] = React.useState('')
+  // Assigned plans state
+  const [assignedPlans, setAssignedPlans] = React.useState<AssignedPlan[]>([])
+  const [loadingPlans, setLoadingPlans] = React.useState(false)
+  const [selectedAddPlanID, setSelectedAddPlanID] = React.useState(0)
+  const [addDisplayGroup, setAddDisplayGroup] = React.useState('')
+  const [planActionBusyId, setPlanActionBusyId] = React.useState<number | null>(null)
+  const [addingPlan, setAddingPlan] = React.useState(false)
+  const [planMessage, setPlanMessage] = React.useState<{ text: string; tone: 'success' | 'error' } | null>(null)
 
+  // Secondary User Auth Dialog state
+  const [userAuthOpen, setUserAuthOpen] = React.useState(false)
   const [userIDs, setUserIDs] = React.useState<Set<number>>(new Set())
   const [effect, setEffect] = React.useState<'allow' | 'deny'>('allow')
   const [reason, setReason] = React.useState('')
@@ -115,72 +117,134 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     }
   }, [node, scope, includeDisabled, client])
 
+  const loadNodePlans = React.useCallback(async () => {
+    if (!node) return
+    setLoadingPlans(true)
+    try {
+      const res = await client.request<{ plans?: AssignedPlan[] }>(`/assignable-nodes/${node.type}/${node.id}`)
+      if (res?.plans) {
+        setAssignedPlans(res.plans)
+      } else if ((node as any).plans) {
+        setAssignedPlans((node as any).plans)
+      }
+    } catch {
+      if ((node as any).plans) {
+        setAssignedPlans((node as any).plans)
+      }
+    } finally {
+      setLoadingPlans(false)
+    }
+  }, [node, client])
+
   React.useEffect(() => {
-    if (open) {
+    if (open && node) {
       setPreview(null)
       setScopeError('')
-      setPlanPreview(null)
-      setPlanMessage('')
+      setPlanMessage(null)
+      setSelectedAddPlanID(0)
+      setAddDisplayGroup('')
+      setUserAuthOpen(false)
+      setUserIDs(new Set())
+      setReason('')
+      setStartsAt('')
+      setExpiresAt('')
       setExPreview(null)
       setExMessage('')
-      setUserIDs(new Set())
       void loadScope()
+      void loadNodePlans()
     }
-  }, [open, loadScope])
+  }, [open, node, loadScope, loadNodePlans])
 
-  const runPlanPreview = async () => {
-    if (!preview || !planID) { setPlanMessage('请先选择套餐'); return }
-    setPlanBusy(true)
-    setPlanMessage('')
+  // Add node to a plan
+  const handleAddPlan = async () => {
+    if (!preview || !selectedAddPlanID) {
+      setPlanMessage({ text: '请先选择要加入的套餐', tone: 'error' })
+      return
+    }
+    const targetPlan = plans.find(p => p.id === selectedAddPlanID)
+    const planName = targetPlan?.name || `套餐 #${selectedAddPlanID}`
+    setAddingPlan(true)
+    setPlanMessage(null)
     try {
-      const res = await client.request<{ preview: PlanChangePreview; expected_revision: number; expected_lock_version: number; base_revision_id: number; node_count: number }>(`/subscription-plans/${planID}/nodes/preview`, {
+      // 1. Preview
+      const prevRes = await client.request<{ preview: PlanChangePreview; expected_revision: number; expected_lock_version: number; base_revision_id: number; node_count: number }>(`/subscription-plans/${selectedAddPlanID}/nodes/preview`, {
         method: 'POST',
-        body: JSON.stringify({ op: planOp, nodes: preview.node_refs, display_group: planOp === 'remove' ? '' : displayGroup }),
+        body: JSON.stringify({ op: 'add', nodes: preview.node_refs, display_group: addDisplayGroup.trim() }),
       })
-      setPlanPreview(res)
-    } catch (e: any) {
-      setPlanMessage('预览失败：' + (e?.message || String(e)))
-    } finally {
-      setPlanBusy(false)
-    }
-  }
 
-  const applyPlanSync = async () => {
-    if (!preview || !planPreview) return
-    setPlanApplyBusy(true)
-    setPlanMessage('')
-    try {
-      const res = await client.request<{ access_change_id?: number; no_change?: boolean }>(`/subscription-plans/${planID}/nodes/apply`, {
+      // 2. Apply
+      const applyRes = await client.request<{ access_change_id?: number; no_change?: boolean }>(`/subscription-plans/${selectedAddPlanID}/nodes/apply`, {
         method: 'POST',
         body: JSON.stringify({
-          op: planOp,
+          op: 'add',
           nodes: preview.node_refs,
-          display_group: planOp === 'remove' ? '' : displayGroup,
-          base_revision_id: planPreview.base_revision_id || 0,
-          expected_lock_version: planPreview.expected_lock_version || planPreview.expected_revision || 0,
+          display_group: addDisplayGroup.trim(),
+          base_revision_id: prevRes.base_revision_id || 0,
+          expected_lock_version: prevRes.expected_lock_version || prevRes.expected_revision || 0,
         }),
       })
-      if (res.no_change) {
-        notify?.('节点集合没有变化，未创建新版本', 'warning')
-      } else if (res.access_change_id) {
-        notify?.(`已保存为新版本，正在应用变更 #${res.access_change_id}`, 'success')
+
+      if (applyRes.no_change) {
+        notify?.(`节点已存在于套餐【${planName}】中`, 'warning')
       } else {
-        notify?.('已保存为新版本', 'success')
+        notify?.(`已成功将节点加入套餐【${planName}】`, 'success')
       }
-      setPlanPreview(null)
+      setSelectedAddPlanID(0)
+      setAddDisplayGroup('')
+      await loadNodePlans()
       await onDone()
     } catch (e: any) {
-      const message = e?.message || String(e)
-      setPlanMessage(message.includes('conflict') || message.includes('409') ? '套餐已发生变化（冲突），请重新预览后重试' : '操作失败：' + message)
+      const msg = e?.message || String(e)
+      setPlanMessage({ text: msg.includes('conflict') || msg.includes('409') ? '套餐版本冲突，请重试' : '加入失败：' + msg, tone: 'error' })
     } finally {
-      setPlanApplyBusy(false)
+      setAddingPlan(false)
     }
   }
 
+  // Remove node from a plan
+  const handleRemovePlan = async (targetPlanId: number, planName: string) => {
+    if (!preview) return
+    setPlanActionBusyId(targetPlanId)
+    setPlanMessage(null)
+    try {
+      // 1. Preview
+      const prevRes = await client.request<{ preview: PlanChangePreview; expected_revision: number; expected_lock_version: number; base_revision_id: number; node_count: number }>(`/subscription-plans/${targetPlanId}/nodes/preview`, {
+        method: 'POST',
+        body: JSON.stringify({ op: 'remove', nodes: preview.node_refs, display_group: '' }),
+      })
+
+      // 2. Apply
+      const applyRes = await client.request<{ access_change_id?: number; no_change?: boolean }>(`/subscription-plans/${targetPlanId}/nodes/apply`, {
+        method: 'POST',
+        body: JSON.stringify({
+          op: 'remove',
+          nodes: preview.node_refs,
+          display_group: '',
+          base_revision_id: prevRes.base_revision_id || 0,
+          expected_lock_version: prevRes.expected_lock_version || prevRes.expected_revision || 0,
+        }),
+      })
+
+      if (applyRes.no_change) {
+        notify?.(`套餐【${planName}】未包含此节点`, 'warning')
+      } else {
+        notify?.(`已从套餐【${planName}】移出该节点`, 'success')
+      }
+      await loadNodePlans()
+      await onDone()
+    } catch (e: any) {
+      const msg = e?.message || String(e)
+      setPlanMessage({ text: msg.includes('conflict') || msg.includes('409') ? '套餐版本冲突，请重试' : '移出失败：' + msg, tone: 'error' })
+    } finally {
+      setPlanActionBusyId(null)
+    }
+  }
+
+  // User exception preview
   const runExceptionPreview = async () => {
     if (!preview) return
     if (userIDs.size === 0) { setExMessage('请先选择用户'); return }
-    if (!reason.trim()) { setExMessage('请填写原因'); return }
+    if (!reason.trim()) { setExMessage('请填写授权原因'); return }
     if (!expiresAt) { setExMessage('过期时间必填'); return }
     setExBusy(true)
     setExMessage('')
@@ -204,6 +268,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     }
   }
 
+  // User exception batch apply
   const applyExceptionBatch = async () => {
     if (!preview || !exPreview) return
     setExApplyBusy(true)
@@ -221,11 +286,12 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
         }),
       })
       if (res.access_change_id) {
-        notify?.(`已创建聚合变更 #${res.access_change_id}（${res.access_change_status}），排队 ${res.queued_tasks} 个任务`, 'success')
+        notify?.(`已创建授权变更 #${res.access_change_id}（${res.access_change_status}），排队 ${res.queued_tasks} 个任务`, 'success')
       } else {
-        notify?.(`没有需要变更的例外（${res.skipped} 项已存在）`, 'warning')
+        notify?.(`没有需要变更的授权（${res.skipped} 项已存在）`, 'warning')
       }
       setExPreview(null)
+      setUserAuthOpen(false)
       await onDone()
     } catch (e: any) {
       setExMessage('操作失败：' + (e?.message || String(e)))
@@ -234,96 +300,221 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     }
   }
 
+  const unaddedPlans = plans.filter(p => !assignedPlans.some(ap => ap.plan_id === p.id))
+
   return (
-    <Dialog isOpen={open} onClose={onClose} title={node ? `节点操作：${node.name}` : '节点操作'} size="lg">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {scopeBusy && <p className="muted">正在解析节点范围...</p>}
-        {scopeError && <p style={{ color: 'var(--color-danger)' }}>{scopeError}</p>}
-        {preview && (
-          <>
-            <div className="card-custom" style={{ padding: 12 }}>
-              <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
-                <span style={{ fontWeight: 600 }}>已选择 {preview.count} 个节点</span>
-                <Badge variant="outline">{scopeName(preview)}</Badge>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginLeft: 'auto', cursor: 'pointer' }}>
-                  <Switch size="sm" checked={includeDisabled} onChange={setIncludeDisabled} ariaLabel="包含已禁用节点" /> 包含已禁用节点
-                </label>
-              </div>
-              {preview.sample_nodes.length > 0 && (
-                <p className="muted" style={{ margin: '8px 0 0' }}>
-                  示例：{preview.sample_nodes.map(n => n.name).join('、')}{preview.count > preview.sample_nodes.length ? ` 等 ${preview.count} 个` : ''}
-                </p>
-              )}
-              {(preview.warnings || []).map((w, i) => <p key={i} className="muted" style={{ margin: '6px 0 0' }}>{w}</p>)}
-            </div>
-
-            <div className="card-custom" style={{ padding: 12 }}>
-              <h3 style={{ marginTop: 0 }}>套餐节点</h3>
-              <div className="section-toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
-                <Select value={planID} onChange={e => setPlanID(Number(e.target.value))} style={{ minWidth: 160 }} aria-label="选择套餐">
-                  <option value={0}>选择套餐</option>
-                  {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </Select>
-                <Select value={planOp} onChange={e => setPlanOp(e.target.value as 'add' | 'remove' | 'replace')} aria-label="操作类型">
-                  <option value="add">加入套餐</option>
-                  <option value="remove">从套餐移除</option>
-                  <option value="replace">替换套餐节点</option>
-                </Select>
-                {planOp !== 'remove' && (
-                  <Input value={displayGroup} onChange={e => setDisplayGroup(e.target.value)} placeholder="展示分组（可选）" style={{ maxWidth: 180 }} />
+    <>
+      <Dialog isOpen={open} onClose={onClose} title={node ? `节点操作：${node.name}` : '节点操作'} size="lg">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {scopeBusy && <p className="muted" style={{ margin: 0, fontSize: 13 }}>正在解析节点范围...</p>}
+          {scopeError && <p style={{ color: 'var(--color-danger)', margin: 0 }}>{scopeError}</p>}
+          {preview && (
+            <>
+              {/* Scope summary */}
+              <div className="card-custom" style={{ padding: '10px 14px' }}>
+                <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>已选择 {preview.count} 个节点</span>
+                  <Badge variant="outline">{scopeName(preview)}</Badge>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginLeft: 'auto', cursor: 'pointer' }}>
+                    <Switch size="sm" checked={includeDisabled} onChange={setIncludeDisabled} ariaLabel="包含已禁用节点" /> 包含已禁用节点
+                  </label>
+                </div>
+                {preview.sample_nodes.length > 0 && (
+                  <p className="muted" style={{ margin: '6px 0 0', fontSize: 12 }}>
+                    示例：{preview.sample_nodes.map(n => n.name).join('、')}{preview.count > preview.sample_nodes.length ? ` 等 ${preview.count} 个` : ''}
+                  </p>
                 )}
-                <Button variant="outline" size="sm" busy={planBusy} onClick={() => void runPlanPreview()}>预览影响</Button>
+                {(preview.warnings || []).map((w, i) => <p key={i} className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>{w}</p>)}
               </div>
-              {planMessage && <p style={{ margin: '8px 0 0', color: planMessage.includes('失败') || planMessage.includes('冲突') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{planMessage}</p>}
-              {planPreview && (
-                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <p className="muted" style={{ margin: 0 }}>
-                    新版本将为 {planPreview.node_count} 个节点 · 新增 {planPreview.preview.nodes_added?.length || 0} · 移除 {planPreview.preview.nodes_removed?.length || 0} · 不变 {planPreview.preview.nodes_unchanged || 0} · 受影响用户 {planPreview.preview.users_affected} · 任务 {planPreview.preview.task_count}
-                  </p>
-                  {(planPreview.preview.capacity_issues || []).length > 0 && (
-                    <p style={{ color: 'var(--color-danger)', margin: 0 }}>{planPreview.preview.capacity_issues.join('；')}</p>
-                  )}
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <Button size="sm" busy={planApplyBusy} onClick={() => void applyPlanSync()}>应用{planOp === 'add' ? '加入' : planOp === 'remove' ? '移除' : '替换'}</Button>
-                    <Button size="sm" variant="ghost" onClick={() => setPlanPreview(null)}>取消</Button>
-                  </div>
-                </div>
-              )}
-            </div>
 
-            <div className="card-custom" style={{ padding: 12 }}>
-              <h3 style={{ marginTop: 0 }}>用户临时例外</h3>
-              <p className="muted" style={{ marginTop: 0 }}>批量创建例外只生成一个聚合 access-change；allow 先部署凭据再对订阅可见，deny 立即隐藏并撤销。</p>
-              <UserPicker users={users} selected={userIDs} onChange={setUserIDs} />
-              <div className="section-toolbar" style={{ gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-                <Select value={effect} onChange={e => setEffect(e.target.value as 'allow' | 'deny')} style={{ minWidth: 100 }} aria-label="例外效果">
-                  <option value="allow">临时允许</option>
-                  <option value="deny">临时禁止</option>
-                </Select>
-                <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="原因（必填）" style={{ maxWidth: 220 }} />
-                <DateTimePicker value={startsAt} onChange={setStartsAt} placeholder="开始时间（可选）" aria-label="开始时间（可选）" title="开始时间（可选）" style={{ maxWidth: 190 }} />
-                <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="过期时间（必填）" aria-label="过期时间（必填）" title="过期时间（必填）" style={{ maxWidth: 190 }} />
-                <Button variant="outline" size="sm" busy={exBusy} onClick={() => void runExceptionPreview()}>预览</Button>
-              </div>
-              {exMessage && <p style={{ margin: '8px 0 0', color: exMessage.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{exMessage}</p>}
-              {exPreview && (
-                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <p className="muted" style={{ margin: 0 }}>
-                    将创建 {exPreview.created} 条、更新 {exPreview.updated} 条、跳过已有 {exPreview.skipped} 条 · 受影响用户 {exPreview.affected_users} 人
-                  </p>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <Button size="sm" busy={exApplyBusy} onClick={() => void applyExceptionBatch()}>批量应用</Button>
-                    <Button size="sm" variant="ghost" onClick={() => setExPreview(null)}>取消</Button>
+              {/* Section 1: 套餐 */}
+              <div className="card-custom" style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Package size={15} style={{ color: 'var(--color-primary, #3b82f6)' }} />
+                    <h3 style={{ margin: 0, fontSize: 13.5, fontWeight: 700 }}>套餐</h3>
                   </div>
+                  <span className="muted" style={{ fontSize: 11.5 }}>包含在 {assignedPlans.length} 个套餐中</span>
                 </div>
-              )}
-            </div>
-          </>
-        )}
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Button variant="outline" onClick={onClose}>关闭</Button>
+
+                {/* Plan list */}
+                {loadingPlans ? (
+                  <p className="muted" style={{ margin: '4px 0', fontSize: 12 }}>正在加载包含此节点的套餐...</p>
+                ) : assignedPlans.length === 0 ? (
+                  <div style={{ padding: '12px', textAlign: 'center', background: 'var(--surface-2)', borderRadius: 'var(--radius-md)', color: 'var(--muted)', fontSize: 12 }}>
+                    当前节点尚未加入任何套餐
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {assignedPlans.map(p => (
+                      <div
+                        key={p.plan_id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '6px 10px',
+                          background: 'var(--surface-2)',
+                          borderRadius: 'var(--radius-md)',
+                          border: '1px solid var(--border)',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                          <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-strong)' }}>{p.name}</span>
+                          {p.display_group && (
+                            <span style={{ fontSize: 11, padding: '1px 6px', background: 'var(--surface-3)', borderRadius: 4, color: 'var(--muted)' }}>
+                              分组：{p.display_group}
+                            </span>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          busy={planActionBusyId === p.plan_id}
+                          disabled={addingPlan || planActionBusyId !== null}
+                          onClick={() => void handleRemovePlan(p.plan_id, p.name)}
+                          style={{ color: 'var(--danger)', height: 26, padding: '0 8px', fontSize: 12 }}
+                          title={`从套餐【${p.name}】移出此节点`}
+                        >
+                          <Trash2 size={13} style={{ marginRight: 4 }} />
+                          移出
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Add to plan toolbar */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4, paddingTop: 10, borderTop: '1px dashed var(--border)' }}>
+                  <Select
+                    value={selectedAddPlanID}
+                    onChange={e => setSelectedAddPlanID(Number(e.target.value))}
+                    style={{ minWidth: 160, flex: '1 1 160px' }}
+                    aria-label="选择要加入的套餐"
+                  >
+                    <option value={0}>选择要加入的套餐</option>
+                    {unaddedPlans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </Select>
+                  <Input
+                    value={addDisplayGroup}
+                    onChange={e => setAddDisplayGroup(e.target.value)}
+                    placeholder="展示分组（可选）"
+                    style={{ maxWidth: 160, flex: '1 1 120px' }}
+                  />
+                  <Button
+                    size="sm"
+                    busy={addingPlan}
+                    disabled={!selectedAddPlanID || planActionBusyId !== null}
+                    onClick={() => void handleAddPlan()}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    <Plus size={14} style={{ marginRight: 4 }} />
+                    加入套餐
+                  </Button>
+                </div>
+                {planMessage && (
+                  <p style={{ margin: 0, fontSize: 12, color: planMessage.tone === 'error' ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>
+                    {planMessage.text}
+                  </p>
+                )}
+              </div>
+
+              {/* Section 2: 授权用户 */}
+              <div className="card-custom" style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <UserCheck size={15} style={{ color: 'var(--color-primary, #3b82f6)' }} />
+                  <h3 style={{ margin: 0, fontSize: 13.5, fontWeight: 700 }}>用户授权</h3>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', background: 'var(--surface-2)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
+                  <Info size={15} style={{ flexShrink: 0, marginTop: 1, color: 'var(--color-primary, #3b82f6)' }} />
+                  <span>
+                    <strong>授权规则说明</strong>：用户可使用的节点为其<strong>所在套餐节点</strong>与<strong>单独授权节点</strong>的<strong>并集</strong>。即使套餐未包含此节点，在此授权后指定用户也能正常使用。
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setUserAuthOpen(true)}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <UserCheck size={14} />
+                    <span>授权用户</span>
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+            <Button variant="outline" onClick={onClose}>关闭</Button>
+          </div>
         </div>
-      </div>
-    </Dialog>
+      </Dialog>
+
+      {/* Secondary Dialog: 授权用户 */}
+      <Dialog
+        isOpen={userAuthOpen}
+        onClose={() => setUserAuthOpen(false)}
+        title={node ? `授权用户 · ${node.name}` : '授权用户'}
+        size="md"
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', background: 'var(--surface-2)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
+            <Sparkles size={15} style={{ flexShrink: 0, marginTop: 1, color: 'var(--color-primary, #3b82f6)' }} />
+            <span>为选定用户独立配置此节点的访问权限（临时允许或临时禁止），权限独立生效并与套餐取并集。</span>
+          </div>
+
+          <UserPicker users={users} selected={userIDs} onChange={setUserIDs} />
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8, marginTop: 4 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>授权效果</label>
+              <Select value={effect} onChange={e => setEffect(e.target.value as 'allow' | 'deny')} style={{ width: '100%' }} aria-label="授权效果">
+                <option value="allow">临时允许</option>
+                <option value="deny">临时禁止</option>
+              </Select>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>授权原因（必填）</label>
+              <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="例如：测试授权、VIP体验" />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>开始时间（可选）</label>
+              <DateTimePicker value={startsAt} onChange={setStartsAt} placeholder="立即生效" aria-label="开始时间" />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>过期时间（必填）</label>
+              <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="选择过期时间" aria-label="过期时间" />
+            </div>
+          </div>
+
+          {exMessage && (
+            <p style={{ margin: 0, fontSize: 12, color: exMessage.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>
+              {exMessage}
+            </p>
+          )}
+
+          {exPreview && (
+            <div style={{ padding: '8px 12px', background: 'var(--surface-2)', borderRadius: 'var(--radius-md)', fontSize: 12 }}>
+              <p className="muted" style={{ margin: 0 }}>
+                将创建 <strong>{exPreview.created}</strong> 条、更新 <strong>{exPreview.updated}</strong> 条、跳过已有 <strong>{exPreview.skipped}</strong> 条 · 受影响用户 <strong>{exPreview.affected_users}</strong> 人
+              </p>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+            <Button variant="ghost" onClick={() => setUserAuthOpen(false)}>取消</Button>
+            {exPreview ? (
+              <Button busy={exApplyBusy} onClick={() => void applyExceptionBatch()}>批量应用授权</Button>
+            ) : (
+              <Button busy={exBusy} onClick={() => void runExceptionPreview()}>预览影响</Button>
+            )}
+          </div>
+        </div>
+      </Dialog>
+    </>
   )
 }
+
+export default NodeScopeActionDialog

@@ -19,11 +19,38 @@ export function UserPicker({ users, selected, onChange, maxHeight = 220 }: {
     else next.add(id)
     onChange(next)
   }
+
+  const selectAllVisible = () => {
+    const next = new Set(selected)
+    visible.forEach(u => next.add(u.id))
+    onChange(next)
+  }
+
+  const clearVisible = () => {
+    const next = new Set(selected)
+    visible.forEach(u => next.delete(u.id))
+    onChange(next)
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索用户（用户名 / 昵称）" aria-label="搜索用户" />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="搜索用户（用户名 / 昵称）"
+          aria-label="搜索用户"
+          style={{ flex: 1 }}
+        />
+        <button type="button" className="ghost" style={{ fontSize: 12, padding: '4px 8px', whiteSpace: 'nowrap' }} onClick={selectAllVisible}>
+          全选
+        </button>
+        <button type="button" className="ghost" style={{ fontSize: 12, padding: '4px 8px', whiteSpace: 'nowrap' }} onClick={clearVisible}>
+          清空
+        </button>
+      </div>
       <div className="card-custom" style={{ maxHeight, overflow: 'auto', padding: 6 }}>
-        {visible.length === 0 && <p className="muted" style={{ padding: 8, margin: 0 }}>没有匹配的用户</p>}
+        {visible.length === 0 && <p className="muted" style={{ padding: 8, margin: 0, textAlign: 'center', fontSize: 12 }}>没有匹配的用户</p>}
         {visible.map(u => (
           <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', cursor: 'pointer', borderRadius: 8 }}>
             <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} aria-label={`选择用户 ${u.username}`} />
@@ -33,7 +60,8 @@ export function UserPicker({ users, selected, onChange, maxHeight = 220 }: {
           </label>
         ))}
       </div>
-      <p className="muted" style={{ margin: 0 }}>已选 {selected.size} 个用户</p>
+      <p className="muted" style={{ margin: 0, fontSize: 12 }}>已选 {selected.size} 个用户（共 {users.length} 个用户）</p>
     </div>
   )
 }
+
