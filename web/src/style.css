@@ -1322,9 +1322,11 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-list-sort .custom-select { width: 140px; }
 
 .server-list-toolbar .custom-select-trigger {
+  height: var(--control-height);
   min-height: var(--control-height);
-  padding-block: 7px;
+  padding: 0 10px 0 12px;
   font-size: 12px;
+  line-height: 1;
 }
 
 .server-list-filter-clear { flex: 0 0 var(--control-height); }
@@ -15329,12 +15331,13 @@ button.ui-btn-ghost:hover {
   min-width: 0;
   max-width: 100%;
   width: 100%;
+  height: var(--control-height);
   min-height: var(--control-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 9px 12px 9px 14px;
+  gap: 8px;
+  padding: 0 12px 0 14px;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-input);
@@ -15342,7 +15345,9 @@ button.ui-btn-ghost:hover {
   box-shadow: none;
   font-size: 14px;
   font-weight: 500;
+  line-height: 1;
   text-align: left;
+  box-sizing: border-box;
   transition:
     border-color 0.18s cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 0.18s cubic-bezier(0.22, 1, 0.36, 1),
@@ -15363,18 +15368,29 @@ button.ui-btn-ghost:hover {
 
 .custom-select-value {
   min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  line-height: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.custom-select-value > * {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  vertical-align: middle;
 }
 .custom-select-value.placeholder { color: var(--muted); }
 
 .custom-select-chevron {
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   color: var(--muted);
   opacity: 0.9;
+  display: block;
   transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), color 0.16s ease;
 }
 .custom-select-trigger:hover .custom-select-chevron,
