@@ -65,7 +65,7 @@ import logo from './assets/logo.svg'
 import { 
   LayoutDashboard, Server as ServerIcon, Workflow, Users as UsersIcon, Link as LinkIcon, 
   Bell, CheckSquare, ClipboardList, Settings as SettingsIcon, LogOut, Shield,
-  Settings2, Activity, ArrowLeftRight, HardDrive, 
+  Settings2, Activity, ArrowLeftRight, Cpu, ArrowDownUp, HardDrive, 
   Zap, Sliders, Menu, X, Sun, Moon, RefreshCw, ChevronDown, ChevronRight, Check, Info,
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
@@ -7380,30 +7380,319 @@ type ServerMonitorMetricCardProps = {
   emptyMessage?: string
 }
 
-function ServerMonitorMetricCard({ title, value, detail, points = [], primary = [], secondary = [], primaryLabel, secondaryLabel, scaleMax, formatScale = value => `${Math.round(value)}%`, tone = 'cpu', emptyMessage = '等待更多历史数据' }: ServerMonitorMetricCardProps) {
+function formatChartTime(value: string, showDate = false) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const timeStr = `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  if (showDate) {
+    return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${timeStr}`
+  }
+  return timeStr
+}
+
+function buildSmoothPath(pts: { x: number; y: number }[]) {
+  if (!pts.length) return ''
+  if (pts.length === 1) return `M ${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`
+  if (pts.length === 2) return `M ${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)} L ${pts[1].x.toFixed(1)},${pts[1].y.toFixed(1)}`
+
+  let d = `M ${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = i > 0 ? pts[i - 1] : pts[i]
+    const p1 = pts[i]
+    const p2 = pts[i + 1]
+    const p3 = i < pts.length - 2 ? pts[i + 2] : p2
+
+    const cp1x = p1.x + (p2.x - p0.x) / 6
+    const cp1y = p1.y + (p2.y - p0.y) / 6
+    const cp2x = p2.x - (p3.x - p1.x) / 6
+    const cp2y = p2.y - (p3.y - p1.y) / 6
+
+    d += ` C ${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`
+  }
+  return d
+}
+
+function buildSmoothArea(pts: { x: number; y: number }[], baselineY: number) {
+  if (pts.length < 2) return ''
+  const linePath = buildSmoothPath(pts)
+  const first = pts[0]
+  const last = pts[pts.length - 1]
+  return `${linePath} L ${last.x.toFixed(1)},${baselineY.toFixed(1)} L ${first.x.toFixed(1)},${baselineY.toFixed(1)} Z`
+}
+
+function ServerMonitorMetricCard({
+  title,
+  value,
+  detail,
+  points = [],
+  primary = [],
+  secondary = [],
+  primaryLabel,
+  secondaryLabel,
+  scaleMax,
+  formatScale = value => `${Math.round(value)}%`,
+  tone = 'cpu',
+  emptyMessage = '等待更多历史数据'
+}: ServerMonitorMetricCardProps) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+  const svgRef = useRef<SVGSVGElement | null>(null)
+
+  const toneIcons: Record<string, React.ReactNode> = {
+    cpu: <Cpu size={15} aria-hidden="true" />,
+    memory: <Layers size={15} aria-hidden="true" />,
+    disk: <HardDrive size={15} aria-hidden="true" />,
+    network: <ArrowDownUp size={15} aria-hidden="true" />,
+    connections: <Network size={15} aria-hidden="true" />,
+    processes: <ServerIcon size={15} aria-hidden="true" />,
+  }
+
+  const toneColors: Record<string, { primary: string; secondary?: string }> = {
+    cpu: { primary: '#3b82f6' },
+    memory: { primary: '#10b981' },
+    disk: { primary: '#f59e0b' },
+    network: { primary: '#0ea5e9', secondary: '#8b5cf6' },
+    connections: { primary: '#3b82f6', secondary: '#14b8a6' },
+    processes: { primary: '#8b5cf6' },
+  }
+
+  const primaryColor = toneColors[tone]?.primary || '#3b82f6'
+  const secondaryColor = toneColors[tone]?.secondary || '#10b981'
+
   const hasChart = points.length > 1 && primary.length === points.length
   const max = Math.max(1, scaleMax || 0, ...primary, ...secondary)
-  return <section className={`server-monitor-metric-card ${tone}`}>
-    <header>
-      <h3>{title}</h3>
-      <div><strong>{value}</strong>{detail ? <small>{detail}</small> : null}</div>
-    </header>
-    {hasChart ? <>
-      <div className="server-monitor-metric-plot">
-        <svg viewBox="0 0 420 150" preserveAspectRatio="none" role="img" aria-label={`${title}历史趋势`}>
-          <line x1="0" y1="37.5" x2="420" y2="37.5" className="server-monitor-grid-line" />
-          <line x1="0" y1="75" x2="420" y2="75" className="server-monitor-grid-line" />
-          <line x1="0" y1="112.5" x2="420" y2="112.5" className="server-monitor-grid-line" />
-          <polyline points={telemetryPolyline(primary, 420, 150, max)} className="server-monitor-line primary" vectorEffect="non-scaling-stroke" />
-          {secondary.length === primary.length ? <polyline points={telemetryPolyline(secondary, 420, 150, max)} className="server-monitor-line secondary" vectorEffect="non-scaling-stroke" /> : null}
-        </svg>
-        <span className="server-monitor-scale top">{formatScale(max)}</span>
-        <span className="server-monitor-scale middle">{formatScale(max / 2)}</span>
-      </div>
-      <div className="server-monitor-metric-axis"><time>{formatTableTime(points[0].sampled_at)}</time><time>{formatTableTime(points[points.length - 1].sampled_at)}</time></div>
-      {(primaryLabel || secondaryLabel) ? <div className="server-monitor-metric-legend">{primaryLabel ? <span><i className="primary" />{primaryLabel}</span> : null}{secondaryLabel ? <span><i className="secondary" />{secondaryLabel}</span> : null}</div> : null}
-    </> : <div className="server-monitor-metric-empty"><Activity size={17} aria-hidden="true" /><span>{emptyMessage}</span></div>}
-  </section>
+
+  const W = 400
+  const H = 125
+  const padL = 6
+  const padR = 48
+  const padT = 10
+  const padB = 115
+  const plotW = W - padL - padR
+  const plotH = padB - padT
+
+  const getX = (idx: number) => padL + (idx / Math.max(1, points.length - 1)) * plotW
+  const getY = (val: number) => padB - (Math.max(0, Math.min(max, val)) / max) * plotH
+
+  const primaryPoints = primary.map((val, idx) => ({ x: getX(idx), y: getY(val) }))
+  const primaryLinePath = buildSmoothPath(primaryPoints)
+  const primaryAreaPath = buildSmoothArea(primaryPoints, padB)
+
+  const hasSecondary = secondary.length === primary.length
+  const secondaryPoints = hasSecondary ? secondary.map((val, idx) => ({ x: getX(idx), y: getY(val) })) : []
+  const secondaryLinePath = hasSecondary ? buildSmoothPath(secondaryPoints) : ''
+  const secondaryAreaPath = hasSecondary ? buildSmoothArea(secondaryPoints, padB) : ''
+
+  const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!svgRef.current || !points.length) return
+    const rect = svgRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const fraction = Math.max(0, Math.min(1, (x - (padL / W) * rect.width) / ((plotW / W) * rect.width)))
+    const idx = Math.round(fraction * (points.length - 1))
+    setHoverIdx(idx)
+  }
+
+  const handlePointerLeave = () => {
+    setHoverIdx(null)
+  }
+
+  const isMultiDay = points.length > 0 && (new Date(points[points.length - 1].sampled_at).getTime() - new Date(points[0].sampled_at).getTime() > 28 * 3600 * 1000)
+
+  // Determine current display values (hover vs default)
+  let displayMain = value
+  let displaySub = detail
+
+  // If memory or disk, show percentage prominently
+  if (tone === 'memory' && detail) {
+    displayMain = detail
+    displaySub = value
+  } else if (tone === 'disk' && detail) {
+    displayMain = detail
+    displaySub = value
+  } else if (tone === 'processes' && !detail) {
+    displaySub = '活跃进程'
+  }
+
+  if (hoverIdx !== null && points[hoverIdx]) {
+    const pt = points[hoverIdx]
+    const pVal = primary[hoverIdx] ?? 0
+    const sVal = secondary[hoverIdx] ?? 0
+    const hoverTimeLabel = formatChartTime(pt.sampled_at, isMultiDay)
+
+    if (tone === 'cpu') {
+      displayMain = `${pVal.toFixed(1)}%`
+      displaySub = hoverTimeLabel
+    } else if (tone === 'memory') {
+      displayMain = `${pVal.toFixed(1)}%`
+      displaySub = pt.memory_total_bytes ? `${formatBytes(pt.memory_used_bytes)} / ${formatBytes(pt.memory_total_bytes)} · ${hoverTimeLabel}` : hoverTimeLabel
+    } else if (tone === 'disk') {
+      displayMain = `${pVal.toFixed(1)}%`
+      displaySub = pt.disk_total_bytes ? `${formatBytes(pt.disk_used_bytes)} / ${formatBytes(pt.disk_total_bytes)} · ${hoverTimeLabel}` : hoverTimeLabel
+    } else if (tone === 'network') {
+      displayMain = `↓ ${formatByteRate(pVal)}`
+      displaySub = `↑ ${formatByteRate(sVal)} · ${hoverTimeLabel}`
+    } else if (tone === 'connections') {
+      displayMain = `TCP ${Math.round(pVal)}`
+      displaySub = `UDP ${Math.round(sVal)} · ${hoverTimeLabel}`
+    } else if (tone === 'processes') {
+      displayMain = `${Math.round(pVal)}`
+      displaySub = `进程 · ${hoverTimeLabel}`
+    }
+  }
+
+  const gradIdPrimary = `grad-${tone}-pri`
+  const gradIdSecondary = `grad-${tone}-sec`
+
+  return (
+    <section className={`server-monitor-metric-card ${tone}`}>
+      <header className="server-monitor-card-header">
+        <div className="server-monitor-card-title-group">
+          <span className={`server-monitor-metric-icon-badge ${tone}`}>
+            {toneIcons[tone] || <Activity size={15} aria-hidden="true" />}
+          </span>
+          <div>
+            <h3 className="server-monitor-card-title">{title}</h3>
+          </div>
+        </div>
+        <div className="server-monitor-card-stat-block">
+          <div className="server-monitor-card-stat-main"><strong>{displayMain}</strong></div>
+          {displaySub ? <div className="server-monitor-card-stat-sub"><small>{displaySub}</small></div> : null}
+        </div>
+      </header>
+
+      {hasChart ? (
+        <>
+          <div className="server-monitor-metric-plot">
+            <svg
+              ref={svgRef}
+              viewBox={`0 0 ${W} ${H}`}
+              preserveAspectRatio="none"
+              role="img"
+              aria-label={`${title}历史趋势`}
+              onPointerMove={handlePointerMove}
+              onPointerLeave={handlePointerLeave}
+            >
+              <defs>
+                <linearGradient id={gradIdPrimary} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={primaryColor} stopOpacity="0.25" />
+                  <stop offset="85%" stopColor={primaryColor} stopOpacity="0.02" />
+                  <stop offset="100%" stopColor={primaryColor} stopOpacity="0.0" />
+                </linearGradient>
+                {hasSecondary && (
+                  <linearGradient id={gradIdSecondary} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={secondaryColor} stopOpacity="0.22" />
+                    <stop offset="85%" stopColor={secondaryColor} stopOpacity="0.02" />
+                    <stop offset="100%" stopColor={secondaryColor} stopOpacity="0.0" />
+                  </linearGradient>
+                )}
+              </defs>
+
+              {/* Grid lines and right Y-axis scale */}
+              {[0, 0.5, 1].map((pct, i) => {
+                const y = padB - pct * plotH
+                const scaleVal = pct * max
+                return (
+                  <g key={i}>
+                    <line x1={padL} y1={y} x2={padL + plotW} y2={y} className="server-monitor-grid-line" strokeDasharray="3 3" />
+                    <text x={W - 2} y={y + 3} textAnchor="end" className="server-monitor-axis-text">
+                      {formatScale(scaleVal)}
+                    </text>
+                  </g>
+                )
+              })}
+
+              {/* Secondary Area & Line */}
+              {hasSecondary && (
+                <>
+                  <path d={secondaryAreaPath} fill={`url(#${gradIdSecondary})`} />
+                  <path
+                    d={secondaryLinePath}
+                    fill="none"
+                    stroke={secondaryColor}
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="server-monitor-line secondary"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                </>
+              )}
+
+              {/* Primary Area & Line */}
+              <path d={primaryAreaPath} fill={`url(#${gradIdPrimary})`} />
+              <path
+                d={primaryLinePath}
+                fill="none"
+                stroke={primaryColor}
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="server-monitor-line primary"
+                vectorEffect="non-scaling-stroke"
+              />
+
+              {/* Hover Indicator */}
+              {hoverIdx !== null && (
+                <g>
+                  <line
+                    x1={getX(hoverIdx)}
+                    y1={padT}
+                    x2={getX(hoverIdx)}
+                    y2={padB}
+                    className="server-monitor-crosshair"
+                    strokeDasharray="2 2"
+                  />
+                  {hasSecondary && (
+                    <circle
+                      cx={getX(hoverIdx)}
+                      cy={getY(secondary[hoverIdx] || 0)}
+                      r="4"
+                      fill={secondaryColor}
+                      stroke="#ffffff"
+                      strokeWidth="2"
+                      className="server-monitor-dot-glow"
+                    />
+                  )}
+                  <circle
+                    cx={getX(hoverIdx)}
+                    cy={getY(primary[hoverIdx] || 0)}
+                    r="4"
+                    fill={primaryColor}
+                    stroke="#ffffff"
+                    strokeWidth="2"
+                    className="server-monitor-dot-glow"
+                  />
+                </g>
+              )}
+            </svg>
+          </div>
+
+          <div className="server-monitor-card-footer">
+            <div className="server-monitor-metric-axis">
+              <time>{formatChartTime(points[0].sampled_at, isMultiDay)}</time>
+              {points.length > 2 && (
+                <time className="server-monitor-axis-mid">
+                  {formatChartTime(points[Math.floor(points.length / 2)].sampled_at, isMultiDay)}
+                </time>
+              )}
+              <time>{formatChartTime(points[points.length - 1].sampled_at, isMultiDay)}</time>
+            </div>
+            {(primaryLabel || secondaryLabel) ? (
+              <div className="server-monitor-metric-legend">
+                {primaryLabel ? <span><i style={{ backgroundColor: primaryColor }} />{primaryLabel}</span> : null}
+                {secondaryLabel ? <span><i style={{ backgroundColor: secondaryColor }} />{secondaryLabel}</span> : null}
+              </div>
+            ) : null}
+          </div>
+        </>
+      ) : (
+        <div className="server-monitor-metric-empty">
+          <Activity size={17} aria-hidden="true" />
+          <span>{emptyMessage}</span>
+        </div>
+      )}
+    </section>
+  )
 }
 
 function ServerLoadPanel({ server, response, loading, error, windowHours, onWindowChange, onRetry }: { server: Server; response: ServerResourceMetricsResponse | null; loading: boolean; error: string; windowHours: number; onWindowChange: (hours: number) => void; onRetry: () => void }) {
@@ -8161,8 +8450,8 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
     </header>
     <div className="dialog-body connectivity-body">
       <div className="server-monitor-tabs" role="tablist" aria-label="服务器监控视图">
-        <button id="server-monitor-load-tab" type="button" role="tab" tabIndex={activeView === 'load' ? 0 : -1} aria-selected={activeView === 'load'} aria-controls="server-monitor-load-panel" className={activeView === 'load' ? 'active' : ''} onClick={() => setActiveView('load')} onKeyDown={handleMonitorTabKeyDown}>负载</button>
-        <button id="server-monitor-latency-tab" type="button" role="tab" tabIndex={activeView === 'latency' ? 0 : -1} aria-selected={activeView === 'latency'} aria-controls="server-monitor-latency-panel" className={activeView === 'latency' ? 'active' : ''} onClick={() => setActiveView('latency')} onKeyDown={handleMonitorTabKeyDown}>延迟</button>
+        <button id="server-monitor-load-tab" type="button" role="tab" tabIndex={activeView === 'load' ? 0 : -1} aria-selected={activeView === 'load'} aria-controls="server-monitor-load-panel" className={activeView === 'load' ? 'active' : ''} onClick={() => setActiveView('load')} onKeyDown={handleMonitorTabKeyDown}><Activity size={14} aria-hidden="true" />负载</button>
+        <button id="server-monitor-latency-tab" type="button" role="tab" tabIndex={activeView === 'latency' ? 0 : -1} aria-selected={activeView === 'latency'} aria-controls="server-monitor-latency-panel" className={activeView === 'latency' ? 'active' : ''} onClick={() => setActiveView('latency')} onKeyDown={handleMonitorTabKeyDown}><Gauge size={14} aria-hidden="true" />延迟</button>
       </div>
       {activeView === 'load' ? <ServerLoadPanel server={server} response={resourceResponse} loading={resourceLoading} error={resourceError} windowHours={loadWindowHours} onWindowChange={setLoadWindowHours} onRetry={() => void loadResourceData(loadWindowHours)} /> : <div className="server-monitor-panel" role="tabpanel" id="server-monitor-latency-panel" aria-labelledby="server-monitor-latency-tab">
       {/* Live Resource & Connectivity Cards Bar */}
