@@ -104,7 +104,8 @@ describe('NodeScopeActionDialog', () => {
     // 2. Verify assigned plans list shows '基础套餐' with remove button
     expect(document.body.textContent).toContain('基础套餐')
     expect(document.body.textContent).toContain('分组：香港')
-    expect(document.body.textContent).toContain('移出')
+    const removeBtn = document.querySelector('button[aria-label="从套餐【基础套餐】移出此节点"]')
+    expect(removeBtn).toBeTruthy()
 
     // 3. Verify union explanation is prominently displayed
     expect(document.body.textContent).toContain('授权规则说明')

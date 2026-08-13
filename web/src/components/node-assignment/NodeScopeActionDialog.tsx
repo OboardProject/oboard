@@ -373,11 +373,11 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                           busy={planActionBusyId === p.plan_id}
                           disabled={addingPlan || planActionBusyId !== null}
                           onClick={() => void handleRemovePlan(p.plan_id, p.name)}
-                          style={{ color: 'var(--danger)', height: 26, padding: '0 8px', fontSize: 12 }}
+                          style={{ color: 'var(--danger)', width: 28, height: 28, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)' }}
                           title={`从套餐【${p.name}】移出此节点`}
+                          aria-label={`从套餐【${p.name}】移出此节点`}
                         >
-                          <Trash2 size={13} style={{ marginRight: 4 }} />
-                          移出
+                          <Trash2 size={14} />
                         </Button>
                       </div>
                     ))}
