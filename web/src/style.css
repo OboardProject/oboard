@@ -9119,7 +9119,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   display: grid;
   gap: 10px;
   padding: 14px 18px;
-  background: var(--surface-2);
+  background: var(--surface-solid);
 }
 
 .connectivity-window-switch {
