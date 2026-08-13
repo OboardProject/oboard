@@ -7,7 +7,7 @@ import {
   normalizeTheme,
   toggleThemeWithTransition,
 } from './theme'
-import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, MarkerType, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getViewportForBounds } from 'reactflow'
+import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, ConnectionLineType, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, MarkerType, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getViewportForBounds } from 'reactflow'
 import type { EdgeProps, ReactFlowInstance } from 'reactflow'
 import 'reactflow/dist/style.css'
 import type {
@@ -53,7 +53,7 @@ import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetO
 import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
 import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphFocusState, graphPathEdgeLabels, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
 import type { GraphFocusScope, GraphPathFocusState } from './components/proxy-path/graph-topology'
-import { roundedOrthogonalPath, type GraphRect } from './components/proxy-path/graph-geometry'
+import { curvedGraphPath, roundedOrthogonalPath, type GraphRect } from './components/proxy-path/graph-geometry'
 import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
 import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
 import './style.css'
@@ -9408,7 +9408,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    await client.request(`/proxy-paths/${result.proxy_path.id}`, { method: 'DELETE' }).catch(() => undefined)
 	    throw error
 	  }
-	  await load()
 	  return createdStep
 	}
 	const createDirectBranch = async (request: { inbound_id: number } | { source_step_id: number }): Promise<ProxyPath | null> => {
@@ -9428,7 +9427,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const candidateStep = { position: nextPosition, transport_mode: 'singbox' as ProxyPathTransportMode, config_json: '{}', ...target }
 	  if (target.transport_mode === 'port_forward' && path && !await ensureTransparentPrefixCompatible(path.id, path.inbound_id, [...pathSteps, candidateStep])) return null
 	  const result = await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({ path_id: step.path_id, position: nextPosition, transport_mode: 'singbox', config_json: '{}', ...target }) }) as { proxy_path_step?: ProxyPathStep }
-	  await load()
 	  return result.proxy_path_step || null
 	}
 	const consumeCanvasServerTarget = (targetID: string, createdSteps: ProxyPathStep[]) => {
@@ -9444,7 +9442,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    saveGraphPositions(next)
 	    return next
 	  })
-	  window.setTimeout(() => fitGraphToSafeArea(280), 60)
+	  window.setTimeout(() => fitGraphToSafeArea(280), 40)
 	}
 	const consumeCanvasDirectTarget = (targetID: string, createdPaths: ProxyPath[]) => {
 	  if (!targetID.startsWith('direct-exit-canvas-') || !createdPaths.length) return
@@ -9508,7 +9506,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			        }
 			      }
 			      consumeCanvasDirectTarget(conn.target, createdPaths)
-			      await load()
+			      await load(undefined, { background: true, forceFresh: true })
 			      if (failures.length) await dialogs.alert({ title: createdPaths.length ? '部分直接出口未添加' : '直接出口添加失败', message: failures.join('\n') })
 			      return
 			    }
@@ -9519,39 +9517,47 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			        const entry = entries.find(item => item.id === source.inbound_id)
 			        return entry ? createPathFromEntry(entry, target) : Promise.resolve(null)
 			      })
-		      consumeCanvasWARPTarget(conn.target, created)
-		      return
-		    }
-		    const target = await targetStepForGraphTarget(conn.target)
-		    if (!target) return
-		    if (target.node_type === 'server_inbound') {
+			      consumeCanvasWARPTarget(conn.target, created)
+			      await load(undefined, { background: true, forceFresh: true })
+			      return
+			    }
+			    const target = await targetStepForGraphTarget(conn.target)
+			    if (!target) return
+			    if (target.node_type === 'server_inbound') {
 			      const created = await reuseControlledTarget(sources, target, sourceEntity?.label)
-		      consumeCanvasServerTarget(conn.target, created)
-		      return
-		    }
+			      consumeCanvasServerTarget(conn.target, created)
+			      return
+			    }
 			    const transport = await chooseTransportForTarget(target, undefined, sourceEntity?.label)
-		    if (!transport) return
+			    if (!transport) return
 			    await runSharedAppends(sources, graphSourceLabel, source => {
 			      if (source.step_id) return appendPathAfterStep(source.step_id, { ...target, ...transport })
 			      const entry = entries.find(item => item.id === source.inbound_id)
 			      return entry ? createPathFromEntry(entry, { ...target, ...transport }) : Promise.resolve(null)
 			    })
-		    return
-		  }
-		  if (targetEntity?.type === 'warp') {
+			    await load(undefined, { background: true, forceFresh: true })
+			    return
+			  }
+			  if (targetEntity?.type === 'warp') {
 	    const target = { node_type: 'warp' as const, transport_mode: 'singbox' as const, config_json: '{}' }
 	    const sourcePathStepID = pathStepIDFromHandle(conn.sourceHandle)
 	    if (sourcePathStepID) {
 	      const sourceStep = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === sourcePathStepID)
 	      if (!sourceStep || sourceStep.node_type !== 'server_inbound') return dialogs.alert({ title: '无法连接 WARP', message: 'WARP 必须直接连接在可控服务器之后。' })
 	      const created = await appendPathAfterStep(sourcePathStepID, target)
-	      if (created) consumeCanvasWARPTarget(conn.target, [created])
+	      if (created) {
+	        consumeCanvasWARPTarget(conn.target, [created])
+	        await load(undefined, { background: true, forceFresh: true })
+	      }
 	      return
 	    }
 	    const sourceEntry = sourceEntity?.type === 'entry' ? entries.find(entry => entry.id === sourceEntity.id) : sourceHandleEntry
 	    if (sourceEntry) {
 	      const created = await createPathFromEntry(sourceEntry, target)
-	      if (created) consumeCanvasWARPTarget(conn.target, [created])
+	      if (created) {
+	        consumeCanvasWARPTarget(conn.target, [created])
+	        await load(undefined, { background: true, forceFresh: true })
+	      }
 	      return
 	    }
 	    return dialogs.alert({ title: '请选择服务器连接点', message: '从一级入口、服务器入口点或路径中的服务器继续连接点拖线到 WARP。' })
@@ -9565,7 +9571,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      const created = await createDirectBranch({ source_step_id: sourcePathStepID })
 	      if (created) {
 	        consumeCanvasDirectTarget(conn.target, [created])
-	        await load()
+	        await load(undefined, { background: true, forceFresh: true })
 	      }
 	      return
 	    }
@@ -9574,7 +9580,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      const created = await createDirectBranch({ inbound_id: sourceEntry.id })
 	      if (created) {
 	        consumeCanvasDirectTarget(conn.target, [created])
-	        await load()
+	        await load(undefined, { background: true, forceFresh: true })
 	      }
 	      return
 	    }
@@ -9588,7 +9594,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      consumeCanvasServerTarget(conn.target, created)
 	    } else if (target) {
 	      const transport = await chooseTransportForTarget(target)
-	      if (transport) await appendPathAfterStep(sourcePathStepID, { ...target, ...transport })
+	      if (transport) {
+	        await appendPathAfterStep(sourcePathStepID, { ...target, ...transport })
+	        await load(undefined, { background: true, forceFresh: true })
+	      }
 	    }
 	    return
 	  }
@@ -9596,7 +9605,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    const target = await targetStepForGraphTarget(conn.target)
 	    if (target?.node_type === 'imported') {
 	      const transport = await chooseTransportForTarget(target, undefined, sourceHandleEntry.name || sourceEntity?.label)
-	      if (transport) await createPathFromEntry(sourceHandleEntry, { ...target, ...transport })
+	      if (transport) {
+	        await createPathFromEntry(sourceHandleEntry, { ...target, ...transport })
+	        await load(undefined, { background: true, forceFresh: true })
+	      }
 	    } else if (target?.node_type === 'server_inbound') {
 	      const created = await reuseControlledTarget([{ inbound_id: sourceHandleEntry.id }], target, sourceHandleEntry.name || sourceEntity?.label)
 	      consumeCanvasServerTarget(conn.target, created)
@@ -9606,7 +9618,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  if (sourceEntity?.type === 'entry' && targetEntity?.type === 'imported') {
 	    const entry = entries.find(x => x.id === sourceEntity.id)
 	    const transport = await chooseTransportForTarget({ node_type: 'imported', external_outbound_id: targetEntity.id } as any, undefined, sourceEntity.label)
-	    if (entry && transport) await createPathFromEntry(entry, { node_type: 'imported', external_outbound_id: targetEntity.id, ...transport })
+	    if (entry && transport) {
+	      await createPathFromEntry(entry, { node_type: 'imported', external_outbound_id: targetEntity.id, ...transport })
+	      await load(undefined, { background: true, forceFresh: true })
+	    }
 	    return
 	  }
 	  if (sourceEntity?.type === 'entry' && (targetEntity?.type === 'entry' || targetEntity?.type === 'server')) {
@@ -9630,7 +9645,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    return
 	  }
 	  return dialogs.alert({ title: '请选择路径连接点', message: '从入口节点、一级服务器上的入口点，或路径中服务器/导入节点旁的继续连接点拖线。这样系统才能知道要追加哪一条代理路径。' })
-  }
+	}
   // React Flow does not await onConnect, so a rejected request would otherwise
   // surface only as an unhandled rejection in the console.
   const onConnect = (conn: Connection) => {
@@ -10293,6 +10308,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		  onPaneClick={clearGraphSelection}
 		  onMoveStart={closeGraphMenu}
           onConnect={onConnect}
+          connectionLineType={ConnectionLineType.SmoothStep}
           panOnScroll={false}
           zoomOnScroll
           zoomOnPinch 
@@ -11781,7 +11797,7 @@ function ProxyGraphEdge({
     if (import.meta.env.DEV) console.warn('[proxy-routing] failed to route edge', id)
     return null
   }
-  const path = roundedOrthogonalPath(points, 8)
+  const path = curvedGraphPath(points, 24)
   const labelX = data.route?.labelPoint?.x
   const labelY = data.route?.labelPoint?.y
   let phaseHash = 0

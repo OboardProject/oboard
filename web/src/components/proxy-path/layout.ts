@@ -58,14 +58,14 @@ export type ProxyLayoutOptions = {
 }
 
 export const GRAPH_ENTRY_NODE_WIDTH = 260
-export const GRAPH_LAYER_SIBLING_GAP = 100
-export const GRAPH_LAYER_SECONDARY_OFFSET_Y = 190
-export const PRIMARY_SUBTREE_GAP = 56
+export const GRAPH_LAYER_SIBLING_GAP = 72
+export const GRAPH_LAYER_SECONDARY_OFFSET_Y = 150
+export const PRIMARY_SUBTREE_GAP = 48
 export const ROUTING_TRACK_GAP = 14
-export const ROUTING_CHANNEL_PADDING = 28
-export const ROUTING_MIN_CHANNEL_HEIGHT = 120
-export const GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT = 220
-export const GRAPH_LAYOUT_EXIT_NODE_HEIGHT = 150
+export const ROUTING_CHANNEL_PADDING = 24
+export const ROUTING_MIN_CHANNEL_HEIGHT = 90
+export const GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT = 180
+export const GRAPH_LAYOUT_EXIT_NODE_HEIGHT = 130
 
 const POSITIONS_KEY = 'oboard.proxyGraph.positions.v6'
 const TOOLBOX_KEY = 'oboard.proxyGraph.toolboxPosition.v1'

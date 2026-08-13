@@ -92,11 +92,11 @@ export type RouteCandidateValidation = {
   crossings: number
 }
 
-export const NODE_CLEARANCE = 24
-export const PORT_MARGIN = 20
+export const NODE_CLEARANCE = 16
+export const PORT_MARGIN = 16
 export const ROUTING_TRACK_GAP = 14
-export const OUTER_GUTTER = 80
-export const OUTER_TRACK_GAP = 18
+export const OUTER_GUTTER = 60
+export const OUTER_TRACK_GAP = 16
 export const BEND_COST = 40
 export const CROSSING_COST = 5000
 export const NODE_PROXIMITY_COST = 6

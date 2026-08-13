@@ -172,7 +172,7 @@ function pointText(point: GraphPoint) {
   return `${point.x} ${point.y}`
 }
 
-export function roundedOrthogonalPath(points: GraphPoint[], radius = 8): string {
+export function roundedOrthogonalPath(points: GraphPoint[], radius = 24): string {
   const route = normalizeOrthogonalPoints(points)
   if (!route.length) return ''
   if (route.length === 1) return `M ${pointText(route[0])}`
@@ -183,7 +183,7 @@ export function roundedOrthogonalPath(points: GraphPoint[], radius = 8): string 
     const next = route[index + 1]
     const incomingLength = Math.abs(corner.x - previous.x) + Math.abs(corner.y - previous.y)
     const outgoingLength = Math.abs(next.x - corner.x) + Math.abs(next.y - corner.y)
-    const cornerRadius = Math.max(0, Math.min(radius, incomingLength / 2, outgoingLength / 2))
+    const cornerRadius = Math.max(0, Math.min(radius, incomingLength * 0.48, outgoingLength * 0.48))
     if (!cornerRadius) {
       path += ` L ${pointText(corner)}`
       continue
@@ -200,4 +200,19 @@ export function roundedOrthogonalPath(points: GraphPoint[], radius = 8): string 
   }
   path += ` L ${pointText(route[route.length - 1])}`
   return path
+}
+
+export function curvedGraphPath(points: GraphPoint[], radius = 24): string {
+  const route = normalizeOrthogonalPoints(points)
+  if (!route.length) return ''
+  if (route.length === 1) return `M ${pointText(route[0])}`
+  if (route.length === 2) {
+    const [p0, p1] = route
+    if (p0.x === p1.x || p0.y === p1.y) {
+      return `M ${pointText(p0)} L ${pointText(p1)}`
+    }
+    const midY = routingCoordinate((p0.y + p1.y) / 2)
+    return `M ${pointText(p0)} C ${p0.x} ${midY}, ${p1.x} ${midY}, ${pointText(p1)}`
+  }
+  return roundedOrthogonalPath(route, radius)
 }
