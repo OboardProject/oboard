@@ -17808,3 +17808,215 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   }
 }
 
+/* Komari Unified Chart Styles */
+.komari-chart-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--surface-solid);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  position: relative;
+  user-select: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.komari-chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.komari-chart-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-strong);
+}
+
+.komari-chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.komari-legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.komari-legend-chip:hover {
+  background: var(--surface-3);
+  color: var(--text-secondary);
+}
+
+.komari-legend-chip.active {
+  background: var(--surface-solid);
+  border-color: var(--border-strong, #64748b);
+  color: var(--text-strong);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.komari-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 8px;
+}
+
+.komari-legend-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.komari-legend-action-btn {
+  font-size: 11px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.komari-legend-action-btn:hover {
+  color: var(--color-primary, #3b82f6);
+}
+
+.komari-chart-canvas-wrap {
+  position: relative;
+  width: 100%;
+  touch-action: none;
+}
+
+.komari-chart-svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  display: block;
+}
+
+.komari-chart-grid-line {
+  stroke: var(--border);
+  stroke-dasharray: 4 4;
+  stroke-width: 1;
+}
+
+.komari-chart-axis-text {
+  fill: var(--muted);
+  font-size: 10px;
+  font-family: inherit;
+}
+
+.komari-chart-polyline {
+  transition: stroke-dashoffset 0.3s ease;
+}
+
+.komari-crosshair {
+  stroke: var(--text-secondary);
+  stroke-dasharray: 3 3;
+  stroke-width: 1.2;
+}
+
+.komari-tooltip-popover {
+  position: absolute;
+  z-index: 100;
+  pointer-events: none;
+  background: rgba(18, 18, 22, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-strong, #475569);
+  border-radius: 8px;
+  padding: 10px 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  color: #ffffff;
+  font-size: 11px;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 160px;
+  max-width: 280px;
+  transform: translate(-50%, -100%);
+  margin-top: -10px;
+  transition: left 0.05s ease-out;
+}
+
+.komari-tooltip-time {
+  font-size: 10px;
+  color: #94a3b8;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  padding-bottom: 4px;
+  font-weight: 600;
+}
+
+.komari-tooltip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.komari-tooltip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.komari-tooltip-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #e2e8f0;
+}
+
+.komari-tooltip-val {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+}
+
+.connectivity-live-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.connectivity-live-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+}
+.connectivity-live-card span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.connectivity-live-card strong {
+  font-size: 15px;
+  font-weight: 750;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+.connectivity-live-card small {
+  font-size: 10px;
+  color: var(--muted);
+}
