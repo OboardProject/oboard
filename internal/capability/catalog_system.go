@@ -80,7 +80,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		"created_at":            stringValue, "updated_at": stringValue,
 	})
 	descriptors := []Descriptor{
-		adminRead("settings.get", "读取主控全局设置（审计、订阅、通知、服务器默认值等，不含秘密）", schemaObject(nil), schemaObject(map[string]any{"settings": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}}, "settings")),
+		adminRead("settings.get", "读取主控全局设置（审计、订阅、通知、Agent 设置等，不含秘密）", schemaObject(nil), schemaObject(map[string]any{"settings": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}}, "settings")),
 		adminRead("subscription_relays.list", "列出受管订阅中继及其版本和在线状态（不含身份凭据）", schemaObject(nil), schemaObject(map[string]any{"subscription_relays": arrayOf(subscriptionRelay)}, "subscription_relays")),
 		adminRead("backups.list", "列出主控备份与备份设置（不返回恢复密码）", schemaObject(nil), schemaObject(map[string]any{"backups": arrayOf(closedObject(map[string]any{"id": stringValue, "name": stringValue, "origin": stringValue, "local_status": stringValue, "remote_status": stringValue, "size_bytes": map[string]any{"type": "integer"}, "created_at": stringValue})), "settings": closedObject(map[string]any{"enabled": boolValue, "schedule": stringValue, "time": stringValue, "local_retention": map[string]any{"type": "integer"}, "remote_retention": map[string]any{"type": "integer"}, "destination_configured": boolValue, "password_configured": boolValue, "last_success_at": nullableString(), "last_error": stringValue})}, "backups", "settings")),
 		adminRead("approval_policies.list", "列出自动化审批策略", schemaObject(nil), rawSchema(arrayOf(approvalPolicy))),

@@ -3120,7 +3120,7 @@ function SubscriptionRelayCommandDialog({ relay, enrollmentToken, controllerURL,
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'traffic' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3302,10 +3302,9 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     <nav className="settings-tabs" role="tablist" aria-label="设置分类">
       <button className={activeSection === 'connection' ? 'active' : ''} role="tab" aria-selected={activeSection === 'connection'} onClick={() => setActiveSection('connection')}><LinkIcon size={15} />基础设置</button>
       <button className={activeSection === 'registration' ? 'active' : ''} role="tab" aria-selected={activeSection === 'registration'} onClick={() => setActiveSection('registration')}><UserPlus size={15} />注册</button>
-      <button className={activeSection === 'servers' ? 'active' : ''} role="tab" aria-selected={activeSection === 'servers'} onClick={() => setActiveSection('servers')}><ServerIcon size={15} />服务器默认值</button>
+      <button className={activeSection === 'servers' ? 'active' : ''} role="tab" aria-selected={activeSection === 'servers'} onClick={() => setActiveSection('servers')}><ServerIcon size={15} />Agent 设置</button>
       <button className={activeSection === 'certificates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'certificates'} onClick={() => setActiveSection('certificates')}><Lock size={15} />证书</button>
       <button className={activeSection === 'subscriptions' ? 'active' : ''} role="tab" aria-selected={activeSection === 'subscriptions'} onClick={() => setActiveSection('subscriptions')}><Shield size={15} />订阅安全</button>
-      <button className={activeSection === 'traffic' ? 'active' : ''} role="tab" aria-selected={activeSection === 'traffic'} onClick={() => setActiveSection('traffic')}><Gauge size={15} />流量控制</button>
       <button className={activeSection === 'notifications' ? 'active' : ''} role="tab" aria-selected={activeSection === 'notifications'} onClick={() => setActiveSection('notifications')}><Bell size={15} />通知提醒</button>
       <button className={activeSection === 'backups' ? 'active' : ''} role="tab" aria-selected={activeSection === 'backups'} onClick={() => setActiveSection('backups')}><Database size={15} />数据备份</button>
       <button className={activeSection === 'updates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'updates'} onClick={() => setActiveSection('updates')}><Download size={15} />更新</button>
@@ -3408,7 +3407,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <div className="settings-actions"><button onClick={() => void saveRegistration()} disabled={Boolean(saving)}>{saving === 'registration' ? '保存中...' : '保存注册设置'}</button></div>
         </div>
       </section>}
-      {activeSection === 'servers' && <section className="settings-card">
+      {activeSection === 'servers' && <><section className="settings-card">
         <div className="settings-card-head"><div><h3>新服务器默认值</h3><p className="muted">创建服务器时自动带入，可在创建窗口中单独修改。</p></div></div>
         <div className="form settings-form single-field">
           <FormField label="MTU" hint="首次部署或设置变化时执行。">
@@ -3429,38 +3428,8 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </FormField>
           <div className="settings-actions"><button onClick={() => void saveServerDefaults()} disabled={Boolean(saving)}>{saving === 'server-defaults' ? '保存中...' : '保存默认值'}</button></div>
         </div>
-      </section>}
-      {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
-      {activeSection === 'subscriptions' && <><section className="settings-card">
-        <div className="settings-card-head">
-          <div><h3>Mihomo Age 加密</h3><p className="muted">服务端只保存用户公钥，私钥始终留在客户端。</p></div>
-          <span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>
-        </div>
-        <div className="form settings-form single-field">
-          <FormField label="加密策略" hint="仅影响 Mihomo 和 Clash 格式。">
-            <Select
-              variant="segmented"
-              value={subscriptionAgePolicy}
-              onChange={e => {
-                const next = e.target.value as 'optional' | 'required'
-                setSubscriptionAgePolicy(next)
-                void saveSubscriptionAgePolicy(next)
-              }}
-              disabled={saving === 'subscription-age'}
-              aria-label="Age 加密策略"
-            >
-              <option value="optional">用户可选</option>
-              <option value="required">强制开启</option>
-            </Select>
-          </FormField>
-          <div className="subscription-security-note">
-            <Shield size={18} />
-            <div><strong>{subscriptionAgePolicy === 'required' ? 'Mihomo 订阅必须加密' : '普通订阅与加密订阅并存'}</strong><span>{subscriptionAgePolicy === 'required' ? '没有配置 Age 公钥的用户将无法获取 Mihomo 格式，直到保存公钥。' : '用户可在自己的账户页面开启，已有普通订阅链接不会失效。'}</span></div>
-          </div>
-        </div>
       </section>
-      <SubscriptionRelayManager data={data} client={client} load={load} notify={notify} /></>}
-      {activeSection === 'traffic' && <section className="settings-card">
+      <section className="settings-card">
         <div className="settings-card-head"><div><h3>流量控制</h3><p className="muted">用于计算用户当前周期流量，并在达量后暂停节点使用。</p></div></div>
         <div className="form settings-form two-column">
           <FormField label="统计时区" hint="用于计算流量重置时间。">
@@ -3478,7 +3447,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <div className="settings-actions"><button onClick={saveTraffic} disabled={Boolean(saving)}>{saving === 'traffic' ? '保存中...' : '保存流量设置'}</button></div>
           <p className="muted">Agent 会保留本地可用额度；面板暂时不可达时，节点仍会按已下发额度暂停超量用户。</p>
         </div>
-      </section>}
+      </section></>}
       {activeSection === 'notifications' && <section className="settings-card">
         <div className="settings-card-head"><div><h3>服务器离线与恢复提醒</h3><p className="muted">统一控制离线判断时间和恢复提醒的延迟窗口，也可以为单台服务器单独覆盖。</p></div></div>
         <div className="form settings-form single-field">
