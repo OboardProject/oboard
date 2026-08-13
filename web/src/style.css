@@ -9435,8 +9435,28 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .connectivity-head .server-monitor-tabs {
   margin: 0;
 }
+.connectivity-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
 .connectivity-head .dialog-close {
   margin-left: 0;
+}
+.connectivity-refresh-btn {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  transition: all 0.15s ease;
+}
+.connectivity-refresh-btn:hover {
+  color: var(--text-strong);
+  background: var(--surface-2);
 }
 .connectivity-title { min-width: 0; gap: 9px; }
 .connectivity-title > div { min-width: 0; }
@@ -9465,7 +9485,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     flex: 1 1 auto;
     min-width: 0;
   }
-  .connectivity-head .dialog-close {
+  .connectivity-head .connectivity-head-actions {
     margin-left: auto;
     flex-shrink: 0;
   }
@@ -9488,9 +9508,9 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     border-radius: var(--radius-full);
   }
   .server-monitor-window-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
+    display: flex;
+    align-items: center;
+    width: 100%;
   }
   .server-monitor-window-toggle {
     display: grid;

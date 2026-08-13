@@ -7791,7 +7791,6 @@ function ServerLoadPanel({ server, response, loading, error, windowHours, onWind
       <div className="server-monitor-window-toggle" role="radiogroup" aria-label="负载时间范围">
         {windowOptions.map(option => <button key={option.hours} type="button" role="radio" aria-checked={windowHours === option.hours} className={windowHours === option.hours ? 'active' : ''} onClick={() => onWindowChange(option.hours)}>{option.label}</button>)}
       </div>
-      <button type="button" className="ghost icon-button" onClick={onRetry} disabled={loading} aria-label="刷新负载数据" title="刷新"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
     </div>
     {error ? <div className="resource-history-state error"><AlertTriangle size={18} aria-hidden="true" /><span>{error}</span><button type="button" className="ghost" onClick={onRetry}>重试</button></div>
       : loading && !response ? <div className="resource-history-state"><Loader2 size={20} className="spin" aria-hidden="true" /><span>正在读取负载数据</span></div>
@@ -8510,6 +8509,15 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
     selectMonitorView(event.key === 'ArrowRight' || event.key === 'End' ? 'latency' : 'load')
   }
 
+  const isMonitorRefreshing = activeView === 'load' ? resourceLoading : (loading || probeLoading)
+  const refreshMonitorData = () => {
+    if (activeView === 'load') {
+      void loadResourceData(loadWindowHours)
+    } else {
+      void loadAllData(windowKey)
+    }
+  }
+
   return <MotionDialogPanel onCancel={onClose} className="connectivity-dialog">
     <header className="dialog-head connectivity-head">
       <div className="connectivity-title">
@@ -8523,7 +8531,19 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
         <button id="server-monitor-load-tab" type="button" role="tab" tabIndex={activeView === 'load' ? 0 : -1} aria-selected={activeView === 'load'} aria-controls="server-monitor-load-panel" className={activeView === 'load' ? 'active' : ''} onClick={() => setActiveView('load')} onKeyDown={handleMonitorTabKeyDown}><Activity size={14} aria-hidden="true" />负载</button>
         <button id="server-monitor-latency-tab" type="button" role="tab" tabIndex={activeView === 'latency' ? 0 : -1} aria-selected={activeView === 'latency'} aria-controls="server-monitor-latency-panel" className={activeView === 'latency' ? 'active' : ''} onClick={() => setActiveView('latency')} onKeyDown={handleMonitorTabKeyDown}><Gauge size={14} aria-hidden="true" />延迟</button>
       </div>
-      <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
+      <div className="connectivity-head-actions">
+        <button
+          type="button"
+          className="ghost icon-button connectivity-refresh-btn"
+          onClick={refreshMonitorData}
+          disabled={isMonitorRefreshing}
+          aria-label="刷新监控数据"
+          title="刷新监控数据"
+        >
+          <RefreshCw size={15} className={isMonitorRefreshing ? 'spin' : ''} />
+        </button>
+        <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
+      </div>
     </header>
     <div className="dialog-body connectivity-body">
       {activeView === 'load' ? <ServerLoadPanel server={server} response={resourceResponse} loading={resourceLoading} error={resourceError} windowHours={loadWindowHours} onWindowChange={setLoadWindowHours} onRetry={() => void loadResourceData(loadWindowHours)} /> : <div className="server-monitor-panel" role="tabpanel" id="server-monitor-latency-panel" aria-labelledby="server-monitor-latency-tab">
@@ -8543,16 +8563,6 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            className="ghost icon-button"
-            onClick={() => void loadAllData(windowKey)}
-            disabled={loading || probeLoading}
-            aria-label="刷新延迟数据"
-            title="刷新"
-          >
-            <RefreshCw size={15} className={(loading || probeLoading) ? 'spin' : ''} />
-          </button>
         </div>
 
         {loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载监控与延迟统计</strong></div>
