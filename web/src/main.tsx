@@ -8081,12 +8081,12 @@ function ServerUnifiedTelemetryChart({
   const hasPercentageSeries = includeResources
   const activeSeries = seriesList.filter(s => enabledSeries[s.id] !== false)
 
-  const W = 680
-  const H = 200
-  const padL = hasPercentageSeries ? 40 : 16
-  const padR = 48
-  const padT = 16
-  const padB = 165
+  const W = 1000
+  const H = 160
+  const padL = hasPercentageSeries ? 45 : 12
+  const padR = 56
+  const padT = 12
+  const padB = 135
   const plotW = W - padL - padR
   const plotH = padB - padT
 
