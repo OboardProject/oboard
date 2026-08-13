@@ -13053,6 +13053,35 @@ button[aria-busy="true"] {
   background-color: var(--color-danger-bg);
   color: var(--color-danger);
 }
+
+.plan-assigned-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-solid);
+  overflow: hidden;
+}
+
+.plan-assigned-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  transition: background 0.12s ease;
+}
+
+.plan-assigned-row:hover {
+  background: var(--surface-2);
+}
+
+.plan-remove-icon-btn {
+  color: var(--muted) !important;
+  transition: color 0.15s ease, background 0.15s ease !important;
+}
+
+.plan-remove-icon-btn:hover {
+  color: var(--danger) !important;
+  background: color-mix(in srgb, var(--danger) 10%, transparent) !important;
+}
 .badge-info {
   background-color: var(--color-primary-light);
   color: var(--color-primary);

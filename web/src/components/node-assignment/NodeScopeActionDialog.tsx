@@ -328,42 +328,39 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
               </div>
 
               {/* Section 1: 套餐 */}
-              <div className="card-custom" style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className="card-custom" style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <Package size={15} style={{ color: 'var(--color-primary, #3b82f6)' }} />
-                    <h3 style={{ margin: 0, fontSize: 13.5, fontWeight: 700 }}>套餐</h3>
+                    <h3 style={{ margin: 0, fontSize: 13.5, fontWeight: 700 }}>所属套餐</h3>
                   </div>
-                  <span className="muted" style={{ fontSize: 11.5 }}>包含在 {assignedPlans.length} 个套餐中</span>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    包含在 <strong>{assignedPlans.length}</strong> 个套餐中
+                  </span>
                 </div>
 
                 {/* Plan list */}
                 {loadingPlans ? (
                   <p className="muted" style={{ margin: '4px 0', fontSize: 12 }}>正在加载包含此节点的套餐...</p>
                 ) : assignedPlans.length === 0 ? (
-                  <div style={{ padding: '12px', textAlign: 'center', background: 'var(--surface-2)', borderRadius: 'var(--radius-md)', color: 'var(--muted)', fontSize: 12 }}>
+                  <div style={{ padding: '14px 12px', textAlign: 'center', background: 'var(--surface-2)', borderRadius: 'var(--radius-md)', color: 'var(--muted)', fontSize: 12.5 }}>
                     当前节点尚未加入任何套餐
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {assignedPlans.map(p => (
+                  <div className="plan-assigned-list">
+                    {assignedPlans.map((p, index) => (
                       <div
                         key={p.plan_id}
+                        className="plan-assigned-row"
                         style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          padding: '6px 10px',
-                          background: 'var(--surface-2)',
-                          borderRadius: 'var(--radius-md)',
-                          border: '1px solid var(--border)',
+                          borderBottom: index < assignedPlans.length - 1 ? '1px solid var(--border)' : 'none',
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                           <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-strong)' }}>{p.name}</span>
                           {p.display_group && (
-                            <span style={{ fontSize: 11, padding: '1px 6px', background: 'var(--surface-3)', borderRadius: 4, color: 'var(--muted)' }}>
-                              分组：{p.display_group}
+                            <span style={{ fontSize: 11, padding: '1px 6px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--muted)' }}>
+                              {p.display_group}
                             </span>
                           )}
                         </div>
@@ -373,11 +370,12 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                           busy={planActionBusyId === p.plan_id}
                           disabled={addingPlan || planActionBusyId !== null}
                           onClick={() => void handleRemovePlan(p.plan_id, p.name)}
-                          style={{ color: 'var(--danger)', width: 28, height: 28, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)' }}
+                          style={{ width: 26, height: 26, minWidth: 26, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-sm)' }}
+                          className="plan-remove-icon-btn"
                           title={`从套餐【${p.name}】移出此节点`}
                           aria-label={`从套餐【${p.name}】移出此节点`}
                         >
-                          <Trash2 size={14} />
+                          <Trash2 size={13.5} />
                         </Button>
                       </div>
                     ))}
@@ -385,28 +383,29 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                 )}
 
                 {/* Add to plan toolbar */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4, paddingTop: 10, borderTop: '1px dashed var(--border)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 1fr) minmax(110px, 140px) auto', gap: 8, alignItems: 'center', marginTop: 2 }}>
                   <Select
                     value={selectedAddPlanID}
                     onChange={e => setSelectedAddPlanID(Number(e.target.value))}
-                    style={{ minWidth: 160, flex: '1 1 160px' }}
+                    style={{ height: 34, fontSize: 12.5 }}
                     aria-label="选择要加入的套餐"
                   >
-                    <option value={0}>选择要加入的套餐</option>
+                    <option value={0}>选择要加入的套餐...</option>
                     {unaddedPlans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </Select>
                   <Input
                     value={addDisplayGroup}
                     onChange={e => setAddDisplayGroup(e.target.value)}
                     placeholder="展示分组（可选）"
-                    style={{ maxWidth: 160, flex: '1 1 120px' }}
+                    style={{ height: 34, fontSize: 12.5 }}
                   />
                   <Button
                     size="sm"
+                    variant="secondary"
                     busy={addingPlan}
                     disabled={!selectedAddPlanID || planActionBusyId !== null}
                     onClick={() => void handleAddPlan()}
-                    style={{ whiteSpace: 'nowrap' }}
+                    style={{ height: 34, padding: '0 12px', fontSize: 12.5, whiteSpace: 'nowrap' }}
                   >
                     <Plus size={14} style={{ marginRight: 4 }} />
                     加入套餐
