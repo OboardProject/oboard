@@ -34,6 +34,7 @@ type serverUpdateChanges struct {
 	InternalPortRangeStart   *int                        `json:"internal_port_range_start,omitempty"`
 	InternalPortRangeEnd     *int                        `json:"internal_port_range_end,omitempty"`
 	ConnectionAuditEnabled   *bool                       `json:"connection_audit_enabled,omitempty"`
+	ResourceHistoryEnabled   *bool                       `json:"resource_history_enabled,omitempty"`
 	LatencyProbeEnabled      *bool                       `json:"latency_probe_enabled,omitempty"`
 	LatencyProbeMode         *model.LatencyProbeMode     `json:"latency_probe_mode,omitempty"`
 	LatencyProbePublicTarget *model.ConnectivityTarget   `json:"latency_probe_public_target,omitempty"`
@@ -140,6 +141,7 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("internal_port_range_start", changes.InternalPortRangeStart != nil, func() { next.InternalPortRangeStart = *changes.InternalPortRangeStart })
 	set("internal_port_range_end", changes.InternalPortRangeEnd != nil, func() { next.InternalPortRangeEnd = *changes.InternalPortRangeEnd })
 	set("connection_audit_enabled", changes.ConnectionAuditEnabled != nil, func() { next.ConnectionAuditEnabled = *changes.ConnectionAuditEnabled })
+	set("resource_history_enabled", changes.ResourceHistoryEnabled != nil, func() { next.ResourceHistoryEnabled = *changes.ResourceHistoryEnabled })
 	set("latency_probe_enabled", changes.LatencyProbeEnabled != nil, func() { next.LatencyProbeEnabled = *changes.LatencyProbeEnabled })
 	set("latency_probe_mode", changes.LatencyProbeMode != nil, func() { next.LatencyProbeMode = *changes.LatencyProbeMode })
 	set("latency_probe_public_target", changes.LatencyProbePublicTarget != nil, func() { next.LatencyProbePublicTarget = *changes.LatencyProbePublicTarget })

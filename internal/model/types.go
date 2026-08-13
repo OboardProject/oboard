@@ -808,6 +808,8 @@ type Server struct {
 	AgentBuild                  string               `json:"agent_build"`
 	SingBoxVersion              string               `json:"sing_box_version"`
 	MonitoringMode              string               `json:"monitoring_mode"`
+	ResourceHistoryEnabled      bool                 `json:"resource_history_enabled"`
+	ResourceHistoryConfigured   bool                 `json:"-"`
 	TrafficResetMode            string               `json:"traffic_reset_mode"`
 	TrafficResetDay             int                  `json:"traffic_reset_day"`
 	NetworkUploadBPS            uint64               `json:"network_upload_bps"`
@@ -2562,7 +2564,15 @@ type ServerMetricSample struct {
 	TrafficDownloadBytes  uint64    `json:"traffic_download_bytes"`
 	ConnectivityAvailable *bool     `json:"connectivity_available,omitempty"`
 	ConnectivityLatencyMS int64     `json:"connectivity_latency_ms"`
+	ResourceRecorded      bool      `json:"resource_recorded"`
 	SampledAt             time.Time `json:"sampled_at"`
+}
+
+type ServerResourceMetricPoint struct {
+	SampledAt        time.Time `json:"sampled_at"`
+	CPUUsagePercent  float64   `json:"cpu_usage_percent"`
+	MemoryUsedBytes  uint64    `json:"memory_used_bytes"`
+	MemoryTotalBytes uint64    `json:"memory_total_bytes"`
 }
 
 type DashboardSummary struct {

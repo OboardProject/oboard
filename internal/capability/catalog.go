@@ -205,7 +205,8 @@ func defaultDescriptors() []Descriptor {
 		"mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"}, "bbr_enabled": boolValue,
 		"agent_connected": boolValue, "agent_version": stringValue, "agent_build": stringValue,
 		"kernel_version": stringValue, "connection_audit_enabled": boolValue,
-		"latency_probe_enabled": boolValue, "latency_probe_mode": stringValue, "latency_probe_public_target": stringValue,
+		"resource_history_enabled": boolValue,
+		"latency_probe_enabled":    boolValue, "latency_probe_mode": stringValue, "latency_probe_public_target": stringValue,
 		"latency_probe_interval_seconds": map[string]any{"type": "integer"}, "latency_probe_sample_count": map[string]any{"type": "integer"},
 		"latency_probe_regions":          map[string]any{"type": "array", "items": closedObject(map[string]any{"province": stringValue, "carrier": stringValue}, "province", "carrier")},
 		"latency_probe_max_targets":      map[string]any{"type": "integer"},
@@ -275,8 +276,8 @@ func defaultDescriptors() []Descriptor {
 	probeRegion := closedObject(map[string]any{"province": map[string]any{"type": "string", "minLength": 1}, "carrier": map[string]any{"type": "string", "minLength": 1}}, "province", "carrier")
 	serverOnboardingInput := schemaObject(map[string]any{
 		"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "region_code": map[string]any{"type": "string", "pattern": "^[A-Za-z]{2}$"},
-		"ip_stack":              map[string]any{"type": "string", "enum": []string{"auto", "ipv4_only", "ipv6_only", "dual_stack", "prefer_ipv4", "prefer_ipv6"}},
-		"latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}}, "latency_probe_public_target": probeTarget,
+		"ip_stack":                 map[string]any{"type": "string", "enum": []string{"auto", "ipv4_only", "ipv6_only", "dual_stack", "prefer_ipv4", "prefer_ipv6"}},
+		"resource_history_enabled": boolValue, "latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}}, "latency_probe_public_target": probeTarget,
 		"latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
 		"latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion}, "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
 	}, "name")
@@ -541,7 +542,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		serverInput := closedObject(map[string]any{
 			"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "region_code": stringValue, "ip_stack": stringValue, "listen_ip": stringValue, "listen_mode": stringValue, "entry_address": stringValue,
 			"port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"}, "udp_inbound_mode": stringValue, "mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"}, "bbr_enabled": boolValue,
-			"latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}}, "latency_probe_public_target": probeTarget,
+			"resource_history_enabled": boolValue, "latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}}, "latency_probe_public_target": probeTarget,
 			"latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
 			"latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion}, "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
 		})
@@ -558,7 +559,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"mtu_overhead_bytes": map[string]any{"type": "integer"}, "bbr_enabled": boolValue,
 			"port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"},
 			"internal_port_range_start": map[string]any{"type": "integer"}, "internal_port_range_end": map[string]any{"type": "integer"},
-			"connection_audit_enabled": boolValue, "time_correction_mode": stringValue,
+			"connection_audit_enabled": boolValue, "resource_history_enabled": boolValue, "time_correction_mode": stringValue,
 			"latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}},
 			"latency_probe_public_target": probeTarget, "latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400},
 			"latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10}, "latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion},

@@ -214,7 +214,15 @@ type BackupDestination = { provider: 's3' | 'webdav' | ''; endpoint: string; buc
 type ControllerBackup = { id: string; name: string; origin: 'manual' | 'automatic' | 'uploaded' | 'pre_restore' | string; local_status: string; remote_status: string; remote_error?: string; remote_retrievable: boolean; size_bytes: number; source_version: string; format_version: number; protected: boolean; created_at: string }
 type ControllerBackupSettings = { enabled: boolean; schedule: 'daily' | 'weekly'; time: string; weekday: number; local_retention: number; remote_retention: number; destination: BackupDestination; password_configured: boolean; destination_configured: boolean; last_success_at?: string; last_error?: string }
 type ControllerBackupSnapshot = { settings: ControllerBackupSettings; backups: ControllerBackup[] }
-type ServerMetricSample = { id: number; server_id: number; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; network_upload_bps: number; network_download_bps: number; traffic_upload_bytes: number; traffic_download_bytes: number; connectivity_available?: boolean; connectivity_latency_ms: number; sampled_at: string }
+type ServerMetricSample = { id: number; server_id: number; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; resource_recorded: boolean; network_upload_bps: number; network_download_bps: number; traffic_upload_bytes: number; traffic_download_bytes: number; connectivity_available?: boolean; connectivity_latency_ms: number; sampled_at: string }
+type ServerResourceMetricPoint = { sampled_at: string; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number }
+type ServerResourceMetricsResponse = {
+  history_enabled: boolean
+  window_hours: number
+  bucket_seconds: number
+  points: ServerResourceMetricPoint[]
+  current: { cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; sampled_at?: string }
+}
 type LatencyProbeMode = 'tcp' | 'icmp'
 type LatencyProbeRegion = { province: string; carrier: string }
 type LatencyProbeResult = { probe_id: string; kind: 'public' | 'regional'; mode: LatencyProbeMode; province: string; carrier: string; host: string; ip: string; port: number; available: boolean; latency_ms: number; min_latency_ms: number; p95_latency_ms: number; jitter_ms: number; sample_count: number; success_count: number; error?: string; checked_at: string }
@@ -6107,7 +6115,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', traffic_reset_mode: 'monthly', traffic_reset_day: 1, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
 }
 
 function GridViewIcon() {
@@ -6162,6 +6170,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [mtuServer, setMtuServer] = useState<Server | null>(null)
   const [dnsServer, setDNSServer] = useState<Server | null>(null)
   const [detailServer, setDetailServer] = useState<Server | null>(null)
+  const [resourceServer, setResourceServer] = useState<Server | null>(null)
   const [timeDetailServer, setTimeDetailServer] = useState<Server | null>(null)
   const [connectivityServer, setConnectivityServer] = useState<{ server: Server } | null>(null)
   const [view, setViewState] = useState<'grid' | 'list'>(() => {
@@ -6460,6 +6469,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   }
   const handleServerAction = async (type: string, s: Server) => {
     if (type === 'details') setDetailServer(s)
+    else if (type === 'resource-details') setResourceServer(s)
     else if (type === 'time-details') setTimeDetailServer(s)
     else if (type === 'connectivity-details') setConnectivityServer({ server: s })
     else if (type === 'edit') setEditServer(s)
@@ -6599,6 +6609,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} onClose={() => setDetailServer(null)} />}</AnimatePresence>
+    <AnimatePresence>{resourceServer && <ServerResourceDialog server={resourceServer} client={client} onClose={() => setResourceServer(null)} />}</AnimatePresence>
     <AnimatePresence>{timeDetailServer && <ServerTimeDetailDialog
       server={timeDetailServer}
       role={role}
@@ -6651,6 +6662,7 @@ function appendLiveServerMetrics(current: ServerMetricSample[], servers: Server[
       cpu_usage_percent: server.cpu_usage_percent || 0,
       memory_used_bytes: server.memory_used_bytes || 0,
       memory_total_bytes: server.memory_total_bytes || 0,
+      resource_recorded: Boolean(server.resource_history_enabled),
       network_upload_bps: server.network_upload_bps || 0,
       network_download_bps: server.network_download_bps || 0,
       traffic_upload_bytes: server.traffic_upload_bytes || 0,
@@ -6952,6 +6964,9 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
               <option value="standard">标准</option>
             </Select>
           </FormField>
+          <FormField label="CPU / 内存历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
+            <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="CPU / 内存历史" />
+          </FormField>
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
           <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
             <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
@@ -7042,6 +7057,9 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           <div className="form-section-title">监控与流量</div>
           <FormField label="回报模式" hint="轻量 20 秒，标准 10 秒。">
             <Select variant="segmented" value={draft.monitoring_mode || 'lightweight'} onChange={e => update({ monitoring_mode: e.target.value })}><option value="lightweight">轻量</option><option value="standard">标准</option></Select>
+          </FormField>
+          <FormField label="CPU / 内存历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
+            <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="CPU / 内存历史" />
           </FormField>
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
           <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
@@ -7414,6 +7432,107 @@ function ServerTelemetryChart({ samples, type }: { samples: ServerMetricSample[]
   </div>
 }
 
+function ServerResourceHistoryChart({ points, type }: { points: ServerResourceMetricPoint[]; type: 'cpu' | 'memory' }) {
+  const values = points.map(point => type === 'cpu'
+    ? Number(point.cpu_usage_percent || 0)
+    : point.memory_total_bytes > 0 ? Number(point.memory_used_bytes || 0) / Number(point.memory_total_bytes) * 100 : 0)
+  const average = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0
+  const peak = values.length ? Math.max(...values) : 0
+  if (points.length < 2) {
+    return <div className="resource-history-empty"><Activity size={18} aria-hidden="true" /><span>等待更多历史数据</span></div>
+  }
+  return <section className={`resource-history-chart ${type}`}>
+    <div className="resource-history-chart-head">
+      <div><strong>{type === 'cpu' ? 'CPU 使用率' : '内存使用率'}</strong><span>平均 {average.toFixed(1)}%</span></div>
+      <b>{peak.toFixed(1)}% 峰值</b>
+    </div>
+    <div className="resource-history-plot">
+      <svg viewBox="0 0 640 128" preserveAspectRatio="none" role="img" aria-label={`${type === 'cpu' ? 'CPU' : '内存'}使用率历史趋势`}>
+        <line x1="0" y1="32" x2="640" y2="32" className="resource-history-grid" />
+        <line x1="0" y1="64" x2="640" y2="64" className="resource-history-grid" />
+        <line x1="0" y1="96" x2="640" y2="96" className="resource-history-grid" />
+        <polyline points={telemetryPolyline(values, 640, 128, 100)} className="resource-history-line" vectorEffect="non-scaling-stroke" />
+      </svg>
+      <span className="resource-history-scale top">100%</span>
+      <span className="resource-history-scale middle">50%</span>
+      <span className="resource-history-scale bottom">0%</span>
+    </div>
+    <div className="resource-history-axis"><time>{formatTableTime(points[0].sampled_at)}</time><time>{formatTableTime(points[points.length - 1].sampled_at)}</time></div>
+  </section>
+}
+
+function ServerResourceDialog({ server, client, onClose }: { server: Server; client: any; onClose: () => void }) {
+  const [windowHours, setWindowHours] = useState(24)
+  const [response, setResponse] = useState<ServerResourceMetricsResponse | null>(null)
+  const [loading, setLoading] = useState(Boolean(server.resource_history_enabled))
+  const [error, setError] = useState('')
+
+  const loadResourceHistory = React.useCallback(async (hours: number) => {
+    if (!server.resource_history_enabled) {
+      setResponse({
+        history_enabled: false,
+        window_hours: hours,
+        bucket_seconds: 0,
+        points: [],
+        current: {
+          cpu_usage_percent: server.cpu_usage_percent || 0,
+          memory_used_bytes: server.memory_used_bytes || 0,
+          memory_total_bytes: server.memory_total_bytes || 0,
+          sampled_at: server.telemetry_updated_at,
+        },
+      })
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      const result = await client.request(`/servers/${server.id}/resource-metrics?hours=${hours}`) as ServerResourceMetricsResponse
+      setResponse(result)
+    } catch (loadError: any) {
+      setError(localizeErrorMessage(loadError?.message || loadError))
+    } finally {
+      setLoading(false)
+    }
+  }, [client, server])
+
+  useEffect(() => { void loadResourceHistory(windowHours) }, [loadResourceHistory, windowHours])
+
+  const current = response?.current || {
+    cpu_usage_percent: server.cpu_usage_percent || 0,
+    memory_used_bytes: server.memory_used_bytes || 0,
+    memory_total_bytes: server.memory_total_bytes || 0,
+    sampled_at: server.telemetry_updated_at,
+  }
+  const memoryPercent = current.memory_total_bytes > 0 ? current.memory_used_bytes / current.memory_total_bytes * 100 : 0
+
+  return <MotionDialogPanel onCancel={onClose} className="server-resource-dialog">
+    <header className="dialog-head resource-dialog-head">
+      <div className="resource-dialog-title"><Gauge size={22} aria-hidden="true" /><div><h2>{server.name || `server-${server.id}`} · 系统资源</h2><p>{server.resource_history_enabled ? 'CPU 与内存历史' : 'CPU 与内存实时状态'}</p></div></div>
+      <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body resource-dialog-body">
+      <section className="resource-live-summary" aria-label="当前系统资源">
+        <div><span>CPU</span><strong>{Number(current.cpu_usage_percent).toFixed(1)}%</strong></div>
+        <div><span>内存</span><strong>{memoryPercent.toFixed(1)}%</strong><small>{current.memory_total_bytes ? `${formatBytes(current.memory_used_bytes)} / ${formatBytes(current.memory_total_bytes)}` : '—'}</small></div>
+        <time dateTime={current.sampled_at || undefined}>{current.sampled_at ? `更新于 ${formatTableTime(current.sampled_at)}` : '等待实时数据'}</time>
+      </section>
+      {server.resource_history_enabled ? <>
+        <div className="resource-history-toolbar">
+          <div className="resource-window-toggle" role="radiogroup" aria-label="资源历史时间范围">
+            {[1, 6, 24, 48].map(hours => <button key={hours} type="button" role="radio" aria-checked={windowHours === hours} className={windowHours === hours ? 'active' : ''} onClick={() => setWindowHours(hours)}>{hours} 小时</button>)}
+          </div>
+          <button type="button" className="ghost icon-button" onClick={() => void loadResourceHistory(windowHours)} disabled={loading} aria-label="刷新资源历史" title="刷新"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
+        </div>
+        {error ? <div className="resource-history-state error"><AlertTriangle size={18} aria-hidden="true" /><span>{error}</span><button type="button" className="ghost" onClick={() => void loadResourceHistory(windowHours)}>重试</button></div>
+          : loading && !response ? <div className="resource-history-state"><Loader2 size={20} className="spin" aria-hidden="true" /><span>正在读取历史数据</span></div>
+          : <div className="resource-history-charts"><ServerResourceHistoryChart points={response?.points || []} type="cpu" /><ServerResourceHistoryChart points={response?.points || []} type="memory" /></div>}
+      </> : <div className="resource-history-state disabled"><Database size={20} aria-hidden="true" /><strong>历史记录已关闭</strong><span>主控只显示 Agent 最新上报的 CPU 和内存，不保存历史数据。</span></div>}
+    </div>
+    <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
+  </MotionDialogPanel>
+}
+
 function serverTrafficPeriodLabel(server: Server) {
   if ((server.traffic_reset_mode || 'monthly') === 'month_day') return `每月 ${server.traffic_reset_day || 1} 日重置`
   return '自然月重置'
@@ -7474,13 +7593,13 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
           </div>
         </div>
 
-        <div className="server-list-metric-item">
+        <button type="button" className="server-list-metric-item server-resource-open" onClick={() => onAction('resource-details', server)} aria-label="查看 CPU 和内存详情">
           <span className="server-list-metric-label">CPU / 内存</span>
           <div className="server-list-metric-value">
             <span style={{ fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>{Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
             <span className="muted" style={{ fontSize: 11, marginLeft: 6, fontVariantNumeric: 'tabular-nums' }}>{serverMemoryLabel(server)} ({memPercent}%)</span>
           </div>
-        </div>
+        </button>
 
         <div className="server-list-metric-item">
           <span className="server-list-metric-label">实时速率 / 本周期</span>
@@ -7561,8 +7680,8 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
         fontSize: '12px'
       }}>
         {/* CPU & Memory bars */}
-        <div style={{ gridColumn: 'span 2' }}>
-          <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, display: 'block', marginBottom: '6px' }}>系统资源</span>
+        <button type="button" className="server-resource-summary" style={{ gridColumn: 'span 2' }} onClick={() => onAction('resource-details', server)} aria-label="查看 CPU 和内存详情">
+          <span className="server-resource-summary-head"><span>系统资源</span><small>{server.resource_history_enabled ? '历史已开启' : '仅实时'}</small><ChevronRight size={13} aria-hidden="true" /></span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {/* CPU Progress */}
             <div>
@@ -7598,7 +7717,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
               </div>
             </div>
           </div>
-        </div>
+        </button>
 
         <div className="server-telemetry" style={{ gridColumn: 'span 2' }}>
           <div className="server-telemetry-heading">

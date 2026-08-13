@@ -57,6 +57,7 @@ export type Server = {
   agent_build: string
   sing_box_version: string
   monitoring_mode: 'lightweight' | 'standard'
+  resource_history_enabled: boolean
   traffic_reset_mode: string
   traffic_reset_day: number
   network_upload_bps: number

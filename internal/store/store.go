@@ -48,7 +48,7 @@ const (
 
 const serverSelectSQL = `select id,name,coalesce(agent_id,''),coalesce(agent_token_hash,''),chain_secret,coalesce(enrollment_hash,''),enrollment_expires_at,entry_address,coalesce(public_ipv4,''),coalesce(public_ipv6,''),coalesce(interface_ipv6,''),coalesce(region_code,''),coalesce(detected_region_code,''),coalesce(region_mode,'auto'),coalesce(entry_ip_mode,'auto'),listen_ip,coalesce(listen_mode,'auto'),ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,internal_port_range_start,internal_port_range_end,port_policy_revision,status,os,coalesce(distro_id,''),coalesce(distro_version,''),coalesce(distro_name,''),coalesce(libc,''),coalesce(service_manager,''),coalesce(package_manager,''),arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,coalesce(agent_version,''),coalesce(agent_build,''),sing_box_version,connection_audit_enabled,last_seen_at,created_at,updated_at from servers`
 
-const serverTelemetrySelectSQL = `select server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error,offline_notify_enabled,offline_after_seconds from server_telemetry`
+const serverTelemetrySelectSQL = `select server_id,monitoring_mode,resource_history_enabled,traffic_reset_mode,traffic_reset_day,time_correction_mode,time_check_status,time_offset_ms,time_effective_offset_ms,time_check_source,time_check_error,time_logical_active,time_unsupported_paths_json,time_checked_at,period_start,period_end,traffic_upload_bytes,traffic_download_bytes,network_upload_bps,network_download_bps,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error,offline_notify_enabled,offline_after_seconds from server_telemetry`
 
 const userSelectSQL = `select u.id,u.username,u.nickname,u.password_hash,coalesce(u.session_version,0),u.role,u.status,u.proxy_uuid,u.proxy_password,coalesce(sua.random_id,''),u.speed_limit_mbps,u.traffic_limit_bytes,u.traffic_used_bytes,u.traffic_reset_mode,u.traffic_reset_day,coalesce(u.subscription_token,''),coalesce(p.burn_after_read,0),p.burned_at,coalesce(a.enabled,0),coalesce(a.public_key,''),coalesce(sa.suspended,0),sa.suspended_at,coalesce(sa.suspension_reason,''),coalesce(u.device_limit,0),coalesce(u.legacy_proxy_enabled,1),u.created_at,u.updated_at from users u left join ssh_user_aliases sua on sua.user_id=u.id left join subscription_token_policies p on p.user_id=u.id left join subscription_age_keys a on a.user_id=u.id left join subscription_access_states sa on sa.user_id=u.id`
 
@@ -363,8 +363,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists connection_probe_episodes (id text primary key, user_id integer not null references users(id) on delete cascade, device_id_hash text not null default '', state text not null, score integer not null, node_count integer not null, connection_count integer not null, upload_bytes integer not null default 0, download_bytes integer not null default 0, started_at text not null, ended_at text not null, updated_at text not null)`,
 		`create index if not exists idx_connection_probe_user_time on connection_probe_episodes(user_id,ended_at desc)`,
 		`create table if not exists traffic_leases (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, period_key text not null, lease_bytes integer not null default 0, consumed_bytes integer not null default 0, updated_at text not null, unique(server_id,user_id,period_key))`,
-		`create table if not exists server_telemetry (server_id integer primary key references servers(id) on delete cascade, monitoring_mode text not null default 'lightweight', traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, connectivity_probe_enabled integer not null default 0, connectivity_probe_target text not null default 'auto', time_correction_mode text not null default 'off', time_check_status text not null default 'unknown', time_offset_ms integer not null default 0, time_effective_offset_ms integer not null default 0, time_check_source text not null default '', time_check_error text not null default '', time_logical_active integer not null default 0, time_unsupported_paths_json text not null default '[]', time_checked_at text, period_key text not null default '', period_start text not null default '', period_end text not null default '', traffic_upload_bytes integer not null default 0, traffic_download_bytes integer not null default 0, raw_upload_bytes integer not null default 0, raw_download_bytes integer not null default 0, network_upload_bps integer not null default 0, network_download_bps integer not null default 0, last_reported_at text, connectivity_available integer not null default -1, connectivity_latency_ms integer not null default 0, connectivity_checked_at text, connectivity_error text not null default '', updated_at text not null)`,
-		`create table if not exists server_metric_samples (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, network_upload_bps integer not null default 0, network_download_bps integer not null default 0, traffic_upload_bytes integer not null default 0, traffic_download_bytes integer not null default 0, connectivity_available integer not null default -1, connectivity_latency_ms integer not null default 0, sampled_at text not null)`,
+		`create table if not exists server_telemetry (server_id integer primary key references servers(id) on delete cascade, monitoring_mode text not null default 'lightweight', resource_history_enabled integer not null default 1, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, connectivity_probe_enabled integer not null default 0, connectivity_probe_target text not null default 'auto', time_correction_mode text not null default 'off', time_check_status text not null default 'unknown', time_offset_ms integer not null default 0, time_effective_offset_ms integer not null default 0, time_check_source text not null default '', time_check_error text not null default '', time_logical_active integer not null default 0, time_unsupported_paths_json text not null default '[]', time_checked_at text, period_key text not null default '', period_start text not null default '', period_end text not null default '', traffic_upload_bytes integer not null default 0, traffic_download_bytes integer not null default 0, raw_upload_bytes integer not null default 0, raw_download_bytes integer not null default 0, network_upload_bps integer not null default 0, network_download_bps integer not null default 0, last_reported_at text, connectivity_available integer not null default -1, connectivity_latency_ms integer not null default 0, connectivity_checked_at text, connectivity_error text not null default '', updated_at text not null)`,
+		`create table if not exists server_metric_samples (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, resource_recorded integer not null default 1, network_upload_bps integer not null default 0, network_download_bps integer not null default 0, traffic_upload_bytes integer not null default 0, traffic_download_bytes integer not null default 0, connectivity_available integer not null default -1, connectivity_latency_ms integer not null default 0, sampled_at text not null)`,
 		`create table if not exists server_connectivity_events ` + serverConnectivityEventsColumnsSQL,
 		`create table if not exists dns_benchmark_runs (id integer primary key autoincrement, request_id text not null unique, server_id integer not null references servers(id) on delete cascade, policy_revision integer not null, encrypted_list_id integer not null, encrypted_list_revision integer not null, bootstrap_list_id integer not null, bootstrap_list_revision integer not null, trigger text not null, apply_on_success integer not null default 0, requested_by integer references users(id) on delete set null, task_id integer references agent_tasks(id) on delete set null, apply_task_id integer references agent_tasks(id) on delete set null, status text not null, error text not null default '', started_at text, completed_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_benchmark_results (id integer primary key autoincrement, report_id text not null unique, request_id text not null default '', server_id integer not null references servers(id) on delete cascade, policy_revision integer not null, encrypted_list_id integer not null, encrypted_list_revision integer not null, bootstrap_list_id integer not null, bootstrap_list_revision integer not null, encrypted_json text not null, bootstrap_json text not null, status text not null, error text not null default '', created_at text not null)`,
@@ -676,6 +676,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		name string
 		sql  string
 	}{
+		{"resource_history_enabled", `alter table server_telemetry add column resource_history_enabled integer not null default 1`},
 		{"offline_notify_enabled", `alter table server_telemetry add column offline_notify_enabled integer not null default 1`},
 		{"offline_after_seconds", `alter table server_telemetry add column offline_after_seconds integer not null default 0`},
 		{"time_correction_mode", `alter table server_telemetry add column time_correction_mode text not null default 'off'`},
@@ -692,6 +693,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		if err := s.ensureColumn(ctx, "server_telemetry", column.name, column.sql); err != nil {
 			return err
 		}
+	}
+	if err := s.ensureColumn(ctx, "server_metric_samples", "resource_recorded", `alter table server_metric_samples add column resource_recorded integer not null default 1`); err != nil {
+		return err
 	}
 	connectionAuditGeoColumns := []struct {
 		name string
@@ -1977,6 +1981,10 @@ func (s *Store) CreateServer(ctx context.Context, v *model.Server) error {
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
+	if !v.ResourceHistoryConfigured {
+		v.ResourceHistoryEnabled = true
+	}
+	v.ResourceHistoryConfigured = true
 	if strings.TrimSpace(v.ChainSecret) == "" {
 		secret, err := randomServerChainSecret()
 		if err != nil {
@@ -2217,16 +2225,7 @@ func normalizeConnectivityProbeTarget(target model.ConnectivityTarget) model.Con
 }
 
 func (s *Store) UpdateServerTelemetrySettings(ctx context.Context, server *model.Server) error {
-	if server == nil || server.ID <= 0 {
-		return errors.New("server telemetry requires a server")
-	}
-	server.MonitoringMode = normalizeServerMonitoringMode(server.MonitoringMode)
-	server.TrafficResetMode = normalizeTrafficResetMode(server.TrafficResetMode)
-	server.TrafficResetDay = normalizeTrafficResetDay(server.TrafficResetDay)
-	server.TimeCorrectionMode = normalizeTimeCorrectionMode(server.TimeCorrectionMode)
-	_, err := s.db.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,time_correction_mode,offline_notify_enabled,offline_after_seconds,updated_at) values(?,?,?,?,?,?,?,?)
-		on conflict(server_id) do update set monitoring_mode=excluded.monitoring_mode,traffic_reset_mode=excluded.traffic_reset_mode,traffic_reset_day=excluded.traffic_reset_day,time_correction_mode=excluded.time_correction_mode,offline_notify_enabled=excluded.offline_notify_enabled,offline_after_seconds=excluded.offline_after_seconds,updated_at=excluded.updated_at`, server.ID, server.MonitoringMode, server.TrafficResetMode, server.TrafficResetDay, server.TimeCorrectionMode, boolInt(server.OfflineNotifyEnabled), server.OfflineAfterSeconds, now())
-	return err
+	return s.updateServerTelemetrySettingsWithTransition(ctx, server)
 }
 
 func (s *Store) initializeServerTelemetrySettings(ctx context.Context, server *model.Server) error {
@@ -2235,7 +2234,7 @@ func (s *Store) initializeServerTelemetrySettings(ctx context.Context, server *m
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,time_correction_mode,offline_notify_enabled,offline_after_seconds,updated_at) values(?,?,?,?,?,?,?,?)`, server.ID, normalizeServerMonitoringMode(server.MonitoringMode), normalizeTrafficResetMode(server.TrafficResetMode), normalizeTrafficResetDay(server.TrafficResetDay), normalizeTimeCorrectionMode(server.TimeCorrectionMode), boolInt(server.OfflineNotifyEnabled), server.OfflineAfterSeconds, server.CreatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,resource_history_enabled,traffic_reset_mode,traffic_reset_day,time_correction_mode,offline_notify_enabled,offline_after_seconds,updated_at) values(?,?,?,?,?,?,?,?,?)`, server.ID, normalizeServerMonitoringMode(server.MonitoringMode), boolInt(server.ResourceHistoryEnabled), normalizeTrafficResetMode(server.TrafficResetMode), normalizeTrafficResetDay(server.TrafficResetDay), normalizeTimeCorrectionMode(server.TimeCorrectionMode), boolInt(server.OfflineNotifyEnabled), server.OfflineAfterSeconds, server.CreatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -2258,9 +2257,19 @@ func (s *Store) updateServerTelemetrySettingsWithTransition(ctx context.Context,
 	if updatedAt.IsZero() {
 		updatedAt = time.Now().UTC()
 	}
-	if _, err := tx.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,traffic_reset_mode,traffic_reset_day,time_correction_mode,offline_notify_enabled,offline_after_seconds,updated_at) values(?,?,?,?,?,?,?,?)
-		on conflict(server_id) do update set monitoring_mode=excluded.monitoring_mode,traffic_reset_mode=excluded.traffic_reset_mode,traffic_reset_day=excluded.traffic_reset_day,time_correction_mode=excluded.time_correction_mode,offline_notify_enabled=excluded.offline_notify_enabled,offline_after_seconds=excluded.offline_after_seconds,updated_at=excluded.updated_at`, server.ID, server.MonitoringMode, server.TrafficResetMode, server.TrafficResetDay, server.TimeCorrectionMode, boolInt(server.OfflineNotifyEnabled), server.OfflineAfterSeconds, updatedAt.Format(time.RFC3339Nano)); err != nil {
+	var previousResourceHistory int
+	previousErr := tx.QueryRowContext(ctx, `select resource_history_enabled from server_telemetry where server_id=?`, server.ID).Scan(&previousResourceHistory)
+	if previousErr != nil && previousErr != sql.ErrNoRows {
+		return previousErr
+	}
+	if _, err := tx.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,resource_history_enabled,traffic_reset_mode,traffic_reset_day,time_correction_mode,offline_notify_enabled,offline_after_seconds,updated_at) values(?,?,?,?,?,?,?,?,?)
+		on conflict(server_id) do update set monitoring_mode=excluded.monitoring_mode,resource_history_enabled=excluded.resource_history_enabled,traffic_reset_mode=excluded.traffic_reset_mode,traffic_reset_day=excluded.traffic_reset_day,time_correction_mode=excluded.time_correction_mode,offline_notify_enabled=excluded.offline_notify_enabled,offline_after_seconds=excluded.offline_after_seconds,updated_at=excluded.updated_at`, server.ID, server.MonitoringMode, boolInt(server.ResourceHistoryEnabled), server.TrafficResetMode, server.TrafficResetDay, server.TimeCorrectionMode, boolInt(server.OfflineNotifyEnabled), server.OfflineAfterSeconds, updatedAt.Format(time.RFC3339Nano)); err != nil {
 		return err
+	}
+	if previousErr == nil && previousResourceHistory != 0 && !server.ResourceHistoryEnabled {
+		if _, err := tx.ExecContext(ctx, `update server_metric_samples set cpu_usage_percent=0,memory_used_bytes=0,memory_total_bytes=0,resource_recorded=0 where server_id=? and resource_recorded<>0`, server.ID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -2272,6 +2281,8 @@ func (s *Store) attachServerTelemetry(ctx context.Context, servers []model.Serve
 	byID := make(map[int64]*model.Server, len(servers))
 	for i := range servers {
 		servers[i].MonitoringMode = "lightweight"
+		servers[i].ResourceHistoryEnabled = true
+		servers[i].ResourceHistoryConfigured = true
 		servers[i].TrafficResetMode = "monthly"
 		servers[i].TrafficResetDay = 1
 		servers[i].OfflineNotifyEnabled = true
@@ -2290,12 +2301,12 @@ func (s *Store) attachServerTelemetry(ctx context.Context, servers []model.Serve
 	for rows.Next() {
 		var id int64
 		var mode, resetMode, correctionMode, timeStatus, timeSource, timeError, timeUnsupportedPathsJSON, periodStart, periodEnd, reportedAt, checkedAt, connectivityError string
-		var resetDay, logicalActive, available, offlineNotifyEnabled, offlineAfterSeconds int
+		var resourceHistoryEnabled, resetDay, logicalActive, available, offlineNotifyEnabled, offlineAfterSeconds int
 		var timeOffset, timeEffectiveOffset int64
 		var up, down, upBPS, downBPS uint64
 		var latency int64
 		var timeChecked, reported, checked sql.NullString
-		if err := rows.Scan(&id, &mode, &resetMode, &resetDay, &correctionMode, &timeStatus, &timeOffset, &timeEffectiveOffset, &timeSource, &timeError, &logicalActive, &timeUnsupportedPathsJSON, &timeChecked, &periodStart, &periodEnd, &up, &down, &upBPS, &downBPS, &reported, &available, &latency, &checked, &connectivityError, &offlineNotifyEnabled, &offlineAfterSeconds); err != nil {
+		if err := rows.Scan(&id, &mode, &resourceHistoryEnabled, &resetMode, &resetDay, &correctionMode, &timeStatus, &timeOffset, &timeEffectiveOffset, &timeSource, &timeError, &logicalActive, &timeUnsupportedPathsJSON, &timeChecked, &periodStart, &periodEnd, &up, &down, &upBPS, &downBPS, &reported, &available, &latency, &checked, &connectivityError, &offlineNotifyEnabled, &offlineAfterSeconds); err != nil {
 			return err
 		}
 		server := byID[id]
@@ -2303,6 +2314,7 @@ func (s *Store) attachServerTelemetry(ctx context.Context, servers []model.Serve
 			continue
 		}
 		server.MonitoringMode = normalizeServerMonitoringMode(mode)
+		server.ResourceHistoryEnabled = resourceHistoryEnabled != 0
 		server.TrafficResetMode = normalizeTrafficResetMode(resetMode)
 		server.TrafficResetDay = normalizeTrafficResetDay(resetDay)
 		server.OfflineNotifyEnabled = offlineNotifyEnabled != 0
@@ -2400,10 +2412,10 @@ func (s *Store) UpdateServerTelemetryReport(ctx context.Context, serverID int64,
 	var periodKey string
 	var periodUp, periodDown, previousUp, previousDown uint64
 	var lastRawAt, previousChecked sql.NullString
-	var previousAvailable int
+	var previousAvailable, resourceHistoryEnabled int
 	var previousLatency int64
 	var previousError string
-	if err := tx.QueryRowContext(ctx, `select period_key,traffic_upload_bytes,traffic_download_bytes,raw_upload_bytes,raw_download_bytes,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error from server_telemetry where server_id=?`, serverID).Scan(&periodKey, &periodUp, &periodDown, &previousUp, &previousDown, &lastRawAt, &previousAvailable, &previousLatency, &previousChecked, &previousError); err != nil {
+	if err := tx.QueryRowContext(ctx, `select period_key,traffic_upload_bytes,traffic_download_bytes,raw_upload_bytes,raw_download_bytes,last_reported_at,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error,resource_history_enabled from server_telemetry where server_id=?`, serverID).Scan(&periodKey, &periodUp, &periodDown, &previousUp, &previousDown, &lastRawAt, &previousAvailable, &previousLatency, &previousChecked, &previousError, &resourceHistoryEnabled); err != nil {
 		return err
 	}
 	periodChanged := periodKey != window.Key
@@ -2450,7 +2462,11 @@ func (s *Store) UpdateServerTelemetryReport(ctx context.Context, serverID int64,
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) values(?,?,?,?,?,?,?,?,?,?,?)`, serverID, report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes, uploadBPS, downloadBPS, periodUp, periodDown, available, latency, nowText); err != nil {
+	cpuUsage, memoryUsed, memoryTotal := report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes
+	if resourceHistoryEnabled == 0 {
+		cpuUsage, memoryUsed, memoryTotal = 0, 0, 0
+	}
+	if _, err := tx.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, cpuUsage, memoryUsed, memoryTotal, resourceHistoryEnabled, uploadBPS, downloadBPS, periodUp, periodDown, available, latency, nowText); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `delete from server_metric_samples where server_id=? and sampled_at<?`, serverID, ts.Add(-48*time.Hour).Format(time.RFC3339Nano)); err != nil {
@@ -2470,7 +2486,7 @@ func (s *Store) ListServerMetricSamples(ctx context.Context, serverID int64, lim
 	if limit <= 0 || limit > 2880 {
 		limit = 120
 	}
-	columns := `id,server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at`
+	columns := `id,server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at`
 	query := `select ` + columns + ` from server_metric_samples`
 	args := []any{}
 	if serverID > 0 {
@@ -2490,11 +2506,12 @@ func (s *Store) ListServerMetricSamples(ctx context.Context, serverID int64, lim
 	out := []model.ServerMetricSample{}
 	for rows.Next() {
 		var item model.ServerMetricSample
-		var available int
+		var available, resourceRecorded int
 		var sampledAt string
-		if err := rows.Scan(&item.ID, &item.ServerID, &item.CPUUsagePercent, &item.MemoryUsedBytes, &item.MemoryTotalBytes, &item.NetworkUploadBPS, &item.NetworkDownloadBPS, &item.TrafficUploadBytes, &item.TrafficDownloadBytes, &available, &item.ConnectivityLatencyMS, &sampledAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.ServerID, &item.CPUUsagePercent, &item.MemoryUsedBytes, &item.MemoryTotalBytes, &resourceRecorded, &item.NetworkUploadBPS, &item.NetworkDownloadBPS, &item.TrafficUploadBytes, &item.TrafficDownloadBytes, &available, &item.ConnectivityLatencyMS, &sampledAt); err != nil {
 			return nil, err
 		}
+		item.ResourceRecorded = resourceRecorded != 0
 		if available >= 0 {
 			value := available == 1
 			item.ConnectivityAvailable = &value
@@ -2511,6 +2528,64 @@ func (s *Store) ListServerMetricSamples(ctx context.Context, serverID int64, lim
 		}
 	}
 	return out, nil
+}
+
+func (s *Store) ListServerResourceMetricPoints(ctx context.Context, serverID int64, from time.Time, bucket time.Duration) ([]model.ServerResourceMetricPoint, error) {
+	if serverID <= 0 || from.IsZero() || bucket <= 0 {
+		return nil, errors.New("invalid server resource metric query")
+	}
+	rows, err := s.db.QueryContext(ctx, `select cpu_usage_percent,memory_used_bytes,memory_total_bytes,sampled_at from server_metric_samples where server_id=? and resource_recorded=1 and sampled_at>=? order by sampled_at`, serverID, from.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type aggregate struct {
+		at               time.Time
+		cpuTotal         float64
+		memoryUsedTotal  uint64
+		memoryTotalTotal uint64
+		count            uint64
+	}
+	groups := map[time.Time]*aggregate{}
+	order := []time.Time{}
+	for rows.Next() {
+		var cpu float64
+		var memoryUsed, memoryTotal uint64
+		var sampledAt string
+		if err := rows.Scan(&cpu, &memoryUsed, &memoryTotal, &sampledAt); err != nil {
+			return nil, err
+		}
+		at := parseTime(sampledAt)
+		key := at.Truncate(bucket)
+		group := groups[key]
+		if group == nil {
+			group = &aggregate{}
+			groups[key] = group
+			order = append(order, key)
+		}
+		group.at = at
+		group.cpuTotal += cpu
+		group.memoryUsedTotal += memoryUsed
+		group.memoryTotalTotal += memoryTotal
+		group.count++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	points := make([]model.ServerResourceMetricPoint, 0, len(order))
+	for _, key := range order {
+		group := groups[key]
+		if group == nil || group.count == 0 {
+			continue
+		}
+		points = append(points, model.ServerResourceMetricPoint{
+			SampledAt:        group.at,
+			CPUUsagePercent:  group.cpuTotal / float64(group.count),
+			MemoryUsedBytes:  group.memoryUsedTotal / group.count,
+			MemoryTotalBytes: group.memoryTotalTotal / group.count,
+		})
+	}
+	return points, nil
 }
 
 func (s *Store) DeleteServerTelemetry(ctx context.Context, serverID int64) error {

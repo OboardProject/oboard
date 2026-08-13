@@ -2403,6 +2403,129 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-mini-chart.network .server-chart-line.secondary { stroke: var(--warning); }
 .server-mini-chart.latency .server-chart-line.primary { stroke: var(--primary); }
 
+.server-resource-summary,
+.server-resource-open {
+  width: 100%;
+  border: 1px solid var(--border);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.server-resource-summary {
+  padding: 9px 10px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.server-resource-summary:hover,
+.server-resource-open:hover { border-color: color-mix(in srgb, var(--primary) 32%, var(--border)); background: var(--surface-solid); }
+.server-resource-summary:focus-visible,
+.server-resource-open:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 45%, transparent); outline-offset: 1px; }
+
+.server-resource-summary-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+}
+
+.server-resource-summary-head > span {
+  color: var(--text-strong);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.server-resource-summary-head small { color: var(--muted); font-size: 9px; }
+.server-resource-summary-head svg { color: var(--muted); }
+
+.server-list-metric-item.server-resource-open {
+  display: block;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.server-resource-dialog {
+  width: min(780px, 100%);
+  max-height: min(90vh, 900px);
+}
+
+.resource-dialog-head,
+.resource-dialog-title,
+.resource-live-summary,
+.resource-history-toolbar,
+.resource-history-chart-head,
+.resource-history-axis {
+  display: flex;
+  align-items: center;
+}
+
+.resource-dialog-title { min-width: 0; gap: 10px; }
+.resource-dialog-title > svg { color: var(--primary); }
+.resource-dialog-title h2 { margin: 0; }
+.resource-dialog-title p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+.resource-dialog-body { display: grid; gap: 14px; }
+
+.resource-live-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.resource-live-summary > div { min-width: 0; display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 5px; }
+.resource-live-summary span { color: var(--muted); font-size: 10px; font-weight: 650; }
+.resource-live-summary strong { color: var(--text-strong); font-size: 20px; font-variant-numeric: tabular-nums; }
+.resource-live-summary small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; }
+.resource-live-summary time { align-self: center; color: var(--muted); font-size: 10px; white-space: nowrap; }
+
+.resource-history-toolbar { justify-content: space-between; gap: 10px; }
+.resource-window-toggle { display: grid; grid-template-columns: repeat(4, minmax(64px, 1fr)); width: min(360px, 100%); padding: 3px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); }
+.resource-window-toggle button { min-height: 30px; padding: 0 8px; border: 0; border-radius: var(--radius-sm); color: var(--muted); background: transparent; font-size: 11px; font-weight: 650; cursor: pointer; }
+.resource-window-toggle button.active { color: var(--text-strong); background: var(--surface-solid); box-shadow: var(--shadow-xs); }
+
+.resource-history-charts { display: grid; gap: 12px; }
+.resource-history-chart { padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-solid); }
+.resource-history-chart-head { justify-content: space-between; gap: 12px; }
+.resource-history-chart-head > div { display: grid; gap: 2px; }
+.resource-history-chart-head strong { color: var(--text-strong); font-size: 12px; }
+.resource-history-chart-head span { color: var(--muted); font-size: 10px; }
+.resource-history-chart-head b { color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.resource-history-plot { position: relative; height: 128px; margin-top: 10px; }
+.resource-history-plot svg { display: block; width: 100%; height: 128px; overflow: visible; }
+.resource-history-grid { stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 3; }
+.resource-history-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.resource-history-chart.cpu .resource-history-line { stroke: var(--primary); }
+.resource-history-chart.memory .resource-history-line { stroke: var(--success); }
+.resource-history-scale { position: absolute; right: 2px; padding: 0 3px; color: var(--muted); background: color-mix(in srgb, var(--surface-solid) 88%, transparent); font-size: 9px; line-height: 1.4; }
+.resource-history-scale.top { top: 0; }
+.resource-history-scale.middle { top: 50%; transform: translateY(-50%); }
+.resource-history-scale.bottom { bottom: 0; }
+.resource-history-axis { justify-content: space-between; gap: 12px; margin-top: 5px; }
+.resource-history-axis time { color: var(--muted); font-size: 9px; }
+
+.resource-history-empty,
+.resource-history-state { display: grid; place-items: center; gap: 8px; min-height: 150px; padding: 18px; border: 1px dashed var(--border); border-radius: var(--radius-md); color: var(--muted); text-align: center; }
+.resource-history-empty { min-height: 128px; margin-top: 10px; }
+.resource-history-state strong { color: var(--text-strong); font-size: 13px; }
+.resource-history-state span { max-width: 460px; font-size: 11px; line-height: 1.5; }
+.resource-history-state.error { color: var(--danger); }
+
+@media (max-width: 640px) {
+  .resource-live-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .resource-live-summary time { grid-column: 1 / -1; white-space: normal; }
+  .resource-history-toolbar { align-items: stretch; }
+  .resource-window-toggle { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .server-chart-caption {
   gap: 10px;
   color: var(--muted);

@@ -3088,6 +3088,7 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			MTUMode                *model.MTUMode            `json:"mtu_mode"`
 			BBREnabled             *bool                     `json:"bbr_enabled"`
 			TimeCorrectionMode     *model.TimeCorrectionMode `json:"time_correction_mode"`
+			ResourceHistoryEnabled *bool                     `json:"resource_history_enabled"`
 			LatencyProbeEnabled    *bool                     `json:"latency_probe_enabled"`
 			ConnectionAuditEnabled *bool                     `json:"connection_audit_enabled"`
 			OfflineNotifyEnabled   *bool                     `json:"offline_notify_enabled"`
@@ -3118,6 +3119,12 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 		} else {
 			v.TimeCorrectionMode = *input.TimeCorrectionMode
 		}
+		if input.ResourceHistoryEnabled == nil {
+			v.ResourceHistoryEnabled = true
+		} else {
+			v.ResourceHistoryEnabled = *input.ResourceHistoryEnabled
+		}
+		v.ResourceHistoryConfigured = true
 		if input.LatencyProbeEnabled == nil {
 			v.LatencyProbeEnabled = true
 		} else {
@@ -3190,6 +3197,48 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		write(w, 200, map[string]any{"server_metrics": items})
 		return
 	}
+	if len(parts) == 2 && parts[1] == "resource-metrics" {
+		if r.Method != http.MethodGet {
+			method(w)
+			return
+		}
+		server, err := s.store.GetServer(r.Context(), id)
+		if err != nil {
+			fail(w, err, 404)
+			return
+		}
+		hours := intQuery(r, "hours", 24)
+		if hours != 1 && hours != 6 && hours != 24 && hours != 48 {
+			hours = 24
+		}
+		bucket := time.Minute
+		if hours >= 24 {
+			bucket = 10 * time.Minute
+		} else if hours >= 6 {
+			bucket = 5 * time.Minute
+		}
+		points := []model.ServerResourceMetricPoint{}
+		if server.ResourceHistoryEnabled {
+			points, err = s.store.ListServerResourceMetricPoints(r.Context(), id, time.Now().UTC().Add(-time.Duration(hours)*time.Hour), bucket)
+			if err != nil {
+				fail(w, err, 500)
+				return
+			}
+		}
+		write(w, 200, map[string]any{
+			"history_enabled": server.ResourceHistoryEnabled,
+			"window_hours":    hours,
+			"bucket_seconds":  int(bucket.Seconds()),
+			"points":          points,
+			"current": map[string]any{
+				"cpu_usage_percent":  server.CPUUsagePercent,
+				"memory_used_bytes":  server.MemoryUsedBytes,
+				"memory_total_bytes": server.MemoryTotalBytes,
+				"sampled_at":         server.TelemetryUpdatedAt,
+			},
+		})
+		return
+	}
 	if len(parts) == 2 && parts[1] == "connectivity" {
 		s.serverConnectivity(w, r, id)
 		return
@@ -3249,6 +3298,7 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			MTUMode                  *model.MTUMode              `json:"mtu_mode"`
 			BBREnabled               *bool                       `json:"bbr_enabled"`
 			TimeCorrectionMode       *model.TimeCorrectionMode   `json:"time_correction_mode"`
+			ResourceHistoryEnabled   *bool                       `json:"resource_history_enabled"`
 			LatencyProbeEnabled      *bool                       `json:"latency_probe_enabled"`
 			LatencyProbeMode         *model.LatencyProbeMode     `json:"latency_probe_mode"`
 			LatencyProbePublicTarget *model.ConnectivityTarget   `json:"latency_probe_public_target"`
@@ -3283,6 +3333,11 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			v.TimeCorrectionMode = current.TimeCorrectionMode
 		} else {
 			v.TimeCorrectionMode = *input.TimeCorrectionMode
+		}
+		if input.ResourceHistoryEnabled == nil {
+			v.ResourceHistoryEnabled = current.ResourceHistoryEnabled
+		} else {
+			v.ResourceHistoryEnabled = *input.ResourceHistoryEnabled
 		}
 		if input.OfflineNotifyEnabled == nil {
 			v.OfflineNotifyEnabled = current.OfflineNotifyEnabled
