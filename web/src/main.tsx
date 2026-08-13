@@ -7852,24 +7852,27 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
     return (
       <MotionCard tag="article" className="server-card server-list-row server-card-monitorable" hoverEffect={false}>
         <button type="button" className="server-monitor-open-overlay" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${server.name || `服务器 #${server.id}`} 的负载与延迟`} />
+        
+        {/* Identity */}
         <div className="server-list-identity">
-          <RegionFlag code={serverRegionCode(server)} size={24} />
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <RegionFlag code={serverRegionCode(server)} size={22} />
+          <div className="server-list-identity-text">
+            <div className="server-list-name-row">
               <strong className="server-list-name">{server.name || `server-${server.id}`}</strong>
               <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
+              {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
+              {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>时间异常</Badge>}
             </div>
             <div className="server-list-subinfo">
               <span>#{server.id}</span>
               <span>·</span>
               <span>{regionLabel(serverRegionCode(server))}</span>
-              {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
-              {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>时间异常</Badge>}
             </div>
           </div>
         </div>
 
-        <div className="server-list-metric-item server-resource-open">
+        {/* Desktop Metric: CPU/Memory */}
+        <div className="server-list-metric-item server-resource-open server-list-col-cpu">
           <span className="server-list-metric-label">CPU / 内存</span>
           <div className="server-list-metric-value">
             <span style={{ fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>{Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
@@ -7877,7 +7880,8 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
           </div>
         </div>
 
-        <div className="server-list-metric-item server-list-metric-net">
+        {/* Desktop Metric: Network Rate & Traffic */}
+        <div className="server-list-metric-item server-list-metric-net server-list-col-net">
           <span className="server-list-metric-label">实时速率 / 本周期</span>
           <div className="server-list-network-row">
             <div className="server-list-rate-group">
@@ -7888,6 +7892,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
           </div>
         </div>
 
+        {/* Latency */}
         <div className="server-list-metric-item server-list-metric-latency">
           <span className="server-list-metric-label">延迟测试</span>
           {server.latency_probe_enabled ? (
@@ -7903,8 +7908,22 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
             </div>
           )}
         </div>
+
+        {/* Actions */}
         <div className="server-list-actions">
           <ServerActionsDropdown server={server} role={role} onAction={onAction} />
+        </div>
+
+        {/* Mobile-only compact metadata line */}
+        <div className="server-list-mobile-meta">
+          <span className="server-list-mobile-tag">#{server.id} {regionLabel(serverRegionCode(server))}</span>
+          <span className="server-list-mobile-sep">·</span>
+          <span className="server-list-mobile-stat">CPU {Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
+          <span className="server-list-mobile-sep">·</span>
+          <span className="server-list-mobile-stat rate-down">↓ {downRate}</span>
+          <span className="server-list-mobile-stat rate-up">↑ {upRate}</span>
+          <span className="server-list-mobile-sep">·</span>
+          <span className="server-list-mobile-traffic">{totalTraffic}</span>
         </div>
       </MotionCard>
     )
