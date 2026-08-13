@@ -812,16 +812,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   settings: { label: '设置', desc: '管理面板设置。', group: '系统' }
 }
 const navGroups = [
-  { label: '', tabs: ['dashboard'] },
-  { label: '', tabs: ['servers'] },
-  { label: '', tabs: ['proxy-paths'] },
-  { label: '', tabs: ['dns', 'dns-records'] },
-  { label: '', tabs: ['users', 'plans', 'subscriptions'] },
-  { label: '', tabs: ['nodes'] },
-  { label: '', tabs: ['notifications'] },
-  { label: '', tabs: ['tasks', 'audit'] },
-  { label: '', tabs: ['automation', 'settings'] },
-  { label: '', tabs: ['account'] },
+  { label: '', tabs: ['dashboard', 'servers', 'proxy-paths', 'dns', 'dns-records', 'users', 'plans', 'subscriptions', 'nodes', 'notifications', 'tasks', 'audit', 'automation', 'settings', 'account'] }
 ]
 
 const roleRanks: Record<Role, number> = { none: -1, viewer: 0, operator: 1, admin: 2 }
