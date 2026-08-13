@@ -675,7 +675,8 @@ func (s *Service) decorateStatus(status Status) Status {
 		status.State = "pinned"
 		status.UpdateAvailable = false
 		status.CanCancel = false
-	} else if status.Available.Version != "" && !buildInfoUpdateAvailable(channel, status.Current, status.Available) {
+	} else if status.Available.Version != "" && !buildInfoUpdateAvailable(channel, status.Current, status.Available) &&
+		(!isActiveUpdateState(status.State) || s.installCancel == nil) {
 		status.State = "current"
 		status.UpdateAvailable = false
 		status.CanCancel = false

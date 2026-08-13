@@ -208,6 +208,49 @@ func TestMatchingStableVersionStopsStaleUpdateProgress(t *testing.T) {
 	}
 }
 
+func TestStatusPollingDoesNotCancelActiveInstallingUpdate(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "oboard-controller")
+	if err := os.WriteFile(binary, []byte("controller"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binaryEnv := filepath.Join(root, "controller.env")
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_UPDATE_CHANNEL=dev\nOBOARD_ADDR=:1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldVersion, oldBuild, oldCommit, oldDate := version.Version, version.Build, version.Commit, version.Date
+	version.Version, version.Build, version.Commit, version.Date = "dev", "20260813182613", "target-commit", "2026-08-13T18:26:13Z"
+	t.Cleanup(func() {
+		version.Version, version.Build, version.Commit, version.Date = oldVersion, oldBuild, oldCommit, oldDate
+	})
+	service := NewService(ServiceConfig{BinaryEnvPath: binaryEnv, ControllerBinary: binary, StatePath: filepath.Join(root, "status.json")})
+	installCtx, cancelInstall := context.WithCancel(context.Background())
+	defer cancelInstall()
+	service.installCancel = cancelInstall
+	service.status = Status{
+		Channel: "dev", State: "installing", UpdateAvailable: true,
+		Available: BuildInfo{Version: "dev", Build: "20260813182613", Commit: "target-commit", Date: "2026-08-13T18:26:13Z"},
+	}
+
+	recorder := httptest.NewRecorder()
+	service.handleStatus(recorder, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status response=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var status Status
+	if err := json.Unmarshal(recorder.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.State != "installing" || !status.UpdateAvailable {
+		t.Fatalf("active installation was collapsed before finalization: %#v", status)
+	}
+	select {
+	case <-installCtx.Done():
+		t.Fatal("status polling cancelled the active installation")
+	default:
+	}
+}
+
 func TestChannelSwitchRewritesEnvironmentFile(t *testing.T) {
 	root := t.TempDir()
 	binary := filepath.Join(root, "oboard-controller")
