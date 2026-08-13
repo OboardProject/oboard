@@ -2414,7 +2414,10 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .server-resource-summary {
-  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
   border-radius: var(--radius-md);
   background: var(--surface-2);
   transition: background-color 0.15s ease, border-color 0.15s ease;
@@ -2426,20 +2429,28 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-resource-open:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 45%, transparent); outline-offset: 1px; }
 
 .server-resource-summary-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 7px;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
 }
 
 .server-resource-summary-head > span {
   color: var(--text-strong);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
 }
 
-.server-resource-summary-head small { color: var(--muted); font-size: 9px; }
+.server-resource-summary-head-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.server-resource-summary-head small { color: var(--muted); font-size: 10px; }
 .server-resource-summary-head svg { color: var(--muted); }
 
 .server-list-metric-item.server-resource-open {

@@ -7614,20 +7614,26 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
       }}>
         {/* CPU & Memory bars */}
         <button type="button" className="server-resource-summary" style={{ gridColumn: 'span 2' }} onClick={() => onAction('resource-details', server)} aria-label="查看 CPU 和内存详情">
-          <span className="server-resource-summary-head"><span>系统资源</span><small>{server.resource_history_enabled ? '历史已开启' : '仅实时'}</small><ChevronRight size={13} aria-hidden="true" /></span>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <div className="server-resource-summary-head">
+            <span>系统资源</span>
+            <div className="server-resource-summary-head-badge">
+              <small>{server.resource_history_enabled ? '历史已开启' : '仅实时'}</small>
+              <ChevronRight size={13} aria-hidden="true" />
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {/* CPU Progress */}
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
                 <span>CPU 使用率</span>
-                <span style={{ fontWeight: 600 }}>{Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
+                <span style={{ fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>{Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
               </div>
-              <div style={{ height: '5px', backgroundColor: 'var(--bg-control)', borderRadius: '2.5px', overflow: 'hidden' }}>
+              <div style={{ height: '6px', backgroundColor: 'var(--surface-3, rgba(0,0,0,0.06))', borderRadius: '3px', overflow: 'hidden' }}>
                 <div style={{
                   height: '100%',
-                  width: `${server.cpu_usage_percent || 0}%`,
-                  backgroundColor: 'var(--color-primary)',
-                  borderRadius: '2.5px',
+                  width: `${Math.max(server.cpu_usage_percent || 0, (server.cpu_usage_percent && server.cpu_usage_percent > 0) ? 2 : 0)}%`,
+                  backgroundColor: '#3b82f6',
+                  borderRadius: '3px',
                   transition: 'width 0.3s ease'
                 }} />
               </div>
@@ -7635,16 +7641,16 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
 
             {/* Memory Progress */}
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
                 <span>内存 ({serverMemoryLabel(server)})</span>
-                <span style={{ fontWeight: 600 }}>{server.memory_total_bytes ? `${((server.memory_used_bytes / server.memory_total_bytes) * 100).toFixed(0)}%` : '—'}</span>
+                <span style={{ fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>{server.memory_total_bytes ? `${((server.memory_used_bytes / server.memory_total_bytes) * 100).toFixed(0)}%` : '—'}</span>
               </div>
-              <div style={{ height: '5px', backgroundColor: 'var(--bg-control)', borderRadius: '2.5px', overflow: 'hidden' }}>
+              <div style={{ height: '6px', backgroundColor: 'var(--surface-3, rgba(0,0,0,0.06))', borderRadius: '3px', overflow: 'hidden' }}>
                 <div style={{
                   height: '100%',
-                  width: `${server.memory_total_bytes ? (server.memory_used_bytes / server.memory_total_bytes) * 100 : 0}%`,
-                  backgroundColor: 'var(--color-success)',
-                  borderRadius: '2.5px',
+                  width: `${server.memory_total_bytes ? Math.max((server.memory_used_bytes / server.memory_total_bytes) * 100, 2) : 0}%`,
+                  backgroundColor: '#10b981',
+                  borderRadius: '3px',
                   transition: 'width 0.3s ease'
                 }} />
               </div>
