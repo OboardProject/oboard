@@ -7,6 +7,10 @@ export function isControllerUpdateInProgressStatus(status: string | undefined | 
   return status != null && CONTROLLER_UPDATE_IN_PROGRESS_STATUSES.includes(status)
 }
 
+export function isControllerUpdateFailedStatus(status: string | undefined | null, lastError?: string | null): boolean {
+  return status === 'failed' || status === 'unavailable' || (status === 'cancelled' && Boolean(lastError))
+}
+
 const EXPECTED_DISCONNECT_STATUSES = [502, 503, 504]
 
 export function createControllerUpdateRequestGuard() {

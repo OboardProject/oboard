@@ -110,6 +110,7 @@ import { collectRegionStats, orderRegions, orderServerRegions } from './region-o
 import {
   controllerUpdatePendingToast,
   createControllerUpdateRequestGuard,
+  isControllerUpdateFailedStatus,
   isControllerUpdateInProgressStatus,
   isExpectedControllerUpdateDisconnect,
   shouldDeferControllerUpdateTerminalStatus,
@@ -3464,7 +3465,8 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
 
   const applyStatus = (result: ControllerUpdateStatus) => {
     setSnapshot(result)
-    if (!working && !isControllerUpdateInProgressStatus(result.status)) return
+    const updateExpected = ['starting', 'downloading', 'ready', 'installing', 'cancelling'].includes(phase)
+    if (!working && !updateExpected && !isControllerUpdateInProgressStatus(result.status)) return
     const targetReached = Boolean(targetBuildRef.current) && result.current?.build === targetBuildRef.current
     if (result.status === 'installed' || (result.status === 'current' && !result.update_available) || (targetReached && !result.update_available)) {
       setWorking(false)
@@ -3474,7 +3476,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
       onControllerUpdateInProgressChange?.(false)
       return
     }
-    if (result.status === 'failed' || result.status === 'unavailable') {
+    if (isControllerUpdateFailedStatus(result.status, result.last_error)) {
       setWorking(false)
       setFailure(result.last_error || '主控更新未能完成，请检查更新状态。')
       setPhase('failed')
@@ -3523,10 +3525,10 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
   }, [realtimeRevision, realtimeStatus, realtimeResources])
 
   useEffect(() => {
-    if (!working || realtimeStatus !== 'fallback') return
+    if ((!working && !['starting', 'downloading', 'ready', 'installing', 'cancelling'].includes(phase)) || realtimeStatus !== 'fallback') return
     const timer = window.setInterval(() => { void refresh() }, 3000)
     return () => window.clearInterval(timer)
-  }, [working, realtimeStatus])
+  }, [working, phase, realtimeStatus])
 
   const install = async () => {
     if (working || !snapshot?.update_available) return
@@ -3647,7 +3649,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     if (shouldDeferControllerUpdateTerminalStatus(result.status, installRequestPendingRef.current, cancelExpectedRef.current)) return
     setInstallConnectionInterrupted(false)
     const targetReached = Boolean(installTargetBuildRef.current) && result.current?.build === installTargetBuildRef.current
-    if (result.status === 'cancelled') {
+    if (result.status === 'cancelled' && !result.last_error) {
       cancelExpectedRef.current = false
       updateInstallExpected(false)
       setInstallPhase('cancelled')
@@ -3663,7 +3665,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       setInstallDialogOpen(true)
       return
     }
-    if (result.status === 'failed' || result.status === 'unavailable') {
+    if (isControllerUpdateFailedStatus(result.status, result.last_error)) {
       cancelExpectedRef.current = false
       updateInstallExpected(false)
       setInstallFailure(result.last_error || '主控更新未能完成，请检查更新状态。')
@@ -3866,7 +3868,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     loading: '读取中', idle: '等待检查', checking: '检查中', current: '已是最新', available: '可更新', downloading: '下载中', ready: '文件已准备好', installing: '安装中', cancelling: '正在中断', cancelled: '已中断', installed: '已安装', failed: '失败', unavailable: '更新器不可用', pinned: '固定版本',
   }
   const channelLabel = snapshot.channel === 'dev' ? '开发版' : snapshot.channel === 'stable' ? '正式版' : snapshot.channel === 'pinned' ? '固定版本' : '未知'
-  const statusTone = snapshot.status === 'failed' || snapshot.status === 'unavailable' ? 'danger' : snapshot.update_available || isControllerUpdateInProgressStatus(snapshot.status) ? 'warning' : 'ok'
+  const statusTone = isControllerUpdateFailedStatus(snapshot.status, snapshot.last_error) ? 'danger' : snapshot.update_available || isControllerUpdateInProgressStatus(snapshot.status) ? 'warning' : 'ok'
   const updateInProgress = installExpected || isControllerUpdateInProgressStatus(snapshot.status)
   const channelSelectDisabled = updateInProgress || snapshot.status === 'checking' || snapshot.status === 'unavailable'
   const [autoUpdateDialogOpen, setAutoUpdateDialogOpen] = useState(false)

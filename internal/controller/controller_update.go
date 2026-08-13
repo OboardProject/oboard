@@ -31,6 +31,7 @@ const (
 	controllerUpdateErrorSetting         = "controller_update_controller_error"
 	controllerUpdateSchedulerPeriod      = time.Minute
 	controllerUpdatePanelIdlePeriod      = 5 * time.Minute
+	controllerUpdateInstallTimeout       = 20 * time.Minute
 	controllerUpdateDefaultIntervalHours = 24
 	updateWindowDefaultStartHour         = 3
 	updateWindowDefaultEndHour           = 7
@@ -396,7 +397,12 @@ func (s *Server) controllerUpdateInstall(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.controllerUpdateRunMu.Lock()
-	defer s.controllerUpdateRunMu.Unlock()
+	backgroundStarted := false
+	defer func() {
+		if !backgroundStarted {
+			s.controllerUpdateRunMu.Unlock()
+		}
+	}()
 	status, err := s.controllerUpdater.Status(r.Context())
 	if err != nil {
 		fail(w, errors.New("主控更新器不可用，请检查 oboard-controller-updater 服务"), http.StatusServiceUnavailable)
@@ -433,35 +439,51 @@ func (s *Server) controllerUpdateInstall(w http.ResponseWriter, r *http.Request)
 	} else {
 		s.startControllerUpdateWatch()
 	}
-	backup, err := s.createControllerBackup(r.Context())
-	if err != nil {
-		if prepared {
-			s.cancelPreparedControllerUpdate()
-		}
-		_ = s.store.SetSetting(r.Context(), controllerUpdateErrorSetting, err.Error())
-		fail(w, fmt.Errorf("创建数据库备份失败，已取消更新: %w", err), http.StatusInternalServerError)
-		return
-	}
-	if err := s.recordControllerUpdateBackup(r.Context(), backup, status.Available.Build); err != nil {
-		if prepared {
-			s.cancelPreparedControllerUpdate()
-		}
-		_ = s.store.SetSetting(r.Context(), controllerUpdateErrorSetting, err.Error())
-		fail(w, fmt.Errorf("记录数据库备份失败，已取消更新: %w", err), http.StatusInternalServerError)
-		return
-	}
-	status, err = s.controllerUpdater.Install(r.Context())
-	if err != nil {
-		publicErr := controllerUpdateOperationError("启动主控更新失败", status, err)
-		_ = s.store.SetSetting(r.Context(), controllerUpdateErrorSetting, publicErr.Error())
-		fail(w, publicErr, http.StatusBadGateway)
-		return
-	}
-	s.startControllerUpdateWatch()
-	status.BackupPath = backup
 	_ = s.store.SetSetting(r.Context(), controllerUpdateErrorSetting, "")
 	auditReq(s, r, "install", "controller_update", status.Channel+":"+status.Available.Version)
 	s.writeControllerUpdateStatus(w, r, status)
+	backgroundStarted = true
+	go s.finishManualControllerUpdate(status, prepared)
+}
+
+func (s *Server) finishManualControllerUpdate(status controllerupdate.Status, prepared bool) {
+	defer s.controllerUpdateRunMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), controllerUpdateInstallTimeout)
+	defer cancel()
+	backup, err := s.createControllerBackup(ctx)
+	if err != nil {
+		log.Printf("manual Controller update backup failed: %v", err)
+		if prepared {
+			s.cancelPreparedControllerUpdate()
+		}
+		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "创建数据库备份失败，已取消更新: "+err.Error())
+		s.publishRealtime("controller_update")
+		return
+	}
+	if err := s.recordControllerUpdateBackup(ctx, backup, status.Available.Build); err != nil {
+		log.Printf("manual Controller update backup recording failed: %v", err)
+		if prepared {
+			s.cancelPreparedControllerUpdate()
+		}
+		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "记录数据库备份失败，已取消更新: "+err.Error())
+		s.publishRealtime("controller_update")
+		return
+	}
+	status, err = s.controllerUpdater.Install(ctx)
+	if err != nil {
+		if (status.State == "cancelled" || status.State == "cancelling") && strings.TrimSpace(status.LastError) == "" {
+			_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
+			s.publishRealtime("controller_update")
+			return
+		}
+		publicErr := controllerUpdateOperationError("启动主控更新失败", status, err)
+		log.Printf("manual Controller update start failed: %v", publicErr)
+		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, publicErr.Error())
+		s.publishRealtime("controller_update")
+		return
+	}
+	s.startControllerUpdateWatch()
+	_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
 }
 
 func (s *Server) controllerUpdateCancel(w http.ResponseWriter, r *http.Request) {

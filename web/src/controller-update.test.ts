@@ -4,6 +4,7 @@ import {
   CONTROLLER_UPDATE_PENDING_MESSAGE,
   controllerUpdatePendingToast,
   createControllerUpdateRequestGuard,
+  isControllerUpdateFailedStatus,
   isControllerUpdateInProgressStatus,
   shouldDeferControllerUpdateTerminalStatus,
 } from './controller-update'
@@ -78,5 +79,12 @@ describe('controller update pending toast', () => {
     expect(isControllerUpdateInProgressStatus('current')).toBe(false)
     expect(isControllerUpdateInProgressStatus('failed')).toBe(false)
     expect(isControllerUpdateInProgressStatus(undefined)).toBe(false)
+  })
+
+  it('distinguishes failed background cancellation from a requested cancellation', () => {
+    expect(isControllerUpdateFailedStatus('cancelled', '创建数据库备份失败，已取消更新')).toBe(true)
+    expect(isControllerUpdateFailedStatus('cancelled', '')).toBe(false)
+    expect(isControllerUpdateFailedStatus('failed')).toBe(true)
+    expect(isControllerUpdateFailedStatus('unavailable')).toBe(true)
   })
 })

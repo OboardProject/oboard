@@ -2,10 +2,14 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -228,6 +232,100 @@ func TestControllerUpdaterPrepareUnsupported(t *testing.T) {
 	}
 	if controllerUpdaterPrepareUnsupported(context.Canceled) {
 		t.Fatal("context cancellation was treated as a legacy updater")
+	}
+}
+
+func TestControllerUpdateInstallContinuesAfterRequestDisconnect(t *testing.T) {
+	root := t.TempDir()
+	socketDir, err := os.MkdirTemp("/tmp", "obu-disconnect-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "updater.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installStarted := make(chan struct{})
+	releaseInstall := make(chan struct{})
+	var releaseInstallOnce sync.Once
+	unblockInstall := func() { releaseInstallOnce.Do(func() { close(releaseInstall) }) }
+	updater := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status := controllerupdate.Status{
+			Channel:         "dev",
+			State:           "available",
+			UpdateAvailable: true,
+			Available:       controllerupdate.BuildInfo{Version: "dev-next", Build: "20260813000000"},
+		}
+		switch r.URL.Path {
+		case "/v1/prepare":
+			status.State = "downloading"
+			status.CanCancel = true
+		case "/v1/install":
+			close(installStarted)
+			select {
+			case <-releaseInstall:
+			case <-r.Context().Done():
+				t.Errorf("updater install request was cancelled with the panel request: %v", r.Context().Err())
+				return
+			}
+			status.State = "downloading"
+			status.CanCancel = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(status)
+	})}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- updater.Serve(listener) }()
+	t.Cleanup(func() {
+		unblockInstall()
+		_ = updater.Close()
+		<-serveDone
+	})
+
+	db, err := store.Open(filepath.Join(root, "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := newTestServer(db, "test-secret", "")
+	app.controllerUpdater = controllerupdate.NewClient(socketPath)
+	app.controllerBackupDir = filepath.Join(root, "backups")
+
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v2/ui/controller-update/install", nil).WithContext(requestCtx)
+	handlerDone := make(chan struct{})
+	go func() {
+		app.controllerUpdateInstall(recorder, request)
+		close(handlerDone)
+	}()
+
+	select {
+	case <-handlerDone:
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("install response=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+	case <-time.After(time.Second):
+		unblockInstall()
+		t.Fatal("install API waited for the background updater operation")
+	}
+	cancelRequest()
+	select {
+	case <-installStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background install approval did not start")
+	}
+	unblockInstall()
+	app.controllerUpdateRunMu.Lock()
+	app.controllerUpdateRunMu.Unlock()
+	settings, err := db.ListSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(settings[controllerBackupSetting]) == "" {
+		t.Fatal("background update did not record its database backup")
 	}
 }
 
