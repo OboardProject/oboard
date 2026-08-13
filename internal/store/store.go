@@ -453,6 +453,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 			return err
 		}
 	}
+	if err := s.ensureColumn(ctx, "server_telemetry", "connectivity_probe_target", `alter table server_telemetry add column connectivity_probe_target text not null default 'auto'`); err != nil {
+		return err
+	}
 	for _, column := range []struct {
 		table, name, statement string
 	}{
@@ -675,7 +678,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	}{
 		{"offline_notify_enabled", `alter table server_telemetry add column offline_notify_enabled integer not null default 1`},
 		{"offline_after_seconds", `alter table server_telemetry add column offline_after_seconds integer not null default 0`},
-		{"connectivity_probe_target", `alter table server_telemetry add column connectivity_probe_target text not null default 'auto'`},
 		{"time_correction_mode", `alter table server_telemetry add column time_correction_mode text not null default 'off'`},
 		{"time_check_status", `alter table server_telemetry add column time_check_status text not null default 'unknown'`},
 		{"time_offset_ms", `alter table server_telemetry add column time_offset_ms integer not null default 0`},

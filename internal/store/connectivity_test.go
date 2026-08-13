@@ -134,6 +134,9 @@ func TestConnectivityProbeTargetMigratesFromPreviousSchema(t *testing.T) {
 	if _, err := raw.Exec(`alter table server_telemetry drop column connectivity_probe_target`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := raw.Exec(`delete from app_settings where key='migration.controller-db-20260813-unified-latency-probes'`); err != nil {
+		t.Fatal(err)
+	}
 	if err := raw.Close(); err != nil {
 		t.Fatal(err)
 	}
