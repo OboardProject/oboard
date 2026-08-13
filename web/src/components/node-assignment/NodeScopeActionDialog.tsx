@@ -457,7 +457,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
         isOpen={userAuthOpen}
         onClose={() => setUserAuthOpen(false)}
         title={node ? `授权用户 · ${node.name}` : '授权用户'}
-        size="md"
+        size="default"
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', background: 'var(--surface-2)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
