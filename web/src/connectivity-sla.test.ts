@@ -38,10 +38,9 @@ describe('connectivity dialog data source', () => {
     expect(source).not.toContain('buildSlaTimeline')
   })
 
-  it('renders authoritative coverage, buckets, latency points, and SLA explanation', () => {
+  it('renders authoritative coverage, buckets, and latency points', () => {
     expect(source).toContain('response.summary.coverage_percent')
     expect(source).toContain('response?.buckets')
     expect(source).toContain('response.latency_points')
-    expect(source).toContain('延迟不参与 SLA')
   })
 })

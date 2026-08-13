@@ -8120,10 +8120,6 @@ function ServerUnifiedTelemetryChart({
   return (
     <div className="komari-chart-container">
       <div className="komari-chart-header">
-        <div className="komari-chart-title">
-          <Activity size={16} aria-hidden="true" />
-          <span>多维监控趋势汇总 (Komari 图表)</span>
-        </div>
         <div className="komari-chart-legend">
           {seriesList.map(s => {
             const active = enabledSeries[s.id] !== false
@@ -8560,8 +8556,6 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
               <div className="connectivity-section-head"><AlertTriangle size={14} aria-hidden="true" /><h3>最近中断</h3></div>
               <ul className="connectivity-outages">{response.outages.map((outage, index) => <li key={`${outage.started_at}-${index}`}><span>{formatTableTime(outage.started_at)} 至 {outage.ended_at ? formatTableTime(outage.ended_at) : '持续中'} · {causeLabels[outage.cause] || '公网异常'}{outage.started_before_window ? ' · 开始于窗口前' : ''}</span><strong>{formatConnectivityDuration(outage.duration_seconds)}</strong></li>)}</ul>
             </section>}
-
-            <div className="connectivity-explanation"><Info size={14} aria-hidden="true" /><p><strong>延迟不参与 SLA。</strong> Agent 与主控保持连接时计为在线；断开主控后，公网目标测试成功的时段仍计为在线，本地保存的结果会在恢复连接后自动补报。地区目标只用于比较延迟，不影响 SLA。</p></div>
           </> : null}
       </div>}
     </div>
