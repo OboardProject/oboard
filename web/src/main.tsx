@@ -8503,26 +8503,12 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
               windowHours={currentWindowHours}
             />
 
-            <div className="connectivity-hero">
-              <div className={`connectivity-sla-bar-card ${slaTone}`} role="img" aria-label={`统计期 SLA ${connectivitySlaDisplay(response.summary.sla_percent)}`}>
-                <div className="connectivity-sla-bar-head">
-                  <div className="connectivity-sla-value-block"><span className="sla-rate-number">{connectivitySlaDisplay(response.summary.sla_percent)}</span><span className="sla-rate-label">可用性 SLA</span></div>
-                  <div className="connectivity-hero-status-row"><span className={`connectivity-status-chip ${currentTone}`}><i aria-hidden="true" />{currentStatusLabels[currentStatus]}</span><span className="connectivity-current-latency">{connectivityLatencyLabel(currentStatus, response.current.latency_ms)}</span></div>
-                </div>
-                <div className="connectivity-sla-progress-track" aria-hidden="true">{response.summary.sla_percent != null && <div className={`connectivity-sla-progress-fill ${slaTone}`} style={{ width: `${Math.min(100, Math.max(0, response.summary.sla_percent))}%` }} />}</div>
-                <dl className="connectivity-hero-grid">
-                  <div><dt>统计窗口</dt><dd>近 {windowLabels[windowKey]}</dd></div>
-                  <div><dt>统计覆盖率</dt><dd>{response.summary.coverage_percent.toFixed(1)}%</dd></div>
-                  <div><dt>最近检测</dt><dd>{response.current.checked_at ? formatTableTime(response.current.checked_at) : '—'}</dd></div>
-                  <div><dt>可信数据起点</dt><dd>{response.data_start_at ? formatTableTime(response.data_start_at) : '暂无'}</dd></div>
-                </dl>
-                {response.summary.coverage_percent < 99.999 && <div className="connectivity-coverage-note"><Info size={13} aria-hidden="true" /><span>统计覆盖率 {response.summary.coverage_percent.toFixed(1)}%{response.data_start_at ? `，完整统计自 ${formatTableTime(response.data_start_at)} 开始` : '，当前窗口存在未观测时段'}</span></div>}
-                {loadError && <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} /><span>{loadError}</span></div>}
+            <div className={`connectivity-sla-bar-card ${slaTone}`} role="img" aria-label={`统计期 SLA ${connectivitySlaDisplay(response.summary.sla_percent)}`}>
+              <div className="connectivity-sla-bar-head">
+                <div className="connectivity-sla-value-block"><span className="sla-rate-number">{connectivitySlaDisplay(response.summary.sla_percent)}</span><span className="sla-rate-label">可用性 SLA</span></div>
+                <div className="connectivity-hero-status-row"><span className={`connectivity-status-chip ${currentTone}`}><i aria-hidden="true" />{currentStatusLabels[currentStatus]}</span><span className="connectivity-current-latency">{connectivityLatencyLabel(currentStatus, response.current.latency_ms)}</span></div>
               </div>
-            </div>
 
-            <section className="connectivity-section">
-              <div className="connectivity-section-head"><Activity size={14} aria-hidden="true" /><h3>可用性时间线</h3><span className="connectivity-section-note">{buckets.length} 个时间段</span></div>
               <div className="connectivity-hour-strip" style={{ gridTemplateColumns: `repeat(${Math.max(1, buckets.length)}, minmax(0, 1fr))` }} role="img" aria-label={`近 ${windowLabels[windowKey]}可用性分段`}>
                 {buckets.map(bucket => {
                   const observed = bucket.available_seconds + bucket.unavailable_seconds
@@ -8531,7 +8517,8 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
               </div>
               {firstBucket && midBucket && lastBucket && <div className="connectivity-hour-axis"><span>{formatTableTime(firstBucket.start_at)}</span><span>{formatTableTime(midBucket.start_at)}</span><span>{formatTableTime(lastBucket.end_at)}</span></div>}
               <div className="connectivity-hour-legend"><span><i className="great" />正常</span><span><i className="fair" />波动</span><span><i className="poor" />不可用</span><span><i className="none" />无数据</span></div>
-            </section>
+              {loadError && <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} /><span>{loadError}</span></div>}
+            </div>
 
             <section className="connectivity-section">
               <div className="connectivity-section-head"><Database size={14} aria-hidden="true" /><h3>检测统计</h3><span className="connectivity-section-note">{response.probes.total} 次实际探测</span></div>
