@@ -1339,6 +1339,8 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
+}
+
 .server-action-group {
   display: inline-flex;
   align-items: stretch;

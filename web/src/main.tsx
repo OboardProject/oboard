@@ -6147,7 +6147,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   useEffect(() => {
     if (!serverActionOpen) return
     const onDocClick = (e: MouseEvent) => {
-      if (serverActionRef.current && !serverActionRef.current.contains(e.target as Node)) {
+      if (serverActionRef.current && !serverActionRef.current.contains(e.target as globalThis.Node)) {
         setServerActionOpen(false)
       }
     }
