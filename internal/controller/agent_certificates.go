@@ -41,13 +41,40 @@ func (s *Server) agentManagedAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := model.ManagedAssetResponse{Assets: make([]model.ManagedAsset, 0, len(req.Assets))}
-	seen := map[int64]bool{}
+	seen := map[string]bool{}
+	routingRuleSets, err := s.authorizedRoutingRuleSetAssets(r.Context(), server.ID)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
 	for _, reference := range req.Assets {
-		if reference.Kind != "certificate" || reference.ID <= 0 || reference.Revision == "" || seen[reference.ID] {
+		key := fmt.Sprintf("%s:%d", reference.Kind, reference.ID)
+		if reference.ID <= 0 || reference.Revision == "" || seen[key] {
 			fail(w, errors.New("invalid managed asset request"), 400)
 			return
 		}
-		seen[reference.ID] = true
+		seen[key] = true
+		if reference.Kind == "routing_rule_set" {
+			set, ok := routingRuleSets[reference.ID]
+			if !ok {
+				fail(w, errors.New("managed asset is not authorized for this agent"), 403)
+				return
+			}
+			if set.Revision != reference.Revision || len(set.Content) == 0 {
+				fail(w, errors.New("managed asset revision is unavailable"), http.StatusConflict)
+				return
+			}
+			filename := "rules.json"
+			if set.Format == model.RoutingRuleSetFormatSingBoxBinary {
+				filename = "rules.srs"
+			}
+			response.Assets = append(response.Assets, model.ManagedAsset{ManagedAssetReference: reference, Files: []model.ManagedAssetFile{{Name: filename, ContentB64: base64.StdEncoding.EncodeToString(set.Content), Mode: 0o600}}})
+			continue
+		}
+		if reference.Kind != "certificate" {
+			fail(w, errors.New("invalid managed asset request"), 400)
+			return
+		}
 		certificate, ok := authorized[reference.ID]
 		if !ok {
 			fail(w, errors.New("managed asset is not authorized for this agent"), 403)
@@ -71,6 +98,46 @@ func (s *Server) agentManagedAssets(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	write(w, 200, response)
+}
+
+func routingRuleSetAssetReferences(serverID int64, rules []model.RoutingRule, sets []model.RoutingRuleSet) []model.ManagedAssetReference {
+	wanted := map[int64]bool{}
+	for _, rule := range rules {
+		if rule.Enabled && rule.ServerID == serverID && rule.MatchSource == model.RoutingMatchSourceRuleSet && rule.RuleSetID != nil {
+			wanted[*rule.RuleSetID] = true
+		}
+	}
+	assets := make([]model.ManagedAssetReference, 0, len(wanted))
+	for _, set := range sets {
+		if wanted[set.ID] && set.Revision != "" && len(set.Content) > 0 {
+			assets = append(assets, model.ManagedAssetReference{Kind: "routing_rule_set", ID: set.ID, Revision: set.Revision})
+		}
+	}
+	return assets
+}
+
+func (s *Server) authorizedRoutingRuleSetAssets(ctx context.Context, serverID int64) (map[int64]model.RoutingRuleSet, error) {
+	rules, err := s.store.ListRoutingRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sets, err := s.store.ListRoutingRuleSets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	wanted := map[int64]bool{}
+	for _, rule := range rules {
+		if rule.Enabled && rule.ServerID == serverID && rule.MatchSource == model.RoutingMatchSourceRuleSet && rule.RuleSetID != nil {
+			wanted[*rule.RuleSetID] = true
+		}
+	}
+	out := map[int64]model.RoutingRuleSet{}
+	for _, set := range sets {
+		if wanted[set.ID] {
+			out[set.ID] = set
+		}
+	}
+	return out, nil
 }
 
 func (s *Server) authorizedCertificateAssets(ctx context.Context, serverID int64) (map[int64]model.Certificate, error) {

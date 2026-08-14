@@ -1105,6 +1105,12 @@ type Outbound struct {
 type RoutingRule struct {
 	ID                 int64       `json:"id"`
 	ServerID           int64       `json:"server_id"`
+	Scope              string      `json:"scope"`
+	ProxyPathID        *int64      `json:"proxy_path_id,omitempty"`
+	StageStepID        *int64      `json:"stage_step_id,omitempty"`
+	SortPosition       int         `json:"sort_position"`
+	MatchSource        string      `json:"match_source"`
+	RuleSetID          *int64      `json:"rule_set_id,omitempty"`
 	Name               string      `json:"name"`
 	Priority           int         `json:"priority"`
 	MatchJSON          string      `json:"match_json"`
@@ -1118,6 +1124,49 @@ type RoutingRule struct {
 	CreatedAt          time.Time   `json:"created_at"`
 	UpdatedAt          time.Time   `json:"updated_at"`
 }
+
+const (
+	RoutingRuleScopeServer    = "server"
+	RoutingRuleScopePathStage = "path_stage"
+	RoutingMatchSourceInline  = "inline"
+	RoutingMatchSourceRuleSet = "rule_set"
+)
+
+type RoutingRuleSet struct {
+	ID             int64      `json:"id"`
+	Name           string     `json:"name"`
+	URL            string     `json:"url"`
+	Format         string     `json:"format"`
+	MihomoBehavior string     `json:"mihomo_behavior,omitempty"`
+	ETag           string     `json:"etag,omitempty"`
+	LastModified   string     `json:"last_modified,omitempty"`
+	Content        []byte     `json:"-"`
+	Revision       string     `json:"revision,omitempty"`
+	Status         string     `json:"status"`
+	LastError      string     `json:"last_error,omitempty"`
+	LastAttemptAt  *time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt  *time.Time `json:"last_success_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+type RoutingRulePlacement struct {
+	RuleID       int64  `json:"rule_id"`
+	StageStepID  *int64 `json:"stage_step_id,omitempty"`
+	SortPosition int    `json:"sort_position"`
+}
+
+const (
+	RoutingRuleSetFormatSingBoxSource   = "singbox_source"
+	RoutingRuleSetFormatSingBoxBinary   = "singbox_binary"
+	RoutingRuleSetFormatMihomoDomain    = "mihomo_domain"
+	RoutingRuleSetFormatMihomoIPCIDR    = "mihomo_ipcidr"
+	RoutingRuleSetFormatMihomoClassical = "mihomo_classical"
+	RoutingRuleSetStatusPending         = "pending"
+	RoutingRuleSetStatusReady           = "ready"
+	RoutingRuleSetStatusRefreshing      = "refreshing"
+	RoutingRuleSetStatusError           = "error"
+)
 
 type ExternalOutbound struct {
 	ID                  int64                 `json:"id"`
@@ -1625,6 +1674,8 @@ type SSHInboundUser struct {
 	PathID           int64  `json:"path_id"`
 	RouteKind        string `json:"route_kind"`
 	OutboundTag      string `json:"outbound_tag,omitempty"`
+	RouteInboundTag  string `json:"route_inbound_tag,omitempty"`
+	RouteAuthUser    string `json:"route_auth_user,omitempty"`
 	Enabled          bool   `json:"enabled"`
 }
 

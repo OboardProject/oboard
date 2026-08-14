@@ -245,6 +245,10 @@ func (s *Service) ListRoutingRules(ctx context.Context, principal Principal) ([]
 	return out, nil
 }
 
+func (s *Service) ListRoutingRuleSets(ctx context.Context, principal Principal) ([]model.RoutingRuleSet, error) {
+	return s.store.ListRoutingRuleSets(ctx)
+}
+
 // ListExternalOutbounds returns redacted imported-node views. The node auth
 // config (config_json) is never included.
 func (s *Service) ListExternalOutbounds(ctx context.Context, principal Principal) ([]map[string]any, error) {
@@ -450,6 +454,8 @@ func (s *Service) Query(ctx context.Context, principal Principal, capability str
 		return s.ListOutbounds(ctx, principal)
 	case "routing_rules.list":
 		return s.ListRoutingRules(ctx, principal)
+	case "routing_rule_sets.list":
+		return s.ListRoutingRuleSets(ctx, principal)
 	case "external_outbounds.list":
 		return s.ListExternalOutbounds(ctx, principal)
 	case "warp_profiles.list":

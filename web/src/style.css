@@ -4366,6 +4366,76 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .graph-form-dialog { width: min(560px, calc(100vw - 28px)); }
+.dialog.routing-composer-dialog { width: min(1180px, calc(100vw - 28px)); max-height: min(900px, calc(100dvh - 28px)); }
+.dialog-head.routing-composer-head { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(240px, 360px) auto; }
+.routing-composer-head .form-field { margin: 0; }
+.routing-composer-body { display: grid; gap: 14px; overflow: auto; }
+.routing-stage-tabs { display: none; gap: 6px; }
+.routing-stage-tabs button { min-width: 0; display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: center; gap: 7px; color: var(--text-secondary); text-align: left; border-color: var(--border); background: var(--surface-2); box-shadow: none; }
+.routing-stage-tabs button:hover:not(:disabled) { color: var(--text-strong); border-color: var(--border-strong); background: var(--surface-3); box-shadow: none; transform: none; }
+.routing-stage-tabs button strong { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--surface-3); }
+.routing-stage-tabs button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.routing-stage-tabs button.selected { border-color: color-mix(in srgb, var(--primary) 50%, var(--border)); background: var(--primary-softer); }
+.routing-stage-grid { display: grid; grid-template-columns: repeat(var(--routing-stage-count), minmax(220px, 1fr)); gap: 8px; min-height: 236px; overflow-x: auto; }
+.routing-stage { min-width: 0; display: grid; grid-template-rows: auto auto minmax(92px, 1fr) auto; align-content: start; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-1); }
+.routing-stage > header { grid-row: 1; display: flex; align-items: center; gap: 9px; min-width: 0; padding: 10px 11px; border-bottom: 1px solid var(--border-soft); }
+.routing-stage > header > div { min-width: 0; display: grid; gap: 1px; }
+.routing-stage > header h3 { margin: 0; overflow: hidden; color: var(--text-strong); font-size: 13px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.routing-stage > header small { color: var(--muted); font-size: 10.5px; }
+.routing-stage-letter { flex: 0 0 auto; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: var(--primary); background: var(--primary-softer); font-size: 12px; font-weight: 800; }
+.routing-stage.disabled { opacity: .65; }
+.routing-stage-unavailable { grid-row: 2; display: flex; align-items: center; gap: 6px; margin: 8px; padding: 8px; color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border)); border-radius: 5px; background: var(--warning-soft); font-size: 11px; }
+.routing-rule-stack { grid-row: 3; min-width: 0; display: grid; align-content: start; gap: 5px; margin: 0; padding: 7px; list-style: none; }
+.routing-rule-card { min-width: 0; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); cursor: grab; }
+.routing-rule-card:active { cursor: grabbing; }
+.routing-rule-order { display: flex; align-items: center; gap: 2px; color: var(--muted-2); font-size: 10px; font-variant-numeric: tabular-nums; }
+.routing-rule-copy { min-width: 0; display: grid; gap: 2px; }
+.routing-rule-copy strong { overflow: hidden; color: var(--text-strong); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.routing-rule-copy > span { min-width: 0; display: flex; align-items: center; gap: 3px; overflow: hidden; color: var(--muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.routing-rule-copy small { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.routing-rule-actions { display: grid; grid-template-columns: repeat(2, 26px); gap: 2px; opacity: .25; transition: opacity .15s ease; }
+.routing-rule-card:hover .routing-rule-actions, .routing-rule-card:focus-within .routing-rule-actions { opacity: 1; }
+.routing-rule-actions .icon-button { width: 26px; min-width: 26px; height: 26px; min-height: 26px; padding: 0; }
+.routing-stage-fallback { grid-row: 4; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; padding: 9px 10px; color: var(--muted); border-top: 1px solid var(--border-soft); font-size: 10.5px; }
+.routing-stage-fallback strong { color: var(--text-secondary); font-size: 10.5px; }
+.routing-rule-editor { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--border); }
+.routing-rule-editor > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.routing-rule-editor-title { display: flex; align-items: baseline; gap: 8px; }
+.routing-rule-editor h3 { margin: 0; color: var(--text-strong); font-size: 14px; }
+.routing-rule-editor-title span { color: var(--muted); font-size: 11px; }
+.routing-match-source-select { flex: 0 1 210px; width: min(210px, 52vw); }
+.routing-rule-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 10px; }
+.routing-rule-editor-grid > .form-field:has(textarea), .routing-rule-set-picker, .routing-action-picker { grid-column: 1 / -1; }
+.routing-action-picker { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.routing-action-picker button { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--text-secondary); background: var(--surface-2); }
+.routing-action-picker button.selected { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 50%, var(--border)); background: var(--primary-softer); }
+.routing-rule-set-picker { display: grid; gap: 7px; }
+.routing-rule-set-toolbar { display: flex; gap: 7px; }
+.routing-rule-set-toolbar label { flex: 1 1 auto; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); }
+.routing-rule-set-toolbar input { min-width: 0; padding-inline: 0; border: 0; background: transparent; box-shadow: none; }
+.routing-rule-set-create { display: grid; grid-template-columns: minmax(120px, .7fr) minmax(240px, 1.5fr) minmax(150px, .8fr) auto; gap: 6px; }
+.routing-rule-set-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; max-height: 190px; overflow: auto; }
+.routing-rule-set-list > label { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); cursor: pointer; }
+.routing-rule-set-list > label.selected { border-color: color-mix(in srgb, var(--primary) 50%, var(--border)); background: var(--primary-softer); }
+.routing-rule-set-list > label > span { min-width: 0; display: grid; gap: 2px; }
+.routing-rule-set-list strong, .routing-rule-set-list small, .routing-rule-set-list em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.routing-rule-set-list strong { color: var(--text-strong); font-size: 11.5px; }
+.routing-rule-set-list small { color: var(--muted); font-size: 10px; }
+.routing-rule-set-list em { color: var(--danger); font-size: 10px; font-style: normal; }
+@media (max-width: 760px) {
+  .dialog.routing-composer-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .dialog-head.routing-composer-head { grid-template-columns: minmax(0, 1fr) auto; }
+  .routing-composer-head .form-field { grid-column: 1 / -1; grid-row: 2; }
+  .routing-stage-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); }
+  .routing-stage-grid { display: block; height: max-content; min-height: 0; overflow: visible; }
+  .routing-stage { display: none; }
+  .routing-stage.selected { display: grid; grid-template-rows: auto auto minmax(92px, auto) auto; }
+  .routing-rule-editor-title span { display: none; }
+  .routing-rule-editor-grid { grid-template-columns: minmax(0, 1fr); }
+  .routing-rule-editor-grid > * { grid-column: 1 !important; }
+  .routing-action-picker { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .routing-rule-set-create, .routing-rule-set-list { grid-template-columns: minmax(0, 1fr); }
+}
 .transport-dialog { width: min(820px, calc(100vw - 28px)); max-height: min(820px, calc(100dvh - 28px)); }
 .transport-dialog-body { display: grid; align-content: start; gap: 12px; scrollbar-gutter: stable; overscroll-behavior: contain; }
 .transport-mode-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }

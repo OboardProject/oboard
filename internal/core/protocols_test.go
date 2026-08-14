@@ -326,6 +326,65 @@ func TestProxyPathServerOnlyMultiHopUsesSharedShadowsocksInbounds(t *testing.T) 
 	}
 }
 
+func TestProxyPathStageRulesRunBeforeEachStageContinuation(t *testing.T) {
+	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
+	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
+	serverC := model.Server{ID: 3, Name: "C", PublicIPv4: "203.0.113.3", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 32000, PortRangeEnd: 32100}
+	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 50, Name: "A-B-C", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	serverBID, serverCID := serverB.ID, serverC.ID
+	stepB := model.ProxyPathStep{ID: 101, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID}
+	stepC := model.ProxyPathStep{ID: 102, PathID: path.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverCID}
+	pathID, stepBID, stepCID, ruleSetID := path.ID, stepB.ID, stepC.ID, int64(9)
+	opts := ConfigOptions{
+		Servers:        []model.Server{serverA, serverB, serverC},
+		Inbounds:       []model.Inbound{root},
+		ProxyPaths:     []model.ProxyPath{path},
+		ProxyPathSteps: []model.ProxyPathStep{stepB, stepC},
+		InboundUsers:   []model.InboundUser{{InboundID: root.ID, UserID: 1, Enabled: true}},
+		RoutingRules: []model.RoutingRule{
+			{ID: 1, ServerID: serverA.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &pathID, SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: "at-a", MatchJSON: `{"domain":["a.example"]}`, Action: model.RouteActionDirect, Enabled: true},
+			{ID: 2, ServerID: serverB.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &pathID, StageStepID: &stepBID, SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: "at-b", MatchJSON: `{"domain":["b.example"]}`, Action: model.RouteActionBlock, Enabled: true},
+			{ID: 3, ServerID: serverC.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &pathID, StageStepID: &stepCID, SortPosition: 0, MatchSource: model.RoutingMatchSourceRuleSet, RuleSetID: &ruleSetID, Name: "at-c", Action: model.RouteActionDirect, Enabled: true},
+		},
+		RoutingRuleSets: []model.RoutingRuleSet{{ID: ruleSetID, Name: "remote", Format: model.RoutingRuleSetFormatSingBoxSource, Revision: "abc"}},
+	}
+	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	tests := []struct {
+		server       model.Server
+		matchKey     string
+		matchValue   string
+		continuation string
+	}{
+		{serverA, "domain", "a.example", "path-50-step-1"},
+		{serverB, "domain", "b.example", "path-50-step-2"},
+		{serverC, "rule_set", "routing-rule-set-9", ""},
+	}
+	for _, test := range tests {
+		t.Run(test.server.Name, func(t *testing.T) {
+			config := mustServerConfig(t, test.server, []model.Inbound{root}, []model.User{user}, opts)
+			var parsed SingBoxConfig
+			if err := json.Unmarshal([]byte(config), &parsed); err != nil {
+				t.Fatal(err)
+			}
+			rules := mapList(parsed.Route["rules"])
+			if len(rules) == 0 {
+				t.Fatalf("stage rules missing: %s", config)
+			}
+			values, ok := rules[0][test.matchKey].([]any)
+			if !ok || len(values) != 1 || values[0] != test.matchValue {
+				t.Fatalf("first stage rule match = %#v, want %s=%s; config=%s", rules[0], test.matchKey, test.matchValue, config)
+			}
+			if test.continuation != "" && (len(rules) < 2 || rules[1]["outbound"] != test.continuation) {
+				t.Fatalf("stage continuation did not follow custom rule: %#v", rules)
+			}
+			if rules[0]["inbound"] == nil || rules[0]["auth_user"] == nil {
+				t.Fatalf("stage rule lacks branch identity: %#v", rules[0])
+			}
+		})
+	}
+}
+
 func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
 	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
@@ -2015,7 +2074,7 @@ func TestProxyPathSSHTunnelConnectsSingBoxToManagedLocalForward(t *testing.T) {
 	}
 }
 
-func TestSSHRootUsesRelayOutboundAndManagedSSHTunnelContinues(t *testing.T) {
+func TestSSHRootUsesKernelRouteIdentityAndManagedSSHTunnelContinues(t *testing.T) {
 	source := model.Server{ID: 1, Name: "A", PublicIPv4: "198.51.100.10", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
 	middle := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
 	exit := model.Server{ID: 3, Name: "C", PublicIPv4: "203.0.113.30", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 32000, PortRangeEnd: 32100}
@@ -2047,10 +2106,14 @@ func TestSSHRootUsesRelayOutboundAndManagedSSHTunnelContinues(t *testing.T) {
 	if firstOutbound == nil || firstOutbound["server"] != "127.0.0.1" {
 		t.Fatalf("SSH tunnel first outbound = %#v", firstOutbound)
 	}
+	foundSyntheticContinuation := false
 	for _, rule := range mapList(sourceConfig.Route["rules"]) {
-		if stringSetContains(stringListFromAny(rule["inbound"]), tag("in", root.ID)) {
-			t.Fatalf("source contains a rule for nonexistent SSH sing-box inbound: %#v", rule)
+		if stringSetContains(stringListFromAny(rule["inbound"]), tag("in", root.ID)) && rule["outbound"] == outboundTag {
+			foundSyntheticContinuation = true
 		}
+	}
+	if !foundSyntheticContinuation {
+		t.Fatalf("source missing synthetic SSH root continuation: %#v", sourceConfig.Route["rules"])
 	}
 
 	middleConfig := parseSingBoxConfig(t, mustServerConfig(t, middle, []model.Inbound{root}, nil, opts))

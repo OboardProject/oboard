@@ -94,6 +94,7 @@ type Adapter interface {
 
 type ConfigOptions struct {
 	RoutingRules      []model.RoutingRule
+	RoutingRuleSets   []model.RoutingRuleSet
 	ExternalOutbounds []model.ExternalOutbound
 	ProxyPaths        []model.ProxyPath
 	ProxyPathSteps    []model.ProxyPathStep
@@ -624,7 +625,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		}
 		config.Outbounds = append(config.Outbounds, item)
 	}
-	pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, opts, users, plannedPathInbounds)
+	pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, outbounds, opts, users, plannedPathInbounds)
 	if err != nil {
 		return "", err
 	}
@@ -652,6 +653,9 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 	}
 	if len(rules) > 0 {
 		config.Route["rules"] = rules
+	}
+	if ruleSets := buildRouteRuleSets(server, opts.RoutingRules, opts.RoutingRuleSets); len(ruleSets) > 0 {
+		config.Route["rule_set"] = ruleSets
 	}
 	if err := ValidateGeneratedSingBoxConfig(config); err != nil {
 		return "", err
@@ -1078,7 +1082,7 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 	return out, nil
 }
 
-func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, users []model.User, plannedInbounds map[int64]model.Inbound) ([]map[string]any, []map[string]any, error) {
+func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model.Outbound, opts ConfigOptions, users []model.User, plannedInbounds map[int64]model.Inbound) ([]map[string]any, []map[string]any, error) {
 	inboundByID := map[int64]model.Inbound{}
 	for _, inbound := range opts.Inbounds {
 		inboundByID[inbound.ID] = inbound
@@ -1163,6 +1167,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 		activeServerID := root.ServerID
 		activeInboundTag := tag("in", root.ID)
 		activeAuthUsers := proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
+		var activeStageStepID *int64
 		previousTag := ""
 		for _, step := range steps {
 			if step.TransportMode == "" {
@@ -1172,6 +1177,8 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
 					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
+					stepID := step.ID
+					activeStageStepID = &stepID
 					previousTag = ""
 				}
 				continue
@@ -1194,6 +1201,8 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
 					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
+					stepID := step.ID
+					activeStageStepID = &stepID
 					previousTag = ""
 				}
 				continue
@@ -1225,17 +1234,22 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 			previousTag = stepTag
 			if step.NodeType == model.ProxyPathStepServerInbound {
 				if previousTag != "" {
-					if root.Protocol != model.ProtocolSSH || activeServerID != root.ServerID {
-						rule := map[string]any{"inbound": []string{activeInboundTag}, "action": "route", "outbound": previousTag}
-						if len(activeAuthUsers) > 0 {
-							rule["auth_user"] = activeAuthUsers
-						}
-						rules = append(rules, rule)
+					stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds)
+					if err != nil {
+						return nil, nil, err
 					}
+					rules = append(rules, stageRules...)
+					rule := map[string]any{"inbound": []string{activeInboundTag}, "action": "route", "outbound": previousTag}
+					if len(activeAuthUsers) > 0 {
+						rule["auth_user"] = activeAuthUsers
+					}
+					rules = append(rules, rule)
 				}
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
 					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
+					stepID := step.ID
+					activeStageStepID = &stepID
 					previousTag = ""
 				}
 			}
@@ -1244,7 +1258,12 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 			if previousTag != "" {
 				return nil, nil, fmt.Errorf("直接出口分支 %s 必须结束于可控服务器", path.Name)
 			}
-			if activeServerID == server.ID && (root.Protocol != model.ProtocolSSH || activeServerID != root.ServerID) {
+			if activeServerID == server.ID {
+				stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds)
+				if err != nil {
+					return nil, nil, err
+				}
+				rules = append(rules, stageRules...)
 				rule := map[string]any{"inbound": []string{activeInboundTag}, "action": "route", "outbound": "direct"}
 				if len(activeAuthUsers) > 0 {
 					rule["auth_user"] = activeAuthUsers
@@ -1253,12 +1272,23 @@ func buildProxyPathOutboundsAndRules(server model.Server, opts ConfigOptions, us
 			}
 			continue
 		}
-		if previousTag != "" && activeServerID == server.ID && (root.Protocol != model.ProtocolSSH || activeServerID != root.ServerID) {
+		if previousTag != "" && activeServerID == server.ID {
+			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds)
+			if err != nil {
+				return nil, nil, err
+			}
+			rules = append(rules, stageRules...)
 			rule := map[string]any{"inbound": []string{activeInboundTag}, "action": "route", "outbound": previousTag}
 			if len(activeAuthUsers) > 0 {
 				rule["auth_user"] = activeAuthUsers
 			}
 			rules = append(rules, rule)
+		} else if previousTag == "" && activeStageStepID != nil && activeServerID == server.ID {
+			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds)
+			if err != nil {
+				return nil, nil, err
+			}
+			rules = append(rules, stageRules...)
 		}
 	}
 	return outbounds, rules, nil
@@ -1294,6 +1324,14 @@ func ProxyPathEntryRoute(path model.ProxyPath, steps []model.ProxyPathStep, root
 		return "", "", errors.New("SSH 入口路径需要可用的 WARP")
 	}
 	return "outbound", proxyPathStepTag(path.ID, first.Position), nil
+}
+
+func ProxyPathEntryRoutingIdentity(path model.ProxyPath, root model.Inbound, user model.User) (string, string, error) {
+	if !path.Enabled || path.InboundID != root.ID || root.Protocol != model.ProtocolSSH || user.ID <= 0 {
+		return "", "", errors.New("SSH entry routing identity is invalid")
+	}
+	branchUser := proxyPathBranchUser(path, root, user)
+	return tag("in", root.ID), protocolAuthUsername(root.Protocol, branchUser), nil
 }
 
 func validateProxyPathForConfig(path model.ProxyPath, root model.Inbound, steps []model.ProxyPathStep) error {
@@ -1855,7 +1893,7 @@ func applyManagedWARPDomainResolver(item map[string]any, strategy string) {
 func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds []model.Outbound, external []model.ExternalOutbound) ([]map[string]any, error) {
 	filtered := make([]model.RoutingRule, 0, len(rules))
 	for _, rule := range rules {
-		if rule.ServerID == server.ID && rule.Enabled {
+		if rule.ServerID == server.ID && rule.Enabled && (rule.Scope == "" || rule.Scope == model.RoutingRuleScopeServer) {
 			filtered = append(filtered, rule)
 		}
 	}
@@ -1891,6 +1929,91 @@ func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds [
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.Server, inboundTag string, authUsers []string, rules []model.RoutingRule, outbounds []model.Outbound, external []model.ExternalOutbound) ([]map[string]any, error) {
+	filtered := make([]model.RoutingRule, 0)
+	for _, rule := range rules {
+		if !rule.Enabled || rule.Scope != model.RoutingRuleScopePathStage || rule.ProxyPathID == nil || *rule.ProxyPathID != path.ID || rule.ServerID != server.ID || !sameOptionalID(rule.StageStepID, stageStepID) {
+			continue
+		}
+		filtered = append(filtered, rule)
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		if filtered[i].SortPosition == filtered[j].SortPosition {
+			return filtered[i].ID < filtered[j].ID
+		}
+		return filtered[i].SortPosition < filtered[j].SortPosition
+	})
+	result := make([]map[string]any, 0, len(filtered))
+	for _, rule := range filtered {
+		item := map[string]any{}
+		if rule.MatchSource == model.RoutingMatchSourceRuleSet {
+			if rule.RuleSetID == nil {
+				return nil, fmt.Errorf("routing rule %s: rule_set_id required", rule.Name)
+			}
+			item["rule_set"] = []string{routingRuleSetTag(*rule.RuleSetID)}
+		} else if strings.TrimSpace(rule.MatchJSON) != "" && strings.TrimSpace(rule.MatchJSON) != "{}" {
+			if err := json.Unmarshal([]byte(rule.MatchJSON), &item); err != nil {
+				return nil, fmt.Errorf("routing rule %s match_json: %w", rule.Name, err)
+			}
+		}
+		item["inbound"] = []string{inboundTag}
+		if len(authUsers) > 0 {
+			item["auth_user"] = append([]string(nil), authUsers...)
+		} else {
+			delete(item, "auth_user")
+		}
+		if rule.Action == model.RouteActionInterface {
+			item["action"] = "direct"
+			item["bind_interface"] = rule.InterfaceName
+			result = append(result, item)
+			continue
+		}
+		outboundTag, ok, err := routeRuleOutboundTag(rule, server, outbounds, external)
+		if err != nil {
+			return nil, fmt.Errorf("routing rule %s: %w", rule.Name, err)
+		}
+		if !ok {
+			continue
+		}
+		item["action"] = "route"
+		item["outbound"] = outboundTag
+		result = append(result, item)
+	}
+	return result, nil
+}
+
+func sameOptionalID(left, right *int64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func routingRuleSetTag(id int64) string { return fmt.Sprintf("routing-rule-set-%d", id) }
+
+func buildRouteRuleSets(server model.Server, rules []model.RoutingRule, sets []model.RoutingRuleSet) []map[string]any {
+	wanted := map[int64]bool{}
+	for _, rule := range rules {
+		if rule.Enabled && rule.ServerID == server.ID && rule.MatchSource == model.RoutingMatchSourceRuleSet && rule.RuleSetID != nil {
+			wanted[*rule.RuleSetID] = true
+		}
+	}
+	result := make([]map[string]any, 0, len(wanted))
+	for _, set := range sets {
+		if !wanted[set.ID] || set.Revision == "" {
+			continue
+		}
+		format := "source"
+		filename := "rules.json"
+		if set.Format == model.RoutingRuleSetFormatSingBoxBinary {
+			format, filename = "binary", "rules.srs"
+		}
+		result = append(result, map[string]any{"type": "local", "tag": routingRuleSetTag(set.ID), "format": format, "path": fmt.Sprintf("oboard-asset://routing-rule-set/%d/%s", set.ID, filename)})
+	}
+	sort.SliceStable(result, func(i, j int) bool { return fmt.Sprint(result[i]["tag"]) < fmt.Sprint(result[j]["tag"]) })
+	return result
 }
 
 func routeRuleOutboundTag(rule model.RoutingRule, server model.Server, outbounds []model.Outbound, external []model.ExternalOutbound) (string, bool, error) {

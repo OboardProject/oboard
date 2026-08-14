@@ -20,6 +20,7 @@ import (
 func (s *Server) registerTrafficAutomationOperations() {
 	s.registerOutboundOperations()
 	s.registerRoutingRuleOperations()
+	s.registerRoutingRuleSetOperations()
 	s.registerExternalOutboundOperations()
 }
 
@@ -268,7 +269,7 @@ func automationOutboundResult(outbound model.Outbound, changed []string) (any, e
 		"server_id": outbound.ServerID, "next_server_id": outbound.NextServerID, "name": outbound.Name,
 		"protocol": outbound.Protocol, "target_address": outbound.TargetAddress, "target_port": outbound.TargetPort,
 		"advanced_configured": strings.TrimSpace(outbound.ConfigJSON) != "" && strings.TrimSpace(outbound.ConfigJSON) != "{}",
-		"enabled": outbound.Enabled, "created_at": outbound.CreatedAt, "updated_at": outbound.UpdatedAt,
+		"enabled":             outbound.Enabled, "created_at": outbound.CreatedAt, "updated_at": outbound.UpdatedAt,
 	}
 	if len(changed) == 0 {
 		return map[string]any{"outbound": view}, nil
@@ -281,7 +282,8 @@ func automationOutboundResult(outbound model.Outbound, changed []string) (any, e
 var routingRuleAutomationFields = map[string]bool{
 	"server_id": true, "name": true, "priority": true, "match_json": true, "action": true,
 	"outbound_id": true, "external_outbound_id": true, "target_server_id": true,
-	"interface_name": true, "enabled": true,
+	"interface_name": true, "enabled": true, "scope": true, "proxy_path_id": true,
+	"stage_step_id": true, "sort_position": true, "match_source": true, "rule_set_id": true,
 }
 
 func (s *Server) registerRoutingRuleOperations() {
@@ -300,6 +302,103 @@ func (s *Server) registerRoutingRuleOperations() {
 			return s.applyRoutingRuleOperation(ctx, principal, input, name)
 		})
 	}
+	name := "routing_rules.place"
+	s.automation.RegisterValidator(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, err := s.validateRoutingRulePlacement(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return request, nil
+	})
+	s.automation.RegisterRevisionResolver(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		request, err := s.validateRoutingRulePlacement(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		path, err := s.store.GetProxyPath(ctx, request.ProxyPathID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"proxy_path:" + strconv.FormatInt(path.ID, 10): path.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
+	})
+	s.automation.Register(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, err := s.validateRoutingRulePlacement(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		before, err := s.routingRuleServerIDsForPath(ctx, request.ProxyPathID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.PlaceRoutingRules(ctx, request.ProxyPathID, request.Placements); err != nil {
+			return nil, err
+		}
+		after, err := s.routingRuleServerIDsForPath(ctx, request.ProxyPathID)
+		if err != nil {
+			return nil, err
+		}
+		for id := range after {
+			before[id] = true
+		}
+		serverIDs := make([]int64, 0, len(before))
+		for id := range before {
+			serverIDs = append(serverIDs, id)
+		}
+		if err := s.queueCoreConfigRefreshForServers(ctx, serverIDs, "routing_rules_placed"); err != nil {
+			return nil, err
+		}
+		return map[string]any{"proxy_path_id": request.ProxyPathID, "placements": request.Placements}, nil
+	})
+}
+
+type routingRulePlacementInput struct {
+	ProxyPathID int64                        `json:"proxy_path_id"`
+	Placements  []model.RoutingRulePlacement `json:"placements"`
+}
+
+func (s *Server) validateRoutingRulePlacement(ctx context.Context, principal application.Principal, input json.RawMessage) (routingRulePlacementInput, error) {
+	var request routingRulePlacementInput
+	if err := strictAutomationInput(input, &request); err != nil {
+		return request, err
+	}
+	if request.ProxyPathID <= 0 || len(request.Placements) == 0 || len(request.Placements) > 512 {
+		return request, errors.New("proxy_path_id and 1-512 placements are required")
+	}
+	if !principal.AllowsInt64("proxy_path_ids", request.ProxyPathID) {
+		return request, errors.New("proxy path is outside the authorized boundary")
+	}
+	path, err := s.store.GetProxyPath(ctx, request.ProxyPathID)
+	if err != nil {
+		return request, err
+	}
+	root, err := s.store.GetInbound(ctx, path.InboundID)
+	if err != nil {
+		return request, err
+	}
+	for _, placement := range request.Placements {
+		rule, err := s.store.GetRoutingRule(ctx, placement.RuleID)
+		if err != nil {
+			return request, err
+		}
+		if !principal.AllowsInt64("server_ids", rule.ServerID) {
+			return request, errors.New("routing rule placement is outside the authorized server boundary")
+		}
+		targetServerID := root.ServerID
+		if placement.StageStepID != nil {
+			step, err := s.store.GetProxyPathStep(ctx, *placement.StageStepID)
+			if err != nil {
+				return request, err
+			}
+			if step.PathID != request.ProxyPathID || step.NodeType != model.ProxyPathStepServerInbound || step.ServerID == nil {
+				return request, errors.New("routing rule placement targets an invalid controlled stage")
+			}
+			targetServerID = *step.ServerID
+		}
+		if !principal.AllowsInt64("server_ids", targetServerID) {
+			return request, errors.New("routing rule target stage is outside the authorized server boundary")
+		}
+	}
+	return request, nil
 }
 
 type routingRuleOperationInput struct {
@@ -323,8 +422,10 @@ func (s *Server) routingRuleAutomationCandidate(ctx context.Context, principal a
 		if err != nil {
 			return model.RoutingRule{}, nil, err
 		}
-		if _, ok := fields["server_id"]; !ok {
-			return model.RoutingRule{}, nil, errors.New("routing_rule.server_id is required")
+		if _, serverOK := fields["server_id"]; !serverOK {
+			if _, pathOK := fields["proxy_path_id"]; !pathOK {
+				return model.RoutingRule{}, nil, errors.New("routing_rule.server_id or proxy_path_id is required")
+			}
 		}
 		if _, ok := fields["name"]; !ok {
 			return model.RoutingRule{}, nil, errors.New("routing_rule.name is required")
@@ -394,8 +495,14 @@ func (s *Server) routingRuleAutomationCandidate(ctx context.Context, principal a
 }
 
 func (s *Server) validateRoutingRuleAutomationCandidate(ctx context.Context, principal application.Principal, rule *model.RoutingRule) error {
+	if err := s.validateRoutingRule(ctx, rule); err != nil {
+		return err
+	}
 	if !principal.AllowsInt64("server_ids", rule.ServerID) {
 		return errors.New("routing rule server is outside the authorized server boundary")
+	}
+	if rule.ProxyPathID != nil && !principal.AllowsInt64("proxy_path_ids", *rule.ProxyPathID) {
+		return errors.New("routing rule proxy path is outside the authorized boundary")
 	}
 	if rule.OutboundID != nil {
 		outbound, err := s.store.GetOutbound(ctx, *rule.OutboundID)
@@ -415,13 +522,31 @@ func (s *Server) validateRoutingRuleAutomationCandidate(ctx context.Context, pri
 			return errors.New("routing rule references an unauthorized external outbound")
 		}
 	}
-	return s.validateRoutingRule(ctx, rule)
+	return nil
 }
 
 func mergeRoutingRulePatch(current model.RoutingRule, patch model.RoutingRule, fields map[string]json.RawMessage) model.RoutingRule {
 	merged := current
 	if _, ok := fields["server_id"]; ok {
 		merged.ServerID = patch.ServerID
+	}
+	if _, ok := fields["scope"]; ok {
+		merged.Scope = patch.Scope
+	}
+	if _, ok := fields["proxy_path_id"]; ok {
+		merged.ProxyPathID = patch.ProxyPathID
+	}
+	if _, ok := fields["stage_step_id"]; ok {
+		merged.StageStepID = patch.StageStepID
+	}
+	if _, ok := fields["sort_position"]; ok {
+		merged.SortPosition = patch.SortPosition
+	}
+	if _, ok := fields["match_source"]; ok {
+		merged.MatchSource = patch.MatchSource
+	}
+	if _, ok := fields["rule_set_id"]; ok {
+		merged.RuleSetID = patch.RuleSetID
 	}
 	if _, ok := fields["name"]; ok {
 		merged.Name = patch.Name
@@ -494,11 +619,12 @@ func (s *Server) applyRoutingRuleOperation(ctx context.Context, principal applic
 func automationRoutingRuleResult(rule model.RoutingRule, changed []string) (any, error) {
 	view := map[string]any{
 		"id": rule.ID, "revision": rule.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		"server_id": rule.ServerID, "name": rule.Name, "priority": rule.Priority,
+		"server_id": rule.ServerID, "scope": rule.Scope, "proxy_path_id": rule.ProxyPathID, "stage_step_id": rule.StageStepID,
+		"sort_position": rule.SortPosition, "match_source": rule.MatchSource, "rule_set_id": rule.RuleSetID, "name": rule.Name, "priority": rule.Priority,
 		"action": rule.Action, "outbound_id": rule.OutboundID, "external_outbound_id": rule.ExternalOutboundID,
 		"target_server_id": rule.TargetServerID, "outbound_tag": rule.OutboundTag, "interface_name": rule.InterfaceName,
 		"match_configured": strings.TrimSpace(rule.MatchJSON) != "" && strings.TrimSpace(rule.MatchJSON) != "{}",
-		"enabled": rule.Enabled, "created_at": rule.CreatedAt, "updated_at": rule.UpdatedAt,
+		"enabled":          rule.Enabled, "created_at": rule.CreatedAt, "updated_at": rule.UpdatedAt,
 	}
 	if len(changed) == 0 {
 		return map[string]any{"routing_rule": view}, nil
@@ -825,7 +951,7 @@ func automationExternalOutboundView(external model.ExternalOutbound) map[string]
 		"effective_region_code": external.EffectiveRegionCode, "region_status": external.RegionStatus,
 		"expose_to_users": external.ExposeToUsers, "enabled": external.Enabled,
 		"advanced_configured": strings.TrimSpace(external.ConfigJSON) != "" && strings.TrimSpace(external.ConfigJSON) != "{}",
-		"created_at": external.CreatedAt, "updated_at": external.UpdatedAt,
+		"created_at":          external.CreatedAt, "updated_at": external.UpdatedAt,
 	}
 }
 

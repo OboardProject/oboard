@@ -145,9 +145,10 @@ type Server struct {
 	// repairs stored topology, refreshes derived roles and allocates one
 	// monotonic config version, so two concurrent applies would interleave those
 	// writes and hand overlapping desired state to the same Agents.
-	deploymentMu sync.Mutex
-	geoIP        connectionAuditGeoResolver
-	geoIPStatus  model.GeoDatabaseStatus
+	deploymentMu          sync.Mutex
+	geoIP                 connectionAuditGeoResolver
+	geoIPStatus           model.GeoDatabaseStatus
+	routingRuleSetFetcher func(context.Context, model.RoutingRuleSet, bool) (*fetchedRoutingRuleSet, error)
 }
 
 type connectionAuditGeoResolver interface {
@@ -272,6 +273,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/outbounds/", s.auth(s.outbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/routing-rules", s.auth(s.routingRules, model.RoleOperator))
 	mux.HandleFunc("/api/v1/routing-rules/", s.auth(s.routingRules, model.RoleOperator))
+	mux.HandleFunc("/api/v1/routing-rule-sets", s.auth(s.routingRuleSets, model.RoleOperator))
+	mux.HandleFunc("/api/v1/routing-rule-sets/", s.auth(s.routingRuleSets, model.RoleOperator))
 	mux.HandleFunc("/api/v1/external-outbounds", s.auth(s.externalOutbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/external-outbounds/", s.auth(s.externalOutbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/proxy-paths", s.auth(s.proxyPaths, model.RoleOperator))
@@ -1520,6 +1523,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		inbounds      []model.Inbound
 		outbounds     []model.Outbound
 		rules         []model.RoutingRule
+		ruleSets      []model.RoutingRuleSet
 		externals     []model.ExternalOutbound
 		paths         []model.ProxyPath
 		steps         []model.ProxyPathStep
@@ -1553,6 +1557,13 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err := timing.run("routing_rules", func() error {
 			var listErr error
 			rules, listErr = s.store.ListRoutingRules(ctx)
+			return listErr
+		}); err != nil {
+			return err
+		}
+		if err := timing.run("routing_rule_sets", func() error {
+			var listErr error
+			ruleSets, listErr = s.store.ListRoutingRuleSets(ctx)
 			return listErr
 		}); err != nil {
 			return err
@@ -1633,6 +1644,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		out["inbounds"] = inbounds
 		out["outbounds"] = outbounds
 		out["routing_rules"] = rules
+		out["routing_rule_sets"] = ruleSets
 		out["external_outbounds"] = externals
 		out["proxy_paths"] = paths
 		out["proxy_path_steps"] = publicProxyPathSteps(steps)
@@ -1739,6 +1751,22 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		ruleSets, err := s.store.ListRoutingRuleSets(ctx)
+		if err != nil {
+			return err
+		}
+		inbounds, err := s.store.ListInbounds(ctx)
+		if err != nil {
+			return err
+		}
+		paths, err := s.store.ListProxyPaths(ctx)
+		if err != nil {
+			return err
+		}
+		steps, err := s.store.ListProxyPathSteps(ctx)
+		if err != nil {
+			return err
+		}
 		outbounds, err := s.store.ListOutbounds(ctx)
 		if err != nil {
 			return err
@@ -1752,6 +1780,10 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		out["routing_rules"] = rules
+		out["routing_rule_sets"] = ruleSets
+		out["inbounds"] = inbounds
+		out["proxy_paths"] = paths
+		out["proxy_path_steps"] = publicProxyPathSteps(steps)
 		out["outbounds"] = outbounds
 		out["external_outbounds"] = externals
 		out["warp_profiles"] = publicWARPProfiles(warps)
@@ -6158,6 +6190,10 @@ func (s *Server) validateOutboundAddress(ctx context.Context, v model.Outbound) 
 }
 
 func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/place") || strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/reorder") {
+		s.placeRoutingRules(w, r)
+		return
+	}
 	id := idFromPath(r.URL.Path, "/api/v1/routing-rules/")
 	switch r.Method {
 	case http.MethodGet:
@@ -6226,14 +6262,70 @@ func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) error {
-	if v.ServerID == 0 {
-		return errors.New("server_id required")
+	if v.Scope == "" {
+		v.Scope = model.RoutingRuleScopeServer
+	}
+	if v.MatchSource == "" {
+		v.MatchSource = model.RoutingMatchSourceInline
+	}
+	if v.Scope == model.RoutingRuleScopePathStage {
+		if v.ProxyPathID == nil || *v.ProxyPathID <= 0 {
+			return errors.New("proxy_path_id required for path_stage rule")
+		}
+		path, err := s.store.GetProxyPath(ctx, *v.ProxyPathID)
+		if err != nil {
+			return fmt.Errorf("proxy_path %d: %w", *v.ProxyPathID, err)
+		}
+		if v.StageStepID == nil {
+			inbound, err := s.store.GetInbound(ctx, path.InboundID)
+			if err != nil {
+				return fmt.Errorf("proxy path root inbound: %w", err)
+			}
+			v.ServerID = inbound.ServerID
+		} else {
+			step, err := s.store.GetProxyPathStep(ctx, *v.StageStepID)
+			if err != nil {
+				return fmt.Errorf("proxy_path_step %d: %w", *v.StageStepID, err)
+			}
+			if step.PathID != path.ID || step.NodeType != model.ProxyPathStepServerInbound || step.ServerID == nil {
+				return errors.New("stage_step_id must identify a controlled server node in the selected proxy path")
+			}
+			v.ServerID = *step.ServerID
+		}
+		if v.SortPosition < 0 {
+			return errors.New("sort_position cannot be negative")
+		}
+	} else if v.Scope == model.RoutingRuleScopeServer {
+		v.ProxyPathID = nil
+		v.StageStepID = nil
+		v.RuleSetID = nil
+		v.MatchSource = model.RoutingMatchSourceInline
+		if v.ServerID == 0 {
+			return errors.New("server_id required")
+		}
+	} else {
+		return fmt.Errorf("unsupported routing rule scope %q", v.Scope)
 	}
 	if strings.TrimSpace(v.Name) == "" {
 		return errors.New("name required")
 	}
 	if v.Priority == 0 {
 		v.Priority = 100
+	}
+	if v.MatchSource == model.RoutingMatchSourceRuleSet {
+		if v.RuleSetID == nil {
+			return errors.New("rule_set_id required for remote rule-set match")
+		}
+		set, err := s.store.GetRoutingRuleSet(ctx, *v.RuleSetID)
+		if err != nil {
+			return fmt.Errorf("routing_rule_set %d: %w", *v.RuleSetID, err)
+		}
+		if set.Revision == "" {
+			return errors.New("routing rule set has no successful snapshot")
+		}
+		v.MatchJSON = "{}"
+	} else if v.MatchSource != model.RoutingMatchSourceInline {
+		return fmt.Errorf("unsupported match_source %q", v.MatchSource)
 	}
 	if strings.TrimSpace(v.MatchJSON) == "" {
 		v.MatchJSON = "{}"
@@ -9683,7 +9775,7 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 		entry := model.SSHInbound{InboundID: inbound.ID, ServerID: server.ID, Name: inbound.Name, ListenIP: core.EffectiveListenIP(server, inbound.ListenIP), Address: address, Port: inbound.Port, Enabled: true, Users: []model.SSHInboundUser{}, Policies: map[string]model.TrafficRuntimePolicy{}}
 		seenPolicy := map[int64]bool{}
 		for _, path := range pathsByInbound[inbound.ID] {
-			routeKind, outboundTag, err := core.ProxyPathEntryRoute(path, stepsByPath[path.ID], inbound, data.WARPProfiles)
+			_, _, err := core.ProxyPathEntryRoute(path, stepsByPath[path.ID], inbound, data.WARPProfiles)
 			if err != nil {
 				return model.SSHInboundPlan{}, fmt.Errorf("SSH 路径 %s: %w", path.Name, err)
 			}
@@ -9696,11 +9788,15 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 						return model.SSHInboundPlan{}, fmt.Errorf("SSH 用户 %d 缺少随机登录标识", user.ID)
 					}
 					credential := core.UserCredentialForRoute(user, inbound.ID, path.ID, model.ProtocolSSH)
+					routeInboundTag, routeAuthUser, err := core.ProxyPathEntryRoutingIdentity(path, inbound, user)
+					if err != nil {
+						return model.SSHInboundPlan{}, fmt.Errorf("SSH path %s: %w", path.Name, err)
+					}
 					status := strings.TrimSpace(user.CredentialStatus)
 					if status == "" {
 						status = "active"
 					}
-					entry.Users = append(entry.Users, model.SSHInboundUser{UserID: user.ID, Username: sshLoginName(user, path.ID), Password: credential.ProxyPassword, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, CredentialStatus: status, PathID: path.ID, RouteKind: routeKind, OutboundTag: outboundTag, Enabled: true})
+					entry.Users = append(entry.Users, model.SSHInboundUser{UserID: user.ID, Username: sshLoginName(user, path.ID), Password: credential.ProxyPassword, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, CredentialStatus: status, PathID: path.ID, RouteKind: "kernel", RouteInboundTag: routeInboundTag, RouteAuthUser: routeAuthUser, Enabled: true})
 					if !seenPolicy[user.ID] {
 						seenPolicy[user.ID] = true
 						if policy, ok := policies[user.ID]; ok {
@@ -9730,6 +9826,8 @@ func sshInboundPlanDigest(plan model.SSHInboundPlan) string {
 		PathID           int64  `json:"path_id"`
 		RouteKind        string `json:"route_kind"`
 		OutboundTag      string `json:"outbound_tag,omitempty"`
+		RouteInboundTag  string `json:"route_inbound_tag,omitempty"`
+		RouteAuthUser    string `json:"route_auth_user,omitempty"`
 	}
 	type digestInbound struct {
 		InboundID int64        `json:"inbound_id"`
@@ -9748,7 +9846,7 @@ func sshInboundPlanDigest(plan model.SSHInboundPlan) string {
 				if status == "" {
 					status = "active"
 				}
-				item.Users = append(item.Users, digestUser{UserID: user.UserID, Username: user.Username, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, CredentialStatus: status, PathID: user.PathID, RouteKind: user.RouteKind, OutboundTag: user.OutboundTag})
+				item.Users = append(item.Users, digestUser{UserID: user.UserID, Username: user.Username, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, CredentialStatus: status, PathID: user.PathID, RouteKind: user.RouteKind, OutboundTag: user.OutboundTag, RouteInboundTag: user.RouteInboundTag, RouteAuthUser: user.RouteAuthUser})
 			}
 		}
 		canonical = append(canonical, item)
@@ -10142,6 +10240,8 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 	if err != nil {
 		return generatedServerCoreConfig{}, err
 	}
+	routingAssets := routingRuleSetAssetReferences(server.ID, data.RoutingRules, data.RoutingRuleSets)
+	assets = append(assets, routingAssets...)
 	dnsState, err := core.DNSConfigStateForServer(server.ID, data.DNSLists, data.ServerDNSPolicies)
 	if err != nil {
 		return generatedServerCoreConfig{}, err
@@ -10156,7 +10256,7 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 		return generatedServerCoreConfig{}, err
 	}
 	config, err := core.GenerateServerConfigWithOptions(server, inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
-		RoutingRules: data.RoutingRules, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
+		RoutingRules: data.RoutingRules, RoutingRuleSets: data.RoutingRuleSets, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
 		Servers: data.Servers, Inbounds: inbounds, WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
 		UserPolicies: userPolicies, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
 		PortLedger: ledger,
@@ -10183,6 +10283,23 @@ func requireReadyWARPForFocusedApply(data store.FullRoutingConfig, serverID int6
 }
 
 func (s *Server) queueCoreConfigRefreshForUserRemoval(ctx context.Context, userID int64, reason string) error {
+	return s.queueCoreConfigRefresh(ctx, userID, reason, nil)
+}
+
+func (s *Server) queueCoreConfigRefreshForServers(ctx context.Context, serverIDs []int64, reason string) error {
+	allowed := make(map[int64]bool, len(serverIDs))
+	for _, serverID := range serverIDs {
+		if serverID > 0 {
+			allowed[serverID] = true
+		}
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	return s.queueCoreConfigRefresh(ctx, 0, reason, allowed)
+}
+
+func (s *Server) queueCoreConfigRefresh(ctx context.Context, userID int64, reason string, allowed map[int64]bool) error {
 	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
 		return err
@@ -10198,6 +10315,9 @@ func (s *Server) queueCoreConfigRefreshForUserRemoval(ctx context.Context, userI
 	}
 	prepared := make([]preparedCoreRefresh, 0, len(data.Servers))
 	for _, server := range data.Servers {
+		if allowed != nil && !allowed[server.ID] {
+			continue
+		}
 		if strings.TrimSpace(server.AgentID) == "" {
 			continue
 		}

@@ -412,7 +412,7 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Inbounds) != 1 || len(plan.Inbounds[0].Users) != 1 || plan.Inbounds[0].Users[0].Username != sshLoginName(*user, directPath.ID) || plan.Inbounds[0].Users[0].Password != user.ProxyPassword || plan.Inbounds[0].Users[0].RouteKind != "direct" {
+	if len(plan.Inbounds) != 1 || len(plan.Inbounds[0].Users) != 1 || plan.Inbounds[0].Users[0].Username != sshLoginName(*user, directPath.ID) || plan.Inbounds[0].Users[0].Password != user.ProxyPassword || plan.Inbounds[0].Users[0].RouteKind != "kernel" || plan.Inbounds[0].Users[0].RouteInboundTag != "in-"+strconv.FormatInt(inboundID, 10) || plan.Inbounds[0].Users[0].RouteAuthUser != user.Username+"__oboard_path_"+strconv.FormatInt(directPath.ID, 10) {
 		t.Fatalf("SSH inbound plan = %#v", plan)
 	}
 	if _, ok := plan.Inbounds[0].Policies["user:"+strconv.FormatInt(user.ID, 10)]; !ok {

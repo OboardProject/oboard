@@ -69,7 +69,7 @@ import {
   Settings2, Activity, ArrowLeftRight, Cpu, ArrowDownUp, HardDrive, 
   Zap, Sliders, Menu, X, Sun, Moon, RefreshCw, ChevronDown, ChevronRight, Check, Info,
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
-  Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, MoreHorizontal,
+  Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
   ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network, Package,
@@ -275,7 +275,8 @@ type NotificationEventDefinition = { value: string; label: string; description: 
 type NotificationChannel = { id: number; owner_user_id: number; owner_username?: string; name: string; type: 'telegram' | 'bark' | 'test'; enabled: boolean; events: string; config_json: string; templates_json: string; user_ids: number[] }
 type NotificationAnnouncement = { id: number; actor_user_id: number; actor_name: string; title: string; body: string; user_ids: number[]; queued_count: number; created_at: string }
 type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'interface'
-type RoutingRule = { id: number; server_id: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; enabled: boolean }
+type RoutingRule = { id: number; server_id: number; scope?: 'server' | 'path_stage'; proxy_path_id?: number; stage_step_id?: number; sort_position?: number; match_source?: 'inline' | 'rule_set'; rule_set_id?: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; enabled: boolean; updated_at?: string }
+type RoutingRuleSet = { id: number; name: string; url: string; format: 'singbox_source' | 'singbox_binary' | 'mihomo_domain' | 'mihomo_ipcidr' | 'mihomo_classical'; mihomo_behavior?: string; revision?: string; status: 'pending' | 'ready' | 'refreshing' | 'error'; last_error?: string; last_attempt_at?: string; last_success_at?: string }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
 type SubscriptionFormat = 'stash' | 'clash-meta' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'sing-box-mieru' | 'mieru' | 'v2ray' | 'v2ray-uri' | 'clash'
 type AuditLog = { id: number; actor_id?: number; action: string; target: string; detail: string; ip: string; created_at: string }
@@ -8893,7 +8894,7 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
 }
 
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
-type RoutingDraft = { server_id: number; name: string; priority: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; interface_name: string; enabled: boolean }
+type RoutingDraft = { server_id: number; proxy_path_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; interface_name: string; enabled: boolean }
 type TransportMode = 'port-forward' | 'tunnel'
 type TransportDraft = { mode: TransportMode; name: string; source_server_id: number; target_server_id: number; listen_ip: string; listen_port: number; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; type: TunnelType; priority: number; config_json: string; enabled: boolean }
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step'; id: number; label: string; path_id?: number; node_id?: string }
@@ -9878,16 +9879,23 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const openRouting = () => {
     const server = selected || servers[0]
     if (!server) return dialogs.alert({ title: '无法添加分流', message: '请先添加服务器。' })
-    setRoutingDraft(defaultRoutingDraft(server))
+		const path = visibleProxyPaths[0] || (data.proxy_paths || [])[0]
+		if (!path) return dialogs.alert({ title: '无法添加分流', message: '请先创建一条代理分支。' })
+    setRoutingDraft(defaultRoutingDraft(server, path.id))
   }
   const submitRoutingDraft = async () => {
     if (!routingDraft) return
     try {
       const body: any = {
         server_id: routingDraft.server_id,
+			scope: 'path_stage',
+			proxy_path_id: routingDraft.proxy_path_id,
+			stage_step_id: routingDraft.stage_step_id || undefined,
+			sort_position: ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage' && rule.proxy_path_id === routingDraft.proxy_path_id && Number(rule.stage_step_id || 0) === routingDraft.stage_step_id).length,
+			match_source: routingDraft.match_source,
+			rule_set_id: routingDraft.match_source === 'rule_set' ? routingDraft.rule_set_id : undefined,
         name: routingDraft.name,
-        priority: routingDraft.priority,
-        match_json: routingMatchJSON(routingDraft.match_kind, routingDraft.match_value),
+			match_json: routingDraft.match_source === 'inline' ? routingMatchJSON(routingDraft.match_kind, routingDraft.match_value) : '{}',
         action: routingDraft.action,
         enabled: routingDraft.enabled,
       }
@@ -9895,8 +9903,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       if (routingDraft.action === 'external' && routingDraft.external_outbound_id) body.external_outbound_id = routingDraft.external_outbound_id
       if (routingDraft.action === 'interface') body.interface_name = routingDraft.interface_name.trim()
       await client.request('/routing-rules', { method: 'POST', body: JSON.stringify(body) })
-      setRoutingDraft(null)
       await load()
+		setRoutingDraft(current => current ? { ...current, name: '', match_value: current.match_kind === 'all' ? '' : current.match_value } : current)
     } catch (e: any) {
       await dialogs.alert({ title: '创建分流失败', message: localizeErrorMessage(e.message || e) })
     }
@@ -10521,7 +10529,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{entryDraft && <EntryDraftDialog mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} />}</AnimatePresence>
     <AnimatePresence>{editEntry && <EntryDraftDialog mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} />}</AnimatePresence>
-    <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} onCancel={() => setRoutingDraft(null)} onSubmit={submitRoutingDraft} />}</AnimatePresence>
+    <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} load={load} onCancel={() => setRoutingDraft(null)} onSubmit={submitRoutingDraft} />}</AnimatePresence>
     <AnimatePresence>{transportDraft && <TransportDraftDialog draft={transportDraft} setDraft={setTransportDraft} servers={servers} onCancel={() => setTransportDraft(null)} onSubmit={submitTransportDraft} />}</AnimatePresence>
     <AnimatePresence>{importDraft && <ImportNodeDialog draft={importDraft} setDraft={setImportDraft} servers={servers} onCancel={() => setImportDraft(null)} onSubmit={submitImportNode} />}</AnimatePresence>
     <AnimatePresence>{configNode && <ImportedNodeConfigDialog node={configNode} data={data} client={client} load={load} onClose={() => setConfigNode(null)} />}</AnimatePresence>
@@ -11096,8 +11104,8 @@ function ProxyToolIcon({ kind }: { kind: ProxyToolAction }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h8a4 4 0 0 1 0 8H9" /><path d="m9 11-4 4 4 4" /><path d="M18 5v4" /><path d="M16 7h4" /></svg>
 }
 
-function defaultRoutingDraft(server: Server): RoutingDraft {
-  return { server_id: server.id, name: `${server.name || 'server'}-route`, priority: 100, match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, interface_name: '', enabled: true }
+function defaultRoutingDraft(server: Server, proxyPathID = 0): RoutingDraft {
+  return { server_id: server.id, proxy_path_id: proxyPathID, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, interface_name: '', enabled: true }
 }
 
 function routingMatchJSON(kind: RoutingMatchKind, value: string) {
@@ -11154,30 +11162,152 @@ function defaultTransportDraft(servers: Server[], selected?: Server): TransportD
   }
 }
 
-function RoutingRuleDraftDialog({ draft, setDraft, data, client, onCancel, onSubmit }: { draft: RoutingDraft; setDraft: React.Dispatch<React.SetStateAction<RoutingDraft | null>>; data: any; client: ReturnType<typeof api>; onCancel: () => void; onSubmit: () => Promise<void> }) {
+type RoutingStage = { key: string; stepID: number; serverID: number; label: string; serverName: string; available: boolean; unavailableReason?: string }
+
+function routingStages(data: any, pathID: number): RoutingStage[] {
+  const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === pathID)
+  const inbound = path ? ((data.inbounds || []) as Inbound[]).find(item => item.id === path.inbound_id) : undefined
+  if (!path || !inbound) return []
+  const steps = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === pathID).sort((a, b) => a.position - b.position)
+  const processingIndex = steps.findIndex(step => step.processing_role)
+  const transparentPrefix = processingIndex >= 0 && steps.slice(0, processingIndex + 1).some(step => step.transport_mode === 'port_forward')
+  const controlled = steps.filter(step => step.node_type === 'server_inbound' && step.server_id)
+  const serverNameFor = (serverID: number) => ((data.servers || []) as Server[]).find(server => server.id === serverID)?.name || `服务器 ${serverID}`
+  const rootAvailable = !transparentPrefix
+  return [
+    { key: 'root', stepID: 0, serverID: inbound.server_id, label: 'A', serverName: serverNameFor(inbound.server_id), available: rootAvailable, unavailableReason: rootAvailable ? undefined : '透明转发解密前不可匹配目标' },
+    ...controlled.map((step, index) => {
+      const sourceIndex = steps.findIndex(item => item.id === step.id)
+      const available = !transparentPrefix || sourceIndex >= processingIndex
+      return { key: `step-${step.id}`, stepID: step.id, serverID: Number(step.server_id), label: String.fromCharCode(66 + index), serverName: serverNameFor(Number(step.server_id)), available, unavailableReason: available ? undefined : '透明转发解密前不可匹配目标' }
+    }),
+  ]
+}
+
+function routingRuleMatchLabel(rule: RoutingRule, sets: RoutingRuleSet[]) {
+  if (rule.match_source === 'rule_set') return sets.find(set => set.id === rule.rule_set_id)?.name || `规则集 #${rule.rule_set_id}`
+  const match = parseConfig(rule.match_json) || {}
+  const key = Object.keys(match)[0]
+  if (!key) return '全部流量'
+  const value = Array.isArray(match[key]) ? match[key].slice(0, 2).join(', ') : String(match[key])
+  return `${labelValue(key)} · ${value}`
+}
+
+function RoutingActionIcon({ action }: { action: RouteAction }) {
+  if (action === 'direct') return <Zap size={15} aria-hidden="true" />
+  if (action === 'block') return <Shield size={15} aria-hidden="true" />
+  if (action === 'outbound') return <LogOut size={15} aria-hidden="true" />
+  if (action === 'external') return <ExternalLink size={15} aria-hidden="true" />
+  return <Network size={15} aria-hidden="true" />
+}
+
+function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel, onSubmit }: { draft: RoutingDraft; setDraft: React.Dispatch<React.SetStateAction<RoutingDraft | null>>; data: any; client: ReturnType<typeof api>; load: () => Promise<void>; onCancel: () => void; onSubmit: () => Promise<void> }) {
+  const dialogs = useDialogs()
+  const [draggedRuleID, setDraggedRuleID] = useState(0)
+  const [ruleSetQuery, setRuleSetQuery] = useState('')
+  const [showRuleSetCreate, setShowRuleSetCreate] = useState(false)
+  const [ruleSetDraft, setRuleSetDraft] = useState({ name: '', url: '', format: 'singbox_source' as RoutingRuleSet['format'] })
   const update = (patch: Partial<RoutingDraft>) => setDraft(old => old ? { ...old, ...patch } : old)
-  const serverOutbounds = (data.outbounds || []).filter((x: Outbound) => x.server_id === Number(draft.server_id))
-  const externalOutbounds = (data.external_outbounds || []).filter((x: ExternalOutbound) => x.scope === 'global' || !x.server_id || x.server_id === Number(draft.server_id))
-  return <MotionDialogPanel onCancel={onCancel} className="graph-form-dialog">
-      <header className="dialog-head">
-        <div><h2 id="routing-dialog-title">添加分流出口</h2><p className="muted">设置匹配条件和处理方式。</p></div>
-        <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
-      </header>
-      <div className="dialog-body">
-        <div className="form graph-dialog-form">
-          <FormField label="服务器" required><Select value={draft.server_id} onChange={e => update({ server_id: Number(e.target.value), outbound_id: 0 })}><option value={0}>选择服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField>
-          <FormField label="名称" required><input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="例如 google-direct" /></FormField>
-          <FormField label="优先级"><input value={draft.priority} onChange={e => update({ priority: Number(e.target.value) })} inputMode="numeric" /></FormField>
-          <FormField label="匹配类型"><Select value={draft.match_kind} onChange={e => update({ match_kind: e.target.value as RoutingMatchKind, match_value: e.target.value === 'port' ? '22' : e.target.value === 'port_range' ? '10000:20000' : draft.match_value })}><option value="domain_suffix">域名后缀</option><option value="domain">完整域名</option><option value="ip_cidr">IP / CIDR</option><option value="port">目标端口</option><option value="port_range">目标端口范围</option><option value="geosite">Geosite</option><option value="geoip">GeoIP</option><option value="all">全部流量</option></Select></FormField>
-          {draft.match_kind !== 'all' && <FormField label="匹配内容" hint={routingMatchHint(draft.match_kind)}><textarea value={draft.match_value} onChange={e => update({ match_value: e.target.value })} rows={3} /></FormField>}
-          <FormField label="处理方式"><Select value={draft.action} onChange={e => update({ action: e.target.value as RouteAction })}>{routeActions.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
-          {draft.action === 'outbound' && <FormField label="本机出口" required><Select value={draft.outbound_id} onChange={e => update({ outbound_id: Number(e.target.value) })}><option value={0}>选择出口</option>{serverOutbounds.map((x: Outbound) => <option value={x.id} key={x.id}>{x.name}</option>)}</Select></FormField>}
-          {draft.action === 'external' && <FormField label="导入节点" required><Select value={draft.external_outbound_id} onChange={e => update({ external_outbound_id: Number(e.target.value) })}><option value={0}>选择导入节点</option>{externalOutbounds.map((x: ExternalOutbound) => <option value={x.id} key={x.id}>{x.name}</option>)}</Select></FormField>}
-          {draft.action === 'interface' && <FormField label="出口网卡" required hint="填写 Agent 主机上的网卡名，例如 eth1、ens6。"><NetworkInterfacePicker serverID={Number(draft.server_id)} value={draft.interface_name} onChange={interface_name => update({ interface_name })} client={client} /></FormField>}
-          <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
-        </div>
+  const paths = ((data.proxy_paths || []) as ProxyPath[]).filter(path => path.enabled !== false)
+  const stages = routingStages(data, draft.proxy_path_id)
+  const selectedStage = stages.find(stage => stage.stepID === draft.stage_step_id) || stages[0]
+  const rules = ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage' && rule.proxy_path_id === draft.proxy_path_id)
+  const ruleSets = ((data.routing_rule_sets || []) as RoutingRuleSet[])
+  const filteredRuleSets = ruleSets.filter(set => `${set.name} ${set.url} ${set.format}`.toLowerCase().includes(ruleSetQuery.trim().toLowerCase()))
+  const serverOutbounds = (data.outbounds || []).filter((item: Outbound) => item.server_id === Number(selectedStage?.serverID || draft.server_id))
+  const externalOutbounds = (data.external_outbounds || []).filter((item: ExternalOutbound) => item.scope === 'global' || !item.server_id || item.server_id === Number(selectedStage?.serverID || draft.server_id))
+  useEffect(() => {
+    if (!selectedStage) return
+    if (draft.server_id !== selectedStage.serverID || draft.stage_step_id !== selectedStage.stepID) update({ server_id: selectedStage.serverID, stage_step_id: selectedStage.stepID, outbound_id: 0, external_outbound_id: 0 })
+  }, [draft.proxy_path_id, selectedStage?.key])
+
+  const persistPlacement = async (movingID: number, targetStageID: number, targetIndex?: number) => {
+    const moving = rules.find(rule => rule.id === movingID)
+    if (!moving) return
+    const grouped = new Map<number, RoutingRule[]>()
+    stages.forEach(stage => grouped.set(stage.stepID, rules.filter(rule => rule.id !== movingID && Number(rule.stage_step_id || 0) === stage.stepID).sort((a, b) => Number(a.sort_position || 0) - Number(b.sort_position || 0))))
+    const target = grouped.get(targetStageID) || []
+    target.splice(Math.max(0, Math.min(targetIndex ?? target.length, target.length)), 0, moving)
+    grouped.set(targetStageID, target)
+    const placements = stages.flatMap(stage => (grouped.get(stage.stepID) || []).map((rule, index) => ({ rule_id: rule.id, stage_step_id: stage.stepID || undefined, sort_position: index })))
+    try {
+      await client.request('/routing-rules/place', { method: 'POST', body: JSON.stringify({ proxy_path_id: draft.proxy_path_id, placements }) })
+      await load()
+    } catch (error: any) {
+      await dialogs.alert({ title: '调整规则失败', message: localizeErrorMessage(error.message || error) })
+    }
+  }
+  const createRuleSet = async () => {
+    try {
+      await client.request('/routing-rule-sets', { method: 'POST', body: JSON.stringify(ruleSetDraft) })
+      setRuleSetDraft({ name: '', url: '', format: 'singbox_source' })
+      setShowRuleSetCreate(false)
+      await load()
+    } catch (error: any) {
+      await dialogs.alert({ title: '规则集校验失败', message: localizeErrorMessage(error.message || error) })
+    }
+  }
+  const selectStage = (stage: RoutingStage) => {
+    if (!stage.available) return
+    update({ stage_step_id: stage.stepID, server_id: stage.serverID, outbound_id: 0, external_outbound_id: 0 })
+  }
+
+  return <MotionDialogPanel onCancel={onCancel} className="routing-composer-dialog" aria-labelledby="routing-dialog-title">
+    <header className="dialog-head routing-composer-head">
+      <div><h2 id="routing-dialog-title">分流出口</h2><p className="muted">{paths.find(path => path.id === draft.proxy_path_id)?.name || '代理分支'}</p></div>
+      <FormField label="代理分支"><Select value={draft.proxy_path_id} onChange={event => { const pathID = Number(event.target.value); const first = routingStages(data, pathID).find(stage => stage.available); update({ proxy_path_id: pathID, stage_step_id: first?.stepID || 0, server_id: first?.serverID || 0 }) }}>{paths.map(path => <option key={path.id} value={path.id}>{path.name || `分支 ${path.id}`}</option>)}</Select></FormField>
+      <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body routing-composer-body">
+      <div className="routing-stage-tabs" role="group" aria-label="链路节点">{stages.map(stage => <button key={stage.key} type="button" aria-pressed={selectedStage?.key === stage.key} disabled={!stage.available} className={selectedStage?.key === stage.key ? 'selected' : ''} onClick={() => selectStage(stage)} title={stage.unavailableReason}><strong>{stage.label}</strong><span>{stage.serverName}</span></button>)}</div>
+      <div className="routing-stage-grid" style={{ '--routing-stage-count': Math.max(1, stages.length) } as React.CSSProperties}>
+        {stages.map((stage, stageIndex) => {
+          const stageRules = rules.filter(rule => Number(rule.stage_step_id || 0) === stage.stepID).sort((a, b) => Number(a.sort_position || 0) - Number(b.sort_position || 0))
+          return <section key={stage.key} className={`routing-stage${selectedStage?.key === stage.key ? ' selected' : ''}${stage.available ? '' : ' disabled'}`} aria-labelledby={`routing-stage-${stage.key}`} onDragOver={event => { if (stage.available) event.preventDefault() }} onDrop={event => { event.preventDefault(); if (draggedRuleID && stage.available) void persistPlacement(draggedRuleID, stage.stepID) }}>
+            <header><span className="routing-stage-letter">{stage.label}</span><div><h3 id={`routing-stage-${stage.key}`}>{stage.serverName}</h3><small>{stageRules.length} 条规则</small></div></header>
+            {!stage.available && <div className="routing-stage-unavailable"><Lock size={14} aria-hidden="true" /><span>{stage.unavailableReason}</span></div>}
+            <ol className="routing-rule-stack">
+              {stageRules.map((rule, index) => {
+                const ruleSet = rule.match_source === 'rule_set' ? ruleSets.find(set => set.id === rule.rule_set_id) : undefined
+                return <li key={rule.id} className="routing-rule-card" draggable onDragStart={() => setDraggedRuleID(rule.id)} onDragEnd={() => setDraggedRuleID(0)} onDragOver={event => { if (stage.available) { event.preventDefault(); event.stopPropagation() } }} onDrop={event => { event.preventDefault(); event.stopPropagation(); if (draggedRuleID && stage.available) void persistPlacement(draggedRuleID, stage.stepID, index) }}>
+                <div className="routing-rule-order"><GripVertical size={14} aria-hidden="true" /><span>{index + 1}</span></div>
+                <div className="routing-rule-copy"><strong>{rule.name}</strong><span>{routingRuleMatchLabel(rule, ruleSets)} <ChevronRight size={12} aria-hidden="true" /> <RoutingActionIcon action={rule.action} /> {labelValue(rule.action)}</span>{ruleSet && <small>{labelValue(ruleSet.format)} · {ruleSet.revision?.slice(0, 10) || '未同步'} · {labelValue(ruleSet.status)} · {ruleSet.last_success_at ? formatTableTime(ruleSet.last_success_at) : '未成功'}</small>}{ruleSet?.last_error && <small className="danger-text">{ruleSet.last_error}</small>}</div>
+                <div className="routing-rule-actions">
+                  <button className="ghost icon-button" disabled={index === 0} onClick={() => void persistPlacement(rule.id, stage.stepID, index - 1)} aria-label={`${rule.name} 上移`} title="上移"><ArrowUp size={13} /></button>
+                  <button className="ghost icon-button" disabled={index === stageRules.length - 1} onClick={() => void persistPlacement(rule.id, stage.stepID, index + 1)} aria-label={`${rule.name} 下移`} title="下移"><ArrowDown size={13} /></button>
+                  <button className="ghost icon-button" disabled={stageIndex === 0 || !stages[stageIndex - 1]?.available} onClick={() => void persistPlacement(rule.id, stages[stageIndex - 1].stepID)} aria-label={`${rule.name} 移到上一节点`} title="上一节点"><ArrowLeft size={13} /></button>
+                  <button className="ghost icon-button" disabled={stageIndex === stages.length - 1 || !stages[stageIndex + 1]?.available} onClick={() => void persistPlacement(rule.id, stages[stageIndex + 1].stepID)} aria-label={`${rule.name} 移到下一节点`} title="下一节点"><ArrowRight size={13} /></button>
+                  <button className="ghost icon-button danger-text" onClick={() => remove(client, `/routing-rules/${rule.id}`, load, dialogs, rule)} aria-label={`删除 ${rule.name}`} title="删除"><Trash2 size={13} /></button>
+                </div>
+              </li>})}
+            </ol>
+            <div className="routing-stage-fallback"><ArrowDown size={13} aria-hidden="true" /><span>未命中</span><strong>{stageIndex < stages.length - 1 ? `继续 ${stages[stageIndex + 1].label}` : '默认出口'}</strong></div>
+          </section>
+        })}
       </div>
-      <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={onSubmit}>创建分流</button></footer>
+      {selectedStage?.available && <section className="routing-rule-editor" aria-labelledby="routing-rule-editor-title">
+        <header><div className="routing-rule-editor-title"><h3 id="routing-rule-editor-title">{selectedStage.label} 节点规则</h3><span>{selectedStage.serverName}</span></div><Select className="routing-match-source-select" variant="segmented" value={draft.match_source} onChange={event => update({ match_source: event.target.value as RoutingDraft['match_source'] })} aria-label="匹配来源"><option value="inline">手动条件</option><option value="rule_set">远程规则集</option></Select></header>
+        <div className="routing-rule-editor-grid">
+          <FormField label="名称" required><input value={draft.name} onChange={event => update({ name: event.target.value })} placeholder="规则名称" /></FormField>
+          {draft.match_source === 'inline' ? <>
+            <FormField label="匹配类型"><Select value={draft.match_kind} onChange={event => update({ match_kind: event.target.value as RoutingMatchKind, match_value: event.target.value === 'port' ? '22' : event.target.value === 'port_range' ? '10000:20000' : draft.match_value })}><option value="domain_suffix">域名后缀</option><option value="domain">完整域名</option><option value="ip_cidr">IP / CIDR</option><option value="port">目标端口</option><option value="port_range">目标端口范围</option><option value="geosite">Geosite</option><option value="geoip">GeoIP</option><option value="all">全部流量</option></Select></FormField>
+            {draft.match_kind !== 'all' && <FormField label="匹配内容"><textarea value={draft.match_value} onChange={event => update({ match_value: event.target.value })} rows={2} /></FormField>}
+          </> : <div className="routing-rule-set-picker">
+            <div className="routing-rule-set-toolbar"><label><Search size={14} aria-hidden="true" /><input value={ruleSetQuery} onChange={event => setRuleSetQuery(event.target.value)} placeholder="搜索规则集" aria-label="搜索规则集" /></label><button className="ghost" onClick={() => setShowRuleSetCreate(value => !value)}><Plus size={14} aria-hidden="true" />新建</button></div>
+            {showRuleSetCreate && <div className="routing-rule-set-create"><input value={ruleSetDraft.name} onChange={event => setRuleSetDraft({ ...ruleSetDraft, name: event.target.value })} placeholder="名称" aria-label="规则集名称" /><input value={ruleSetDraft.url} onChange={event => setRuleSetDraft({ ...ruleSetDraft, url: event.target.value })} placeholder="https://" aria-label="规则集 HTTPS URL" /><Select value={ruleSetDraft.format} onChange={event => setRuleSetDraft({ ...ruleSetDraft, format: event.target.value as RoutingRuleSet['format'] })} aria-label="规则集格式"><option value="singbox_source">sing-box JSON</option><option value="singbox_binary">sing-box SRS</option><option value="mihomo_domain">Mihomo domain</option><option value="mihomo_ipcidr">Mihomo ipcidr</option><option value="mihomo_classical">Mihomo classical</option></Select><button type="button" onClick={createRuleSet}>校验并创建</button></div>}
+            <div className="routing-rule-set-list">{filteredRuleSets.map(set => {
+              const references = rules.filter(rule => rule.match_source === 'rule_set' && rule.rule_set_id === set.id).length
+              return <label key={set.id} className={draft.rule_set_id === set.id ? 'selected' : ''}><input type="radio" name="routing-rule-set" checked={draft.rule_set_id === set.id} onChange={() => update({ rule_set_id: set.id })} /><span><strong>{set.name}</strong><small>{labelValue(set.format)} · {labelValue(set.status)} · {set.revision?.slice(0, 10) || '未同步'} · {set.last_success_at ? formatTableTime(set.last_success_at) : '未成功'} · {references} 条引用</small>{set.last_error && <em>{set.last_error}</em>}</span><button type="button" className="ghost icon-button" onClick={async event => { event.preventDefault(); await client.request(`/routing-rule-sets/${set.id}/refresh`, { method: 'POST', body: '{}' }); await load() }} aria-label={`刷新 ${set.name}`} title="刷新"><RefreshCw size={13} /></button></label>
+            })}</div>
+          </div>}
+          <div className="routing-action-picker" role="group" aria-label="处理动作">{routeActions.map(action => <button type="button" key={action} aria-pressed={draft.action === action} className={draft.action === action ? 'selected' : ''} onClick={() => update({ action })}><RoutingActionIcon action={action} /><span>{labelValue(action)}</span></button>)}</div>
+          {draft.action === 'outbound' && <FormField label="本机出口" required><Select value={draft.outbound_id} onChange={event => update({ outbound_id: Number(event.target.value) })}><option value={0}>选择出口</option>{serverOutbounds.map((item: Outbound) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
+          {draft.action === 'external' && <FormField label="导入节点" required><Select value={draft.external_outbound_id} onChange={event => update({ external_outbound_id: Number(event.target.value) })}><option value={0}>选择导入节点</option>{externalOutbounds.map((item: ExternalOutbound) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
+          {draft.action === 'interface' && <FormField label="出口网卡" required><NetworkInterfacePicker serverID={selectedStage.serverID} value={draft.interface_name} onChange={interface_name => update({ interface_name })} client={client} /></FormField>}
+        </div>
+      </section>}
+    </div>
+    <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>完成</button><button onClick={onSubmit} disabled={!draft.name.trim() || (draft.match_source === 'rule_set' && !draft.rule_set_id)}><Plus size={14} aria-hidden="true" />添加到 {selectedStage?.label}</button></footer>
   </MotionDialogPanel>
 }
 
@@ -13187,31 +13317,61 @@ function Outbounds({ data, client, load }: any) {
 
 function RoutingRules({ data, client, load }: any) {
   const dialogs = useDialogs()
-  const [f, setF] = useState({ server_id: 0, name: 'route-google', priority: 100, match_json: '{"domain_suffix":["google.com"]}', action: 'direct' as RouteAction, outbound_id: 0, external_outbound_id: 0, outbound_tag: '', interface_name: '', enabled: true })
-  const payload = () => {
-    const body: any = { server_id: f.server_id, name: f.name, priority: f.priority, match_json: f.match_json, action: f.action, outbound_tag: f.outbound_tag, enabled: f.enabled }
-    if (f.action === 'outbound' && f.outbound_id) body.outbound_id = f.outbound_id
-    if (f.action === 'external' && f.external_outbound_id) body.external_outbound_id = f.external_outbound_id
-		if (f.action === 'interface') body.interface_name = f.interface_name.trim()
-    return body
+  const [draft, setDraft] = useState<RoutingDraft | null>(null)
+  const paths = ((data.proxy_paths || []) as ProxyPath[]).filter(path => path.enabled !== false)
+  const rules = ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage')
+  const ruleSets = ((data.routing_rule_sets || []) as RoutingRuleSet[])
+  const openComposer = () => {
+    const path = paths[0]
+    if (!path) {
+      void dialogs.alert({ title: '无法编排分流', message: '请先创建一条代理分支。' })
+      return
+    }
+    const stage = routingStages(data, path.id).find(item => item.available)
+    const server = ((data.servers || []) as Server[]).find(item => item.id === stage?.serverID)
+    if (!stage || !server) {
+      void dialogs.alert({ title: '无法编排分流', message: '该分支没有可执行规则的受控节点。' })
+      return
+    }
+    setDraft({ ...defaultRoutingDraft(server, path.id), stage_step_id: stage.stepID })
   }
-  return <Panel title="分流规则">
-    <p className="muted">规则会生成到所选服务器的 sing-box route.rules 中。</p>
-    <div className="form">
-      <Select value={f.server_id} onChange={e => setF({ ...f, server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select>
-      <input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="名称" />
-      <input value={f.priority} onChange={e => setF({ ...f, priority: Number(e.target.value) })} placeholder="优先级" />
-      <Select value={f.action} onChange={e => setF({ ...f, action: e.target.value as RouteAction })}>{routeActions.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
-      <input value={f.match_json} onChange={e => setF({ ...f, match_json: e.target.value })} placeholder='匹配 JSON，例如 {"port":[22]}' />
-      {f.action === 'outbound' && <Select value={f.outbound_id} onChange={e => setF({ ...f, outbound_id: Number(e.target.value) })}><option value={0}>选择出口</option>{(data.outbounds || []).filter((x: Outbound) => !f.server_id || x.server_id === f.server_id).map((x: Outbound) => <option value={x.id} key={x.id}>{x.name}</option>)}</Select>}
-      {f.action === 'external' && <Select value={f.external_outbound_id} onChange={e => setF({ ...f, external_outbound_id: Number(e.target.value) })}><option value={0}>选择导入节点</option>{(data.external_outbounds || []).map((x: ExternalOutbound) => <option value={x.id} key={x.id}>{x.name}</option>)}</Select>}
-      {f.action === 'interface' && <input value={f.interface_name} onChange={e => setF({ ...f, interface_name: e.target.value })} placeholder="出口网卡，例如 eth1" />}
-      <input value={f.outbound_tag} onChange={e => setF({ ...f, outbound_tag: e.target.value })} placeholder="出口标签覆盖，可选" />
-      <Select variant="segmented" value={String(f.enabled)} onChange={e => setF({ ...f, enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select>
-      <button onClick={async () => { await client.request('/routing-rules', { method: 'POST', body: JSON.stringify(payload()) }); await load() }}>创建</button>
-    </div>
-    <Table rows={data.routing_rules || []} actions={(r: RoutingRule) => <button onClick={() => remove(client, `/routing-rules/${r.id}`, load, dialogs, r)}>删除</button>} />
-  </Panel>
+  const submit = async () => {
+    if (!draft) return
+    try {
+      const body: any = {
+        server_id: draft.server_id,
+        scope: 'path_stage',
+        proxy_path_id: draft.proxy_path_id,
+        stage_step_id: draft.stage_step_id || undefined,
+        sort_position: rules.filter(rule => rule.proxy_path_id === draft.proxy_path_id && Number(rule.stage_step_id || 0) === draft.stage_step_id).length,
+        match_source: draft.match_source,
+        rule_set_id: draft.match_source === 'rule_set' ? draft.rule_set_id : undefined,
+        name: draft.name,
+        match_json: draft.match_source === 'inline' ? routingMatchJSON(draft.match_kind, draft.match_value) : '{}',
+        action: draft.action,
+        enabled: draft.enabled,
+      }
+      if (draft.action === 'outbound' && draft.outbound_id) body.outbound_id = draft.outbound_id
+      if (draft.action === 'external' && draft.external_outbound_id) body.external_outbound_id = draft.external_outbound_id
+      if (draft.action === 'interface') body.interface_name = draft.interface_name.trim()
+      await client.request('/routing-rules', { method: 'POST', body: JSON.stringify(body) })
+      await load()
+      setDraft(current => current ? { ...current, name: '', match_value: current.match_kind === 'all' ? '' : current.match_value } : current)
+    } catch (error: any) {
+      await dialogs.alert({ title: '创建分流失败', message: localizeErrorMessage(error.message || error) })
+    }
+  }
+  const rows = rules.map(rule => {
+    const path = paths.find(item => item.id === rule.proxy_path_id)
+    const stage = routingStages(data, Number(rule.proxy_path_id)).find(item => item.stepID === Number(rule.stage_step_id || 0))
+    return { id: rule.id, branch: path?.name || `分支 ${rule.proxy_path_id}`, node: stage ? `${stage.label} · ${stage.serverName}` : '节点已移除', match: routingRuleMatchLabel(rule, ruleSets), action: labelValue(rule.action), status: rule.enabled ? '启用' : '停用', _raw: rule }
+  })
+  return <>
+    <Panel title="分流规则" actions={<button type="button" onClick={openComposer} disabled={!paths.length}><Workflow size={15} aria-hidden="true" />编排规则</button>}>
+      {rows.length ? <Table rows={rows} actions={(row: any) => <button className="ghost icon-button danger-text" onClick={() => remove(client, `/routing-rules/${row._raw.id}`, load, dialogs, row._raw)} aria-label={`删除 ${row._raw.name}`} title="删除"><Trash2 size={14} /></button>} /> : <div className="automation-empty"><Workflow size={22} aria-hidden="true" /><span>暂无节点分流规则</span></div>}
+    </Panel>
+    <AnimatePresence>{draft && <RoutingRuleDraftDialog draft={draft} setDraft={setDraft} data={data} client={client} load={load} onCancel={() => setDraft(null)} onSubmit={submit} />}</AnimatePresence>
+  </>
 }
 
 function ExternalOutbounds({ data, client, load }: any) {

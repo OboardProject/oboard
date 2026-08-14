@@ -170,7 +170,7 @@ func HumanPrincipal(user model.User, role model.Role, sourceIP netip.Addr) Princ
 	if role == model.RoleViewer {
 		scopes = []string{"inventory:read", "servers:read", "users:read", "topology:read", "deployments:read", "audit:read", "notifications:read"}
 	} else if role == model.RoleOperator {
-		scopes = []string{"inventory:read", "servers:*", "topology:*", "deployments:*", "audit:*", "dns:read", "certificates:read", "tasks:*", "logs:read", "notifications:*", "outbounds:*", "routing_rules:*", "external_outbounds:*", "warp_profiles:*", "dns_lists:read", "dns_records:*", "port_forwards:*", "tunnels:*", "agent_tasks:*", "mtu:*", "backups:read"}
+		scopes = []string{"inventory:read", "servers:*", "topology:*", "deployments:*", "audit:*", "dns:read", "certificates:read", "tasks:*", "logs:read", "notifications:*", "outbounds:*", "routing_rules:*", "routing_rule_sets:*", "external_outbounds:*", "warp_profiles:*", "dns_lists:read", "dns_records:*", "port_forwards:*", "tunnels:*", "agent_tasks:*", "mtu:*", "backups:read"}
 	}
 	return Principal{ID: "user:" + formatInt64(user.ID), UserID: &user.ID, Name: user.Username, Type: model.APIPrincipalOAuth, Role: role, Scopes: scopes, SourceIP: sourceIP, ClientName: "oboard-web", Interactive: true}
 }

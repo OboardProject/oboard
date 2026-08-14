@@ -73,6 +73,54 @@ func TestOutboundAndRoutingRuleCapabilities(t *testing.T) {
 	}
 }
 
+func TestRoutingRuleSetCapabilities(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	operator := &model.User{Username: "operator", PasswordHash: "unused", Role: model.RoleOperator, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, operator); err != nil {
+		t.Fatal(err)
+	}
+	revision := "revision-1"
+	server.routingRuleSetFetcher = func(context.Context, model.RoutingRuleSet, bool) (*fetchedRoutingRuleSet, error) {
+		return &fetchedRoutingRuleSet{content: []byte(`{"version":1,"rules":[{"domain":["example.com"]}]}`), revision: revision}, nil
+	}
+	principal := trafficAutomationPrincipal(t, server, "operator")
+	createInput := json.RawMessage(`{"routing_rule_set":{"name":"shared","url":"https://rules.example/shared.json","format":"singbox_source"}}`)
+	applyAutomationChangeset(t, server, principal, "routing-rule-set-create", automation.OperationRequest{Capability: "routing_rule_sets.create", Input: createInput})
+	items, err := db.ListRoutingRuleSets(ctx)
+	if err != nil || len(items) != 1 || items[0].Revision != revision {
+		t.Fatalf("created routing rule sets=%#v error=%v", items, err)
+	}
+	item := items[0]
+	updateInput, _ := json.Marshal(map[string]any{"routing_rule_set_id": item.ID, "changes": map[string]any{"name": "shared-renamed"}})
+	applyAutomationChangeset(t, server, principal, "routing-rule-set-update", automation.OperationRequest{Capability: "routing_rule_sets.update", Input: updateInput})
+	updated, err := db.GetRoutingRuleSet(ctx, item.ID)
+	if err != nil || updated.Name != "shared-renamed" {
+		t.Fatalf("updated routing rule set=%#v error=%v", updated, err)
+	}
+	revision = "revision-2"
+	refreshInput, _ := json.Marshal(map[string]any{"routing_rule_set_id": item.ID})
+	applyAutomationChangeset(t, server, principal, "routing-rule-set-refresh", automation.OperationRequest{Capability: "routing_rule_sets.refresh", Input: refreshInput})
+	refreshed, err := db.GetRoutingRuleSet(ctx, item.ID)
+	if err != nil || refreshed.Revision != revision {
+		t.Fatalf("refreshed routing rule set=%#v error=%v", refreshed, err)
+	}
+	listed, err := server.application.Query(ctx, principal, "routing_rule_sets.list", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("routing_rule_sets.list: %v", err)
+	}
+	encoded, _ := json.Marshal(listed)
+	if contains(encoded, "content") {
+		t.Fatalf("routing_rule_sets.list leaked content snapshot: %s", encoded)
+	}
+	deleteInput, _ := json.Marshal(map[string]any{"routing_rule_set_id": item.ID, "confirm": true})
+	applyAutomationChangeset(t, server, principal, "routing-rule-set-delete", automation.OperationRequest{Capability: "routing_rule_sets.delete", Input: deleteInput})
+	if _, err := db.GetRoutingRuleSet(ctx, item.ID); err == nil {
+		t.Fatal("deleted routing rule set still exists")
+	}
+}
+
 func TestExternalOutboundImportCapability(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")
