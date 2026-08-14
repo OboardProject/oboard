@@ -9,7 +9,7 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-const proxyPathNameSeparator = " → "
+const proxyPathNameSeparator = "｜"
 
 type proxyPathNameState struct {
 	path         model.ProxyPath

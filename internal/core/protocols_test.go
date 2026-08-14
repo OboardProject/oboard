@@ -468,7 +468,7 @@ func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 	for _, node := range subscriptionNodes {
 		names[node.SourceName] = true
 	}
-	for _, name := range []string{"A → B → C", "A → B", "A → B → C → 直出"} {
+	for _, name := range []string{"A｜B｜C", "A｜B", "A｜B｜C｜直出"} {
 		if !names[name] {
 			t.Fatalf("subscription should preserve %q, got %#v", name, names)
 		}

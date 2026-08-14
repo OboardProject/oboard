@@ -1904,7 +1904,7 @@ func TestImportedNodeURIProxyPathAndGrantAPI(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusBadRequest)
 	branched := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": serverStepID}, http.StatusCreated)
 	branchedPath := branched["proxy_path"].(map[string]any)
-	if branchedPath["kind"] != "direct" || branchedPath["name"] != "s1 → s2 → 直出" || int64(branchedPath["branch_source_step_id"].(float64)) != serverStepID {
+	if branchedPath["kind"] != "direct" || branchedPath["name"] != "s1｜s2｜直出" || int64(branchedPath["branch_source_step_id"].(float64)) != serverStepID {
 		t.Fatalf("bad intermediate direct branch: %#v", branched)
 	}
 	branchedSteps := branched["proxy_path_steps"].([]any)
@@ -2097,17 +2097,17 @@ func TestProxyPathAutomaticAndCustomNamesFollowTopology(t *testing.T) {
 	stepID := int64(createdStep["proxy_path_step"].(map[string]any)["id"].(float64))
 
 	path := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
-	if path["name"] != "香港 → 洛杉矶" || path["name_mode"] != "auto" {
+	if path["name"] != "香港｜洛杉矶" || path["name_mode"] != "auto" {
 		t.Fatalf("automatic path = %#v", path)
 	}
 	template := []map[string]any{
 		{"kind": "literal", "value": "专线 "},
 		{"kind": "server", "server_id": serverAID},
-		{"kind": "literal", "value": " → "},
+		{"kind": "literal", "value": "｜"},
 		{"kind": "server", "server_id": serverBID},
 	}
 	path = request(t, h, http.MethodPatch, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, map[string]any{"name_mode": "custom", "name_template": template}, http.StatusOK)["proxy_path"].(map[string]any)
-	if path["name"] != "专线 香港 → 洛杉矶" || path["name_mode"] != "custom" {
+	if path["name"] != "专线 香港｜洛杉矶" || path["name_mode"] != "custom" {
 		t.Fatalf("custom path = %#v", path)
 	}
 	storedB, err := db.GetServer(context.Background(), serverBID)
@@ -2120,12 +2120,12 @@ func TestProxyPathAutomaticAndCustomNamesFollowTopology(t *testing.T) {
 		t.Fatal(err)
 	}
 	path = request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
-	if path["name"] != "专线 香港 → 纽约" {
+	if path["name"] != "专线 香港｜纽约" {
 		t.Fatalf("renamed custom path = %#v", path)
 	}
 	request(t, h, http.MethodPatch, "/api/v2/ui/proxy-path-steps/"+itoa(stepID), token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusOK)
 	path = request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
-	if path["name"] != "香港 → 东京" || path["name_mode"] != "auto" {
+	if path["name"] != "香港｜东京" || path["name_mode"] != "auto" {
 		t.Fatalf("topology fallback path = %#v", path)
 	}
 }

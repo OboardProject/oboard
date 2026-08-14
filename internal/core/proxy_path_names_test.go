@@ -16,13 +16,13 @@ func TestResolveProxyPathNamesUsesEndpointsAndDynamicResourceNames(t *testing.T)
 		{ID: 2, PathID: 100, Position: 2, NodeType: model.ProxyPathStepServerInbound, ServerID: int64Ptr(3)},
 	}
 	resolved := ResolveProxyPathNames(paths, steps, servers, inbounds, nil)
-	if got := resolved[0].Name; got != "香港 → 东京 → 洛杉矶" {
+	if got := resolved[0].Name; got != "香港｜东京｜洛杉矶" {
 		t.Fatalf("name = %q", got)
 	}
 	servers[0].Name = "广州"
 	servers[2].Name = "纽约"
 	resolved = ResolveProxyPathNames(paths, steps, servers, inbounds, nil)
-	if got := resolved[0].Name; got != "广州 → 东京 → 纽约" {
+	if got := resolved[0].Name; got != "广州｜东京｜纽约" {
 		t.Fatalf("renamed path = %q", got)
 	}
 }
@@ -33,7 +33,7 @@ func TestResolveProxyPathNamesOmitsUnneededDirectSuffix(t *testing.T) {
 	paths := []model.ProxyPath{{ID: 100, Kind: model.ProxyPathKindDirect, NameMode: model.ProxyPathNameAuto, InboundID: 10, Enabled: true}}
 	steps := []model.ProxyPathStep{{ID: 1, PathID: 100, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: int64Ptr(2)}}
 	resolved := ResolveProxyPathNames(paths, steps, servers, inbounds, nil)
-	if got := resolved[0].Name; got != "A → B" {
+	if got := resolved[0].Name; got != "A｜B" {
 		t.Fatalf("direct branch name = %q", got)
 	}
 }
@@ -50,7 +50,7 @@ func TestResolveProxyPathNamesUsesDirectSuffixOnlyForConflict(t *testing.T) {
 		{ID: 2, PathID: 200, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: int64Ptr(2)},
 	}
 	resolved := ResolveProxyPathNames(paths, steps, servers, inbounds, nil)
-	if resolved[0].Name != "A → B" || resolved[1].Name != "A → B → 直出" {
+	if resolved[0].Name != "A｜B" || resolved[1].Name != "A｜B｜直出" {
 		t.Fatalf("resolved = %#v", resolved)
 	}
 }
@@ -71,7 +71,7 @@ func TestResolveProxyPathNamesAddsDistinguishingMiddleNodes(t *testing.T) {
 		{ID: 6, PathID: 200, Position: 3, NodeType: model.ProxyPathStepServerInbound, ServerID: int64Ptr(5)},
 	}
 	resolved := ResolveProxyPathNames(paths, steps, servers, inbounds, nil)
-	if resolved[0].Name != "香港 → 东京 → 新加坡 → 洛杉矶" || resolved[1].Name != "香港 → 东京 → 首尔 → 洛杉矶" {
+	if resolved[0].Name != "香港｜东京｜新加坡｜洛杉矶" || resolved[1].Name != "香港｜东京｜首尔｜洛杉矶" {
 		t.Fatalf("resolved = %#v", resolved)
 	}
 }
@@ -94,10 +94,10 @@ func TestResolveProxyPathNamesUsesTransportFeaturesThenStableOrdinals(t *testing
 	for _, path := range resolved {
 		byID[path.ID] = path.Name
 	}
-	if byID[30] != "香港 → 洛杉矶 → VLESS → WireGuard" {
+	if byID[30] != "香港｜洛杉矶｜VLESS｜WireGuard" {
 		t.Fatalf("wireguard name = %q", byID[30])
 	}
-	if byID[10] != "香港 → 洛杉矶 → VLESS → SSH → 01" || byID[20] != "香港 → 洛杉矶 → VLESS → SSH → 02" {
+	if byID[10] != "香港｜洛杉矶｜VLESS｜SSH｜01" || byID[20] != "香港｜洛杉矶｜VLESS｜SSH｜02" {
 		t.Fatalf("ssh names = %#v", byID)
 	}
 }
@@ -108,7 +108,7 @@ func TestResolveProxyPathNamesRendersCustomReferencesAndDisambiguates(t *testing
 	template := []model.ProxyPathNamePart{
 		{Kind: model.ProxyPathNameLiteral, Value: "专线 "},
 		{Kind: model.ProxyPathNameServer, ServerID: 1},
-		{Kind: model.ProxyPathNameLiteral, Value: " → "},
+		{Kind: model.ProxyPathNameLiteral, Value: "｜"},
 		{Kind: model.ProxyPathNameServer, ServerID: 2},
 	}
 	paths := []model.ProxyPath{
@@ -120,12 +120,12 @@ func TestResolveProxyPathNamesRendersCustomReferencesAndDisambiguates(t *testing
 		{ID: 2, PathID: 2, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: int64Ptr(2)},
 	}
 	resolved := ResolveProxyPathNames(paths, steps, servers, inbounds, nil)
-	if !strings.HasPrefix(resolved[0].Name, "专线 香港 → 洛杉矶 → HY2 → SS2022-128 → ") || !strings.HasSuffix(resolved[1].Name, "02") {
+	if !strings.HasPrefix(resolved[0].Name, "专线 香港｜洛杉矶｜HY2｜SS2022-128｜") || !strings.HasSuffix(resolved[1].Name, "02") {
 		t.Fatalf("custom names = %#v", resolved)
 	}
 	servers[1].Name = "纽约"
 	resolved = ResolveProxyPathNames(paths[:1], steps[:1], servers, inbounds, nil)
-	if resolved[0].Name != "专线 香港 → 纽约" {
+	if resolved[0].Name != "专线 香港｜纽约" {
 		t.Fatalf("renamed custom path = %q", resolved[0].Name)
 	}
 }
