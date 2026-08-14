@@ -9,12 +9,11 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-const proxyPathNameSeparator = "｜"
+const proxyPathNameSeparator = " → "
 
 type proxyPathNameState struct {
 	path         model.ProxyPath
 	route        []string
-	middleDepth  int
 	directSuffix bool
 	features     []string
 	featureDepth int
@@ -67,43 +66,22 @@ func ResolveProxyPathNames(paths []model.ProxyPath, steps []model.ProxyPathStep,
 	for _, path := range paths {
 		pathSteps := stepsByPath[path.ID]
 		route := proxyPathRouteLabels(path, pathSteps, serverByID, inboundByID, externalByID)
-		middleDepth := 0
-		base := automaticProxyPathName(route, middleDepth)
+		base := automaticProxyPathName(route)
 		if path.NameMode == model.ProxyPathNameCustom {
 			if rendered, err := renderProxyPathNameTemplate(path.NameTemplate, serverByID, externalByID); err == nil && strings.TrimSpace(rendered) != "" {
 				base = strings.TrimSpace(rendered)
 			}
 		}
 		states = append(states, proxyPathNameState{
-			path:        path,
-			route:       route,
-			middleDepth: middleDepth,
-			features:    proxyPathNameFeatures(path, pathSteps, inboundByID, externalByID),
-			base:        base,
-			active:      proxyPathIsActive(path, pathSteps),
+			path:     path,
+			route:    route,
+			features: proxyPathNameFeatures(path, pathSteps, inboundByID, externalByID),
+			base:     base,
+			active:   proxyPathIsActive(path, pathSteps),
 		})
 	}
 
 	recomputeProxyPathNames(states)
-	for {
-		conflicts := proxyPathNameConflicts(states, reserved)
-		changed := false
-		for index := range states {
-			state := &states[index]
-			if !conflicts[state.path.ID] || state.path.NameMode == model.ProxyPathNameCustom {
-				continue
-			}
-			middleCount := max(0, len(state.route)-2)
-			if state.middleDepth < middleCount {
-				state.middleDepth++
-				changed = true
-			}
-		}
-		if !changed {
-			break
-		}
-		recomputeProxyPathNames(states)
-	}
 	conflicts := proxyPathNameConflicts(states, reserved)
 	changed := false
 	for index := range states {
@@ -297,21 +275,11 @@ func proxyPathServerLabel(server model.Server, id int64) string {
 	return firstNonEmpty(strings.TrimSpace(server.Name), fmt.Sprintf("服务器 #%d", id))
 }
 
-func automaticProxyPathName(route []string, middleDepth int) string {
+func automaticProxyPathName(route []string) string {
 	if len(route) == 0 {
 		return "代理拓扑"
 	}
-	if len(route) == 1 {
-		return route[0]
-	}
-	middle := route[1 : len(route)-1]
-	if middleDepth > len(middle) {
-		middleDepth = len(middle)
-	}
-	parts := []string{route[0]}
-	parts = append(parts, middle[len(middle)-middleDepth:]...)
-	parts = append(parts, route[len(route)-1])
-	return strings.Join(parts, proxyPathNameSeparator)
+	return strings.Join(route, proxyPathNameSeparator)
 }
 
 func recomputeProxyPathNames(states []proxyPathNameState) {
@@ -319,7 +287,7 @@ func recomputeProxyPathNames(states []proxyPathNameState) {
 		state := &states[index]
 		name := state.base
 		if state.path.NameMode != model.ProxyPathNameCustom {
-			name = automaticProxyPathName(state.route, state.middleDepth)
+			name = automaticProxyPathName(state.route)
 		}
 		if state.directSuffix {
 			name += proxyPathNameSeparator + "直出"

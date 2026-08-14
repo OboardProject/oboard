@@ -10524,7 +10524,7 @@ function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: Prox
 	const pathSteps = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === path.id).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
 	const terminalImported = pathSteps[pathSteps.length - 1]?.node_type === 'imported'
   const preview = mode === 'auto'
-    ? (path.name_mode === 'auto' ? path.name : (chain.length > 1 ? `${chain[0]}｜${chain[chain.length - 1]}` : chain[0] || path.name))
+    ? (path.name_mode === 'auto' ? path.name : chain.join(' → '))
     : renderProxyPathNameTemplate(parts, data)
 
   const switchMode = (next: 'auto' | 'custom') => {
@@ -10560,31 +10560,31 @@ function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: Prox
       if (preceding !== undefined) {
         let insertAt = preceding.partIndex + 1
         const targetPart = current[insertAt]
-        if (targetPart && targetPart.kind === 'literal' && (targetPart.value === '｜' || targetPart.value === '|')) {
+        if (targetPart && targetPart.kind === 'literal' && (targetPart.value === '｜' || targetPart.value === '|' || targetPart.value.includes('→'))) {
           insertAt += 1
           const next = current.slice()
-          next.splice(insertAt, 0, reference.part, { kind: 'literal', value: '｜' })
+          next.splice(insertAt, 0, reference.part, { kind: 'literal', value: ' → ' })
           return next
         }
         const next = current.slice()
         if (insertAt >= current.length) {
-          next.splice(insertAt, 0, { kind: 'literal', value: '｜' }, reference.part)
+          next.splice(insertAt, 0, { kind: 'literal', value: ' → ' }, reference.part)
         } else {
-          next.splice(insertAt, 0, reference.part, { kind: 'literal', value: '｜' })
+          next.splice(insertAt, 0, reference.part, { kind: 'literal', value: ' → ' })
         }
         return next
       } else if (succeeding !== undefined) {
         let insertAt = succeeding.partIndex
         const next = current.slice()
-        next.splice(insertAt, 0, reference.part, { kind: 'literal', value: '｜' })
+        next.splice(insertAt, 0, reference.part, { kind: 'literal', value: ' → ' })
         return next
       } else {
         if (!current.length) return [reference.part]
         const last = current[current.length - 1]
-        if (last?.kind === 'literal' && (last.value.endsWith('｜') || last.value.endsWith('|'))) {
+        if (last?.kind === 'literal' && (last.value.endsWith('｜') || last.value.endsWith('|') || last.value.endsWith('→') || last.value.endsWith('→ '))) {
           return [...current, reference.part]
         }
-        return [...current, { kind: 'literal', value: '｜' }, reference.part]
+        return [...current, { kind: 'literal', value: ' → ' }, reference.part]
       }
     })
   }
@@ -10717,8 +10717,12 @@ function proxyPathNameReferences(data: any, path: ProxyPath): ProxyPathNameRefer
 
 function defaultProxyPathNameTemplate(references: ProxyPathNameReference[]): ProxyPathNamePart[] {
   if (!references.length) return []
-  if (references.length === 1) return [references[0].part]
-  return [references[0].part, { kind: 'literal', value: '｜' }, references[references.length - 1].part]
+  const parts: ProxyPathNamePart[] = []
+  references.forEach((ref, index) => {
+    if (index > 0) parts.push({ kind: 'literal', value: ' → ' })
+    parts.push(ref.part)
+  })
+  return parts
 }
 
 function renderProxyPathNameTemplate(parts: ProxyPathNamePart[], data: any) {

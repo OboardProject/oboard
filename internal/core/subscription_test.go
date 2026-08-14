@@ -346,11 +346,11 @@ func TestSubscriptionStandaloneNamesUseVisibleServersAndProtocols(t *testing.T) 
 		t.Fatal(err)
 	}
 	want := map[int64]string{
-		101: "🇦🇶 香港｜01",
-		201: "🇦🇶 香港｜02｜VLESS",
-		202: "🇦🇶 香港｜02｜HY2",
-		301: "🇦🇶 东京｜01",
-		302: "🇦🇶 东京｜02",
+		101: "🇦🇶 香港 → 01",
+		201: "🇦🇶 香港 → 02 → VLESS",
+		202: "🇦🇶 香港 → 02 → HY2",
+		301: "🇦🇶 东京 → 01",
+		302: "🇦🇶 东京 → 02",
 	}
 	for _, node := range nodes {
 		if got := node.Name; got != want[node.Inbound.ID] {
@@ -414,11 +414,11 @@ func TestSubscriptionNamesAvoidPathsAndDisambiguateImportedNodes(t *testing.T) {
 	}
 	want := map[string]bool{
 		"🇦🇶 链路名":     true,
-		"🇦🇶 链路名｜01":  true,
+		"🇦🇶 链路名 → 01":  true,
 		"🇦🇶 导入名":     true,
-		"🇦🇶 导入名｜01":  true,
-		"🇦🇶 重复导入｜01": true,
-		"🇦🇶 重复导入｜02": true,
+		"🇦🇶 导入名 → 01":  true,
+		"🇦🇶 重复导入 → 01": true,
+		"🇦🇶 重复导入 → 02": true,
 	}
 	seen := map[string]bool{}
 	for _, node := range nodes {
