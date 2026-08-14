@@ -168,6 +168,24 @@ export function routeOverlapLength(left: GraphPoint[], right: GraphPoint[]): num
   ), 0)
 }
 
+export function pointToPolylineDistance(point: GraphPoint, points: readonly GraphPoint[]): number {
+  if (!points.length) return Number.POSITIVE_INFINITY
+  if (points.length === 1) return Math.hypot(point.x - points[0].x, point.y - points[0].y)
+  let minimum = Number.POSITIVE_INFINITY
+  for (let index = 1; index < points.length; index++) {
+    const from = points[index - 1]
+    const to = points[index]
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    const lengthSquared = dx * dx + dy * dy
+    const ratio = lengthSquared
+      ? Math.max(0, Math.min(1, ((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSquared))
+      : 0
+    minimum = Math.min(minimum, Math.hypot(point.x - (from.x + ratio * dx), point.y - (from.y + ratio * dy)))
+  }
+  return minimum
+}
+
 function pointText(point: GraphPoint) {
   return `${point.x} ${point.y}`
 }

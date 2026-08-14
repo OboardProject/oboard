@@ -53,7 +53,7 @@ import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetO
 import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
 import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphFocusState, graphPathEdgeLabels, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
 import type { GraphFocusScope, GraphPathFocusState } from './components/proxy-path/graph-topology'
-import { curvedGraphPath, roundedOrthogonalPath, type GraphPoint, type GraphRect } from './components/proxy-path/graph-geometry'
+import { curvedGraphPath, pointToPolylineDistance, roundedOrthogonalPath, type GraphPoint, type GraphRect } from './components/proxy-path/graph-geometry'
 import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
 import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
 import { proxyPathGeneratedReuseCountKey } from './components/proxy-path/reuse-target-options'
@@ -9058,6 +9058,17 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const [activeGraphSource, setActiveGraphSource] = useState<'node' | 'edge'>('node')
   const [relatedGraphTarget, setRelatedGraphTarget] = useState<RelatedGraphTarget | null>(null)
   const pathFocusTimer = useRef<number | null>(null)
+	const openGraphContextMenu = (clientX: number, clientY: number, entity: GraphEntity, pathIDs: number[], source: 'node' | 'edge') => {
+	  const menuWidth = Math.min(260, Math.max(148, window.innerWidth - 16))
+	  const menuHeight = entity.type === 'proxy-path-step' || (entity.type === 'direct' && entity.path_id) ? 248 : entity.type === 'direct' ? 126 : 132
+	  setGraphMenu({
+	    x: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
+	    y: Math.max(8, Math.min(clientY, window.innerHeight - menuHeight - 8)),
+	    entity,
+	    pathIDs,
+	    source,
+	  })
+	}
   useEffect(() => { setNodes(builtFlow.nodes); setEdges(builtFlow.edges) }, [builtFlow])
   useEffect(() => {
     if (focusedPathID && !visibleProxyPaths.some(path => path.id === focusedPathID)) setFocusedPathID(0)
@@ -9105,7 +9116,16 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         ...edge,
         className: `${edge.className || ''}${focusState ? ` path-focus-${focusState}` : ''}`.trim(),
         zIndex: focusState === 'active' && data?.routingClass === 'primary' ? 4 : focusState === 'context' ? 1 : routingZIndex,
-        data: data ? { ...data, focusState, onFocusPath: setFocusedPathID } : data,
+        data: data ? {
+          ...data,
+          focusState,
+          onFocusPath: setFocusedPathID,
+          onContextMenu: data.entity ? (event: React.MouseEvent) => {
+            event.preventDefault()
+            event.stopPropagation()
+            openGraphContextMenu(event.clientX, event.clientY, data.entity!, pathIDs, 'edge')
+          } : undefined,
+        } : data,
       }
     })
   }, [routedEdges, activeGraphFocusKey])
@@ -10541,17 +10561,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    setActiveGraphSource('node')
 	    if (pathIDs.length === 1) setFocusedPathID(pathIDs[0])
 	  }
-	  const openGraphContextMenu = (clientX: number, clientY: number, entity: GraphEntity, pathIDs: number[], source: 'node' | 'edge') => {
-	    const menuWidth = Math.min(260, Math.max(148, window.innerWidth - 16))
-		    const menuHeight = entity.type === 'proxy-path-step' || (entity.type === 'direct' && entity.path_id) ? 248 : entity.type === 'direct' ? 126 : 132
-    setGraphMenu({
-      x: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
-      y: Math.max(8, Math.min(clientY, window.innerHeight - menuHeight - 8)),
-      entity,
-	  pathIDs,
-	  source,
-    })
-  }
 	  const onNodeContextMenu = (e: React.MouseEvent, node: Node) => {
 	    const entity = node.data?.entity as GraphEntity | undefined
 	    if (!entity) return
@@ -10566,6 +10575,21 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     e.stopPropagation()
 	    openGraphContextMenu(e.clientX, e.clientY, entity, graphPathIDs(edge), 'edge')
   }
+	const onPaneContextMenu = (e: React.MouseEvent) => {
+	  e.preventDefault()
+	  if (!flowInstance) return
+	  const cursor = { x: e.clientX, y: e.clientY }
+	  const closest = displayEdges.reduce<{ edge: Edge; distance: number } | null>((current, edge) => {
+	    const edgeData = edge.data as GraphTransportEdgeData | undefined
+	    if (edgeData?.entity?.type !== 'proxy-path-step' || !edgeData.route?.points?.length) return current
+	    const screenPoints = edgeData.route.points.map(point => flowInstance.flowToScreenPosition(point))
+	    const distance = pointToPolylineDistance(cursor, screenPoints)
+	    return !current || distance < current.distance ? { edge, distance } : current
+	  }, null)
+	  if (!closest || closest.distance > 36) return
+	  const entity = closest.edge.data?.entity as GraphEntity
+	  openGraphContextMenu(e.clientX, e.clientY, entity, graphPathIDs(closest.edge), 'edge')
+	}
 	  const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
 	    setGraphMenu(null)
 	    setActiveGraphEntity(edge.data?.entity as GraphEntity || null)
@@ -10819,6 +10843,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		  onEdgeMouseLeave={stopPreviewingGraphPaths}
 		  onEdgeContextMenu={onEdgeContextMenu}
 		  onPaneClick={clearGraphSelection}
+		  onPaneContextMenu={onPaneContextMenu}
 		  onMoveStart={closeGraphMenu}
           onConnect={onConnect}
           connectionLineType={ConnectionLineType.SmoothStep}
@@ -12491,6 +12516,7 @@ type GraphTransportEdgeData = GraphRoutingEdgeData & {
   pathLabelID?: number
   focusState?: GraphPathFocusState
   onFocusPath?: (pathID: number) => void
+  onContextMenu?: (event: React.MouseEvent) => void
 }
 
 function estimatedGraphNodeHeight(node: Node) {
@@ -12621,7 +12647,7 @@ function ProxyGraphEdge({
   const phase = (phaseHash % 2400) / 1000
   return <>
     <path d={path} className="proxy-edge-casing" pointerEvents="none" />
-    <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={22} />
+    <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={40} />
     {!data?.unhealthy && data?.focusState === 'active' && (
       <g className="edge-flow" pointerEvents="none" style={{ color: style?.stroke as string }}>
         <circle r="1.7" fill="currentColor" opacity="0.5">
@@ -12639,6 +12665,7 @@ function ProxyGraphEdge({
             className={`proxy-edge-label nodrag nopan${data.focusState ? ` path-focus-${data.focusState}` : ''}`}
             style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
             title={data.pathLabelTitle || data.pathLabel}
+            onContextMenu={data.onContextMenu}
             onClick={event => {
               event.stopPropagation()
               data.onFocusPath?.(data.pathLabelID!)
@@ -12648,6 +12675,7 @@ function ProxyGraphEdge({
             className={`proxy-edge-label shared nodrag nopan${data.focusState ? ` path-focus-${data.focusState}` : ''}`}
             style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
             title={data.pathLabelTitle || data.pathLabel}
+            onContextMenu={data.onContextMenu}
           >{data.pathLabel}</span>}
     </EdgeLabelRenderer>}
   </>

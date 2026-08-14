@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   collinearOverlapLength,
   normalizeOrthogonalPoints,
+  pointToPolylineDistance,
   roundedOrthogonalPath,
   segmentIntersectsRectInterior,
   type GraphSegment,
@@ -52,6 +53,15 @@ describe('normalizeOrthogonalPoints', () => {
       { x: 40, y: 30 },
       { x: 60, y: 30 },
     ])
+  })
+})
+
+describe('pointToPolylineDistance', () => {
+  it('finds the nearest point across every route segment', () => {
+    const route = [{ x: 0, y: 0 }, { x: 0, y: 100 }, { x: 100, y: 100 }]
+    expect(pointToPolylineDistance({ x: 8, y: 40 }, route)).toBe(8)
+    expect(pointToPolylineDistance({ x: 70, y: 112 }, route)).toBe(12)
+    expect(pointToPolylineDistance({ x: -3, y: -4 }, route)).toBe(5)
   })
 })
 
