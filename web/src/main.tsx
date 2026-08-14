@@ -57,6 +57,7 @@ import { curvedGraphPath, roundedOrthogonalPath, type GraphPoint, type GraphRect
 import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
 import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
 import { proxyPathGeneratedReuseCountKey } from './components/proxy-path/reuse-target-options'
+import { detachedPathSuffix, detachedStepCreateRequest, disconnectPathCandidates, type CanvasDetachedChain } from './components/proxy-path/detached-chain'
 import './style.css'
 import { alignUnifiedMetrics, computeMaxLatency, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
 import { Badge } from './components/ui/badge'
@@ -73,7 +74,7 @@ import {
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
   ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network, Package,
-  ArrowUpCircle, SlidersHorizontal
+  ArrowUpCircle, SlidersHorizontal, Unlink
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -8955,7 +8956,7 @@ type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_
 type RoutingDraft = { server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; interface_name: string; enabled: boolean }
 type TransportMode = 'port-forward' | 'tunnel'
 type TransportDraft = { mode: TransportMode; name: string; source_server_id: number; target_server_id: number; listen_ip: string; listen_port: number; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; type: TunnelType; priority: number; config_json: string; enabled: boolean }
-type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step'; id: number; label: string; path_id?: number; node_id?: string }
+type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; node_id?: string }
 type RelatedGraphTarget = { entity: GraphEntity; relation: GraphRelationTarget }
 type GraphContextMenu = { x: number; y: number; entity: GraphEntity; pathIDs: number[]; source: 'node' | 'edge' }
 type ImportedNodeDraft = { content: string; scope: 'global' | 'server'; server_id: number; expose_to_users: boolean; position?: GraphPosition | null }
@@ -9015,6 +9016,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const [canvasDirectExitInstances, setCanvasDirectExitInstances] = useState<GraphDirectExitInstance[]>(() => loadGraphDirectExitInstances())
 	const [canvasWARPInstances, setCanvasWARPInstances] = useState<CanvasWARPInstance[]>([])
 	const [canvasRoutingInstances, setCanvasRoutingInstances] = useState<CanvasRoutingInstance[]>([])
+	const [canvasDetachedChains, setCanvasDetachedChains] = useState<CanvasDetachedChain[]>([])
 	const canvasServerSequence = useRef(0)
 	const canvasDirectExitSequence = useRef(0)
 	const canvasWARPSequence = useRef(0)
@@ -9027,7 +9029,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    .slice()
 	    .sort((left, right) => left.id - right.id)
 	}, [data.proxy_paths, entries, selected?.id])
-	const builtFlow = useMemo(() => editableProxyFlow(data, positions, selected?.id || 0, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances, canvasRoutingInstances), [data.servers, data.inbounds, data.external_outbounds, data.warp_profiles, data.proxy_paths, data.proxy_path_steps, data.port_forwards, data.tunnels, positions, selected?.id, canvasImportedIDs.join(','), canvasServerInstances.map(item => `${item.instance_id}:${item.server_id}`).join(','), canvasDirectExitInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasWARPInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasRoutingInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(',')])
+	const builtFlow = useMemo(() => editableProxyFlow(data, positions, selected?.id || 0, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances, canvasRoutingInstances, canvasDetachedChains), [data.servers, data.inbounds, data.external_outbounds, data.warp_profiles, data.proxy_paths, data.proxy_path_steps, data.port_forwards, data.tunnels, positions, selected?.id, canvasImportedIDs.join(','), canvasServerInstances.map(item => `${item.instance_id}:${item.server_id}`).join(','), canvasDirectExitInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasWARPInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasRoutingInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasDetachedChains])
   const graphTopologyFingerprint = builtFlow.edges
     .map(edge => `${edge.id}:${edge.source}:${edge.sourceHandle || ''}>${edge.target}:${edge.targetHandle || ''}`)
     .sort()
@@ -9319,10 +9321,17 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     const next = applyNodeChanges(changes, nds)
     return next
   })
-  const onNodeDragStop = (_: React.MouseEvent, node: Node) => {
-    const next = { ...positions, [node.id]: { x: node.position.x, y: node.position.y } }
-    setPositions(next)
-    saveGraphPositions(next)
+	const onNodeDragStop = (_: React.MouseEvent, node: Node) => {
+	  const detached = detachedChainStepFromNodeID(node.id)
+	  if (detached) {
+	    setCanvasDetachedChains(chains => chains.map(chain => chain.instance_id !== detached.chainID
+	      ? chain
+	      : { ...chain, steps: chain.steps.map((item, index) => index === detached.stepIndex ? { ...item, position: { x: node.position.x, y: node.position.y } } : item) }))
+	    return
+	  }
+	  const next = { ...positions, [node.id]: { x: node.position.x, y: node.position.y } }
+	  setPositions(next)
+	  saveGraphPositions(next)
 	}
 	const onEdgesChange = (changes: EdgeChange[]) => setEdges(eds => applyEdgeChanges(changes, eds))
 	const graphEntity = (id: string) => nodes.find(n => n.id === id)?.data?.entity as GraphEntity | undefined
@@ -9696,6 +9705,76 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    return next
 	  })
 	}
+	const reconnectDetachedChain = async (source: ProxyPathReuseSource, targetID: string) => {
+	  const target = detachedChainStepFromNodeID(targetID)
+	  const chain = target ? canvasDetachedChains.find(item => item.instance_id === target.chainID) : undefined
+	  if (!target || !chain) return false
+	  if (target.stepIndex !== 0) {
+	    await dialogs.alert({ title: '请连接链段首节点', message: '这段节点仍保持原有顺序，请把新连线接到链段最前面的节点。' })
+	    return true
+	  }
+
+	  const allSteps = (data.proxy_path_steps || []) as ProxyPathStep[]
+	  const sourceStep = source.step_id ? allSteps.find(step => step.id === source.step_id) : undefined
+	  const sourcePath = sourceStep ? ((data.proxy_paths || []) as ProxyPath[]).find(path => path.id === sourceStep.path_id) : undefined
+	  const sourceEntry = source.inbound_id ? entries.find(entry => entry.id === source.inbound_id) : undefined
+	  if (!sourceStep && !sourceEntry) {
+	    await dialogs.alert({ title: '无法恢复链路', message: '没有找到新的连接起点，请刷新后重试。' })
+	    return true
+	  }
+
+	  let pathID = sourcePath?.id || 0
+	  let inboundID = sourcePath?.inbound_id || sourceEntry?.id || 0
+	  let nextPosition = sourcePath
+	    ? Math.max(0, ...allSteps.filter(step => step.path_id === sourcePath.id).map(step => step.position || 0)) + 1
+	    : 1
+	  let createdPathID = 0
+	  let firstCreatedStepID = 0
+	  const createdSteps: ProxyPathStep[] = []
+	  const candidateSteps = chain.steps.map((item, index) => ({ ...item.step, position: nextPosition + index }))
+
+	  if (candidateSteps.some(step => step.transport_mode === 'port_forward') && !await ensureTransparentPrefixCompatible(pathID, inboundID, [
+	    ...allSteps.filter(step => step.path_id === pathID),
+	    ...candidateSteps,
+	  ])) return true
+
+	  try {
+	    if (!pathID) {
+	      const result = await client.request('/proxy-paths', {
+	        method: 'POST',
+	        body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: inboundID, enabled: true }),
+	      }) as { proxy_path?: ProxyPath }
+	      pathID = result.proxy_path?.id || 0
+	      createdPathID = pathID
+	      if (!pathID) throw new Error('路径已创建，但接口未返回路径数据')
+	    }
+
+	    for (let index = 0; index < chain.steps.length; index++) {
+	      const result = await client.request('/proxy-path-steps', {
+	        method: 'POST',
+	        body: JSON.stringify(detachedStepCreateRequest(chain.steps[index].step, pathID, nextPosition + index)),
+	      }) as { proxy_path_step?: ProxyPathStep }
+	      const created = result.proxy_path_step
+	      if (!created?.id) throw new Error(`第 ${index + 1} 个节点未返回创建结果`)
+	      if (!firstCreatedStepID) firstCreatedStepID = created.id
+	      createdSteps.push(created)
+	    }
+
+	    setPositions(current => {
+	      const next = { ...current }
+	      createdSteps.forEach((step, index) => { next[proxyPathStepNodeID(step)] = chain.steps[index].position })
+	      saveGraphPositions(next)
+	      return next
+	    })
+	    setCanvasDetachedChains(chains => chains.filter(item => item.instance_id !== chain.instance_id))
+	    await load(undefined, { background: true, forceFresh: true })
+	    return true
+	  } catch (error) {
+	    if (createdPathID) await client.request(`/proxy-paths/${createdPathID}`, { method: 'DELETE' }).catch(() => undefined)
+	    else if (firstCreatedStepID) await client.request(`/proxy-path-steps/${firstCreatedStepID}`, { method: 'DELETE' }).catch(() => undefined)
+	    throw error
+	  }
+	}
 	const connect = async (conn: Connection) => {
 		  if (!conn.source || !conn.target) return
 		  const sourceEntity = graphEntity(conn.source)
@@ -9705,8 +9784,12 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		    ? entries.find(entry => entry.id === sourceHandleInboundID && entry.server_id === sourceEntity.id)
 		    : undefined
 			  if (conn.sourceHandle === SERVER_GRAPH_SOURCE_HANDLE) {
-			    const sources = await chooseServerSources(conn.source, sourceEntity?.label || '服务器', targetEntity?.type !== 'routing')
+			    const sources = await chooseServerSources(conn.source, sourceEntity?.label || '服务器', targetEntity?.type !== 'routing' && targetEntity?.type !== 'detached-step')
 			    if (!sources?.length) return
+			    if (targetEntity?.type === 'detached-step') {
+			      await reconnectDetachedChain(sources[0], conn.target)
+			      return
+			    }
 			    if (targetEntity?.type === 'routing') {
 			      openRoutingForSource(sources[0], conn.target)
 			      return
@@ -9759,6 +9842,21 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			    })
 			    await load(undefined, { background: true, forceFresh: true })
 			    return
+			  }
+			  if (targetEntity?.type === 'detached-step') {
+			    const sourcePathStepID = pathStepIDFromHandle(conn.sourceHandle)
+			    if (sourcePathStepID) {
+			      await reconnectDetachedChain({ step_id: sourcePathStepID }, conn.target)
+			      return
+			    }
+			    const sourceEntry = sourceEntity?.type === 'entry'
+			      ? entries.find(entry => entry.id === sourceEntity.id)
+			      : sourceHandleEntry
+			    if (sourceEntry) {
+			      await reconnectDetachedChain({ inbound_id: sourceEntry.id }, conn.target)
+			      return
+			    }
+			    return dialogs.alert({ title: '请选择路径连接点', message: '从入口、服务器入口点或已有路径的继续连接点，拖线到这段未连接节点的首节点。' })
 			  }
 			  if (targetEntity?.type === 'routing') {
 			    const sourcePathStepID = pathStepIDFromHandle(conn.sourceHandle)
@@ -10114,6 +10212,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     }
   }
 	  const deleteGraphEntity = async (entity: GraphEntity) => {
+		  if (entity.type === 'detached-step' && entity.node_id) {
+		    const detached = detachedChainStepFromNodeID(entity.node_id)
+		    if (detached) setCanvasDetachedChains(chains => chains.filter(chain => chain.instance_id !== detached.chainID))
+		    return
+		  }
 		  if (entity.node_id?.startsWith('routing-canvas-')) {
 		    removeCanvasRoutingTarget(entity.node_id)
 		    return
@@ -10165,6 +10268,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    tunnel: { name: '隧道', path: `/tunnels/${entity.id}` },
 	    'proxy-path': { name: '代理路径', path: `/proxy-paths/${entity.id}` },
 	    'proxy-path-step': { name: '路径步骤', path: `/proxy-path-steps/${entity.id}` },
+	    'detached-step': { name: '未连接链段', path: '' },
 	  }
 	    const item = meta[entity.type]
     const cascading = entity.type === 'proxy-path-step'
@@ -10220,6 +10324,85 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    const entity = graphMenu?.entity
 		    setGraphMenu(null)
 		    copyDirectExit(entity)
+		  }
+		  const disconnectGraphEdge = async (entity: GraphEntity, pathIDs: readonly number[]) => {
+		    if (entity.type !== 'proxy-path-step') return
+		    const allSteps = (data.proxy_path_steps || []) as ProxyPathStep[]
+		    const candidates = disconnectPathCandidates(entity.id, pathIDs, allSteps)
+		    if (!candidates.length) {
+		      await dialogs.alert({ title: '无法断开连接', message: '没有找到这条连线对应的路径步骤，请刷新后重试。' })
+		      return
+		    }
+		    let selectedCandidate = candidates.find(candidate => candidate.pathID === focusedPathID)
+		    if (!selectedCandidate && candidates.length === 1) selectedCandidate = candidates[0]
+		    if (!selectedCandidate) {
+		      const selectedPathID = await dialogs.prompt({
+		        title: '选择要断开的路径',
+		        message: '这条连线由多条路径共享。只会断开所选路径，其他路径保持不变。',
+		        defaultValue: String(candidates[0].pathID),
+		        choices: candidates.map(candidate => {
+		          const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === candidate.pathID)
+		          return { value: String(candidate.pathID), label: path?.name || `路径 ${candidate.pathID}` }
+		        }),
+		      })
+		      selectedCandidate = candidates.find(candidate => candidate.pathID === Number(selectedPathID))
+		    }
+		    if (!selectedCandidate) return
+
+		    const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === selectedCandidate!.pathID)
+		    const rootEntry = path ? entries.find(entry => entry.id === path.inbound_id) : undefined
+		    const suffix = detachedPathSuffix(selectedCandidate.pathID, selectedCandidate.step.id, allSteps)
+		    if (!path || !rootEntry || !suffix.length) {
+		      await dialogs.alert({ title: '无法断开连接', message: '路径数据已经变化，请刷新后重试。' })
+		      return
+		    }
+		    const suffixIDs = new Set(suffix.map(step => step.id))
+		    const affectedRuleCount = ((data.routing_rules || []) as Array<{ stage_step_id?: number }>).filter(rule => rule.stage_step_id && suffixIDs.has(rule.stage_step_id)).length
+		    const ok = await dialogs.confirm({
+		      title: '断开连接',
+		      message: <div className="dialog-detail">
+		        <p>确认断开 {path.name || `路径 ${path.id}`} 的这条连线？后续 {suffix.length} 个节点会保留在当前画布，可重新连到入口或其他路径。</p>
+		        <p className="muted">未连接链段只保留到当前页面关闭或刷新。{affectedRuleCount ? `依赖后续位置的 ${affectedRuleCount} 条分流规则会被移除。` : '依赖后续位置的分流规则会随原步骤移除。'}</p>
+		      </div>,
+		      tone: 'danger',
+		      confirmText: '断开并保留节点',
+		    })
+		    if (!ok) return
+
+		    const instanceID = `${path.id}-${Date.now().toString(36)}-${selectedCandidate.step.id}`
+		    let fallback = nodes.find(node => node.id === proxyPathStepNodeID(selectedCandidate!.step))?.position || { x: 320, y: 320 }
+		    const chainSteps = suffix.map((step, index) => {
+		      const graphNode = nodes.find(node => {
+		        const nodeEntity = node.data?.entity as GraphEntity | undefined
+		        if (nodeEntity?.type !== 'proxy-path-step') return false
+		        const canonical = allSteps.find(item => item.id === nodeEntity.id)
+		        return canonical?.position === step.position && graphPathIDs(node).includes(path.id)
+		      })
+		      const position = graphNode?.position || (index ? { x: fallback.x + 280, y: fallback.y } : fallback)
+		      fallback = position
+		      return { step: { ...step }, position: { ...position } }
+		    })
+
+		    try {
+		      await client.request(`/proxy-path-steps/${selectedCandidate.step.id}`, { method: 'DELETE' })
+		      setCanvasDetachedChains(chains => [...chains, {
+		        instance_id: instanceID,
+		        root_server_id: rootEntry.server_id,
+		        source_path_id: path.id,
+		        source_path_name: path.name || `路径 ${path.id}`,
+		        steps: chainSteps,
+		      }])
+		      setPositions(current => {
+		        const next = { ...current }
+		        suffix.forEach(step => { delete next[proxyPathStepNodeID(step)] })
+		        saveGraphPositions(next)
+		        return next
+		      })
+		      setFocusedPathID(path.id)
+		      await load(undefined, { background: true, forceFresh: true })
+		    } catch (error: any) {
+		      await dialogs.alert({ title: '断开失败', message: localizeErrorMessage(error?.message || error) })
+		    }
 		  }
 		const editProxyPathTransportForEntity = async (entity: GraphEntity | null | undefined) => {
 	  if (!entity || entity.type !== 'proxy-path-step') return
@@ -10360,7 +10543,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }
 	  const openGraphContextMenu = (clientX: number, clientY: number, entity: GraphEntity, pathIDs: number[], source: 'node' | 'edge') => {
 	    const menuWidth = Math.min(260, Math.max(148, window.innerWidth - 16))
-		    const menuHeight = entity.type === 'proxy-path-step' || (entity.type === 'direct' && entity.path_id) ? 210 : entity.type === 'direct' ? 126 : 132
+		    const menuHeight = entity.type === 'proxy-path-step' || (entity.type === 'direct' && entity.path_id) ? 248 : entity.type === 'direct' ? 126 : 132
     setGraphMenu({
       x: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(clientY, window.innerHeight - menuHeight - 8)),
@@ -10444,6 +10627,12 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     setGraphMenu(null)
     if (entity) await deleteGraphEntity(entity)
   }
+	const disconnectGraphMenuEdge = async () => {
+	  const entity = graphMenu?.entity
+	  const pathIDs = graphMenu?.pathIDs || []
+	  setGraphMenu(null)
+	  if (entity) await disconnectGraphEdge(entity, pathIDs)
+	}
   const activeGraphStep = activeGraphEntity?.type === 'proxy-path-step' ? ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === activeGraphEntity.id) : undefined
   const activeGraphActionLabel = activeGraphEntity?.type === 'proxy-path-step'
     ? activeGraphStep?.node_type === 'warp' ? '' : '传递方式'
@@ -10483,6 +10672,12 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     setActiveGraphEntity(null)
     if (entity) await deleteGraphEntity(entity)
   }
+	const disconnectActiveGraphEdge = async () => {
+	  const entity = activeGraphEntity
+	  const pathIDs = activeGraphPathIDs
+	  setActiveGraphEntity(null)
+	  if (entity) await disconnectGraphEdge(entity, pathIDs)
+	}
   const entryServerRegions = useMemo(() => {
     return orderServerRegions(servers, regionLabel)
   }, [servers])
@@ -10649,10 +10844,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         {activeGraphEntity && <div className="graph-selection-toolbar" role="toolbar" aria-label="当前选中项操作">
           <strong title={activeGraphEntity.label}>{activeGraphEntity.label}</strong>
 		  {(activeGraphEntity.type === 'proxy-path-step' || (activeGraphEntity.type === 'direct' && activeGraphEntity.path_id)) && <button type="button" className="ghost" onClick={() => editProxyPathNameForEntity(activeGraphEntity)}><Edit3 size={13} />链路设置</button>}
+		  {activeGraphSource === 'edge' && activeGraphEntity.type === 'proxy-path-step' && <button type="button" className="ghost" onClick={() => void disconnectActiveGraphEdge()}><Unlink size={13} />断开连接</button>}
 		  {activeGraphSource === 'node' && relationTargetForEntity(activeGraphEntity, activeGraphPathIDs) && <button type="button" className="ghost" onClick={() => openRelatedPaths(activeGraphEntity, activeGraphPathIDs)}><Workflow size={13} aria-hidden="true" />相关链路</button>}
 	          {activeGraphActionLabel && <button type="button" className="ghost" onClick={() => void openActiveGraphEntity()}><Edit3 size={13} />{activeGraphActionLabel}</button>}
 			  {activeGraphEntity.type === 'direct' && <button type="button" className="ghost" onClick={() => copyDirectExit(activeGraphEntity)}><Copy size={13} />复制直接出口</button>}
-			  <button type="button" className="ghost danger-text" onClick={() => void deleteActiveGraphEntity()}><Trash2 size={13} />{activeGraphEntity.node_id?.startsWith('canvas-server-') || activeGraphEntity.node_id?.startsWith('direct-exit-canvas-') || activeGraphEntity.node_id?.startsWith('warp-canvas-') || activeGraphEntity.node_id?.startsWith('routing-canvas-') ? '移出画布' : activeGraphEntity.type === 'proxy-path-step' ? '断开后续' : '删除'}</button>
+			  <button type="button" className="ghost danger-text" onClick={() => void deleteActiveGraphEntity()}><Trash2 size={13} />{activeGraphEntity.node_id?.startsWith('canvas-server-') || activeGraphEntity.node_id?.startsWith('direct-exit-canvas-') || activeGraphEntity.node_id?.startsWith('warp-canvas-') || activeGraphEntity.node_id?.startsWith('routing-canvas-') || activeGraphEntity.type === 'detached-step' ? '移出画布' : activeGraphEntity.type === 'proxy-path-step' ? '取消后续' : '删除'}</button>
 		  <button type="button" className="ghost icon-button" onClick={clearGraphSelection} aria-label="取消选择" title="取消选择"><X size={13} /></button>
         </div>}
         {!nodes.length && <div className="graph-empty-state"><ServerIcon size={22} /><strong>还没有服务器</strong><span>添加服务器后即可创建入口和代理拓扑。</span><button onClick={() => addServer()}>添加服务器</button></div>}
@@ -10660,10 +10856,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         {graphMenu && <div className="graph-context-menu" style={{ left: graphMenu.x, top: graphMenu.y }} onContextMenu={e => e.preventDefault()}>
           <div className="graph-context-menu-title">{graphMenu.entity.label}</div>
 			  {(graphMenu.entity.type === 'proxy-path-step' || (graphMenu.entity.type === 'direct' && graphMenu.entity.path_id)) && <button onClick={editProxyPathName}><Edit3 size={14} />链路设置</button>}
+			  {graphMenu.source === 'edge' && graphMenu.entity.type === 'proxy-path-step' && <button onClick={() => void disconnectGraphMenuEdge()}><Unlink size={14} />断开连接</button>}
 			  {graphMenu.source === 'node' && relationTargetForEntity(graphMenu.entity, graphMenu.pathIDs) && <button onClick={() => openRelatedPaths(graphMenu.entity, graphMenu.pathIDs)}><Workflow size={14} aria-hidden="true" />相关链路</button>}
 			  {graphMenu.entity.type === 'proxy-path-step' && ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === graphMenu.entity.id)?.node_type !== 'warp' && <button onClick={editProxyPathTransport}><ArrowLeftRight size={14} />更改传递方式</button>}
 			  {graphMenu.entity.type === 'direct' && <button onClick={copyGraphMenuDirectExit}><Copy size={14} />复制直接出口</button>}
-			  <button className="danger-text" onClick={deleteGraphMenuEntity}><Trash2 size={14} />{graphMenu.entity.node_id?.startsWith('canvas-server-') || graphMenu.entity.node_id?.startsWith('direct-exit-canvas-') || graphMenu.entity.node_id?.startsWith('warp-canvas-') || graphMenu.entity.node_id?.startsWith('routing-canvas-') ? '从画布移除' : graphMenu.entity.type === 'proxy-path-step' ? '取消此处及后续节点' : '删除'}</button>
+			  <button className="danger-text" onClick={deleteGraphMenuEntity}><Trash2 size={14} />{graphMenu.entity.node_id?.startsWith('canvas-server-') || graphMenu.entity.node_id?.startsWith('direct-exit-canvas-') || graphMenu.entity.node_id?.startsWith('warp-canvas-') || graphMenu.entity.node_id?.startsWith('routing-canvas-') || graphMenu.entity.type === 'detached-step' ? '从画布移除' : graphMenu.entity.type === 'proxy-path-step' ? '取消此处及后续节点' : '删除'}</button>
         </div>}
         </div>
         {inspectorOpen && <aside className="graph-inspector open">
@@ -12626,7 +12823,7 @@ function graphTransportEdge(
   }
 }
 
-function editableProxyFlow(data: any, positions: Record<string, { x: number; y: number }>, rootServerId = 0, canvasImportedIDs: number[] = [], canvasServerInstances: CanvasServerInstance[] = [], canvasDirectExitInstances: GraphDirectExitInstance[] = [], canvasWARPInstances: CanvasWARPInstance[] = [], canvasRoutingInstances: CanvasRoutingInstance[] = []) {
+function editableProxyFlow(data: any, positions: Record<string, { x: number; y: number }>, rootServerId = 0, canvasImportedIDs: number[] = [], canvasServerInstances: CanvasServerInstance[] = [], canvasDirectExitInstances: GraphDirectExitInstance[] = [], canvasWARPInstances: CanvasWARPInstance[] = [], canvasRoutingInstances: CanvasRoutingInstance[] = [], canvasDetachedChains: CanvasDetachedChain[] = []) {
   const nodes: Node[] = []
   const edges: Edge[] = []
   const entries: Inbound[] = data.inbounds || []
@@ -12908,6 +13105,35 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const position = positions[id] || { x: rootPosition.x + index * 240, y: rootPosition.y + 450 }
     nodes.push({ id, className: 'graph-node routing-graph-node canvas-routing-node', position, style: { width: 220 }, data: { entity: { type: 'routing', id: 0, label: '分流出口', node_id: id } as GraphEntity, label: <RoutingGraphNode title="分流出口" meta="连接路径后配置规则" /> } })
   })
+	canvasDetachedChains.filter(chain => chain.root_server_id === rootID).forEach(chain => {
+	  chain.steps.forEach((item, index) => {
+	    const step = item.step
+	    const id = detachedChainStepNodeID(chain.instance_id, index)
+	    const entity = { type: 'detached-step', id: step.id, path_id: chain.source_path_id, label: `${chain.source_path_name} / 未连接节点 ${index + 1}`, node_id: id } as GraphEntity
+	    if (step.node_type === 'warp') {
+	      nodes.push({ id, className: 'graph-node warp-graph-node detached-chain-node', position: item.position, style: { width: 220 }, data: { entity, label: <WARPGraphNode title="WARP" meta="未连接链段" /> } })
+	    } else if (step.node_type === 'imported' && step.external_outbound_id) {
+	      const imported = (data.external_outbounds || []).find((candidate: ExternalOutbound) => candidate.id === step.external_outbound_id) as ExternalOutbound | undefined
+	      if (imported) nodes.push({ id, className: 'graph-node imported-graph-node detached-chain-node', position: item.position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="导入节点" title={imported.name} meta={`${labelProtocol(imported.protocol)} · 未连接链段`} /> } })
+	    } else {
+	      const serverID = graphStepServerID(step, inboundByID)
+	      const server = (data.servers || []).find((candidate: Server) => candidate.id === serverID) as Server | undefined
+	      if (server) nodes.push({ id, className: 'graph-node server-graph-node detached-chain-node', position: item.position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · 未连接链段`} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
+	    }
+	    if (index === 0) return
+	    const transport = proxyPathTransportPresentation(step)
+	    const edge = graphTransportEdge(
+	      `detached-chain-${chain.instance_id}-${index}`,
+	      detachedChainStepNodeID(chain.instance_id, index - 1),
+	      id,
+	      { kind: transport.kind, title: transport.title, detail: '未连接链段', routingClass: 'primary' },
+	      { sourceHandle: 'source-bottom', targetHandle: 'target-top', animated: false },
+	    )
+	    edge.className = `${edge.className || ''} detached-chain-edge`
+	    edge.style = { ...edge.style, strokeDasharray: '6 5', opacity: 0.72 }
+	    edges.push(edge)
+	  })
+	})
 	const renderedPathEdges = new Map<string, Edge<GraphTransportEdgeData>>()
   visiblePaths.forEach(path => {
     const root = inboundByID.get(path.inbound_id)
@@ -13081,6 +13307,15 @@ function proxyPathStepNodeID(step: ProxyPathStep) {
   if (step.node_type === 'imported' && step.external_outbound_id) return `proxy-imported-step-${step.id}`
   if (step.node_type === 'server_inbound' && (step.inbound_id || step.server_id)) return `proxy-server-step-${step.id}`
   return ''
+}
+
+function detachedChainStepNodeID(chainID: string, stepIndex: number) {
+  return `detached-chain-${chainID}-step-${stepIndex}`
+}
+
+function detachedChainStepFromNodeID(nodeID: string) {
+  const match = /^detached-chain-(.+)-step-(\d+)$/.exec(nodeID)
+  return match ? { chainID: match[1], stepIndex: Number(match[2]) } : null
 }
 
 function canvasServerNodeID(instance: CanvasServerInstance) {

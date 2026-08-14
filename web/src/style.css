@@ -5030,6 +5030,18 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   background: color-mix(in srgb, var(--surface-solid) 88%, var(--primary-softer));
 }
 
+.flow .react-flow__node.detached-chain-node .graph-node-inner,
+.flow .react-flow__node.detached-chain-node .rf-node-custom,
+.flow .react-flow__node.detached-chain-node .warp-exit-card {
+  outline: 2px dashed color-mix(in srgb, var(--warning) 62%, var(--border));
+  outline-offset: 3px;
+}
+
+.flow .react-flow__edge.detached-chain-edge .react-flow__edge-path {
+  stroke-dasharray: 6 5;
+  opacity: .72;
+}
+
 .flow .react-flow__node.imported-graph-node .node-kind {
   color: var(--primary);
   background: var(--primary-softer);
