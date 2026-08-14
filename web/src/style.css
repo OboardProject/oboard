@@ -19089,8 +19089,15 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   gap: 5px;
   min-width: 140px;
   max-width: 280px;
-  transform: translateX(-50%);
   transition: left 0.06s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.komari-tooltip-popover.place-left {
+  transform: translateX(-100%);
+}
+
+.komari-tooltip-popover.place-right {
+  transform: none;
 }
 
 .komari-tooltip-time {

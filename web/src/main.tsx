@@ -8333,34 +8333,40 @@ function ServerUnifiedTelemetryChart({
         </svg>
 
         {hoveredBucket && (
-          <div
-            className="komari-tooltip-popover"
-            style={{
-              left: `${Math.max(15, Math.min(85, (hoveredIdx! / Math.max(1, buckets.length - 1)) * 100))}%`,
-              top: '10px',
-            }}
-          >
-            <div className="komari-tooltip-time">{hoveredBucket.timeLabel}</div>
-            <div className="komari-tooltip-list">
-              {activeSeries.map(s => {
-                const val = hoveredBucket.values[s.id]
-                if (val == null) return null
-                let formattedVal = s.unit === '%' ? `${val.toFixed(1)}%` : `${Math.round(val)} ms`
-                if (s.id === 'memory' && hoveredBucket.memoryUsedBytes && hoveredBucket.memoryTotalBytes) {
-                  formattedVal = `${val.toFixed(1)}% (${formatBytes(hoveredBucket.memoryUsedBytes)} / ${formatBytes(hoveredBucket.memoryTotalBytes)})`
-                }
-                return (
-                  <div key={s.id} className="komari-tooltip-row">
-                    <span className="komari-tooltip-label">
-                      <span className="komari-legend-dot" style={{ backgroundColor: s.color }} />
-                      {s.label}
-                    </span>
-                    <span className="komari-tooltip-val">{formattedVal}</span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
+          (() => {
+            const crosshairPct = (getX(hoveredIdx!) / W) * 100
+            const isRightSide = crosshairPct > 50
+            return (
+              <div
+                className={`komari-tooltip-popover ${isRightSide ? 'place-left' : 'place-right'}`}
+                style={{
+                  left: isRightSide ? `calc(${crosshairPct}% - 14px)` : `calc(${crosshairPct}% + 14px)`,
+                  top: '8px',
+                }}
+              >
+                <div className="komari-tooltip-time">{hoveredBucket.timeLabel}</div>
+                <div className="komari-tooltip-list">
+                  {activeSeries.map(s => {
+                    const val = hoveredBucket.values[s.id]
+                    if (val == null) return null
+                    let formattedVal = s.unit === '%' ? `${val.toFixed(1)}%` : `${Math.round(val)} ms`
+                    if (s.id === 'memory' && hoveredBucket.memoryUsedBytes && hoveredBucket.memoryTotalBytes) {
+                      formattedVal = `${val.toFixed(1)}% (${formatBytes(hoveredBucket.memoryUsedBytes)} / ${formatBytes(hoveredBucket.memoryTotalBytes)})`
+                    }
+                    return (
+                      <div key={s.id} className="komari-tooltip-row">
+                        <span className="komari-tooltip-label">
+                          <span className="komari-legend-dot" style={{ backgroundColor: s.color }} />
+                          {s.label}
+                        </span>
+                        <span className="komari-tooltip-val">{formattedVal}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })()
         )}
       </div>
     </div>
