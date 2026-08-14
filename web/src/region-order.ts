@@ -9,6 +9,7 @@ type RegionServer = {
   region_mode?: string
   region_code?: string
   detected_region_code?: string
+  effective_region_code?: string
   status?: string
 }
 
@@ -17,7 +18,7 @@ export function regionPoints(code: string) {
 }
 
 function regionCodeOf(server: RegionServer) {
-  const value = String((server.region_mode === 'manual' ? server.region_code : server.detected_region_code) || '').trim().toUpperCase()
+  const value = String((server.region_mode === 'manual' ? server.region_code : (server.effective_region_code || server.detected_region_code || server.region_code)) || '').trim().toUpperCase()
   return REGION_CODE_PATTERN.test(value) ? value : ''
 }
 

@@ -482,6 +482,11 @@ function serverRegionCode(server?: Pick<Server, 'region_mode' | 'region_code' | 
   return normalizeRegionCode(server.region_mode === 'manual' ? server.region_code : server.detected_region_code)
 }
 
+function nodeRegionCode(node?: Pick<ExternalOutbound, 'region_mode' | 'region_code' | 'detected_region_code' | 'effective_region_code'>) {
+  if (!node) return ''
+  return normalizeRegionCode(node.region_mode === 'manual' ? node.region_code : (node.effective_region_code || node.detected_region_code || node.region_code))
+}
+
 function RegionFlag({ code, size = 22 }: { code?: string; size?: number }) {
   const value = normalizeRegionCode(code)
   const label = regionLabel(value)
@@ -10777,19 +10782,54 @@ function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNod
   const availableServers = servers.filter(server => server.id !== selected?.id)
   const [nodePickerOpen, setNodePickerOpen] = useState(false)
   const [nodeQuery, setNodeQuery] = useState('')
+  const [nodeRegion, setNodeRegion] = useState('all')
+  const [nodeTypeFilter, setNodeTypeFilter] = useState<'all' | 'server' | 'imported'>('all')
+  const [nodeStatusFilter, setNodeStatusFilter] = useState<'all' | 'online' | 'offline'>('all')
+
   const closeNodePicker = () => {
     setNodePickerOpen(false)
     setNodeQuery('')
+    setNodeRegion('all')
+    setNodeTypeFilter('all')
+    setNodeStatusFilter('all')
   }
+
+  const allAvailableEntities = useMemo(() => [...availableServers, ...importedNodes], [availableServers, importedNodes])
+  const nodeRegions = useMemo(() => {
+    return orderServerRegions(allAvailableEntities, regionLabel)
+  }, [allAvailableEntities])
+
   const normalizedQuery = nodeQuery.trim().toLowerCase()
-  const filteredServers = normalizedQuery
-    ? availableServers.filter(server => [server.name, server.entry_address, server.public_ipv4, server.public_ipv6, server.interface_ipv6].some(value => String(value || '').toLowerCase().includes(normalizedQuery)))
-    : availableServers
-  const filteredImportedNodes = normalizedQuery
-    ? importedNodes.filter(node => [node.name, node.protocol, node.target_address, node.target_port].some(value => String(value || '').toLowerCase().includes(normalizedQuery)))
-    : importedNodes
+
+  const filteredServers = useMemo(() => {
+    if (nodeTypeFilter === 'imported') return []
+    return availableServers.filter(server => {
+      const code = serverRegionCode(server)
+      if (nodeRegion !== 'all' && (nodeRegion === '' ? Boolean(code) : code !== nodeRegion)) return false
+      if (nodeStatusFilter === 'online' && server.status?.toLowerCase() !== 'online') return false
+      if (nodeStatusFilter === 'offline' && server.status?.toLowerCase() === 'online') return false
+      if (!normalizedQuery) return true
+      return [server.name, server.entry_address, server.public_ipv4, server.public_ipv6, server.interface_ipv6, `server-${server.id}`, code, regionLabel(code)]
+        .some(value => String(value || '').toLowerCase().includes(normalizedQuery))
+    })
+  }, [availableServers, nodeTypeFilter, nodeRegion, nodeStatusFilter, normalizedQuery])
+
+  const filteredImportedNodes = useMemo(() => {
+    if (nodeTypeFilter === 'server') return []
+    return importedNodes.filter(node => {
+      const code = nodeRegionCode(node)
+      if (nodeRegion !== 'all' && (nodeRegion === '' ? Boolean(code) : code !== nodeRegion)) return false
+      if (nodeStatusFilter === 'offline') return false
+      if (!normalizedQuery) return true
+      return [node.name, node.protocol, node.target_address, String(node.target_port), `imported-${node.id}`, code, regionLabel(code)]
+        .some(value => String(value || '').toLowerCase().includes(normalizedQuery))
+    })
+  }, [importedNodes, nodeTypeFilter, nodeRegion, nodeStatusFilter, normalizedQuery])
+
   const availableCount = availableServers.length + importedNodes.length
   const filteredCount = filteredServers.length + filteredImportedNodes.length
+  const hasActiveFilters = Boolean(nodeQuery.trim() || nodeRegion !== 'all' || nodeTypeFilter !== 'all' || nodeStatusFilter !== 'all')
+
   return <>
   <aside className={`graph-toolbox${collapsed ? ' collapsed' : ''}${dragging ? ' dragging' : ''}`} aria-label="链路编排工具箱">
     <div className="graph-toolbox-head" onPointerDown={onMoveStart}>
@@ -10851,20 +10891,126 @@ function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNod
       <button className="ghost dialog-close icon-button" onClick={closeNodePicker} aria-label="关闭" title="关闭"><X /></button>
     </header>
     <div className="dialog-body graph-node-picker-body">
-      <div className="graph-toolbox-section-head"><span className="graph-toolbox-label">可用节点</span><small>{normalizedQuery ? `${filteredCount} / ${availableCount}` : `${availableCount} 个`}</small></div>
-      {availableCount > 3 && <label className="graph-palette-search">
-        <Search size={13} aria-hidden="true" />
-        <input value={nodeQuery} onChange={event => setNodeQuery(event.target.value)} placeholder="搜索服务器或节点" aria-label="搜索可用节点" autoFocus />
-      </label>}
+      <div className="graph-toolbox-section-head"><span className="graph-toolbox-label">可用节点</span><small>{hasActiveFilters ? `${filteredCount} / ${availableCount}` : `${availableCount} 个`}</small></div>
+      <div className="graph-palette-controls">
+        <label className="graph-palette-search">
+          <Search size={13} aria-hidden="true" />
+          <input value={nodeQuery} onChange={event => setNodeQuery(event.target.value)} placeholder="搜索服务器或节点" aria-label="搜索可用节点" autoFocus />
+          {nodeQuery && (
+            <button
+              type="button"
+              className="ghost icon-button graph-palette-search-clear"
+              onClick={() => setNodeQuery('')}
+              aria-label="清空搜索"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </label>
+        {(importedNodes.length > 0 || availableServers.some(s => s.status?.toLowerCase() !== 'online')) && (
+          <div className="graph-palette-filter-row">
+            {importedNodes.length > 0 && (
+              <div className="graph-palette-pill-group" role="group" aria-label="类型筛选">
+                <button
+                  type="button"
+                  className={`graph-palette-pill${nodeTypeFilter === 'all' ? ' selected' : ''}`}
+                  onClick={() => setNodeTypeFilter('all')}
+                >
+                  全部
+                </button>
+                <button
+                  type="button"
+                  className={`graph-palette-pill${nodeTypeFilter === 'server' ? ' selected' : ''}`}
+                  onClick={() => setNodeTypeFilter('server')}
+                >
+                  服务器 <small>{availableServers.length}</small>
+                </button>
+                <button
+                  type="button"
+                  className={`graph-palette-pill${nodeTypeFilter === 'imported' ? ' selected' : ''}`}
+                  onClick={() => setNodeTypeFilter('imported')}
+                >
+                  导入节点 <small>{importedNodes.length}</small>
+                </button>
+              </div>
+            )}
+            <div className="graph-palette-pill-group" role="group" aria-label="状态筛选">
+              <button
+                type="button"
+                className={`graph-palette-pill${nodeStatusFilter === 'all' ? ' selected' : ''}`}
+                onClick={() => setNodeStatusFilter('all')}
+              >
+                全部状态
+              </button>
+              <button
+                type="button"
+                className={`graph-palette-pill${nodeStatusFilter === 'online' ? ' selected' : ''}`}
+                onClick={() => setNodeStatusFilter('online')}
+              >
+                在线
+              </button>
+              <button
+                type="button"
+                className={`graph-palette-pill${nodeStatusFilter === 'offline' ? ' selected' : ''}`}
+                onClick={() => setNodeStatusFilter('offline')}
+              >
+                离线
+              </button>
+            </div>
+            {hasActiveFilters && (
+              <button
+                type="button"
+                className="ghost icon-button graph-palette-clear-all"
+                onClick={() => {
+                  setNodeQuery('')
+                  setNodeRegion('all')
+                  setNodeTypeFilter('all')
+                  setNodeStatusFilter('all')
+                }}
+                title="重置所有筛选"
+                aria-label="重置所有筛选"
+              >
+                <RotateCcw size={12} />
+              </button>
+            )}
+          </div>
+        )}
+        {nodeRegions.length > 0 && (
+          <div className="entry-server-region-filters graph-palette-region-filters" role="group" aria-label="按地区筛选节点">
+            <button
+              type="button"
+              className={nodeRegion === 'all' ? 'selected' : ''}
+              aria-pressed={nodeRegion === 'all'}
+              onClick={() => setNodeRegion('all')}
+            >
+              全部
+            </button>
+            {nodeRegions.map(({ code, count }) => (
+              <button
+                key={code || 'pending'}
+                type="button"
+                className={nodeRegion === (code || '') ? 'selected' : ''}
+                aria-pressed={nodeRegion === (code || '')}
+                onClick={() => setNodeRegion(code || '')}
+                title={`${regionLabel(code)}，${count} 个节点`}
+              >
+                <RegionFlag code={code} size={15} />
+                <span>{regionLabel(code)}</span>
+                <small>{count}</small>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       {!filteredCount ? <div className="graph-palette-empty">没有匹配的节点</div> : <div className="graph-palette-groups">
         {filteredServers.length > 0 && <section className="graph-palette-group">
           <div className="graph-palette-group-head"><span>服务器</span><small>{filteredServers.length}</small></div>
           <div className="graph-server-grid">
         {filteredServers.map(server => {
-          const online = server.status === 'online'
+          const online = server.status?.toLowerCase() === 'online'
           const address = serverDefaultEntryAddress(server) || 'IP 待检测'
-          return <button type="button" className="graph-server-tile" key={`server-${server.id}`} onClick={() => onShowServer(server)} title={`${server.name} · ${online ? '在线' : labelValue(server.status || 'unknown')} · ${address}`} aria-label={`将 ${server.name} 放入画布`}>
-            <span className={`graph-palette-kind server${online ? ' online' : ''}`}><ServerIcon size={14} /></span>
+          return <button type="button" className="graph-server-tile" key={`server-${server.id}`} onClick={() => onShowServer(server)} title={`${server.name} · ${regionLabel(serverRegionCode(server))} · ${online ? '在线' : labelValue(server.status || 'unknown')} · ${address}`} aria-label={`将 ${server.name} 放入画布`}>
+            <span className={`graph-palette-kind server${online ? ' online' : ''}`}><RegionFlag code={serverRegionCode(server)} size={20} /></span>
             <span className="graph-palette-copy"><strong>{server.name || `服务器 ${server.id}`}</strong><small className={online ? 'online' : ''}>{online ? '在线' : labelValue(server.status || 'unknown')}</small></span>
             <Plus size={13} className="graph-server-tile-add" aria-hidden="true" />
           </button>
@@ -10875,7 +11021,7 @@ function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNod
           <div className="graph-palette-group-head"><span>导入节点</span><small>{filteredImportedNodes.length}</small></div>
           <div className="graph-imported-list">
         {filteredImportedNodes.map(node => <div className="graph-palette-item" key={`imported-${node.id}`}>
-          <span className="graph-palette-kind imported"><Globe size={14} /></span>
+          <span className="graph-palette-kind imported"><RegionFlag code={nodeRegionCode(node)} size={20} /></span>
           <span className="graph-palette-copy"><strong>{node.name || `导入节点 ${node.id}`}</strong><small>{labelProtocol(node.protocol)} · {formatHostPort(node.target_address, node.target_port)}</small></span>
           <div className="graph-palette-actions">
             <button className="ghost icon-button" onClick={() => onAddImported(node)} title="连接到当前入口" aria-label={`将 ${node.name} 连接到当前入口`}><LinkIcon size={14} /></button>
