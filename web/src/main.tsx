@@ -432,7 +432,7 @@ function trafficTimezoneLabel(timezone: string) {
     return timezone
   }
 }
-const routeActions: RouteAction[] = ['direct', 'block', 'outbound', 'external', 'interface', 'source_prefix']
+const routeActions: Exclude<RouteAction, 'source_prefix'>[] = ['direct', 'block', 'outbound', 'external', 'interface']
 const outboundScopes = ['global', 'server']
 
 const qureRegionFlags: Record<string, string> = {
@@ -11637,6 +11637,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
     if (!stage.available) return
     update({ stage_step_id: stage.stepID, server_id: stage.serverID, outbound_id: 0, external_outbound_id: 0 })
   }
+  const usesExplicitSource = draft.action === 'interface' || draft.action === 'source_prefix'
 
   return <MotionDialogPanel onCancel={onCancel} className="routing-composer-dialog" aria-labelledby="routing-dialog-title">
     <header className="dialog-head routing-composer-head">
@@ -11686,15 +11687,22 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
               return <label key={set.id} className={draft.rule_set_id === set.id ? 'selected' : ''}><input type="radio" name="routing-rule-set" checked={draft.rule_set_id === set.id} onChange={() => update({ rule_set_id: set.id })} /><span><strong>{set.name}</strong><small>{labelValue(set.format)} · {labelValue(set.status)} · {set.revision?.slice(0, 10) || '未同步'} · {set.last_success_at ? formatTableTime(set.last_success_at) : '未成功'} · {references} 条引用</small>{set.last_error && <em>{set.last_error}</em>}</span><button type="button" className="ghost icon-button" onClick={async event => { event.preventDefault(); await client.request(`/routing-rule-sets/${set.id}/refresh`, { method: 'POST', body: '{}' }); await load() }} aria-label={`刷新 ${set.name}`} title="刷新"><RefreshCw size={13} /></button></label>
             })}</div>
           </div>}
-          <div className="routing-action-picker" role="group" aria-label="处理动作">{routeActions.map(action => <button type="button" key={action} aria-pressed={draft.action === action} className={draft.action === action ? 'selected' : ''} onClick={() => update({ action })}><RoutingActionIcon action={action} /><span>{labelValue(action)}</span></button>)}</div>
+          <div className="routing-action-picker" role="group" aria-label="处理动作">{routeActions.map(action => {
+            const selected = action === 'interface' ? usesExplicitSource : draft.action === action
+            return <button type="button" key={action} aria-pressed={selected} className={selected ? 'selected' : ''} onClick={() => update({ action: action === 'interface' && usesExplicitSource ? draft.action : action })}><RoutingActionIcon action={action} /><span>{labelValue(action)}</span></button>
+          })}</div>
           {draft.action === 'outbound' && <FormField label="本机出口" required><Select value={draft.outbound_id} onChange={event => update({ outbound_id: Number(event.target.value) })}><option value={0}>选择出口</option>{serverOutbounds.map((item: Outbound) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
           {draft.action === 'external' && <FormField label="导入节点" required><Select value={draft.external_outbound_id} onChange={event => update({ external_outbound_id: Number(event.target.value) })}><option value={0}>选择导入节点</option>{externalOutbounds.map((item: ExternalOutbound) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
-          {draft.action === 'interface' && <FormField label="出口网卡" required><NetworkInterfacePicker serverID={selectedStage.serverID} value={draft.interface_name} onChange={interface_name => update({ interface_name })} client={client} /></FormField>}
-          {draft.action === 'source_prefix' && <FormField label="源地址前缀" hint="每条新连接实时匹配本机地址；没有匹配地址时拒绝连接。" required><input value={draft.source_prefix} onChange={event => update({ source_prefix: event.target.value })} placeholder="2001:b011:b000:8e73::/64" inputMode="text" autoCapitalize="none" spellCheck={false} /></FormField>}
+          {usesExplicitSource && <div className="routing-egress-selector">
+            <FormField label="出口绑定" required><Select className="full-width" variant="segmented" value={draft.action} onChange={event => update({ action: event.target.value as 'interface' | 'source_prefix' })} aria-label="出口绑定方式"><option value="interface">网卡</option><option value="source_prefix">IP 前缀</option></Select></FormField>
+            {draft.action === 'interface'
+              ? <FormField label="出口网卡" required><NetworkInterfacePicker serverID={selectedStage.serverID} value={draft.interface_name} onChange={interface_name => update({ interface_name })} client={client} /></FormField>
+              : <FormField label="源地址前缀" hint="每条新连接实时匹配本机地址；没有匹配地址时拒绝连接。" required><input value={draft.source_prefix} onChange={event => update({ source_prefix: event.target.value })} placeholder="2001:b011:b000:8e73::/64" inputMode="text" autoCapitalize="none" spellCheck={false} aria-label="源地址前缀" /></FormField>}
+          </div>}
         </div>
       </section>}
     </div>
-    <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>完成</button><button onClick={onSubmit} disabled={!draft.name.trim() || (draft.match_source === 'rule_set' && !draft.rule_set_id) || (draft.action === 'source_prefix' && !draft.source_prefix.trim())}><Plus size={14} aria-hidden="true" />添加到 {selectedStage?.label}</button></footer>
+    <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>完成</button><button onClick={onSubmit} disabled={!draft.name.trim() || (draft.match_source === 'rule_set' && !draft.rule_set_id) || (draft.action === 'interface' && !draft.interface_name.trim()) || (draft.action === 'source_prefix' && !draft.source_prefix.trim())}><Plus size={14} aria-hidden="true" />添加到 {selectedStage?.label}</button></footer>
   </MotionDialogPanel>
 }
 

@@ -143,7 +143,7 @@ export function NetworkInterfacePicker({
 
   return <div className="network-interface-picker">
     <div className="network-interface-input">
-      <input value={value} onChange={event => onChange(event.target.value)} placeholder="eth1" autoComplete="off" />
+      <input value={value} onChange={event => onChange(event.target.value)} placeholder="eth1" autoComplete="off" aria-label="出口网卡" />
       <button
         type="button"
         className="ghost icon-button"

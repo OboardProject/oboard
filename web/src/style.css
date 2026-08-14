@@ -4405,10 +4405,11 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .routing-rule-editor-title span { color: var(--muted); font-size: 11px; }
 .routing-match-source-select { flex: 0 1 210px; width: min(210px, 52vw); }
 .routing-rule-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 10px; }
-.routing-rule-editor-grid > .form-field:has(textarea), .routing-rule-set-picker, .routing-action-picker { grid-column: 1 / -1; }
-.routing-action-picker { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.routing-rule-editor-grid > .form-field:has(textarea), .routing-rule-set-picker, .routing-action-picker, .routing-egress-selector { grid-column: 1 / -1; }
+.routing-action-picker { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
 .routing-action-picker button { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--text-secondary); background: var(--surface-2); }
 .routing-action-picker button.selected { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 50%, var(--border)); background: var(--primary-softer); }
+.routing-egress-selector { display: grid; grid-template-columns: minmax(180px, .45fr) minmax(0, 1.55fr); align-items: start; gap: 10px; }
 .routing-rule-set-picker { display: grid; gap: 7px; }
 .routing-rule-set-toolbar { display: flex; gap: 7px; }
 .routing-rule-set-toolbar label { flex: 1 1 auto; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); }
@@ -4434,6 +4435,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   .routing-rule-editor-grid { grid-template-columns: minmax(0, 1fr); }
   .routing-rule-editor-grid > * { grid-column: 1 !important; }
   .routing-action-picker { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .routing-egress-selector { grid-template-columns: minmax(0, 1fr); }
   .routing-rule-set-create, .routing-rule-set-list { grid-template-columns: minmax(0, 1fr); }
 }
 .transport-dialog { width: min(820px, calc(100vw - 28px)); max-height: min(820px, calc(100dvh - 28px)); }

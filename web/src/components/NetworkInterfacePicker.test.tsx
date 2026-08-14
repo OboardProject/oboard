@@ -47,6 +47,7 @@ describe('NetworkInterfacePicker', () => {
 
     expect(request).toHaveBeenCalledWith('/servers/3/network-interfaces', { method: 'POST', body: '{}' })
     expect(container.querySelector<HTMLInputElement>('input')?.value).toBe('manual0')
+    expect(container.querySelector<HTMLInputElement>('input')?.getAttribute('aria-label')).toBe('出口网卡')
     expect(container.textContent).toContain('已读取 2 个网卡')
 
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="选择 Agent 网卡"]')!.click())
