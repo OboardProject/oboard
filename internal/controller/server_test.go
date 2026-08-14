@@ -705,9 +705,37 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, PlanDigest: planDigest, ConfigVersion: 24}, expectedDeployments); err != nil {
 		t.Fatal(err)
 	}
+	payloadJSON, err := json.Marshal(model.DeploymentTaskPayload{Version: 24, SSHInbounds: plan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateTask(ctx, &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: string(payloadJSON), Status: "succeeded", ResultJSON: `{}`, ConfigVersion: 24, Nonce: "ssh-subscription-baseline"}); err != nil {
+		t.Fatal(err)
+	}
 	nodes := readSubscription()
 	if len(nodes) != 1 || nodes[0]["type"] != "ssh" || nodes[0]["user"] != sshLoginName(*user, path.ID) || nodes[0]["server"] != server.PublicIPv4 || nodes[0]["password"] != user.ProxyPassword {
 		t.Fatalf("matching SSH subscription = %#v", nodes)
+	}
+
+	other := &model.User{Username: "bob", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "bob-id", ProxyPassword: "bob-pass", SubscriptionToken: "bob-subscription-token"}
+	if err := db.CreateUser(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.SubscriptionPlans) != 1 {
+		t.Fatalf("subscription plans = %#v", config.SubscriptionPlans)
+	}
+	if err := db.SetUserPlanBindings(ctx, []model.UserPlanBinding{{UserID: other.ID, PlanID: config.SubscriptionPlans[0].ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if nodes := readSubscription(); len(nodes) != 1 {
+		t.Fatalf("unrelated SSH authorization hid the deployed node: %#v", nodes)
+	}
+	server.InterfaceIPv6 = "2400:3200::10"
+	if err := db.UpdateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if nodes := readSubscription(); len(nodes) != 1 {
+		t.Fatalf("runtime listener derivation hid the deployed node: %#v", nodes)
 	}
 	egernRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(egernRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions/ssh-subscription-token?format=egern", nil))
@@ -751,6 +779,34 @@ func TestSSHInboundPlanDigestTracksRoutesWithoutDerivingFromPasswords(t *testing
 	plan.Inbounds[0].Users[0].OutboundTag = "path-4-step-1"
 	if got := sshInboundPlanDigest(plan); got == original {
 		t.Fatal("route change did not alter plan digest")
+	}
+}
+
+func TestSSHSubscriptionDeploymentMatchingIsScopedToListenerAndIdentity(t *testing.T) {
+	alice := model.SSHInboundUser{UserID: 3, Username: "u123456789012-p4", Password: "alice-password", PathID: 4, RouteKind: "kernel", RouteInboundTag: "in-1", RouteAuthUser: "alice__oboard_path_4", Enabled: true}
+	bob := model.SSHInboundUser{UserID: 5, Username: "u987654321098-p4", Password: "bob-password", PathID: 4, RouteKind: "kernel", RouteInboundTag: "in-1", RouteAuthUser: "bob__oboard_path_4", Enabled: true}
+	deployed := model.SSHInboundPlan{Inbounds: []model.SSHInbound{{InboundID: 1, ServerID: 2, ListenIP: "0.0.0.0", Address: "203.0.113.10", Port: 2222, Enabled: true, Users: []model.SSHInboundUser{alice, bob}}}}
+	aliceIdentity := sshPasswordDeploymentIdentityForPlanUser(alice)
+
+	current := deployed
+	current.Inbounds = append([]model.SSHInbound(nil), deployed.Inbounds...)
+	current.Inbounds[0].Users = []model.SSHInboundUser{alice}
+	current.Inbounds[0].ListenIP = "::"
+	current.Inbounds[0].Address = "ssh.example.com"
+	if sshInboundListenerPlanDigest(current) != sshInboundListenerPlanDigest(deployed) {
+		t.Fatal("runtime address or unrelated user change altered listener readiness")
+	}
+	if !matchingSSHIdentityRoutePlan(current, deployed, aliceIdentity) {
+		t.Fatal("unrelated user change altered Alice's deployed route readiness")
+	}
+
+	current.Inbounds[0].Users[0].RouteAuthUser = "alice__oboard_path_9"
+	if matchingSSHIdentityRoutePlan(current, deployed, aliceIdentity) {
+		t.Fatal("Alice's undeployed route change remained ready")
+	}
+	current.Inbounds[0].Port = 2200
+	if sshInboundListenerPlanDigest(current) == sshInboundListenerPlanDigest(deployed) {
+		t.Fatal("undeployed listener port change remained ready")
 	}
 }
 

@@ -2217,13 +2217,16 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 							err = planErr
 							break
 						}
-						hostKey, hostErr := s.store.GetSSHServerHostKey(ctx, server.ID)
-						if errors.Is(hostErr, sql.ErrNoRows) || (hostErr == nil && hostKey.PlanDigest != sshInboundPlanDigest(plan)) {
+						if len(plan.Inbounds) == 0 {
 							continue
 						}
-						if hostErr != nil {
-							err = hostErr
+						_, deployedPlan, ready, readyErr := s.matchingDeployedSSHPlan(ctx, server.ID, plan)
+						if readyErr != nil {
+							err = readyErr
 							break
+						}
+						if !ready {
+							continue
 						}
 						expectedDeployments, deploymentErr := s.sshPasswordDeploymentsFromPlan(server.ID, plan)
 						if deploymentErr != nil {
@@ -2238,7 +2241,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 								identity := sshPasswordDeploymentIdentityForPlanUser(access)
 								expected, expectedOK := sshPasswordDeploymentForIdentity(expectedDeployments, server.ID, identity)
 								persisted, persistedOK := sshPasswordDeploymentForIdentity(deployments, server.ID, identity)
-								if expectedOK && persistedOK && matchingSSHPasswordDeployment(persisted, expected) {
+								if expectedOK && persistedOK && matchingSSHPasswordDeployment(persisted, expected) && matchingSSHIdentityRoutePlan(plan, deployedPlan, identity) {
 									accesses = append(accesses, map[string]any{"inbound_id": inbound.InboundID, "path_id": access.PathID, "name": pathNames[access.PathID], "address": inbound.Address, "port": inbound.Port, "username": access.Username, "device_id_hash": access.DeviceIDHash, "credential_epoch": access.CredentialEpoch, "credential_status": access.CredentialStatus})
 								}
 							}
@@ -9857,6 +9860,110 @@ func sshInboundPlanDigest(plan model.SSHInboundPlan) string {
 	return fmt.Sprintf("%x", sum[:])
 }
 
+// sshInboundListenerPlanDigest identifies the deployed public SSH services,
+// without coupling subscription availability to other users or runtime IP
+// detection. Address is client-facing metadata, while ListenIP may be
+// re-derived from health reports; neither changes the listener that is already
+// serving the persisted port.
+func sshInboundListenerPlanDigest(plan model.SSHInboundPlan) string {
+	type digestInbound struct {
+		InboundID int64 `json:"inbound_id"`
+		ServerID  int64 `json:"server_id"`
+		Port      int   `json:"port"`
+	}
+	canonical := make([]digestInbound, 0, len(plan.Inbounds))
+	for _, inbound := range plan.Inbounds {
+		if inbound.Enabled {
+			canonical = append(canonical, digestInbound{InboundID: inbound.InboundID, ServerID: inbound.ServerID, Port: inbound.Port})
+		}
+	}
+	encoded, _ := json.Marshal(canonical)
+	sum := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func sshInboundIdentityRouteDigest(plan model.SSHInboundPlan, identity sshPasswordDeploymentIdentity) (string, bool) {
+	type digestRoute struct {
+		InboundID       int64  `json:"inbound_id"`
+		PathID          int64  `json:"path_id"`
+		Username        string `json:"username"`
+		CredentialState string `json:"credential_status"`
+		RouteKind       string `json:"route_kind"`
+		OutboundTag     string `json:"outbound_tag,omitempty"`
+		RouteInboundTag string `json:"route_inbound_tag,omitempty"`
+		RouteAuthUser   string `json:"route_auth_user,omitempty"`
+	}
+	routes := []digestRoute{}
+	for _, inbound := range plan.Inbounds {
+		if !inbound.Enabled {
+			continue
+		}
+		for _, user := range inbound.Users {
+			if !user.Enabled || sshPasswordDeploymentIdentityForPlanUser(user) != identity {
+				continue
+			}
+			status := strings.TrimSpace(user.CredentialStatus)
+			if status == "" {
+				status = "active"
+			}
+			routes = append(routes, digestRoute{InboundID: inbound.InboundID, PathID: user.PathID, Username: user.Username, CredentialState: status, RouteKind: user.RouteKind, OutboundTag: user.OutboundTag, RouteInboundTag: user.RouteInboundTag, RouteAuthUser: user.RouteAuthUser})
+		}
+	}
+	if len(routes) == 0 {
+		return "", false
+	}
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].InboundID != routes[j].InboundID {
+			return routes[i].InboundID < routes[j].InboundID
+		}
+		if routes[i].PathID != routes[j].PathID {
+			return routes[i].PathID < routes[j].PathID
+		}
+		return routes[i].Username < routes[j].Username
+	})
+	encoded, _ := json.Marshal(routes)
+	sum := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", sum[:]), true
+}
+
+func matchingSSHIdentityRoutePlan(current, deployed model.SSHInboundPlan, identity sshPasswordDeploymentIdentity) bool {
+	currentDigest, currentOK := sshInboundIdentityRouteDigest(current, identity)
+	deployedDigest, deployedOK := sshInboundIdentityRouteDigest(deployed, identity)
+	return currentOK && deployedOK && currentDigest == deployedDigest
+}
+
+func (s *Server) matchingDeployedSSHPlan(ctx context.Context, serverID int64, current model.SSHInboundPlan) (*model.SSHServerHostKey, model.SSHInboundPlan, bool, error) {
+	hostKey, err := s.store.GetSSHServerHostKey(ctx, serverID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, model.SSHInboundPlan{}, false, nil
+	}
+	if err != nil {
+		return nil, model.SSHInboundPlan{}, false, err
+	}
+	task, err := s.store.LastSuccessfulTaskByServerType(ctx, serverID, model.AgentTaskTypeApplyDeployment)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, model.SSHInboundPlan{}, false, nil
+	}
+	if err != nil {
+		return nil, model.SSHInboundPlan{}, false, err
+	}
+	var payload model.DeploymentTaskPayload
+	if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
+		return nil, model.SSHInboundPlan{}, false, nil
+	}
+	version := payload.Version
+	if version == 0 {
+		version = task.ConfigVersion
+	}
+	if version != hostKey.ConfigVersion || hostKey.PlanDigest != sshInboundPlanDigest(payload.SSHInbounds) {
+		return nil, model.SSHInboundPlan{}, false, nil
+	}
+	if sshInboundListenerPlanDigest(current) != sshInboundListenerPlanDigest(payload.SSHInbounds) {
+		return nil, model.SSHInboundPlan{}, false, nil
+	}
+	return hostKey, payload.SSHInbounds, true, nil
+}
+
 type sshPasswordDeploymentIdentity struct {
 	UserID          int64
 	DeviceIDHash    string
@@ -10622,12 +10729,13 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		if !expectedOK || !persistedOK || !matchingSSHPasswordDeployment(persisted, expected) {
 			continue
 		}
-		hostKey, hostErr := s.store.GetSSHServerHostKey(r.Context(), server.ID)
-		if hostErr == nil && hostKey.PlanDigest == sshInboundPlanDigest(plan) {
-			sshServerHostKeys[server.ID] = hostKey.PublicKey
-		} else if hostErr != nil && !errors.Is(hostErr, sql.ErrNoRows) {
-			fail(w, hostErr, 500)
+		hostKey, deployedPlan, ready, readyErr := s.matchingDeployedSSHPlan(r.Context(), server.ID, plan)
+		if readyErr != nil {
+			fail(w, readyErr, 500)
 			return
+		}
+		if ready && matchingSSHIdentityRoutePlan(plan, deployedPlan, subscriptionIdentity) {
+			sshServerHostKeys[server.ID] = hostKey.PublicKey
 		}
 	}
 	opts := core.SubscriptionOptions{
