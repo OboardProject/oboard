@@ -91,6 +91,7 @@ import { SearchableMultiSelect } from './components/ui/SearchableMultiSelect'
 import { SearchableCombobox } from './components/ui/SearchableCombobox'
 import { NetworkInterfacePicker } from './components/NetworkInterfacePicker'
 import { AgentSettingsPanel } from './components/AgentSettingsPanel'
+import { AboutSettingsPanel } from './components/AboutSettingsPanel'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
 import clashMetaClientIcon from './assets/subscription-clients/clash-meta.png'
 import stashClientIcon from './assets/subscription-clients/stash.jpg'
@@ -3172,7 +3173,7 @@ function SubscriptionRelayCommandDialog({ relay, enrollmentToken, controllerURL,
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'backups' | 'updates' | 'logs'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'backups' | 'updates' | 'logs' | 'about'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3333,6 +3334,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       <button className={activeSection === 'backups' ? 'active' : ''} role="tab" aria-selected={activeSection === 'backups'} onClick={() => setActiveSection('backups')}><Database size={15} />数据备份</button>
       <button className={activeSection === 'updates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'updates'} onClick={() => setActiveSection('updates')}><Download size={15} />更新</button>
       <button className={activeSection === 'logs' ? 'active' : ''} role="tab" aria-selected={activeSection === 'logs'} onClick={() => setActiveSection('logs')}><FileText size={15} />运行日志</button>
+      <button type="button" id="settings-tab-about" className={activeSection === 'about' ? 'active' : ''} role="tab" aria-selected={activeSection === 'about'} aria-controls="settings-panel-about" onClick={() => setActiveSection('about')}><Info size={15} aria-hidden="true" />关于</button>
     </nav>
     <div className="settings-grid">
       {activeSection === 'connection' && <section className="settings-card">
@@ -3490,6 +3492,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         saving={saving === 'controller-logs'}
         onSave={saveControllerLogs}
       />}
+      {activeSection === 'about' && <AboutSettingsPanel version={data.version} />}
     </div>
   </section>
 }

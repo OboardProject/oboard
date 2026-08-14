@@ -6766,6 +6766,152 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   margin: 0;
 }
 
+.about-settings {
+  gap: 0;
+}
+
+.about-product {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 8px 4px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.about-product-logo {
+  width: 72px;
+  height: 72px;
+  flex: 0 0 72px;
+  object-fit: contain;
+}
+
+.about-product-copy {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.about-product-copy p {
+  text-wrap: pretty;
+}
+
+.about-product-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.about-product-title h3 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+.about-version-badge,
+.about-dev-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-strong);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.about-dev-badge {
+  border-color: color-mix(in srgb, var(--warning) 30%, var(--border));
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.about-details {
+  margin: 0;
+  padding: 8px 0;
+}
+
+.about-details > div {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.3fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+  min-height: 52px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.about-details > div:last-child {
+  border-bottom: 0;
+}
+
+.about-details dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.about-details dd {
+  min-width: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+
+.about-details dd small {
+  width: 100%;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.about-details a,
+.about-project-link a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.about-details a:hover,
+.about-project-link a:hover {
+  text-decoration: underline;
+}
+
+.about-project-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 8px;
+  padding: 18px 4px 4px;
+  border-top: 1px solid var(--border);
+}
+
+.about-project-link > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.about-project-link span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.about-project-link a {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
 .controller-update-card { container-type: inline-size; gap: 16px; }
 .controller-update-head {
   display: grid;
@@ -8348,6 +8494,11 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   }
   .settings-shell { padding: 12px; }
   .settings-card-head { align-items: flex-start; flex-direction: column; }
+  .about-product { align-items: flex-start; }
+  .about-product-logo { width: 56px; height: 56px; flex-basis: 56px; }
+  .about-product-title h3 { font-size: 20px; }
+  .about-details > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .about-project-link { align-items: flex-start; flex-direction: column; }
   .settings-actions {
     width: 100%;
     flex-wrap: wrap;
