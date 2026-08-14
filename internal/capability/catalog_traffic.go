@@ -38,6 +38,7 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"priority": map[string]any{"type": "integer"}, "action": stringValue,
 		"outbound_id": nullableInteger(), "external_outbound_id": nullableInteger(),
 		"target_server_id": nullableInteger(), "outbound_tag": stringValue, "interface_name": stringValue,
+		"source_prefix":    stringValue,
 		"match_configured": boolValue, "enabled": boolValue,
 		"created_at": stringValue, "updated_at": stringValue,
 	})
@@ -52,11 +53,12 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"name":                 map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
 		"priority":             map[string]any{"type": "integer", "minimum": 0, "maximum": 100000},
 		"match_json":           map[string]any{"type": "string", "maxLength": 8192},
-		"action":               map[string]any{"type": "string", "enum": []string{"direct", "block", "outbound", "external", "interface"}},
+		"action":               map[string]any{"type": "string", "enum": []string{"direct", "block", "outbound", "external", "interface", "source_prefix"}},
 		"outbound_id":          nullableInteger(),
 		"external_outbound_id": nullableInteger(),
 		"target_server_id":     nullableInteger(),
 		"interface_name":       map[string]any{"type": "string", "maxLength": 64},
+		"source_prefix":        map[string]any{"type": "string", "maxLength": 64},
 		"enabled":              boolValue,
 	})
 	warpProfile := closedObject(map[string]any{

@@ -276,8 +276,8 @@ type NotificationTemplate = { title: string; body: string }
 type NotificationEventDefinition = { value: string; label: string; description: string; variables: string[] }
 type NotificationChannel = { id: number; owner_user_id: number; owner_username?: string; name: string; type: 'telegram' | 'bark' | 'test'; enabled: boolean; events: string; config_json: string; templates_json: string; user_ids: number[] }
 type NotificationAnnouncement = { id: number; actor_user_id: number; actor_name: string; title: string; body: string; user_ids: number[]; queued_count: number; created_at: string }
-type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'interface'
-type RoutingRule = { id: number; server_id: number; scope?: 'server' | 'path_stage'; proxy_path_id?: number; stage_step_id?: number; sort_position?: number; match_source?: 'inline' | 'rule_set'; rule_set_id?: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; enabled: boolean; updated_at?: string }
+type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'interface' | 'source_prefix'
+type RoutingRule = { id: number; server_id: number; scope?: 'server' | 'path_stage'; proxy_path_id?: number; stage_step_id?: number; sort_position?: number; match_source?: 'inline' | 'rule_set'; rule_set_id?: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; source_prefix?: string; enabled: boolean; updated_at?: string }
 type RoutingRuleSet = { id: number; name: string; url: string; format: 'singbox_source' | 'singbox_binary' | 'mihomo_domain' | 'mihomo_ipcidr' | 'mihomo_classical'; mihomo_behavior?: string; revision?: string; status: 'pending' | 'ready' | 'refreshing' | 'error'; last_error?: string; last_attempt_at?: string; last_success_at?: string }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
 type SubscriptionFormat = 'stash' | 'clash-meta' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'sing-box-mieru' | 'mieru' | 'v2ray' | 'v2ray-uri' | 'clash'
@@ -432,7 +432,7 @@ function trafficTimezoneLabel(timezone: string) {
     return timezone
   }
 }
-const routeActions: RouteAction[] = ['direct', 'block', 'outbound', 'external', 'interface']
+const routeActions: RouteAction[] = ['direct', 'block', 'outbound', 'external', 'interface', 'source_prefix']
 const outboundScopes = ['global', 'server']
 
 const qureRegionFlags: Record<string, string> = {
@@ -988,7 +988,7 @@ const fieldLabels: Record<string, string> = {
 const valueLabels: Record<string, string> = {
   admin: '管理员', operator: '操作员', viewer: '只读', active: '活跃', online: '在线', offline: '离线', unknown: '未知', healthy: '健康', unhealthy: '异常',
   enabled: '已启用', disabled: '已禁用', true: '启用', false: '禁用', succeeded: '成功', success: '成功', skipped: '已跳过', stale: '已过期', warning: '需关注', failed: '失败', partial_failed: '部分失败', timeout: '超时', error: '错误', pending: '等待中', running: '执行中', requested: '已请求', needed: '需要申请', ready: '就绪',
-  rollback_failed: '回滚失败', direct: '直连', block: '阻断', outbound: '出口', external: '导入节点', chain: '链式代理', warp: 'WARP', interface: '指定网卡', socks: 'SOCKS',
+  rollback_failed: '回滚失败', direct: '直连', block: '阻断', outbound: '出口', external: '导入节点', chain: '链式代理', warp: 'WARP', interface: '指定网卡', source_prefix: '地址前缀', socks: 'SOCKS',
   global: '全局', server: '服务器', auto: '自动（IPv4 优先）', ipv4: 'IPv4', ipv6: 'IPv6', custom: '自定义', ipv4_only: '仅 IPv4', ipv6_only: '仅 IPv6', dual_stack: '双栈', prefer_ipv4: '优先 IPv4', prefer_ipv6: '优先 IPv6',
   a: 'A', aaaa: 'AAAA', both: 'A + AAAA',
   allow: '允许', uot: 'UoT', never: '从不', first_apply: '首次下发', periodic: '定期', always: '每次', sampled: '实际连接采样', periodic_sampled: '定期+采样',
@@ -8953,7 +8953,7 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
 }
 
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
-type RoutingDraft = { server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; interface_name: string; enabled: boolean }
+type RoutingDraft = { server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; interface_name: string; source_prefix: string; enabled: boolean }
 type TransportMode = 'port-forward' | 'tunnel'
 type TransportDraft = { mode: TransportMode; name: string; source_server_id: number; target_server_id: number; listen_ip: string; listen_port: number; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; type: TunnelType; priority: number; config_json: string; enabled: boolean }
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; node_id?: string }
@@ -10157,6 +10157,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       if (routingDraft.action === 'outbound' && routingDraft.outbound_id) body.outbound_id = routingDraft.outbound_id
       if (routingDraft.action === 'external' && routingDraft.external_outbound_id) body.external_outbound_id = routingDraft.external_outbound_id
       if (routingDraft.action === 'interface') body.interface_name = routingDraft.interface_name.trim()
+      if (routingDraft.action === 'source_prefix') body.source_prefix = routingDraft.source_prefix.trim()
       await client.request('/routing-rules', { method: 'POST', body: JSON.stringify(body) })
       uncommittedPathID = 0
       if (routingCanvasTargetID) {
@@ -11488,7 +11489,7 @@ function ProxyToolIcon({ kind }: { kind: ProxyToolAction }) {
 }
 
 function defaultRoutingDraft(server: Server, proxyPathID = 0): RoutingDraft {
-  return { server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, interface_name: '', enabled: true }
+  return { server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, interface_name: '', source_prefix: '', enabled: true }
 }
 
 function routingMatchJSON(kind: RoutingMatchKind, value: string) {
@@ -11581,6 +11582,7 @@ function RoutingActionIcon({ action }: { action: RouteAction }) {
   if (action === 'block') return <Shield size={15} aria-hidden="true" />
   if (action === 'outbound') return <LogOut size={15} aria-hidden="true" />
   if (action === 'external') return <ExternalLink size={15} aria-hidden="true" />
+  if (action === 'source_prefix') return <LocateFixed size={15} aria-hidden="true" />
   return <Network size={15} aria-hidden="true" />
 }
 
@@ -11688,10 +11690,11 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
           {draft.action === 'outbound' && <FormField label="本机出口" required><Select value={draft.outbound_id} onChange={event => update({ outbound_id: Number(event.target.value) })}><option value={0}>选择出口</option>{serverOutbounds.map((item: Outbound) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
           {draft.action === 'external' && <FormField label="导入节点" required><Select value={draft.external_outbound_id} onChange={event => update({ external_outbound_id: Number(event.target.value) })}><option value={0}>选择导入节点</option>{externalOutbounds.map((item: ExternalOutbound) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
           {draft.action === 'interface' && <FormField label="出口网卡" required><NetworkInterfacePicker serverID={selectedStage.serverID} value={draft.interface_name} onChange={interface_name => update({ interface_name })} client={client} /></FormField>}
+          {draft.action === 'source_prefix' && <FormField label="源地址前缀" hint="每条新连接实时匹配本机地址；没有匹配地址时拒绝连接。" required><input value={draft.source_prefix} onChange={event => update({ source_prefix: event.target.value })} placeholder="2001:b011:b000:8e73::/64" inputMode="text" autoCapitalize="none" spellCheck={false} /></FormField>}
         </div>
       </section>}
     </div>
-    <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>完成</button><button onClick={onSubmit} disabled={!draft.name.trim() || (draft.match_source === 'rule_set' && !draft.rule_set_id)}><Plus size={14} aria-hidden="true" />添加到 {selectedStage?.label}</button></footer>
+    <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>完成</button><button onClick={onSubmit} disabled={!draft.name.trim() || (draft.match_source === 'rule_set' && !draft.rule_set_id) || (draft.action === 'source_prefix' && !draft.source_prefix.trim())}><Plus size={14} aria-hidden="true" />添加到 {selectedStage?.label}</button></footer>
   </MotionDialogPanel>
 }
 
@@ -13800,6 +13803,7 @@ function RoutingRules({ data, client, load }: any) {
       if (draft.action === 'outbound' && draft.outbound_id) body.outbound_id = draft.outbound_id
       if (draft.action === 'external' && draft.external_outbound_id) body.external_outbound_id = draft.external_outbound_id
       if (draft.action === 'interface') body.interface_name = draft.interface_name.trim()
+      if (draft.action === 'source_prefix') body.source_prefix = draft.source_prefix.trim()
       await client.request('/routing-rules', { method: 'POST', body: JSON.stringify(body) })
       await load()
       setDraft(current => current ? { ...current, name: '', match_value: current.match_kind === 'all' ? '' : current.match_value } : current)

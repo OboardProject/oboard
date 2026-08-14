@@ -2,8 +2,27 @@ package capability
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
+
+func TestRoutingCapabilitySchemasSupportSourcePrefix(t *testing.T) {
+	catalog := NewCatalog()
+	for _, name := range []string{"routing_rules.create", "routing_rules.update"} {
+		descriptor, ok := catalog.Get(name)
+		if !ok {
+			t.Fatalf("capability %s is missing", name)
+		}
+		raw := string(descriptor.InputSchema)
+		if !strings.Contains(raw, `"source_prefix"`) || !strings.Contains(raw, `"source_prefix"]`) {
+			t.Fatalf("%s input schema lacks the source-prefix field or action: %s", name, raw)
+		}
+	}
+	descriptor, ok := catalog.Get("routing_rules.list")
+	if !ok || !strings.Contains(string(descriptor.OutputSchema), `"source_prefix"`) {
+		t.Fatalf("routing_rules.list output schema lacks source_prefix")
+	}
+}
 
 func TestRoutingCapabilityResourceResolvers(t *testing.T) {
 	catalog := NewCatalog()

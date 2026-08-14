@@ -116,7 +116,7 @@ func (s *Server) prepareRoutingRuleRecipe(ctx context.Context, principal applica
 		if nested, ok := input.Params["changes"].(map[string]any); ok {
 			changes = nested
 		}
-		for _, key := range []string{"name", "priority", "match_json", "action", "outbound_id", "external_outbound_id", "interface_name", "enabled", "server_id"} {
+		for _, key := range []string{"name", "priority", "match_json", "action", "outbound_id", "external_outbound_id", "interface_name", "source_prefix", "enabled", "server_id"} {
 			if value, ok := input.Params[key]; ok {
 				changes[key] = value
 			}
@@ -136,7 +136,7 @@ func (s *Server) prepareRoutingRuleRecipe(ctx context.Context, principal applica
 		return candidate, nil
 	}
 	rule := map[string]any{"server_id": serverID}
-	for _, key := range []string{"name", "priority", "match_json", "action", "outbound_id", "external_outbound_id", "interface_name", "enabled"} {
+	for _, key := range []string{"name", "priority", "match_json", "action", "outbound_id", "external_outbound_id", "interface_name", "source_prefix", "enabled"} {
 		if value, ok := input.Params[key]; ok {
 			rule[key] = value
 		}

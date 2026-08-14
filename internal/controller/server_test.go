@@ -1832,22 +1832,31 @@ func TestRoutingExternalOutboundAndWARPPathPublicAPI(t *testing.T) {
 	}
 	warpProfileID := int64(warpItems[0].(map[string]any)["id"].(float64))
 	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "ssh-via-wan6", "priority": 45, "match_json": `{"port":[22]}`, "action": "interface", "interface_name": "eth1", "enabled": true}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "dynamic-v6", "priority": 46, "match_json": `{"domain_suffix":["v6.example"]}`, "action": "source_prefix", "source_prefix": "2001:db8:55::1234/64", "enabled": true}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "bad-prefix", "priority": 47, "match_json": `{"domain_suffix":["bad.example"]}`, "action": "source_prefix", "source_prefix": "2001:db8::/129", "enabled": true}, http.StatusBadRequest)
 	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "bad-port", "priority": 50, "match_json": `{"port":[0]}`, "action": "direct", "enabled": true}, http.StatusBadRequest)
 	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "bad-interface", "priority": 50, "match_json": `{"port":[443]}`, "action": "interface", "interface_name": "eth1;id", "enabled": true}, http.StatusBadRequest)
 
 	listedRules := request(t, h, http.MethodGet, "/api/v2/ui/routing-rules", token, nil, http.StatusOK)
-	if len(listedRules["routing_rules"].([]any)) != 4 {
+	if len(listedRules["routing_rules"].([]any)) != 5 {
 		t.Fatalf("routing rules missing: %#v", listedRules)
 	}
 	foundInterface := false
+	foundSourcePrefix := false
 	for _, raw := range listedRules["routing_rules"].([]any) {
 		rule := raw.(map[string]any)
 		if rule["action"] == "interface" && rule["interface_name"] == "eth1" {
 			foundInterface = true
 		}
+		if rule["action"] == "source_prefix" && rule["source_prefix"] == "2001:db8:55::/64" {
+			foundSourcePrefix = true
+		}
 	}
 	if !foundInterface {
 		t.Fatalf("interface routing rule did not round-trip: %#v", listedRules)
+	}
+	if !foundSourcePrefix {
+		t.Fatalf("source-prefix routing rule did not round-trip: %#v", listedRules)
 	}
 	deployment := request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 	foundWARPRequest := false

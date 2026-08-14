@@ -3258,6 +3258,8 @@ func (s *Store) GetOutbound(ctx context.Context, id int64) (*model.Outbound, err
 func (s *Store) CreateRoutingRule(ctx context.Context, v *model.RoutingRule) error {
 	if v.Action == model.RouteActionInterface && v.InterfaceName != "" {
 		v.OutboundTag = v.InterfaceName
+	} else if v.Action == model.RouteActionSourcePrefix && v.SourcePrefix != "" {
+		v.OutboundTag = v.SourcePrefix
 	}
 	ts := now()
 	v.CreatedAt = parseTime(ts)
@@ -3273,6 +3275,8 @@ func (s *Store) CreateRoutingRule(ctx context.Context, v *model.RoutingRule) err
 func (s *Store) UpdateRoutingRule(ctx context.Context, v *model.RoutingRule) error {
 	if v.Action == model.RouteActionInterface && v.InterfaceName != "" {
 		v.OutboundTag = v.InterfaceName
+	} else if v.Action == model.RouteActionSourcePrefix && v.SourcePrefix != "" {
+		v.OutboundTag = v.SourcePrefix
 	}
 	_, err := s.db.ExecContext(ctx, `update routing_rules set server_id=?,scope=?,proxy_path_id=?,stage_step_id=?,sort_position=?,match_source=?,rule_set_id=?,name=?,priority=?,match_json=?,action=?,outbound_id=?,external_outbound_id=?,target_server_id=?,outbound_tag=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetServerID, v.OutboundTag, boolInt(v.Enabled), now(), v.ID)
 	return err
@@ -3313,6 +3317,8 @@ func (s *Store) ListRoutingRules(ctx context.Context) ([]model.RoutingRule, erro
 		}
 		if v.Action == model.RouteActionInterface {
 			v.InterfaceName = v.OutboundTag
+		} else if v.Action == model.RouteActionSourcePrefix {
+			v.SourcePrefix = v.OutboundTag
 		}
 		v.Enabled = en == 1
 		v.CreatedAt = parseTime(ca)

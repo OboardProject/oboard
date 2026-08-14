@@ -6384,6 +6384,21 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 		}
 		v.OutboundTag = v.InterfaceName
 		return nil
+	case model.RouteActionSourcePrefix:
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(v.SourcePrefix))
+		if err != nil {
+			return fmt.Errorf("source_prefix must be a valid IPv4 or IPv6 CIDR: %w", err)
+		}
+		prefix = prefix.Masked()
+		if server.IPStack == model.IPStackIPv4Only && prefix.Addr().Is6() {
+			return errors.New("IPv6 source_prefix is incompatible with ipv4_only")
+		}
+		if server.IPStack == model.IPStackIPv6Only && prefix.Addr().Is4() {
+			return errors.New("IPv4 source_prefix is incompatible with ipv6_only")
+		}
+		v.SourcePrefix = prefix.String()
+		v.OutboundTag = v.SourcePrefix
+		return nil
 	default:
 		return fmt.Errorf("unsupported action %q", v.Action)
 	}

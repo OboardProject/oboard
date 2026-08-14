@@ -4,10 +4,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -625,6 +627,11 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		}
 		config.Outbounds = append(config.Outbounds, item)
 	}
+	sourcePrefixOutbounds, err := buildSourcePrefixOutbounds(server, opts.RoutingRules)
+	if err != nil {
+		return "", err
+	}
+	config.Outbounds = append(config.Outbounds, sourcePrefixOutbounds...)
 	pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, outbounds, opts, users, plannedPathInbounds)
 	if err != nil {
 		return "", err
@@ -1917,6 +1924,12 @@ func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds [
 			out = append(out, item)
 			continue
 		}
+		if rule.Action == model.RouteActionSourcePrefix {
+			item["action"] = "route"
+			item["outbound"] = sourcePrefixOutboundTag(rule.SourcePrefix)
+			out = append(out, item)
+			continue
+		}
 		tag, ok, err := routeRuleOutboundTag(rule, server, outbounds, external)
 		if err != nil {
 			return nil, fmt.Errorf("routing rule %s: %w", rule.Name, err)
@@ -1970,6 +1983,12 @@ func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.
 			result = append(result, item)
 			continue
 		}
+		if rule.Action == model.RouteActionSourcePrefix {
+			item["action"] = "route"
+			item["outbound"] = sourcePrefixOutboundTag(rule.SourcePrefix)
+			result = append(result, item)
+			continue
+		}
 		outboundTag, ok, err := routeRuleOutboundTag(rule, server, outbounds, external)
 		if err != nil {
 			return nil, fmt.Errorf("routing rule %s: %w", rule.Name, err)
@@ -1992,6 +2011,46 @@ func sameOptionalID(left, right *int64) bool {
 }
 
 func routingRuleSetTag(id int64) string { return fmt.Sprintf("routing-rule-set-%d", id) }
+
+func buildSourcePrefixOutbounds(server model.Server, rules []model.RoutingRule) ([]map[string]any, error) {
+	seen := map[string]bool{}
+	result := make([]map[string]any, 0)
+	for _, rule := range rules {
+		if !rule.Enabled || rule.ServerID != server.ID || rule.Action != model.RouteActionSourcePrefix {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(rule.SourcePrefix))
+		if err != nil {
+			return nil, fmt.Errorf("routing rule %s source_prefix: %w", rule.Name, err)
+		}
+		canonical := prefix.Masked().String()
+		if seen[canonical] {
+			continue
+		}
+		seen[canonical] = true
+		item := map[string]any{
+			"type":   "source-prefix",
+			"tag":    sourcePrefixOutboundTag(canonical),
+			"prefix": canonical,
+		}
+		strategy := "ipv4_only"
+		if prefix.Addr().Is6() {
+			strategy = "ipv6_only"
+		}
+		applyDialDomainResolver(item, strategy)
+		result = append(result, item)
+	}
+	return result, nil
+}
+
+func sourcePrefixOutboundTag(prefix string) string {
+	canonical := strings.TrimSpace(prefix)
+	if parsed, err := netip.ParsePrefix(canonical); err == nil {
+		canonical = parsed.Masked().String()
+	}
+	sum := sha256.Sum256([]byte(canonical))
+	return "source-prefix-" + hex.EncodeToString(sum[:6])
+}
 
 func buildRouteRuleSets(server model.Server, rules []model.RoutingRule, sets []model.RoutingRuleSet) []map[string]any {
 	wanted := map[int64]bool{}

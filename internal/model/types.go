@@ -135,11 +135,12 @@ const (
 type RouteAction string
 
 const (
-	RouteActionDirect    RouteAction = "direct"
-	RouteActionBlock     RouteAction = "block"
-	RouteActionOutbound  RouteAction = "outbound"
-	RouteActionExternal  RouteAction = "external"
-	RouteActionInterface RouteAction = "interface"
+	RouteActionDirect       RouteAction = "direct"
+	RouteActionBlock        RouteAction = "block"
+	RouteActionOutbound     RouteAction = "outbound"
+	RouteActionExternal     RouteAction = "external"
+	RouteActionInterface    RouteAction = "interface"
+	RouteActionSourcePrefix RouteAction = "source_prefix"
 )
 
 type ExternalOutboundScope string
@@ -1120,6 +1121,7 @@ type RoutingRule struct {
 	TargetServerID     *int64      `json:"target_server_id,omitempty"`
 	OutboundTag        string      `json:"outbound_tag"`
 	InterfaceName      string      `json:"interface_name,omitempty"`
+	SourcePrefix       string      `json:"source_prefix,omitempty"`
 	Enabled            bool        `json:"enabled"`
 	CreatedAt          time.Time   `json:"created_at"`
 	UpdatedAt          time.Time   `json:"updated_at"`

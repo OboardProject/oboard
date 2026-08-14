@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 )
 
@@ -136,6 +137,11 @@ func (v *configValidator) validateOutbounds(outbounds []map[string]any) {
 		}
 		switch typ {
 		case "direct", "block":
+		case "source-prefix":
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(stringFromAny(outbound["prefix"])))
+			if err != nil || !prefix.IsValid() {
+				v.addf("%s missing prefix", path)
+			}
 		case "vless", "hysteria2", "anytls", "shadowsocks", "mieru", "socks":
 			v.validateRemoteAdapter(path, typ, outbound)
 		default:

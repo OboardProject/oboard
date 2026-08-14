@@ -45,14 +45,14 @@ func TestOutboundAndRoutingRuleCapabilities(t *testing.T) {
 	if outbound.Name != "跳板出口" || outbound.TargetPort != 8388 || !outbound.Enabled {
 		t.Fatalf("unexpected outbound: %#v", outbound)
 	}
-	ruleInput := json.RawMessage(`{"routing_rule":{"server_id":1,"name":"直连网飞","priority":100,"action":"direct","match_json":"{\"domain_suffix\":[\"netflix.com\"]}","enabled":true}}`)
+	ruleInput := json.RawMessage(`{"routing_rule":{"server_id":1,"name":"动态 IPv6 出口","priority":100,"action":"source_prefix","source_prefix":"2001:db8:66::9/64","match_json":"{\"domain_suffix\":[\"netflix.com\"]}","enabled":true}}`)
 	applyAutomationChangeset(t, server, principal, "routing-create", automation.OperationRequest{Capability: "routing_rules.create", Input: ruleInput})
 	rules, err := db.ListRoutingRules(ctx)
 	if err != nil || len(rules) != 1 {
 		t.Fatalf("rules=%#v err=%v", rules, err)
 	}
 	rule := rules[0]
-	if rule.Action != model.RouteActionDirect || rule.Priority != 100 {
+	if rule.Action != model.RouteActionSourcePrefix || rule.SourcePrefix != "2001:db8:66::/64" || rule.Priority != 100 {
 		t.Fatalf("unexpected rule: %#v", rule)
 	}
 	updateInput, _ := json.Marshal(map[string]any{"routing_rule_id": rule.ID, "changes": map[string]any{"priority": 200}})

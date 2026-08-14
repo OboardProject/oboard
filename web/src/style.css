@@ -4406,7 +4406,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .routing-match-source-select { flex: 0 1 210px; width: min(210px, 52vw); }
 .routing-rule-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 10px; }
 .routing-rule-editor-grid > .form-field:has(textarea), .routing-rule-set-picker, .routing-action-picker { grid-column: 1 / -1; }
-.routing-action-picker { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.routing-action-picker { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
 .routing-action-picker button { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--text-secondary); background: var(--surface-2); }
 .routing-action-picker button.selected { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 50%, var(--border)); background: var(--primary-softer); }
 .routing-rule-set-picker { display: grid; gap: 7px; }

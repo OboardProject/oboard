@@ -1708,6 +1708,7 @@ func TestGenerateServerConfigWithRoutingRulesIgnoresUnreferencedWARP(t *testing.
 				{ID: 2, ServerID: 1, Name: "paid", Priority: 20, MatchJSON: `{"domain_suffix":["example.org"]}`, Action: model.RouteActionOutbound, OutboundID: &outboundID, Enabled: true},
 				{ID: 3, ServerID: 1, Name: "external", Priority: 30, MatchJSON: `{"domain_suffix":["example.net"]}`, Action: model.RouteActionExternal, ExternalOutboundID: &externalID, Enabled: true},
 				{ID: 6, ServerID: 1, Name: "ssh-via-wan6", Priority: 45, MatchJSON: `{"port":[22]}`, Action: model.RouteActionInterface, InterfaceName: "eth1", Enabled: true},
+				{ID: 7, ServerID: 1, Name: "dynamic-v6", Priority: 50, MatchJSON: `{"domain_suffix":["v6.example"]}`, Action: model.RouteActionSourcePrefix, SourcePrefix: "2001:db8:42::/64", Enabled: true},
 			},
 		},
 	)
@@ -1718,8 +1719,8 @@ func TestGenerateServerConfigWithRoutingRulesIgnoresUnreferencedWARP(t *testing.
 	if err := json.Unmarshal([]byte(config), &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if len(parsed.Outbounds) != 4 {
-		t.Fatalf("outbounds = %d, want direct/block + normal + external", len(parsed.Outbounds))
+	if len(parsed.Outbounds) != 5 {
+		t.Fatalf("outbounds = %d, want direct/block + normal + external + source-prefix", len(parsed.Outbounds))
 	}
 	if len(parsed.Endpoints) != 0 {
 		t.Fatalf("unreferenced WARP profile emitted endpoints: %#v", parsed.Endpoints)
@@ -1732,8 +1733,8 @@ func TestGenerateServerConfigWithRoutingRulesIgnoresUnreferencedWARP(t *testing.
 			}
 		}
 	}
-	if len(rules) != 4 {
-		t.Fatalf("route rules = %d, want direct/outbound/external/interface: %#v", len(rules), parsed.Route["rules"])
+	if len(rules) != 5 {
+		t.Fatalf("route rules = %d, want direct/outbound/external/interface/source-prefix: %#v", len(rules), parsed.Route["rules"])
 	}
 	want := []string{"direct", tag("out", outboundID), tag("ext", externalID)}
 	for i, outbound := range want {
@@ -1752,6 +1753,18 @@ func TestGenerateServerConfigWithRoutingRulesIgnoresUnreferencedWARP(t *testing.
 	ports, ok := interfaceRule["port"].([]any)
 	if !ok || len(ports) != 1 || ports[0].(float64) != 22 {
 		t.Fatalf("interface route ports = %#v, want [22]", interfaceRule["port"])
+	}
+	prefixOutbound := parsed.Outbounds[4]
+	if prefixOutbound["type"] != "source-prefix" || prefixOutbound["prefix"] != "2001:db8:42::/64" {
+		t.Fatalf("source-prefix outbound = %#v", prefixOutbound)
+	}
+	resolver, ok := prefixOutbound["domain_resolver"].(map[string]any)
+	if !ok || resolver["server"] != primaryBootstrapDNSTag || resolver["strategy"] != "ipv6_only" {
+		t.Fatalf("source-prefix domain_resolver = %#v", prefixOutbound["domain_resolver"])
+	}
+	prefixRule := rules[4].(map[string]any)
+	if prefixRule["action"] != "route" || prefixRule["outbound"] != prefixOutbound["tag"] {
+		t.Fatalf("source-prefix route = %#v, outbound = %#v", prefixRule, prefixOutbound)
 	}
 }
 
