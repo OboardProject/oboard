@@ -7578,27 +7578,63 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		var restoredDirectPath *model.ProxyPath
+		if v.NodeType != model.ProxyPathStepServerInbound {
+			path, err := s.store.GetProxyPath(r.Context(), v.PathID)
+			if err != nil {
+				fail(w, err, 404)
+				return
+			}
+			if path.Kind == model.ProxyPathKindDirect {
+				converted := *path
+				converted.Kind = model.ProxyPathKindChain
+				converted.BranchSourceStepID = nil
+				if err := s.validateProxyPath(r.Context(), &converted); err != nil {
+					fail(w, err, 400)
+					return
+				}
+				if err := s.store.UpdateProxyPath(r.Context(), &converted); err != nil {
+					fail(w, err, 500)
+					return
+				}
+				restoredDirectPath = path
+			}
+		}
+		restoreDirectPath := func() {
+			if restoredDirectPath != nil {
+				_ = s.store.UpdateProxyPath(r.Context(), restoredDirectPath)
+			}
+		}
 		if err := s.store.CreateProxyPathStep(r.Context(), &v); err != nil {
+			restoreDirectPath()
 			fail(w, err, 500)
 			return
 		}
 		if err := s.normalizeAndValidateProxyPath(r.Context(), v.PathID); err != nil {
 			_ = s.store.Delete(r.Context(), "proxy_path_steps", v.ID)
+			restoreDirectPath()
 			_ = s.normalizeProxyPathProcessingRoles(r.Context(), v.PathID)
 			fail(w, err, 400)
 			return
 		}
 		if err := s.ensureWARPProfilesForProxyPaths(r.Context()); err != nil {
 			_ = s.store.Delete(r.Context(), "proxy_path_steps", v.ID)
+			restoreDirectPath()
 			_ = s.normalizeProxyPathProcessingRoles(r.Context(), v.PathID)
 			fail(w, err, 500)
 			return
 		}
 		if err := s.store.ClearProxyPathBranchSource(r.Context(), v.PathID); err != nil {
+			_ = s.store.Delete(r.Context(), "proxy_path_steps", v.ID)
+			restoreDirectPath()
+			_ = s.normalizeProxyPathProcessingRoles(r.Context(), v.PathID)
 			fail(w, err, 500)
 			return
 		}
 		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
+			_ = s.store.Delete(r.Context(), "proxy_path_steps", v.ID)
+			restoreDirectPath()
+			_ = s.normalizeProxyPathProcessingRoles(r.Context(), v.PathID)
 			fail(w, err, 500)
 			return
 		}

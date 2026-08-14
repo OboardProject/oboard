@@ -385,6 +385,49 @@ func TestProxyPathStageRulesRunBeforeEachStageContinuation(t *testing.T) {
 	}
 }
 
+func TestProxyPathStageRuleDoesNotAffectSiblingBranch(t *testing.T) {
+	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
+	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
+	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	pathA := model.ProxyPath{ID: 50, Name: "branch-a", InboundID: root.ID, Secret: "path-a-secret", Enabled: true}
+	pathB := model.ProxyPath{ID: 51, Name: "branch-b", InboundID: root.ID, Secret: "path-b-secret", Enabled: true}
+	serverBID, pathAID := serverB.ID, pathA.ID
+	opts := ConfigOptions{
+		Servers:    []model.Server{serverA, serverB},
+		Inbounds:   []model.Inbound{root},
+		ProxyPaths: []model.ProxyPath{pathA, pathB},
+		ProxyPathSteps: []model.ProxyPathStep{
+			{ID: 101, PathID: pathA.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID},
+			{ID: 102, PathID: pathB.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID},
+		},
+		InboundUsers: []model.InboundUser{{InboundID: root.ID, UserID: 1, Enabled: true}},
+		RoutingRules: []model.RoutingRule{{ID: 1, ServerID: serverA.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &pathAID, SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: "only-a", MatchJSON: `{"domain":["a.example"]}`, Action: model.RouteActionDirect, Enabled: true}},
+	}
+	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	config := mustServerConfig(t, serverA, []model.Inbound{root}, []model.User{user}, opts)
+	parsed := parseSingBoxConfig(t, config)
+	var customUsers, pathAUsers, pathBUsers []string
+	for _, rule := range mapList(parsed.Route["rules"]) {
+		users := stringList(rule["auth_user"])
+		switch rule["outbound"] {
+		case "direct":
+			if domains := stringList(rule["domain"]); len(domains) == 1 && domains[0] == "a.example" {
+				customUsers = users
+			}
+		case "path-50-step-1":
+			pathAUsers = users
+		case "path-51-step-1":
+			pathBUsers = users
+		}
+	}
+	if len(customUsers) != 1 || len(pathAUsers) != 1 || len(pathBUsers) != 1 {
+		t.Fatalf("branch routes are incomplete: custom=%v path-a=%v path-b=%v config=%s", customUsers, pathAUsers, pathBUsers, config)
+	}
+	if customUsers[0] != pathAUsers[0] || customUsers[0] == pathBUsers[0] {
+		t.Fatalf("path-a rule leaked across branch identity: custom=%v path-a=%v path-b=%v", customUsers, pathAUsers, pathBUsers)
+	}
+}
+
 func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
 	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}

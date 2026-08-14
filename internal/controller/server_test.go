@@ -1992,6 +1992,69 @@ func TestImportedNodeURIProxyPathAndGrantAPI(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": serverPathID, "position": 2, "node_type": "server_inbound", "server_id": serverID}, http.StatusBadRequest)
 }
 
+func TestRoutingFallbackDirectBranchCanContinueToImportedNode(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "entry", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	serverID := int64(server["server"].(map[string]any)["id"].(float64))
+	targetServer := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "target", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 11000, "port_range_end": 11010}, http.StatusCreated)
+	targetServerID := int64(targetServer["server"].(map[string]any)["id"].(float64))
+	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
+	imported := request(t, h, http.MethodPost, "/api/v2/ui/external-outbounds/import", token, map[string]any{"scope": "global", "content": "socks5://user:pass@socks.example.com:1080#SOCKS"}, http.StatusCreated)
+	externalID := int64(imported["external_outbounds"].([]any)[0].(map[string]any)["id"].(float64))
+	createRootRule := func(pathID int64, name string) int64 {
+		rule := request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"scope": "path_stage", "proxy_path_id": pathID, "sort_position": 0, "match_source": "inline", "name": name, "match_json": `{"geoip":["cn"]}`, "action": "direct", "enabled": true}, http.StatusCreated)["routing_rule"].(map[string]any)
+		return int64(rule["id"].(float64))
+	}
+	assertRootRule := func(ruleID, pathID int64) {
+		t.Helper()
+		storedRule, err := db.GetRoutingRule(context.Background(), ruleID)
+		if err != nil || storedRule.ProxyPathID == nil || *storedRule.ProxyPathID != pathID || storedRule.StageStepID != nil {
+			t.Fatalf("routing rule moved while continuing fallback: %#v err=%v", storedRule, err)
+		}
+	}
+
+	direct := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)["proxy_path"].(map[string]any)
+	pathID := int64(direct["id"].(float64))
+	ruleID := createRootRule(pathID, "cn-imported")
+
+	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "singbox"}, http.StatusCreated)
+	updated := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	if updated["kind"] != "chain" {
+		t.Fatalf("routing fallback path kind = %v, want chain: %#v", updated["kind"], updated)
+	}
+	assertRootRule(ruleID, pathID)
+
+	warpDirect := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)["proxy_path"].(map[string]any)
+	warpPathID := int64(warpDirect["id"].(float64))
+	warpRuleID := createRootRule(warpPathID, "cn-warp")
+	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": warpPathID, "position": 1, "node_type": "warp", "transport_mode": "singbox"}, http.StatusCreated)
+	updated = request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(warpPathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	if updated["kind"] != "chain" {
+		t.Fatalf("WARP fallback path kind = %v, want chain: %#v", updated["kind"], updated)
+	}
+	assertRootRule(warpRuleID, warpPathID)
+
+	serverDirect := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)["proxy_path"].(map[string]any)
+	serverPathID := int64(serverDirect["id"].(float64))
+	serverRuleID := createRootRule(serverPathID, "cn-server")
+	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": serverPathID, "position": 1, "node_type": "server_inbound", "server_id": targetServerID, "transport_mode": "singbox"}, http.StatusCreated)
+	updated = request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(serverPathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	if updated["kind"] != "direct" {
+		t.Fatalf("controlled-server fallback path kind = %v, want direct: %#v", updated["kind"], updated)
+	}
+	assertRootRule(serverRuleID, serverPathID)
+}
+
 func TestProxyPathServerOnlyStepsPlanAndValidation(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
