@@ -13280,6 +13280,50 @@ button.proxy-edge-label:hover { transform: none; border-color: var(--primary); b
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--graph-wireguard) 14%, transparent), 0 12px 30px rgba(15, 23, 42, .11);
 }
 
+.routing-exit-card {
+  position: relative;
+  width: 100%;
+  min-height: 82px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 12px;
+  color: var(--text-primary);
+  border: 1px dashed color-mix(in srgb, var(--graph-forward) 58%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-solid) 94%, var(--graph-forward));
+  box-shadow: 0 8px 22px rgba(15, 23, 42, .08);
+}
+.routing-exit-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  color: var(--graph-forward);
+  border: 1px solid color-mix(in srgb, var(--graph-forward) 28%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--graph-forward) 10%, var(--surface-solid));
+}
+.routing-exit-copy { min-width: 0; display: grid; gap: 2px; }
+.routing-exit-copy small { color: var(--graph-forward); font-size: 9px; font-weight: 800; }
+.routing-exit-copy strong { color: var(--text-primary); font-size: 13px; }
+.routing-exit-state {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flow .react-flow__node.routing-graph-node:hover .routing-exit-card,
+.flow .react-flow__node.routing-graph-node.selected .routing-exit-card {
+  border-style: solid;
+  border-color: var(--graph-forward);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--graph-forward) 14%, transparent), 0 12px 30px rgba(15, 23, 42, .11);
+}
+
 @media (max-width: 820px) {
   .proxy-graph-legend { top: 10px; right: 10px; width: 176px; }
   .proxy-graph-legend-body { grid-template-columns: 1fr; }
