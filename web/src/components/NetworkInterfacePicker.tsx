@@ -49,8 +49,12 @@ function interfaceStateLabel(iface: NetworkInterfaceInfo) {
 
 function interfaceAddressLabel(addresses: string[]) {
   if (!addresses.length) return '无 IP 地址'
-  const visible = addresses.slice(0, 2).join(' · ')
-  return addresses.length > 2 ? `${visible} · 另有 ${addresses.length - 2} 个` : visible
+  return addresses.join(' · ')
+}
+
+function interfaceTooltip(iface: NetworkInterfaceInfo) {
+  if (!iface.addresses.length) return '无 IP 地址'
+  return iface.addresses.join('\n')
 }
 
 function normalizeInterfaces(value: unknown): NetworkInterfaceInfo[] {
@@ -126,13 +130,16 @@ export function NetworkInterfacePicker({
   }
 
   const selectedValue = interfaces.some(iface => iface.name === value) ? value : ''
-  const options = interfaces.map(iface => ({
-    value: iface.name,
-    label: <span className="network-interface-option">
-      <span><strong>{iface.name}</strong><small>{interfaceStateLabel(iface)}</small></span>
-      <small>{interfaceAddressLabel(iface.addresses)}</small>
-    </span>,
-  }))
+  const options = interfaces.map(iface => {
+    const tooltip = interfaceTooltip(iface)
+    return {
+      value: iface.name,
+      label: <span className="network-interface-option" title={tooltip}>
+        <span><strong>{iface.name}</strong><small>{interfaceStateLabel(iface)}</small></span>
+        <small title={tooltip}>{interfaceAddressLabel(iface.addresses)}</small>
+      </span>,
+    }
+  })
 
   return <div className="network-interface-picker">
     <div className="network-interface-input">

@@ -4693,6 +4693,15 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .network-interface-status.error-text { color: var(--danger); }
 .network-interface-select .custom-select-trigger { min-height: 52px; height: auto; }
 .network-interface-select .custom-select-value { min-width: 0; width: 100%; }
+.network-interface-select .custom-select-value > .network-interface-option {
+  display: grid;
+  width: 100%;
+  line-height: normal;
+}
+.network-interface-select .custom-select-option > span {
+  min-width: 0;
+  flex: 1 1 auto;
+}
 .network-interface-option {
   min-width: 0;
   width: 100%;
@@ -4707,6 +4716,10 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+}
+
+.network-interface-option > span > small {
+  flex-shrink: 0;
 }
 
 .network-interface-option strong {

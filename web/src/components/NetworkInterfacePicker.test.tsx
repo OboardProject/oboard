@@ -90,4 +90,57 @@ describe('NetworkInterfacePicker', () => {
     })
     expect(container.textContent).toContain('读取网卡超时')
   })
+
+  it('renders all IP addresses in normal state and includes all IPs in tooltip title', async () => {
+    const request = vi.fn(async () => ({
+      task: {
+        id: 11,
+        status: 'succeeded',
+        result_json: JSON.stringify({ interfaces: [
+          {
+            name: 'eth0',
+            up: true,
+            running: true,
+            loopback: false,
+            addresses: [
+              '10.7.0.68/23',
+              '2408:820c:7509:b244:be24:11ff:fe46:70e2/64',
+              'fe80::be24:11ff:fe46:70e2/64',
+              '10.7.0.69/23',
+            ],
+          },
+          {
+            name: 'eth1',
+            up: false,
+            running: false,
+            loopback: false,
+            addresses: [],
+          },
+        ] }),
+      },
+    }))
+
+    act(() => root.render(<NetworkInterfacePicker serverID={3} value="eth0" onChange={() => {}} client={{ request }} />))
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="读取网卡"]')!.click()
+      await Promise.resolve()
+    })
+
+    // Check trigger display in normal state
+    const trigger = container.querySelector<HTMLButtonElement>('.custom-select-trigger')
+    expect(trigger?.textContent).toContain('10.7.0.68/23 · 2408:820c:7509:b244:be24:11ff:fe46:70e2/64 · fe80::be24:11ff:fe46:70e2/64 · 10.7.0.69/23')
+    expect(trigger?.querySelector('.network-interface-option')?.getAttribute('title')).toBe('10.7.0.68/23\n2408:820c:7509:b244:be24:11ff:fe46:70e2/64\nfe80::be24:11ff:fe46:70e2/64\n10.7.0.69/23')
+
+    // Open dropdown and check option items
+    act(() => trigger!.click())
+    const options = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.custom-select-option'))
+    const eth0Option = options.find(btn => btn.textContent?.includes('eth0'))
+    expect(eth0Option?.textContent).toContain('10.7.0.68/23 · 2408:820c:7509:b244:be24:11ff:fe46:70e2/64 · fe80::be24:11ff:fe46:70e2/64 · 10.7.0.69/23')
+    expect(eth0Option?.querySelector('.network-interface-option')?.getAttribute('title')).toBe('10.7.0.68/23\n2408:820c:7509:b244:be24:11ff:fe46:70e2/64\nfe80::be24:11ff:fe46:70e2/64\n10.7.0.69/23')
+
+    const eth1Option = options.find(btn => btn.textContent?.includes('eth1'))
+    expect(eth1Option?.textContent).toContain('无 IP 地址')
+    expect(eth1Option?.querySelector('.network-interface-option')?.getAttribute('title')).toBe('无 IP 地址')
+  })
 })
