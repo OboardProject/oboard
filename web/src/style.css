@@ -4743,6 +4743,14 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   white-space: nowrap;
 }
 
+.network-prefix-option > small {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  text-overflow: clip;
+  white-space: normal;
+}
+.network-prefix-option > .network-prefix-result { color: var(--text); }
+
 .graph-inspector {
   position: relative;
   z-index: 2;
@@ -13344,6 +13352,7 @@ button.proxy-edge-label:hover { transform: none; border-color: var(--primary); b
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.flow .react-flow__node.persisted-routing-node .routing-exit-card { border-style: solid; }
 .flow .react-flow__node.routing-graph-node:hover .routing-exit-card,
 .flow .react-flow__node.routing-graph-node.selected .routing-exit-card {
   border-style: solid;

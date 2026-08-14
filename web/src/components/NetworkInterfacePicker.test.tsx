@@ -4,7 +4,27 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { NetworkInterfacePicker } from './NetworkInterfacePicker'
+import { NetworkInterfacePicker, sourcePrefixSuggestion } from './NetworkInterfacePicker'
+
+describe('sourcePrefixSuggestion', () => {
+  it('canonicalizes reported IPv4 and IPv6 networks', () => {
+    expect(sourcePrefixSuggestion('216.23.110.46/24')).toBe('216.23.110.0/24')
+    expect(sourcePrefixSuggestion('216.23.110.46/32')).toBe('216.23.110.46/32')
+    expect(sourcePrefixSuggestion('2401:0b60:003c:006b::a/64')).toBe('2401:b60:3c:6b::/64')
+  })
+
+  it('suggests a stable /64 for global IPv6 /128 addresses', () => {
+    expect(sourcePrefixSuggestion('2001:b011:b000:8e73:1::b5b9/128')).toBe('2001:b011:b000:8e73::/64')
+  })
+
+  it('rejects loopback, link-local, and malformed addresses', () => {
+    expect(sourcePrefixSuggestion('127.0.0.1/8')).toBeNull()
+    expect(sourcePrefixSuggestion('169.254.10.2/16')).toBeNull()
+    expect(sourcePrefixSuggestion('::1/128')).toBeNull()
+    expect(sourcePrefixSuggestion('fe80::201:7ff:feb9:9fc3/64')).toBeNull()
+    expect(sourcePrefixSuggestion('not-an-address')).toBeNull()
+  })
+})
 
 describe('NetworkInterfacePicker', () => {
   let container: HTMLDivElement
@@ -143,5 +163,59 @@ describe('NetworkInterfacePicker', () => {
     const eth1Option = options.find(btn => btn.textContent?.includes('eth1'))
     expect(eth1Option?.textContent).toContain('无 IP 地址')
     expect(eth1Option?.querySelector('.network-interface-option')?.getAttribute('title')).toBe('无 IP 地址')
+  })
+
+  it('offers every usable interface address as a canonical source prefix', async () => {
+    const onChange = vi.fn()
+    const request = vi.fn(async () => ({
+      task: {
+        id: 12,
+        status: 'succeeded',
+        result_json: JSON.stringify({ interfaces: [
+          {
+            name: 'eth0',
+            up: true,
+            running: true,
+            loopback: false,
+            addresses: [
+              '216.23.110.46/24',
+              '216.23.110.47/24',
+              '2001:b011:b000:8e73:1::b5b9/128',
+              '240d:1b:c8:e910:a::7c47/128',
+              '2401:b60:3c:6b::a/64',
+              'fe80::201:7ff:feb9:9fc3/64',
+            ],
+          },
+          { name: 'lo', up: true, running: true, loopback: true, addresses: ['127.0.0.1/8', '::1/128'] },
+        ] }),
+      },
+    }))
+
+    act(() => root.render(<NetworkInterfacePicker mode="source-prefix" serverID={3} value="manual-prefix/64" onChange={onChange} client={{ request }} />))
+    expect(container.querySelector<HTMLInputElement>('input')?.getAttribute('aria-label')).toBe('源地址前缀')
+    expect(container.querySelector<HTMLInputElement>('input')?.value).toBe('manual-prefix/64')
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="读取网卡 IP"]')!.click()
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toContain('已读取 5 个可用 IP')
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="选择 Agent 网卡 IP"]')!.click())
+    const options = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.custom-select-option'))
+    expect(options).toHaveLength(5)
+    expect(options.map(option => option.textContent)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/216\.23\.110\.46\/24.*216\.23\.110\.0\/24/),
+      expect.stringMatching(/216\.23\.110\.47\/24.*216\.23\.110\.0\/24/),
+      expect.stringMatching(/2001:b011:b000:8e73:1::b5b9\/128.*2001:b011:b000:8e73::\/64/),
+      expect.stringMatching(/240d:1b:c8:e910:a::7c47\/128.*240d:1b:c8:e910::\/64/),
+      expect.stringMatching(/2401:b60:3c:6b::a\/64.*2401:b60:3c:6b::\/64/),
+    ]))
+    expect(options.some(option => option.textContent?.includes('fe80::'))).toBe(false)
+    expect(options.some(option => option.textContent?.includes('127.0.0.1'))).toBe(false)
+
+    const dynamicIPv6 = options.find(option => option.textContent?.includes('2001:b011:b000:8e73:1::b5b9'))
+    act(() => dynamicIPv6!.click())
+    expect(onChange).toHaveBeenCalledWith('2001:b011:b000:8e73::/64')
   })
 })

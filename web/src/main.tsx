@@ -11697,7 +11697,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
             <FormField label="出口绑定" required><Select className="full-width" variant="segmented" value={draft.action} onChange={event => update({ action: event.target.value as 'interface' | 'source_prefix' })} aria-label="出口绑定方式"><option value="interface">网卡</option><option value="source_prefix">IP 前缀</option></Select></FormField>
             {draft.action === 'interface'
               ? <FormField label="出口网卡" required><NetworkInterfacePicker serverID={selectedStage.serverID} value={draft.interface_name} onChange={interface_name => update({ interface_name })} client={client} /></FormField>
-              : <FormField label="源地址前缀" hint="每条新连接实时匹配本机地址；没有匹配地址时拒绝连接。" required><input value={draft.source_prefix} onChange={event => update({ source_prefix: event.target.value })} placeholder="2001:b011:b000:8e73::/64" inputMode="text" autoCapitalize="none" spellCheck={false} aria-label="源地址前缀" /></FormField>}
+              : <FormField label="源地址前缀" hint="每条新连接实时匹配本机地址；IPv6 /128 地址按 /64 生成前缀。" required><NetworkInterfacePicker mode="source-prefix" serverID={selectedStage.serverID} value={draft.source_prefix} onChange={source_prefix => update({ source_prefix })} client={client} /></FormField>}
           </div>}
         </div>
       </section>}
