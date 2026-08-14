@@ -56,6 +56,7 @@ import type { GraphFocusScope, GraphPathFocusState } from './components/proxy-pa
 import { curvedGraphPath, roundedOrthogonalPath, type GraphPoint, type GraphRect } from './components/proxy-path/graph-geometry'
 import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
 import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
+import { proxyPathGeneratedReuseCountKey } from './components/proxy-path/reuse-target-options'
 import './style.css'
 import { alignUnifiedMetrics, computeMaxLatency, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
 import { Badge } from './components/ui/badge'
@@ -12252,13 +12253,8 @@ function proxyPathReusableTargetOptions(data: any, serverID: number): ProxyPathR
     }
     if (step.server_id !== serverID) continue
     const config = parseConfig(step.config_json || '{}') || {}
-    const protocol = config.chain_protocol === 'vless' || config.chain_protocol === 'mieru' ? config.chain_protocol : 'shadowsocks'
-    const key = protocol === 'shadowsocks'
-      ? `shadowsocks:${String(config.chain_method || '2022-blake3-aes-128-gcm')}`
-      : protocol === 'vless'
-        ? `vless:${String(config.reality_handshake_server || 'cdn.icloud-content.com').toLowerCase()}:${Number(config.reality_handshake_port || 443)}`
-        : 'mieru'
-    generatedCounts.set(key, (generatedCounts.get(key) || 0) + 1)
+    const key = proxyPathGeneratedReuseCountKey(config)
+    if (key) generatedCounts.set(key, (generatedCounts.get(key) || 0) + 1)
   }
   const generated: ProxyPathReuseTargetOption[] = [
     { kind: 'generated', protocol: 'shadowsocks', chain_method: '2022-blake3-aes-128-gcm', label: 'SS 2022-128', visibility: 'system_hidden', active_reuse_count: generatedCounts.get('shadowsocks:2022-blake3-aes-128-gcm') || 0, eligible: true },
