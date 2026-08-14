@@ -233,6 +233,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/me/devices/", s.auth(s.selfUserDevices, model.RoleViewer))
 	mux.HandleFunc("/api/v1/page-data", s.auth(s.pageData, model.RoleNone))
 	mux.HandleFunc("/api/v1/events", s.auth(s.uiEvents, model.RoleNone))
+	mux.HandleFunc("/api/v1/poll-events", s.auth(s.uiPollEvents, model.RoleNone))
 	mux.HandleFunc("/api/v1/dashboard/summary", s.auth(s.dashboard, model.RoleOperator))
 	mux.HandleFunc("/api/v1/settings/base-path/retry", s.auth(s.settingsBasePathRetry, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/settings", s.auth(s.settings, model.RoleAdmin))
@@ -478,7 +479,7 @@ func (w *responseStatusWriter) Write(p []byte) (int, error) {
 
 func (s *Server) requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || !strings.HasPrefix(r.URL.Path, "/api/") {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/api/v2/ui/poll-events" || !strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -11070,7 +11071,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 			log.Printf("save latency probe report server=%d: %v", server.ID, err)
 		} else {
 			acceptedReportID = report.ReportID
-			s.publishRealtime("server_runtime", "server_metrics", "latency_probes")
+			s.publishRealtime("server_metrics", "latency_probes")
 		}
 	}
 	if raw, ok := msg["presence_delta"]; ok {
@@ -11107,7 +11108,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 			old, next, err := s.store.UpsertHealthTransition(ctx, h, window)
 			if err == nil {
 				s.completeAgentUpdateAfterReconnect(ctx, server.ID, h.AgentBuild)
-				s.publishRealtime("server_runtime", "server_metrics")
+				s.publishRealtime("server_metrics")
 			}
 			if err == nil && old == model.ServerOffline && next == model.ServerOnline {
 				log.Printf("server %d(%s) recovered and is online again", server.ID, safeLogField(current.Name))

@@ -221,7 +221,7 @@ func (s *Server) checkOfflineAt(ctx context.Context, now time.Time) {
 		}
 	}
 	if len(items) > 0 {
-		s.publishRealtime("server_runtime", "server_metrics")
+		s.publishRealtime("server_metrics")
 	}
 	s.fireDueOfflineNotices(ctx, merge, now)
 	s.fireDueOnlineNotices(ctx, now)

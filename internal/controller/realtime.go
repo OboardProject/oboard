@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,20 +17,48 @@ import (
 	"github.com/OboardProject/oboard/internal/security"
 )
 
-const realtimeProtocolVersion = 1
+const realtimeProtocolVersion = 2
+
+const uiEventPollTimeout = 25 * time.Second
 
 type realtimeMessage struct {
-	Type      string   `json:"type"`
-	Protocol  int      `json:"protocol,omitempty"`
-	Sequence  uint64   `json:"sequence"`
-	Resources []string `json:"resources,omitempty"`
+	Type            string                   `json:"type"`
+	Protocol        int                      `json:"protocol,omitempty"`
+	Sequence        uint64                   `json:"sequence"`
+	Resources       []string                 `json:"resources,omitempty"`
+	ServerSnapshots []realtimeServerSnapshot `json:"server_snapshots,omitempty"`
+}
+
+type realtimeServerSnapshot struct {
+	ID                    int64              `json:"id"`
+	Status                model.ServerStatus `json:"status"`
+	CPUUsagePercent       float64            `json:"cpu_usage_percent"`
+	MemoryUsedBytes       uint64             `json:"memory_used_bytes"`
+	MemoryTotalBytes      uint64             `json:"memory_total_bytes"`
+	AgentMemoryBytes      uint64             `json:"agent_memory_bytes"`
+	DiskBytes             uint64             `json:"disk_bytes"`
+	DiskTotalBytes        uint64             `json:"disk_total_bytes"`
+	TCPConnectionCount    uint64             `json:"tcp_connection_count"`
+	UDPConnectionCount    uint64             `json:"udp_connection_count"`
+	ProcessCount          uint64             `json:"process_count"`
+	NetworkUploadBPS      uint64             `json:"network_upload_bps"`
+	NetworkDownloadBPS    uint64             `json:"network_download_bps"`
+	TrafficUploadBytes    uint64             `json:"traffic_upload_bytes"`
+	TrafficDownloadBytes  uint64             `json:"traffic_download_bytes"`
+	ConnectivityStatus    string             `json:"connectivity_status"`
+	ConnectivityLatencyMS int64              `json:"connectivity_latency_ms"`
+	ConnectivityCheckedAt *time.Time         `json:"connectivity_checked_at,omitempty"`
+	ConnectivityError     string             `json:"connectivity_error,omitempty"`
+	TelemetryUpdatedAt    *time.Time         `json:"telemetry_updated_at,omitempty"`
+	LastSeenAt            *time.Time         `json:"last_seen_at,omitempty"`
 }
 
 type realtimeBroker struct {
-	mu       sync.Mutex
-	clients  map[*realtimeClient]struct{}
-	sequence atomic.Uint64
-	closed   bool
+	mu                sync.Mutex
+	clients           map[*realtimeClient]struct{}
+	resourceSequences map[string]uint64
+	sequence          atomic.Uint64
+	closed            bool
 }
 
 type realtimeClient struct {
@@ -39,16 +68,37 @@ type realtimeClient struct {
 	sequence   uint64
 	mergeCount int
 	resync     bool
+	mode       realtimeClientMode
 	closed     bool
 	wake       chan struct{}
 }
 
+type realtimeClientMode uint8
+
+const (
+	realtimeClientAll realtimeClientMode = iota
+	realtimeClientPolling
+	realtimeClientLive
+)
+
 func newRealtimeBroker() *realtimeBroker {
-	return &realtimeBroker{clients: make(map[*realtimeClient]struct{})}
+	return &realtimeBroker{clients: make(map[*realtimeClient]struct{}), resourceSequences: make(map[string]uint64)}
 }
 
 func (b *realtimeBroker) subscribe(role model.Role) (*realtimeClient, uint64, bool) {
-	client := &realtimeClient{role: role, pending: make(map[string]struct{}), wake: make(chan struct{}, 1)}
+	return b.subscribeMode(role, realtimeClientAll)
+}
+
+func (b *realtimeBroker) subscribePolling(role model.Role) (*realtimeClient, uint64, bool) {
+	return b.subscribeMode(role, realtimeClientPolling)
+}
+
+func (b *realtimeBroker) subscribeLive(role model.Role) (*realtimeClient, uint64, bool) {
+	return b.subscribeMode(role, realtimeClientLive)
+}
+
+func (b *realtimeBroker) subscribeMode(role model.Role, mode realtimeClientMode) (*realtimeClient, uint64, bool) {
+	client := &realtimeClient{role: role, mode: mode, pending: make(map[string]struct{}), wake: make(chan struct{}, 1)}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
@@ -79,9 +129,32 @@ func (b *realtimeBroker) publish(resources ...string) {
 	if b.closed {
 		return
 	}
+	for _, resource := range resources {
+		b.resourceSequences[resource] = sequence
+	}
 	for client := range b.clients {
 		client.enqueue(sequence, resources)
 	}
+}
+
+func (b *realtimeBroker) changesSince(role model.Role, since uint64) realtimeMessage {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	sequence := b.sequence.Load()
+	if since > sequence {
+		return realtimeMessage{Type: "resync_required", Sequence: sequence}
+	}
+	resources := make([]string, 0)
+	for resource, changedAt := range b.resourceSequences {
+		if changedAt > since && realtimeClientAllowsResource(role, realtimeClientPolling, resource) {
+			resources = append(resources, resource)
+		}
+	}
+	if len(resources) == 0 {
+		return realtimeMessage{Type: "ready", Protocol: realtimeProtocolVersion, Sequence: sequence}
+	}
+	sort.Strings(resources)
+	return realtimeMessage{Type: "invalidate", Sequence: sequence, Resources: resources}
 }
 
 func (b *realtimeBroker) close() {
@@ -110,7 +183,7 @@ func (c *realtimeClient) enqueue(sequence uint64, resources []string) {
 	}
 	allowed := make([]string, 0, len(resources))
 	for _, resource := range resources {
-		if roleAllows(c.role, realtimeResourceRole(resource)) {
+		if realtimeClientAllowsResource(c.role, c.mode, resource) {
 			allowed = append(allowed, resource)
 		}
 	}
@@ -132,6 +205,30 @@ func (c *realtimeClient) enqueue(sequence uint64, resources []string) {
 	select {
 	case c.wake <- struct{}{}:
 	default:
+	}
+}
+
+func realtimeClientAllowsResource(role model.Role, mode realtimeClientMode, resource string) bool {
+	if !roleAllows(role, realtimeResourceRole(resource)) {
+		return false
+	}
+	live := realtimeLiveResource(resource)
+	switch mode {
+	case realtimeClientPolling:
+		return !live
+	case realtimeClientLive:
+		return live
+	default:
+		return true
+	}
+}
+
+func realtimeLiveResource(resource string) bool {
+	switch resource {
+	case "server_metrics", "latency_probes":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -261,7 +358,7 @@ func (s *Server) uiEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := currentRole(r)
-	client, sequence, ok := s.realtime.subscribe(role)
+	client, sequence, ok := s.realtime.subscribeLive(role)
 	if !ok {
 		fail(w, errors.New("realtime service unavailable"), http.StatusServiceUnavailable)
 		return
@@ -278,7 +375,14 @@ func (s *Server) uiEvents(w http.ResponseWriter, r *http.Request) {
 	conn.SetPongHandler(func(string) error {
 		return conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	})
-	if err := writeRealtimeMessage(conn, realtimeMessage{Type: "ready", Protocol: realtimeProtocolVersion, Sequence: sequence}); err != nil {
+	ready := realtimeMessage{Type: "ready", Protocol: realtimeProtocolVersion, Sequence: sequence}
+	if roleAllows(role, model.RoleOperator) {
+		ready.ServerSnapshots, err = s.realtimeServerSnapshots(r.Context())
+		if err != nil {
+			return
+		}
+	}
+	if err := writeRealtimeMessage(conn, ready); err != nil {
 		return
 	}
 
@@ -305,6 +409,12 @@ func (s *Server) uiEvents(w http.ResponseWriter, r *http.Request) {
 			if !available {
 				return
 			}
+			message.Type = "server_snapshot"
+			message.Resources = nil
+			message.ServerSnapshots, err = s.realtimeServerSnapshots(r.Context())
+			if err != nil {
+				return
+			}
 			if err := writeRealtimeMessage(conn, message); err != nil {
 				return
 			}
@@ -318,6 +428,82 @@ func (s *Server) uiEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+}
+
+func (s *Server) realtimeServerSnapshots(ctx context.Context) ([]realtimeServerSnapshot, error) {
+	servers, err := s.store.ListServers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	snapshots := make([]realtimeServerSnapshot, 0, len(servers))
+	for _, server := range servers {
+		snapshots = append(snapshots, realtimeServerSnapshot{
+			ID:                    server.ID,
+			Status:                server.Status,
+			CPUUsagePercent:       server.CPUUsagePercent,
+			MemoryUsedBytes:       server.MemoryUsedBytes,
+			MemoryTotalBytes:      server.MemoryTotalBytes,
+			AgentMemoryBytes:      server.AgentMemoryBytes,
+			DiskBytes:             server.DiskBytes,
+			DiskTotalBytes:        server.DiskTotalBytes,
+			TCPConnectionCount:    server.TCPConnectionCount,
+			UDPConnectionCount:    server.UDPConnectionCount,
+			ProcessCount:          server.ProcessCount,
+			NetworkUploadBPS:      server.NetworkUploadBPS,
+			NetworkDownloadBPS:    server.NetworkDownloadBPS,
+			TrafficUploadBytes:    server.TrafficUploadBytes,
+			TrafficDownloadBytes:  server.TrafficDownloadBytes,
+			ConnectivityStatus:    server.ConnectivityStatus,
+			ConnectivityLatencyMS: server.ConnectivityLatencyMS,
+			ConnectivityCheckedAt: server.ConnectivityCheckedAt,
+			ConnectivityError:     server.ConnectivityError,
+			TelemetryUpdatedAt:    server.TelemetryUpdatedAt,
+			LastSeenAt:            server.LastSeenAt,
+		})
+	}
+	return snapshots, nil
+}
+
+func (s *Server) uiPollEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		method(w)
+		return
+	}
+	since := uint64(0)
+	if raw := strings.TrimSpace(r.URL.Query().Get("since")); raw != "" {
+		value, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			fail(w, errors.New("invalid event sequence"), http.StatusBadRequest)
+			return
+		}
+		since = value
+	}
+	role := currentRole(r)
+	client, sequence, ok := s.realtime.subscribePolling(role)
+	if !ok {
+		fail(w, errors.New("event polling unavailable"), http.StatusServiceUnavailable)
+		return
+	}
+	defer s.realtime.unsubscribe(client)
+	if sequence != since {
+		write(w, http.StatusOK, s.realtime.changesSince(role, since))
+		return
+	}
+	timer := time.NewTimer(uiEventPollTimeout)
+	defer timer.Stop()
+	select {
+	case <-r.Context().Done():
+		return
+	case <-client.wake:
+		message, available := client.drain()
+		if !available {
+			fail(w, errors.New("event polling unavailable"), http.StatusServiceUnavailable)
+			return
+		}
+		write(w, http.StatusOK, message)
+	case <-timer.C:
+		write(w, http.StatusOK, s.realtime.changesSince(role, since))
 	}
 }
 

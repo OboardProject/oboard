@@ -4,7 +4,7 @@ import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { realtimeHandshakeTimeoutMS, useRealtimeEvents, type RealtimeEvent, type RealtimeStatus } from './realtime'
+import { realtimeHandshakeTimeoutMS, usePollingEvents, useServerTelemetry, type PollRequest, type RealtimeEvent, type RealtimeStatus } from './realtime'
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = []
@@ -29,13 +29,19 @@ class FakeWebSocket {
   }
 }
 
-function Harness({ enabled = true, onStatus, onEvent }: { enabled?: boolean; onStatus: (status: RealtimeStatus) => void; onEvent: (event: RealtimeEvent) => void }) {
-  const status = useRealtimeEvents(enabled, 'ws://localhost/events', onEvent)
+function TelemetryHarness({ enabled = true, onStatus, onEvent }: { enabled?: boolean; onStatus: (status: RealtimeStatus) => void; onEvent: (event: RealtimeEvent) => void }) {
+  const status = useServerTelemetry(enabled, 'ws://localhost/events', onEvent)
   useEffect(() => { onStatus(status) }, [onStatus, status])
   return null
 }
 
-describe('useRealtimeEvents', () => {
+function PollingHarness({ request, onStatus, onEvent }: { request: PollRequest; onStatus: (status: RealtimeStatus) => void; onEvent: (event: RealtimeEvent) => void }) {
+  const status = usePollingEvents(true, request, onEvent)
+  useEffect(() => { onStatus(status) }, [onStatus, status])
+  return null
+}
+
+describe('panel transports', () => {
   let root: Root
   let container: HTMLDivElement
 
@@ -58,47 +64,54 @@ describe('useRealtimeEvents', () => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false
   })
 
-  it('opens the first connection without marking ready as a resync', () => {
+  it('accepts protocol 2 telemetry snapshots without business invalidations', () => {
     const statuses: RealtimeStatus[] = []
     const events: RealtimeEvent[] = []
-    act(() => root.render(<Harness onStatus={status => statuses.push(status)} onEvent={event => events.push(event)} />))
+    act(() => root.render(<TelemetryHarness onStatus={status => statuses.push(status)} onEvent={event => events.push(event)} />))
 
     expect(FakeWebSocket.instances).toHaveLength(1)
-    act(() => FakeWebSocket.instances[0].emit({ type: 'ready', protocol: 1, sequence: 0 }))
+    act(() => FakeWebSocket.instances[0].emit({ type: 'ready', protocol: 2, sequence: 0, server_snapshots: [] }))
+    act(() => FakeWebSocket.instances[0].emit({ type: 'server_snapshot', sequence: 1, server_snapshots: [{ id: 1, status: 'online' } as any] }))
 
     expect(statuses[statuses.length - 1]).toBe('open')
-    expect(events).toEqual([{ type: 'ready', protocol: 1, sequence: 0, reconnected: false }])
+    expect(events[1].type).toBe('server_snapshot')
+    expect(events[1].server_snapshots?.[0].id).toBe(1)
     act(() => vi.advanceTimersByTime(realtimeHandshakeTimeoutMS))
     expect(FakeWebSocket.instances[0].closed).toBe(false)
   })
 
-  it('reports connecting immediately when realtime is enabled after login', () => {
-    const statuses: RealtimeStatus[] = []
-    const onStatus = (status: RealtimeStatus) => { statuses.push(status) }
-    const onEvent = () => {}
-    act(() => root.render(<Harness enabled={false} onStatus={onStatus} onEvent={onEvent} />))
-    expect(statuses[statuses.length - 1]).toBe('fallback')
-
-    act(() => root.render(<Harness enabled onStatus={onStatus} onEvent={onEvent} />))
-    expect(statuses[statuses.length - 1]).toBe('connecting')
-    expect(FakeWebSocket.instances).toHaveLength(1)
+  it('rejects business invalidations on the telemetry socket', () => {
+    act(() => root.render(<TelemetryHarness onStatus={() => {}} onEvent={() => {}} />))
+    act(() => FakeWebSocket.instances[0].emit({ type: 'ready', protocol: 2, sequence: 0 }))
+    act(() => FakeWebSocket.instances[0].emit({ type: 'invalidate', sequence: 1, resources: ['tasks'] }))
+    expect(FakeWebSocket.instances[0].closed).toBe(true)
   })
 
-  it('falls back after the handshake timeout and stays there until reconnect is ready', () => {
+  it('falls back after a telemetry handshake timeout', () => {
     const statuses: RealtimeStatus[] = []
-    const events: RealtimeEvent[] = []
-    act(() => root.render(<Harness onStatus={status => statuses.push(status)} onEvent={event => events.push(event)} />))
-
+    act(() => root.render(<TelemetryHarness onStatus={status => statuses.push(status)} onEvent={() => {}} />))
     act(() => vi.advanceTimersByTime(realtimeHandshakeTimeoutMS))
     expect(statuses[statuses.length - 1]).toBe('fallback')
     expect(FakeWebSocket.instances[0].closed).toBe(true)
+  })
 
-    act(() => vi.advanceTimersByTime(1_000))
-    expect(FakeWebSocket.instances).toHaveLength(2)
-    expect(statuses[statuses.length - 1]).toBe('fallback')
+  it('uses HTTP polling for business invalidations and advances the sequence', async () => {
+    const statuses: RealtimeStatus[] = []
+    const events: RealtimeEvent[] = []
+    const pending = new Promise<RealtimeEvent>(() => {})
+    const request = vi.fn<PollRequest>()
+      .mockResolvedValueOnce({ type: 'invalidate', sequence: 7, resources: ['tasks'] })
+      .mockImplementation(() => pending)
 
-    act(() => FakeWebSocket.instances[1].emit({ type: 'ready', protocol: 1, sequence: 3 }))
+    await act(async () => {
+      root.render(<PollingHarness request={request} onStatus={status => statuses.push(status)} onEvent={event => events.push(event)} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(request.mock.calls[0][0]).toBe('/poll-events?since=0')
+    expect(request.mock.calls[1][0]).toBe('/poll-events?since=7')
+    expect(events).toEqual([{ type: 'invalidate', sequence: 7, resources: ['tasks'], reconnected: false }])
     expect(statuses[statuses.length - 1]).toBe('open')
-    expect(events[events.length - 1]).toEqual({ type: 'ready', protocol: 1, sequence: 3, reconnected: true })
   })
 })

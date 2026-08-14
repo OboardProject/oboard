@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +60,33 @@ func TestRealtimeBrokerFiltersAndCoalescesResources(t *testing.T) {
 	message, ok = viewer.drain()
 	if !ok || message.Type != "resync_required" {
 		t.Fatalf("slow client event = %#v, want resync_required", message)
+	}
+}
+
+func TestRealtimeBrokerSeparatesHTTPPollingFromLiveTelemetry(t *testing.T) {
+	broker := newRealtimeBroker()
+	polling, sequence, ok := broker.subscribePolling(model.RoleOperator)
+	if !ok {
+		t.Fatal("polling subscription failed")
+	}
+	live, _, ok := broker.subscribeLive(model.RoleOperator)
+	if !ok {
+		t.Fatal("live subscription failed")
+	}
+	broker.publish("tasks", "server_metrics")
+	<-polling.wake
+	pollEvent, ok := polling.drain()
+	if !ok || !slices.Equal(pollEvent.Resources, []string{"tasks"}) {
+		t.Fatalf("poll event = %#v", pollEvent)
+	}
+	<-live.wake
+	liveEvent, ok := live.drain()
+	if !ok || !slices.Equal(liveEvent.Resources, []string{"server_metrics"}) {
+		t.Fatalf("live event = %#v", liveEvent)
+	}
+	changes := broker.changesSince(model.RoleOperator, sequence)
+	if changes.Type != "invalidate" || !slices.Equal(changes.Resources, []string{"tasks"}) {
+		t.Fatalf("poll changes = %#v", changes)
 	}
 }
 
@@ -123,7 +151,7 @@ func TestUIRealtimeEventsRequireCookieAndSameOrigin(t *testing.T) {
 	if err := conn.ReadJSON(&ready); err != nil {
 		t.Fatal(err)
 	}
-	if ready.Type != "ready" || ready.Protocol != realtimeProtocolVersion {
+	if ready.Type != "ready" || ready.Protocol != realtimeProtocolVersion || len(ready.ServerSnapshots) != 0 {
 		t.Fatalf("ready event = %#v", ready)
 	}
 
@@ -139,13 +167,29 @@ func TestUIRealtimeEventsRequireCookieAndSameOrigin(t *testing.T) {
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("create server status = %d", response.StatusCode)
 	}
+	app.publishRealtime("server_metrics")
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	var event realtimeMessage
 	if err := conn.ReadJSON(&event); err != nil {
 		t.Fatal(err)
 	}
-	if event.Type != "invalidate" || !slices.Contains(event.Resources, "servers") || !slices.Contains(event.Resources, "topology") || slices.Contains(event.Resources, "tasks") || slices.Contains(event.Resources, "server_metrics") {
-		t.Fatalf("server mutation event = %#v", event)
+	if event.Type != "server_snapshot" || len(event.Resources) != 0 || len(event.ServerSnapshots) != 1 || event.ServerSnapshots[0].ID == 0 {
+		t.Fatalf("server telemetry event = %#v", event)
+	}
+
+	pollRequest, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v2/ui/poll-events?since="+strconv.FormatUint(ready.Sequence, 10), nil)
+	pollRequest.Header.Set("Authorization", "Bearer "+token)
+	pollResponse, err := server.Client().Do(pollRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pollResponse.Body.Close()
+	var pollEvent realtimeMessage
+	if err := json.NewDecoder(pollResponse.Body).Decode(&pollEvent); err != nil {
+		t.Fatal(err)
+	}
+	if pollResponse.StatusCode != http.StatusOK || pollEvent.Type != "invalidate" || !slices.Contains(pollEvent.Resources, "servers") || slices.Contains(pollEvent.Resources, "server_metrics") {
+		t.Fatalf("HTTP poll event = %#v status=%d", pollEvent, pollResponse.StatusCode)
 	}
 }
 

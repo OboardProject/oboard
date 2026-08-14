@@ -104,7 +104,7 @@ import v2rayNClientIcon from './assets/subscription-clients/v2rayn.png'
 import clashClassicClientIcon from './assets/subscription-clients/clash-classic.png'
 import { PageDataRequestCoordinator } from './page-data'
 import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
-import { useRealtimeEvents, type RealtimeEvent, type RealtimeStatus } from './realtime'
+import { usePollingEvents, useServerTelemetry, type RealtimeEvent, type RealtimeStatus, type ServerTelemetrySnapshot } from './realtime'
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { getServerTimeIssue } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
@@ -867,7 +867,7 @@ const realtimeResourcePages: Record<string, string[]> = {
   server_runtime: ['dashboard', 'servers'],
   server_metrics: ['dashboard', 'servers'],
   traffic: ['dashboard', 'servers', 'users', 'subscriptions', 'account'],
-  tasks: ['dashboard', 'tasks'],
+  tasks: ['dashboard'],
   deployments: ['dashboard', 'servers', 'proxy-paths', 'tasks'],
   probes: ['servers', 'proxy-paths', 'dns', 'mtu', 'port-forwards', 'tasks'],
   topology: ['servers', 'proxy-paths', 'plans', 'subscriptions', 'settings'],
@@ -1507,6 +1507,7 @@ function App() {
   type PageCacheEntry = { data: any; fetchedAt: number }
   const pageCacheRef = useRef<Record<string, PageCacheEntry>>({})
   const dirtyPagesRef = useRef(new Set<string>())
+  const latestTelemetryRef = useRef<ServerTelemetrySnapshot[]>([])
   const prefetchSchedulerRef = useRef<PagePrefetchScheduler | null>(null)
   const realtimeRefreshTimerRef = useRef<number | undefined>(undefined)
   const realtimeVisibleRefreshPendingRef = useRef(false)
@@ -1524,6 +1525,7 @@ function App() {
     setSessionUser(null)
     setData({})
     pageCacheRef.current = {}
+    latestTelemetryRef.current = []
     pageRequestsRef.current.reset()
     dirtyPagesRef.current.clear()
     prefetchSchedulerRef.current?.clear()
@@ -1644,7 +1646,7 @@ function App() {
   }
 
   const cachePageData = (page: string, data: any) => {
-    pageCacheRef.current[page] = { data: { ...data, load_errors: [] as string[] }, fetchedAt: Date.now() }
+    pageCacheRef.current[page] = { data: mergeServerTelemetryData({ ...data, load_errors: [] as string[] }, latestTelemetryRef.current), fetchedAt: Date.now() }
   }
 
   // warmPage fetches a page in the background and stores it in the per-tab
@@ -1687,8 +1689,9 @@ function App() {
     }
     const seq = ++loadSeq.current
     const requestToken = token
-    const background = Boolean(opts?.background)
+    const background = Boolean(opts?.background || pageCacheRef.current[page])
     const updateInProgressSnapshot = controllerUpdateInProgressRef.current
+    dirtyPagesRef.current.delete(page)
     // Only show the global loading flag when this tab has no cached payload yet.
     // Background revalidation must not flash skeletons during a crossfade.
     if (!background) setLoading(true)
@@ -1697,13 +1700,11 @@ function App() {
       if (!pageRequestsRef.current.isCurrent(page, response)) return
       const next = response.data
       if (requestToken !== activeTokenRef.current) return
-      const dirtiedDuringRequest = dirtyPagesRef.current.has(page)
-      if (background && dirtiedDuringRequest) return
       if (next.current_user && seq === loadSeq.current) {
         setSessionUser(next.current_user)
         sessionStorage.setItem('oboard.user', JSON.stringify(next.current_user))
       }
-      const merged = { ...next, load_errors: [] as string[] }
+      const merged = mergeServerTelemetryData({ ...next, load_errors: [] as string[] }, latestTelemetryRef.current)
       // Always warm the per-tab cache, even if the user has already navigated away.
       // That way a quick A→B→A return crossfades into fresh content without a blank stage.
       pageCacheRef.current[page] = { data: merged, fetchedAt: Date.now() }
@@ -1736,10 +1737,10 @@ function App() {
     }
     const pending = pageRequestsRef.current.pending(page)
     if (pending) {
-      const retry = () => {
-        if (page === activeTabRef.current && dirtyPagesRef.current.has(page)) scheduleRealtimePageRefresh(page)
-      }
-      void pending.then(retry, retry)
+      // A page request already issued after the triggering mutation is the
+      // reconciliation. Consume the invalidation instead of aborting it and
+      // issuing the same heavy page-data request a second time.
+      dirtyPagesRef.current.delete(page)
       return
     }
     if (realtimeRefreshTimerRef.current !== undefined) window.clearTimeout(realtimeRefreshTimerRef.current)
@@ -1748,7 +1749,7 @@ function App() {
       if (page !== activeTabRef.current) return
       if (!dirtyPagesRef.current.delete(page)) return
       void load(page, { background: true, forceFresh: true })
-    }, 200)
+    }, 600)
   }
 
   const handleRealtimeEvent = (event: RealtimeEvent) => {
@@ -1773,7 +1774,45 @@ function App() {
     scheduleRealtimePageRefresh(tab)
   }
 
-  const realtimeStatus = useRealtimeEvents(Boolean(token), appWebSocketURL('/api/v2/ui/events'), handleRealtimeEvent)
+  const handleServerTelemetry = React.useCallback((event: RealtimeEvent) => {
+    const snapshots = event.server_snapshots || []
+    if (!snapshots.length) return
+    latestTelemetryRef.current = snapshots
+    Object.keys(pageCacheRef.current).forEach(page => {
+      const entry = pageCacheRef.current[page]
+      pageCacheRef.current[page] = { ...entry, data: mergeServerTelemetryData(entry.data, snapshots) }
+    })
+    setData((current: any) => mergeServerTelemetryData(current, snapshots))
+  }, [])
+
+  const realtimeStatus = usePollingEvents(Boolean(token), client.request, handleRealtimeEvent)
+  const serverTelemetryEnabled = Boolean(token && sessionUser && roleRanks[sessionUser.role] >= roleRanks.operator)
+  const serverTelemetryStatus = useServerTelemetry(serverTelemetryEnabled, appWebSocketURL('/api/v2/ui/events'), handleServerTelemetry)
+
+  useEffect(() => {
+    if (!serverTelemetryEnabled || tab !== 'dashboard' || serverTelemetryStatus === 'open') return
+    let cancelled = false
+    let timer: number | undefined
+    const scheduleNext = () => {
+      if (!cancelled && document.visibilityState === 'visible') timer = window.setTimeout(refresh, 5000)
+    }
+    const refresh = async () => {
+      if (cancelled || document.visibilityState !== 'visible') return
+      try {
+        const result = await client.request('/servers')
+        if (!cancelled) handleServerTelemetry({ type: 'server_snapshot', sequence: 0, server_snapshots: result.servers || [] })
+      } catch {
+        // The normal page payload remains visible until the next fallback attempt.
+      } finally {
+        scheduleNext()
+      }
+    }
+    void refresh()
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [serverTelemetryEnabled, tab, serverTelemetryStatus, client, handleServerTelemetry])
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -1848,7 +1887,7 @@ function App() {
   }, [token, tab])
 
   useEffect(() => {
-    if (!token || realtimeStatus !== 'fallback' || ['automation', 'servers', 'tasks', 'settings'].includes(tab)) return
+    if (!token || realtimeStatus !== 'fallback' || ['automation', 'tasks', 'settings'].includes(tab)) return
     let cancelled = false
     let timer: number | undefined
     const scheduleNext = () => {
@@ -1969,6 +2008,7 @@ function App() {
       setSessionUser(null)
       setData({})
       pageCacheRef.current = {}
+      latestTelemetryRef.current = []
       pageRequestsRef.current.reset()
       dirtyPagesRef.current.clear()
       prefetchSchedulerRef.current?.clear()
@@ -1987,6 +2027,7 @@ function App() {
     setSessionUser(user)
     setData({})
     pageCacheRef.current = {}
+    latestTelemetryRef.current = []
     pageRequestsRef.current.reset()
     dirtyPagesRef.current.clear()
     prefetchSchedulerRef.current?.clear()
@@ -2288,7 +2329,7 @@ function App() {
             <div className="page-stage">
               <AnimatePresence initial={false} mode="popLayout">
                 <MotionPage key={tab}>
-                  {renderTab(tab, data, client, load, apply, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange)}
+                  {renderTab(tab, data, client, load, apply, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange)}
                 </MotionPage>
               </AnimatePresence>
             </div>
@@ -2615,7 +2656,7 @@ $ _`}</pre>
   )
 }
 
-function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange) {
+function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', serverTelemetryStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange) {
   if (tab === 'account') return (
     <AccountPage
       data={data}
@@ -2640,7 +2681,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
       ? <Dashboard data={data} loading={loading} displayName={displayName} attention={dashboardAttention} dismissAttention={dismissDashboardAttention} />
       : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} announcements={data.user_announcements || []} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('subscriptions')} />
   }
-  if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={realtimeStatus} />
+  if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={serverTelemetryStatus} />
   if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} apply={apply} loading={loading} topbarTarget={proxyPathTopbarTarget} />
   if (tab === 'inbounds') return <Inbounds data={data} client={client} load={load} />
   if (tab === 'outbounds') return <Outbounds data={data} client={client} load={load} />
@@ -2659,7 +2700,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'subscriptions') return sessionUser?.role === 'admin'
     ? <Subscriptions data={data} client={client} load={load} notify={notify} />
     : <MySubscriptions data={data} client={client} load={load} notify={notify} />
-  if (tab === 'tasks') return <Tasks data={data} client={client} loading={loading} realtimeStatus={realtimeStatus} />
+  if (tab === 'tasks') return <Tasks data={data} client={client} loading={loading} />
   if (tab === 'audit') return <AuditConsole data={data} client={client} loading={loading} notify={notify} />
   if (tab === 'automation') return <AutomationWorkspace data={data} client={client} notify={notify} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
   if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />
@@ -6696,6 +6737,20 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     />}</AnimatePresence>
     </div>
   </section>
+}
+
+function mergeServerTelemetryData(current: any, snapshots: ServerTelemetrySnapshot[]) {
+  if (!Array.isArray(current?.servers) || !snapshots.length) return current
+  const updates = new Map(snapshots.map(snapshot => [Number(snapshot.id), snapshot]))
+  const servers = (current.servers as Server[]).map(server => {
+    const snapshot = updates.get(Number(server.id))
+    return snapshot ? { ...server, ...snapshot } : server
+  })
+  return {
+    ...current,
+    servers,
+    server_metrics: appendLiveServerMetrics(current.server_metrics || [], servers),
+  }
 }
 
 function appendLiveServerMetrics(current: ServerMetricSample[], servers: Server[]) {
@@ -15806,7 +15861,7 @@ function NotificationChannelDialog({
   </MotionDialogPanel>
 }
 
-function Tasks({ data, client, loading: pageLoading, realtimeStatus }: any) {
+function Tasks({ data, client, loading: pageLoading }: any) {
   const [rows, setRows] = useState<any[]>(data.agent_tasks || [])
   const [manualRefreshing, setManualRefreshing] = useState(false)
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false)
@@ -15819,8 +15874,6 @@ function Tasks({ data, client, loading: pageLoading, realtimeStatus }: any) {
   hasActiveTasksRef.current = hasActiveTasks
 
   useEffect(() => { setRows(data.agent_tasks || []) }, [data.agent_tasks])
-  useEffect(() => { if (realtimeStatus === 'open') setRefreshFailed(false) }, [realtimeStatus])
-
   useEffect(() => {
     mountedRef.current = true
     return () => { mountedRef.current = false }
@@ -15850,7 +15903,6 @@ function Tasks({ data, client, loading: pageLoading, realtimeStatus }: any) {
   }, [client])
 
   useEffect(() => {
-    if (realtimeStatus !== 'fallback') return
     let cancelled = false
     let timer: number | undefined
 
@@ -15876,7 +15928,7 @@ function Tasks({ data, client, loading: pageLoading, realtimeStatus }: any) {
       if (timer !== undefined) window.clearTimeout(timer)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [loadTasks, realtimeStatus])
+  }, [loadTasks])
 
   const busy = manualRefreshing || pageLoading
   const refreshing = manualRefreshing || backgroundRefreshing
@@ -15888,9 +15940,9 @@ function Tasks({ data, client, loading: pageLoading, realtimeStatus }: any) {
         <p className="muted">一次下发、批量更新等操作会合并为一条记录。先看整体状态，再点开服务器，最后查看该服务器的具体子任务。</p>
       </div>
       <div className="section-actions">
-        <div className={`live-refresh-status ${refreshFailed ? 'is-error' : realtimeStatus === 'open' || hasActiveTasks ? 'is-active' : ''}`} title={realtimeStatus === 'open' ? '任务状态实时更新' : hasActiveTasks ? '进行中的任务每 3 秒更新' : '任务状态每 15 秒更新'}>
+        <div className={`live-refresh-status ${refreshFailed ? 'is-error' : 'is-active'}`} title={hasActiveTasks ? '进行中的任务通过 HTTP 每 3 秒更新' : '任务状态通过 HTTP 每 15 秒更新'}>
           <span className="live-refresh-dot" aria-hidden="true" />
-          <span>{refreshFailed ? '自动刷新暂时失败' : refreshing ? '正在更新任务' : realtimeStatus === 'open' ? '任务状态实时更新' : realtimeStatus === 'connecting' ? '正在连接实时更新' : '自动刷新已开启'}</span>
+          <span>{refreshFailed ? '自动刷新暂时失败' : refreshing ? '正在更新任务' : 'HTTP 自动刷新已开启'}</span>
           {refreshedTime ? <time dateTime={lastRefreshedAt?.toISOString()}>更新于 {refreshedTime}</time> : null}
         </div>
         <button className="ghost" onClick={() => void loadTasks('manual')} disabled={refreshing}>{refreshing ? '刷新中…' : '刷新'}</button>
