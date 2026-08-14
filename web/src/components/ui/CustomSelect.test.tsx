@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { CustomSelect } from './CustomSelect'
+import { Select } from './select'
 
 describe('CustomSelect', () => {
   let container: HTMLDivElement
@@ -44,5 +45,27 @@ describe('CustomSelect', () => {
     act(() => trigger.click())
     act(() => trigger.click())
     expect(document.body.querySelector('[aria-label="搜索服务器"]')).not.toBeNull()
+  })
+
+  it('correctly falls back option value to text content when value prop is omitted', () => {
+    let selectedValue = ''
+    const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      selectedValue = e.target.value
+    }
+
+    act(() => root.render(<Select value="AAAA" onChange={handleChange} aria-label="记录类型">
+      {['A', 'AAAA', 'CNAME', 'TXT'].map(type => <option key={type}>{type}</option>)}
+    </Select>))
+
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label="记录类型"]')!
+    expect(trigger.textContent).toContain('AAAA')
+
+    act(() => trigger.click())
+    const options = document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')
+    expect(options.length).toBe(4)
+
+    // Click 'CNAME'
+    act(() => options[2].click())
+    expect(selectedValue).toBe('CNAME')
   })
 })

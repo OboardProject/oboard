@@ -19,9 +19,12 @@ type ParsedOption = CustomSelectOption & { key: React.Key }
 function parseOptions(children: React.ReactNode): ParsedOption[] {
   return React.Children.toArray(children).flatMap((child, index) => {
     if (!React.isValidElement<React.OptionHTMLAttributes<HTMLOptionElement>>(child) || child.type !== 'option') return []
+    const fallbackValue = typeof child.props.children === 'string' || typeof child.props.children === 'number'
+      ? String(child.props.children)
+      : ''
     return [{
       key: child.key ?? index,
-      value: String(child.props.value ?? ''),
+      value: String(child.props.value !== undefined ? child.props.value : fallbackValue),
       label: child.props.children,
       disabled: child.props.disabled,
     }]

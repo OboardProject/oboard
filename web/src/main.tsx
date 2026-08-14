@@ -4571,7 +4571,7 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
     if (!zoneID || !recordDraft.name.trim() || !recordDraft.content.trim()) return
     setWorking('record-save')
     try {
-      await client.request(`/dns-records?dns_zone_id=${zoneID}`, { method: 'POST', body: JSON.stringify({ ...recordDraft, enabled: true }) })
+      await client.request(`/dns-records?dns_zone_id=${zoneID}`, { method: 'POST', body: JSON.stringify({ ...recordDraft, type: (recordDraft.type || 'A').toUpperCase(), enabled: true }) })
       closeRecordDialog()
       if (selectedZoneID === zoneID) await loadRecords(zoneID)
       else setSelectedZoneID(zoneID)
@@ -4653,7 +4653,18 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
 
 function DNSRecordDialog({ zoneOptions, zoneID, setZoneID, draft, setDraft, serverName, saving, onCancel, onSubmit }: { zoneOptions: { credential: DNSCredential; zone: DNSCredentialZone }[]; zoneID: number; setZoneID: (zoneID: number) => void; draft: ReturnType<typeof emptyDNSRecordDraft>; setDraft: React.Dispatch<React.SetStateAction<ReturnType<typeof emptyDNSRecordDraft>>>; serverName: (serverID?: number) => string; saving: boolean; onCancel: () => void; onSubmit: () => Promise<void> }) {
   const selectedOption = zoneOptions.find(item => item.zone.id === zoneID)
+  const selectedZoneName = selectedOption?.zone.zone_name?.trim() || ''
   const update = (patch: Partial<typeof draft>) => setDraft(current => ({ ...current, ...patch }))
+
+  const [hostPrefix, setHostPrefix] = useState(() => {
+    if (!draft.name || !selectedZoneName) return draft.name || ''
+    if (draft.name === selectedZoneName || draft.name === '@') return '@'
+    if (draft.name.endsWith(`.${selectedZoneName}`)) {
+      return draft.name.slice(0, -(selectedZoneName.length + 1))
+    }
+    return draft.name
+  })
+
   const formatOptionLabel = (credential: DNSCredential, zone: DNSCredentialZone) => {
     const accountName = credential.name?.trim()
     const zoneName = zone.zone_name?.trim()
@@ -4661,17 +4672,53 @@ function DNSRecordDialog({ zoneOptions, zoneID, setZoneID, draft, setDraft, serv
     const serverPart = zone.server_id ? ` · ${serverName(zone.server_id)}` : ''
     return `${namePart}${serverPart}`
   }
+
+  const handlePrefixChange = (rawPrefix: string) => {
+    let prefix = rawPrefix.trim()
+    if (selectedZoneName && prefix.endsWith(`.${selectedZoneName}`)) {
+      prefix = prefix.slice(0, -(selectedZoneName.length + 1))
+    } else if (selectedZoneName && prefix === selectedZoneName) {
+      prefix = '@'
+    }
+    setHostPrefix(prefix)
+    const fullName = prefix === '@' || !prefix ? selectedZoneName : `${prefix}.${selectedZoneName}`
+    update({ name: fullName })
+  }
+
+  const handleZoneChange = (nextZoneID: number) => {
+    setZoneID(nextZoneID)
+    const nextOption = zoneOptions.find(item => item.zone.id === nextZoneID)
+    const nextZoneName = nextOption?.zone.zone_name?.trim() || ''
+    if (nextZoneName) {
+      const fullName = hostPrefix === '@' || !hostPrefix ? nextZoneName : `${hostPrefix}.${nextZoneName}`
+      update({ name: fullName })
+    }
+  }
+
   return <MotionDialogPanel onCancel={onCancel} className="dns-record-dialog">
     <header className="dialog-head"><div><h2>添加解析记录</h2><p className="muted">为指定域名创建一条子域名解析。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body"><div className="form server-dialog-form labeled-form">
-      <FormField label="域名" required><Select value={zoneID} onChange={e => setZoneID(Number(e.target.value))}><option value={0}>选择域名</option>{zoneOptions.map(({ credential, zone }) => <option key={zone.id} value={zone.id}>{formatOptionLabel(credential, zone)}</option>)}</Select></FormField>
-      <FormField label="记录类型" required><Select value={draft.type} onChange={e => update({ type: e.target.value })}>{['A', 'AAAA', 'CNAME', 'TXT'].map(type => <option key={type}>{type}</option>)}</Select></FormField>
-      <FormField label="主机记录" required><input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="entry.example.com" autoCapitalize="none" /></FormField>
-      <FormField label="记录值" required><input value={draft.content} onChange={e => update({ content: e.target.value })} autoCapitalize="none" /></FormField>
+      <FormField label="域名" required><Select value={zoneID} onChange={e => handleZoneChange(Number(e.target.value))}><option value={0}>选择域名</option>{zoneOptions.map(({ credential, zone }) => <option key={zone.id} value={zone.id}>{formatOptionLabel(credential, zone)}</option>)}</Select></FormField>
+      <FormField label="记录类型" required><Select value={draft.type || 'A'} onChange={e => update({ type: e.target.value })}>{['A', 'AAAA', 'CNAME', 'TXT'].map(type => <option key={type} value={type}>{type}</option>)}</Select></FormField>
+      <FormField label="主机记录" required hint="支持填写子域名前缀（例如 hkp 或 *）；如需解析主域名请填写 @。">
+        <div className="dns-domain-input">
+          <input
+            value={hostPrefix}
+            onChange={e => handlePrefixChange(e.target.value)}
+            placeholder="例如：hkp 或 @"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            disabled={!selectedZoneName}
+          />
+          <span className="dns-domain-suffix">{selectedZoneName ? `.${selectedZoneName}` : '请先选择域名'}</span>
+        </div>
+      </FormField>
+      <FormField label="记录值" required><input value={draft.content} onChange={e => update({ content: e.target.value })} autoCapitalize="none" placeholder={draft.type === 'AAAA' ? '例如：2001:db8::1' : draft.type === 'CNAME' ? '例如：target.example.com' : draft.type === 'TXT' ? '例如：v=spf1...' : '例如：1.2.3.4'} /></FormField>
       <FormField label="解析备注" hint="备注属于这条子域名解析；自动创建时会写入入口和服务器信息。"><input value={draft.comment} maxLength={100} onChange={e => update({ comment: e.target.value })} placeholder="例如：东京入口" /></FormField>
       {selectedOption?.credential.provider === 'cloudflare' && <div className="switch-form-row"><span className="switch-form-label">Cloudflare 代理</span><Switch checked={draft.proxied} onChange={checked => update({ proxied: checked })} ariaLabel="Cloudflare 代理" /></div>}
     </div></div>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" onClick={() => void onSubmit()} disabled={saving || !zoneID || !draft.name.trim() || !draft.content.trim()}>{saving ? '创建中...' : '添加记录'}</button></footer>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" onClick={() => void onSubmit()} disabled={saving || !zoneID || !hostPrefix.trim() || !draft.content.trim()}>{saving ? '创建中...' : '添加记录'}</button></footer>
   </MotionDialogPanel>
 }
 
