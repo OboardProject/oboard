@@ -8952,7 +8952,7 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
 }
 
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
-type RoutingDraft = { server_id: number; proxy_path_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; interface_name: string; enabled: boolean }
+type RoutingDraft = { server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; interface_name: string; enabled: boolean }
 type TransportMode = 'port-forward' | 'tunnel'
 type TransportDraft = { mode: TransportMode; name: string; source_server_id: number; target_server_id: number; listen_ip: string; listen_port: number; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; type: TunnelType; priority: number; config_json: string; enabled: boolean }
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step'; id: number; label: string; path_id?: number; node_id?: string }
@@ -9972,12 +9972,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       return next
     })
   }
-  const openRouting = (context?: { pathID?: number; stageStepID?: number; serverID?: number; canvasTargetID?: string }) => {
-    const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === context?.pathID)
-      || visibleProxyPaths[0]
-      || (data.proxy_paths || [])[0]
-    if (!path) return dialogs.alert({ title: '无法添加分流', message: '请先创建一条代理分支。' })
-    const stages = routingStages(data, path.id)
+  const openRouting = (context?: { pathID?: number; inboundID?: number; stageStepID?: number; serverID?: number; canvasTargetID?: string }) => {
+    const requestedPath = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === context?.pathID)
+    const path = requestedPath || (context?.inboundID ? undefined : visibleProxyPaths[0] || (data.proxy_paths || [])[0])
+    const inbound = entries.find(item => item.id === context?.inboundID)
+      || (!path ? selectedEntries.find(item => item.enabled !== false) : undefined)
+    if (!path && !inbound) return dialogs.alert({ title: '无法添加分流', message: '请先创建入口节点。' })
+    const stages = routingStages(data, path?.id || 0, inbound?.id || 0)
     const stage = stages.find(item => item.stepID === Number(context?.stageStepID || 0) && item.available)
       || stages.find(item => item.serverID === context?.serverID && item.available)
       || stages.find(item => item.available)
@@ -9988,7 +9989,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     if (!server) return dialogs.alert({ title: '无法添加分流', message: '请先添加服务器。' })
     setRoutingCanvasTargetID(context?.canvasTargetID || '')
     setRoutingDraft({
-      ...defaultRoutingDraft(server, path.id),
+      ...defaultRoutingDraft(server, path?.id || 0),
+      inbound_id: path ? 0 : Number(inbound?.id || 0),
       server_id: stage?.serverID || server.id,
       stage_step_id: stage?.stepID || 0,
     })
@@ -10005,19 +10007,28 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     const path = ((data.proxy_paths || []) as ProxyPath[])
       .filter(item => item.enabled !== false && item.inbound_id === inboundID)
       .sort((left, right) => left.id - right.id)[0]
-    if (!path) return dialogs.alert({ title: '此入口没有代理分支', message: '先从这个入口创建一条代理分支，再连接分流出口。' })
+    if (!path) return openRouting({ inboundID, canvasTargetID })
     const stage = routingStages(data, path.id).find(item => item.available)
     return openRouting({ pathID: path.id, stageStepID: stage?.stepID, serverID: stage?.serverID, canvasTargetID })
   }
   const submitRoutingDraft = async () => {
     if (!routingDraft) return
+    let uncommittedPathID = 0
     try {
+      let proxyPathID = routingDraft.proxy_path_id
+      if (!proxyPathID) {
+        if (!routingDraft.inbound_id) throw new Error('没有找到分流所属入口，请重新连接分流出口。')
+        const created = await createDirectBranch({ inbound_id: routingDraft.inbound_id })
+        if (!created?.id) throw new Error('未能创建入口默认直出分支。')
+        proxyPathID = created.id
+        uncommittedPathID = created.id
+      }
       const body: any = {
         server_id: routingDraft.server_id,
 			scope: 'path_stage',
-			proxy_path_id: routingDraft.proxy_path_id,
+			proxy_path_id: proxyPathID,
 			stage_step_id: routingDraft.stage_step_id || undefined,
-			sort_position: ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage' && rule.proxy_path_id === routingDraft.proxy_path_id && Number(rule.stage_step_id || 0) === routingDraft.stage_step_id).length,
+			sort_position: ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage' && rule.proxy_path_id === proxyPathID && Number(rule.stage_step_id || 0) === routingDraft.stage_step_id).length,
 			match_source: routingDraft.match_source,
 			rule_set_id: routingDraft.match_source === 'rule_set' ? routingDraft.rule_set_id : undefined,
         name: routingDraft.name,
@@ -10029,13 +10040,15 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       if (routingDraft.action === 'external' && routingDraft.external_outbound_id) body.external_outbound_id = routingDraft.external_outbound_id
       if (routingDraft.action === 'interface') body.interface_name = routingDraft.interface_name.trim()
       await client.request('/routing-rules', { method: 'POST', body: JSON.stringify(body) })
+      uncommittedPathID = 0
       if (routingCanvasTargetID) {
         removeCanvasRoutingTarget(routingCanvasTargetID)
         setRoutingCanvasTargetID('')
       }
       await load()
-		setRoutingDraft(current => current ? { ...current, name: '', match_value: current.match_kind === 'all' ? '' : current.match_value } : current)
+		setRoutingDraft(current => current ? { ...current, proxy_path_id: proxyPathID, inbound_id: 0, name: '', match_value: current.match_kind === 'all' ? '' : current.match_value } : current)
     } catch (e: any) {
+      if (uncommittedPathID) await client.request(`/proxy-paths/${uncommittedPathID}`, { method: 'DELETE' }).catch(() => undefined)
       await dialogs.alert({ title: '创建分流失败', message: localizeErrorMessage(e.message || e) })
     }
   }
@@ -11253,7 +11266,7 @@ function ProxyToolIcon({ kind }: { kind: ProxyToolAction }) {
 }
 
 function defaultRoutingDraft(server: Server, proxyPathID = 0): RoutingDraft {
-  return { server_id: server.id, proxy_path_id: proxyPathID, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, interface_name: '', enabled: true }
+  return { server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, interface_name: '', enabled: true }
 }
 
 function routingMatchJSON(kind: RoutingMatchKind, value: string) {
@@ -11312,11 +11325,11 @@ function defaultTransportDraft(servers: Server[], selected?: Server): TransportD
 
 type RoutingStage = { key: string; stepID: number; serverID: number; label: string; serverName: string; available: boolean; unavailableReason?: string }
 
-function routingStages(data: any, pathID: number): RoutingStage[] {
+function routingStages(data: any, pathID: number, inboundID = 0): RoutingStage[] {
   const path = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === pathID)
-  const inbound = path ? ((data.inbounds || []) as Inbound[]).find(item => item.id === path.inbound_id) : undefined
-  if (!path || !inbound) return []
-  const steps = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === pathID).sort((a, b) => a.position - b.position)
+  const inbound = ((data.inbounds || []) as Inbound[]).find(item => item.id === (path?.inbound_id || inboundID))
+  if (!inbound) return []
+  const steps = path ? ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === pathID).sort((a, b) => a.position - b.position) : []
   const processingIndex = steps.findIndex(step => step.processing_role)
   const transparentPrefix = processingIndex >= 0 && steps.slice(0, processingIndex + 1).some(step => step.transport_mode === 'port_forward')
   const controlled = steps.filter(step => step.node_type === 'server_inbound' && step.server_id)
@@ -11357,7 +11370,8 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
   const [ruleSetDraft, setRuleSetDraft] = useState({ name: '', url: '', format: 'singbox_source' as RoutingRuleSet['format'] })
   const update = (patch: Partial<RoutingDraft>) => setDraft(old => old ? { ...old, ...patch } : old)
   const paths = ((data.proxy_paths || []) as ProxyPath[]).filter(path => path.enabled !== false)
-  const stages = routingStages(data, draft.proxy_path_id)
+  const virtualInbound = ((data.inbounds || []) as Inbound[]).find(inbound => inbound.id === draft.inbound_id)
+  const stages = routingStages(data, draft.proxy_path_id, draft.inbound_id)
   const selectedStage = stages.find(stage => stage.stepID === draft.stage_step_id) || stages[0]
   const rules = ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage' && rule.proxy_path_id === draft.proxy_path_id)
   const ruleSets = ((data.routing_rule_sets || []) as RoutingRuleSet[])
@@ -11367,7 +11381,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
   useEffect(() => {
     if (!selectedStage) return
     if (draft.server_id !== selectedStage.serverID || draft.stage_step_id !== selectedStage.stepID) update({ server_id: selectedStage.serverID, stage_step_id: selectedStage.stepID, outbound_id: 0, external_outbound_id: 0 })
-  }, [draft.proxy_path_id, selectedStage?.key])
+  }, [draft.proxy_path_id, draft.inbound_id, selectedStage?.key])
 
   const persistPlacement = async (movingID: number, targetStageID: number, targetIndex?: number) => {
     const moving = rules.find(rule => rule.id === movingID)
@@ -11402,8 +11416,8 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
 
   return <MotionDialogPanel onCancel={onCancel} className="routing-composer-dialog" aria-labelledby="routing-dialog-title">
     <header className="dialog-head routing-composer-head">
-      <div><h2 id="routing-dialog-title">分流出口</h2><p className="muted">{paths.find(path => path.id === draft.proxy_path_id)?.name || '代理分支'}</p></div>
-      <FormField label="代理分支"><Select value={draft.proxy_path_id} onChange={event => { const pathID = Number(event.target.value); const first = routingStages(data, pathID).find(stage => stage.available); update({ proxy_path_id: pathID, stage_step_id: first?.stepID || 0, server_id: first?.serverID || 0 }) }}>{paths.map(path => <option key={path.id} value={path.id}>{path.name || `分支 ${path.id}`}</option>)}</Select></FormField>
+      <div><h2 id="routing-dialog-title">分流出口</h2><p className="muted">{paths.find(path => path.id === draft.proxy_path_id)?.name || (virtualInbound ? `${virtualInbound.name} · 默认直出` : '代理分支')}</p></div>
+      <FormField label="代理分支"><Select value={draft.proxy_path_id} onChange={event => { const pathID = Number(event.target.value); const inboundID = pathID ? 0 : Number(virtualInbound?.id || 0); const first = routingStages(data, pathID, inboundID).find(stage => stage.available); update({ proxy_path_id: pathID, inbound_id: inboundID, stage_step_id: first?.stepID || 0, server_id: first?.serverID || 0 }) }}>{virtualInbound && <option value={0}>{virtualInbound.name} · 默认直出</option>}{paths.map(path => <option key={path.id} value={path.id}>{path.name || `分支 ${path.id}`}</option>)}</Select></FormField>
       <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
     <div className="dialog-body routing-composer-body">
