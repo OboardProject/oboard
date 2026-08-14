@@ -45,6 +45,15 @@ export function graphRoutingStageSource(handle?: string | null) {
   return { pathID: Number(match[1]), stageStepID: match[2] === 'root' ? 0 : Number(match[2]) }
 }
 
+export function graphRoutingRuleSourceHandleID(ruleID: number) {
+  return `routing-rule-source-${ruleID}`
+}
+
+export function graphRoutingRuleSource(handle?: string | null) {
+  const match = /^routing-rule-source-(\d+)$/.exec(handle || '')
+  return match ? Number(match[1]) : 0
+}
+
 export function graphRoutingStageSiblingOffset(index: number, count: number, spacing = 260) {
   const siblingCount = Math.max(1, count)
   const siblingIndex = Math.max(0, Math.min(index, siblingCount - 1))

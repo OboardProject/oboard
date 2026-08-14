@@ -139,6 +139,7 @@ const (
 	RouteActionBlock        RouteAction = "block"
 	RouteActionOutbound     RouteAction = "outbound"
 	RouteActionExternal     RouteAction = "external"
+	RouteActionProxyPath    RouteAction = "proxy_path"
 	RouteActionInterface    RouteAction = "interface"
 	RouteActionSourcePrefix RouteAction = "source_prefix"
 )
@@ -1118,10 +1119,14 @@ type RoutingRule struct {
 	Action             RouteAction `json:"action"`
 	OutboundID         *int64      `json:"outbound_id,omitempty"`
 	ExternalOutboundID *int64      `json:"external_outbound_id,omitempty"`
+	TargetProxyPathID  *int64      `json:"target_proxy_path_id,omitempty"`
 	TargetServerID     *int64      `json:"target_server_id,omitempty"`
 	OutboundTag        string      `json:"outbound_tag"`
 	InterfaceName      string      `json:"interface_name,omitempty"`
 	SourcePrefix       string      `json:"source_prefix,omitempty"`
+	SyncGroupID        string      `json:"sync_group_id,omitempty"`
+	SyncSourceRuleID   *int64      `json:"sync_source_rule_id,omitempty"`
+	SyncEnabled        bool        `json:"sync_enabled,omitempty"`
 	Enabled            bool        `json:"enabled"`
 	CreatedAt          time.Time   `json:"created_at"`
 	UpdatedAt          time.Time   `json:"updated_at"`

@@ -428,6 +428,68 @@ func TestProxyPathStageRuleDoesNotAffectSiblingBranch(t *testing.T) {
 	}
 }
 
+func TestProxyPathStageRuleCanSwitchToIndependentTargetPathBeforeFallback(t *testing.T) {
+	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
+	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
+	serverC := model.Server{ID: 3, Name: "C", PublicIPv4: "203.0.113.3", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 32000, PortRangeEnd: 32100}
+	serverD := model.Server{ID: 4, Name: "D", PublicIPv4: "203.0.113.4", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 33000, PortRangeEnd: 33100}
+	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	fallback := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindChain, Name: "A-B-C", InboundID: root.ID, Secret: "fallback-secret", Enabled: true}
+	target := model.ProxyPath{ID: 51, Kind: model.ProxyPathKindChain, Name: "A-B-D", InboundID: root.ID, Secret: "target-secret", Enabled: true}
+	serverBID, serverCID, serverDID := serverB.ID, serverC.ID, serverD.ID
+	fallbackB := model.ProxyPathStep{ID: 101, PathID: fallback.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID}
+	fallbackC := model.ProxyPathStep{ID: 102, PathID: fallback.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverCID}
+	targetB := model.ProxyPathStep{ID: 201, PathID: target.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID}
+	targetD := model.ProxyPathStep{ID: 202, PathID: target.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverDID}
+	fallbackID, fallbackBID, targetID := fallback.ID, fallbackB.ID, target.ID
+	opts := ConfigOptions{
+		Servers:        []model.Server{serverA, serverB, serverC, serverD},
+		Inbounds:       []model.Inbound{root},
+		ProxyPaths:     []model.ProxyPath{fallback, target},
+		ProxyPathSteps: []model.ProxyPathStep{fallbackB, fallbackC, targetB, targetD},
+		InboundUsers:   []model.InboundUser{{InboundID: root.ID, UserID: 1, Enabled: true}},
+		RoutingRules: []model.RoutingRule{{
+			ID: 1, ServerID: serverB.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &fallbackID, StageStepID: &fallbackBID,
+			SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: "switch-at-b", MatchJSON: `{"domain":["special.example"]}`,
+			Action: model.RouteActionProxyPath, TargetProxyPathID: &targetID, Enabled: true,
+		}},
+	}
+	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	configB := mustServerConfig(t, serverB, []model.Inbound{root}, []model.User{user}, opts)
+	parsed := parseSingBoxConfig(t, configB)
+	rules := mapList(parsed.Route["rules"])
+	matchIndex := -1
+	var branchUsers []string
+	for index, rule := range rules {
+		if domains := stringList(rule["domain"]); len(domains) == 1 && domains[0] == "special.example" {
+			matchIndex = index
+			branchUsers = stringList(rule["auth_user"])
+			if rule["outbound"] != "path-51-step-2" {
+				t.Fatalf("matched rule outbound = %#v, want target path hop; config=%s", rule, configB)
+			}
+			break
+		}
+	}
+	if matchIndex < 0 || len(branchUsers) != 1 {
+		t.Fatalf("target-path rule or branch identity missing: %s", configB)
+	}
+	fallbackFound := false
+	for _, rule := range rules[matchIndex+1:] {
+		users := stringList(rule["auth_user"])
+		if rule["outbound"] == "path-50-step-2" && len(users) == 1 && users[0] == branchUsers[0] {
+			fallbackFound = true
+			break
+		}
+	}
+	if !fallbackFound {
+		t.Fatalf("fallback continuation did not remain after target-path rule: %s", configB)
+	}
+	configC := mustServerConfig(t, serverC, []model.Inbound{root}, []model.User{user}, opts)
+	if strings.Contains(configC, "special.example") {
+		t.Fatalf("rule leaked into fallback destination server: %s", configC)
+	}
+}
+
 func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
 	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 )
 
 // registerTrafficAutomationOperations wires the outbound, routing-rule,
@@ -282,6 +283,7 @@ func automationOutboundResult(outbound model.Outbound, changed []string) (any, e
 var routingRuleAutomationFields = map[string]bool{
 	"server_id": true, "name": true, "priority": true, "match_json": true, "action": true,
 	"outbound_id": true, "external_outbound_id": true, "target_server_id": true,
+	"target_proxy_path_id": true, "sync_source_rule_id": true, "sync_enabled": true,
 	"interface_name": true, "source_prefix": true, "enabled": true, "scope": true, "proxy_path_id": true,
 	"stage_step_id": true, "sort_position": true, "match_source": true, "rule_set_id": true,
 }
@@ -375,6 +377,9 @@ func (s *Server) validateRoutingRulePlacement(ctx context.Context, principal app
 	if err != nil {
 		return request, err
 	}
+	if err := s.validateRoutingRulePlacements(ctx, request.ProxyPathID, request.Placements); err != nil {
+		return request, err
+	}
 	for _, placement := range request.Placements {
 		rule, err := s.store.GetRoutingRule(ctx, placement.RuleID)
 		if err != nil {
@@ -428,10 +433,15 @@ func (s *Server) routingRuleAutomationCandidate(ctx context.Context, principal a
 			}
 		}
 		if _, ok := fields["name"]; !ok {
-			return model.RoutingRule{}, nil, errors.New("routing_rule.name is required")
+			if _, reuse := fields["sync_source_rule_id"]; !reuse {
+				return model.RoutingRule{}, nil, errors.New("routing_rule.name is required")
+			}
 		}
 		var rule model.RoutingRule
 		if err := json.Unmarshal(request.RoutingRule, &rule); err != nil {
+			return model.RoutingRule{}, nil, err
+		}
+		if _, err := s.prepareRoutingRuleReuse(ctx, &rule); err != nil {
 			return model.RoutingRule{}, nil, err
 		}
 		if err := s.validateRoutingRuleAutomationCandidate(ctx, principal, &rule); err != nil {
@@ -448,6 +458,12 @@ func (s *Server) routingRuleAutomationCandidate(ctx context.Context, principal a
 		}
 		if len(fields) == 0 {
 			return model.RoutingRule{}, nil, errors.New("changes must contain at least one routing rule field")
+		}
+		if _, ok := fields["sync_source_rule_id"]; ok {
+			return model.RoutingRule{}, nil, errors.New("sync_source_rule_id is create-only")
+		}
+		if _, ok := fields["sync_enabled"]; ok {
+			return model.RoutingRule{}, nil, errors.New("sync_enabled is create-only")
 		}
 		current, err := s.store.GetRoutingRule(ctx, request.RoutingRuleID)
 		if err != nil {
@@ -503,6 +519,9 @@ func (s *Server) validateRoutingRuleAutomationCandidate(ctx context.Context, pri
 	}
 	if rule.ProxyPathID != nil && !principal.AllowsInt64("proxy_path_ids", *rule.ProxyPathID) {
 		return errors.New("routing rule proxy path is outside the authorized boundary")
+	}
+	if rule.TargetProxyPathID != nil && !principal.AllowsInt64("proxy_path_ids", *rule.TargetProxyPathID) {
+		return errors.New("routing rule target proxy path is outside the authorized boundary")
 	}
 	if rule.OutboundID != nil {
 		outbound, err := s.store.GetOutbound(ctx, *rule.OutboundID)
@@ -566,6 +585,9 @@ func mergeRoutingRulePatch(current model.RoutingRule, patch model.RoutingRule, f
 	if _, ok := fields["external_outbound_id"]; ok {
 		merged.ExternalOutboundID = patch.ExternalOutboundID
 	}
+	if _, ok := fields["target_proxy_path_id"]; ok {
+		merged.TargetProxyPathID = patch.TargetProxyPathID
+	}
 	if _, ok := fields["target_server_id"]; ok {
 		merged.TargetServerID = patch.TargetServerID
 	}
@@ -603,7 +625,19 @@ func (s *Server) applyRoutingRuleOperation(ctx context.Context, principal applic
 	}
 	switch name {
 	case "routing_rules.create":
-		if err := s.store.CreateRoutingRule(ctx, &rule); err != nil {
+		syncSourceID, err := s.prepareRoutingRuleReuse(ctx, &rule)
+		if err != nil {
+			return nil, err
+		}
+		if syncSourceID != 0 {
+			groupID, err := security.RandomToken(18)
+			if err == nil {
+				err = s.store.CreateSyncedRoutingRule(ctx, &rule, syncSourceID, groupID)
+			}
+			if err != nil {
+				return nil, err
+			}
+		} else if err := s.store.CreateRoutingRule(ctx, &rule); err != nil {
 			return nil, err
 		}
 	case "routing_rules.update":
@@ -625,7 +659,8 @@ func automationRoutingRuleResult(rule model.RoutingRule, changed []string) (any,
 		"server_id": rule.ServerID, "scope": rule.Scope, "proxy_path_id": rule.ProxyPathID, "stage_step_id": rule.StageStepID,
 		"sort_position": rule.SortPosition, "match_source": rule.MatchSource, "rule_set_id": rule.RuleSetID, "name": rule.Name, "priority": rule.Priority,
 		"action": rule.Action, "outbound_id": rule.OutboundID, "external_outbound_id": rule.ExternalOutboundID,
-		"target_server_id": rule.TargetServerID, "outbound_tag": rule.OutboundTag, "interface_name": rule.InterfaceName, "source_prefix": rule.SourcePrefix,
+		"target_proxy_path_id": rule.TargetProxyPathID, "target_server_id": rule.TargetServerID, "outbound_tag": rule.OutboundTag, "interface_name": rule.InterfaceName, "source_prefix": rule.SourcePrefix,
+		"sync_group_id":    rule.SyncGroupID,
 		"match_configured": strings.TrimSpace(rule.MatchJSON) != "" && strings.TrimSpace(rule.MatchJSON) != "{}",
 		"enabled":          rule.Enabled, "created_at": rule.CreatedAt, "updated_at": rule.UpdatedAt,
 	}

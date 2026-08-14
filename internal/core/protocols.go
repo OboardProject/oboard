@@ -1241,7 +1241,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 			previousTag = stepTag
 			if step.NodeType == model.ProxyPathStepServerInbound {
 				if previousTag != "" {
-					stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds)
+					stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
 					if err != nil {
 						return nil, nil, err
 					}
@@ -1266,7 +1266,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 				return nil, nil, fmt.Errorf("直接出口分支 %s 必须结束于可控服务器", path.Name)
 			}
 			if activeServerID == server.ID {
-				stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds)
+				stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -1280,7 +1280,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 			continue
 		}
 		if previousTag != "" && activeServerID == server.ID {
-			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds)
+			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1291,7 +1291,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 			}
 			rules = append(rules, rule)
 		} else if previousTag == "" && activeStageStepID != nil && activeServerID == server.ID {
-			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds)
+			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1944,7 +1944,7 @@ func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds [
 	return out, nil
 }
 
-func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.Server, inboundTag string, authUsers []string, rules []model.RoutingRule, outbounds []model.Outbound, external []model.ExternalOutbound) ([]map[string]any, error) {
+func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.Server, inboundTag string, authUsers []string, rules []model.RoutingRule, outbounds []model.Outbound, external []model.ExternalOutbound, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile) ([]map[string]any, error) {
 	filtered := make([]model.RoutingRule, 0)
 	for _, rule := range rules {
 		if !rule.Enabled || rule.Scope != model.RoutingRuleScopePathStage || rule.ProxyPathID == nil || *rule.ProxyPathID != path.ID || rule.ServerID != server.ID || !sameOptionalID(rule.StageStepID, stageStepID) {
@@ -1989,7 +1989,15 @@ func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.
 			result = append(result, item)
 			continue
 		}
-		outboundTag, ok, err := routeRuleOutboundTag(rule, server, outbounds, external)
+		var outboundTag string
+		var ok bool
+		var err error
+		if rule.Action == model.RouteActionProxyPath {
+			outboundTag, err = routingRuleProxyPathOutboundTag(rule, server, paths, steps, warpProfiles)
+			ok = err == nil && outboundTag != ""
+		} else {
+			outboundTag, ok, err = routeRuleOutboundTag(rule, server, outbounds, external)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("routing rule %s: %w", rule.Name, err)
 		}
@@ -2001,6 +2009,74 @@ func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.
 		result = append(result, item)
 	}
 	return result, nil
+}
+
+func routingRuleProxyPathOutboundTag(rule model.RoutingRule, server model.Server, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile) (string, error) {
+	if rule.ProxyPathID == nil || rule.TargetProxyPathID == nil {
+		return "", errors.New("source and target proxy paths are required")
+	}
+	var target model.ProxyPath
+	found := false
+	for _, path := range paths {
+		if path.ID == *rule.TargetProxyPathID && path.Enabled {
+			target, found = path, true
+			break
+		}
+	}
+	if !found {
+		return "", fmt.Errorf("target proxy path %d is unavailable", *rule.TargetProxyPathID)
+	}
+	stagePosition := 0
+	if rule.StageStepID != nil {
+		for _, step := range steps {
+			if step.PathID == *rule.ProxyPathID && step.ID == *rule.StageStepID {
+				stagePosition = step.Position
+				break
+			}
+		}
+		if stagePosition == 0 {
+			return "", errors.New("routing stage is unavailable")
+		}
+	}
+	targetSteps := make([]model.ProxyPathStep, 0)
+	for _, step := range steps {
+		if step.PathID == target.ID && step.Position > stagePosition {
+			targetSteps = append(targetSteps, step)
+		}
+	}
+	sort.SliceStable(targetSteps, func(i, j int) bool { return targetSteps[i].Position < targetSteps[j].Position })
+	if len(targetSteps) == 0 {
+		return "", errors.New("target proxy path does not continue after the routing stage")
+	}
+	previousTag := ""
+	for _, step := range targetSteps {
+		mode := step.TransportMode
+		if mode == "" {
+			mode = model.ProxyPathTransportSingBox
+		}
+		if mode == model.ProxyPathTransportPortForward {
+			return "", errors.New("rule-specific path cannot enter a transparent forwarding hop")
+		}
+		if step.NodeType == model.ProxyPathStepWARP {
+			if previousTag != "" {
+				return "", errors.New("WARP must be the first local hop after the routing stage")
+			}
+			profile, ok := warpProfileForServer(warpProfiles, server.ID)
+			if !ok || !profile.Enabled {
+				return "", fmt.Errorf("target proxy path requires WARP on server %d", server.ID)
+			}
+			previousTag = tag("warp", profile.ID)
+			continue
+		}
+		previousTag = proxyPathStepTag(target.ID, step.Position)
+		if step.NodeType == model.ProxyPathStepServerInbound {
+			return previousTag, nil
+		}
+	}
+	if previousTag == "" {
+		return "", errors.New("target proxy path has no routable outbound")
+	}
+	return previousTag, nil
 }
 
 func sameOptionalID(left, right *int64) bool {

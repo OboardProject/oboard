@@ -32,8 +32,12 @@ func TestRoutingRuleScopeMigrationFromPreviousTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		`drop index idx_routing_rules_sync_group`,
+		`drop index idx_routing_rules_target_path`,
 		`drop index idx_routing_rules_stage_order`,
 		`drop index idx_routing_rules_rule_set`,
+		`alter table routing_rules drop column sync_group_id`,
+		`alter table routing_rules drop column target_proxy_path_id`,
 		`alter table routing_rules drop column rule_set_id`,
 		`alter table routing_rules drop column match_source`,
 		`alter table routing_rules drop column sort_position`,
@@ -60,6 +64,49 @@ func TestRoutingRuleScopeMigrationFromPreviousTable(t *testing.T) {
 	}
 	if migrated.Scope != model.RoutingRuleScopeServer || migrated.MatchSource != model.RoutingMatchSourceInline || migrated.ProxyPathID != nil || migrated.StageStepID != nil || migrated.RuleSetID != nil {
 		t.Fatalf("legacy routing rule was not migrated to server scope: %#v", migrated)
+	}
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("repeated migration is not idempotent: %v", err)
+	}
+}
+
+func TestRoutingRuleChainAndSyncColumnsMigrateFromPreviousSchema(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "routing-chain-sync-migration.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`drop index idx_routing_rules_sync_group`,
+		`drop index idx_routing_rules_target_path`,
+		`alter table routing_rules drop column sync_group_id`,
+		`alter table routing_rules drop column target_proxy_path_id`,
+	} {
+		if _, err := raw.Exec(statement); err != nil {
+			t.Fatalf("prepare previous routing schema with %q: %v", statement, err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, column := range []string{"target_proxy_path_id", "sync_group_id"} {
+		var count int
+		if err := db.db.QueryRowContext(ctx, `select count(*) from pragma_table_info('routing_rules') where name=?`, column).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("routing_rules.%s migration count=%d err=%v", column, count, err)
+		}
 	}
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatalf("repeated migration is not idempotent: %v", err)
@@ -126,5 +173,44 @@ func TestRoutingRuleSetReuseDeleteProtectionAndAtomicPlacement(t *testing.T) {
 	afterA, _ := db.GetRoutingRule(ctx, ruleA.ID)
 	if afterA.ServerID != movedA.ServerID || afterA.StageStepID == nil || *afterA.StageStepID != *movedA.StageStepID || afterA.SortPosition != movedA.SortPosition {
 		t.Fatalf("failed placement was not rolled back: before=%#v after=%#v", movedA, afterA)
+	}
+}
+
+func TestSyncedRoutingRulesShareMatchesButKeepIndependentActions(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "sync", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	source := &model.RoutingRule{ServerID: server.ID, Scope: model.RoutingRuleScopeServer, MatchSource: model.RoutingMatchSourceInline, Name: "streaming", MatchJSON: `{"domain_suffix":["example.com"]}`, Action: model.RouteActionDirect, Enabled: true}
+	if err := db.CreateRoutingRule(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	synced := &model.RoutingRule{ServerID: server.ID, Scope: model.RoutingRuleScopeServer, MatchSource: source.MatchSource, Name: source.Name, MatchJSON: source.MatchJSON, Action: model.RouteActionBlock, Enabled: true}
+	if err := db.CreateSyncedRoutingRule(ctx, synced, source.ID, "sync-test-group"); err != nil {
+		t.Fatal(err)
+	}
+	independent := &model.RoutingRule{ServerID: server.ID, Scope: model.RoutingRuleScopeServer, MatchSource: source.MatchSource, Name: source.Name, MatchJSON: source.MatchJSON, Action: model.RouteActionDirect, Enabled: true}
+	if err := db.CreateRoutingRule(ctx, independent); err != nil {
+		t.Fatal(err)
+	}
+	synced.Name = "streaming-updated"
+	synced.MatchJSON = `{"domain_suffix":["updated.example"]}`
+	synced.Action = model.RouteActionBlock
+	if err := db.UpdateRoutingRule(ctx, synced); err != nil {
+		t.Fatal(err)
+	}
+	updatedSource, _ := db.GetRoutingRule(ctx, source.ID)
+	updatedIndependent, _ := db.GetRoutingRule(ctx, independent.ID)
+	if updatedSource.Name != synced.Name || updatedSource.MatchJSON != synced.MatchJSON || updatedSource.Action != model.RouteActionDirect || updatedSource.SyncGroupID == "" {
+		t.Fatalf("shared match update did not preserve source action: %#v", updatedSource)
+	}
+	if updatedIndependent.Name != source.Name || updatedIndependent.MatchJSON != source.MatchJSON || updatedIndependent.SyncGroupID != "" {
+		t.Fatalf("one-time copy was changed by sync update: %#v", updatedIndependent)
 	}
 }

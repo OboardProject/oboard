@@ -37,12 +37,13 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"sort_position": map[string]any{"type": "integer"}, "match_source": stringValue, "rule_set_id": nullableInteger(),
 		"priority": map[string]any{"type": "integer"}, "action": stringValue,
 		"outbound_id": nullableInteger(), "external_outbound_id": nullableInteger(),
-		"target_server_id": nullableInteger(), "outbound_tag": stringValue, "interface_name": stringValue,
+		"target_proxy_path_id": nullableInteger(), "target_server_id": nullableInteger(), "outbound_tag": stringValue, "interface_name": stringValue,
 		"source_prefix":    stringValue,
+		"sync_group_id":    stringValue,
 		"match_configured": boolValue, "enabled": boolValue,
 		"created_at": stringValue, "updated_at": stringValue,
 	})
-	routingRuleFields := closedObject(map[string]any{
+	routingRuleFieldProperties := map[string]any{
 		"server_id":            positiveID,
 		"scope":                map[string]any{"type": "string", "enum": []string{"server", "path_stage"}},
 		"proxy_path_id":        nullableInteger(),
@@ -53,14 +54,23 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"name":                 map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
 		"priority":             map[string]any{"type": "integer", "minimum": 0, "maximum": 100000},
 		"match_json":           map[string]any{"type": "string", "maxLength": 8192},
-		"action":               map[string]any{"type": "string", "enum": []string{"direct", "block", "outbound", "external", "interface", "source_prefix"}},
+		"action":               map[string]any{"type": "string", "enum": []string{"direct", "block", "outbound", "external", "proxy_path", "interface", "source_prefix"}},
 		"outbound_id":          nullableInteger(),
 		"external_outbound_id": nullableInteger(),
+		"target_proxy_path_id": nullableInteger(),
 		"target_server_id":     nullableInteger(),
 		"interface_name":       map[string]any{"type": "string", "maxLength": 64},
 		"source_prefix":        map[string]any{"type": "string", "maxLength": 64},
 		"enabled":              boolValue,
-	})
+	}
+	routingRuleFields := closedObject(routingRuleFieldProperties)
+	routingRuleCreateProperties := make(map[string]any, len(routingRuleFieldProperties)+2)
+	for key, value := range routingRuleFieldProperties {
+		routingRuleCreateProperties[key] = value
+	}
+	routingRuleCreateProperties["sync_source_rule_id"] = nullableInteger()
+	routingRuleCreateProperties["sync_enabled"] = boolValue
+	routingRuleCreateFields := closedObject(routingRuleCreateProperties)
 	warpProfile := closedObject(map[string]any{
 		"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
 		"status": stringValue, "mtu": map[string]any{"type": "integer"}, "dns_strategy": stringValue,
@@ -84,7 +94,7 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		{Name: "routing_rule_sets.list", Description: "列出可复用远程分流规则集及刷新状态", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(routingRuleSet)), RequiredScopes: []string{"routing_rule_sets:read"}, ResourceTypes: []string{"routing_rule_set"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "warp_profiles.list", Description: "列出各服务器的 WARP 配置档状态（不含私钥）", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(warpProfile)), RequiredScopes: []string{"warp_profiles:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 	}
-	reads = append(reads, trafficWriteDescriptors(outbound, routingRule, outboundFields, routingRuleFields, positiveID, stringValue, boolValue, nullableInteger)...)
+	reads = append(reads, trafficWriteDescriptors(outbound, routingRule, outboundFields, routingRuleCreateFields, routingRuleFields, positiveID, stringValue, boolValue, nullableInteger)...)
 	placements := map[string]any{"type": "array", "minItems": 1, "maxItems": 512, "items": closedObject(map[string]any{"rule_id": positiveID, "stage_step_id": nullableInteger(), "sort_position": map[string]any{"type": "integer", "minimum": 0}})}
 	for _, descriptor := range []Descriptor{
 		{Name: "routing_rules.place", Description: "原子移动并重排代理分支节点规则", InputSchema: schemaObject(map[string]any{"proxy_path_id": positiveID, "placements": placements}, "proxy_path_id", "placements"), OutputSchema: schemaObject(map[string]any{"proxy_path_id": positiveID, "placements": placements}, "proxy_path_id", "placements"), RequiredScopes: []string{"routing_rules:write"}, ResourceTypes: []string{"proxy_path", "routing_rule"}, ResourceEvaluator: "server_ids", RiskClass: 2, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: trafficWriteResolver("routing_rules.place")},
@@ -98,7 +108,7 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 	return reads
 }
 
-func trafficWriteDescriptors(outbound, routingRule, outboundFields, routingRuleFields, positiveID map[string]any, stringValue, boolValue map[string]any, nullableInteger func() map[string]any) []Descriptor {
+func trafficWriteDescriptors(outbound, routingRule, outboundFields, routingRuleCreateFields, routingRuleFields, positiveID map[string]any, stringValue, boolValue map[string]any, nullableInteger func() map[string]any) []Descriptor {
 	writes := []struct {
 		name, description string
 		input, output     json.RawMessage
@@ -108,7 +118,7 @@ func trafficWriteDescriptors(outbound, routingRule, outboundFields, routingRuleF
 		{"outbounds.create", "创建服务器出口（下一跳）", schemaObject(map[string]any{"outbound": outboundFields}, "outbound"), schemaObject(map[string]any{"outbound": outbound}, "outbound"), 2, false},
 		{"outbounds.update", "修改服务器出口", schemaObject(map[string]any{"outbound_id": positiveID, "changes": outboundFields}, "outbound_id", "changes"), schemaObject(map[string]any{"outbound": outbound, "changed_fields": stringArray(1, 32)}, "outbound"), 2, false},
 		{"outbounds.delete", "删除服务器出口", schemaObject(map[string]any{"outbound_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "outbound_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "outbound_id": positiveID}, "deleted"), 3, true},
-		{"routing_rules.create", "创建分流规则", schemaObject(map[string]any{"routing_rule": routingRuleFields}, "routing_rule"), schemaObject(map[string]any{"routing_rule": routingRule}, "routing_rule"), 2, false},
+		{"routing_rules.create", "创建分流规则", schemaObject(map[string]any{"routing_rule": routingRuleCreateFields}, "routing_rule"), schemaObject(map[string]any{"routing_rule": routingRule}, "routing_rule"), 2, false},
 		{"routing_rules.update", "修改分流规则", schemaObject(map[string]any{"routing_rule_id": positiveID, "changes": routingRuleFields}, "routing_rule_id", "changes"), schemaObject(map[string]any{"routing_rule": routingRule, "changed_fields": stringArray(1, 32)}, "routing_rule"), 2, false},
 		{"routing_rules.delete", "删除分流规则", schemaObject(map[string]any{"routing_rule_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "routing_rule_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "routing_rule_id": positiveID}, "deleted"), 3, true},
 	}
@@ -179,7 +189,7 @@ func trafficWriteResolver(name string) func(context.Context, any) ([]mcpauth.Res
 			}
 		case "routing_rules.create":
 			nested, _ := object["routing_rule"].(map[string]any)
-			for field, resourceType := range map[string]string{"server_id": "server", "proxy_path_id": "proxy_path", "rule_set_id": "routing_rule_set", "outbound_id": "outbound", "external_outbound_id": "external_outbound"} {
+			for field, resourceType := range map[string]string{"server_id": "server", "proxy_path_id": "proxy_path", "target_proxy_path_id": "proxy_path", "sync_source_rule_id": "routing_rule", "rule_set_id": "routing_rule_set", "outbound_id": "outbound", "external_outbound_id": "external_outbound"} {
 				if id, ok := int64Value(nested[field]); ok && id > 0 {
 					refs = append(refs, mcpauth.ResourceRef{Type: resourceType, ID: strconv.FormatInt(id, 10)})
 				}
@@ -189,7 +199,7 @@ func trafficWriteResolver(name string) func(context.Context, any) ([]mcpauth.Res
 				return nil, err
 			}
 			changes, _ := object["changes"].(map[string]any)
-			for field, resourceType := range map[string]string{"server_id": "server", "proxy_path_id": "proxy_path", "rule_set_id": "routing_rule_set", "outbound_id": "outbound", "external_outbound_id": "external_outbound"} {
+			for field, resourceType := range map[string]string{"server_id": "server", "proxy_path_id": "proxy_path", "target_proxy_path_id": "proxy_path", "rule_set_id": "routing_rule_set", "outbound_id": "outbound", "external_outbound_id": "external_outbound"} {
 				if id, ok := int64Value(changes[field]); ok && id > 0 {
 					refs = append(refs, mcpauth.ResourceRef{Type: resourceType, ID: strconv.FormatInt(id, 10)})
 				}

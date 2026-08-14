@@ -2,10 +2,18 @@ import { describe, expect, it } from 'vitest'
 import {
   buildGraphRoutingStages,
   graphRoutingStageNodeID,
+  graphRoutingRuleSource,
+  graphRoutingRuleSourceHandleID,
   graphRoutingStageSiblingOffset,
   graphRoutingStageSource,
   graphRoutingStageSourceHandleID,
 } from './graph-routing-stages'
+
+it('encodes and parses rule-specific source handles separately from fallback handles', () => {
+  expect(graphRoutingRuleSourceHandleID(91)).toBe('routing-rule-source-91')
+  expect(graphRoutingRuleSource('routing-rule-source-91')).toBe(91)
+  expect(graphRoutingRuleSource('routing-stage-source-4-root')).toBe(0)
+})
 
 describe('graph routing stages', () => {
   it('keeps a saved root routing block addressable after its direct fallback is created', () => {

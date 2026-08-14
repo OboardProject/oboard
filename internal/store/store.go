@@ -339,7 +339,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists user_group_members (id integer primary key autoincrement, group_id integer not null references user_groups(id) on delete cascade, user_id integer not null references users(id) on delete cascade, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(group_id,user_id))`,
 		`create table if not exists outbounds (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, next_server_id integer references servers(id) on delete set null, name text not null, protocol text not null, target_address text not null, target_port integer not null, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists routing_rule_sets (id integer primary key autoincrement, name text not null unique, url text not null, format text not null, mihomo_behavior text not null default '', etag text not null default '', last_modified text not null default '', content blob not null default x'', revision text not null default '', status text not null default 'pending', last_error text not null default '', last_attempt_at text, last_success_at text, created_at text not null, updated_at text not null)`,
-		`create table if not exists routing_rules (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, scope text not null default 'server', proxy_path_id integer references proxy_paths(id) on delete cascade, stage_step_id integer references proxy_path_steps(id) on delete cascade, sort_position integer not null default 0, match_source text not null default 'inline', rule_set_id integer references routing_rule_sets(id) on delete restrict, name text not null, priority integer not null default 100, match_json text not null default '{}', action text not null, outbound_id integer references outbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, target_server_id integer references servers(id) on delete set null, outbound_tag text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists routing_rules (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, scope text not null default 'server', proxy_path_id integer references proxy_paths(id) on delete cascade, stage_step_id integer references proxy_path_steps(id) on delete cascade, sort_position integer not null default 0, match_source text not null default 'inline', rule_set_id integer references routing_rule_sets(id) on delete restrict, name text not null, priority integer not null default 100, match_json text not null default '{}', action text not null, outbound_id integer references outbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, target_proxy_path_id integer references proxy_paths(id) on delete cascade, target_server_id integer references servers(id) on delete set null, outbound_tag text not null default '', sync_group_id text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists external_outbounds (id integer primary key autoincrement, server_id integer references servers(id) on delete set null, name text not null, protocol text not null, scope text not null default 'global', target_address text not null default '', target_port integer not null default 0, config_json text not null default '{}', region_mode text not null default 'auto', region_code text not null default '', expose_to_users integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_paths (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, kind text not null default 'chain', branch_source_step_id integer references proxy_path_steps(id) on delete set null, name_mode text not null default 'auto', name_template_json text not null default '[]', exit_region_mode text not null default 'auto', exit_region_code text not null default '', secret text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_steps (id integer primary key autoincrement, path_id integer not null references proxy_paths(id) on delete cascade, position integer not null, node_type text not null, transport_mode text not null default 'singbox', processing_role integer not null default 0, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, config_json text not null default '{}', created_at text not null, updated_at text not null)`,
@@ -460,6 +460,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	for _, stmt := range []string{
 		`create index if not exists idx_routing_rules_stage_order on routing_rules(proxy_path_id,stage_step_id,sort_position,id) where scope='path_stage'`,
 		`create index if not exists idx_routing_rules_rule_set on routing_rules(rule_set_id) where rule_set_id is not null`,
+		`create index if not exists idx_routing_rules_target_path on routing_rules(target_proxy_path_id) where target_proxy_path_id is not null`,
+		`create index if not exists idx_routing_rules_sync_group on routing_rules(sync_group_id) where sync_group_id<>''`,
 		`create index if not exists idx_routing_rule_sets_refresh on routing_rule_sets(status,last_success_at)`,
 	} {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -1181,6 +1183,8 @@ func (s *Store) migrateRoutingRuleScopes(ctx context.Context) error {
 		{"sort_position", `alter table routing_rules add column sort_position integer not null default 0`},
 		{"match_source", `alter table routing_rules add column match_source text not null default 'inline'`},
 		{"rule_set_id", `alter table routing_rules add column rule_set_id integer references routing_rule_sets(id) on delete restrict`},
+		{"target_proxy_path_id", `alter table routing_rules add column target_proxy_path_id integer references proxy_paths(id) on delete cascade`},
+		{"sync_group_id", `alter table routing_rules add column sync_group_id text not null default ''`},
 	}
 	for _, column := range columns {
 		var count int
@@ -3264,7 +3268,7 @@ func (s *Store) CreateRoutingRule(ctx context.Context, v *model.RoutingRule) err
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_server_id,outbound_tag,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetServerID, v.OutboundTag, boolInt(v.Enabled), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -3278,12 +3282,62 @@ func (s *Store) UpdateRoutingRule(ctx context.Context, v *model.RoutingRule) err
 	} else if v.Action == model.RouteActionSourcePrefix && v.SourcePrefix != "" {
 		v.OutboundTag = v.SourcePrefix
 	}
-	_, err := s.db.ExecContext(ctx, `update routing_rules set server_id=?,scope=?,proxy_path_id=?,stage_step_id=?,sort_position=?,match_source=?,rule_set_id=?,name=?,priority=?,match_json=?,action=?,outbound_id=?,external_outbound_id=?,target_server_id=?,outbound_tag=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetServerID, v.OutboundTag, boolInt(v.Enabled), now(), v.ID)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ts := now()
+	if _, err := tx.ExecContext(ctx, `update routing_rules set server_id=?,scope=?,proxy_path_id=?,stage_step_id=?,sort_position=?,match_source=?,rule_set_id=?,name=?,priority=?,match_json=?,action=?,outbound_id=?,external_outbound_id=?,target_proxy_path_id=?,target_server_id=?,outbound_tag=?,sync_group_id=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, v.ID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(v.SyncGroupID) != "" {
+		if _, err := tx.ExecContext(ctx, `update routing_rules set name=?,match_source=?,rule_set_id=?,match_json=?,updated_at=? where sync_group_id=? and id<>?`, v.Name, v.MatchSource, v.RuleSetID, v.MatchJSON, ts, v.SyncGroupID, v.ID); err != nil {
+			return err
+		}
+	}
+	v.UpdatedAt = parseTime(ts)
+	return tx.Commit()
+}
+
+func (s *Store) CreateSyncedRoutingRule(ctx context.Context, v *model.RoutingRule, sourceRuleID int64, groupID string) error {
+	groupID = strings.TrimSpace(groupID)
+	if sourceRuleID <= 0 || groupID == "" {
+		return errors.New("source routing rule and sync group are required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var sourceGroup string
+	if err := tx.QueryRowContext(ctx, `select sync_group_id from routing_rules where id=?`, sourceRuleID).Scan(&sourceGroup); err != nil {
+		return err
+	}
+	if strings.TrimSpace(sourceGroup) == "" {
+		sourceGroup = groupID
+		if _, err := tx.ExecContext(ctx, `update routing_rules set sync_group_id=?,updated_at=? where id=?`, sourceGroup, now(), sourceRuleID); err != nil {
+			return err
+		}
+	}
+	v.SyncGroupID = sourceGroup
+	if v.Action == model.RouteActionInterface && v.InterfaceName != "" {
+		v.OutboundTag = v.InterfaceName
+	} else if v.Action == model.RouteActionSourcePrefix && v.SourcePrefix != "" {
+		v.OutboundTag = v.SourcePrefix
+	}
+	ts := now()
+	res, err := tx.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, ts)
+	if err != nil {
+		return err
+	}
+	v.ID, _ = res.LastInsertId()
+	v.CreatedAt, v.UpdatedAt = parseTime(ts), parseTime(ts)
+	return tx.Commit()
 }
 
 func (s *Store) ListRoutingRules(ctx context.Context) ([]model.RoutingRule, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_server_id,outbound_tag,enabled,created_at,updated_at from routing_rules order by case when scope='path_stage' then 0 else 1 end,proxy_path_id,sort_position,priority,id`)
+	rows, err := s.db.QueryContext(ctx, `select id,server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at from routing_rules order by case when scope='path_stage' then 0 else 1 end,proxy_path_id,sort_position,priority,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -3291,10 +3345,10 @@ func (s *Store) ListRoutingRules(ctx context.Context) ([]model.RoutingRule, erro
 	var out []model.RoutingRule
 	for rows.Next() {
 		var v model.RoutingRule
-		var pathID, stageStepID, ruleSetID, outboundID, externalID, targetID sql.NullInt64
+		var pathID, stageStepID, ruleSetID, outboundID, externalID, targetPathID, targetID sql.NullInt64
 		var en int
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.ServerID, &v.Scope, &pathID, &stageStepID, &v.SortPosition, &v.MatchSource, &ruleSetID, &v.Name, &v.Priority, &v.MatchJSON, &v.Action, &outboundID, &externalID, &targetID, &v.OutboundTag, &en, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.ServerID, &v.Scope, &pathID, &stageStepID, &v.SortPosition, &v.MatchSource, &ruleSetID, &v.Name, &v.Priority, &v.MatchJSON, &v.Action, &outboundID, &externalID, &targetPathID, &targetID, &v.OutboundTag, &v.SyncGroupID, &en, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if pathID.Valid {
@@ -3311,6 +3365,9 @@ func (s *Store) ListRoutingRules(ctx context.Context) ([]model.RoutingRule, erro
 		}
 		if externalID.Valid {
 			v.ExternalOutboundID = &externalID.Int64
+		}
+		if targetPathID.Valid {
+			v.TargetProxyPathID = &targetPathID.Int64
 		}
 		if targetID.Valid {
 			v.TargetServerID = &targetID.Int64

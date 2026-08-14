@@ -6221,11 +6221,25 @@ func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &v) {
 			return
 		}
+		syncSourceID, err := s.prepareRoutingRuleReuse(r.Context(), &v)
+		if err != nil {
+			fail(w, err, 400)
+			return
+		}
 		if err := s.validateRoutingRule(r.Context(), &v); err != nil {
 			fail(w, err, 400)
 			return
 		}
-		if err := s.store.CreateRoutingRule(r.Context(), &v); err != nil {
+		if syncSourceID != 0 {
+			groupID, err := security.RandomToken(18)
+			if err == nil {
+				err = s.store.CreateSyncedRoutingRule(r.Context(), &v, syncSourceID, groupID)
+			}
+			if err != nil {
+				fail(w, err, 500)
+				return
+			}
+		} else if err := s.store.CreateRoutingRule(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
 		}
@@ -6240,7 +6254,15 @@ func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &v) {
 			return
 		}
+		current, err := s.store.GetRoutingRule(r.Context(), id)
+		if err != nil {
+			fail(w, err, 404)
+			return
+		}
 		v.ID = id
+		v.SyncGroupID = current.SyncGroupID
+		v.SyncSourceRuleID = nil
+		v.SyncEnabled = false
 		if err := s.validateRoutingRule(r.Context(), &v); err != nil {
 			fail(w, err, 400)
 			return
@@ -6263,6 +6285,30 @@ func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
 	default:
 		method(w)
 	}
+}
+
+func (s *Server) prepareRoutingRuleReuse(ctx context.Context, v *model.RoutingRule) (int64, error) {
+	if v.SyncSourceRuleID == nil || *v.SyncSourceRuleID <= 0 {
+		if v.SyncEnabled {
+			return 0, errors.New("sync_source_rule_id required when sync_enabled is true")
+		}
+		return 0, nil
+	}
+	source, err := s.store.GetRoutingRule(ctx, *v.SyncSourceRuleID)
+	if err != nil {
+		return 0, fmt.Errorf("sync source routing rule: %w", err)
+	}
+	if source.Scope != model.RoutingRuleScopePathStage {
+		return 0, errors.New("only path-stage routing rules can be reused")
+	}
+	v.Name = source.Name
+	v.MatchSource = source.MatchSource
+	v.RuleSetID = source.RuleSetID
+	v.MatchJSON = source.MatchJSON
+	if !v.SyncEnabled {
+		return 0, nil
+	}
+	return source.ID, nil
 }
 
 func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) error {
@@ -6302,6 +6348,7 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 	} else if v.Scope == model.RoutingRuleScopeServer {
 		v.ProxyPathID = nil
 		v.StageStepID = nil
+		v.TargetProxyPathID = nil
 		v.RuleSetID = nil
 		v.MatchSource = model.RoutingMatchSourceInline
 		if v.ServerID == 0 {
@@ -6374,6 +6421,14 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 			return errors.New("server-scoped external outbound must belong to the same server")
 		}
 		return core.ValidateAddressForIPStack(core.EffectiveIPStack(*server), ext.TargetAddress)
+	case model.RouteActionProxyPath:
+		if v.Scope != model.RoutingRuleScopePathStage || v.ProxyPathID == nil {
+			return errors.New("proxy_path action requires a path_stage routing rule")
+		}
+		if v.TargetProxyPathID == nil || *v.TargetProxyPathID <= 0 {
+			return errors.New("target_proxy_path_id required")
+		}
+		return s.validateRoutingRuleTargetPath(ctx, *v.ProxyPathID, v.StageStepID, *v.TargetProxyPathID, v.ID)
 	case model.RouteActionInterface:
 		v.InterfaceName = strings.TrimSpace(v.InterfaceName)
 		if v.InterfaceName == "" {
@@ -6402,6 +6457,115 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 	default:
 		return fmt.Errorf("unsupported action %q", v.Action)
 	}
+}
+
+func (s *Server) validateRoutingRuleTargetPath(ctx context.Context, sourcePathID int64, sourceStageStepID *int64, targetPathID, ruleID int64) error {
+	if sourcePathID == targetPathID {
+		return errors.New("routing rule target path must differ from its fallback path")
+	}
+	sourcePath, err := s.store.GetProxyPath(ctx, sourcePathID)
+	if err != nil {
+		return err
+	}
+	targetPath, err := s.store.GetProxyPath(ctx, targetPathID)
+	if err != nil {
+		return fmt.Errorf("target proxy path %d: %w", targetPathID, err)
+	}
+	if !targetPath.Enabled || targetPath.Kind != model.ProxyPathKindChain || targetPath.InboundID != sourcePath.InboundID {
+		return errors.New("target proxy path must be an enabled chain from the same root inbound")
+	}
+	sourceSteps, err := s.store.ListProxyPathStepsForPath(ctx, sourcePathID)
+	if err != nil {
+		return err
+	}
+	targetSteps, err := s.store.ListProxyPathStepsForPath(ctx, targetPathID)
+	if err != nil {
+		return err
+	}
+	sort.SliceStable(sourceSteps, func(i, j int) bool { return sourceSteps[i].Position < sourceSteps[j].Position })
+	sort.SliceStable(targetSteps, func(i, j int) bool { return targetSteps[i].Position < targetSteps[j].Position })
+	stagePosition := 0
+	if sourceStageStepID != nil {
+		for _, step := range sourceSteps {
+			if step.ID == *sourceStageStepID {
+				stagePosition = step.Position
+				break
+			}
+		}
+		if stagePosition == 0 {
+			return errors.New("routing rule stage no longer belongs to its fallback path")
+		}
+	}
+	if len(targetSteps) <= stagePosition {
+		return errors.New("target proxy path must continue after the routing stage")
+	}
+	for position := 1; position <= stagePosition; position++ {
+		if len(sourceSteps) < position || len(targetSteps) < position || !equivalentRoutingPrefixStep(sourceSteps[position-1], targetSteps[position-1]) {
+			return fmt.Errorf("target proxy path must share the fallback prefix through step %d", stagePosition)
+		}
+	}
+	next := targetSteps[stagePosition]
+	mode := next.TransportMode
+	if mode == "" {
+		mode = model.ProxyPathTransportSingBox
+	}
+	if mode == model.ProxyPathTransportPortForward {
+		return errors.New("rule-specific proxy paths cannot start with transparent port forwarding after the routing stage")
+	}
+	items, err := s.store.ListRoutingRules(ctx)
+	if err != nil {
+		return err
+	}
+	edges := map[int64][]int64{}
+	for _, item := range items {
+		if item.ID == ruleID || !item.Enabled || item.Action != model.RouteActionProxyPath || item.ProxyPathID == nil || item.TargetProxyPathID == nil {
+			continue
+		}
+		edges[*item.ProxyPathID] = append(edges[*item.ProxyPathID], *item.TargetProxyPathID)
+	}
+	edges[sourcePathID] = append(edges[sourcePathID], targetPathID)
+	if routingPathReachable(edges, targetPathID, sourcePathID, map[int64]bool{}) {
+		return errors.New("routing rule proxy paths must not form a cycle")
+	}
+	return nil
+}
+
+func equivalentRoutingPrefixStep(left, right model.ProxyPathStep) bool {
+	leftMode, rightMode := left.TransportMode, right.TransportMode
+	if leftMode == "" {
+		leftMode = model.ProxyPathTransportSingBox
+	}
+	if rightMode == "" {
+		rightMode = model.ProxyPathTransportSingBox
+	}
+	return left.NodeType == right.NodeType && leftMode == rightMode && left.ProcessingRole == right.ProcessingRole &&
+		sameOptionalInt64(left.ServerID, right.ServerID) && sameOptionalInt64(left.InboundID, right.InboundID) &&
+		sameOptionalInt64(left.ExternalOutboundID, right.ExternalOutboundID) && canonicalRoutingJSON(left.ConfigJSON) == canonicalRoutingJSON(right.ConfigJSON)
+}
+
+func canonicalRoutingJSON(raw string) string {
+	var value any
+	if json.Unmarshal([]byte(firstNonEmptyString(strings.TrimSpace(raw), "{}")), &value) != nil {
+		return strings.TrimSpace(raw)
+	}
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
+}
+
+func routingPathReachable(edges map[int64][]int64, current, target int64, seen map[int64]bool) bool {
+	if current == target {
+		return true
+	}
+	if seen[current] {
+		return false
+	}
+	seen[current] = true
+	for _, next := range edges[current] {
+		if routingPathReachable(edges, next, target, seen) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) externalOutbounds(w http.ResponseWriter, r *http.Request) {

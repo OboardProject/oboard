@@ -344,6 +344,10 @@ func (s *Server) placeRoutingRules(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 400)
 		return
 	}
+	if err := s.validateRoutingRulePlacements(r.Context(), request.ProxyPathID, request.Placements); err != nil {
+		fail(w, err, 400)
+		return
+	}
 	if err := s.store.PlaceRoutingRules(r.Context(), request.ProxyPathID, request.Placements); err != nil {
 		fail(w, err, 400)
 		return
@@ -371,6 +375,42 @@ func (s *Server) placeRoutingRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, map[string]any{"routing_rules": items})
+}
+
+func (s *Server) validateRoutingRulePlacements(ctx context.Context, pathID int64, placements []model.RoutingRulePlacement) error {
+	path, err := s.store.GetProxyPath(ctx, pathID)
+	if err != nil {
+		return err
+	}
+	root, err := s.store.GetInbound(ctx, path.InboundID)
+	if err != nil {
+		return err
+	}
+	for _, placement := range placements {
+		rule, err := s.store.GetRoutingRule(ctx, placement.RuleID)
+		if err != nil {
+			return err
+		}
+		candidate := *rule
+		candidate.ProxyPathID = &pathID
+		candidate.StageStepID = placement.StageStepID
+		candidate.SortPosition = placement.SortPosition
+		candidate.ServerID = root.ServerID
+		if placement.StageStepID != nil {
+			step, err := s.store.GetProxyPathStep(ctx, *placement.StageStepID)
+			if err != nil {
+				return err
+			}
+			if step.PathID != pathID || step.NodeType != model.ProxyPathStepServerInbound || step.ServerID == nil {
+				return errors.New("routing rule placement targets an invalid controlled stage")
+			}
+			candidate.ServerID = *step.ServerID
+		}
+		if err := s.validateRoutingRule(ctx, &candidate); err != nil {
+			return fmt.Errorf("routing rule %d cannot move to the selected stage: %w", placement.RuleID, err)
+		}
+	}
+	return nil
 }
 
 func (s *Server) routingRuleServerIDsForPath(ctx context.Context, pathID int64) (map[int64]bool, error) {

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestRoutingCapabilitySchemasSupportSourcePrefix(t *testing.T) {
+func TestRoutingCapabilitySchemasSupportSourcePrefixTargetPathsAndSync(t *testing.T) {
 	catalog := NewCatalog()
 	for _, name := range []string{"routing_rules.create", "routing_rules.update"} {
 		descriptor, ok := catalog.Get(name)
@@ -14,13 +14,19 @@ func TestRoutingCapabilitySchemasSupportSourcePrefix(t *testing.T) {
 			t.Fatalf("capability %s is missing", name)
 		}
 		raw := string(descriptor.InputSchema)
-		if !strings.Contains(raw, `"source_prefix"`) || !strings.Contains(raw, `"source_prefix"]`) {
-			t.Fatalf("%s input schema lacks the source-prefix field or action: %s", name, raw)
+		if !strings.Contains(raw, `"source_prefix"`) || !strings.Contains(raw, `"source_prefix"]`) || !strings.Contains(raw, `"target_proxy_path_id"`) || !strings.Contains(raw, `"proxy_path"`) {
+			t.Fatalf("%s input schema lacks routing target or synchronization fields: %s", name, raw)
+		}
+		if name == "routing_rules.create" && (!strings.Contains(raw, `"sync_source_rule_id"`) || !strings.Contains(raw, `"sync_enabled"`)) {
+			t.Fatalf("%s input schema lacks synchronization fields: %s", name, raw)
+		}
+		if name == "routing_rules.update" && (strings.Contains(raw, `"sync_source_rule_id"`) || strings.Contains(raw, `"sync_enabled"`)) {
+			t.Fatalf("%s input schema exposes create-only synchronization fields: %s", name, raw)
 		}
 	}
 	descriptor, ok := catalog.Get("routing_rules.list")
-	if !ok || !strings.Contains(string(descriptor.OutputSchema), `"source_prefix"`) {
-		t.Fatalf("routing_rules.list output schema lacks source_prefix")
+	if !ok || !strings.Contains(string(descriptor.OutputSchema), `"source_prefix"`) || !strings.Contains(string(descriptor.OutputSchema), `"target_proxy_path_id"`) || !strings.Contains(string(descriptor.OutputSchema), `"sync_group_id"`) {
+		t.Fatalf("routing_rules.list output schema lacks current routing fields")
 	}
 }
 
@@ -34,9 +40,9 @@ func TestRoutingCapabilityResourceResolvers(t *testing.T) {
 		{
 			name: "routing_rules.create",
 			input: map[string]any{"routing_rule": map[string]any{
-				"server_id": 1, "proxy_path_id": 2, "rule_set_id": 3,
+				"server_id": 1, "proxy_path_id": 2, "rule_set_id": 3, "target_proxy_path_id": 4, "sync_source_rule_id": 9,
 			}},
-			want: map[string]bool{"server:1": true, "proxy_path:2": true, "routing_rule_set:3": true},
+			want: map[string]bool{"server:1": true, "proxy_path:2": true, "proxy_path:4": true, "routing_rule_set:3": true, "routing_rule:9": true},
 		},
 		{
 			name: "routing_rules.place",

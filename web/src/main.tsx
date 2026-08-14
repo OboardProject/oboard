@@ -60,6 +60,8 @@ import {
   graphRoutingStageKey,
   graphRoutingStageNodeID,
   graphRoutingStageSiblingOffset,
+  graphRoutingRuleSource,
+  graphRoutingRuleSourceHandleID,
   graphRoutingStageSource,
   graphRoutingStageSourceHandleID,
   type GraphRoutingStage,
@@ -83,7 +85,7 @@ import {
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
   ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network, Package,
-  ArrowUpCircle, SlidersHorizontal, Unlink
+  ArrowUpCircle, SlidersHorizontal, Unlink, GitBranch, Save
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -285,8 +287,8 @@ type NotificationTemplate = { title: string; body: string }
 type NotificationEventDefinition = { value: string; label: string; description: string; variables: string[] }
 type NotificationChannel = { id: number; owner_user_id: number; owner_username?: string; name: string; type: 'telegram' | 'bark' | 'test'; enabled: boolean; events: string; config_json: string; templates_json: string; user_ids: number[] }
 type NotificationAnnouncement = { id: number; actor_user_id: number; actor_name: string; title: string; body: string; user_ids: number[]; queued_count: number; created_at: string }
-type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'interface' | 'source_prefix'
-type RoutingRule = { id: number; server_id: number; scope?: 'server' | 'path_stage'; proxy_path_id?: number; stage_step_id?: number; sort_position?: number; match_source?: 'inline' | 'rule_set'; rule_set_id?: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; source_prefix?: string; enabled: boolean; updated_at?: string }
+type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'proxy_path' | 'interface' | 'source_prefix'
+type RoutingRule = { id: number; server_id: number; scope?: 'server' | 'path_stage'; proxy_path_id?: number; stage_step_id?: number; sort_position?: number; match_source?: 'inline' | 'rule_set'; rule_set_id?: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_proxy_path_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; source_prefix?: string; sync_group_id?: string; enabled: boolean; updated_at?: string }
 type RoutingRuleSet = { id: number; name: string; url: string; format: 'singbox_source' | 'singbox_binary' | 'mihomo_domain' | 'mihomo_ipcidr' | 'mihomo_classical'; mihomo_behavior?: string; revision?: string; status: 'pending' | 'ready' | 'refreshing' | 'error'; last_error?: string; last_attempt_at?: string; last_success_at?: string }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
 type SubscriptionFormat = 'stash' | 'clash-meta' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'sing-box-mieru' | 'mieru' | 'v2ray' | 'v2ray-uri' | 'clash'
@@ -441,7 +443,7 @@ function trafficTimezoneLabel(timezone: string) {
     return timezone
   }
 }
-const routeActions: Exclude<RouteAction, 'source_prefix'>[] = ['direct', 'block', 'outbound', 'external', 'interface']
+const routeActions: Exclude<RouteAction, 'source_prefix'>[] = ['direct', 'block', 'outbound', 'external', 'proxy_path', 'interface']
 const outboundScopes = ['global', 'server']
 
 const qureRegionFlags: Record<string, string> = {
@@ -997,7 +999,7 @@ const fieldLabels: Record<string, string> = {
 const valueLabels: Record<string, string> = {
   admin: '管理员', operator: '操作员', viewer: '只读', active: '活跃', online: '在线', offline: '离线', unknown: '未知', healthy: '健康', unhealthy: '异常',
   enabled: '已启用', disabled: '已禁用', true: '启用', false: '禁用', succeeded: '成功', success: '成功', skipped: '已跳过', stale: '已过期', warning: '需关注', failed: '失败', partial_failed: '部分失败', timeout: '超时', error: '错误', pending: '等待中', running: '执行中', requested: '已请求', needed: '需要申请', ready: '就绪',
-  rollback_failed: '回滚失败', direct: '直连', block: '阻断', outbound: '出口', external: '导入节点', chain: '链式代理', warp: 'WARP', interface: '指定网卡', source_prefix: '地址前缀', socks: 'SOCKS',
+  rollback_failed: '回滚失败', direct: '直连', block: '阻断', outbound: '出口', external: '导入节点', proxy_path: '代理链路', chain: '链式代理', warp: 'WARP', interface: '指定网卡', source_prefix: '地址前缀', socks: 'SOCKS',
   global: '全局', server: '服务器', auto: '自动（IPv4 优先）', ipv4: 'IPv4', ipv6: 'IPv6', custom: '自定义', ipv4_only: '仅 IPv4', ipv6_only: '仅 IPv6', dual_stack: '双栈', prefer_ipv4: '优先 IPv4', prefer_ipv6: '优先 IPv6',
   a: 'A', aaaa: 'AAAA', both: 'A + AAAA',
   allow: '允许', uot: 'UoT', never: '从不', first_apply: '首次下发', periodic: '定期', always: '每次', sampled: '实际连接采样', periodic_sampled: '定期+采样',
@@ -8962,7 +8964,7 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
 }
 
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
-type RoutingDraft = { server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; interface_name: string; source_prefix: string; enabled: boolean }
+type RoutingDraft = { id: number; server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; target_proxy_path_id: number; interface_name: string; source_prefix: string; sync_source_rule_id: number; sync_enabled: boolean; enabled: boolean }
 type TransportMode = 'port-forward' | 'tunnel'
 type TransportDraft = { mode: TransportMode; name: string; source_server_id: number; target_server_id: number; listen_ip: string; listen_port: number; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; type: TunnelType; priority: number; config_json: string; enabled: boolean }
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; stage_step_id?: number; rule_ids?: number[]; node_id?: string }
@@ -9705,6 +9707,44 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const result = await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({ path_id: path.id, ...candidateStep }) }) as { proxy_path_step?: ProxyPathStep }
 	  return result.proxy_path_step || null
 	}
+	const createRoutingRuleTargetPath = async (rule: RoutingRule, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
+	  const sourcePath = ((data.proxy_paths || []) as ProxyPath[]).find(path => path.id === rule.proxy_path_id)
+	  if (!sourcePath) throw new Error('分流规则所属路径已经不存在，请刷新后重试。')
+	  const ordered = ((data.proxy_path_steps || []) as ProxyPathStep[])
+		.filter(step => step.path_id === sourcePath.id)
+		.sort((left, right) => (left.position - right.position) || (left.id - right.id))
+	  const stagePosition = rule.stage_step_id ? ordered.find(step => step.id === rule.stage_step_id)?.position || 0 : 0
+	  if (rule.stage_step_id && !stagePosition) throw new Error('分流规则所属节点已经不存在，请刷新后重试。')
+	  const prefix = ordered.filter(step => step.position <= stagePosition)
+	  const createdPath = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ kind: 'chain', name_mode: 'auto', name_template: [], inbound_id: sourcePath.inbound_id, enabled: false }) }) as { proxy_path?: ProxyPath }
+	  const pathID = createdPath.proxy_path?.id || 0
+	  if (!pathID) throw new Error('目标路径已创建，但接口没有返回路径数据。')
+	  let targetStep: ProxyPathStep | null = null
+	  try {
+		for (const source of prefix) {
+		  await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({
+			path_id: pathID,
+			position: source.position,
+			node_type: source.node_type,
+			transport_mode: source.transport_mode || 'singbox',
+			processing_role: source.processing_role === true,
+			server_id: source.server_id,
+			inbound_id: source.inbound_id,
+			external_outbound_id: source.external_outbound_id,
+			config_json: source.config_json || '{}',
+		  }) })
+		}
+		const stepResult = await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({ path_id: pathID, position: stagePosition + 1, transport_mode: 'singbox', processing_role: false, config_json: '{}', ...target }) }) as { proxy_path_step?: ProxyPathStep }
+		targetStep = stepResult.proxy_path_step || null
+		if (!targetStep?.id) throw new Error('目标路径缺少第一个节点。')
+		await client.request(`/proxy-paths/${pathID}`, { method: 'PATCH', body: JSON.stringify({ enabled: true }) })
+		await client.request(`/routing-rules/${rule.id}`, { method: 'PATCH', body: JSON.stringify({ ...rule, action: 'proxy_path', target_proxy_path_id: pathID }) })
+		return targetStep
+	  } catch (error) {
+		await client.request(`/proxy-paths/${pathID}`, { method: 'DELETE' }).catch(() => undefined)
+		throw error
+	  }
+	}
 	const consumeCanvasServerTarget = (targetID: string, createdSteps: ProxyPathStep[]) => {
 	  if (!targetID.startsWith('canvas-server-') || !createdSteps.length) return
 	  setCanvasServerInstances(items => items.filter(item => canvasServerNodeID(item) !== targetID))
@@ -9845,6 +9885,44 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			  const sourceHandleEntry = sourceEntity?.type === 'server' && sourceHandleInboundID
 			    ? entries.find(entry => entry.id === sourceHandleInboundID && entry.server_id === sourceEntity.id)
 			    : undefined
+			  const routingRuleID = sourceEntity?.type === 'routing' ? graphRoutingRuleSource(conn.sourceHandle) : 0
+			  if (routingRuleID) {
+				const rule = ((data.routing_rules || []) as RoutingRule[]).find(item => item.id === routingRuleID)
+				if (!rule) return dialogs.alert({ title: '规则已经变化', message: '没有找到这条分流规则，请刷新后重试。' })
+				if (targetEntity?.type === 'direct') {
+				  await client.request(`/routing-rules/${rule.id}`, { method: 'PATCH', body: JSON.stringify({ ...rule, action: 'direct', target_proxy_path_id: undefined }) })
+				  await load(undefined, { background: true, forceFresh: true })
+				  return
+				}
+				if (targetEntity?.type === 'routing' || targetEntity?.type === 'detached-step') {
+				  return dialogs.alert({ title: '无法连接', message: '规则链路请连接到服务器、导入节点、WARP 或直接出口。' })
+				}
+				const target = targetEntity?.type === 'warp'
+				  ? { node_type: 'warp' as const, transport_mode: 'singbox' as const, config_json: '{}' }
+				  : await targetStepForGraphTarget(conn.target)
+				if (!target) return
+				let stepTarget: any = target
+				if (target.node_type !== 'warp') {
+				  const transport = await chooseTransportForTarget(target, undefined, rule.name)
+				  if (!transport) return
+				  const transportStep = { transport_mode: transport.transport_mode, processing_role: false, config_json: transport.config_json }
+				  if (target.node_type === 'server_inbound' && transport.target_kind === 'existing') {
+					const selectedInbound = entries.find(item => item.id === transport.target_inbound_id)
+					if (!selectedInbound) return dialogs.alert({ title: '无法创建规则链路', message: '所选目标入口已经不存在，请重新选择。' })
+					stepTarget = { ...target, ...transportStep, server_id: selectedInbound.server_id, inbound_id: selectedInbound.id }
+				  } else if (target.node_type === 'server_inbound') {
+					stepTarget = { ...target, ...transportStep, server_id: transport.target_server_id || target.server_id, inbound_id: undefined }
+				  } else {
+					stepTarget = { ...target, ...transportStep }
+				  }
+				}
+				const created = await createRoutingRuleTargetPath(rule, stepTarget)
+				if (!created) return
+				if (target.node_type === 'server_inbound') consumeCanvasServerTarget(conn.target, [created])
+				if (target.node_type === 'warp') consumeCanvasWARPTarget(conn.target, [created])
+				await load(undefined, { background: true, forceFresh: true })
+				return
+			  }
 			  const routingSource = sourceEntity?.type === 'routing' && sourceEntity.path_id
 			    ? graphRoutingStageSource(conn.sourceHandle) || { pathID: sourceEntity.path_id, stageStepID: Number(sourceEntity.stage_step_id || 0) }
 			    : null
@@ -10233,18 +10311,23 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         action: routingDraft.action,
         enabled: routingDraft.enabled,
       }
+	  if (!routingDraft.id && routingDraft.sync_source_rule_id) {
+		body.sync_source_rule_id = routingDraft.sync_source_rule_id
+		body.sync_enabled = routingDraft.sync_enabled
+	  }
       if (routingDraft.action === 'outbound' && routingDraft.outbound_id) body.outbound_id = routingDraft.outbound_id
       if (routingDraft.action === 'external' && routingDraft.external_outbound_id) body.external_outbound_id = routingDraft.external_outbound_id
+	  if (routingDraft.action === 'proxy_path' && routingDraft.target_proxy_path_id) body.target_proxy_path_id = routingDraft.target_proxy_path_id
       if (routingDraft.action === 'interface') body.interface_name = routingDraft.interface_name.trim()
       if (routingDraft.action === 'source_prefix') body.source_prefix = routingDraft.source_prefix.trim()
-	      await client.request('/routing-rules', { method: 'POST', body: JSON.stringify(body) })
+	      await client.request(routingDraft.id ? `/routing-rules/${routingDraft.id}` : '/routing-rules', { method: routingDraft.id ? 'PATCH' : 'POST', body: JSON.stringify(body) })
 	      uncommittedPathID = 0
 	      if (routingCanvasTargetID) {
 	        consumeCanvasRoutingTarget(routingCanvasTargetID, proxyPathID, routingDraft.stage_step_id)
 	        setRoutingCanvasTargetID('')
 	      }
       await load()
-		setRoutingDraft(current => current ? { ...current, proxy_path_id: proxyPathID, inbound_id: 0, name: '', match_value: current.match_kind === 'all' ? '' : current.match_value } : current)
+		setRoutingDraft(current => current ? { ...current, id: 0, proxy_path_id: proxyPathID, inbound_id: 0, name: '', sync_source_rule_id: 0, sync_enabled: false, match_value: current.match_kind === 'all' ? '' : current.match_value } : current)
     } catch (e: any) {
       if (uncommittedPathID) await client.request(`/proxy-paths/${uncommittedPathID}`, { method: 'DELETE' }).catch(() => undefined)
       await dialogs.alert({ title: '创建分流失败', message: localizeErrorMessage(e.message || e) })
@@ -11598,7 +11681,37 @@ function ProxyToolIcon({ kind }: { kind: ProxyToolAction }) {
 }
 
 function defaultRoutingDraft(server: Server, proxyPathID = 0): RoutingDraft {
-  return { server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, interface_name: '', source_prefix: '', enabled: true }
+  return { id: 0, server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, target_proxy_path_id: 0, interface_name: '', source_prefix: '', sync_source_rule_id: 0, sync_enabled: false, enabled: true }
+}
+
+function routingDraftMatch(rule: RoutingRule): { match_kind: RoutingMatchKind; match_value: string } {
+  const match = parseConfig(rule.match_json) || {}
+  const key = Object.keys(match)[0] as RoutingMatchKind | undefined
+  if (!key) return { match_kind: 'all', match_value: '' }
+  const raw = match[key]
+  return { match_kind: key, match_value: Array.isArray(raw) ? raw.join('\n') : String(raw ?? '') }
+}
+
+function routingDraftFromRule(rule: RoutingRule): Partial<RoutingDraft> {
+  return {
+    id: rule.id,
+    server_id: rule.server_id,
+    proxy_path_id: Number(rule.proxy_path_id || 0),
+    stage_step_id: Number(rule.stage_step_id || 0),
+    name: rule.name,
+    match_source: rule.match_source || 'inline',
+    rule_set_id: Number(rule.rule_set_id || 0),
+    ...routingDraftMatch(rule),
+    action: rule.action,
+    outbound_id: Number(rule.outbound_id || 0),
+    external_outbound_id: Number(rule.external_outbound_id || 0),
+    target_proxy_path_id: Number(rule.target_proxy_path_id || 0),
+    interface_name: rule.interface_name || '',
+    source_prefix: rule.source_prefix || '',
+    sync_source_rule_id: 0,
+    sync_enabled: Boolean(rule.sync_group_id),
+    enabled: rule.enabled,
+  }
 }
 
 function routingMatchJSON(kind: RoutingMatchKind, value: string) {
@@ -11691,6 +11804,7 @@ function RoutingActionIcon({ action }: { action: RouteAction }) {
   if (action === 'block') return <Shield size={15} aria-hidden="true" />
   if (action === 'outbound') return <LogOut size={15} aria-hidden="true" />
   if (action === 'external') return <ExternalLink size={15} aria-hidden="true" />
+  if (action === 'proxy_path') return <GitBranch size={15} aria-hidden="true" />
   if (action === 'source_prefix') return <LocateFixed size={15} aria-hidden="true" />
   return <Network size={15} aria-hidden="true" />
 }
@@ -11707,10 +11821,14 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
   const stages = routingStages(data, draft.proxy_path_id, draft.inbound_id)
   const selectedStage = stages.find(stage => stage.stepID === draft.stage_step_id) || stages[0]
   const rules = ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage' && rule.proxy_path_id === draft.proxy_path_id)
+	const allRules = ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage')
   const ruleSets = ((data.routing_rule_sets || []) as RoutingRuleSet[])
   const filteredRuleSets = ruleSets.filter(set => `${set.name} ${set.url} ${set.format}`.toLowerCase().includes(ruleSetQuery.trim().toLowerCase()))
   const serverOutbounds = (data.outbounds || []).filter((item: Outbound) => item.server_id === Number(selectedStage?.serverID || draft.server_id))
   const externalOutbounds = (data.external_outbounds || []).filter((item: ExternalOutbound) => item.scope === 'global' || !item.server_id || item.server_id === Number(selectedStage?.serverID || draft.server_id))
+	const sourcePath = paths.find(path => path.id === draft.proxy_path_id)
+	const targetPaths = paths.filter(path => path.id !== draft.proxy_path_id && path.kind !== 'direct' && path.inbound_id === sourcePath?.inbound_id)
+	const reuseRules = allRules.filter(rule => rule.id !== draft.id && (rule.proxy_path_id !== draft.proxy_path_id || Number(rule.stage_step_id || 0) !== Number(draft.stage_step_id || 0)))
   useEffect(() => {
     if (!selectedStage) return
     if (draft.server_id !== selectedStage.serverID || draft.stage_step_id !== selectedStage.stepID) update({ server_id: selectedStage.serverID, stage_step_id: selectedStage.stepID, outbound_id: 0, external_outbound_id: 0 })
@@ -11747,6 +11865,21 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
     update({ stage_step_id: stage.stepID, server_id: stage.serverID, outbound_id: 0, external_outbound_id: 0 })
   }
   const usesExplicitSource = draft.action === 'interface' || draft.action === 'source_prefix'
+	const reuseRule = (ruleID: number) => {
+	  const source = allRules.find(rule => rule.id === ruleID)
+	  if (!source) return update({ sync_source_rule_id: 0, sync_enabled: false })
+		  update({
+			...routingDraftFromRule(source),
+			id: 0,
+			proxy_path_id: draft.proxy_path_id,
+			stage_step_id: draft.stage_step_id,
+			server_id: selectedStage?.serverID || draft.server_id,
+			action: source.action === 'proxy_path' ? 'direct' : source.action,
+			target_proxy_path_id: source.action === 'proxy_path' ? 0 : Number(source.target_proxy_path_id || 0),
+			sync_source_rule_id: source.id,
+		sync_enabled: false,
+	  })
+	}
 
   return <MotionDialogPanel onCancel={onCancel} className="routing-composer-dialog" aria-labelledby="routing-dialog-title">
     <header className="dialog-head routing-composer-head">
@@ -11767,8 +11900,9 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                 const ruleSet = rule.match_source === 'rule_set' ? ruleSets.find(set => set.id === rule.rule_set_id) : undefined
                 return <li key={rule.id} className="routing-rule-card" draggable onDragStart={() => setDraggedRuleID(rule.id)} onDragEnd={() => setDraggedRuleID(0)} onDragOver={event => { if (stage.available) { event.preventDefault(); event.stopPropagation() } }} onDrop={event => { event.preventDefault(); event.stopPropagation(); if (draggedRuleID && stage.available) void persistPlacement(draggedRuleID, stage.stepID, index) }}>
                 <div className="routing-rule-order"><GripVertical size={14} aria-hidden="true" /><span>{index + 1}</span></div>
-                <div className="routing-rule-copy"><strong>{rule.name}</strong><span>{routingRuleMatchLabel(rule, ruleSets)} <ChevronRight size={12} aria-hidden="true" /> <RoutingActionIcon action={rule.action} /> {labelValue(rule.action)}</span>{ruleSet && <small>{labelValue(ruleSet.format)} · {ruleSet.revision?.slice(0, 10) || '未同步'} · {labelValue(ruleSet.status)} · {ruleSet.last_success_at ? formatTableTime(ruleSet.last_success_at) : '未成功'}</small>}{ruleSet?.last_error && <small className="danger-text">{ruleSet.last_error}</small>}</div>
+                <div className="routing-rule-copy"><strong>{rule.name}{rule.sync_group_id && <span className="routing-sync-badge">同步</span>}</strong><span>{routingRuleMatchLabel(rule, ruleSets)} <ChevronRight size={12} aria-hidden="true" /> <RoutingActionIcon action={rule.action} /> {rule.action === 'proxy_path' ? paths.find(path => path.id === rule.target_proxy_path_id)?.name || '代理链路' : labelValue(rule.action)}</span>{ruleSet && <small>{labelValue(ruleSet.format)} · {ruleSet.revision?.slice(0, 10) || '未同步'} · {labelValue(ruleSet.status)} · {ruleSet.last_success_at ? formatTableTime(ruleSet.last_success_at) : '未成功'}</small>}{ruleSet?.last_error && <small className="danger-text">{ruleSet.last_error}</small>}</div>
                 <div className="routing-rule-actions">
+				  <button className="ghost icon-button" onClick={() => update({ ...routingDraftFromRule(rule), sync_source_rule_id: 0 })} aria-label={`编辑 ${rule.name}`} title="编辑"><Edit3 size={13} /></button>
                   <button className="ghost icon-button" disabled={index === 0} onClick={() => void persistPlacement(rule.id, stage.stepID, index - 1)} aria-label={`${rule.name} 上移`} title="上移"><ArrowUp size={13} /></button>
                   <button className="ghost icon-button" disabled={index === stageRules.length - 1} onClick={() => void persistPlacement(rule.id, stage.stepID, index + 1)} aria-label={`${rule.name} 下移`} title="下移"><ArrowDown size={13} /></button>
                   <button className="ghost icon-button" disabled={stageIndex === 0 || !stages[stageIndex - 1]?.available} onClick={() => void persistPlacement(rule.id, stages[stageIndex - 1].stepID)} aria-label={`${rule.name} 移到上一节点`} title="上一节点"><ArrowLeft size={13} /></button>
@@ -11782,7 +11916,8 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
         })}
       </div>
       {selectedStage?.available && <section className="routing-rule-editor" aria-labelledby="routing-rule-editor-title">
-        <header><div className="routing-rule-editor-title"><h3 id="routing-rule-editor-title">{selectedStage.label} 节点规则</h3><span>{selectedStage.serverName}</span></div><Select className="routing-match-source-select" variant="segmented" value={draft.match_source} onChange={event => update({ match_source: event.target.value as RoutingDraft['match_source'] })} aria-label="匹配来源"><option value="inline">手动条件</option><option value="rule_set">远程规则集</option></Select></header>
+		<header><div className="routing-rule-editor-title"><h3 id="routing-rule-editor-title">{selectedStage.label} 节点规则</h3><span>{selectedStage.serverName}</span></div><Select className="routing-match-source-select" variant="segmented" value={draft.match_source} onChange={event => update({ match_source: event.target.value as RoutingDraft['match_source'] })} aria-label="匹配来源"><option value="inline">手动条件</option><option value="rule_set">远程规则集</option></Select></header>
+		<div className="routing-rule-reuse"><FormField label="复用其他规则"><Select value={draft.sync_source_rule_id} onChange={event => reuseRule(Number(event.target.value))}><option value={0}>新规则</option>{reuseRules.map(rule => <option key={rule.id} value={rule.id}>{paths.find(path => path.id === rule.proxy_path_id)?.name || `分支 ${rule.proxy_path_id}`} · {rule.name}</option>)}</Select></FormField><label className={draft.sync_source_rule_id ? '' : 'disabled'}><input type="checkbox" checked={draft.sync_enabled} disabled={!draft.sync_source_rule_id} onChange={event => update({ sync_enabled: event.target.checked })} /><span>同步名称与匹配条件</span></label></div>
         <div className="routing-rule-editor-grid">
           <FormField label="名称" required><input value={draft.name} onChange={event => update({ name: event.target.value })} placeholder="规则名称" /></FormField>
           {draft.match_source === 'inline' ? <>
@@ -11802,6 +11937,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
           })}</div>
           {draft.action === 'outbound' && <FormField label="本机出口" required><Select value={draft.outbound_id} onChange={event => update({ outbound_id: Number(event.target.value) })}><option value={0}>选择出口</option>{serverOutbounds.map((item: Outbound) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
           {draft.action === 'external' && <FormField label="导入节点" required><Select value={draft.external_outbound_id} onChange={event => update({ external_outbound_id: Number(event.target.value) })}><option value={0}>选择导入节点</option>{externalOutbounds.map((item: ExternalOutbound) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
+		  {draft.action === 'proxy_path' && <FormField label="规则代理链路" hint="必须与当前路径共享到此节点的前缀；也可以关闭窗口后从规则连接点拖线创建。" required><Select value={draft.target_proxy_path_id} onChange={event => update({ target_proxy_path_id: Number(event.target.value) })}><option value={0}>选择目标路径</option>{targetPaths.map(path => <option key={path.id} value={path.id}>{path.name || `路径 ${path.id}`}</option>)}</Select></FormField>}
           {usesExplicitSource && <div className="routing-egress-selector">
             <FormField label="出口绑定" required><Select className="full-width" variant="segmented" value={draft.action} onChange={event => update({ action: event.target.value as 'interface' | 'source_prefix' })} aria-label="出口绑定方式"><option value="interface">网卡</option><option value="source_prefix">IP 前缀</option></Select></FormField>
             {draft.action === 'interface'
@@ -11811,7 +11947,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
         </div>
       </section>}
     </div>
-    <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>完成</button><button onClick={onSubmit} disabled={!draft.name.trim() || (draft.match_source === 'rule_set' && !draft.rule_set_id) || (draft.action === 'interface' && !draft.interface_name.trim()) || (draft.action === 'source_prefix' && !draft.source_prefix.trim())}><Plus size={14} aria-hidden="true" />添加到 {selectedStage?.label}</button></footer>
+    <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>完成</button><button onClick={onSubmit} disabled={!draft.name.trim() || (draft.match_source === 'rule_set' && !draft.rule_set_id) || (draft.action === 'proxy_path' && !draft.target_proxy_path_id) || (draft.action === 'interface' && !draft.interface_name.trim()) || (draft.action === 'source_prefix' && !draft.source_prefix.trim())}>{draft.id ? <Save size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}{draft.id ? '保存规则' : `添加到 ${selectedStage?.label}`}</button></footer>
   </MotionDialogPanel>
 }
 
@@ -12671,6 +12807,9 @@ function nodeHandles(node: Node, rect: GraphRect): Record<string, GraphPoint> {
 	  const entity = data?.entity as GraphEntity | undefined
 	  if (entity?.type === 'routing' && entity.path_id) {
 	    handles[graphRoutingStageSourceHandleID(entity.path_id, Number(entity.stage_step_id || 0))] = { x: (rect.left + rect.right) / 2, y: rect.bottom }
+		;(entity.rule_ids || []).forEach((ruleID, index) => {
+		  handles[graphRoutingRuleSourceHandleID(ruleID)] = { x: rect.right, y: rect.top + 82 + index * 28 }
+		})
 	  }
 	  const entryHandles: GraphEntrySource[] = data?.entryHandles || []
   const pathHandles: GraphPathSource[] = data?.pathHandles || []
@@ -12997,7 +13136,11 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
 	  })
 	  const stepByID = new Map<number, ProxyPathStep>(((data.proxy_path_steps || []) as ProxyPathStep[]).map(step => [step.id, step]))
 	  const graphRoutingStages = buildGraphRoutingStages(visiblePaths, data.proxy_path_steps || [], data.routing_rules || [])
-	  const graphRoutingStageByKey = new Map(graphRoutingStages.map(stage => [graphRoutingStageKey(stage.pathID, stage.stageStepID), stage]))
+	const graphRoutingStageByKey = new Map(graphRoutingStages.map(stage => [graphRoutingStageKey(stage.pathID, stage.stageStepID), stage]))
+	const routingRuleByTargetPath = new Map<number, RoutingRule>()
+	;((data.routing_rules || []) as RoutingRule[]).forEach(rule => {
+	  if (rule.enabled !== false && rule.action === 'proxy_path' && rule.target_proxy_path_id && !routingRuleByTargetPath.has(rule.target_proxy_path_id)) routingRuleByTargetPath.set(rule.target_proxy_path_id, rule)
+	})
 	  const pathsWithRoutingStages = new Set(graphRoutingStages.map(stage => stage.pathID))
 	  const collapsedDirectSourceByPath = new Map<number, ProxyPathStep>()
 	  visiblePaths.forEach(path => {
@@ -13234,15 +13377,16 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
 	    const total = stage.ruleIDs.length
 	    const enabled = stage.enabledRuleCount
 	    const ruleSummary = enabled === total ? `${total} 条规则` : `${enabled}/${total} 条启用`
+		const stageRules = stage.ruleIDs.map(ruleID => ((data.routing_rules || []) as RoutingRule[]).find(rule => rule.id === ruleID)).filter(Boolean) as RoutingRule[]
 	    nodes.push({
 	      id,
 	      className: 'graph-node routing-graph-node persisted-routing-node',
 	      position,
-	      style: { width: 220 },
+	      style: { width: 240, height: 94 + stageRules.length * 28 },
 	      data: {
 	        entity: { type: 'routing', id: stage.ruleIDs[0] || 0, path_id: path.id, stage_step_id: stage.stageStepID, rule_ids: stage.ruleIDs, label: `${pathDisplayName(path.id)} / 分流规则`, node_id: id } as GraphEntity,
 	        pathIDs: [path.id],
-	        label: <RoutingGraphNode connected pathID={path.id} stageStepID={stage.stageStepID} title="分流规则" meta={`${ruleSummary} · ${hasContinuation ? '未命中继续链路' : '未命中直接出口'}`} />,
+	        label: <RoutingGraphNode connected pathID={path.id} stageStepID={stage.stageStepID} title="分流规则" meta={`${ruleSummary} · ${hasContinuation ? '未命中继续链路' : '未命中直接出口'}`} rules={stageRules} />,
 	      },
 	    })
 	  })
@@ -13343,10 +13487,15 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const root = inboundByID.get(path.inbound_id)
     if (!root) return
 	    const pathSteps = (stepsByPath.get(path.id) || []).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
+		const targetRule = routingRuleByTargetPath.get(path.id)
+		const sourceRuleStep = targetRule?.stage_step_id ? stepByID.get(targetRule.stage_step_id) : undefined
+		const sourceRulePosition = sourceRuleStep?.position || 0
+		const renderedSteps = targetRule ? pathSteps.filter(step => step.position > sourceRulePosition) : pathSteps
 	    const collapsedSource = collapsedDirectSourceByPath.get(path.id)
-	    let source = collapsedSource ? stepNodeID(collapsedSource) : `server-${root.server_id}`
-	    let sourceHandle: string | undefined = collapsedSource ? pathStepHandleID(collapsedSource.id) : serverEntryHandleID(root.id)
+	    let source = targetRule ? graphRoutingStageNodeID(Number(targetRule.proxy_path_id), Number(targetRule.stage_step_id || 0)) : collapsedSource ? stepNodeID(collapsedSource) : `server-${root.server_id}`
+	    let sourceHandle: string | undefined = targetRule ? graphRoutingRuleSourceHandleID(targetRule.id) : collapsedSource ? pathStepHandleID(collapsedSource.id) : serverEntryHandleID(root.id)
 	    let activeStageStepID: number | null = collapsedSource ? pathSteps[pathSteps.length - 1]?.id || null : 0
+		if (targetRule) activeStageStepID = null
 	    const insertRoutingStage = () => {
 	      if (activeStageStepID === null) return false
 	      const stage = graphRoutingStageByKey.get(graphRoutingStageKey(path.id, activeStageStepID))
@@ -13370,7 +13519,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
 	      sourceHandle = graphRoutingStageSourceHandleID(path.id, activeStageStepID)
 	      return true
 	    }
-	    if (!collapsedSource) pathSteps.forEach((step, index) => {
+	    if (!collapsedSource) renderedSteps.forEach((step, index) => {
 	      const target = stepNodeID(step)
 	      if (!target) return
 	      const routedFromStage = insertRoutingStage()
@@ -13623,12 +13772,13 @@ function WARPGraphNode({ connected = false, title, meta, exitRegion }: { connect
   </div>
 }
 
-function RoutingGraphNode({ connected = false, pathID = 0, stageStepID = 0, title, meta }: { connected?: boolean; pathID?: number; stageStepID?: number; title: string; meta: string }) {
+function RoutingGraphNode({ connected = false, pathID = 0, stageStepID = 0, title, meta, rules = [] }: { connected?: boolean; pathID?: number; stageStepID?: number; title: string; meta: string; rules?: RoutingRule[] }) {
 	  return <div className="routing-exit-card">
 	    <Handle id="target-top" className="connect-handle connect-target connect-target-top" type="target" position={Position.Top} isConnectable={!connected} />
 	    {connected && <Handle id={graphRoutingStageSourceHandleID(pathID, stageStepID)} className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} />}
 	    <span className="routing-exit-icon"><Workflow size={18} /></span>
 	    <span className="routing-exit-copy"><small>{connected ? '路径分流' : '规则出口'}</small><strong>{title}</strong></span>
+		{rules.length > 0 && <div className="routing-exit-rules">{rules.map(rule => <div key={rule.id} className="routing-exit-rule"><span>{rule.name}</span><small>{rule.sync_group_id ? `同步 · ${labelValue(rule.action)}` : labelValue(rule.action)}</small><Handle id={graphRoutingRuleSourceHandleID(rule.id)} className="connect-handle connect-source routing-rule-source-handle" type="source" position={Position.Right} /></div>)}</div>}
 	    <span className="routing-exit-state">{meta}</span>
 	  </div>
 }
@@ -14001,13 +14151,18 @@ function RoutingRules({ data, client, load }: any) {
         action: draft.action,
         enabled: draft.enabled,
       }
+	  if (!draft.id && draft.sync_source_rule_id) {
+		body.sync_source_rule_id = draft.sync_source_rule_id
+		body.sync_enabled = draft.sync_enabled
+	  }
       if (draft.action === 'outbound' && draft.outbound_id) body.outbound_id = draft.outbound_id
       if (draft.action === 'external' && draft.external_outbound_id) body.external_outbound_id = draft.external_outbound_id
+	  if (draft.action === 'proxy_path' && draft.target_proxy_path_id) body.target_proxy_path_id = draft.target_proxy_path_id
       if (draft.action === 'interface') body.interface_name = draft.interface_name.trim()
       if (draft.action === 'source_prefix') body.source_prefix = draft.source_prefix.trim()
-      await client.request('/routing-rules', { method: 'POST', body: JSON.stringify(body) })
+      await client.request(draft.id ? `/routing-rules/${draft.id}` : '/routing-rules', { method: draft.id ? 'PATCH' : 'POST', body: JSON.stringify(body) })
       await load()
-      setDraft(current => current ? { ...current, name: '', match_value: current.match_kind === 'all' ? '' : current.match_value } : current)
+      setDraft(current => current ? { ...current, id: 0, name: '', sync_source_rule_id: 0, sync_enabled: false, match_value: current.match_kind === 'all' ? '' : current.match_value } : current)
     } catch (error: any) {
       await dialogs.alert({ title: '创建分流失败', message: localizeErrorMessage(error.message || error) })
     }

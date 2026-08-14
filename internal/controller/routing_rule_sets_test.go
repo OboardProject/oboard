@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -184,6 +185,28 @@ func TestRoutingRuleSetRESTLifecycleAndCrossStagePlacement(t *testing.T) {
 	if movedA.ServerID != serverB.ID || movedA.StageStepID == nil || movedB.ServerID != serverA.ID || movedB.StageStepID != nil {
 		t.Fatalf("REST placement did not move rules across stages: A=%#v B=%#v", movedA, movedB)
 	}
+	syncedResponse := request(t, handler, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{
+		"scope": model.RoutingRuleScopePathStage, "proxy_path_id": path.ID, "sort_position": 1,
+		"sync_source_rule_id": movedA.ID, "sync_enabled": true, "action": model.RouteActionBlock, "enabled": true,
+	}, http.StatusCreated)
+	syncedID := int64(syncedResponse["routing_rule"].(map[string]any)["id"].(float64))
+	copyResponse := request(t, handler, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{
+		"scope": model.RoutingRuleScopePathStage, "proxy_path_id": path.ID, "sort_position": 2,
+		"sync_source_rule_id": movedA.ID, "sync_enabled": false, "action": model.RouteActionDirect, "enabled": true,
+	}, http.StatusCreated)
+	copyID := int64(copyResponse["routing_rule"].(map[string]any)["id"].(float64))
+	movedA, _ = db.GetRoutingRule(ctx, movedA.ID)
+	movedA.Name = "shared-updated"
+	movedA.MatchJSON = `{"domain":["shared-updated.example"]}`
+	request(t, handler, http.MethodPatch, "/api/v2/ui/routing-rules/"+itoa(movedA.ID), token, movedA, http.StatusOK)
+	syncedRule, _ := db.GetRoutingRule(ctx, syncedID)
+	independentRule, _ := db.GetRoutingRule(ctx, copyID)
+	if syncedRule.Name != movedA.Name || syncedRule.MatchJSON != movedA.MatchJSON || syncedRule.Action != model.RouteActionBlock || syncedRule.SyncGroupID == "" {
+		t.Fatalf("REST synchronized copy did not share only match fields: %#v", syncedRule)
+	}
+	if independentRule.Name == movedA.Name || independentRule.SyncGroupID != "" {
+		t.Fatalf("REST one-time copy remained synchronized: %#v", independentRule)
+	}
 }
 
 func TestRoutingRuleSetPeriodicRefreshOnlyAttemptsDueItems(t *testing.T) {
@@ -218,6 +241,82 @@ func TestRoutingRuleSetPeriodicRefreshOnlyAttemptsDueItems(t *testing.T) {
 	if err != nil || persistedFresh.LastAttemptAt == nil || !persistedFresh.LastAttemptAt.Equal(freshAt) {
 		t.Fatalf("fresh rule set was modified: %#v error=%v", persistedFresh, err)
 	}
+}
+
+func TestRoutingRuleTargetPathValidationRequiresSharedPrefixAndRejectsCycles(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := t.Context()
+	servers := []model.Server{{Name: "A", Status: model.ServerOnline}, {Name: "B", Status: model.ServerOnline}, {Name: "C", Status: model.ServerOnline}, {Name: "D", Status: model.ServerOnline}}
+	for index := range servers {
+		if err := db.CreateServer(ctx, &servers[index]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := &model.Inbound{ServerID: servers[0].ID, Name: "root", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	otherRoot := &model.Inbound{ServerID: servers[0].ID, Name: "other", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 444, ConfigJSON: `{}`, Enabled: true}
+	for _, inbound := range []*model.Inbound{root, otherRoot} {
+		if err := db.CreateInbound(ctx, inbound); err != nil {
+			t.Fatal(err)
+		}
+	}
+	createPath := func(inboundID int64, ids ...int64) (model.ProxyPath, []model.ProxyPathStep) {
+		t.Helper()
+		path := model.ProxyPath{InboundID: inboundID, Kind: model.ProxyPathKindChain, NameMode: model.ProxyPathNameAuto, ExitRegionMode: "auto", Secret: fmt.Sprintf("path-%d", len(ids)), Enabled: true}
+		if err := db.CreateProxyPath(ctx, &path); err != nil {
+			t.Fatal(err)
+		}
+		steps := make([]model.ProxyPathStep, 0, len(ids))
+		for index, serverID := range ids {
+			id := serverID
+			step := model.ProxyPathStep{PathID: path.ID, Position: index + 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &id, ConfigJSON: `{}`}
+			if err := db.CreateProxyPathStep(ctx, &step); err != nil {
+				t.Fatal(err)
+			}
+			steps = append(steps, step)
+		}
+		return path, steps
+	}
+	fallback, fallbackSteps := createPath(root.ID, servers[1].ID, servers[2].ID)
+	target, _ := createPath(root.ID, servers[1].ID, servers[3].ID)
+	wrongPrefix, _ := createPath(root.ID, servers[2].ID, servers[3].ID)
+	wrongRoot, _ := createPath(otherRoot.ID, servers[1].ID, servers[3].ID)
+	server := newTestServer(db, "test-secret", "")
+	if err := server.validateRoutingRuleTargetPath(ctx, fallback.ID, &fallbackSteps[0].ID, target.ID, 0); err != nil {
+		t.Fatalf("compatible target path rejected: %v", err)
+	}
+	if err := server.validateRoutingRuleTargetPath(ctx, fallback.ID, &fallbackSteps[0].ID, wrongPrefix.ID, 0); err == nil {
+		t.Fatal("target path with a different prefix was accepted")
+	}
+	if err := server.validateRoutingRuleTargetPath(ctx, fallback.ID, &fallbackSteps[0].ID, wrongRoot.ID, 0); err == nil {
+		t.Fatal("target path from another root inbound was accepted")
+	}
+	targetID, fallbackID := target.ID, fallback.ID
+	cycleRule := &model.RoutingRule{ServerID: servers[1].ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &targetID, StageStepID: &[]int64{dbStepIDAt(t, db, target.ID, 1)}[0], MatchSource: model.RoutingMatchSourceInline, Name: "cycle", MatchJSON: `{}`, Action: model.RouteActionProxyPath, TargetProxyPathID: &fallbackID, Enabled: true}
+	if err := db.CreateRoutingRule(ctx, cycleRule); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.validateRoutingRuleTargetPath(ctx, fallback.ID, &fallbackSteps[0].ID, target.ID, 0); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("routing target cycle was not rejected: %v", err)
+	}
+}
+
+func dbStepIDAt(t *testing.T, db *store.Store, pathID int64, position int) int64 {
+	t.Helper()
+	steps, err := db.ListProxyPathStepsForPath(t.Context(), pathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range steps {
+		if step.Position == position {
+			return step.ID
+		}
+	}
+	t.Fatalf("path %d has no step %d", pathID, position)
+	return 0
 }
 
 func TestRoutingRuleSetRefreshQueuesOnlyReferencingServers(t *testing.T) {

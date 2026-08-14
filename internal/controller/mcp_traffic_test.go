@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/application"
@@ -118,6 +119,69 @@ func TestRoutingRuleSetCapabilities(t *testing.T) {
 	applyAutomationChangeset(t, server, principal, "routing-rule-set-delete", automation.OperationRequest{Capability: "routing_rule_sets.delete", Input: deleteInput})
 	if _, err := db.GetRoutingRuleSet(ctx, item.ID); err == nil {
 		t.Fatal("deleted routing rule set still exists")
+	}
+}
+
+func TestRoutingRuleCapabilityCreatesSynchronizedStageReuse(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := t.Context()
+	operator := &model.User{Username: "operator-sync", PasswordHash: "unused", Role: model.RoleOperator, Status: "active", ProxyUUID: "22222222-2222-4222-8222-222222222222", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, operator); err != nil {
+		t.Fatal(err)
+	}
+	node := &model.Server{Name: "entry", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: node.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	path := &model.ProxyPath{InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, NameMode: model.ProxyPathNameAuto, ExitRegionMode: "auto", Secret: "direct-secret", Enabled: true}
+	if err := db.CreateProxyPath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	principal := trafficAutomationPrincipal(t, server, operator.Username)
+	createSource, _ := json.Marshal(map[string]any{"routing_rule": map[string]any{
+		"scope": model.RoutingRuleScopePathStage, "proxy_path_id": path.ID, "sort_position": 0,
+		"name": "shared-match", "match_json": `{"domain_suffix":["example.com"]}`, "action": model.RouteActionDirect, "enabled": true,
+	}})
+	applyAutomationChangeset(t, server, principal, "routing-sync-source", automation.OperationRequest{Capability: "routing_rules.create", Input: createSource})
+	rules, err := db.ListRoutingRules(ctx)
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("source rules=%#v err=%v", rules, err)
+	}
+	source := rules[0]
+	createReuse, _ := json.Marshal(map[string]any{"routing_rule": map[string]any{
+		"scope": model.RoutingRuleScopePathStage, "proxy_path_id": path.ID, "sort_position": 1,
+		"sync_source_rule_id": source.ID, "sync_enabled": true, "action": model.RouteActionBlock, "enabled": true,
+	}})
+	applyAutomationChangeset(t, server, principal, "routing-sync-copy", automation.OperationRequest{Capability: "routing_rules.create", Input: createReuse})
+	rules, err = db.ListRoutingRules(ctx)
+	if err != nil || len(rules) != 2 {
+		t.Fatalf("synchronized rules=%#v err=%v", rules, err)
+	}
+	var synced model.RoutingRule
+	for _, rule := range rules {
+		if rule.ID != source.ID {
+			synced = rule
+		}
+	}
+	if synced.Name != source.Name || synced.MatchJSON != source.MatchJSON || synced.Action != model.RouteActionBlock || synced.SyncGroupID == "" {
+		t.Fatalf("unexpected synchronized copy: %#v", synced)
+	}
+	updateSource, _ := json.Marshal(map[string]any{"routing_rule_id": source.ID, "changes": map[string]any{"name": "shared-updated", "match_json": `{"domain_suffix":["updated.example"]}`}})
+	applyAutomationChangeset(t, server, principal, "routing-sync-update", automation.OperationRequest{Capability: "routing_rules.update", Input: updateSource})
+	synced, err = func() (model.RoutingRule, error) {
+		item, err := db.GetRoutingRule(ctx, synced.ID)
+		if err != nil {
+			return model.RoutingRule{}, err
+		}
+		return *item, nil
+	}()
+	if err != nil || synced.Name != "shared-updated" || !strings.Contains(synced.MatchJSON, "updated.example") || synced.Action != model.RouteActionBlock {
+		t.Fatalf("synchronized MCP update=%#v err=%v", synced, err)
 	}
 }
 

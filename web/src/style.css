@@ -4391,6 +4391,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .routing-rule-order { display: flex; align-items: center; gap: 2px; color: var(--muted-2); font-size: 10px; font-variant-numeric: tabular-nums; }
 .routing-rule-copy { min-width: 0; display: grid; gap: 2px; }
 .routing-rule-copy strong { overflow: hidden; color: var(--text-strong); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.routing-sync-badge { display: inline-flex; margin-left: 5px; padding: 1px 4px; color: var(--primary); border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border)); border-radius: 4px; background: var(--primary-softer); font-size: 9px; font-weight: 700; vertical-align: 1px; }
 .routing-rule-copy > span { min-width: 0; display: flex; align-items: center; gap: 3px; overflow: hidden; color: var(--muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
 .routing-rule-copy small { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .routing-rule-actions { display: grid; grid-template-columns: repeat(2, 26px); gap: 2px; opacity: .25; transition: opacity .15s ease; }
@@ -4399,6 +4400,10 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .routing-stage-fallback { grid-row: 4; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; padding: 9px 10px; color: var(--muted); border-top: 1px solid var(--border-soft); font-size: 10.5px; }
 .routing-stage-fallback strong { color: var(--text-secondary); font-size: 10.5px; }
 .routing-rule-editor { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--border); }
+.routing-rule-reuse { display: grid; grid-template-columns: minmax(220px, 1fr) auto; align-items: end; gap: 10px; }
+.routing-rule-reuse > label { min-height: 36px; display: flex; align-items: center; gap: 7px; padding: 0 10px; color: var(--text-secondary); border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); font-size: 11px; }
+.routing-rule-reuse > label.disabled { color: var(--muted-2); }
+.routing-rule-reuse input { width: 15px; height: 15px; }
 .routing-rule-editor > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .routing-rule-editor-title { display: flex; align-items: baseline; gap: 8px; }
 .routing-rule-editor h3 { margin: 0; color: var(--text-strong); font-size: 14px; }
@@ -4406,7 +4411,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .routing-match-source-select { flex: 0 1 210px; width: min(210px, 52vw); }
 .routing-rule-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 10px; }
 .routing-rule-editor-grid > .form-field:has(textarea), .routing-rule-set-picker, .routing-action-picker, .routing-egress-selector { grid-column: 1 / -1; }
-.routing-action-picker { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.routing-action-picker { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
 .routing-action-picker button { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--text-secondary); background: var(--surface-2); }
 .routing-action-picker button.selected { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 50%, var(--border)); background: var(--primary-softer); }
 .routing-egress-selector { display: grid; grid-template-columns: minmax(180px, .45fr) minmax(0, 1.55fr); align-items: start; gap: 10px; }
@@ -4431,6 +4436,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   .routing-stage-grid { display: block; height: max-content; min-height: 0; overflow: visible; }
   .routing-stage { display: none; }
   .routing-stage.selected { display: grid; grid-template-rows: auto auto minmax(92px, auto) auto; }
+	.routing-rule-reuse { grid-template-columns: 1fr; align-items: stretch; }
   .routing-rule-editor-title span { display: none; }
   .routing-rule-editor-grid { grid-template-columns: minmax(0, 1fr); }
   .routing-rule-editor-grid > * { grid-column: 1 !important; }
@@ -13330,6 +13336,7 @@ button.proxy-edge-label:hover { transform: none; border-color: var(--primary); b
   background: color-mix(in srgb, var(--surface-solid) 94%, var(--graph-forward));
   box-shadow: 0 8px 22px rgba(15, 23, 42, .08);
 }
+.flow .react-flow__node.persisted-routing-node .routing-exit-card { height: 100%; align-content: start; }
 .routing-exit-icon {
   width: 36px;
   height: 36px;
@@ -13343,6 +13350,11 @@ button.proxy-edge-label:hover { transform: none; border-color: var(--primary); b
 .routing-exit-copy { min-width: 0; display: grid; gap: 2px; }
 .routing-exit-copy small { color: var(--graph-forward); font-size: 9px; font-weight: 800; }
 .routing-exit-copy strong { color: var(--text-primary); font-size: 13px; }
+.routing-exit-rules { grid-column: 1 / -1; display: grid; gap: 2px; margin: 2px -4px 0; }
+.routing-exit-rule { position: relative; min-width: 0; height: 26px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 0 9px; color: var(--text-secondary); border-radius: 5px; background: color-mix(in srgb, var(--surface-2) 88%, var(--graph-forward)); font-size: 10px; }
+.routing-exit-rule > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.routing-exit-rule > small { color: var(--muted); font-size: 9px; }
+.flow .react-flow__handle.routing-rule-source-handle { right: -15px; width: 11px; height: 11px; border-color: var(--surface-solid); background: var(--graph-forward); }
 .routing-exit-state {
   grid-column: 1 / -1;
   overflow: hidden;
