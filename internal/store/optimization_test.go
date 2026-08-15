@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,51 @@ import (
 
 	"github.com/OboardProject/oboard/internal/model"
 )
+
+func TestPointServerLoadersUseConstantQueries(t *testing.T) {
+	ctx := context.Background()
+	for _, count := range []int{1, 500} {
+		t.Run(fmt.Sprintf("servers_%d", count), func(t *testing.T) {
+			s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			var target *model.Server
+			for index := 0; index < count; index++ {
+				server := &model.Server{Name: fmt.Sprintf("point-%d", index), AgentID: fmt.Sprintf("point-agent-%d", index), Status: model.ServerOnline, LatencyProbeEnabled: true}
+				if err := s.CreateServer(ctx, server); err != nil {
+					t.Fatal(err)
+				}
+				target = server
+			}
+			if _, err := s.db.ExecContext(ctx, `update server_telemetry set traffic_upload_bytes=1234,connectivity_available=1 where server_id=?`, target.ID); err != nil {
+				t.Fatal(err)
+			}
+			for _, load := range []struct {
+				name string
+				fn   func() (*model.Server, error)
+			}{
+				{name: "id", fn: func() (*model.Server, error) { return s.GetServer(ctx, target.ID) }},
+				{name: "agent", fn: func() (*model.Server, error) { return s.GetServerByAgent(ctx, target.AgentID) }},
+			} {
+				t.Run(load.name, func(t *testing.T) {
+					before := s.SQLStatementCount()
+					loaded, err := load.fn()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if delta := s.SQLStatementCount() - before; delta != 3 {
+						t.Fatalf("SQL statements = %d, want 3", delta)
+					}
+					if loaded.ID != target.ID || loaded.TrafficUploadBytes != 1234 || loaded.ConnectivityStatus != "available" || !loaded.LatencyProbeEnabled {
+						t.Fatalf("point loader returned incomplete state: %#v", loaded)
+					}
+				})
+			}
+		})
+	}
+}
 
 func TestNextTaskQueryPlanUsesCompositeIndex(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))

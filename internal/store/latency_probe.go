@@ -68,7 +68,8 @@ func (s *Store) attachServerLatencySettings(ctx context.Context, servers []model
 		servers[i].LatencyProbeMaxTargets = 64
 		byID[servers[i].ID] = &servers[i]
 	}
-	rows, err := s.db.QueryContext(ctx, `select server_id,enabled,mode,public_target,interval_seconds,sample_count,regions_json,max_targets,resource_version from server_latency_probe_settings`)
+	serverIDs, placeholders := serverIDQueryArgs(servers)
+	rows, err := s.db.QueryContext(ctx, `select server_id,enabled,mode,public_target,interval_seconds,sample_count,regions_json,max_targets,resource_version from server_latency_probe_settings where server_id in (`+placeholders+`)`, serverIDs...)
 	if err != nil {
 		return err
 	}
@@ -100,47 +101,7 @@ func (s *Store) attachServerLatencySettings(ctx context.Context, servers []model
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	return s.applyCurrentControllerConnection(ctx, servers)
-}
-
-func (s *Store) applyCurrentControllerConnection(ctx context.Context, servers []model.Server) error {
-	rows, err := s.db.QueryContext(ctx, `select e.server_id,e.kind,(select p.available from server_connectivity_events p where p.server_id=e.server_id and p.kind=? and (p.effective_at>e.effective_at or (p.effective_at=e.effective_at and p.id>e.id)) order by p.effective_at desc,p.id desc limit 1) from server_connectivity_events e where e.kind in (?,?) and not exists(select 1 from server_connectivity_events newer where newer.server_id=e.server_id and newer.kind in (?,?) and (newer.effective_at>e.effective_at or (newer.effective_at=e.effective_at and newer.id>e.id)))`, model.ConnectivityEventProbeResult, model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerDisconnected, model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerDisconnected)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	connected := make(map[int64]bool)
-	known := make(map[int64]bool)
-	probeAvailable := make(map[int64]bool)
-	probeKnown := make(map[int64]bool)
-	for rows.Next() {
-		var serverID int64
-		var kind model.ConnectivityEventKind
-		var available sql.NullInt64
-		if err := rows.Scan(&serverID, &kind, &available); err != nil {
-			return err
-		}
-		known[serverID] = true
-		connected[serverID] = kind == model.ConnectivityEventControllerConnected
-		probeKnown[serverID] = available.Valid
-		probeAvailable[serverID] = available.Int64 == 1
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
 	for index := range servers {
-		serverID := servers[index].ID
-		if known[serverID] && connected[serverID] {
-			servers[index].ConnectivityStatus = "available"
-			continue
-		}
-		if known[serverID] {
-			servers[index].ConnectivityStatus = "unavailable"
-			if servers[index].LatencyProbeEnabled && probeKnown[serverID] && probeAvailable[serverID] {
-				servers[index].ConnectivityStatus = "available"
-			}
-			continue
-		}
 		if !servers[index].LatencyProbeEnabled {
 			servers[index].ConnectivityStatus = "disabled"
 		}

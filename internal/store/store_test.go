@@ -1963,13 +1963,13 @@ func TestServerTelemetryRatesPeriodsAndHistory(t *testing.T) {
 	}
 	defer s.Close()
 	ctx := context.Background()
-	server := &model.Server{Name: "metrics", AgentID: "agent-metrics", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline, MonitoringMode: "standard", TrafficResetMode: "month_day", TrafficResetDay: 15, ConnectivityProbeEnabled: true}
+	server := &model.Server{Name: "metrics", AgentID: "agent-metrics", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline, MonitoringMode: "standard", TrafficResetMode: "month_day", TrafficResetDay: 15, LatencyProbeEnabled: true}
 	if err := s.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
 	window := model.ServerTrafficWindow{Key: "2026-07-15", Start: start, End: start.AddDate(0, 1, 0)}
-	first := model.HealthReport{AgentID: server.AgentID, Status: model.ServerOnline, CPUUsagePercent: 10, MemoryUsedBytes: 100, MemoryTotalBytes: 1000, NetworkTotalUploadBytes: 1000, NetworkTotalDownloadBytes: 2000, NetworkUploadBPS: 60, NetworkDownloadBPS: 120, ConnectivityProbeEnabled: true, ConnectivityAvailable: true, ConnectivityLatencyMS: 35, ConnectivityCheckedAt: start, Timestamp: start}
+	first := model.HealthReport{AgentID: server.AgentID, Status: model.ServerOnline, CPUUsagePercent: 10, MemoryUsedBytes: 100, MemoryTotalBytes: 1000, NetworkTotalUploadBytes: 1000, NetworkTotalDownloadBytes: 2000, NetworkUploadBPS: 60, NetworkDownloadBPS: 120, Timestamp: start}
 	if _, _, err := s.UpsertHealthTransition(ctx, first, window); err != nil {
 		t.Fatal(err)
 	}
@@ -1981,11 +1981,14 @@ func TestServerTelemetryRatesPeriodsAndHistory(t *testing.T) {
 	if _, _, err := s.UpsertHealthTransition(ctx, second, window); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.SaveLatencyProbeResults(ctx, server.ID, model.LatencyProbeResultReport{ReportID: "metrics-public", ResourceVersion: "resource-v1", CheckedAt: second.Timestamp, Items: []model.LatencyProbeResult{{ProbeID: "public", Kind: "public", Mode: "tcp", Available: true, LatencyMS: 35}}}); err != nil {
+		t.Fatal(err)
+	}
 	stored, err := s.GetServer(ctx, server.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.MonitoringMode != "standard" || stored.TrafficResetMode != "month_day" || stored.TrafficResetDay != 15 || !stored.ConnectivityProbeEnabled {
+	if stored.MonitoringMode != "standard" || stored.TrafficResetMode != "month_day" || stored.TrafficResetDay != 15 || !stored.LatencyProbeEnabled {
 		t.Fatalf("telemetry settings = %#v", stored)
 	}
 	if stored.TrafficUploadBytes != 600 || stored.TrafficDownloadBytes != 1200 {
@@ -1995,7 +1998,7 @@ func TestServerTelemetryRatesPeriodsAndHistory(t *testing.T) {
 		t.Fatalf("live telemetry = %#v", stored)
 	}
 	samples, err := s.ListServerMetricSamples(ctx, server.ID, 10)
-	if err != nil || len(samples) != 2 {
+	if err != nil || len(samples) != 1 {
 		t.Fatalf("samples=%d err=%v", len(samples), err)
 	}
 	nextStart := start.AddDate(0, 1, 0)

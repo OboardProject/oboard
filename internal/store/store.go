@@ -2418,7 +2418,8 @@ func (s *Store) attachServerTelemetry(ctx context.Context, servers []model.Serve
 		servers[i].ConnectivityStatus = "disabled"
 		byID[servers[i].ID] = &servers[i]
 	}
-	rows, err := s.db.QueryContext(ctx, serverTelemetrySelectSQL)
+	serverIDs, placeholders := serverIDQueryArgs(servers)
+	rows, err := s.db.QueryContext(ctx, serverTelemetrySelectSQL+` where server_id in (`+placeholders+`)`, serverIDs...)
 	if err != nil {
 		return err
 	}
@@ -2483,6 +2484,16 @@ func (s *Store) attachServerTelemetry(ctx context.Context, servers []model.Serve
 		}
 	}
 	return rows.Err()
+}
+
+func serverIDQueryArgs(servers []model.Server) ([]any, string) {
+	args := make([]any, len(servers))
+	placeholders := make([]string, len(servers))
+	for index := range servers {
+		args[index] = servers[index].ID
+		placeholders[index] = "?"
+	}
+	return args, strings.Join(placeholders, ",")
 }
 
 func (s *Store) UpdateServerTimeCheck(ctx context.Context, serverID int64, result model.TimeCheckResult) error {
@@ -2850,28 +2861,33 @@ func cleanPublicIP(raw string) (string, string) {
 }
 
 func (s *Store) MarkStaleServersOfflineEffective(ctx context.Context, now time.Time, defaultAfter time.Duration) ([]model.Server, error) {
-	items, err := s.ListServers(ctx)
+	defaultSeconds := int64(defaultAfter / time.Second)
+	if defaultSeconds <= 0 {
+		defaultSeconds = 1
+	}
+	rows, err := s.db.QueryContext(ctx, `select s.id,s.name,coalesce(s.agent_id,''),s.status,s.last_seen_at,coalesce(t.offline_notify_enabled,1),coalesce(t.offline_after_seconds,0)
+		from servers s left join server_telemetry t on t.server_id=s.id
+		where s.status in ('online','degraded','unknown') and s.agent_id is not null and s.agent_id<>'' and s.last_seen_at is not null
+		and unixepoch(?) - unixepoch(s.last_seen_at) >= case when coalesce(t.offline_after_seconds,0)>0 then t.offline_after_seconds else ? end`, now.UTC().Format(time.RFC3339Nano), defaultSeconds)
 	if err != nil {
 		return nil, err
 	}
-	type staleItem struct {
-		server model.Server
+	defer rows.Close()
+	stale := make([]model.Server, 0)
+	for rows.Next() {
+		var item model.Server
+		var lastSeen string
+		var notifyEnabled int
+		if err := rows.Scan(&item.ID, &item.Name, &item.AgentID, &item.Status, &lastSeen, &notifyEnabled, &item.OfflineAfterSeconds); err != nil {
+			return nil, err
+		}
+		lastSeenAt := parseTime(lastSeen)
+		item.LastSeenAt = &lastSeenAt
+		item.OfflineNotifyEnabled = notifyEnabled != 0
+		stale = append(stale, item)
 	}
-	stale := []staleItem{}
-	for _, item := range items {
-		if item.Status != model.ServerOnline && item.Status != model.ServerDegraded && item.Status != model.ServerUnknown {
-			continue
-		}
-		if strings.TrimSpace(item.AgentID) == "" || item.LastSeenAt == nil {
-			continue
-		}
-		threshold := defaultAfter
-		if item.OfflineAfterSeconds > 0 {
-			threshold = time.Duration(item.OfflineAfterSeconds) * time.Second
-		}
-		if now.Sub(item.LastSeenAt.UTC()) >= threshold {
-			stale = append(stale, staleItem{server: item})
-		}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if len(stale) == 0 {
 		return nil, nil
@@ -2886,7 +2902,7 @@ func (s *Store) MarkStaleServersOfflineEffective(ctx context.Context, now time.T
 	for _, item := range stale {
 		// A status transition is runtime state, not topology content: it must
 		// not churn servers.updated_at (the routing-topology revision source).
-		res, err := tx.ExecContext(ctx, `update servers set status='offline', last_seen_at=? where id=? and status in ('online','degraded','unknown')`, ts, item.server.ID)
+		res, err := tx.ExecContext(ctx, `update servers set status='offline', last_seen_at=? where id=? and status in ('online','degraded','unknown')`, ts, item.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -2896,15 +2912,15 @@ func (s *Store) MarkStaleServersOfflineEffective(ctx context.Context, now time.T
 		}
 		if affected == 1 {
 			threshold := defaultAfter
-			if item.server.OfflineAfterSeconds > 0 {
-				threshold = time.Duration(item.server.OfflineAfterSeconds) * time.Second
+			if item.OfflineAfterSeconds > 0 {
+				threshold = time.Duration(item.OfflineAfterSeconds) * time.Second
 			}
-			effectiveAt := item.server.LastSeenAt.UTC().Add(threshold)
+			effectiveAt := item.LastSeenAt.UTC().Add(threshold)
 			available := false
-			if _, err := insertConnectivityEvent(ctx, tx, model.ServerConnectivityEvent{ServerID: item.server.ID, Kind: model.ConnectivityEventServerOffline, Available: &available, Source: "offline_monitor", EffectiveAt: effectiveAt, EventKey: "offline:" + effectiveAt.Format(time.RFC3339Nano)}); err != nil {
+			if _, err := insertConnectivityEvent(ctx, tx, model.ServerConnectivityEvent{ServerID: item.ID, Kind: model.ConnectivityEventServerOffline, Available: &available, Source: "offline_monitor", EffectiveAt: effectiveAt, EventKey: "offline:" + effectiveAt.Format(time.RFC3339Nano)}); err != nil {
 				return nil, err
 			}
-			marked = append(marked, item.server)
+			marked = append(marked, item)
 		}
 	}
 	if len(marked) == 0 {

@@ -22,7 +22,7 @@ func newConnectivityTestStoreAtPath(t *testing.T, path string) (*Store, *model.S
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	server := &model.Server{Name: "connectivity-node", AgentID: "connectivity-agent", Status: model.ServerOnline, ConnectivityProbeEnabled: true, OfflineNotifyEnabled: true}
+	server := &model.Server{Name: "connectivity-node", AgentID: "connectivity-agent", Status: model.ServerOnline, LatencyProbeEnabled: true, OfflineNotifyEnabled: true}
 	if err := db.CreateServer(context.Background(), server); err != nil {
 		t.Fatal(err)
 	}
@@ -46,30 +46,22 @@ func TestConnectivityProbeEventsTrackRealProbesOnly(t *testing.T) {
 	ctx := context.Background()
 	db, server := newConnectivityTestStore(t)
 	checkedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
-	report := model.HealthReport{ConnectivityProbeEnabled: true, ConnectivityAvailable: true, ConnectivityLatencyMS: 23, ConnectivityCheckedAt: checkedAt, Timestamp: checkedAt}
+	report := model.LatencyProbeResultReport{ReportID: "probe-1", ResourceVersion: "resource-v1", CheckedAt: checkedAt, Items: []model.LatencyProbeResult{{ProbeID: "public", Kind: "public", Mode: "tcp", Available: true, LatencyMS: 23}}}
 	for range 6 {
-		if err := db.UpdateServerTelemetryReport(ctx, server.ID, report, telemetryWindow(checkedAt)); err != nil {
+		if err := db.SaveLatencyProbeResults(ctx, server.ID, report); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if got := connectivityEventCount(t, db, server.ID, model.ConnectivityEventProbeResult); got != 1 {
 		t.Fatalf("probe events after repeated heartbeat = %d, want 1", got)
 	}
-	report.ConnectivityCheckedAt = checkedAt.Add(time.Minute)
-	report.Timestamp = report.ConnectivityCheckedAt
-	if err := db.UpdateServerTelemetryReport(ctx, server.ID, report, telemetryWindow(report.Timestamp)); err != nil {
+	report.ReportID = "probe-2"
+	report.CheckedAt = checkedAt.Add(time.Minute)
+	if err := db.SaveLatencyProbeResults(ctx, server.ID, report); err != nil {
 		t.Fatal(err)
 	}
 	if got := connectivityEventCount(t, db, server.ID, model.ConnectivityEventProbeResult); got != 2 {
 		t.Fatalf("probe events after fresh probe = %d, want 2", got)
-	}
-	report.ConnectivityCheckedAt = checkedAt.Add(-time.Minute)
-	report.Timestamp = checkedAt.Add(2 * time.Minute)
-	if err := db.UpdateServerTelemetryReport(ctx, server.ID, report, telemetryWindow(report.Timestamp)); err != nil {
-		t.Fatal(err)
-	}
-	if got := connectivityEventCount(t, db, server.ID, model.ConnectivityEventProbeResult); got != 2 {
-		t.Fatalf("probe events after stale probe = %d, want 2", got)
 	}
 }
 
@@ -107,7 +99,7 @@ func TestConnectivityProbeTargetPersists(t *testing.T) {
 	if err := db.db.QueryRowContext(ctx, `select source from server_connectivity_events where server_id=? and kind=? order by id desc limit 1`, server.ID, model.ConnectivityEventProbeTargetChanged).Scan(&source); err != nil {
 		t.Fatal(err)
 	}
-	if source != "target_change" {
+	if source != "latency_setting" {
 		t.Fatalf("target change boundary source = %q", source)
 	}
 }
@@ -308,14 +300,14 @@ func TestConnectivitySettingEventsRecordTransitionsOnly(t *testing.T) {
 	if got := connectivityEventCount(t, db, server.ID, model.ConnectivityEventProbeEnabled); got != initial {
 		t.Fatalf("unchanged update added enabled event: %d -> %d", initial, got)
 	}
-	server.ConnectivityProbeEnabled = false
+	server.LatencyProbeEnabled = false
 	if err := db.UpdateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpdateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
-	server.ConnectivityProbeEnabled = true
+	server.LatencyProbeEnabled = true
 	if err := db.UpdateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
