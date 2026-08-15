@@ -40,14 +40,37 @@ var connectionAuditNonPublicPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("2001:db8::/32"),
 }
 
+type ConnectionAuditAddResult struct {
+	AcceptedReportIDs []string
+	InsertedReportIDs []string
+	InsertedUserIDs   []int64
+}
+
 func (s *Store) AddConnectionAuditReports(ctx context.Context, reports []model.ConnectionAuditReport) ([]string, error) {
-	accepted := make([]string, 0, len(reports))
+	result, err := s.AddConnectionAuditReportsResult(ctx, reports)
+	if err != nil {
+		return result.AcceptedReportIDs, err
+	}
+	for _, userID := range result.InsertedUserIDs {
+		if err := s.refreshConnectionProbeEpisodes(ctx, userID, time.Now().UTC()); err != nil {
+			return result.AcceptedReportIDs, err
+		}
+	}
+	return result.AcceptedReportIDs, nil
+}
+
+// AddConnectionAuditReportsResult preserves idempotent acknowledgement while
+// distinguishing newly inserted reports from retries. It intentionally does
+// not rebuild derived probe episodes so the Controller can coalesce that work
+// outside the Agent request path.
+func (s *Store) AddConnectionAuditReportsResult(ctx context.Context, reports []model.ConnectionAuditReport) (ConnectionAuditAddResult, error) {
+	result := ConnectionAuditAddResult{AcceptedReportIDs: make([]string, 0, len(reports)), InsertedReportIDs: make([]string, 0, len(reports))}
 	if len(reports) == 0 {
-		return accepted, nil
+		return result, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	defer tx.Rollback()
 	ts := now()
@@ -78,23 +101,26 @@ func (s *Store) AddConnectionAuditReports(ctx context.Context, reports []model.C
 			report.ProbeState, boolInt(report.InternalProbe), report.PresenceSequence, report.ActivePeak, report.ActiveAtEnd, report.CollectionGeneration, report.BucketCapacity, report.DroppedBucketCount,
 			report.CollectionStartedAt.UTC().Format(time.RFC3339Nano), report.CollectionEndedAt.UTC().Format(time.RFC3339Nano), report.StartedAt.UTC().Format(time.RFC3339Nano), report.EndedAt.UTC().Format(time.RFC3339Nano), ts)
 		if err != nil {
-			return nil, err
+			return result, err
 		}
-		if _, err := res.RowsAffected(); err != nil {
-			return nil, err
+		inserted, err := res.RowsAffected()
+		if err != nil {
+			return result, err
 		}
-		accepted = append(accepted, report.ReportID)
-		affectedUsers[report.UserID] = struct{}{}
+		result.AcceptedReportIDs = append(result.AcceptedReportIDs, report.ReportID)
+		if inserted == 1 {
+			result.InsertedReportIDs = append(result.InsertedReportIDs, report.ReportID)
+			affectedUsers[report.UserID] = struct{}{}
+		}
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return result, err
 	}
 	for userID := range affectedUsers {
-		if err := s.refreshConnectionProbeEpisodes(ctx, userID, time.Now().UTC()); err != nil {
-			return nil, err
-		}
+		result.InsertedUserIDs = append(result.InsertedUserIDs, userID)
 	}
-	return accepted, nil
+	sort.Slice(result.InsertedUserIDs, func(i, j int) bool { return result.InsertedUserIDs[i] < result.InsertedUserIDs[j] })
+	return result, nil
 }
 
 func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, connectionAuditEnabled bool, policy model.AuditPolicy) (model.ConnectionAuditOverview, error) {
@@ -1648,6 +1674,12 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 		}
 	}
 	return tx.Commit()
+}
+
+// RefreshConnectionProbeEpisodes rebuilds recent derived probe state for one
+// user. Controller scheduling keeps this expensive scan off ingest requests.
+func (s *Store) RefreshConnectionProbeEpisodes(ctx context.Context, userID int64, at time.Time) error {
+	return s.refreshConnectionProbeEpisodes(ctx, userID, at)
 }
 
 func (s *Store) connectionAuditAssignedNodes(ctx context.Context, userID int64, since time.Time) (map[string]map[string]struct{}, error) {

@@ -188,15 +188,23 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 		report.RouteID = s.auditRouteID(report.SourceIP, report.SourceCountryCode, report.SourceISP)
 		reports = append(reports, report)
 	}
-	stored, err := s.store.AddConnectionAuditReports(r.Context(), reports)
+	addResult, err := s.store.AddConnectionAuditReportsResult(r.Context(), reports)
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
+	insertedReports := make(map[string]struct{}, len(addResult.InsertedReportIDs))
+	for _, reportID := range addResult.InsertedReportIDs {
+		insertedReports[reportID] = struct{}{}
+	}
 	// Device activity is deduplicated per batch and written with one
-	// statement instead of one UPDATE per report.
-	deviceActivity := make(map[string]time.Time, len(reports))
+	// statement instead of one UPDATE per report. Retries are already
+	// accounted for and must not create another write.
+	deviceActivity := make(map[string]time.Time, len(addResult.InsertedReportIDs))
 	for _, report := range reports {
+		if _, inserted := insertedReports[report.ReportID]; !inserted {
+			continue
+		}
 		if report.DeviceIDHash == "" || report.PayloadLastAt.IsZero() {
 			continue
 		}
@@ -207,22 +215,13 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 	if err := s.store.MarkUserDevicesProxyActivity(r.Context(), deviceActivity); err != nil {
 		log.Printf("mark device proxy activity: %v", err)
 	}
-	riskUserIDs := make([]int64, 0, len(reports))
-	seenRiskUsers := map[int64]bool{}
-	for _, report := range reports {
-		if !seenRiskUsers[report.UserID] {
-			seenRiskUsers[report.UserID] = true
-			riskUserIDs = append(riskUserIDs, report.UserID)
-		}
-	}
-	s.applyConnectionAuditDeviceActions(r.Context(), riskUserIDs)
-	s.notifyConnectionAuditRisks(r.Context(), riskUserIDs)
-	// Risk evaluation is bounded, coalesced by userID, and runs off the
-	// report path so heavy per-user evaluations never block the agent.
-	for _, userID := range riskUserIDs {
+	// Actions, notifications, and incident evaluation share one bounded,
+	// debounced queue. Only newly inserted reports wake it; idempotent Agent
+	// retries are acknowledged without repeating historical scans.
+	for _, userID := range addResult.InsertedUserIDs {
 		s.auditRisk.enqueue(userID)
 	}
-	accepted = append(accepted, stored...)
+	accepted = append(accepted, addResult.AcceptedReportIDs...)
 	write(w, http.StatusOK, map[string]any{"ok": true, "accepted_report_ids": accepted})
 }
 

@@ -1540,7 +1540,7 @@ func (s *Server) notifyConnectionAuditRisks(ctx context.Context, userIDs []int64
 	}
 	s.connectionAuditNotificationMu.Lock()
 	defer s.connectionAuditNotificationMu.Unlock()
-	settings, _ := s.store.ListSettings(ctx)
+	settings := s.runtimeSettings(ctx)
 	nowTime := time.Now().UTC()
 	seen := map[int64]bool{}
 	for _, userID := range userIDs {

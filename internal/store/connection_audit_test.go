@@ -145,6 +145,13 @@ func TestConnectionAuditReportsAreIdempotentAndRiskIsAggregated(t *testing.T) {
 	if accepted, err = s.AddConnectionAuditReports(ctx, reports[:1]); err != nil || len(accepted) != 1 {
 		t.Fatalf("idempotent retry = %v, %v", accepted, err)
 	}
+	retry, err := s.AddConnectionAuditReportsResult(ctx, reports[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retry.AcceptedReportIDs) != 1 || len(retry.InsertedReportIDs) != 0 || len(retry.InsertedUserIDs) != 0 {
+		t.Fatalf("retry result = %#v", retry)
+	}
 	overview, err := s.ConnectionAuditOverview(ctx, 24, true, DefaultAuditPolicy())
 	if err != nil {
 		t.Fatal(err)
@@ -168,6 +175,15 @@ func TestConnectionAuditReportsAreIdempotentAndRiskIsAggregated(t *testing.T) {
 	}
 	if detail.Outbounds[0].Label != "direct" || detail.Outbounds[0].ConnectionCount != 1500 {
 		t.Fatalf("unexpected outbound aggregate: %#v", detail.Outbounds[0])
+	}
+	newReport := reports[0]
+	newReport.ReportID = "audit-new"
+	inserted, err := s.AddConnectionAuditReportsResult(ctx, []model.ConnectionAuditReport{newReport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inserted.AcceptedReportIDs) != 1 || len(inserted.InsertedReportIDs) != 1 || len(inserted.InsertedUserIDs) != 1 || inserted.InsertedUserIDs[0] != user.ID {
+		t.Fatalf("insert result = %#v", inserted)
 	}
 }
 

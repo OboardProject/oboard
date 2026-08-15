@@ -146,7 +146,8 @@ func Benchmark100AgentIdleDispatch(b *testing.B) {
 }
 
 // BenchmarkAgentConnectionReports measures the full /agent/connection-reports
-// handler for 100- and 500-item batches with a warm routing snapshot cache.
+// handler for new and retried 100- and 500-item batches with a warm routing
+// snapshot cache. Derived risk and probe scans run on the coalescing worker.
 func BenchmarkAgentConnectionReports(b *testing.B) {
 	db, err := store.Open(filepath.Join(b.TempDir(), "oboard.sqlite"))
 	if err != nil {
@@ -193,15 +194,7 @@ func BenchmarkAgentConnectionReports(b *testing.B) {
 			"started_at": nowTime.Add(-time.Second).Format(time.RFC3339Nano), "ended_at": nowTime.Format(time.RFC3339Nano),
 		}
 	}
-	post := func(count int) {
-		items := make([]map[string]any, 0, count)
-		for index := 0; index < count; index++ {
-			items = append(items, item(fmt.Sprintf("bench-report-%d-%d", time.Now().UnixNano(), index), index))
-		}
-		body, err := json.Marshal(map[string]any{"items": items})
-		if err != nil {
-			b.Fatal(err)
-		}
+	postPayload := func(body []byte) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/connection-reports", strings.NewReader(string(body)))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Agent-ID", server.AgentID)
@@ -212,16 +205,44 @@ func BenchmarkAgentConnectionReports(b *testing.B) {
 			b.Fatalf("connection report status = %d: %s", rr.Code, rr.Body.String())
 		}
 	}
+	post := func(count int) {
+		items := make([]map[string]any, 0, count)
+		for index := 0; index < count; index++ {
+			items = append(items, item(fmt.Sprintf("bench-report-%d-%d", time.Now().UnixNano(), index), index))
+		}
+		body, err := json.Marshal(map[string]any{"items": items})
+		if err != nil {
+			b.Fatal(err)
+		}
+		postPayload(body)
+	}
 	// Warm the per-user overview cache path.
 	post(10)
 	for _, count := range []int{100, 500} {
 		b.Run(fmt.Sprintf("restrict_%d", count), func(b *testing.B) {
+			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
 				post(count)
 			}
 		})
 	}
+	retryItems := make([]map[string]any, 0, 500)
+	for index := 0; index < 500; index++ {
+		retryItems = append(retryItems, item(fmt.Sprintf("bench-retry-%d", index), index))
+	}
+	retryBody, err := json.Marshal(map[string]any{"items": retryItems})
+	if err != nil {
+		b.Fatal(err)
+	}
+	postPayload(retryBody)
+	b.Run("retry_500", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for index := 0; index < b.N; index++ {
+			postPayload(retryBody)
+		}
+	})
 	// With action=warn the device-action evaluation is skipped entirely; this
 	// isolates the batch ingest cost.
 	if err := db.SetSetting(ctx, settingAuditAction, string(model.AuditActionWarn)); err != nil {
@@ -230,6 +251,7 @@ func BenchmarkAgentConnectionReports(b *testing.B) {
 	srv.invalidateSettingsSnapshot()
 	for _, count := range []int{100, 500} {
 		b.Run(fmt.Sprintf("warn_%d", count), func(b *testing.B) {
+			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
 				post(count)

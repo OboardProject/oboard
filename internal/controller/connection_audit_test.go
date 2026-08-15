@@ -121,7 +121,8 @@ func TestAgentConnectionReportsAcknowledgeStaleItemsWithoutBlockingValidReports(
 	req.Header.Set("X-Agent-ID", server.AgentID)
 	req.Header.Set("Authorization", "Bearer audit-token")
 	rr := httptest.NewRecorder()
-	newTestServer(db, "test-secret", "").Handler().ServeHTTP(rr, req)
+	sut := newTestServer(db, "test-secret", "")
+	sut.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("connection report status = %d: %s", rr.Code, rr.Body.String())
 	}
@@ -144,6 +145,28 @@ func TestAgentConnectionReportsAcknowledgeStaleItemsWithoutBlockingValidReports(
 	}
 	if overview.ReportingUserCount != 1 || len(overview.Users) != 1 || overview.Users[0].UserID != activeUser.ID {
 		t.Fatalf("stale report was stored or valid report was lost: %#v", overview)
+	}
+	// A retry remains acknowledged but must not enqueue another historical
+	// risk scan for the already stored report.
+	sut.auditRisk.stop()
+	sut.auditRisk = newAuditRiskQueue(func(context.Context, int64) error {
+		t.Fatal("duplicate report triggered risk evaluation")
+		return nil
+	})
+	retryReq := httptest.NewRequest(http.MethodPost, "/api/v1/agent/connection-reports", bytes.NewReader(body))
+	retryReq.Header.Set("Content-Type", "application/json")
+	retryReq.Header.Set("X-Agent-ID", server.AgentID)
+	retryReq.Header.Set("Authorization", "Bearer audit-token")
+	retryResponse := httptest.NewRecorder()
+	sut.Handler().ServeHTTP(retryResponse, retryReq)
+	if retryResponse.Code != http.StatusOK {
+		t.Fatalf("connection report retry status = %d: %s", retryResponse.Code, retryResponse.Body.String())
+	}
+	sut.auditRisk.mu.Lock()
+	queued := len(sut.auditRisk.states)
+	sut.auditRisk.mu.Unlock()
+	if queued != 0 {
+		t.Fatalf("duplicate report queued %d risk evaluations", queued)
 	}
 }
 
