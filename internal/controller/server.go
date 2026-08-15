@@ -6452,7 +6452,11 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 		if v.TargetProxyPathID == nil || *v.TargetProxyPathID <= 0 {
 			return errors.New("target_proxy_path_id required")
 		}
-		return s.validateRoutingRuleTargetPath(ctx, *v.ProxyPathID, v.StageStepID, *v.TargetProxyPathID, v.ID)
+		hasBinding, err := normalizeRoutingRuleProxyPathBinding(v, *server)
+		if err != nil {
+			return err
+		}
+		return s.validateRoutingRuleTargetPath(ctx, *v.ProxyPathID, v.StageStepID, *v.TargetProxyPathID, v.ID, hasBinding)
 	case model.RouteActionInterface:
 		v.InterfaceName = strings.TrimSpace(v.InterfaceName)
 		if v.InterfaceName == "" {
@@ -6483,7 +6487,40 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 	}
 }
 
-func (s *Server) validateRoutingRuleTargetPath(ctx context.Context, sourcePathID int64, sourceStageStepID *int64, targetPathID, ruleID int64) error {
+func normalizeRoutingRuleProxyPathBinding(v *model.RoutingRule, server model.Server) (bool, error) {
+	v.InterfaceName = strings.TrimSpace(v.InterfaceName)
+	v.SourcePrefix = strings.TrimSpace(v.SourcePrefix)
+	if v.InterfaceName != "" && v.SourcePrefix != "" {
+		return false, errors.New("proxy_path action cannot bind both interface_name and source_prefix")
+	}
+	if v.InterfaceName != "" {
+		if err := core.ValidateNetworkInterfaceName(v.InterfaceName); err != nil {
+			return false, fmt.Errorf("interface_name: %w", err)
+		}
+		v.OutboundTag = v.InterfaceName
+		return true, nil
+	}
+	if v.SourcePrefix == "" {
+		v.OutboundTag = ""
+		return false, nil
+	}
+	prefix, err := netip.ParsePrefix(v.SourcePrefix)
+	if err != nil {
+		return false, fmt.Errorf("source_prefix must be a valid IPv4 or IPv6 CIDR: %w", err)
+	}
+	prefix = prefix.Masked()
+	if server.IPStack == model.IPStackIPv4Only && prefix.Addr().Is6() {
+		return false, errors.New("IPv6 source_prefix is incompatible with ipv4_only")
+	}
+	if server.IPStack == model.IPStackIPv6Only && prefix.Addr().Is4() {
+		return false, errors.New("IPv4 source_prefix is incompatible with ipv6_only")
+	}
+	v.SourcePrefix = prefix.String()
+	v.OutboundTag = v.SourcePrefix
+	return true, nil
+}
+
+func (s *Server) validateRoutingRuleTargetPath(ctx context.Context, sourcePathID int64, sourceStageStepID *int64, targetPathID, ruleID int64, hasBinding bool) error {
 	if sourcePathID == targetPathID {
 		return errors.New("routing rule target path must differ from its fallback path")
 	}
@@ -6535,6 +6572,9 @@ func (s *Server) validateRoutingRuleTargetPath(ctx context.Context, sourcePathID
 	}
 	if mode == model.ProxyPathTransportPortForward {
 		return errors.New("rule-specific proxy paths cannot start with transparent port forwarding after the routing stage")
+	}
+	if hasBinding && next.NodeType == model.ProxyPathStepWARP {
+		return errors.New("rule-specific interface or source-prefix binding requires a proxy node after the routing stage")
 	}
 	items, err := s.store.ListRoutingRules(ctx)
 	if err != nil {

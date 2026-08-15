@@ -7,6 +7,7 @@ import {
   graphRoutingStageSiblingOffset,
   graphRoutingStageSource,
   graphRoutingStageSourceHandleID,
+  graphPathHasImplicitDirectFallback,
 } from './graph-routing-stages'
 
 it('encodes and parses rule-specific source handles separately from fallback handles', () => {
@@ -67,5 +68,22 @@ describe('graph routing stages', () => {
       graphRoutingStageSiblingOffset(1, 3),
       graphRoutingStageSiblingOffset(2, 3),
     ]).toEqual([-260, 0, 260])
+  })
+
+  it('treats a terminal routing block as the direct fallback without another exit node', () => {
+    const rootStages = [{ pathID: 41, stageStepID: 0, ruleIDs: [101], enabledRuleCount: 1 }]
+    expect(graphPathHasImplicitDirectFallback(41, [], rootStages)).toBe(true)
+    expect(graphPathHasImplicitDirectFallback(41, [
+      { id: 500, path_id: 41, position: 1, node_type: 'imported' },
+    ], rootStages)).toBe(false)
+
+    const terminalStages = [{ pathID: 42, stageStepID: 501, ruleIDs: [102], enabledRuleCount: 1 }]
+    expect(graphPathHasImplicitDirectFallback(42, [
+      { id: 501, path_id: 42, position: 1, node_type: 'server_inbound' },
+    ], terminalStages)).toBe(true)
+    expect(graphPathHasImplicitDirectFallback(42, [
+      { id: 501, path_id: 42, position: 1, node_type: 'server_inbound' },
+      { id: 502, path_id: 42, position: 2, node_type: 'imported' },
+    ], terminalStages)).toBe(false)
   })
 })

@@ -8,6 +8,7 @@ export type GraphRoutingStep = {
   id: number
   path_id: number
   position?: number
+  node_type?: string
 }
 
 export type GraphRoutingRule = {
@@ -58,6 +59,17 @@ export function graphRoutingStageSiblingOffset(index: number, count: number, spa
   const siblingCount = Math.max(1, count)
   const siblingIndex = Math.max(0, Math.min(index, siblingCount - 1))
   return (siblingIndex - (siblingCount - 1) / 2) * spacing
+}
+
+export function graphPathHasImplicitDirectFallback(pathID: number, steps: GraphRoutingStep[], stages: GraphRoutingStage[]) {
+  const ordered = steps
+    .filter(step => step.path_id === pathID)
+    .slice()
+    .sort((left, right) => Number(left.position || 0) - Number(right.position || 0) || left.id - right.id)
+  const terminal = ordered[ordered.length - 1]
+  if (terminal && terminal.node_type !== 'server_inbound') return false
+  const terminalStageStepID = terminal?.id || 0
+  return stages.some(stage => stage.pathID === pathID && stage.stageStepID === terminalStageStepID)
 }
 
 export function buildGraphRoutingStages(

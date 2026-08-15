@@ -1298,6 +1298,9 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 			rules = append(rules, stageRules...)
 		}
 	}
+	if err := applyRoutingRuleProxyPathBindings(server, opts.RoutingRules, paths, opts.ProxyPathSteps, opts.WARPProfiles, &outbounds); err != nil {
+		return nil, nil, err
+	}
 	return outbounds, rules, nil
 }
 
@@ -1994,6 +1997,9 @@ func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.
 		var err error
 		if rule.Action == model.RouteActionProxyPath {
 			outboundTag, err = routingRuleProxyPathOutboundTag(rule, server, paths, steps, warpProfiles)
+			if err == nil && routingRuleHasProxyPathBinding(rule) {
+				outboundTag = routingRuleBoundOutboundTag(rule.ID, outboundTag)
+			}
 			ok = err == nil && outboundTag != ""
 		} else {
 			outboundTag, ok, err = routeRuleOutboundTag(rule, server, outbounds, external)
@@ -2079,6 +2085,84 @@ func routingRuleProxyPathOutboundTag(rule model.RoutingRule, server model.Server
 	return previousTag, nil
 }
 
+func routingRuleHasProxyPathBinding(rule model.RoutingRule) bool {
+	return strings.TrimSpace(rule.InterfaceName) != "" || strings.TrimSpace(rule.SourcePrefix) != ""
+}
+
+func routingRuleBoundOutboundTag(ruleID int64, outboundTag string) string {
+	return fmt.Sprintf("routing-rule-%d-%s", ruleID, outboundTag)
+}
+
+func applyRoutingRuleProxyPathBindings(server model.Server, rules []model.RoutingRule, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile, outbounds *[]map[string]any) error {
+	if outbounds == nil {
+		return nil
+	}
+	byTag := make(map[string]map[string]any, len(*outbounds))
+	for _, outbound := range *outbounds {
+		if outboundTag, _ := outbound["tag"].(string); outboundTag != "" {
+			byTag[outboundTag] = outbound
+		}
+	}
+	for _, rule := range rules {
+		if !rule.Enabled || rule.Scope != model.RoutingRuleScopePathStage || rule.ServerID != server.ID || rule.Action != model.RouteActionProxyPath || !routingRuleHasProxyPathBinding(rule) {
+			continue
+		}
+		if strings.TrimSpace(rule.InterfaceName) != "" && strings.TrimSpace(rule.SourcePrefix) != "" {
+			return fmt.Errorf("routing rule %s cannot bind both an interface and a source prefix", rule.Name)
+		}
+		baseTag, err := routingRuleProxyPathOutboundTag(rule, server, paths, steps, warpProfiles)
+		if err != nil {
+			return fmt.Errorf("routing rule %s: %w", rule.Name, err)
+		}
+		base, ok := byTag[baseTag]
+		if !ok {
+			return fmt.Errorf("routing rule %s cannot bind non-outbound target %q", rule.Name, baseTag)
+		}
+		chain := []map[string]any{base}
+		seen := map[string]bool{baseTag: true}
+		for {
+			detour, _ := chain[len(chain)-1]["detour"].(string)
+			if detour == "" {
+				break
+			}
+			if seen[detour] {
+				return fmt.Errorf("routing rule %s target outbound detour cycle at %q", rule.Name, detour)
+			}
+			next, ok := byTag[detour]
+			if !ok {
+				return fmt.Errorf("routing rule %s target outbound detour %q is unavailable", rule.Name, detour)
+			}
+			seen[detour] = true
+			chain = append(chain, next)
+		}
+		for index := len(chain) - 1; index >= 0; index-- {
+			bound := cloneNestedMap(chain[index])
+			originalTag, _ := bound["tag"].(string)
+			boundTag := routingRuleBoundOutboundTag(rule.ID, originalTag)
+			bound["tag"] = boundTag
+			if index == len(chain)-1 {
+				if interfaceName := strings.TrimSpace(rule.InterfaceName); interfaceName != "" {
+					if err := ValidateNetworkInterfaceName(interfaceName); err != nil {
+						return fmt.Errorf("routing rule %s interface_name: %w", rule.Name, err)
+					}
+					bound["bind_interface"] = interfaceName
+				} else {
+					prefix, err := netip.ParsePrefix(strings.TrimSpace(rule.SourcePrefix))
+					if err != nil {
+						return fmt.Errorf("routing rule %s source_prefix: %w", rule.Name, err)
+					}
+					bound["detour"] = sourcePrefixOutboundTag(prefix.Masked().String())
+				}
+			} else if detour, _ := bound["detour"].(string); detour != "" {
+				bound["detour"] = routingRuleBoundOutboundTag(rule.ID, detour)
+			}
+			*outbounds = append(*outbounds, bound)
+			byTag[boundTag] = bound
+		}
+	}
+	return nil
+}
+
 func sameOptionalID(left, right *int64) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
@@ -2092,7 +2176,7 @@ func buildSourcePrefixOutbounds(server model.Server, rules []model.RoutingRule) 
 	seen := map[string]bool{}
 	result := make([]map[string]any, 0)
 	for _, rule := range rules {
-		if !rule.Enabled || rule.ServerID != server.ID || rule.Action != model.RouteActionSourcePrefix {
+		if !rule.Enabled || rule.ServerID != server.ID || (rule.Action != model.RouteActionSourcePrefix && !(rule.Action == model.RouteActionProxyPath && strings.TrimSpace(rule.SourcePrefix) != "")) {
 			continue
 		}
 		prefix, err := netip.ParsePrefix(strings.TrimSpace(rule.SourcePrefix))

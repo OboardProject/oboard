@@ -64,6 +64,7 @@ import {
   graphRoutingRuleSourceHandleID,
   graphRoutingStageSource,
   graphRoutingStageSourceHandleID,
+  graphPathHasImplicitDirectFallback,
   type GraphRoutingStage,
 } from './components/proxy-path/graph-routing-stages'
 import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
@@ -8975,7 +8976,7 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
 }
 
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
-type RoutingDraft = { id: number; server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; target_proxy_path_id: number; interface_name: string; source_prefix: string; sync_source_rule_id: number; sync_enabled: boolean; enabled: boolean }
+type RoutingDraft = { id: number; server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; target_proxy_path_id: number; proxy_path_binding: 'default' | 'interface' | 'source_prefix'; interface_name: string; source_prefix: string; sync_source_rule_id: number; sync_enabled: boolean; enabled: boolean }
 type TransportMode = 'port-forward' | 'tunnel'
 type TransportDraft = { mode: TransportMode; name: string; source_server_id: number; target_server_id: number; listen_ip: string; listen_port: number; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; type: TunnelType; priority: number; config_json: string; enabled: boolean }
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; stage_step_id?: number; rule_ids?: number[]; node_id?: string }
@@ -10328,7 +10329,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }
       if (routingDraft.action === 'outbound' && routingDraft.outbound_id) body.outbound_id = routingDraft.outbound_id
       if (routingDraft.action === 'external' && routingDraft.external_outbound_id) body.external_outbound_id = routingDraft.external_outbound_id
-	  if (routingDraft.action === 'proxy_path' && routingDraft.target_proxy_path_id) body.target_proxy_path_id = routingDraft.target_proxy_path_id
+	  if (routingDraft.action === 'proxy_path' && routingDraft.target_proxy_path_id) {
+		body.target_proxy_path_id = routingDraft.target_proxy_path_id
+		if (routingDraft.interface_name.trim()) body.interface_name = routingDraft.interface_name.trim()
+		if (routingDraft.source_prefix.trim()) body.source_prefix = routingDraft.source_prefix.trim()
+	  }
       if (routingDraft.action === 'interface') body.interface_name = routingDraft.interface_name.trim()
       if (routingDraft.action === 'source_prefix') body.source_prefix = routingDraft.source_prefix.trim()
 	      await client.request(routingDraft.id ? `/routing-rules/${routingDraft.id}` : '/routing-rules', { method: routingDraft.id ? 'PATCH' : 'POST', body: JSON.stringify(body) })
@@ -11692,7 +11697,7 @@ function ProxyToolIcon({ kind }: { kind: ProxyToolAction }) {
 }
 
 function defaultRoutingDraft(server: Server, proxyPathID = 0): RoutingDraft {
-  return { id: 0, server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, target_proxy_path_id: 0, interface_name: '', source_prefix: '', sync_source_rule_id: 0, sync_enabled: false, enabled: true }
+  return { id: 0, server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, target_proxy_path_id: 0, proxy_path_binding: 'default', interface_name: '', source_prefix: '', sync_source_rule_id: 0, sync_enabled: false, enabled: true }
 }
 
 function routingDraftMatch(rule: RoutingRule): { match_kind: RoutingMatchKind; match_value: string } {
@@ -11717,6 +11722,7 @@ function routingDraftFromRule(rule: RoutingRule): Partial<RoutingDraft> {
     outbound_id: Number(rule.outbound_id || 0),
     external_outbound_id: Number(rule.external_outbound_id || 0),
     target_proxy_path_id: Number(rule.target_proxy_path_id || 0),
+	proxy_path_binding: rule.interface_name ? 'interface' : rule.source_prefix ? 'source_prefix' : 'default',
     interface_name: rule.interface_name || '',
     source_prefix: rule.source_prefix || '',
     sync_source_rule_id: 0,
@@ -11898,6 +11904,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
   }
 
   const usesExplicitSource = draft.action === 'interface' || draft.action === 'source_prefix'
+	const proxyPathBindingMode = draft.action === 'proxy_path' ? draft.proxy_path_binding : 'default'
 
   const reuseRule = (ruleID: number) => {
     const source = allRules.find(rule => rule.id === ruleID)
@@ -12378,7 +12385,10 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                     key={action}
                     aria-pressed={selected}
                     className={`routing-action-card-btn${selected ? ' selected' : ''}`}
-                    onClick={() => update({ action: action === 'interface' && usesExplicitSource ? draft.action : action })}
+					onClick={() => update({
+					  action: action === 'interface' && usesExplicitSource ? draft.action : action,
+					  ...(action === 'proxy_path' && usesExplicitSource ? { proxy_path_binding: draft.action as 'interface' | 'source_prefix' } : {}),
+					})}
                   >
                     <RoutingActionIcon action={action} />
                     <span>{labelValue(action)}</span>
@@ -12445,6 +12455,35 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                     ))}
                   </Select>
                 </FormField>
+				<FormField label="后续节点出口" hint="可让规则链路的第一个代理连接从指定网卡或源地址发起。">
+				  <Select
+					variant="segmented"
+					value={proxyPathBindingMode}
+					onChange={event => {
+					  const mode = event.target.value as RoutingDraft['proxy_path_binding']
+					  update({
+						proxy_path_binding: mode,
+						interface_name: mode === 'interface' ? draft.interface_name : '',
+						source_prefix: mode === 'source_prefix' ? draft.source_prefix : '',
+					  })
+					}}
+					aria-label="后续节点出口绑定方式"
+				  >
+					<option value="default">默认出口</option>
+					<option value="interface">指定网卡</option>
+					<option value="source_prefix">指定 IP 前缀</option>
+				  </Select>
+				</FormField>
+				{proxyPathBindingMode === 'interface' && (
+				  <FormField label="出口网卡" required>
+					<NetworkInterfacePicker serverID={selectedStage.serverID} value={draft.interface_name} onChange={interface_name => update({ interface_name })} client={client} />
+				  </FormField>
+				)}
+				{proxyPathBindingMode === 'source_prefix' && (
+				  <FormField label="源地址前缀" hint="每条新连接实时匹配本机地址；IPv6 /128 地址按 /64 生成前缀。" required>
+					<NetworkInterfacePicker mode="source-prefix" serverID={selectedStage.serverID} value={draft.source_prefix} onChange={source_prefix => update({ source_prefix })} client={client} />
+				  </FormField>
+				)}
               </div>
             )}
 
@@ -12509,6 +12548,8 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
             !draft.name.trim() ||
             (draft.match_source === 'rule_set' && !draft.rule_set_id) ||
             (draft.action === 'proxy_path' && !draft.target_proxy_path_id) ||
+			(draft.action === 'proxy_path' && proxyPathBindingMode === 'interface' && !draft.interface_name.trim()) ||
+			(draft.action === 'proxy_path' && proxyPathBindingMode === 'source_prefix' && !draft.source_prefix.trim()) ||
             (draft.action === 'interface' && !draft.interface_name.trim()) ||
             (draft.action === 'source_prefix' && !draft.source_prefix.trim())
           }
@@ -13962,6 +14003,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
 	  })
 	  const directPaths = visiblePaths.filter(path => {
     if (path.kind !== 'direct') return false
+	if (graphPathHasImplicitDirectFallback(path.id, stepsByPath.get(path.id) || [], graphRoutingStages)) return false
     if (path.branch_source_step_id) return Boolean(stepByID.get(path.branch_source_step_id))
     return Boolean(inboundByID.get(path.inbound_id))
   })
@@ -14125,7 +14167,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
 	      activeStageStepID = step.node_type === 'server_inbound' ? step.id : null
 	    })
 	    if (path.kind === 'direct') {
-	      insertRoutingStage()
+	      if (insertRoutingStage()) return
 	      edges.push(graphTransportEdge(
         `proxy-path-direct-${path.id}`,
         source,
@@ -14348,7 +14390,14 @@ function RoutingGraphNode({ connected = false, pathID = 0, stageStepID = 0, titl
 	    {connected && <Handle id={graphRoutingStageSourceHandleID(pathID, stageStepID)} className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} />}
 	    <span className="routing-exit-icon"><Workflow size={18} /></span>
 	    <span className="routing-exit-copy"><small>{connected ? '路径分流' : '规则出口'}</small><strong>{title}</strong></span>
-		{rules.length > 0 && <div className="routing-exit-rules">{rules.map(rule => <div key={rule.id} className="routing-exit-rule"><span>{rule.name}</span><small>{rule.sync_group_id ? `同步 · ${labelValue(rule.action)}` : labelValue(rule.action)}</small><Handle id={graphRoutingRuleSourceHandleID(rule.id)} className="connect-handle connect-source routing-rule-source-handle" type="source" position={Position.Right} /></div>)}</div>}
+		{rules.length > 0 && <div className="routing-exit-rules">{rules.map(rule => {
+		  const action = rule.action === 'proxy_path' && rule.interface_name
+		    ? '代理链路 · 指定网卡'
+		    : rule.action === 'proxy_path' && rule.source_prefix
+		      ? '代理链路 · 指定 IP'
+		      : labelValue(rule.action)
+		  return <div key={rule.id} className="routing-exit-rule"><span>{rule.name}</span><small>{rule.sync_group_id ? `同步 · ${action}` : action}</small><Handle id={graphRoutingRuleSourceHandleID(rule.id)} className="connect-handle connect-source routing-rule-source-handle" type="source" position={Position.Right} /></div>
+		})}</div>}
 	    <span className="routing-exit-state">{meta}</span>
 	  </div>
 }

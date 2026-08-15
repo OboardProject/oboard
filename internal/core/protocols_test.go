@@ -490,6 +490,98 @@ func TestProxyPathStageRuleCanSwitchToIndependentTargetPathBeforeFallback(t *tes
 	}
 }
 
+func TestProxyPathStageRuleSpecificPathInheritsEgressBinding(t *testing.T) {
+	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
+	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
+	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	fallback := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindDirect, Name: "fallback", InboundID: root.ID, Secret: "fallback-secret", Enabled: true}
+	target := model.ProxyPath{ID: 51, Kind: model.ProxyPathKindChain, Name: "target", InboundID: root.ID, Secret: "target-secret", Enabled: true}
+	serverBID := serverB.ID
+	externalID := int64(30)
+	external := model.ExternalOutbound{ID: externalID, Name: "socks", Protocol: model.ProtocolSocks, TargetAddress: "socks.example.com", TargetPort: 1080, ConfigJSON: `{"type":"socks","server":"socks.example.com","server_port":1080}`, Enabled: true}
+	targetProxyStep := model.ProxyPathStep{ID: 201, PathID: target.ID, Position: 1, NodeType: model.ProxyPathStepImported, ExternalOutboundID: &externalID}
+	targetServerStep := model.ProxyPathStep{ID: 202, PathID: target.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID}
+	fallbackID, targetID := fallback.ID, target.ID
+	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+
+	tests := []struct {
+		name          string
+		interfaceName string
+		sourcePrefix  string
+	}{
+		{name: "interface", interfaceName: "eth1"},
+		{name: "source prefix", sourcePrefix: "198.51.100.0/24"},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rule := model.RoutingRule{
+				ID: int64(70 + index), ServerID: serverA.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &fallbackID,
+				SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: test.name, MatchJSON: `{"domain":["bound.example"]}`,
+				Action: model.RouteActionProxyPath, TargetProxyPathID: &targetID, InterfaceName: test.interfaceName, SourcePrefix: test.sourcePrefix, Enabled: true,
+			}
+			opts := ConfigOptions{
+				Servers:           []model.Server{serverA, serverB},
+				Inbounds:          []model.Inbound{root},
+				ProxyPaths:        []model.ProxyPath{fallback, target},
+				ProxyPathSteps:    []model.ProxyPathStep{targetProxyStep, targetServerStep},
+				ExternalOutbounds: []model.ExternalOutbound{external},
+				InboundUsers:      []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}},
+				RoutingRules:      []model.RoutingRule{rule},
+			}
+			config := mustServerConfig(t, serverA, []model.Inbound{root}, []model.User{user}, opts)
+			parsed := parseSingBoxConfig(t, config)
+			baseTag := proxyPathStepTag(target.ID, targetServerStep.Position)
+			baseDialerTag := proxyPathStepTag(target.ID, targetProxyStep.Position)
+			boundTag := routingRuleBoundOutboundTag(rule.ID, baseTag)
+			bound := findOutbound(config, boundTag)
+			if len(bound) == 0 {
+				t.Fatalf("bound first hop %q missing: %s", boundTag, config)
+			}
+			boundDialerTag := routingRuleBoundOutboundTag(rule.ID, baseDialerTag)
+			if bound["detour"] != boundDialerTag {
+				t.Fatalf("bound route outbound = %#v, want detour=%q", bound, boundDialerTag)
+			}
+			boundDialer := findOutbound(config, boundDialerTag)
+			if test.interfaceName != "" && boundDialer["bind_interface"] != test.interfaceName {
+				t.Fatalf("bound first hop = %#v, want bind_interface=%q", boundDialer, test.interfaceName)
+			}
+			if test.sourcePrefix != "" {
+				prefixTag := sourcePrefixOutboundTag(test.sourcePrefix)
+				if boundDialer["detour"] != prefixTag {
+					t.Fatalf("bound first hop = %#v, want detour=%q", boundDialer, prefixTag)
+				}
+				if prefixOutbound := findOutbound(config, prefixTag); prefixOutbound["type"] != "source-prefix" || prefixOutbound["prefix"] != test.sourcePrefix {
+					t.Fatalf("source-prefix outbound = %#v", prefixOutbound)
+				}
+			}
+			base := findOutbound(config, baseTag)
+			baseDialer := findOutbound(config, baseDialerTag)
+			if base["bind_interface"] != nil || base["detour"] != baseDialerTag || baseDialer["bind_interface"] != nil || baseDialer["detour"] != nil {
+				t.Fatalf("shared target path was modified by rule binding: %#v", base)
+			}
+
+			routes := mapList(parsed.Route["rules"])
+			matched := false
+			fallbackDirect := false
+			var matchedUsers []string
+			for _, route := range routes {
+				if domains := stringList(route["domain"]); len(domains) == 1 && domains[0] == "bound.example" {
+					matched = route["outbound"] == boundTag
+					matchedUsers = stringList(route["auth_user"])
+					continue
+				}
+				users := stringList(route["auth_user"])
+				if route["outbound"] == "direct" && len(users) == 1 && len(matchedUsers) == 1 && users[0] == matchedUsers[0] {
+					fallbackDirect = true
+				}
+			}
+			if !matched || !fallbackDirect {
+				t.Fatalf("bound route or implicit direct fallback missing: matched=%v fallback=%v config=%s", matched, fallbackDirect, config)
+			}
+		})
+	}
+}
+
 func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
 	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
