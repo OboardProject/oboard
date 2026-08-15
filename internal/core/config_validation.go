@@ -167,6 +167,9 @@ func (v *configValidator) validateEndpoints(endpoints []map[string]any) {
 		if stringFromAny(endpoint["type"]) == "" {
 			v.addf("%s missing type", path)
 		}
+		if detour := stringFromAny(endpoint["detour"]); detour != "" && !v.outboundTag[detour] {
+			v.addf("%s.detour references unknown outbound %q", path, detour)
+		}
 		v.validateDomainResolver(path, endpoint["domain_resolver"])
 	}
 }

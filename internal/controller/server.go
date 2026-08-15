@@ -6452,11 +6452,11 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 		if v.TargetProxyPathID == nil || *v.TargetProxyPathID <= 0 {
 			return errors.New("target_proxy_path_id required")
 		}
-		hasBinding, err := normalizeRoutingRuleProxyPathBinding(v, *server)
+		_, err := normalizeRoutingRuleProxyPathBinding(v, *server)
 		if err != nil {
 			return err
 		}
-		return s.validateRoutingRuleTargetPath(ctx, *v.ProxyPathID, v.StageStepID, *v.TargetProxyPathID, v.ID, hasBinding)
+		return s.validateRoutingRuleTargetPath(ctx, *v.ProxyPathID, v.StageStepID, *v.TargetProxyPathID, v.ID)
 	case model.RouteActionInterface:
 		v.InterfaceName = strings.TrimSpace(v.InterfaceName)
 		if v.InterfaceName == "" {
@@ -6520,7 +6520,7 @@ func normalizeRoutingRuleProxyPathBinding(v *model.RoutingRule, server model.Ser
 	return true, nil
 }
 
-func (s *Server) validateRoutingRuleTargetPath(ctx context.Context, sourcePathID int64, sourceStageStepID *int64, targetPathID, ruleID int64, hasBinding bool) error {
+func (s *Server) validateRoutingRuleTargetPath(ctx context.Context, sourcePathID int64, sourceStageStepID *int64, targetPathID, ruleID int64) error {
 	if sourcePathID == targetPathID {
 		return errors.New("routing rule target path must differ from its fallback path")
 	}
@@ -6572,9 +6572,6 @@ func (s *Server) validateRoutingRuleTargetPath(ctx context.Context, sourcePathID
 	}
 	if mode == model.ProxyPathTransportPortForward {
 		return errors.New("rule-specific proxy paths cannot start with transparent port forwarding after the routing stage")
-	}
-	if hasBinding && next.NodeType == model.ProxyPathStepWARP {
-		return errors.New("rule-specific interface or source-prefix binding requires a proxy node after the routing stage")
 	}
 	items, err := s.store.ListRoutingRules(ctx)
 	if err != nil {

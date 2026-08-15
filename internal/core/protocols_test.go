@@ -582,6 +582,79 @@ func TestProxyPathStageRuleSpecificPathInheritsEgressBinding(t *testing.T) {
 	}
 }
 
+func TestProxyPathStageRuleSpecificWARPInheritsEgressBinding(t *testing.T) {
+	server := model.Server{ID: 1, Name: "edge", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
+	root := model.Inbound{ID: 10, ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	fallback := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindDirect, Name: "fallback", InboundID: root.ID, Secret: "fallback-secret", Enabled: true}
+	target := model.ProxyPath{ID: 51, Kind: model.ProxyPathKindChain, Name: "warp", InboundID: root.ID, Secret: "target-secret", Enabled: true}
+	warpStep := model.ProxyPathStep{ID: 201, PathID: target.ID, Position: 1, NodeType: model.ProxyPathStepWARP, TransportMode: model.ProxyPathTransportSingBox}
+	fallbackID, targetID := fallback.ID, target.ID
+	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	readyConfig := `{"type":"wireguard","address":["172.16.0.2/32"],"private_key":"private","peers":[{"address":"engage.cloudflareclient.com","port":2408,"public_key":"public","allowed_ips":["0.0.0.0/0","::/0"]}]}`
+
+	tests := []struct {
+		name          string
+		status        model.WARPStatus
+		configJSON    string
+		interfaceName string
+		sourcePrefix  string
+	}{
+		{name: "ready interface", status: model.WARPStatusReady, configJSON: readyConfig, interfaceName: "eth1"},
+		{name: "ready source prefix", status: model.WARPStatusReady, configJSON: readyConfig, sourcePrefix: "2001:db8:100::/64"},
+		{name: "pending interface", status: model.WARPStatusRequested, configJSON: `{}`, interfaceName: "eth1"},
+		{name: "pending source prefix", status: model.WARPStatusRequested, configJSON: `{}`, sourcePrefix: "2001:db8:100::/64"},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rule := model.RoutingRule{
+				ID: int64(80 + index), ServerID: server.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &fallbackID,
+				SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: test.name, MatchJSON: `{"domain":["warp.example"]}`,
+				Action: model.RouteActionProxyPath, TargetProxyPathID: &targetID, InterfaceName: test.interfaceName, SourcePrefix: test.sourcePrefix, Enabled: true,
+			}
+			profile := model.WARPProfile{ID: 30, ServerID: server.ID, Name: "warp", Status: test.status, ConfigJSON: test.configJSON, Enabled: true}
+			config := mustServerConfig(t, server, []model.Inbound{root}, []model.User{user}, ConfigOptions{
+				Servers: []model.Server{server}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{fallback, target},
+				ProxyPathSteps: []model.ProxyPathStep{warpStep}, WARPProfiles: []model.WARPProfile{profile},
+				InboundUsers: []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}}, RoutingRules: []model.RoutingRule{rule},
+			})
+			baseTag := WARPOutboundTag(profile.ID)
+			boundTag := routingRuleBoundOutboundTag(rule.ID, baseTag)
+			base := findEndpoint(config, baseTag)
+			bound := findEndpoint(config, boundTag)
+			if len(base) == 0 || len(bound) == 0 {
+				t.Fatalf("base or bound WARP endpoint missing: %s", config)
+			}
+			if base["bind_interface"] != nil || base["detour"] != nil {
+				t.Fatalf("shared WARP endpoint was modified: %#v", base)
+			}
+			if test.interfaceName != "" && bound["bind_interface"] != test.interfaceName {
+				t.Fatalf("bound WARP endpoint = %#v, want bind_interface=%q", bound, test.interfaceName)
+			}
+			if test.sourcePrefix != "" {
+				prefixTag := sourcePrefixOutboundTag(test.sourcePrefix)
+				if bound["detour"] != prefixTag {
+					t.Fatalf("bound WARP endpoint = %#v, want detour=%q", bound, prefixTag)
+				}
+				if prefixOutbound := findOutbound(config, prefixTag); prefixOutbound["type"] != "source-prefix" || prefixOutbound["prefix"] != test.sourcePrefix {
+					t.Fatalf("source-prefix outbound = %#v", prefixOutbound)
+				}
+			}
+			if test.status != model.WARPStatusReady && bound["_oboard_warp_pending"] != float64(profile.ID) {
+				t.Fatalf("bound pending WARP endpoint lost profile marker: %#v", bound)
+			}
+			matched := false
+			for _, route := range mapList(parseSingBoxConfig(t, config).Route["rules"]) {
+				if domains := stringList(route["domain"]); len(domains) == 1 && domains[0] == "warp.example" {
+					matched = route["outbound"] == boundTag
+				}
+			}
+			if !matched {
+				t.Fatalf("routing rule does not target bound WARP endpoint: %s", config)
+			}
+		})
+	}
+}
+
 func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
 	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
@@ -984,6 +1057,17 @@ func findOutbound(raw, tag string) map[string]any {
 	for _, outbound := range parsed.Outbounds {
 		if outbound["tag"] == tag {
 			return outbound
+		}
+	}
+	return nil
+}
+
+func findEndpoint(raw, tag string) map[string]any {
+	var parsed SingBoxConfig
+	_ = json.Unmarshal([]byte(raw), &parsed)
+	for _, endpoint := range parsed.Endpoints {
+		if endpoint["tag"] == tag {
+			return endpoint
 		}
 	}
 	return nil
@@ -1506,6 +1590,21 @@ func TestValidateGeneratedSingBoxConfigRejectsUnknownDialResolver(t *testing.T) 
 				t.Fatalf("error = %v, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestValidateGeneratedSingBoxConfigRejectsUnknownEndpointDetour(t *testing.T) {
+	config := SingBoxConfig{
+		DNS: map[string]any{"servers": []map[string]any{
+			{"type": "udp", "tag": primaryBootstrapDNSTag, "server": "1.1.1.1", "server_port": 53},
+		}, "final": primaryBootstrapDNSTag},
+		Outbounds: []map[string]any{{"type": "direct", "tag": "direct"}, {"type": "block", "tag": "block"}},
+		Endpoints: []map[string]any{{"type": "wireguard", "tag": "warp-1", "detour": "missing"}},
+		Route:     map[string]any{"final": "direct"},
+	}
+	err := ValidateGeneratedSingBoxConfig(config)
+	if err == nil || !strings.Contains(err.Error(), `endpoints[0].detour references unknown outbound "missing"`) {
+		t.Fatalf("error = %v, want unknown endpoint detour rejection", err)
 	}
 }
 

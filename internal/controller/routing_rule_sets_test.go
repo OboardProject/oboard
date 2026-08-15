@@ -285,13 +285,13 @@ func TestRoutingRuleTargetPathValidationRequiresSharedPrefixAndRejectsCycles(t *
 	wrongPrefix, _ := createPath(root.ID, servers[2].ID, servers[3].ID)
 	wrongRoot, _ := createPath(otherRoot.ID, servers[1].ID, servers[3].ID)
 	server := newTestServer(db, "test-secret", "")
-	if err := server.validateRoutingRuleTargetPath(ctx, fallback.ID, &fallbackSteps[0].ID, target.ID, 0, false); err != nil {
+	if err := server.validateRoutingRuleTargetPath(ctx, fallback.ID, &fallbackSteps[0].ID, target.ID, 0); err != nil {
 		t.Fatalf("compatible target path rejected: %v", err)
 	}
-	if err := server.validateRoutingRuleTargetPath(ctx, fallback.ID, &fallbackSteps[0].ID, wrongPrefix.ID, 0, false); err == nil {
+	if err := server.validateRoutingRuleTargetPath(ctx, fallback.ID, &fallbackSteps[0].ID, wrongPrefix.ID, 0); err == nil {
 		t.Fatal("target path with a different prefix was accepted")
 	}
-	if err := server.validateRoutingRuleTargetPath(ctx, fallback.ID, &fallbackSteps[0].ID, wrongRoot.ID, 0, false); err == nil {
+	if err := server.validateRoutingRuleTargetPath(ctx, fallback.ID, &fallbackSteps[0].ID, wrongRoot.ID, 0); err == nil {
 		t.Fatal("target path from another root inbound was accepted")
 	}
 	targetID, fallbackID := target.ID, fallback.ID
@@ -299,7 +299,7 @@ func TestRoutingRuleTargetPathValidationRequiresSharedPrefixAndRejectsCycles(t *
 	if err := db.CreateRoutingRule(ctx, cycleRule); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.validateRoutingRuleTargetPath(ctx, fallback.ID, &fallbackSteps[0].ID, target.ID, 0, false); err == nil || !strings.Contains(err.Error(), "cycle") {
+	if err := server.validateRoutingRuleTargetPath(ctx, fallback.ID, &fallbackSteps[0].ID, target.ID, 0); err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("routing target cycle was not rejected: %v", err)
 	}
 }

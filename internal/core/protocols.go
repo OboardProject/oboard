@@ -651,6 +651,9 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		}
 		config.Endpoints = append(config.Endpoints, item)
 	}
+	if err := applyRoutingRuleWARPEndpointBindings(server, opts.RoutingRules, opts.ProxyPaths, opts.ProxyPathSteps, opts.WARPProfiles, &config.Endpoints); err != nil {
+		return "", err
+	}
 	rules, err := buildRouteRules(server, opts.RoutingRules, outbounds, opts.ExternalOutbounds)
 	if err != nil {
 		return "", err
@@ -2116,6 +2119,9 @@ func applyRoutingRuleProxyPathBindings(server model.Server, rules []model.Routin
 		}
 		base, ok := byTag[baseTag]
 		if !ok {
+			if _, isWARP := routingRuleWARPProfileForTag(server.ID, baseTag, warpProfiles); isWARP {
+				continue
+			}
 			return fmt.Errorf("routing rule %s cannot bind non-outbound target %q", rule.Name, baseTag)
 		}
 		chain := []map[string]any{base}
@@ -2161,6 +2167,63 @@ func applyRoutingRuleProxyPathBindings(server model.Server, rules []model.Routin
 		}
 	}
 	return nil
+}
+
+func applyRoutingRuleWARPEndpointBindings(server model.Server, rules []model.RoutingRule, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile, endpoints *[]map[string]any) error {
+	if endpoints == nil {
+		return nil
+	}
+	byTag := make(map[string]map[string]any, len(*endpoints))
+	for _, endpoint := range *endpoints {
+		if endpointTag, _ := endpoint["tag"].(string); endpointTag != "" {
+			byTag[endpointTag] = endpoint
+		}
+	}
+	for _, rule := range rules {
+		if !rule.Enabled || rule.Scope != model.RoutingRuleScopePathStage || rule.ServerID != server.ID || rule.Action != model.RouteActionProxyPath || !routingRuleHasProxyPathBinding(rule) {
+			continue
+		}
+		baseTag, err := routingRuleProxyPathOutboundTag(rule, server, paths, steps, warpProfiles)
+		if err != nil {
+			return fmt.Errorf("routing rule %s: %w", rule.Name, err)
+		}
+		if _, isWARP := routingRuleWARPProfileForTag(server.ID, baseTag, warpProfiles); !isWARP {
+			continue
+		}
+		base, ok := byTag[baseTag]
+		if !ok {
+			return fmt.Errorf("routing rule %s WARP endpoint %q is unavailable", rule.Name, baseTag)
+		}
+		bound := cloneNestedMap(base)
+		boundTag := routingRuleBoundOutboundTag(rule.ID, baseTag)
+		bound["tag"] = boundTag
+		if interfaceName := strings.TrimSpace(rule.InterfaceName); interfaceName != "" {
+			if err := ValidateNetworkInterfaceName(interfaceName); err != nil {
+				return fmt.Errorf("routing rule %s interface_name: %w", rule.Name, err)
+			}
+			delete(bound, "detour")
+			bound["bind_interface"] = interfaceName
+		} else {
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(rule.SourcePrefix))
+			if err != nil {
+				return fmt.Errorf("routing rule %s source_prefix: %w", rule.Name, err)
+			}
+			delete(bound, "bind_interface")
+			bound["detour"] = sourcePrefixOutboundTag(prefix.Masked().String())
+		}
+		*endpoints = append(*endpoints, bound)
+		byTag[boundTag] = bound
+	}
+	return nil
+}
+
+func routingRuleWARPProfileForTag(serverID int64, outboundTag string, profiles []model.WARPProfile) (model.WARPProfile, bool) {
+	for _, profile := range profiles {
+		if profile.ServerID == serverID && profile.Enabled && tag("warp", profile.ID) == outboundTag {
+			return profile, true
+		}
+	}
+	return model.WARPProfile{}, false
 }
 
 func sameOptionalID(left, right *int64) bool {
