@@ -11815,20 +11815,25 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
   const [ruleSetQuery, setRuleSetQuery] = useState('')
   const [showRuleSetCreate, setShowRuleSetCreate] = useState(false)
   const [ruleSetDraft, setRuleSetDraft] = useState({ name: '', url: '', format: 'singbox_source' as RoutingRuleSet['format'] })
+  const [mobileTab, setMobileTab] = useState<'editor' | 'list'>('editor')
   const update = (patch: Partial<RoutingDraft>) => setDraft(old => old ? { ...old, ...patch } : old)
   const paths = ((data.proxy_paths || []) as ProxyPath[]).filter(path => path.enabled !== false)
   const virtualInbound = ((data.inbounds || []) as Inbound[]).find(inbound => inbound.id === draft.inbound_id)
   const stages = routingStages(data, draft.proxy_path_id, draft.inbound_id)
   const selectedStage = stages.find(stage => stage.stepID === draft.stage_step_id) || stages[0]
+  const currentStageIndex = stages.findIndex(stage => stage.stepID === selectedStage?.stepID)
   const rules = ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage' && rule.proxy_path_id === draft.proxy_path_id)
-	const allRules = ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage')
+  const selectedStageRules = rules.filter(rule => Number(rule.stage_step_id || 0) === selectedStage?.stepID).sort((a, b) => Number(a.sort_position || 0) - Number(b.sort_position || 0))
+  const allRules = ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage')
   const ruleSets = ((data.routing_rule_sets || []) as RoutingRuleSet[])
   const filteredRuleSets = ruleSets.filter(set => `${set.name} ${set.url} ${set.format}`.toLowerCase().includes(ruleSetQuery.trim().toLowerCase()))
   const serverOutbounds = (data.outbounds || []).filter((item: Outbound) => item.server_id === Number(selectedStage?.serverID || draft.server_id))
   const externalOutbounds = (data.external_outbounds || []).filter((item: ExternalOutbound) => item.scope === 'global' || !item.server_id || item.server_id === Number(selectedStage?.serverID || draft.server_id))
-	const sourcePath = paths.find(path => path.id === draft.proxy_path_id)
-	const targetPaths = paths.filter(path => path.id !== draft.proxy_path_id && path.kind !== 'direct' && path.inbound_id === sourcePath?.inbound_id)
-	const reuseRules = allRules.filter(rule => rule.id !== draft.id && (rule.proxy_path_id !== draft.proxy_path_id || Number(rule.stage_step_id || 0) !== Number(draft.stage_step_id || 0)))
+  const sourcePath = paths.find(path => path.id === draft.proxy_path_id)
+  const targetPaths = paths.filter(path => path.id !== draft.proxy_path_id && path.kind !== 'direct' && path.inbound_id === sourcePath?.inbound_id)
+  const reuseRules = allRules.filter(rule => rule.id !== draft.id && (rule.proxy_path_id !== draft.proxy_path_id || Number(rule.stage_step_id || 0) !== Number(draft.stage_step_id || 0)))
+  const isEditing = Boolean(draft.id && draft.id > 0)
+
   useEffect(() => {
     if (!selectedStage) return
     if (draft.server_id !== selectedStage.serverID || draft.stage_step_id !== selectedStage.stepID) update({ server_id: selectedStage.serverID, stage_step_id: selectedStage.stepID, outbound_id: 0, external_outbound_id: 0 })
@@ -11850,6 +11855,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
       await dialogs.alert({ title: '调整规则失败', message: localizeErrorMessage(error.message || error) })
     }
   }
+
   const createRuleSet = async () => {
     try {
       await client.request('/routing-rule-sets', { method: 'POST', body: JSON.stringify(ruleSetDraft) })
@@ -11860,94 +11866,647 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
       await dialogs.alert({ title: '规则集校验失败', message: localizeErrorMessage(error.message || error) })
     }
   }
+
   const selectStage = (stage: RoutingStage) => {
     if (!stage.available) return
     update({ stage_step_id: stage.stepID, server_id: stage.serverID, outbound_id: 0, external_outbound_id: 0 })
   }
+
+  const startEditRule = (rule: RoutingRule) => {
+    update({
+      ...routingDraftFromRule(rule),
+      sync_source_rule_id: 0,
+    })
+    setMobileTab('editor')
+  }
+
+  const startNewRule = () => {
+    if (!selectedStage) return
+    setDraft(defaultRoutingDraft({ id: selectedStage.serverID, name: selectedStage.serverName } as Server, draft.proxy_path_id))
+    setMobileTab('editor')
+  }
+
   const usesExplicitSource = draft.action === 'interface' || draft.action === 'source_prefix'
-	const reuseRule = (ruleID: number) => {
-	  const source = allRules.find(rule => rule.id === ruleID)
-	  if (!source) return update({ sync_source_rule_id: 0, sync_enabled: false })
-		  update({
-			...routingDraftFromRule(source),
-			id: 0,
-			proxy_path_id: draft.proxy_path_id,
-			stage_step_id: draft.stage_step_id,
-			server_id: selectedStage?.serverID || draft.server_id,
-			action: source.action === 'proxy_path' ? 'direct' : source.action,
-			target_proxy_path_id: source.action === 'proxy_path' ? 0 : Number(source.target_proxy_path_id || 0),
-			sync_source_rule_id: source.id,
-		sync_enabled: false,
-	  })
-	}
+
+  const reuseRule = (ruleID: number) => {
+    const source = allRules.find(rule => rule.id === ruleID)
+    if (!source) return update({ sync_source_rule_id: 0, sync_enabled: false })
+    update({
+      ...routingDraftFromRule(source),
+      id: draft.id || 0,
+      proxy_path_id: draft.proxy_path_id,
+      stage_step_id: draft.stage_step_id,
+      server_id: selectedStage?.serverID || draft.server_id,
+      action: source.action === 'proxy_path' ? 'direct' : source.action,
+      target_proxy_path_id: source.action === 'proxy_path' ? 0 : Number(source.target_proxy_path_id || 0),
+      sync_source_rule_id: source.id,
+      sync_enabled: false,
+    })
+  }
 
   return <MotionDialogPanel onCancel={onCancel} className="routing-composer-dialog" aria-labelledby="routing-dialog-title">
     <header className="dialog-head routing-composer-head">
-      <div><h2 id="routing-dialog-title">分流出口</h2><p className="muted">{paths.find(path => path.id === draft.proxy_path_id)?.name || (virtualInbound ? `${virtualInbound.name} · 默认直出` : '代理分支')}</p></div>
-      <FormField label="代理分支"><Select value={draft.proxy_path_id} onChange={event => { const pathID = Number(event.target.value); const inboundID = pathID ? 0 : Number(virtualInbound?.id || 0); const first = routingStages(data, pathID, inboundID).find(stage => stage.available); update({ proxy_path_id: pathID, inbound_id: inboundID, stage_step_id: first?.stepID || 0, server_id: first?.serverID || 0 }) }}>{virtualInbound && <option value={0}>{virtualInbound.name} · 默认直出</option>}{paths.map(path => <option key={path.id} value={path.id}>{path.name || `分支 ${path.id}`}</option>)}</Select></FormField>
-      <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
-    </header>
-    <div className="dialog-body routing-composer-body">
-      <div className="routing-stage-tabs" role="group" aria-label="链路节点">{stages.map(stage => <button key={stage.key} type="button" aria-pressed={selectedStage?.key === stage.key} disabled={!stage.available} className={selectedStage?.key === stage.key ? 'selected' : ''} onClick={() => selectStage(stage)} title={stage.unavailableReason}><strong>{stage.label}</strong><span>{stage.serverName}</span></button>)}</div>
-      <div className="routing-stage-grid" style={{ '--routing-stage-count': Math.max(1, stages.length) } as React.CSSProperties}>
-        {stages.map((stage, stageIndex) => {
-          const stageRules = rules.filter(rule => Number(rule.stage_step_id || 0) === stage.stepID).sort((a, b) => Number(a.sort_position || 0) - Number(b.sort_position || 0))
-          return <section key={stage.key} className={`routing-stage${selectedStage?.key === stage.key ? ' selected' : ''}${stage.available ? '' : ' disabled'}`} aria-labelledby={`routing-stage-${stage.key}`} onDragOver={event => { if (stage.available) event.preventDefault() }} onDrop={event => { event.preventDefault(); if (draggedRuleID && stage.available) void persistPlacement(draggedRuleID, stage.stepID) }}>
-            <header><span className="routing-stage-letter">{stage.label}</span><div><h3 id={`routing-stage-${stage.key}`}>{stage.serverName}</h3><small>{stageRules.length} 条规则</small></div></header>
-            {!stage.available && <div className="routing-stage-unavailable"><Lock size={14} aria-hidden="true" /><span>{stage.unavailableReason}</span></div>}
-            <ol className="routing-rule-stack">
-              {stageRules.map((rule, index) => {
-                const ruleSet = rule.match_source === 'rule_set' ? ruleSets.find(set => set.id === rule.rule_set_id) : undefined
-                return <li key={rule.id} className="routing-rule-card" draggable onDragStart={() => setDraggedRuleID(rule.id)} onDragEnd={() => setDraggedRuleID(0)} onDragOver={event => { if (stage.available) { event.preventDefault(); event.stopPropagation() } }} onDrop={event => { event.preventDefault(); event.stopPropagation(); if (draggedRuleID && stage.available) void persistPlacement(draggedRuleID, stage.stepID, index) }}>
-                <div className="routing-rule-order"><GripVertical size={14} aria-hidden="true" /><span>{index + 1}</span></div>
-                <div className="routing-rule-copy"><strong>{rule.name}{rule.sync_group_id && <span className="routing-sync-badge">同步</span>}</strong><span>{routingRuleMatchLabel(rule, ruleSets)} <ChevronRight size={12} aria-hidden="true" /> <RoutingActionIcon action={rule.action} /> {rule.action === 'proxy_path' ? paths.find(path => path.id === rule.target_proxy_path_id)?.name || '代理链路' : labelValue(rule.action)}</span>{ruleSet && <small>{labelValue(ruleSet.format)} · {ruleSet.revision?.slice(0, 10) || '未同步'} · {labelValue(ruleSet.status)} · {ruleSet.last_success_at ? formatTableTime(ruleSet.last_success_at) : '未成功'}</small>}{ruleSet?.last_error && <small className="danger-text">{ruleSet.last_error}</small>}</div>
-                <div className="routing-rule-actions">
-				  <button className="ghost icon-button" onClick={() => update({ ...routingDraftFromRule(rule), sync_source_rule_id: 0 })} aria-label={`编辑 ${rule.name}`} title="编辑"><Edit3 size={13} /></button>
-                  <button className="ghost icon-button" disabled={index === 0} onClick={() => void persistPlacement(rule.id, stage.stepID, index - 1)} aria-label={`${rule.name} 上移`} title="上移"><ArrowUp size={13} /></button>
-                  <button className="ghost icon-button" disabled={index === stageRules.length - 1} onClick={() => void persistPlacement(rule.id, stage.stepID, index + 1)} aria-label={`${rule.name} 下移`} title="下移"><ArrowDown size={13} /></button>
-                  <button className="ghost icon-button" disabled={stageIndex === 0 || !stages[stageIndex - 1]?.available} onClick={() => void persistPlacement(rule.id, stages[stageIndex - 1].stepID)} aria-label={`${rule.name} 移到上一节点`} title="上一节点"><ArrowLeft size={13} /></button>
-                  <button className="ghost icon-button" disabled={stageIndex === stages.length - 1 || !stages[stageIndex + 1]?.available} onClick={() => void persistPlacement(rule.id, stages[stageIndex + 1].stepID)} aria-label={`${rule.name} 移到下一节点`} title="下一节点"><ArrowRight size={13} /></button>
-                  <button className="ghost icon-button danger-text" onClick={() => remove(client, `/routing-rules/${rule.id}`, load, dialogs, rule)} aria-label={`删除 ${rule.name}`} title="删除"><Trash2 size={13} /></button>
-                </div>
-              </li>})}
-            </ol>
-            <div className="routing-stage-fallback"><ArrowDown size={13} aria-hidden="true" /><span>未命中</span><strong>{stageIndex < stages.length - 1 ? `继续 ${stages[stageIndex + 1].label}` : '默认出口'}</strong></div>
-          </section>
-        })}
+      <div className="routing-composer-head-left">
+        <h2 id="routing-dialog-title">
+          <Workflow size={17} aria-hidden="true" />
+          分流规则编排
+        </h2>
+        <p className="muted">
+          {paths.find(path => path.id === draft.proxy_path_id)?.name || (virtualInbound ? `${virtualInbound.name} · 默认直出` : '代理分支')} · 为链路节点配置条件分流与目标出口
+        </p>
       </div>
-      {selectedStage?.available && <section className="routing-rule-editor" aria-labelledby="routing-rule-editor-title">
-		<header><div className="routing-rule-editor-title"><h3 id="routing-rule-editor-title">{selectedStage.label} 节点规则</h3><span>{selectedStage.serverName}</span></div><Select className="routing-match-source-select" variant="segmented" value={draft.match_source} onChange={event => update({ match_source: event.target.value as RoutingDraft['match_source'] })} aria-label="匹配来源"><option value="inline">手动条件</option><option value="rule_set">远程规则集</option></Select></header>
-		<div className="routing-rule-reuse"><FormField label="复用其他规则"><Select value={draft.sync_source_rule_id} onChange={event => reuseRule(Number(event.target.value))}><option value={0}>新规则</option>{reuseRules.map(rule => <option key={rule.id} value={rule.id}>{paths.find(path => path.id === rule.proxy_path_id)?.name || `分支 ${rule.proxy_path_id}`} · {rule.name}</option>)}</Select></FormField><label className={draft.sync_source_rule_id ? '' : 'disabled'}><input type="checkbox" checked={draft.sync_enabled} disabled={!draft.sync_source_rule_id} onChange={event => update({ sync_enabled: event.target.checked })} /><span>同步名称与匹配条件</span></label></div>
-        <div className="routing-rule-editor-grid">
-          <FormField label="名称" required><input value={draft.name} onChange={event => update({ name: event.target.value })} placeholder="规则名称" /></FormField>
-          {draft.match_source === 'inline' ? <>
-            <FormField label="匹配类型"><Select value={draft.match_kind} onChange={event => update({ match_kind: event.target.value as RoutingMatchKind, match_value: event.target.value === 'port' ? '22' : event.target.value === 'port_range' ? '10000:20000' : draft.match_value })}><option value="domain_suffix">域名后缀</option><option value="domain">完整域名</option><option value="ip_cidr">IP / CIDR</option><option value="port">目标端口</option><option value="port_range">目标端口范围</option><option value="geosite">Geosite</option><option value="geoip">GeoIP</option><option value="all">全部流量</option></Select></FormField>
-            {draft.match_kind !== 'all' && <FormField label="匹配内容"><textarea value={draft.match_value} onChange={event => update({ match_value: event.target.value })} rows={2} /></FormField>}
-          </> : <div className="routing-rule-set-picker">
-            <div className="routing-rule-set-toolbar"><label><Search size={14} aria-hidden="true" /><input value={ruleSetQuery} onChange={event => setRuleSetQuery(event.target.value)} placeholder="搜索规则集" aria-label="搜索规则集" /></label><button className="ghost" onClick={() => setShowRuleSetCreate(value => !value)}><Plus size={14} aria-hidden="true" />新建</button></div>
-            {showRuleSetCreate && <div className="routing-rule-set-create"><input value={ruleSetDraft.name} onChange={event => setRuleSetDraft({ ...ruleSetDraft, name: event.target.value })} placeholder="名称" aria-label="规则集名称" /><input value={ruleSetDraft.url} onChange={event => setRuleSetDraft({ ...ruleSetDraft, url: event.target.value })} placeholder="https://" aria-label="规则集 HTTPS URL" /><Select value={ruleSetDraft.format} onChange={event => setRuleSetDraft({ ...ruleSetDraft, format: event.target.value as RoutingRuleSet['format'] })} aria-label="规则集格式"><option value="singbox_source">sing-box JSON</option><option value="singbox_binary">sing-box SRS</option><option value="mihomo_domain">Mihomo domain</option><option value="mihomo_ipcidr">Mihomo ipcidr</option><option value="mihomo_classical">Mihomo classical</option></Select><button type="button" onClick={createRuleSet}>校验并创建</button></div>}
-            <div className="routing-rule-set-list">{filteredRuleSets.map(set => {
-              const references = rules.filter(rule => rule.match_source === 'rule_set' && rule.rule_set_id === set.id).length
-              return <label key={set.id} className={draft.rule_set_id === set.id ? 'selected' : ''}><input type="radio" name="routing-rule-set" checked={draft.rule_set_id === set.id} onChange={() => update({ rule_set_id: set.id })} /><span><strong>{set.name}</strong><small>{labelValue(set.format)} · {labelValue(set.status)} · {set.revision?.slice(0, 10) || '未同步'} · {set.last_success_at ? formatTableTime(set.last_success_at) : '未成功'} · {references} 条引用</small>{set.last_error && <em>{set.last_error}</em>}</span><button type="button" className="ghost icon-button" onClick={async event => { event.preventDefault(); await client.request(`/routing-rule-sets/${set.id}/refresh`, { method: 'POST', body: '{}' }); await load() }} aria-label={`刷新 ${set.name}`} title="刷新"><RefreshCw size={13} /></button></label>
-            })}</div>
-          </div>}
-          <div className="routing-action-picker" role="group" aria-label="处理动作">{routeActions.map(action => {
-            const selected = action === 'interface' ? usesExplicitSource : draft.action === action
-            return <button type="button" key={action} aria-pressed={selected} className={selected ? 'selected' : ''} onClick={() => update({ action: action === 'interface' && usesExplicitSource ? draft.action : action })}><RoutingActionIcon action={action} /><span>{labelValue(action)}</span></button>
-          })}</div>
-          {draft.action === 'outbound' && <FormField label="本机出口" required><Select value={draft.outbound_id} onChange={event => update({ outbound_id: Number(event.target.value) })}><option value={0}>选择出口</option>{serverOutbounds.map((item: Outbound) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
-          {draft.action === 'external' && <FormField label="导入节点" required><Select value={draft.external_outbound_id} onChange={event => update({ external_outbound_id: Number(event.target.value) })}><option value={0}>选择导入节点</option>{externalOutbounds.map((item: ExternalOutbound) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
-		  {draft.action === 'proxy_path' && <FormField label="规则代理链路" hint="必须与当前路径共享到此节点的前缀；也可以关闭窗口后从规则连接点拖线创建。" required><Select value={draft.target_proxy_path_id} onChange={event => update({ target_proxy_path_id: Number(event.target.value) })}><option value={0}>选择目标路径</option>{targetPaths.map(path => <option key={path.id} value={path.id}>{path.name || `路径 ${path.id}`}</option>)}</Select></FormField>}
-          {usesExplicitSource && <div className="routing-egress-selector">
-            <FormField label="出口绑定" required><Select className="full-width" variant="segmented" value={draft.action} onChange={event => update({ action: event.target.value as 'interface' | 'source_prefix' })} aria-label="出口绑定方式"><option value="interface">网卡</option><option value="source_prefix">IP 前缀</option></Select></FormField>
-            {draft.action === 'interface'
-              ? <FormField label="出口网卡" required><NetworkInterfacePicker serverID={selectedStage.serverID} value={draft.interface_name} onChange={interface_name => update({ interface_name })} client={client} /></FormField>
-              : <FormField label="源地址前缀" hint="每条新连接实时匹配本机地址；IPv6 /128 地址按 /64 生成前缀。" required><NetworkInterfacePicker mode="source-prefix" serverID={selectedStage.serverID} value={draft.source_prefix} onChange={source_prefix => update({ source_prefix })} client={client} /></FormField>}
-          </div>}
+      <div className="routing-composer-head-right">
+        <div className="routing-composer-branch-field">
+          <span>代理分支</span>
+          <Select
+            value={draft.proxy_path_id}
+            onChange={event => {
+              const pathID = Number(event.target.value)
+              const inboundID = pathID ? 0 : Number(virtualInbound?.id || 0)
+              const first = routingStages(data, pathID, inboundID).find(stage => stage.available)
+              update({
+                proxy_path_id: pathID,
+                inbound_id: inboundID,
+                stage_step_id: first?.stepID || 0,
+                server_id: first?.serverID || 0,
+              })
+            }}
+          >
+            {virtualInbound && <option value={0}>{virtualInbound.name} · 默认直出</option>}
+            {paths.map(path => <option key={path.id} value={path.id}>{path.name || `分支 ${path.id}`}</option>)}
+          </Select>
         </div>
-      </section>}
+        <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+      </div>
+    </header>
+
+    <div className="routing-composer-mobile-tabs" role="tablist">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mobileTab === 'editor'}
+        className={mobileTab === 'editor' ? 'selected' : ''}
+        onClick={() => setMobileTab('editor')}
+      >
+        {isEditing ? '编辑规则' : '规则配置'}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mobileTab === 'list'}
+        className={mobileTab === 'list' ? 'selected' : ''}
+        onClick={() => setMobileTab('list')}
+      >
+        规则列表 ({selectedStageRules.length})
+      </button>
     </div>
-    <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>完成</button><button onClick={onSubmit} disabled={!draft.name.trim() || (draft.match_source === 'rule_set' && !draft.rule_set_id) || (draft.action === 'proxy_path' && !draft.target_proxy_path_id) || (draft.action === 'interface' && !draft.interface_name.trim()) || (draft.action === 'source_prefix' && !draft.source_prefix.trim())}>{draft.id ? <Save size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}{draft.id ? '保存规则' : `添加到 ${selectedStage?.label}`}</button></footer>
+
+    <div className="dialog-body routing-composer-body">
+      <aside className={`routing-composer-sidebar${mobileTab === 'list' ? ' mobile-show' : ''}`}>
+        <div className="routing-sidebar-stages">
+          <div className="routing-sidebar-stages-head">
+            <span>链路节点</span>
+            <small>{stages.length} 个节点</small>
+          </div>
+          <div className="routing-stage-pipeline" role="group" aria-label="链路节点">
+            {stages.map(stage => {
+              const stageRuleCount = rules.filter(r => Number(r.stage_step_id || 0) === stage.stepID).length
+              return (
+                <button
+                  key={stage.key}
+                  type="button"
+                  aria-pressed={selectedStage?.key === stage.key}
+                  disabled={!stage.available}
+                  className={`routing-stage-pip-btn${selectedStage?.key === stage.key ? ' selected' : ''}`}
+                  onClick={() => selectStage(stage)}
+                  title={stage.unavailableReason || `${stage.label} 节点：${stage.serverName}`}
+                >
+                  <span className="routing-pip-letter">{stage.label}</span>
+                  <span className="routing-pip-name">{stage.serverName}</span>
+                  <span className="routing-pip-badge">{stageRuleCount}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="routing-sidebar-rules">
+          <div className="routing-sidebar-rules-head">
+            <div>
+              <strong>{selectedStage?.label} 节点规则</strong>
+              <span className="muted" style={{ marginLeft: 6, fontSize: 11 }}>({selectedStage?.serverName})</span>
+            </div>
+            {isEditing && (
+              <button
+                type="button"
+                className="ghost"
+                style={{ fontSize: 11.5, padding: '2px 6px', height: 'auto', border: 0 }}
+                onClick={startNewRule}
+              >
+                <Plus size={12} aria-hidden="true" /> 新建规则
+              </button>
+            )}
+          </div>
+
+          {!selectedStage?.available && (
+            <div className="routing-stage-unavailable">
+              <Lock size={14} aria-hidden="true" />
+              <span>{selectedStage?.unavailableReason}</span>
+            </div>
+          )}
+
+          {selectedStageRules.length === 0 ? (
+            <div className="routing-sidebar-empty">
+              <Workflow size={20} className="muted" aria-hidden="true" />
+              <span>暂无分流规则</span>
+              <small className="muted">在右侧配置后点击添加</small>
+            </div>
+          ) : (
+            <ol className="routing-rule-stack">
+              {selectedStageRules.map((rule, index) => {
+                const ruleSet = rule.match_source === 'rule_set' ? ruleSets.find(set => set.id === rule.rule_set_id) : undefined
+                const isCurrentEdit = draft.id === rule.id
+                return (
+                  <li
+                    key={rule.id}
+                    className={`routing-rule-card${isCurrentEdit ? ' is-editing' : ''}`}
+                    draggable
+                    onDragStart={() => setDraggedRuleID(rule.id)}
+                    onDragEnd={() => setDraggedRuleID(0)}
+                    onDragOver={event => { if (selectedStage?.available) { event.preventDefault(); event.stopPropagation() } }}
+                    onDrop={event => { event.preventDefault(); event.stopPropagation(); if (draggedRuleID && selectedStage?.available) void persistPlacement(draggedRuleID, selectedStage.stepID, index) }}
+                  >
+                    <div className="routing-rule-order">
+                      <span>{index + 1}</span>
+                    </div>
+                    <div className="routing-rule-copy">
+                      <div className="routing-rule-title-row">
+                        <strong>{rule.name}</strong>
+                        {rule.sync_group_id && <span className="routing-sync-badge">同步</span>}
+                      </div>
+                      <div className="routing-rule-tags-row">
+                        <span>{routingRuleMatchLabel(rule, ruleSets)}</span>
+                        <ChevronRight size={11} aria-hidden="true" />
+                        <RoutingActionIcon action={rule.action} />
+                        <span>{rule.action === 'proxy_path' ? (paths.find(path => path.id === rule.target_proxy_path_id)?.name || '代理链路') : labelValue(rule.action)}</span>
+                      </div>
+                      {ruleSet && <small className="muted">{labelValue(ruleSet.format)} · {ruleSet.revision?.slice(0, 10) || '未同步'} · {labelValue(ruleSet.status)}</small>}
+                      {ruleSet?.last_error && <small className="danger-text">{ruleSet.last_error}</small>}
+                    </div>
+                    <div className="routing-rule-actions">
+                      <button
+                        type="button"
+                        className="ghost icon-button"
+                        onClick={() => startEditRule(rule)}
+                        aria-label={`编辑 ${rule.name}`}
+                        title="编辑"
+                      >
+                        <Edit3 size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost icon-button"
+                        disabled={index === 0}
+                        onClick={() => void persistPlacement(rule.id, selectedStage.stepID, index - 1)}
+                        aria-label={`${rule.name} 上移`}
+                        title="上移"
+                      >
+                        <ArrowUp size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost icon-button"
+                        disabled={index === selectedStageRules.length - 1}
+                        onClick={() => void persistPlacement(rule.id, selectedStage.stepID, index + 1)}
+                        aria-label={`${rule.name} 下移`}
+                        title="下移"
+                      >
+                        <ArrowDown size={13} />
+                      </button>
+                      {stages.length > 1 && (
+                        <>
+                          <button
+                            type="button"
+                            className="ghost icon-button"
+                            disabled={currentStageIndex === 0 || !stages[currentStageIndex - 1]?.available}
+                            onClick={() => void persistPlacement(rule.id, stages[currentStageIndex - 1].stepID)}
+                            aria-label={`${rule.name} 移到上一节点`}
+                            title="移到上一节点"
+                          >
+                            <ArrowLeft size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            className="ghost icon-button"
+                            disabled={currentStageIndex === stages.length - 1 || !stages[currentStageIndex + 1]?.available}
+                            onClick={() => void persistPlacement(rule.id, stages[currentStageIndex + 1].stepID)}
+                            aria-label={`${rule.name} 移到下一节点`}
+                            title="移到下一节点"
+                          >
+                            <ArrowRight size={13} />
+                          </button>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        className="ghost icon-button danger-text"
+                        onClick={() => remove(client, `/routing-rules/${rule.id}`, load, dialogs, rule)}
+                        aria-label={`删除 ${rule.name}`}
+                        title="删除"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </li>
+                )
+              })}
+            </ol>
+          )}
+
+          <div className="routing-stage-fallback">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <ArrowDown size={13} aria-hidden="true" />
+              <span>未命中规则时</span>
+            </div>
+            <strong>{currentStageIndex < stages.length - 1 ? `继续节点 ${stages[currentStageIndex + 1].label}` : '默认出口'}</strong>
+          </div>
+        </div>
+      </aside>
+
+      {selectedStage?.available && (
+        <main className={`routing-composer-main${mobileTab === 'editor' ? ' mobile-show' : ''}`} aria-labelledby="routing-rule-editor-title">
+          <div className="routing-editor-header-bar">
+            <div className="routing-editor-title-group">
+              <h3 id="routing-rule-editor-title">{isEditing ? `编辑规则：${draft.name || '未命名'}` : '新建分流规则'}</h3>
+              <span>· 作用于 {selectedStage.label} 节点 ({selectedStage.serverName})</span>
+            </div>
+            {isEditing && (
+              <button
+                type="button"
+                className="ghost"
+                style={{ fontSize: 12 }}
+                onClick={startNewRule}
+              >
+                <Plus size={13} aria-hidden="true" /> 新建规则
+              </button>
+            )}
+          </div>
+
+          {/* Section 1: 基本信息与复用 */}
+          <section className="routing-config-section">
+            <div className="routing-config-section-title">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span className="step-pill">1</span>
+                <span>基本信息</span>
+              </div>
+            </div>
+            <div className="routing-rule-basic-grid">
+              <FormField label="规则名称" required>
+                <input
+                  value={draft.name}
+                  onChange={event => update({ name: event.target.value })}
+                  placeholder="例如：Google直连 / Telegram代理"
+                />
+              </FormField>
+              {reuseRules.length > 0 && (
+                <div className="routing-rule-reuse-box">
+                  <FormField label="从已有规则复用 (可选)">
+                    <Select
+                      value={draft.sync_source_rule_id}
+                      onChange={event => reuseRule(Number(event.target.value))}
+                    >
+                      <option value={0}>不复用 (新规则)</option>
+                      {reuseRules.map(rule => (
+                        <option key={rule.id} value={rule.id}>
+                          {paths.find(path => path.id === rule.proxy_path_id)?.name || `分支 ${rule.proxy_path_id}`} · {rule.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </FormField>
+                  {Boolean(draft.sync_source_rule_id) && (
+                    <label className="routing-sync-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={draft.sync_enabled}
+                        onChange={event => update({ sync_enabled: event.target.checked })}
+                      />
+                      <span>保持与源规则同步 (随源规则修改自动联动)</span>
+                    </label>
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Section 2: 匹配条件 */}
+          <section className="routing-config-section">
+            <div className="routing-config-section-title">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span className="step-pill">2</span>
+                <span>匹配条件</span>
+              </div>
+              <Select
+                className="routing-match-source-select"
+                variant="segmented"
+                value={draft.match_source}
+                onChange={event => update({ match_source: event.target.value as RoutingDraft['match_source'] })}
+                aria-label="匹配来源"
+              >
+                <option value="inline">手动条件</option>
+                <option value="rule_set">远程规则集</option>
+              </Select>
+            </div>
+
+            {draft.match_source === 'inline' ? (
+              <div className="routing-inline-match-fields">
+                <FormField label="匹配类型" required>
+                  <Select
+                    value={draft.match_kind}
+                    onChange={event => update({
+                      match_kind: event.target.value as RoutingMatchKind,
+                      match_value: event.target.value === 'port' ? '22' : event.target.value === 'port_range' ? '10000:20000' : draft.match_value,
+                    })}
+                  >
+                    <option value="domain_suffix">域名后缀 (domain_suffix)</option>
+                    <option value="domain">完整域名 (domain)</option>
+                    <option value="ip_cidr">IP / CIDR (ip_cidr)</option>
+                    <option value="port">目标端口 (port)</option>
+                    <option value="port_range">目标端口范围 (port_range)</option>
+                    <option value="geosite">Geosite 分类</option>
+                    <option value="geoip">GeoIP 分类</option>
+                    <option value="all">全部流量 (all)</option>
+                  </Select>
+                </FormField>
+
+                {draft.match_kind === 'all' ? (
+                  <div className="routing-match-all-box">
+                    <Info size={15} aria-hidden="true" />
+                    <span>已选择<strong>全部流量</strong>，该规则将无条件匹配流经此节点的所有连接。</span>
+                  </div>
+                ) : (
+                  <FormField
+                    label="匹配内容"
+                    hint={routingMatchHint(draft.match_kind)}
+                    required
+                  >
+                    <textarea
+                      className="monospace-input"
+                      value={draft.match_value}
+                      onChange={event => update({ match_value: event.target.value })}
+                      rows={3}
+                      placeholder={draft.match_kind === 'domain_suffix' ? 'google.com\nyoutube.com' : draft.match_kind === 'ip_cidr' ? '1.1.1.1\n8.8.8.8/32' : '填写匹配内容，多个值用换行或逗号分隔'}
+                    />
+                  </FormField>
+                )}
+              </div>
+            ) : (
+              <div className="routing-rule-set-picker">
+                <div className="routing-rule-set-toolbar">
+                  <label>
+                    <Search size={14} aria-hidden="true" />
+                    <input
+                      value={ruleSetQuery}
+                      onChange={event => setRuleSetQuery(event.target.value)}
+                      placeholder="搜索远程规则集..."
+                      aria-label="搜索规则集"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => setShowRuleSetCreate(value => !value)}
+                  >
+                    <Plus size={14} aria-hidden="true" /> 新建规则集
+                  </button>
+                </div>
+
+                {showRuleSetCreate && (
+                  <div className="routing-rule-set-create">
+                    <input
+                      value={ruleSetDraft.name}
+                      onChange={event => setRuleSetDraft({ ...ruleSetDraft, name: event.target.value })}
+                      placeholder="规则集名称"
+                      aria-label="规则集名称"
+                    />
+                    <input
+                      value={ruleSetDraft.url}
+                      onChange={event => setRuleSetDraft({ ...ruleSetDraft, url: event.target.value })}
+                      placeholder="https://..."
+                      aria-label="规则集 HTTPS URL"
+                    />
+                    <Select
+                      value={ruleSetDraft.format}
+                      onChange={event => setRuleSetDraft({ ...ruleSetDraft, format: event.target.value as RoutingRuleSet['format'] })}
+                      aria-label="规则集格式"
+                    >
+                      <option value="singbox_source">sing-box JSON</option>
+                      <option value="singbox_binary">sing-box SRS</option>
+                      <option value="mihomo_domain">Mihomo domain</option>
+                      <option value="mihomo_ipcidr">Mihomo ipcidr</option>
+                      <option value="mihomo_classical">Mihomo classical</option>
+                    </Select>
+                    <button type="button" onClick={createRuleSet}>校验并创建</button>
+                  </div>
+                )}
+
+                <div className="routing-rule-set-grid-list">
+                  {filteredRuleSets.map(set => {
+                    const references = rules.filter(rule => rule.match_source === 'rule_set' && rule.rule_set_id === set.id).length
+                    return (
+                      <label
+                        key={set.id}
+                        className={`routing-ruleset-card${draft.rule_set_id === set.id ? ' selected' : ''}`}
+                      >
+                        <input
+                          type="radio"
+                          name="routing-rule-set"
+                          checked={draft.rule_set_id === set.id}
+                          onChange={() => update({ rule_set_id: set.id })}
+                        />
+                        <div className="routing-ruleset-info">
+                          <strong>{set.name}</strong>
+                          <small>{labelValue(set.format)} · {labelValue(set.status)} · {references} 条引用</small>
+                          {set.last_error && <em className="danger-text">{set.last_error}</em>}
+                        </div>
+                        <button
+                          type="button"
+                          className="ghost icon-button"
+                          onClick={async event => {
+                            event.preventDefault()
+                            await client.request(`/routing-rule-sets/${set.id}/refresh`, { method: 'POST', body: '{}' })
+                            await load()
+                          }}
+                          aria-label={`刷新 ${set.name}`}
+                          title="刷新规则集"
+                        >
+                          <RefreshCw size={13} />
+                        </button>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* Section 3: 处理动作与目标出口 */}
+          <section className="routing-config-section">
+            <div className="routing-config-section-title">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span className="step-pill">3</span>
+                <span>处理动作与目标出口</span>
+              </div>
+            </div>
+
+            <div className="routing-action-cards-grid" role="group" aria-label="处理动作">
+              {routeActions.map(action => {
+                const selected = action === 'interface' ? usesExplicitSource : draft.action === action
+                return (
+                  <button
+                    type="button"
+                    key={action}
+                    aria-pressed={selected}
+                    className={`routing-action-card-btn${selected ? ' selected' : ''}`}
+                    onClick={() => update({ action: action === 'interface' && usesExplicitSource ? draft.action : action })}
+                  >
+                    <RoutingActionIcon action={action} />
+                    <span>{labelValue(action)}</span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Contextual Target Box */}
+            {draft.action === 'direct' && (
+              <div className="routing-action-target-panel">
+                <span className="routing-action-helper-hint">⚡ <strong>直连</strong>：命中此规则的流量将直接从 {selectedStage.serverName} 发起直连，不走任何代理出口。</span>
+              </div>
+            )}
+
+            {draft.action === 'block' && (
+              <div className="routing-action-target-panel">
+                <span className="routing-action-helper-hint">🛑 <strong>阻断</strong>：命中此规则的流量将被直接拒绝并断开连接。</span>
+              </div>
+            )}
+
+            {draft.action === 'outbound' && (
+              <div className="routing-action-target-panel">
+                <FormField label="本机出口" required>
+                  <Select
+                    value={draft.outbound_id}
+                    onChange={event => update({ outbound_id: Number(event.target.value) })}
+                  >
+                    <option value={0}>选择出口</option>
+                    {serverOutbounds.map((item: Outbound) => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
+                    ))}
+                  </Select>
+                </FormField>
+              </div>
+            )}
+
+            {draft.action === 'external' && (
+              <div className="routing-action-target-panel">
+                <FormField label="导入节点" required>
+                  <Select
+                    value={draft.external_outbound_id}
+                    onChange={event => update({ external_outbound_id: Number(event.target.value) })}
+                  >
+                    <option value={0}>选择导入节点</option>
+                    {externalOutbounds.map((item: ExternalOutbound) => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
+                    ))}
+                  </Select>
+                </FormField>
+              </div>
+            )}
+
+            {draft.action === 'proxy_path' && (
+              <div className="routing-action-target-panel">
+                <FormField label="规则代理链路" hint="必须与当前路径共享到此节点的前缀；也可以关闭窗口后从规则连接点拖线创建。" required>
+                  <Select
+                    value={draft.target_proxy_path_id}
+                    onChange={event => update({ target_proxy_path_id: Number(event.target.value) })}
+                  >
+                    <option value={0}>选择目标路径</option>
+                    {targetPaths.map(path => (
+                      <option key={path.id} value={path.id}>{path.name || `路径 ${path.id}`}</option>
+                    ))}
+                  </Select>
+                </FormField>
+              </div>
+            )}
+
+            {usesExplicitSource && (
+              <div className="routing-action-target-panel">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-strong)' }}>出口绑定方式</span>
+                  <Select
+                    variant="segmented"
+                    value={draft.action}
+                    onChange={event => update({ action: event.target.value as 'interface' | 'source_prefix' })}
+                    aria-label="出口绑定方式"
+                  >
+                    <option value="interface">网卡分流</option>
+                    <option value="source_prefix">IP 前缀分流</option>
+                  </Select>
+                </div>
+                {draft.action === 'interface' ? (
+                  <FormField label="出口网卡" required>
+                    <NetworkInterfacePicker
+                      serverID={selectedStage.serverID}
+                      value={draft.interface_name}
+                      onChange={interface_name => update({ interface_name })}
+                      client={client}
+                    />
+                  </FormField>
+                ) : (
+                  <FormField label="源地址前缀" hint="每条新连接实时匹配本机地址；IPv6 /128 地址按 /64 生成前缀。" required>
+                    <NetworkInterfacePicker
+                      mode="source-prefix"
+                      serverID={selectedStage.serverID}
+                      value={draft.source_prefix}
+                      onChange={source_prefix => update({ source_prefix })}
+                      client={client}
+                    />
+                  </FormField>
+                )}
+              </div>
+            )}
+          </section>
+        </main>
+      )}
+    </div>
+
+    <footer className="dialog-actions routing-composer-footer">
+      <div className="routing-footer-left">
+        {isEditing && (
+          <button type="button" className="ghost" onClick={startNewRule}>
+            <RotateCcw size={14} aria-hidden="true" />
+            放弃编辑 / 新建规则
+          </button>
+        )}
+      </div>
+      <div className="routing-footer-right">
+        <button type="button" className="ghost" onClick={onCancel}>
+          完成
+        </button>
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={
+            !draft.name.trim() ||
+            (draft.match_source === 'rule_set' && !draft.rule_set_id) ||
+            (draft.action === 'proxy_path' && !draft.target_proxy_path_id) ||
+            (draft.action === 'interface' && !draft.interface_name.trim()) ||
+            (draft.action === 'source_prefix' && !draft.source_prefix.trim())
+          }
+        >
+          {isEditing ? <Save size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
+          {isEditing ? '保存修改' : `添加到 ${selectedStage?.label} 节点`}
+        </button>
+      </div>
+    </footer>
   </MotionDialogPanel>
 }
 
