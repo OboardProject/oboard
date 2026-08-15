@@ -48,14 +48,21 @@ func main() {
 		log.Println("OBoard Controller", version.String())
 		return
 	}
-	logPath := env("OBOARD_LOG_FILE", filepath.Join(filepath.Dir(*dbPath), "logs", "controller.log"))
-	logManager, err := oboardlog.New(logPath, oboardlog.Config{MaxBytes: int64(envInt("OBOARD_LOG_MAX_MB", 32)) << 20, Backups: envInt("OBOARD_LOG_BACKUPS", 5)})
+	logOutput, err := parseLogOutput(os.Getenv("OBOARD_LOG_OUTPUT"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer logManager.Close()
+	logPath := env("OBOARD_LOG_FILE", filepath.Join(filepath.Dir(*dbPath), "logs", "controller.log"))
+	var logManager *oboardlog.Manager
+	if logOutput != "stdout" {
+		logManager, err = oboardlog.New(logPath, oboardlog.Config{MaxBytes: int64(envInt("OBOARD_LOG_MAX_MB", 32)) << 20, Backups: envInt("OBOARD_LOG_BACKUPS", 5)})
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer logManager.Close()
+	}
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
-	log.SetOutput(io.MultiWriter(os.Stdout, logManager))
+	log.SetOutput(controllerLogWriter(logOutput, os.Stdout, logManager))
 	if err := validateSessionSecret(*secret); err != nil {
 		log.Fatal(err)
 	}
@@ -143,6 +150,30 @@ func main() {
 	log.Printf("OBoard controller listening on %s%s", *addr, app.BasePath())
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
+	}
+}
+
+func parseLogOutput(value string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(value))
+	if mode == "" {
+		mode = "both"
+	}
+	switch mode {
+	case "stdout", "file", "both":
+		return mode, nil
+	default:
+		return "", errors.New("OBOARD_LOG_OUTPUT must be stdout, file, or both")
+	}
+}
+
+func controllerLogWriter(mode string, stdout, file io.Writer) io.Writer {
+	switch mode {
+	case "stdout":
+		return stdout
+	case "file":
+		return file
+	default:
+		return io.MultiWriter(stdout, file)
 	}
 }
 

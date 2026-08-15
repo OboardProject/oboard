@@ -9,12 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -28,6 +30,8 @@ const (
 	defaultNotificationOfflineAfterSeconds = 120
 	defaultNotificationOnlineAfterSeconds  = 60
 	notificationOfflineMergeGraceMinutes   = 10
+	notificationFallbackInterval           = 5 * time.Minute
+	periodicErrorLogInterval               = time.Minute
 )
 
 const (
@@ -143,28 +147,77 @@ var defaultNotificationTemplates = map[string]model.NotificationTemplate{
 }
 
 func (s *Server) StartMonitor(ctx context.Context) {
+	if !s.monitorStarted.CompareAndSwap(false, true) {
+		return
+	}
+	defer s.monitorStarted.Store(false)
 	s.StartTelegramBots(ctx)
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	// Run once at start so long-lived controllers clear stale work without
-	// waiting for the first panel poll.
-	s.expireTimedOutTasks(ctx)
-	s.checkOffline(ctx)
-	s.maybeFinalizeBasePathMigration(ctx)
-	s.schedulePeriodicInboundProbes(ctx)
-	s.scheduleDailyTimeChecks(ctx)
-	s.deliverPendingNotifications(ctx)
+	jobs := []struct {
+		initial  time.Duration
+		interval time.Duration
+		run      func(context.Context)
+	}{
+		{0, 30 * time.Second, s.expireTimedOutTasks},
+		{200 * time.Millisecond, 30 * time.Second, s.checkOffline},
+		{400 * time.Millisecond, 30 * time.Second, s.maybeFinalizeBasePathMigration},
+		{600 * time.Millisecond, time.Minute, s.schedulePeriodicInboundProbes},
+		{800 * time.Millisecond, time.Minute, s.scheduleDailyTimeChecks},
+	}
+	var workers sync.WaitGroup
+	for _, job := range jobs {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			runPeriodicMonitor(ctx, job.initial, job.interval, job.run)
+		}()
+	}
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		s.runNotificationMonitor(ctx)
+	}()
+	<-ctx.Done()
+	workers.Wait()
+}
+
+func runPeriodicMonitor(ctx context.Context, initial, interval time.Duration, run func(context.Context)) {
+	timer := time.NewTimer(initial)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			s.expireTimedOutTasks(ctx)
-			s.checkOffline(ctx)
-			s.maybeFinalizeBasePathMigration(ctx)
-			s.schedulePeriodicInboundProbes(ctx)
-			s.scheduleDailyTimeChecks(ctx)
+		case <-timer.C:
+			run(ctx)
+			timer.Reset(jitteredMonitorInterval(interval))
+		}
+	}
+}
+
+func jitteredMonitorInterval(interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return time.Millisecond
+	}
+	spread := interval / 10
+	if spread <= 0 {
+		return interval
+	}
+	return interval + time.Duration(rand.Int63n(int64(spread)+1))
+}
+
+func (s *Server) runNotificationMonitor(ctx context.Context) {
+	s.deliverPendingNotifications(ctx)
+	timer := time.NewTimer(jitteredMonitorInterval(notificationFallbackInterval))
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.notificationWake:
 			s.deliverPendingNotifications(ctx)
+		case <-timer.C:
+			s.deliverPendingNotifications(ctx)
+			timer.Reset(jitteredMonitorInterval(notificationFallbackInterval))
 		}
 	}
 }
@@ -174,12 +227,12 @@ func (s *Server) checkOffline(ctx context.Context) {
 }
 
 func (s *Server) checkOfflineAt(ctx context.Context, now time.Time) {
-	settings, _ := s.store.ListSettings(ctx)
+	settings := s.runtimeSettings(ctx)
 	defaultAfter := time.Duration(settingInt(settings, settingNotificationServerOfflineAfter, defaultNotificationOfflineAfterSeconds, 30, 86400)) * time.Second
 	merge := settingBool(settings, settingNotificationServerMergeOffline, true)
 	items, err := s.store.MarkStaleServersOfflineEffective(ctx, now, defaultAfter)
 	if err != nil {
-		log.Printf("offline monitor failed: %v", err)
+		s.logPeriodicError("offline-monitor", "offline monitor failed: %v", err)
 		return
 	}
 	for _, server := range items {
@@ -222,6 +275,11 @@ func (s *Server) checkOfflineAt(ctx context.Context, now time.Time) {
 	}
 	if len(items) > 0 {
 		s.publishRealtime("server_metrics")
+		if s.realtime != nil {
+			for _, item := range items {
+				s.realtime.publishServerPatch(realtimeServerPatch{ServerID: item.ID, Fields: map[string]any{"status": model.ServerOffline}})
+			}
+		}
 	}
 	s.fireDueOfflineNotices(ctx, merge, now)
 	s.fireDueOnlineNotices(ctx, now)
@@ -330,7 +388,7 @@ func (s *Server) handleServerRecovered(ctx context.Context, serverID int64) {
 	if err != nil || !server.OfflineNotifyEnabled {
 		return
 	}
-	settings, _ := s.store.ListSettings(ctx)
+	settings := s.runtimeSettings(ctx)
 	onlineAfter := time.Duration(settingInt(settings, settingNotificationServerOnlineAfter, defaultNotificationOnlineAfterSeconds, 0, 86400)) * time.Second
 	now := time.Now().UTC()
 	if err := s.store.UpsertServerOfflineNotice(ctx, serverID, store.ServerOfflineNoticeStatusOnline, now, now.Add(onlineAfter), ""); err != nil {
@@ -1012,7 +1070,7 @@ func isRedactedSecret(value string) bool {
 }
 
 func (s *Server) notificationNow(ctx context.Context) string {
-	settings, _ := s.store.ListSettings(ctx)
+	settings := s.runtimeSettings(ctx)
 	return time.Now().In(trafficLocation(settings)).Format("2006-01-02 15:04:05 MST")
 }
 
@@ -1051,13 +1109,7 @@ func (s *Server) enqueueNotificationEvent(ctx context.Context, event notificatio
 		}
 	}
 	if queued > 0 {
-		s.notificationWG.Add(1)
-		go func(parent context.Context) {
-			defer s.notificationWG.Done()
-			deliveryCtx, cancel := context.WithTimeout(parent, 30*time.Second)
-			defer cancel()
-			s.deliverPendingNotifications(deliveryCtx)
-		}(context.WithoutCancel(ctx))
+		s.wakeNotificationDelivery(ctx)
 	}
 	return queued
 }
@@ -1100,15 +1152,28 @@ func (s *Server) enqueueForcedAdminNotification(ctx context.Context, event notif
 		}
 	}
 	if queued > 0 {
-		s.notificationWG.Add(1)
-		go func(parent context.Context) {
-			defer s.notificationWG.Done()
-			deliveryCtx, cancel := context.WithTimeout(parent, 30*time.Second)
-			defer cancel()
-			s.deliverPendingNotifications(deliveryCtx)
-		}(context.WithoutCancel(ctx))
+		s.wakeNotificationDelivery(ctx)
 	}
 	return queued
+}
+
+func (s *Server) wakeNotificationDelivery(ctx context.Context) {
+	select {
+	case s.notificationWake <- struct{}{}:
+	default:
+	}
+	if s.monitorStarted.Load() {
+		return
+	}
+	// Tests and startup callers may enqueue before StartMonitor owns the wake
+	// channel. Preserve immediate delivery until the monitor is active.
+	s.notificationWG.Add(1)
+	go func(parent context.Context) {
+		defer s.notificationWG.Done()
+		deliveryCtx, cancel := context.WithTimeout(parent, 30*time.Second)
+		defer cancel()
+		s.deliverPendingNotifications(deliveryCtx)
+	}(context.WithoutCancel(ctx))
 }
 
 func notificationChannelEligible(channel model.NotificationChannel, ownerRole model.Role, event notificationEvent) bool {
@@ -1167,7 +1232,7 @@ func (s *Server) deliverPendingNotifications(ctx context.Context) {
 	defer s.notificationMu.Unlock()
 	deliveries, err := s.store.ListPendingNotificationDeliveries(ctx, time.Now().UTC(), 50)
 	if err != nil {
-		log.Printf("list pending notifications: %v", err)
+		s.logPeriodicError("pending-notifications", "list pending notifications: %v", err)
 		return
 	}
 	for _, delivery := range deliveries {
@@ -1187,6 +1252,21 @@ func (s *Server) deliverPendingNotifications(ctx context.Context) {
 		}
 		_ = s.store.AddAudit(ctx, model.AuditLog{Action: "notify", Target: "notification_channel", Detail: fmt.Sprintf("%d:%s", delivery.ChannelID, delivery.Event), IP: "controller"})
 	}
+}
+
+func (s *Server) logPeriodicError(key, format string, args ...any) {
+	now := time.Now()
+	s.periodicLogMu.Lock()
+	if s.periodicLogNext == nil {
+		s.periodicLogNext = make(map[string]time.Time)
+	}
+	if next := s.periodicLogNext[key]; !next.IsZero() && now.Before(next) {
+		s.periodicLogMu.Unlock()
+		return
+	}
+	s.periodicLogNext[key] = now.Add(periodicErrorLogInterval)
+	s.periodicLogMu.Unlock()
+	log.Printf(format, args...)
 }
 
 func (s *Server) notificationAnnouncements(w http.ResponseWriter, r *http.Request) {

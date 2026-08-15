@@ -199,7 +199,7 @@ func BenchmarkHealthReportPoolScaling(b *testing.B) {
 			for index := 0; index < b.N; index++ {
 				at = at.Add(30 * time.Second)
 				report := model.HealthReport{AgentID: server.AgentID, Status: model.ServerOnline, Timestamp: at, CPUUsagePercent: 23, MemoryUsedBytes: 1 << 30, MemoryTotalBytes: 4 << 30, TCPConnectionCount: 120, NetworkUploadBPS: 1000, NetworkDownloadBPS: 2000}
-				if _, _, err := s.UpsertHealthTransition(ctx, report, window); err != nil {
+				if _, err := s.ApplyHealthReport(ctx, server.ID, report, window); err != nil {
 					b.Fatal(err)
 				}
 			}
