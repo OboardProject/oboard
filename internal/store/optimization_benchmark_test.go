@@ -145,7 +145,7 @@ func BenchmarkHealthReportScaling(b *testing.B) {
 			for index := 0; index < b.N; index++ {
 				at = at.Add(30 * time.Second)
 				server := servers[index%count]
-				if _, _, err := s.UpsertHealthTransition(ctx, report(server.AgentID, at), window); err != nil {
+				if _, err := s.ApplyHealthReport(ctx, server.ID, report(server.AgentID, at), window); err != nil {
 					b.Fatal(err)
 				}
 			}

@@ -11465,12 +11465,15 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 			settings := s.runtimeSettings(ctx)
 			_, start, end := trafficWindow(time.Now(), server.TrafficResetMode, server.TrafficResetDay, time.Time{}, trafficLocation(settings))
 			window := model.ServerTrafficWindow{Key: start.Format("2006-01-02"), Start: start, End: end}
-			old, next, err := s.store.UpsertHealthTransition(ctx, h, window)
+			result, err := s.store.ApplyHealthReport(ctx, server.ID, h, window)
 			if err == nil {
+				// Refresh the connection's in-memory server copy so heartbeat
+				// and plan generation observe the report without a reload.
+				applyHealthReportToServer(server, h, result)
 				s.completeAgentUpdateAfterReconnect(ctx, server.ID, h.AgentBuild)
 				s.publishRealtime("server_metrics")
 			}
-			if err == nil && old == model.ServerOffline && next == model.ServerOnline {
+			if err == nil && result.StatusChanged && result.OldStatus == model.ServerOffline && result.NewStatus == model.ServerOnline {
 				log.Printf("server %d(%s) recovered and is online again", server.ID, safeLogField(server.Name))
 				s.handleServerRecovered(ctx, server.ID)
 			}
@@ -11516,6 +11519,60 @@ func sanitizeServerHealthReport(report *model.HealthReport) {
 		report.NetworkDownloadBPS = 0
 	}
 	report.RegionCode = normalizeControllerRegionCode(report.RegionCode)
+}
+
+// applyHealthReportToServer mirrors the persisted health report state onto the
+// connection's in-memory server copy so heartbeat planning and future reports
+// observe the applied report without a per-report GetServer reload. It never
+// advances UpdatedAt (runtime state only).
+func applyHealthReportToServer(server *model.Server, report model.HealthReport, result store.HealthApplyResult) {
+	if server == nil {
+		return
+	}
+	server.Status = result.NewStatus
+	if ip, family := cleanPublicEntryIP(report.PublicIPv4); family == "ipv4" {
+		server.PublicIPv4 = ip
+	}
+	if ip, family := cleanPublicEntryIP(report.PublicIPv6); family == "ipv6" {
+		server.PublicIPv6 = ip
+	}
+	if ip, family := cleanPublicEntryIP(report.InterfaceIPv6); family == "ipv6" {
+		server.InterfaceIPv6 = ip
+	} else {
+		server.InterfaceIPv6 = ""
+	}
+	if code := normalizeControllerRegionCode(report.RegionCode); code != "" {
+		server.DetectedRegionCode = code
+	}
+	server.OS = report.OS
+	server.DistroID = report.DistroID
+	server.DistroVersion = report.DistroVersion
+	server.DistroName = report.DistroName
+	server.Libc = report.Libc
+	server.ServiceManager = report.ServiceManager
+	server.PackageManager = report.PackageManager
+	server.Arch = report.Arch
+	server.Kernel = report.Kernel
+	server.CPU = report.CPU
+	server.MemoryBytes = report.MemoryBytes
+	server.CPUUsagePercent = result.Curr.CPUUsagePercent
+	server.MemoryUsedBytes = result.Curr.MemoryUsedBytes
+	server.MemoryTotalBytes = result.Curr.MemoryTotalBytes
+	server.AgentMemoryBytes = result.Curr.AgentMemoryBytes
+	server.DiskBytes = result.Curr.DiskBytes
+	server.DiskTotalBytes = result.Curr.DiskTotalBytes
+	server.TCPConnectionCount = result.Curr.TCPConnectionCount
+	server.UDPConnectionCount = result.Curr.UDPConnectionCount
+	server.ProcessCount = result.Curr.ProcessCount
+	server.NetworkUploadBPS = result.Curr.NetworkUploadBPS
+	server.NetworkDownloadBPS = result.Curr.NetworkDownloadBPS
+	server.TrafficUploadBytes = result.Curr.TrafficUploadBytes
+	server.TrafficDownloadBytes = result.Curr.TrafficDownloadBytes
+	server.AgentVersion = report.AgentVersion
+	server.AgentBuild = report.AgentBuild
+	server.SingBoxVersion = report.SingBoxVersion
+	server.TelemetryUpdatedAt = result.Curr.TelemetryUpdatedAt
+	server.LastSeenAt = result.Curr.LastSeenAt
 }
 
 func (s *Server) completeAgentUpdateAfterReconnect(ctx context.Context, serverID int64, agentBuild string) {

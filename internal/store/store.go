@@ -240,13 +240,14 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) DBStats() sql.DBStats { return s.db.Stats() }
 
-// SQLStatementCount returns the number of SQL statements executed through the
-// Store since it was opened. It is used by hot-path tests to assert that
-// per-report work stays constant as the managed fleet grows.
+// SQLStatementCount returns the number of SQL statements executed through
+// Store databases in this process since it started. It is used by hot-path
+// tests to assert that per-report work stays constant as the managed fleet
+// grows.
 func (s *Store) SQLStatementCount() int64 { return s.db.stmts.Load() }
 
 // SQLWriteTransactionCount returns the number of write transactions started
-// through the Store since it was opened.
+// through Store databases in this process since it started.
 func (s *Store) SQLWriteTransactionCount() int64 { return s.db.txs.Load() }
 
 func (s *Store) CheckHealth(ctx context.Context) error {
@@ -2768,49 +2769,20 @@ func (s *Store) DeleteServerTelemetry(ctx context.Context, serverID int64) error
 	return tx.Commit()
 }
 
+// UpsertHealthTransition persists an Agent health report addressed by AgentID.
+// The controller hot path uses ApplyHealthReport (keyed by server id, single
+// transaction, no telemetry settings writes); this wrapper keeps the AgentID
+// form for enrollment/recovery flows and tests.
 func (s *Store) UpsertHealthTransition(ctx context.Context, report model.HealthReport, window model.ServerTrafficWindow) (model.ServerStatus, model.ServerStatus, error) {
 	server, err := s.GetServerByAgent(ctx, report.AgentID)
 	if err != nil {
 		return "", "", err
 	}
-	old := server.Status
-	n := time.Now().UTC()
-	server.Status = report.Status
-	applyDetectedPublicIPs(server, report)
-	if code := normalizeRegionCode(report.RegionCode); code != "" {
-		server.DetectedRegionCode = code
+	result, err := s.ApplyHealthReport(ctx, server.ID, report, window)
+	if err != nil {
+		return result.OldStatus, result.NewStatus, err
 	}
-	server.OS = report.OS
-	server.DistroID = report.DistroID
-	server.DistroVersion = report.DistroVersion
-	server.DistroName = report.DistroName
-	server.Libc = report.Libc
-	server.ServiceManager = report.ServiceManager
-	server.PackageManager = report.PackageManager
-	server.Arch = report.Arch
-	server.Kernel = report.Kernel
-	server.CPU = report.CPU
-	server.MemoryBytes = report.MemoryBytes
-	server.CPUUsagePercent = report.CPUUsagePercent
-	server.MemoryUsedBytes = report.MemoryUsedBytes
-	server.MemoryTotalBytes = report.MemoryTotalBytes
-	server.AgentMemoryBytes = report.AgentMemoryBytes
-	server.DiskBytes = report.DiskBytes
-	server.DiskTotalBytes = report.DiskTotalBytes
-	server.TCPConnectionCount = report.TCPConnectionCount
-	server.UDPConnectionCount = report.UDPConnectionCount
-	server.ProcessCount = report.ProcessCount
-	server.AgentVersion = report.AgentVersion
-	server.AgentBuild = report.AgentBuild
-	server.SingBoxVersion = report.SingBoxVersion
-	server.LastSeenAt = &n
-	// Health reports must not churn updated_at (which drives the
-	// routing-topology revision used by MCP plan/validate/submit); only
-	// administrative server edits do.
-	if err := s.UpdateServerRuntimeState(ctx, server); err != nil {
-		return old, server.Status, err
-	}
-	return old, server.Status, s.UpdateServerTelemetryReport(ctx, server.ID, report, window)
+	return result.OldStatus, result.NewStatus, nil
 }
 
 func applyDetectedPublicIPs(server *model.Server, report model.HealthReport) {
