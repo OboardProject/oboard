@@ -1788,9 +1788,20 @@ function App() {
   }
 
   const handleServerTelemetry = React.useCallback((event: RealtimeEvent) => {
-    const snapshots = event.server_snapshots || []
+    let snapshots = event.server_snapshots || []
+    if (event.type === 'server_patch') {
+      const known = new Map(latestTelemetryRef.current.map(snapshot => [Number(snapshot.id), snapshot]))
+      snapshots = (event.server_patches || []).map(patch => {
+        const serverID = Number(patch.server_id)
+        const next = { ...(known.get(serverID) || { id: serverID }), ...patch.fields, id: serverID } as ServerTelemetrySnapshot
+        known.set(serverID, next)
+        return next
+      })
+      latestTelemetryRef.current = Array.from(known.values())
+    } else if (snapshots.length) {
+      latestTelemetryRef.current = snapshots
+    }
     if (!snapshots.length) return
-    latestTelemetryRef.current = snapshots
     Object.keys(pageCacheRef.current).forEach(page => {
       const entry = pageCacheRef.current[page]
       pageCacheRef.current[page] = { ...entry, data: mergeServerTelemetryData(entry.data, snapshots) }

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -15,11 +16,14 @@ import (
 
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 const realtimeProtocolVersion = 2
 
 const uiEventPollTimeout = 25 * time.Second
+
+const realtimePatchWindow = 500 * time.Millisecond
 
 type realtimeMessage struct {
 	Type            string                   `json:"type"`
@@ -27,6 +31,12 @@ type realtimeMessage struct {
 	Sequence        uint64                   `json:"sequence"`
 	Resources       []string                 `json:"resources,omitempty"`
 	ServerSnapshots []realtimeServerSnapshot `json:"server_snapshots,omitempty"`
+	ServerPatches   []realtimeServerPatch    `json:"server_patches,omitempty"`
+}
+
+type realtimeServerPatch struct {
+	ServerID int64          `json:"server_id"`
+	Fields   map[string]any `json:"fields"`
 }
 
 type realtimeServerSnapshot struct {
@@ -58,6 +68,9 @@ type realtimeBroker struct {
 	clients           map[*realtimeClient]struct{}
 	resourceSequences map[string]uint64
 	sequence          atomic.Uint64
+	telemetrySequence atomic.Uint64
+	serverPatches     map[int64]map[string]any
+	patchTimer        *time.Timer
 	closed            bool
 	counters          realtimeCounters
 }
@@ -86,6 +99,7 @@ type realtimeClient struct {
 	mode       realtimeClientMode
 	closed     bool
 	wake       chan struct{}
+	payloads   chan []byte
 }
 
 type realtimeClientMode uint8
@@ -97,7 +111,7 @@ const (
 )
 
 func newRealtimeBroker() *realtimeBroker {
-	return &realtimeBroker{clients: make(map[*realtimeClient]struct{}), resourceSequences: make(map[string]uint64)}
+	return &realtimeBroker{clients: make(map[*realtimeClient]struct{}), resourceSequences: make(map[string]uint64), serverPatches: make(map[int64]map[string]any)}
 }
 
 func (b *realtimeBroker) subscribe(role model.Role) (*realtimeClient, uint64, bool) {
@@ -113,7 +127,7 @@ func (b *realtimeBroker) subscribeLive(role model.Role) (*realtimeClient, uint64
 }
 
 func (b *realtimeBroker) subscribeMode(role model.Role, mode realtimeClientMode) (*realtimeClient, uint64, bool) {
-	client := &realtimeClient{role: role, mode: mode, pending: make(map[string]struct{}), wake: make(chan struct{}, 1)}
+	client := &realtimeClient{role: role, mode: mode, pending: make(map[string]struct{}), wake: make(chan struct{}, 1), payloads: make(chan []byte, 16)}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
@@ -122,6 +136,69 @@ func (b *realtimeBroker) subscribeMode(role model.Role, mode realtimeClientMode)
 	b.clients[client] = struct{}{}
 	b.counters.clients.Add(1)
 	return client, b.sequence.Load(), true
+}
+
+func (b *realtimeBroker) publishServerPatch(patch realtimeServerPatch) {
+	if patch.ServerID <= 0 || len(patch.Fields) == 0 {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return
+	}
+	merged := b.serverPatches[patch.ServerID]
+	if merged == nil {
+		merged = make(map[string]any, len(patch.Fields))
+		b.serverPatches[patch.ServerID] = merged
+	}
+	for field, value := range patch.Fields {
+		merged[field] = value
+	}
+	if b.patchTimer == nil {
+		b.patchTimer = time.AfterFunc(realtimePatchWindow, b.flushServerPatches)
+	}
+}
+
+func (b *realtimeBroker) flushServerPatches() {
+	b.mu.Lock()
+	if b.patchTimer != nil {
+		b.patchTimer.Stop()
+		b.patchTimer = nil
+	}
+	if b.closed || len(b.serverPatches) == 0 {
+		b.mu.Unlock()
+		return
+	}
+	patches := make([]realtimeServerPatch, 0, len(b.serverPatches))
+	for serverID, fields := range b.serverPatches {
+		patches = append(patches, realtimeServerPatch{ServerID: serverID, Fields: fields})
+	}
+	b.serverPatches = make(map[int64]map[string]any)
+	b.mu.Unlock()
+
+	sort.Slice(patches, func(i, j int) bool { return patches[i].ServerID < patches[j].ServerID })
+	sequence := b.telemetrySequence.Add(1)
+	payload, err := json.Marshal(realtimeMessage{Type: "server_patch", Sequence: sequence, ServerPatches: patches})
+	if err != nil {
+		return
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return
+	}
+	for client := range b.clients {
+		if client.mode != realtimeClientLive || !roleAllows(client.role, model.RoleOperator) {
+			continue
+		}
+		select {
+		case client.payloads <- payload:
+		default:
+			client.close()
+		}
+	}
 }
 
 func (b *realtimeBroker) unsubscribe(client *realtimeClient) {
@@ -184,6 +261,10 @@ func (b *realtimeBroker) close() {
 		return
 	}
 	b.closed = true
+	if b.patchTimer != nil {
+		b.patchTimer.Stop()
+		b.patchTimer = nil
+	}
 	clients := make([]*realtimeClient, 0, len(b.clients))
 	for client := range b.clients {
 		clients = append(clients, client)
@@ -244,12 +325,7 @@ func realtimeClientAllowsResource(role model.Role, mode realtimeClientMode, reso
 }
 
 func realtimeLiveResource(resource string) bool {
-	switch resource {
-	case "server_metrics", "latency_probes":
-		return true
-	default:
-		return false
-	}
+	return false
 }
 
 func (c *realtimeClient) drain() (realtimeMessage, bool) {
@@ -323,6 +399,68 @@ func (s *Server) publishRealtime(resources ...string) {
 	}
 }
 
+func (s *Server) publishServerPatch(result store.HealthApplyResult) {
+	if s.realtime != nil {
+		s.realtime.publishServerPatch(healthRealtimePatch(result))
+	}
+}
+
+func healthRealtimePatch(result store.HealthApplyResult) realtimeServerPatch {
+	previous, current := result.Prev, result.Curr
+	fields := make(map[string]any)
+	set := func(name string, changed bool, value any) {
+		if changed {
+			fields[name] = value
+		}
+	}
+	set("status", previous.Status != current.Status, current.Status)
+	set("public_ipv4", previous.PublicIPv4 != current.PublicIPv4, current.PublicIPv4)
+	set("public_ipv6", previous.PublicIPv6 != current.PublicIPv6, current.PublicIPv6)
+	set("interface_ipv6", previous.InterfaceIPv6 != current.InterfaceIPv6, current.InterfaceIPv6)
+	set("detected_region_code", previous.DetectedRegionCode != current.DetectedRegionCode, current.DetectedRegionCode)
+	set("os", previous.OS != current.OS, current.OS)
+	set("distro_id", previous.DistroID != current.DistroID, current.DistroID)
+	set("distro_version", previous.DistroVersion != current.DistroVersion, current.DistroVersion)
+	set("distro_name", previous.DistroName != current.DistroName, current.DistroName)
+	set("libc", previous.Libc != current.Libc, current.Libc)
+	set("service_manager", previous.ServiceManager != current.ServiceManager, current.ServiceManager)
+	set("package_manager", previous.PackageManager != current.PackageManager, current.PackageManager)
+	set("arch", previous.Arch != current.Arch, current.Arch)
+	set("kernel", previous.Kernel != current.Kernel, current.Kernel)
+	set("cpu", previous.CPU != current.CPU, current.CPU)
+	set("memory_bytes", previous.MemoryBytes != current.MemoryBytes, current.MemoryBytes)
+	set("cpu_usage_percent", previous.CPUUsagePercent != current.CPUUsagePercent, current.CPUUsagePercent)
+	set("memory_used_bytes", previous.MemoryUsedBytes != current.MemoryUsedBytes, current.MemoryUsedBytes)
+	set("memory_total_bytes", previous.MemoryTotalBytes != current.MemoryTotalBytes, current.MemoryTotalBytes)
+	set("agent_memory_bytes", previous.AgentMemoryBytes != current.AgentMemoryBytes, current.AgentMemoryBytes)
+	set("disk_bytes", previous.DiskBytes != current.DiskBytes, current.DiskBytes)
+	set("disk_total_bytes", previous.DiskTotalBytes != current.DiskTotalBytes, current.DiskTotalBytes)
+	set("tcp_connection_count", previous.TCPConnectionCount != current.TCPConnectionCount, current.TCPConnectionCount)
+	set("udp_connection_count", previous.UDPConnectionCount != current.UDPConnectionCount, current.UDPConnectionCount)
+	set("process_count", previous.ProcessCount != current.ProcessCount, current.ProcessCount)
+	set("agent_version", previous.AgentVersion != current.AgentVersion, current.AgentVersion)
+	set("agent_build", previous.AgentBuild != current.AgentBuild, current.AgentBuild)
+	set("sing_box_version", previous.SingBoxVersion != current.SingBoxVersion, current.SingBoxVersion)
+	set("network_upload_bps", previous.NetworkUploadBPS != current.NetworkUploadBPS, current.NetworkUploadBPS)
+	set("network_download_bps", previous.NetworkDownloadBPS != current.NetworkDownloadBPS, current.NetworkDownloadBPS)
+	set("traffic_upload_bytes", previous.TrafficUploadBytes != current.TrafficUploadBytes, current.TrafficUploadBytes)
+	set("traffic_download_bytes", previous.TrafficDownloadBytes != current.TrafficDownloadBytes, current.TrafficDownloadBytes)
+	set("connectivity_status", previous.ConnectivityStatus != current.ConnectivityStatus, current.ConnectivityStatus)
+	set("connectivity_latency_ms", previous.ConnectivityLatencyMS != current.ConnectivityLatencyMS, current.ConnectivityLatencyMS)
+	set("connectivity_checked_at", !timePointersEqual(previous.ConnectivityCheckedAt, current.ConnectivityCheckedAt), current.ConnectivityCheckedAt)
+	set("connectivity_error", previous.ConnectivityError != current.ConnectivityError, current.ConnectivityError)
+	set("telemetry_updated_at", !timePointersEqual(previous.TelemetryUpdatedAt, current.TelemetryUpdatedAt), current.TelemetryUpdatedAt)
+	set("last_seen_at", !timePointersEqual(previous.LastSeenAt, current.LastSeenAt), current.LastSeenAt)
+	return realtimeServerPatch{ServerID: current.ServerID, Fields: fields}
+}
+
+func timePointersEqual(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.Equal(*right)
+}
+
 func realtimeResourcesForTask(taskType string) []string {
 	resources := []string{"tasks"}
 	switch taskType {
@@ -378,7 +516,7 @@ func (s *Server) uiEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := currentRole(r)
-	client, sequence, ok := s.realtime.subscribeLive(role)
+	client, _, ok := s.realtime.subscribeLive(role)
 	if !ok {
 		fail(w, errors.New("realtime service unavailable"), http.StatusServiceUnavailable)
 		return
@@ -395,14 +533,18 @@ func (s *Server) uiEvents(w http.ResponseWriter, r *http.Request) {
 	conn.SetPongHandler(func(string) error {
 		return conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	})
-	ready := realtimeMessage{Type: "ready", Protocol: realtimeProtocolVersion, Sequence: sequence}
-	if roleAllows(role, model.RoleOperator) {
-		ready.ServerSnapshots, err = s.realtimeServerSnapshots(r.Context())
-		if err != nil {
-			return
-		}
+	ready, err := s.realtimeReadyMessage(r.Context(), role)
+	if err != nil {
+		return
 	}
-	if err := writeRealtimeMessage(conn, ready); err != nil {
+	readyPayload, err := json.Marshal(ready)
+	if err != nil {
+		return
+	}
+	if len(ready.ServerSnapshots) != 0 {
+		s.realtime.counters.snapshotBytes.Add(uint64(len(readyPayload)))
+	}
+	if err := writeRealtimePayload(conn, readyPayload); err != nil {
 		return
 	}
 
@@ -424,20 +566,12 @@ func (s *Server) uiEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-readDone:
 			return
+		case payload := <-client.payloads:
+			if err := writeRealtimePayload(conn, payload); err != nil {
+				return
+			}
 		case <-client.wake:
-			message, available := client.drain()
-			if !available {
-				return
-			}
-			message.Type = "server_snapshot"
-			message.Resources = nil
-			message.ServerSnapshots, err = s.realtimeServerSnapshots(r.Context())
-			if err != nil {
-				return
-			}
-			if err := writeRealtimeMessage(conn, message); err != nil {
-				return
-			}
+			return
 		case <-ticker.C:
 			valid, currentRole := s.realtimeSessionValid(r.Context(), cookie.Value, user.ID, user.SessionVersion)
 			if !valid || currentRole != role {
@@ -447,6 +581,26 @@ func (s *Server) uiEvents(w http.ResponseWriter, r *http.Request) {
 			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
 				return
 			}
+		}
+	}
+}
+
+func (s *Server) realtimeReadyMessage(ctx context.Context, role model.Role) (realtimeMessage, error) {
+	ready := realtimeMessage{Type: "ready", Protocol: realtimeProtocolVersion}
+	if !roleAllows(role, model.RoleOperator) {
+		ready.Sequence = s.realtime.telemetrySequence.Load()
+		return ready, nil
+	}
+	for {
+		sequence := s.realtime.telemetrySequence.Load()
+		snapshots, err := s.realtimeServerSnapshots(ctx)
+		if err != nil {
+			return realtimeMessage{}, err
+		}
+		if sequence == s.realtime.telemetrySequence.Load() {
+			ready.Sequence = sequence
+			ready.ServerSnapshots = snapshots
+			return ready, nil
 		}
 	}
 }
@@ -530,8 +684,16 @@ func (s *Server) uiPollEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeRealtimeMessage(conn *websocket.Conn, message realtimeMessage) error {
+	payload, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+	return writeRealtimePayload(conn, payload)
+}
+
+func writeRealtimePayload(conn *websocket.Conn, payload []byte) error {
 	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	return conn.WriteJSON(message)
+	return conn.WriteMessage(websocket.TextMessage, payload)
 }
 
 func (s *Server) realtimeSessionValid(ctx context.Context, token string, userID, sessionVersion int64) (bool, model.Role) {

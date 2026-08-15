@@ -5,6 +5,24 @@ export type RealtimeStatus = 'connecting' | 'open' | 'fallback'
 export type ServerTelemetrySnapshot = {
   id: number
   status: string
+  public_ipv4?: string
+  public_ipv6?: string
+  interface_ipv6?: string
+  detected_region_code?: string
+  os?: string
+  distro_id?: string
+  distro_version?: string
+  distro_name?: string
+  libc?: string
+  service_manager?: string
+  package_manager?: string
+  arch?: string
+  kernel?: string
+  cpu?: string
+  memory_bytes?: number
+  agent_version?: string
+  agent_build?: string
+  sing_box_version?: string
   cpu_usage_percent: number
   memory_used_bytes: number
   memory_total_bytes: number
@@ -26,12 +44,18 @@ export type ServerTelemetrySnapshot = {
   last_seen_at?: string
 }
 
+export type ServerTelemetryPatch = {
+  server_id: number
+  fields: Partial<ServerTelemetrySnapshot>
+}
+
 export type RealtimeEvent = {
-  type: 'ready' | 'invalidate' | 'resync_required' | 'server_snapshot'
+  type: 'ready' | 'invalidate' | 'resync_required' | 'server_snapshot' | 'server_patch'
   protocol?: number
   sequence: number
   resources?: string[]
   server_snapshots?: ServerTelemetrySnapshot[]
+  server_patches?: ServerTelemetryPatch[]
   reconnected?: boolean
 }
 
@@ -134,6 +158,7 @@ export function useServerTelemetry(enabled: boolean, url: string, onEvent: (even
     let attempt = 0
     let connectionFailed = false
     let openedOnce = false
+    let lastSequence = 0
 
     const clearHandshakeTimer = () => {
       if (handshakeTimer === undefined) return
@@ -190,14 +215,22 @@ export function useServerTelemetry(enabled: boolean, url: string, onEvent: (even
           const reconnected = connectionFailed || openedOnce
           attempt = 0
           openedOnce = true
+          lastSequence = Number(event.sequence || 0)
           setStatus('open')
           callbackRef.current({ ...event, reconnected })
           return
         }
-        if (!ready || event.type !== 'server_snapshot') {
+        if (!ready || (event.type !== 'server_snapshot' && event.type !== 'server_patch')) {
           next.close(1002, ready ? 'telemetry event required' : 'ready event required')
           return
         }
+        if (event.type === 'server_patch' && Number(event.sequence) !== lastSequence + 1) {
+          connectionFailed = true
+          callbackRef.current({ type: 'resync_required', sequence: Number(event.sequence || 0) })
+          next.close(1000, 'telemetry sequence gap')
+          return
+        }
+        lastSequence = Number(event.sequence || lastSequence)
         callbackRef.current(event)
       }
       next.onerror = () => next.close()

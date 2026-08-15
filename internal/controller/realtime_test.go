@@ -76,17 +76,59 @@ func TestRealtimeBrokerSeparatesHTTPPollingFromLiveTelemetry(t *testing.T) {
 	broker.publish("tasks", "server_metrics")
 	<-polling.wake
 	pollEvent, ok := polling.drain()
-	if !ok || !slices.Equal(pollEvent.Resources, []string{"tasks"}) {
+	if !ok || !slices.Equal(pollEvent.Resources, []string{"server_metrics", "tasks"}) {
 		t.Fatalf("poll event = %#v", pollEvent)
 	}
-	<-live.wake
-	liveEvent, ok := live.drain()
-	if !ok || !slices.Equal(liveEvent.Resources, []string{"server_metrics"}) {
-		t.Fatalf("live event = %#v", liveEvent)
+	select {
+	case <-live.wake:
+		t.Fatal("resource invalidation reached live telemetry client")
+	default:
 	}
 	changes := broker.changesSince(model.RoleOperator, sequence)
-	if changes.Type != "invalidate" || !slices.Equal(changes.Resources, []string{"tasks"}) {
+	if changes.Type != "invalidate" || !slices.Equal(changes.Resources, []string{"server_metrics", "tasks"}) {
 		t.Fatalf("poll changes = %#v", changes)
+	}
+	broker.publishServerPatch(realtimeServerPatch{ServerID: 7, Fields: map[string]any{"status": "online"}})
+	broker.flushServerPatches()
+	var patch realtimeMessage
+	if err := json.Unmarshal(<-live.payloads, &patch); err != nil {
+		t.Fatal(err)
+	}
+	if patch.Type != "server_patch" || patch.Sequence != 1 || len(patch.ServerPatches) != 1 || patch.ServerPatches[0].ServerID != 7 {
+		t.Fatalf("live patch = %#v", patch)
+	}
+}
+
+func TestRealtimeServerPatchCoalescesAndEncodesOnce(t *testing.T) {
+	broker := newRealtimeBroker()
+	clients := make([]*realtimeClient, 3)
+	for index := range clients {
+		client, _, ok := broker.subscribeLive(model.RoleOperator)
+		if !ok {
+			t.Fatal("live subscription failed")
+		}
+		clients[index] = client
+	}
+	broker.publishServerPatch(realtimeServerPatch{ServerID: 9, Fields: map[string]any{"status": "offline", "cpu_usage_percent": 1.0}})
+	broker.publishServerPatch(realtimeServerPatch{ServerID: 9, Fields: map[string]any{"status": "online", "memory_used_bytes": uint64(42)}})
+	broker.flushServerPatches()
+	payloads := make([][]byte, len(clients))
+	for index, client := range clients {
+		payloads[index] = <-client.payloads
+		if !bytes.Equal(payloads[0], payloads[index]) {
+			t.Fatal("clients received different patch bytes")
+		}
+	}
+	if &payloads[0][0] != &payloads[1][0] || &payloads[0][0] != &payloads[2][0] {
+		t.Fatal("patch JSON was copied per client")
+	}
+	var event realtimeMessage
+	if err := json.Unmarshal(payloads[0], &event); err != nil {
+		t.Fatal(err)
+	}
+	fields := event.ServerPatches[0].Fields
+	if fields["status"] != "online" || fields["cpu_usage_percent"] != float64(1) || fields["memory_used_bytes"] != float64(42) {
+		t.Fatalf("coalesced fields = %#v", fields)
 	}
 }
 
@@ -167,13 +209,14 @@ func TestUIRealtimeEventsRequireCookieAndSameOrigin(t *testing.T) {
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("create server status = %d", response.StatusCode)
 	}
-	app.publishRealtime("server_metrics")
+	app.realtime.publishServerPatch(realtimeServerPatch{ServerID: 1, Fields: map[string]any{"status": "online"}})
+	app.realtime.flushServerPatches()
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	var event realtimeMessage
 	if err := conn.ReadJSON(&event); err != nil {
 		t.Fatal(err)
 	}
-	if event.Type != "server_snapshot" || len(event.Resources) != 0 || len(event.ServerSnapshots) != 1 || event.ServerSnapshots[0].ID == 0 {
+	if event.Type != "server_patch" || len(event.Resources) != 0 || len(event.ServerPatches) != 1 || event.ServerPatches[0].ServerID == 0 {
 		t.Fatalf("server telemetry event = %#v", event)
 	}
 

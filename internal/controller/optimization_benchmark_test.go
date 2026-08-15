@@ -325,19 +325,29 @@ func BenchmarkRealtimeSnapshotScaling(b *testing.B) {
 					}
 				}
 				srv := newTestServer(db, "test-secret", "")
+				defer srv.Close()
+				var deliveredBytes uint64
 				b.ResetTimer()
 				for index := 0; index < b.N; index++ {
+					snapshots, err := srv.realtimeServerSnapshots(ctx)
+					if err != nil {
+						b.Fatal(err)
+					}
+					payload, err := json.Marshal(realtimeMessage{Type: "server_snapshot", Sequence: uint64(index), ServerSnapshots: snapshots})
+					if err != nil {
+						b.Fatal(err)
+					}
+					srv.realtime.counters.snapshotBytes.Add(uint64(len(payload)))
 					for client := 0; client < clientCount; client++ {
-						snapshots, err := srv.realtimeServerSnapshots(ctx)
-						if err != nil {
-							b.Fatal(err)
-						}
-						message := realtimeMessage{Type: "server_snapshot", Sequence: uint64(index), ServerSnapshots: snapshots}
-						if _, err := json.Marshal(message); err != nil {
-							b.Fatal(err)
-						}
+						deliveredBytes += uint64(len(payload))
 					}
 				}
+				builds, rows, encodedBytes, _ := srv.realtime.counters.snapshot()
+				b.ReportMetric(float64(builds)/float64(b.N), "builds/op")
+				b.ReportMetric(float64(rows)/float64(b.N), "rows/op")
+				b.ReportMetric(float64(encodedBytes)/float64(b.N), "encoded-bytes/op")
+				b.ReportMetric(float64(deliveredBytes)/float64(b.N), "wire-bytes/op")
+				b.ReportMetric(float64(clientCount), "clients")
 			})
 		}
 	}

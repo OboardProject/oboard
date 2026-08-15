@@ -87,6 +87,28 @@ describe('panel transports', () => {
     expect(FakeWebSocket.instances[0].closed).toBe(true)
   })
 
+  it('accepts consecutive server patches', () => {
+    const events: RealtimeEvent[] = []
+    act(() => root.render(<TelemetryHarness onStatus={() => {}} onEvent={event => events.push(event)} />))
+    act(() => FakeWebSocket.instances[0].emit({ type: 'ready', protocol: 2, sequence: 5, server_snapshots: [] }))
+    act(() => FakeWebSocket.instances[0].emit({ type: 'server_patch', sequence: 6, server_patches: [{ server_id: 1, fields: { status: 'online' } }] }))
+
+    expect(events[1]).toMatchObject({ type: 'server_patch', sequence: 6 })
+    expect(FakeWebSocket.instances[0].closed).toBe(false)
+  })
+
+  it('requests a resync and reconnects after a server patch sequence gap', () => {
+    const events: RealtimeEvent[] = []
+    act(() => root.render(<TelemetryHarness onStatus={() => {}} onEvent={event => events.push(event)} />))
+    act(() => FakeWebSocket.instances[0].emit({ type: 'ready', protocol: 2, sequence: 5, server_snapshots: [] }))
+    act(() => FakeWebSocket.instances[0].emit({ type: 'server_patch', sequence: 7, server_patches: [{ server_id: 1, fields: { status: 'online' } }] }))
+
+    expect(events[1]).toEqual({ type: 'resync_required', sequence: 7 })
+    expect(FakeWebSocket.instances[0].closed).toBe(true)
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(FakeWebSocket.instances).toHaveLength(2)
+  })
+
   it('falls back after a telemetry handshake timeout', () => {
     const statuses: RealtimeStatus[] = []
     act(() => root.render(<TelemetryHarness onStatus={status => statuses.push(status)} onEvent={() => {}} />))

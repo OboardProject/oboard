@@ -11469,9 +11469,9 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 			if err == nil {
 				// Refresh the connection's in-memory server copy so heartbeat
 				// and plan generation observe the report without a reload.
-				applyHealthReportToServer(server, h, result)
+				applyHealthReportToServer(server, result)
 				s.completeAgentUpdateAfterReconnect(ctx, server.ID, h.AgentBuild)
-				s.publishRealtime("server_metrics")
+				s.publishServerPatch(result)
 			}
 			if err == nil && result.StatusChanged && result.OldStatus == model.ServerOffline && result.NewStatus == model.ServerOnline {
 				log.Printf("server %d(%s) recovered and is online again", server.ID, safeLogField(server.Name))
@@ -11525,36 +11525,27 @@ func sanitizeServerHealthReport(report *model.HealthReport) {
 // connection's in-memory server copy so heartbeat planning and future reports
 // observe the applied report without a per-report GetServer reload. It never
 // advances UpdatedAt (runtime state only).
-func applyHealthReportToServer(server *model.Server, report model.HealthReport, result store.HealthApplyResult) {
+func applyHealthReportToServer(server *model.Server, result store.HealthApplyResult) {
 	if server == nil {
 		return
 	}
-	server.Status = result.NewStatus
-	if ip, family := cleanPublicEntryIP(report.PublicIPv4); family == "ipv4" {
-		server.PublicIPv4 = ip
-	}
-	if ip, family := cleanPublicEntryIP(report.PublicIPv6); family == "ipv6" {
-		server.PublicIPv6 = ip
-	}
-	if ip, family := cleanPublicEntryIP(report.InterfaceIPv6); family == "ipv6" {
-		server.InterfaceIPv6 = ip
-	} else {
-		server.InterfaceIPv6 = ""
-	}
-	if code := normalizeControllerRegionCode(report.RegionCode); code != "" {
-		server.DetectedRegionCode = code
-	}
-	server.OS = report.OS
-	server.DistroID = report.DistroID
-	server.DistroVersion = report.DistroVersion
-	server.DistroName = report.DistroName
-	server.Libc = report.Libc
-	server.ServiceManager = report.ServiceManager
-	server.PackageManager = report.PackageManager
-	server.Arch = report.Arch
-	server.Kernel = report.Kernel
-	server.CPU = report.CPU
-	server.MemoryBytes = report.MemoryBytes
+	current := result.Curr
+	server.Status = current.Status
+	server.PublicIPv4 = current.PublicIPv4
+	server.PublicIPv6 = current.PublicIPv6
+	server.InterfaceIPv6 = current.InterfaceIPv6
+	server.DetectedRegionCode = current.DetectedRegionCode
+	server.OS = current.OS
+	server.DistroID = current.DistroID
+	server.DistroVersion = current.DistroVersion
+	server.DistroName = current.DistroName
+	server.Libc = current.Libc
+	server.ServiceManager = current.ServiceManager
+	server.PackageManager = current.PackageManager
+	server.Arch = current.Arch
+	server.Kernel = current.Kernel
+	server.CPU = current.CPU
+	server.MemoryBytes = current.MemoryBytes
 	server.CPUUsagePercent = result.Curr.CPUUsagePercent
 	server.MemoryUsedBytes = result.Curr.MemoryUsedBytes
 	server.MemoryTotalBytes = result.Curr.MemoryTotalBytes
@@ -11568,9 +11559,13 @@ func applyHealthReportToServer(server *model.Server, report model.HealthReport, 
 	server.NetworkDownloadBPS = result.Curr.NetworkDownloadBPS
 	server.TrafficUploadBytes = result.Curr.TrafficUploadBytes
 	server.TrafficDownloadBytes = result.Curr.TrafficDownloadBytes
-	server.AgentVersion = report.AgentVersion
-	server.AgentBuild = report.AgentBuild
-	server.SingBoxVersion = report.SingBoxVersion
+	server.AgentVersion = current.AgentVersion
+	server.AgentBuild = current.AgentBuild
+	server.SingBoxVersion = current.SingBoxVersion
+	server.ConnectivityStatus = current.ConnectivityStatus
+	server.ConnectivityLatencyMS = current.ConnectivityLatencyMS
+	server.ConnectivityCheckedAt = current.ConnectivityCheckedAt
+	server.ConnectivityError = current.ConnectivityError
 	server.TelemetryUpdatedAt = result.Curr.TelemetryUpdatedAt
 	server.LastSeenAt = result.Curr.LastSeenAt
 }
