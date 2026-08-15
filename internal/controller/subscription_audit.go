@@ -29,10 +29,7 @@ type auditSettingsState struct {
 
 func (s *Server) auditSettingsState(ctx context.Context) auditSettingsState {
 	state := auditSettingsState{Enabled: true, Subscription: true, Connection: true, Action: model.AuditActionRestrict}
-	settings, err := s.store.ListSettings(ctx)
-	if err != nil {
-		return state
-	}
+	settings := s.runtimeSettings(ctx)
 	state.Enabled = settingBool(settings, settingAuditEnabled, true)
 	state.Subscription = settingBool(settings, settingSubscriptionAuditEnabled, true)
 	state.Connection = settingBool(settings, settingConnectionAuditEnabled, true)
@@ -61,10 +58,7 @@ func (s *Server) effectiveConnectionAuditEnabled(ctx context.Context, server *mo
 
 func (s *Server) auditPolicy(ctx context.Context) model.AuditPolicy {
 	policy := store.DefaultAuditPolicy()
-	settings, err := s.store.ListSettings(ctx)
-	if err != nil {
-		return policy
-	}
+	settings := s.runtimeSettings(ctx)
 	raw := strings.TrimSpace(settings[settingAuditPolicy])
 	if raw == "" {
 		return policy

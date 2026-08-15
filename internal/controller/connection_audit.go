@@ -82,24 +82,20 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 		fail(w, errors.New("too many connection audit items in one report"), http.StatusBadRequest)
 		return
 	}
-	data, err := s.store.FullRoutingConfigData(r.Context())
+	// One immutable routing snapshot per report path instead of a full routing
+	// rebuild per batch; the store revision invalidates it synchronously on
+	// any authorization-relevant mutation.
+	routing, err := s.routingSnapshot(r.Context())
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
-	snapshot, err := s.buildAccessSnapshot(r.Context(), data)
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	userByID := make(map[int64]model.User, len(data.Users))
-	for _, user := range data.Users {
-		userByID[user.ID] = user
-	}
-	inboundByID := make(map[int64]model.Inbound, len(data.Inbounds))
-	for _, inbound := range data.Inbounds {
-		inboundByID[inbound.ID] = inbound
-	}
+	data := routing.data
+	snapshot := routing.snapshot
+	userByID := routing.usersByID
+	inboundByID := routing.inboundsByID
+	paths := data.ProxyPaths
+	steps := data.ProxyPathSteps
 	type accessPair struct{ inboundID, userID, pathID int64 }
 	allowed := map[accessPair]struct{}{}
 	for _, binding := range snapshot.InboundUserBindings() {
@@ -112,7 +108,6 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID, pathID: binding.ProxyPathID}] = struct{}{}
 		}
 	}
-	paths, steps := data.ProxyPaths, data.ProxyPathSteps
 	reports := make([]model.ConnectionAuditReport, 0, len(req.Items))
 	accepted := make([]string, 0, len(req.Items))
 	for _, item := range req.Items {
@@ -136,15 +131,7 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 				fail(w, errors.New("connection audit path_id must be positive"), http.StatusBadRequest)
 				return
 			}
-			var path model.ProxyPath
-			pathExists := false
-			for _, candidate := range paths {
-				if candidate.ID == *item.PathID {
-					path = candidate
-					pathExists = true
-					break
-				}
-			}
+			path, pathExists := routing.pathsByID[*item.PathID]
 			if !pathExists {
 				if inbound.ServerID != server.ID {
 					fail(w, errors.New("connection audit path does not belong to this agent"), http.StatusForbidden)
@@ -206,12 +193,19 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
+	// Device activity is deduplicated per batch and written with one
+	// statement instead of one UPDATE per report.
+	deviceActivity := make(map[string]time.Time, len(reports))
 	for _, report := range reports {
-		if report.DeviceIDHash != "" && !report.PayloadLastAt.IsZero() {
-			if err := s.store.MarkUserDeviceProxyActivity(r.Context(), report.DeviceIDHash, report.PayloadLastAt); err != nil {
-				log.Printf("mark device proxy activity: %v", err)
-			}
+		if report.DeviceIDHash == "" || report.PayloadLastAt.IsZero() {
+			continue
 		}
+		if latest, ok := deviceActivity[report.DeviceIDHash]; !ok || report.PayloadLastAt.After(latest) {
+			deviceActivity[report.DeviceIDHash] = report.PayloadLastAt
+		}
+	}
+	if err := s.store.MarkUserDevicesProxyActivity(r.Context(), deviceActivity); err != nil {
+		log.Printf("mark device proxy activity: %v", err)
 	}
 	riskUserIDs := make([]int64, 0, len(reports))
 	seenRiskUsers := map[int64]bool{}
@@ -223,8 +217,10 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 	}
 	s.applyConnectionAuditDeviceActions(r.Context(), riskUserIDs)
 	s.notifyConnectionAuditRisks(r.Context(), riskUserIDs)
-	if err := s.auditIntel.EvaluateUsers(r.Context(), riskUserIDs); err != nil {
-		log.Printf("evaluate audit incidents: %v", err)
+	// Risk evaluation is bounded, coalesced by userID, and runs off the
+	// report path so heavy per-user evaluations never block the agent.
+	for _, userID := range riskUserIDs {
+		s.auditRisk.enqueue(userID)
 	}
 	accepted = append(accepted, stored...)
 	write(w, http.StatusOK, map[string]any{"ok": true, "accepted_report_ids": accepted})
@@ -236,7 +232,9 @@ func (s *Server) applyConnectionAuditDeviceActions(ctx context.Context, userIDs 
 	}
 	s.connectionAuditActionMu.Lock()
 	defer s.connectionAuditActionMu.Unlock()
-	overview, err := s.store.ConnectionAuditOverview(ctx, 24, true, s.auditPolicy(ctx))
+	// Evaluate only the reported users' 24h overview instead of computing the
+	// overview of every user in the system.
+	overview, err := s.store.ConnectionAuditOverviewForUsers(ctx, 24, true, s.auditPolicy(ctx), userIDs)
 	if err != nil {
 		log.Printf("evaluate connection audit device actions: %v", err)
 		return

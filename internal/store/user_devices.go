@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -181,6 +182,35 @@ func (s *Store) MarkUserDeviceProxyActivity(ctx context.Context, deviceIDHash st
 		at = time.Now().UTC()
 	}
 	_, err := s.db.ExecContext(ctx, `update user_devices set last_proxy_activity_at=?,updated_at=? where device_id_hash=?`, at.UTC().Format(time.RFC3339Nano), now(), deviceIDHash)
+	return err
+}
+
+// MarkUserDevicesProxyActivity bulk-updates device proxy activity for a
+// report batch. Values are keyed by device_id_hash and only the latest
+// activity time per device is written, replacing the per-report UPDATE loop.
+func (s *Store) MarkUserDevicesProxyActivity(ctx context.Context, activity map[string]time.Time) error {
+	hashes := make([]string, 0, len(activity))
+	for hash := range activity {
+		hashes = append(hashes, hash)
+	}
+	sort.Strings(hashes)
+	if len(hashes) == 0 {
+		return nil
+	}
+	// One statement covers every device of the batch instead of one UPDATE
+	// per report.
+	query := `update user_devices set last_proxy_activity_at=case device_id_hash`
+	args := []any{}
+	for _, hash := range hashes {
+		query += ` when ? then ?`
+		args = append(args, hash, activity[hash].UTC().Format(time.RFC3339Nano))
+	}
+	query += ` end, updated_at=? where device_id_hash in (` + inClause(len(hashes)) + `)`
+	args = append(args, now())
+	for _, hash := range hashes {
+		args = append(args, hash)
+	}
+	_, err := s.db.ExecContext(ctx, query, args...)
 	return err
 }
 

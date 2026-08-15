@@ -149,6 +149,25 @@ type Server struct {
 	geoIP                 connectionAuditGeoResolver
 	geoIPStatus           model.GeoDatabaseStatus
 	routingRuleSetFetcher func(context.Context, model.RoutingRuleSet, bool) (*fetchedRoutingRuleSet, error)
+	// tasks is the per-server task wake notifier. SQLite stays the task source
+	// of truth; wakes are only hints to claim immediately.
+	tasks *taskNotifier
+	// taskRecoveryScanMin/Max bound the jittered recovery scan that re-wakes
+	// servers with pending tasks after a lost wake. Tests shorten them.
+	taskRecoveryScanMin time.Duration
+	taskRecoveryScanMax time.Duration
+	// routingSnapshotCache is the immutable FullRoutingConfigData + effective
+	// access snapshot cache, keyed by the store routing revision.
+	routingSnapshotCache atomic.Pointer[routingSnapshot]
+	// settingsCache is the revision-keyed ListSettings snapshot used by hot
+	// paths (health reports, audit gates).
+	settingsCache atomic.Pointer[settingsSnapshot]
+	// auditRisk is the bounded, userID-coalescing audit risk evaluation queue.
+	auditRisk *auditRiskQueue
+	// accessWorkersWake coalesces wake events for the access change and
+	// authorization lifecycle workers; the database remains the recovery
+	// fallback for both.
+	accessWorkersWake chan struct{}
 }
 
 type connectionAuditGeoResolver interface {
@@ -169,7 +188,10 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	socketPath := strings.TrimSpace(os.Getenv("OBOARD_CONTROLLER_UPDATER_SOCKET"))
 	catalog := capability.NewCatalog()
 	auditIntel := auditintel.New(store, sessionSecret)
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, auditRisk: newAuditRiskQueue(func(ctx context.Context, userID int64) error {
+		_, err := auditIntel.EvaluateUser(ctx, userID)
+		return err
+	}), accessWorkersWake: make(chan struct{}, 1)}
 	_ = store.CloseOpenControllerConnections(context.Background(), time.Now().UTC())
 	s.initializeTrustedProxies()
 	s.registerAutomationHandlers()
@@ -3662,7 +3684,7 @@ func (s *Server) createAgentTask(ctx context.Context, serverID int64, taskType, 
 		s.publishRealtime(realtimeResourcesForTask(task.Type)...)
 		return task, nil
 	}
-	if err := s.store.CreateTask(ctx, &task); err != nil {
+	if err := s.createTaskAndWake(ctx, &task); err != nil {
 		return model.AgentTask{}, err
 	}
 	s.publishRealtime(realtimeResourcesForTask(task.Type)...)
@@ -11285,8 +11307,37 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			s.publishRealtime(realtimeResourcesForTask(inFlightTaskType)...)
 		}
 	}()
-	taskTicker := time.NewTicker(time.Second)
-	defer taskTicker.Stop()
+	// Task delivery is event-driven: the notifier wakes this loop when a task
+	// becomes claimable, and the loop additionally claims on connect and after
+	// every task_ack so the next queued task is dispatched immediately. The
+	// jittered recovery scan re-wakes this channel after lost notifications;
+	// NextTask remains the atomic, database-backed claim.
+	notifyCh := s.tasks.channel(server.ID)
+	claimTask := func() {
+		if inFlightTaskID != 0 {
+			return
+		}
+		task, err := s.store.NextTask(r.Context(), server.ID)
+		if err != nil {
+			return
+		}
+		inFlightTaskID = task.ID
+		inFlightTaskType = task.Type
+		log.Printf("task dispatched server=%d(%s) id=%d type=%s version=%d", server.ID, safeLogField(server.Name), task.ID, task.Type, task.ConfigVersion)
+		s.publishRealtime(realtimeResourcesForTask(task.Type)...)
+		taskTimeout := 10 * time.Minute
+		if task.Type == model.AgentTaskTypeIssueCertificateHTTP {
+			taskTimeout = 20 * time.Minute
+		}
+		inFlightTimer = time.NewTimer(taskTimeout)
+		inFlightTimeout = inFlightTimer.C
+		if err := conn.WriteJSON(map[string]any{"type": "task_request", "ts": time.Now().UTC(), "task": task, "signature_version": 2, "signature": signAgentTaskEnvelope(server.AgentTokenHash, *task)}); err != nil {
+			// The socket is broken; the read side observes the failure and
+			// the deferred requeue returns the task to the queue.
+			return
+		}
+	}
+	claimTask()
 	_, heartbeatInterval := serverMonitoringPolicy(server)
 	heartbeatTimer := time.NewTimer(heartbeatInterval)
 	defer heartbeatTimer.Stop()
@@ -11311,7 +11362,9 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			if raw, ok := received.message["task_id"]; ok {
 				_ = json.Unmarshal(raw, &envelope.TaskID)
 			}
+			acknowledged := false
 			if envelope.Type == "task_ack" && envelope.TaskID == inFlightTaskID {
+				acknowledged = true
 				inFlightTaskID = 0
 				inFlightTaskType = ""
 				if inFlightTimer != nil {
@@ -11326,27 +11379,12 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-		case <-taskTicker.C:
-			if inFlightTaskID != 0 {
-				continue
+			if acknowledged {
+				// Deliver the next queued task without waiting for a wake.
+				claimTask()
 			}
-			task, err := s.store.NextTask(r.Context(), server.ID)
-			if err != nil {
-				continue
-			}
-			inFlightTaskID = task.ID
-			inFlightTaskType = task.Type
-			log.Printf("task dispatched server=%d(%s) id=%d type=%s version=%d", server.ID, safeLogField(server.Name), task.ID, task.Type, task.ConfigVersion)
-			s.publishRealtime(realtimeResourcesForTask(task.Type)...)
-			taskTimeout := 10 * time.Minute
-			if task.Type == model.AgentTaskTypeIssueCertificateHTTP {
-				taskTimeout = 20 * time.Minute
-			}
-			inFlightTimer = time.NewTimer(taskTimeout)
-			inFlightTimeout = inFlightTimer.C
-			if err := conn.WriteJSON(map[string]any{"type": "task_request", "ts": time.Now().UTC(), "task": task, "signature_version": 2, "signature": signAgentTaskEnvelope(server.AgentTokenHash, *task)}); err != nil {
-				return
-			}
+		case <-notifyCh:
+			claimTask()
 		case <-heartbeatTimer.C:
 			if latest, loadErr := s.store.GetServer(r.Context(), server.ID); loadErr == nil {
 				server = latest
@@ -11421,12 +11459,11 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 					h.PublicIPv6 = ip
 				}
 			}
-			current, currentErr := s.store.GetServer(ctx, server.ID)
-			if currentErr != nil {
-				return acceptedReportID
-			}
-			settings, _ := s.store.ListSettings(ctx)
-			_, start, end := trafficWindow(time.Now(), current.TrafficResetMode, current.TrafficResetDay, time.Time{}, trafficLocation(settings))
+			// The in-memory server was refreshed on the last heartbeat, so no
+			// per-report GetServer query is needed; settings come from the
+			// revision-keyed in-memory snapshot.
+			settings := s.runtimeSettings(ctx)
+			_, start, end := trafficWindow(time.Now(), server.TrafficResetMode, server.TrafficResetDay, time.Time{}, trafficLocation(settings))
 			window := model.ServerTrafficWindow{Key: start.Format("2006-01-02"), Start: start, End: end}
 			old, next, err := s.store.UpsertHealthTransition(ctx, h, window)
 			if err == nil {
@@ -11434,7 +11471,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				s.publishRealtime("server_metrics")
 			}
 			if err == nil && old == model.ServerOffline && next == model.ServerOnline {
-				log.Printf("server %d(%s) recovered and is online again", server.ID, safeLogField(current.Name))
+				log.Printf("server %d(%s) recovered and is online again", server.ID, safeLogField(server.Name))
 				s.handleServerRecovered(ctx, server.ID)
 			}
 		}
@@ -11612,6 +11649,9 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	// A completed task may advance an access-change phase or open an
+	// authorization window; wake the access workers instead of polling.
+	s.wakeAccessWorkers()
 	log.Printf("task result server=%d(%s) id=%d type=%s status=%s duration_ms=%d", task.ServerID, safeLogField(server.Name), task.ID, task.Type, req.Status, time.Since(task.CreatedAt.UTC()).Milliseconds())
 	defer s.publishRealtime(realtimeResourcesForTask(task.Type)...)
 	if task.Type == model.AgentTaskTypeApplyCoreConfig {

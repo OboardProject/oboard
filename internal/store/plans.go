@@ -1921,6 +1921,37 @@ func (s *Store) SetUserPlanBindingsActiveForUsers(ctx context.Context, userIDs [
 	return err
 }
 
+// AccessLifecycleNextDue returns the next future moment at which the
+// authorization lifecycle needs to run, or nil when nothing is scheduled. It
+// mirrors the four lifecycle scans: bindings whose window opens but were never
+// deployed, bindings whose expiry was never synced, pending exceptions without
+// an owning change, and active exceptions past expiry. A nil result lets the
+// Controller sleep on the fallback interval instead of polling.
+func (s *Store) AccessLifecycleNextDue(ctx context.Context, at time.Time) (*time.Time, error) {
+	nowText := at.UTC().Format(time.RFC3339Nano)
+	var raw sql.NullString
+	err := s.db.QueryRowContext(ctx, `select min(due) from (
+		select min(coalesce(starts_at,?)) as due from user_plan_bindings where enabled=1 and deployed_at is null
+		union all
+		select min(expires_at) from user_plan_bindings where enabled=1 and expires_at is not null and deployed_at is not null and expiry_synced_at is null
+		union all
+		select min(coalesce(starts_at,?)) from user_node_exceptions where status='pending' and change_id is null and expires_at>?
+		union all
+		select min(expires_at) from user_node_exceptions where status='active' and expiry_synced_at is null
+	)`, nowText, nowText, nowText).Scan(&raw)
+	if err != nil {
+		return nil, err
+	}
+	if !raw.Valid || strings.TrimSpace(raw.String) == "" {
+		return nil, nil
+	}
+	due := parseTime(raw.String)
+	if due.IsZero() {
+		return nil, nil
+	}
+	return &due, nil
+}
+
 // ClaimBindingsDeployedForUsers claims every enabled binding of the users as
 // deployed. Used when a scheduler-created change owns the bindings.
 func (s *Store) ClaimBindingsDeployedForUsers(ctx context.Context, userIDs []int64) error {

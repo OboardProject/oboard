@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"sort"
 	"strings"
@@ -453,6 +454,7 @@ func (s *Server) createAccessChange(ctx context.Context, r *http.Request, draft 
 	if err != nil {
 		return nil, err
 	}
+	s.wakeAccessWorkers()
 	return change, nil
 }
 
@@ -755,17 +757,43 @@ func (s *Server) proceedAccessChangeActivation(ctx context.Context, change *mode
 
 // StartAccessChangeWorker drives the prepare -> activate -> finalize state
 // machine. It is safe to restart: open changes are re-read from the database
-// and the phase tasks are already persisted with their task ids.
+// and the phase tasks are already persisted with their task ids. Wake events
+// (new changes, retries, task completions) drive progress; a jittered
+// 30-60 second recovery scan covers missed events.
 func (s *Server) StartAccessChangeWorker(ctx context.Context) {
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
+	recoveryMin, recoveryMax := s.taskRecoveryScanMin, s.taskRecoveryScanMax
+	if recoveryMin <= 0 {
+		recoveryMin = defaultTaskRecoveryScanMin
+	}
+	if recoveryMax <= recoveryMin {
+		recoveryMax = recoveryMin + defaultTaskRecoveryScanMin
+	}
+	// Progress open changes left over from a restart immediately.
+	s.reconcileAccessChanges(ctx)
+	timer := time.NewTimer(recoveryMin)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-s.accessWorkersWake:
+			timer.Stop()
 			s.reconcileAccessChanges(ctx)
+			timer.Reset(recoveryMin + time.Duration(rand.Int63n(int64(recoveryMax-recoveryMin))))
+		case <-timer.C:
+			s.reconcileAccessChanges(ctx)
+			timer.Reset(recoveryMin + time.Duration(rand.Int63n(int64(recoveryMax-recoveryMin))))
 		}
+	}
+}
+
+// wakeAccessWorkers wakes the access-change and authorization-lifecycle
+// workers. The wake is a coalesced hint; both workers keep a database-backed
+// recovery scan as fallback.
+func (s *Server) wakeAccessWorkers() {
+	select {
+	case s.accessWorkersWake <- struct{}{}:
+	default:
 	}
 }
 
@@ -901,6 +929,7 @@ func (s *Server) retryAccessChange(ctx context.Context, id int64) (phase string,
 		s.markAccessChangeFailed(ctx, change, "retry: "+err.Error())
 		return "", 0, err
 	}
+	s.wakeAccessWorkers()
 	return phase, queued, nil
 }
 
@@ -925,6 +954,7 @@ func (s *Server) accessChangeCancel(w http.ResponseWriter, r *http.Request, id i
 		fail(w, err, http.StatusConflict)
 		return
 	}
+	s.wakeAccessWorkers()
 	auditReq(s, r, "cancel", "access-change", fmt.Sprint(id))
 	write(w, 200, map[string]any{"access_change_id": id, "status": model.AccessChangeCancelled})
 }

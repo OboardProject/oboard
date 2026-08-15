@@ -116,8 +116,13 @@ func main() {
 	go app.StartDatabaseMaintenance(ctx)
 	go app.StartAccessChangeWorker(ctx)
 	go app.StartAccessLifecycleWorker(ctx)
+	go app.StartTaskRecoveryScan(ctx)
+	go app.StartAuditRiskWorker(ctx)
 	go app.StartPlanRuleReconciler(ctx)
 	go app.StartRoutingRuleSetRefresh(ctx)
+	if err := app.StartProfiling(ctx, env("OBOARD_PPROF_ADDR", "")); err != nil {
+		log.Printf("disable profiling endpoints: %v", err)
+	}
 	srv := &http.Server{
 		Addr:              *addr,
 		Handler:           app.Handler(),

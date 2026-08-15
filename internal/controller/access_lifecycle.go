@@ -14,17 +14,51 @@ import (
 // into access changes: bindings whose window opens (fallback when no change
 // claimed them), bindings and exceptions that expired, and pending allow
 // exceptions whose start time arrived. It runs only in plan mode and is
-// restart-safe: claims are persisted so nothing is processed twice.
+// restart-safe: claims are persisted so nothing is processed twice. Instead of
+// polling, it sleeps until the next due moment from the database (or the
+// fallback interval when nothing is scheduled) and wakes early on
+// authorization mutations.
 func (s *Server) StartAccessLifecycleWorker(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+	immediateRuns := 0
 	for {
+		sleep := time.Minute
+		now := time.Now()
+		due, err := s.store.AccessLifecycleNextDue(ctx, now)
+		if err == nil && due != nil {
+			wait := due.Sub(now)
+			switch {
+			case wait <= 0:
+				// Work is due right now (unclaimed fallback items). Retry
+				// quickly at first, then back off so a persistently failing
+				// claim cannot turn into a busy loop.
+				immediateRuns++
+				switch {
+				case immediateRuns <= 3:
+					sleep = 2 * time.Second
+				case immediateRuns <= 10:
+					sleep = 10 * time.Second
+				default:
+					sleep = 30 * time.Second
+				}
+			default:
+				immediateRuns = 0
+				if wait < time.Minute {
+					sleep = wait
+				}
+			}
+		} else {
+			immediateRuns = 0
+		}
+		timer := time.NewTimer(sleep)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
-			s.reconcileAccessLifecycle(ctx)
+		case <-s.accessWorkersWake:
+			timer.Stop()
+		case <-timer.C:
 		}
+		s.reconcileAccessLifecycle(ctx)
 	}
 }
 

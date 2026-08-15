@@ -13,13 +13,14 @@ const (
 )
 
 type MaintenanceResult struct {
-	ConnectionAuditsDeleted   int64
-	SubscriptionAuditsDeleted int64
-	ProbeEpisodesDeleted      int64
-	RateBucketsDeleted        int64
-	WALBusyFrames             int
-	WALLogFrames              int
-	WALCheckpointedFrames     int
+	ConnectionAuditsDeleted    int64
+	SubscriptionAuditsDeleted  int64
+	ProbeEpisodesDeleted       int64
+	RateBucketsDeleted         int64
+	ServerMetricSamplesDeleted int64
+	WALBusyFrames              int
+	WALLogFrames               int
+	WALCheckpointedFrames      int
 }
 
 func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceResult, error) {
@@ -54,6 +55,12 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 			query:  `delete from subscription_rate_buckets where rowid in (select rowid from subscription_rate_buckets where updated_at < ? order by updated_at limit ?)`,
 			cutoff: at.Add(-subscriptionBucketRetention),
 			count:  &result.RateBucketsDeleted,
+		},
+		{
+			name:   "server metric sample retention",
+			query:  `delete from server_metric_samples where rowid in (select rowid from server_metric_samples where sampled_at < ? order by sampled_at limit ?)`,
+			cutoff: at.Add(-serverMetricSampleRetention),
+			count:  &result.ServerMetricSamplesDeleted,
 		},
 	}
 	for _, job := range jobs {

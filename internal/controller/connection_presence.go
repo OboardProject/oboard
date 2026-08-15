@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"log"
 	"math"
 	"net/netip"
 	"strings"
@@ -24,38 +25,17 @@ func (s *Server) acceptConnectionPresenceDelta(ctx context.Context, server *mode
 	if len(delta.Events) > 500 || delta.DroppedCount < 0 || delta.DroppedCount > 1_000_000_000 {
 		return nil, errors.New("connection presence batch is invalid")
 	}
-	data, err := s.store.FullRoutingConfigData(ctx)
+	// Reuse the immutable routing snapshot; presence deltas never rebuild the
+	// full routing state per delta.
+	routing, err := s.routingSnapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
-	users := make(map[int64]model.User, len(data.Users))
-	for _, user := range data.Users {
-		users[user.ID] = user
-	}
-	devices := make(map[string]model.UserDevice, len(data.UserDevices))
-	for _, device := range data.UserDevices {
-		devices[device.DeviceIDHash] = device
-	}
-	inbounds := make(map[int64]model.Inbound, len(data.Inbounds))
-	for _, inbound := range data.Inbounds {
-		inbounds[inbound.ID] = inbound
-	}
-	paths := make(map[int64]model.ProxyPath, len(data.ProxyPaths))
-	for _, path := range data.ProxyPaths {
-		paths[path.ID] = path
-	}
-	snapshot := core.BuildEffectiveAccessSnapshot(core.EffectiveAccessInput{
-		Users:             data.Users,
-		Bindings:          data.PlanBindings,
-		Plans:             data.SubscriptionPlans,
-		PlanNodes:         data.ActivePlanNodes,
-		Exceptions:        data.UserNodeExceptions,
-		Paths:             data.ProxyPaths,
-		Steps:             data.ProxyPathSteps,
-		Inbounds:          data.Inbounds,
-		ExternalOutbounds: data.ExternalOutbounds,
-		Now:               time.Now(),
-	})
+	data, snapshot := routing.data, routing.snapshot
+	users := routing.usersByID
+	devices := routing.devicesByHash
+	inbounds := routing.inboundsByID
+	paths := routing.pathsByID
 	type accessPair struct{ inboundID, userID, pathID int64 }
 	allowed := map[accessPair]bool{}
 	for _, binding := range snapshot.InboundUserBindings() {
@@ -108,10 +88,16 @@ func (s *Server) acceptConnectionPresenceDelta(ctx context.Context, server *mode
 	if _, err := s.store.ApplyConnectionPresenceEvents(ctx, server.AgentID, server.ID, delta.DroppedCount, accepted); err != nil {
 		return nil, err
 	}
+	deviceActivity := make(map[string]time.Time, len(accepted))
 	for _, event := range accepted {
 		if event.DeviceIDHash != "" && event.Meaningful && !event.PayloadLastAt.IsZero() {
-			_ = s.store.MarkUserDeviceProxyActivity(ctx, event.DeviceIDHash, event.PayloadLastAt)
+			if latest, ok := deviceActivity[event.DeviceIDHash]; !ok || event.PayloadLastAt.After(latest) {
+				deviceActivity[event.DeviceIDHash] = event.PayloadLastAt
+			}
 		}
+	}
+	if err := s.store.MarkUserDevicesProxyActivity(ctx, deviceActivity); err != nil {
+		log.Printf("mark device proxy activity: %v", err)
 	}
 	return accepted, nil
 }

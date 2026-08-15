@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -22,19 +23,32 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db *sql.DB
+	// settingsRevision is a process-local monotonic counter bumped on every
+	// settings write. The Controller caches ListSettings behind it so hot
+	// paths (health reports, audit gates) avoid a per-message settings query.
+	settingsRevision atomic.Int64
+	// metricSampleMinInterval bounds server_metric_samples writes; zero means
+	// the default applies. Resolved from SQLiteOptions at open time.
+	metricSampleMinInterval time.Duration
+}
 
 type SQLiteOptions struct {
 	MaxOpenConns int
 	MaxIdleConns int
 	BusyTimeout  time.Duration
+	// MetricSampleMinInterval bounds server_metric_samples writes to at most
+	// one sample per server per interval. Zero keeps the default 60 seconds.
+	MetricSampleMinInterval time.Duration
 }
 
 func DefaultSQLiteOptions() SQLiteOptions {
 	return SQLiteOptions{
-		MaxOpenConns: 4,
-		MaxIdleConns: 4,
-		BusyTimeout:  5 * time.Second,
+		MaxOpenConns:            4,
+		MaxIdleConns:            4,
+		BusyTimeout:             5 * time.Second,
+		MetricSampleMinInterval: defaultMetricSampleMinInterval,
 	}
 }
 
@@ -43,6 +57,8 @@ const (
 	UserGroupSystemUsers               = "users"
 	bootstrapAdminSetting              = "system.bootstrap_admin_user_id"
 	configVersionSetting               = "system.config_version_sequence"
+	defaultMetricSampleMinInterval     = 60 * time.Second
+	serverMetricSampleRetention        = 30 * 24 * time.Hour
 	serverConnectivityEventsColumnsSQL = `(id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, kind text not null check(kind in ('probe_result','server_offline','probe_enabled','probe_disabled','probe_target_changed','controller_connected','controller_disconnected')), available integer check(available is null or available in (0,1)), latency_ms integer not null default 0, error text not null default '', source text not null default '', effective_at text not null, event_key text not null, created_at text not null, unique(server_id,event_key))`
 )
 
@@ -109,6 +125,10 @@ func open(path string, opts SQLiteOptions, restore bool) (*Store, error) {
 		}
 	}
 	s := &Store{db: db}
+	if opts.MetricSampleMinInterval < 0 {
+		opts.MetricSampleMinInterval = 0
+	}
+	s.metricSampleMinInterval = opts.MetricSampleMinInterval
 	if err := s.migrate(ctx, restore); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -255,6 +275,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	}
 	schema := []string{
 		`create table if not exists app_settings (key text primary key, value text not null, updated_at text not null)`,
+		`create table if not exists routing_cache_revision (id integer primary key check(id=1), revision integer not null default 0)`,
 		`create table if not exists server_latency_probe_settings (server_id integer primary key references servers(id) on delete cascade, enabled integer not null default 1, mode text not null default 'tcp', public_target text not null default 'auto', interval_seconds integer not null default 60, sample_count integer not null default 3, regions_json text not null default '[]', provinces_json text not null default '[]', carriers_json text not null default '[]', max_targets integer not null default 64, resource_version text not null default '', updated_at text not null)`,
 		`create table if not exists server_latency_probe_results (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, report_id text not null default '', resource_version text not null, probe_id text not null, kind text not null default 'regional', mode text not null default 'icmp', province text not null, carrier text not null, host text not null default '', ip text not null, port integer not null default 0, available integer not null default 0, latency_ms integer not null default 0, min_latency_ms integer not null default 0, p95_latency_ms integer not null default 0, jitter_ms integer not null default 0, sample_count integer not null default 0, success_count integer not null default 0, error text not null default '', checked_at text not null, created_at text not null, unique(server_id,resource_version,probe_id,checked_at))`,
 		`create index if not exists idx_server_latency_probe_results_server_checked on server_latency_probe_results(server_id,checked_at desc)`,
@@ -389,7 +410,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists user_node_exceptions (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, node_type text not null, node_id integer not null, effect text not null, reason text not null, status text not null default 'active', starts_at text, expires_at text not null, created_by integer references users(id) on delete set null, created_at text not null, expiry_synced_at text, change_id integer references access_changes(id) on delete set null)`,
 		`create table if not exists access_changes (id integer primary key autoincrement, change_type text not null, source_plan_id integer references subscription_plans(id) on delete cascade, candidate_revision_id integer not null default 0, expected_active_revision_id integer not null default 0, status text not null default 'preparing', preview_hash text not null default '', affected_user_count integer not null default 0, activate_at text, payload_json text not null default '{}', prepare_projection_json text not null default '{}', finalize_projection_json text not null default '{}', error text not null default '', created_by integer references users(id) on delete set null, created_at text not null, activated_at text, finalized_at text, failed_at text, updated_at text not null)`,
 		`create table if not exists access_change_targets (access_change_id integer not null references access_changes(id) on delete cascade, server_id integer not null references servers(id) on delete cascade, prepare_task_id integer not null default 0, finalize_task_id integer not null default 0, status text not null default 'pending', error text not null default '', updated_at text not null, primary key(access_change_id, server_id))`,
-		`create index if not exists idx_tasks_server_status on agent_tasks(server_id, status)`,
+		`create index if not exists idx_tasks_server_status_id on agent_tasks(server_id, status, id)`,
+		`drop index if exists idx_tasks_server_status`,
 		`create index if not exists idx_tasks_status_updated on agent_tasks(status, updated_at)`,
 		`create index if not exists idx_tasks_config_version on agent_tasks(config_version desc)`,
 		`create index if not exists idx_controller_backups_created on controller_backups(created_at desc)`,
@@ -405,6 +427,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_traffic_period_transitions_target on traffic_period_transitions(user_id,target_period_key)`,
 		`create index if not exists idx_traffic_leases_server on traffic_leases(server_id, period_key)`,
 		`create index if not exists idx_server_metric_samples_server_time on server_metric_samples(server_id, sampled_at desc)`,
+		`create index if not exists idx_server_metric_samples_time on server_metric_samples(sampled_at)`,
 		`create index if not exists idx_server_connectivity_events_server_time on server_connectivity_events(server_id,effective_at)`,
 		`create index if not exists idx_server_connectivity_events_server_kind_time on server_connectivity_events(server_id,kind,effective_at desc)`,
 		`create index if not exists idx_user_group_members_group on user_group_members(group_id, enabled)`,
@@ -453,6 +476,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
+	}
+	if err := s.migrateRoutingCacheRevisionTriggers(ctx); err != nil {
+		return err
 	}
 	if err := s.migrateRoutingRuleScopes(ctx); err != nil {
 		return err
@@ -1399,6 +1425,9 @@ func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
 func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at`, key, value, now)
+	if err == nil {
+		s.settingsRevision.Add(1)
+	}
 	return err
 }
 
@@ -1438,7 +1467,17 @@ func (s *Store) SetSettings(ctx context.Context, values map[string]string) error
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.settingsRevision.Add(1)
+	return nil
+}
+
+// SettingsRevision returns the process-local settings mutation counter. The
+// Controller settings snapshot is valid while this value is unchanged.
+func (s *Store) SettingsRevision() int64 {
+	return s.settingsRevision.Load()
 }
 
 // Backup writes a transactionally consistent standalone SQLite snapshot and
@@ -2546,11 +2585,24 @@ func (s *Store) UpdateServerTelemetryReport(ctx context.Context, serverID int64,
 		diskUsed, diskTotal = 0, 0
 		tcpConnections, udpConnections, processes = 0, 0, 0
 	}
-	if _, err := tx.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, cpuUsage, memoryUsed, memoryTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, resourceHistoryEnabled, uploadBPS, downloadBPS, periodUp, periodDown, available, latency, nowText); err != nil {
+	interval := s.metricSampleMinInterval
+	if interval <= 0 {
+		interval = defaultMetricSampleMinInterval
+	}
+	var lastSample sql.NullString
+	if err := tx.QueryRowContext(ctx, `select max(sampled_at) from server_metric_samples where server_id=?`, serverID).Scan(&lastSample); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `delete from server_metric_samples where server_id=? and sampled_at<?`, serverID, ts.Add(-30*24*time.Hour).Format(time.RFC3339Nano)); err != nil {
-		return err
+	rateLimited := false
+	if lastSample.Valid {
+		if last := parseTime(lastSample.String); !last.IsZero() && ts.Sub(last) < interval {
+			rateLimited = true
+		}
+	}
+	if !rateLimited {
+		if _, err := tx.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, cpuUsage, memoryUsed, memoryTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, resourceHistoryEnabled, uploadBPS, downloadBPS, periodUp, periodDown, available, latency, nowText); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -5118,27 +5170,20 @@ func (s *Store) RequeueTaskIfRunning(ctx context.Context, id int64, result strin
 	return err
 }
 
+// NextTask claims the oldest pending task of one server with a single atomic
+// statement: the UPDATE is conditioned on the task still being pending and
+// RETURNING returns the claimed row, so concurrent consumers (duplicate Agent
+// connections, recovery scans) can never run the same task twice and no
+// separate transaction is required. sql.ErrNoRows means nothing to claim.
 func (s *Store) NextTask(ctx context.Context, serverID int64) (*model.AgentTask, error) {
 	var task model.AgentTask
 	var createdAt, updatedAt string
 	var completedAt sql.NullString
-	err := s.db.QueryRowContext(ctx, `select id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at from agent_tasks where server_id=? and status='pending' order by id limit 1`, serverID).Scan(&task.ID, &task.ServerID, &task.Type, &task.PayloadJSON, &task.Status, &task.ResultJSON, &task.ConfigVersion, &task.Nonce, &createdAt, &updatedAt, &completedAt)
-	if err != nil {
-		return nil, err
-	}
 	ts := now()
-	res, err := s.db.ExecContext(ctx, `update agent_tasks set status='running', updated_at=? where id=? and status='pending'`, ts, task.ID)
+	err := s.db.QueryRowContext(ctx, `update agent_tasks set status='running', updated_at=? where id=(select id from agent_tasks where server_id=? and status='pending' order by id limit 1) returning id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at`, ts, serverID).Scan(&task.ID, &task.ServerID, &task.Type, &task.PayloadJSON, &task.Status, &task.ResultJSON, &task.ConfigVersion, &task.Nonce, &createdAt, &updatedAt, &completedAt)
 	if err != nil {
 		return nil, err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return nil, err
-	}
-	if n != 1 {
-		return nil, sql.ErrNoRows
-	}
-	task.Status = "running"
 	task.CreatedAt = parseTime(createdAt)
 	task.UpdatedAt = parseTime(ts)
 	task.CompletedAt = parseNullTime(completedAt)
