@@ -59,6 +59,21 @@ type realtimeBroker struct {
 	resourceSequences map[string]uint64
 	sequence          atomic.Uint64
 	closed            bool
+	counters          realtimeCounters
+}
+
+// realtimeCounters are process-local metrics used to assert that realtime
+// broadcast cost stays independent of the number of connected UI clients:
+// a full snapshot is built once and its serialized bytes are shared.
+type realtimeCounters struct {
+	snapshotBuilds atomic.Uint64
+	snapshotRows   atomic.Uint64
+	snapshotBytes  atomic.Uint64
+	clients        atomic.Int64
+}
+
+func (c *realtimeCounters) snapshot() (builds, rows, bytes uint64, clients int64) {
+	return c.snapshotBuilds.Load(), c.snapshotRows.Load(), c.snapshotBytes.Load(), c.clients.Load()
 }
 
 type realtimeClient struct {
@@ -105,6 +120,7 @@ func (b *realtimeBroker) subscribeMode(role model.Role, mode realtimeClientMode)
 		return nil, b.sequence.Load(), false
 	}
 	b.clients[client] = struct{}{}
+	b.counters.clients.Add(1)
 	return client, b.sequence.Load(), true
 }
 
@@ -113,7 +129,11 @@ func (b *realtimeBroker) unsubscribe(client *realtimeClient) {
 		return
 	}
 	b.mu.Lock()
+	_, present := b.clients[client]
 	delete(b.clients, client)
+	if present {
+		b.counters.clients.Add(-1)
+	}
 	b.mu.Unlock()
 	client.close()
 }
@@ -436,6 +456,8 @@ func (s *Server) realtimeServerSnapshots(ctx context.Context) ([]realtimeServerS
 	if err != nil {
 		return nil, err
 	}
+	s.realtime.counters.snapshotBuilds.Add(1)
+	s.realtime.counters.snapshotRows.Add(uint64(len(servers)))
 	snapshots := make([]realtimeServerSnapshot, 0, len(servers))
 	for _, server := range servers {
 		snapshots = append(snapshots, realtimeServerSnapshot{

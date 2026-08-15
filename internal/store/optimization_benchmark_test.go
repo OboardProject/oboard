@@ -125,6 +125,88 @@ func BenchmarkUpsertHealthTransition(b *testing.B) {
 	})
 }
 
+// BenchmarkHealthReportScaling measures the health-report persistence hot path
+// as the managed fleet grows from 1 to 500 servers. The report is applied to a
+// rotating server so every iteration exercises the full path; per-report cost
+// must stay constant because all SQL is point-filtered by server id.
+func BenchmarkHealthReportScaling(b *testing.B) {
+	window := model.ServerTrafficWindow{Key: "2026-08-01", Start: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)}
+	for _, count := range []int{1, 10, 100, 500} {
+		b.Run(fmt.Sprintf("servers_%d", count), func(b *testing.B) {
+			b.ReportAllocs()
+			s, servers := newHealthReportBenchStore(b, count)
+			defer s.Close()
+			ctx := context.Background()
+			report := func(agentID string, at time.Time) model.HealthReport {
+				return model.HealthReport{AgentID: agentID, Status: model.ServerOnline, Timestamp: at, CPUUsagePercent: 23, MemoryUsedBytes: 1 << 30, MemoryTotalBytes: 4 << 30, TCPConnectionCount: 120, NetworkUploadBPS: 1000, NetworkDownloadBPS: 2000}
+			}
+			b.ResetTimer()
+			at := time.Now().UTC()
+			for index := 0; index < b.N; index++ {
+				at = at.Add(30 * time.Second)
+				server := servers[index%count]
+				if _, _, err := s.UpsertHealthTransition(ctx, report(server.AgentID, at), window); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func newHealthReportBenchStore(b *testing.B, count int) (*Store, []*model.Server) {
+	b.Helper()
+	opts := DefaultSQLiteOptions()
+	opts.MetricSampleMinInterval = 0
+	s, err := OpenWithOptions(filepath.Join(b.TempDir(), "oboard.sqlite"), opts)
+	if err != nil {
+		b.Fatal(err)
+	}
+	servers := make([]*model.Server, count)
+	for index := range servers {
+		server := &model.Server{Name: fmt.Sprintf("bench-node-%d", index), AgentID: fmt.Sprintf("bench-node-agent-%d", index), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000, Status: model.ServerOnline}
+		if err := s.CreateServer(context.Background(), server); err != nil {
+			b.Fatal(err)
+		}
+		servers[index] = server
+	}
+	return s, servers
+}
+
+// BenchmarkHealthReportPoolScaling compares the health-report hot path under
+// MaxOpenConns of 1, 2, and 4. Do not raise the default pool size: SQLite
+// serializes writers, and larger pools mostly add mutex and idle connections.
+func BenchmarkHealthReportPoolScaling(b *testing.B) {
+	window := model.ServerTrafficWindow{Key: "2026-08-01", Start: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)}
+	for _, pool := range []int{1, 2, 4} {
+		b.Run(fmt.Sprintf("max_open_%d", pool), func(b *testing.B) {
+			b.ReportAllocs()
+			opts := DefaultSQLiteOptions()
+			opts.MaxOpenConns = pool
+			opts.MaxIdleConns = pool
+			opts.MetricSampleMinInterval = 0
+			s, err := OpenWithOptions(filepath.Join(b.TempDir(), "oboard.sqlite"), opts)
+			if err != nil {
+				b.Fatal(err)
+			}
+			defer s.Close()
+			server := &model.Server{Name: "bench-pool", AgentID: "bench-pool-agent", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000, Status: model.ServerOnline}
+			if err := s.CreateServer(context.Background(), server); err != nil {
+				b.Fatal(err)
+			}
+			ctx := context.Background()
+			b.ResetTimer()
+			at := time.Now().UTC()
+			for index := 0; index < b.N; index++ {
+				at = at.Add(30 * time.Second)
+				report := model.HealthReport{AgentID: server.AgentID, Status: model.ServerOnline, Timestamp: at, CPUUsagePercent: 23, MemoryUsedBytes: 1 << 30, MemoryTotalBytes: 4 << 30, TCPConnectionCount: 120, NetworkUploadBPS: 1000, NetworkDownloadBPS: 2000}
+				if _, _, err := s.UpsertHealthTransition(ctx, report, window); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkConnectionAuditBatchDeviceActivity compares the per-report device
 // activity UPDATE loop against the single-statement bulk update for report
 // batches of 100 and 500 items.

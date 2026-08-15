@@ -258,3 +258,87 @@ func BenchmarkHealthReportSocket(b *testing.B) {
 		srv.processAgentSocketMessage(ctx, server, map[string]json.RawMessage{"health_report": raw}, "198.51.100.9")
 	}
 }
+
+// BenchmarkHeartbeatScaling measures the per-heartbeat work an agent
+// connection performs (in-memory server refresh, monitoring policy, audit
+// gate, latency probe plan, heartbeat JSON) as the managed fleet grows.
+// Heartbeat cost must not depend on total server count.
+func BenchmarkHeartbeatScaling(b *testing.B) {
+	ctx := context.Background()
+	for _, count := range []int{1, 10, 100, 500} {
+		b.Run(fmt.Sprintf("servers_%d", count), func(b *testing.B) {
+			b.ReportAllocs()
+			db, err := store.Open(filepath.Join(b.TempDir(), "oboard.sqlite"))
+			if err != nil {
+				b.Fatal(err)
+			}
+			defer db.Close()
+			servers := make([]*model.Server, count)
+			for index := range servers {
+				server := &model.Server{Name: fmt.Sprintf("bench-hb-%d", index), AgentID: fmt.Sprintf("bench-hb-agent-%d", index), AgentTokenHash: security.HashSecret(agentTestToken), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000, Status: model.ServerOnline}
+				if err := db.CreateServer(ctx, server); err != nil {
+					b.Fatal(err)
+				}
+				servers[index] = server
+			}
+			srv := newTestServer(db, "test-secret", "")
+			b.ResetTimer()
+			for index := 0; index < b.N; index++ {
+				server := servers[index%count]
+				latest, err := srv.store.GetServer(ctx, server.ID)
+				if err != nil {
+					b.Fatal(err)
+				}
+				_, _ = serverMonitoringPolicy(latest)
+				_ = srv.effectiveConnectionAuditEnabled(ctx, latest)
+				if _, err := latencyProbePlanForServer(ctx, *latest); err != nil {
+					b.Fatal(err)
+				}
+				heartbeat := map[string]any{"type": "heartbeat", "ts": time.Now().UTC()}
+				if _, err := json.Marshal(heartbeat); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkRealtimeSnapshotScaling measures full realtime snapshot broadcast
+// for server counts of 10/100/500 and client counts of 1/3/10. The snapshot
+// query and its serialization must be shared across clients: per-iteration
+// cost must grow with server count but not with client count.
+func BenchmarkRealtimeSnapshotScaling(b *testing.B) {
+	ctx := context.Background()
+	for _, serverCount := range []int{10, 100, 500} {
+		for _, clientCount := range []int{1, 3, 10} {
+			b.Run(fmt.Sprintf("servers_%d_clients_%d", serverCount, clientCount), func(b *testing.B) {
+				b.ReportAllocs()
+				db, err := store.Open(filepath.Join(b.TempDir(), "oboard.sqlite"))
+				if err != nil {
+					b.Fatal(err)
+				}
+				defer db.Close()
+				for index := 0; index < serverCount; index++ {
+					server := &model.Server{Name: fmt.Sprintf("bench-rt-%d", index), AgentID: fmt.Sprintf("bench-rt-agent-%d", index), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000, Status: model.ServerOnline}
+					if err := db.CreateServer(ctx, server); err != nil {
+						b.Fatal(err)
+					}
+				}
+				srv := newTestServer(db, "test-secret", "")
+				b.ResetTimer()
+				for index := 0; index < b.N; index++ {
+					for client := 0; client < clientCount; client++ {
+						snapshots, err := srv.realtimeServerSnapshots(ctx)
+						if err != nil {
+							b.Fatal(err)
+						}
+						message := realtimeMessage{Type: "server_snapshot", Sequence: uint64(index), ServerSnapshots: snapshots}
+						if _, err := json.Marshal(message); err != nil {
+							b.Fatal(err)
+						}
+					}
+				}
+			})
+		}
+	}
+}

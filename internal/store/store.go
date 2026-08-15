@@ -24,7 +24,7 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db *countingDB
 	// settingsRevision is a process-local monotonic counter bumped on every
 	// settings write. The Controller caches ListSettings behind it so hot
 	// paths (health reports, audit gates) avoid a per-message settings query.
@@ -124,7 +124,7 @@ func open(path string, opts SQLiteOptions, restore bool) (*Store, error) {
 			return nil, fmt.Errorf("set SQLite journal mode %s: active mode is %s", journalMode, activeMode)
 		}
 	}
-	s := &Store{db: db}
+	s := &Store{db: newCountingDB(db)}
 	if opts.MetricSampleMinInterval < 0 {
 		opts.MetricSampleMinInterval = 0
 	}
@@ -239,6 +239,15 @@ func secureSQLiteFile(path string) error {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) DBStats() sql.DBStats { return s.db.Stats() }
+
+// SQLStatementCount returns the number of SQL statements executed through the
+// Store since it was opened. It is used by hot-path tests to assert that
+// per-report work stays constant as the managed fleet grows.
+func (s *Store) SQLStatementCount() int64 { return s.db.stmts.Load() }
+
+// SQLWriteTransactionCount returns the number of write transactions started
+// through the Store since it was opened.
+func (s *Store) SQLWriteTransactionCount() int64 { return s.db.txs.Load() }
 
 func (s *Store) CheckHealth(ctx context.Context) error {
 	for _, query := range []string{
