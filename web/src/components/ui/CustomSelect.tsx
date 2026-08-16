@@ -18,6 +18,7 @@ export interface CustomSelectProps {
   placeholder?: string
   id?: string
   ariaLabel?: string
+  ariaDescribedBy?: string
   required?: boolean
   selectedLabel?: React.ReactNode
   menuHeader?: React.ReactNode
@@ -42,6 +43,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   placeholder = '请选择',
   id,
   ariaLabel,
+  ariaDescribedBy,
   required = false,
   selectedLabel,
   menuHeader,
@@ -186,6 +188,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         aria-controls={listId}
         aria-activedescendant={isOpen && highlightedIndex >= 0 ? `${listId}-option-${highlightedIndex}` : undefined}
         aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
         aria-required={required || undefined}
         disabled={disabled}
         onKeyDown={handleTriggerKeyDown}

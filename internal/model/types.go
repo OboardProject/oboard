@@ -1861,6 +1861,18 @@ type LatencyProbeResult struct {
 	CheckedAt    time.Time `json:"checked_at"`
 }
 
+type ServerRegionalLatencyPoint struct {
+	Kind         string    `json:"kind"`
+	Province     string    `json:"province"`
+	Carrier      string    `json:"carrier"`
+	Available    bool      `json:"available"`
+	LatencyMS    float64   `json:"latency_ms"`
+	MinLatencyMS int64     `json:"min_latency_ms"`
+	MaxLatencyMS int64     `json:"max_latency_ms"`
+	Count        int64     `json:"count"`
+	CheckedAt    time.Time `json:"checked_at"`
+}
+
 type LatencyProbeResultReport struct {
 	ReportID        string               `json:"report_id"`
 	ResourceVersion string               `json:"resource_version"`

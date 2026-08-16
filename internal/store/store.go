@@ -58,7 +58,6 @@ const (
 	bootstrapAdminSetting              = "system.bootstrap_admin_user_id"
 	configVersionSetting               = "system.config_version_sequence"
 	defaultMetricSampleMinInterval     = 60 * time.Second
-	serverMetricSampleRetention        = 30 * 24 * time.Hour
 	serverConnectivityEventsColumnsSQL = `(id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, kind text not null check(kind in ('probe_result','server_offline','probe_enabled','probe_disabled','probe_target_changed','controller_connected','controller_disconnected')), available integer check(available is null or available in (0,1)), latency_ms integer not null default 0, error text not null default '', source text not null default '', effective_at text not null, event_key text not null, created_at text not null, unique(server_id,event_key))`
 )
 
@@ -438,8 +437,10 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_traffic_leases_server on traffic_leases(server_id, period_key)`,
 		`create index if not exists idx_server_metric_samples_server_time on server_metric_samples(server_id, sampled_at desc)`,
 		`create index if not exists idx_server_metric_samples_time on server_metric_samples(sampled_at)`,
+		`create index if not exists idx_server_latency_probe_results_checked on server_latency_probe_results(checked_at)`,
 		`create index if not exists idx_server_connectivity_events_server_time on server_connectivity_events(server_id,effective_at)`,
 		`create index if not exists idx_server_connectivity_events_server_kind_time on server_connectivity_events(server_id,kind,effective_at desc)`,
+		`create index if not exists idx_server_connectivity_events_kind_time on server_connectivity_events(kind,effective_at)`,
 		`create index if not exists idx_user_group_members_group on user_group_members(group_id, enabled)`,
 		`create index if not exists idx_user_group_members_user on user_group_members(user_id, enabled)`,
 		`create index if not exists idx_port_forwards_source on port_forwards(source_server_id, enabled, priority)`,

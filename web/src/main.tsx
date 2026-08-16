@@ -73,7 +73,7 @@ import { proxyPathGeneratedReuseCountKey } from './components/proxy-path/reuse-t
 import { detachedPathSuffix, detachedStepCreateRequest, disconnectPathCandidates, type CanvasDetachedChain } from './components/proxy-path/detached-chain'
 import { mergeTopologyMutation, removeTopologyRows } from './components/proxy-path/mutation-data'
 import './style.css'
-import { alignUnifiedMetrics, computeMaxLatency, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
+import { alignUnifiedMetrics, computeMaxLatency, splitSeriesSegments, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
 import { Badge } from './components/ui/badge'
 import { Switch } from './components/ui/switch'
 import { DateTimePicker } from './components/ui/datetime-picker'
@@ -240,6 +240,7 @@ type ServerMetricSample = { id: number; server_id: number; cpu_usage_percent: nu
 type ServerResourceMetricPoint = { sampled_at: string; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; disk_used_bytes: number; disk_total_bytes: number; tcp_connection_count: number; udp_connection_count: number; process_count: number; network_upload_bps: number; network_download_bps: number }
 type ServerResourceMetricsResponse = {
   history_enabled: boolean
+  retention_days: number
   window_hours: number
   bucket_seconds: number
   points: ServerResourceMetricPoint[]
@@ -247,7 +248,6 @@ type ServerResourceMetricsResponse = {
 }
 type LatencyProbeMode = 'tcp' | 'icmp'
 type LatencyProbeRegion = { province: string; carrier: string }
-type LatencyProbeResult = { probe_id: string; kind: 'public' | 'regional'; mode: LatencyProbeMode; province: string; carrier: string; host: string; ip: string; port: number; available: boolean; latency_ms: number; min_latency_ms: number; p95_latency_ms: number; jitter_ms: number; sample_count: number; success_count: number; error?: string; checked_at: string }
 type DNSProvider = 'cloudflare' | 'alidns' | 'tencent_dns' | 'tencent_esa' | 'huawei_cloud'
 type DNSCredentialZone = { id: number; credential_id: number; zone_name: string; provider_zone_id?: string; server_id?: number }
 type DNSCredential = { id: number; name: string; provider: DNSProvider; zones: DNSCredentialZone[]; configured: boolean; enabled: boolean; verified_at?: string; last_error?: string }
@@ -7965,13 +7965,28 @@ function ServerLoadPanel({ server, response, loading, error, windowHours, onWind
   const downloadValues = points.map(point => Number(point.network_download_bps || 0))
   const uploadValues = points.map(point => Number(point.network_upload_bps || 0))
   const networkMax = Math.max(1, ...downloadValues, ...uploadValues)
-  const windowOptions = [{ hours: 1, label: '实时' }, { hours: 4, label: '4 小时' }, { hours: 24, label: '1 天' }, { hours: 168, label: '7 天' }, { hours: 720, label: '30 天' }]
+  const retentionDays = Math.max(1, Number(response?.retention_days) || 30)
+  const windowOptions = [{ hours: 1, label: '实时' }, { hours: 4, label: '4 小时' }, { hours: 24, label: '1 天' }, { hours: 168, label: '7 天' }, { hours: 720, label: '30 天' }].filter(option => option.hours <= retentionDays * 24)
+  const selectWindow = (index: number) => {
+    const option = windowOptions[index]
+    if (!option) return
+    onWindowChange(option.hours)
+    window.requestAnimationFrame(() => document.getElementById(`server-load-window-${option.hours}`)?.focus())
+  }
+  const handleWindowKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    if (event.key === 'Home') selectWindow(0)
+    else if (event.key === 'End') selectWindow(windowOptions.length - 1)
+    else selectWindow((index + (event.key === 'ArrowRight' ? 1 : -1) + windowOptions.length) % windowOptions.length)
+  }
 
   return <div className="server-monitor-panel" role="tabpanel" id="server-monitor-load-panel" aria-labelledby="server-monitor-load-tab">
     <div className="server-monitor-window-row">
       <div className="server-monitor-window-toggle" role="radiogroup" aria-label="负载时间范围">
-        {windowOptions.map(option => <button key={option.hours} type="button" role="radio" aria-checked={windowHours === option.hours} className={windowHours === option.hours ? 'active' : ''} onClick={() => onWindowChange(option.hours)}>{option.label}</button>)}
+        {windowOptions.map((option, index) => <button id={`server-load-window-${option.hours}`} key={option.hours} type="button" role="radio" aria-checked={windowHours === option.hours} tabIndex={windowHours === option.hours ? 0 : -1} className={windowHours === option.hours ? 'active' : ''} onClick={() => onWindowChange(option.hours)} onKeyDown={event => handleWindowKeyDown(event, index)}>{option.label}</button>)}
       </div>
+      <span className="server-monitor-window-note">保留 {retentionDays} 天</span>
     </div>
     {error ? <div className="resource-history-state error"><AlertTriangle size={18} aria-hidden="true" /><span>{error}</span><button type="button" className="ghost" onClick={onRetry}>重试</button></div>
       : loading && !response ? <div className="resource-history-state"><Loader2 size={20} className="spin" aria-hidden="true" /><span>正在读取负载数据</span></div>
@@ -8300,16 +8315,19 @@ function ServerUnifiedTelemetryChart({
   regionalProbes = [],
   includeResources = true,
   windowHours = 24,
+  windowEndAt,
 }: {
   resourcePoints?: ServerResourcePoint[]
   latencyPoints?: ServerLatencyPoint[]
   regionalProbes?: LatencyProbeResultSample[]
   includeResources?: boolean
   windowHours?: number
+  windowEndAt?: string
 }) {
   const { seriesList, buckets } = useMemo(() => {
-    return alignUnifiedMetrics({ resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours })
-  }, [resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours])
+    const responseEnd = windowEndAt ? new Date(windowEndAt).getTime() : Number.NaN
+    return alignUnifiedMetrics({ resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours, now: Number.isFinite(responseEnd) ? responseEnd : Date.now() })
+  }, [resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours, windowEndAt])
 
   const [enabledSeries, setEnabledSeries] = useState<Record<string, boolean>>({})
 
@@ -8339,6 +8357,8 @@ function ServerUnifiedTelemetryChart({
 
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
+  const chartTitleID = React.useId()
+  const chartDescriptionID = React.useId()
 
   const hasPercentageSeries = includeResources
   const activeSeries = seriesList.filter(s => enabledSeries[s.id] !== false)
@@ -8390,6 +8410,7 @@ function ServerUnifiedTelemetryChart({
                 key={s.id}
                 type="button"
                 className={`komari-legend-chip${active ? ' active' : ''}`}
+                aria-pressed={active}
                 onClick={() => toggleSeries(s.id)}
                 title={`点击切换 ${s.label} 显示`}
               >
@@ -8411,9 +8432,13 @@ function ServerUnifiedTelemetryChart({
           className="komari-chart-svg"
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="none"
+          role="img"
+          aria-labelledby={`${chartTitleID} ${chartDescriptionID}`}
           onPointerMove={handlePointerMove}
           onPointerLeave={handlePointerLeave}
         >
+          <title id={chartTitleID}>服务器监控趋势</title>
+          <desc id={chartDescriptionID}>显示已选择的负载与延迟时间序列；空白区间表示没有保存的数据。</desc>
           <defs>
             <linearGradient id="komari-grad-public" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.22" />
@@ -8440,29 +8465,33 @@ function ServerUnifiedTelemetryChart({
           })}
 
           {activeSeries.map(s => {
-            const validPts: { x: number; y: number }[] = []
-            buckets.forEach((b, idx) => {
-              const val = b.values[s.id]
-              if (val != null) {
-                validPts.push({ x: getX(idx), y: getY(val, s) })
-              }
-            })
-            if (validPts.length < 2) return null
-            const linePath = buildSmoothPath(validPts)
-            const areaPath = s.id === 'public_latency' ? buildSmoothArea(validPts, padB) : ''
+            const segments = splitSeriesSegments(buckets, s.id)
+            if (segments.length === 0) return null
             return (
               <g key={s.id}>
-                {areaPath ? <path d={areaPath} fill="url(#komari-grad-public)" /> : null}
-                <path
-                  d={linePath}
-                  fill="none"
-                  stroke={s.color}
-                  strokeWidth="2.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="komari-chart-polyline"
-                  vectorEffect="non-scaling-stroke"
-                />
+                {segments.map((segment, segmentIndex) => {
+                  const points = segment.map(point => ({ x: getX(point.index), y: getY(point.value, s) }))
+                  if (points.length === 1) {
+                    return <circle key={segmentIndex} cx={points[0].x} cy={points[0].y} r="3" fill={s.color} stroke="#ffffff" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+                  }
+                  const linePath = buildSmoothPath(points)
+                  const areaPath = s.id === 'public_latency' ? buildSmoothArea(points, padB) : ''
+                  return (
+                    <React.Fragment key={segmentIndex}>
+                      {areaPath ? <path d={areaPath} fill="url(#komari-grad-public)" /> : null}
+                      <path
+                        d={linePath}
+                        fill="none"
+                        stroke={s.color}
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="komari-chart-polyline"
+                        vectorEffect="non-scaling-stroke"
+                      />
+                    </React.Fragment>
+                  )
+                })}
               </g>
             )
           })}
@@ -8560,12 +8589,10 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
   const [windowKey, setWindowKey] = useState<ConnectivityWindowKey>('1h')
   const [response, setResponse] = useState<ConnectivityResponse | null>(null)
   const [resourceResponse, setResourceResponse] = useState<ServerResourceMetricsResponse | null>(null)
-  const [resourceLoading, setResourceLoading] = useState(Boolean(server.resource_history_enabled))
+  const [resourceLoading, setResourceLoading] = useState(true)
   const [resourceError, setResourceError] = useState('')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
-  const [probeItems, setProbeItems] = useState<LatencyProbeResult[]>([])
-  const [probeLoading, setProbeLoading] = useState(true)
   const [probeRunning, setProbeRunning] = useState(false)
   const [probeError, setProbeError] = useState('')
   const mounted = useRef(true)
@@ -8580,15 +8607,10 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
     setLoading(true)
     setLoadError('')
     try {
-      const [connRes, probeRes] = await Promise.all([
-        client.request(connectivityRequestPath(server.id, key)) as Promise<ConnectivityResponse>,
-        client.request(`/servers/${server.id}/latency-probe?limit=512`).catch(() => ({ results: [] })),
-      ])
+      const connRes = await client.request(connectivityRequestPath(server.id, key)) as ConnectivityResponse
 
       if (sequence === requestSequence.current && mounted.current) {
         setResponse(connRes)
-        setProbeItems(probeRes?.results || [])
-        setProbeLoading(false)
       }
     } catch (error: any) {
       if (sequence === requestSequence.current && mounted.current) {
@@ -8603,29 +8625,6 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
 
   const loadResourceData = React.useCallback(async (hours: number) => {
     const sequence = ++resourceRequestSequence.current
-    if (!server.resource_history_enabled) {
-      setResourceResponse({
-        history_enabled: false,
-        window_hours: hours,
-        bucket_seconds: 0,
-        points: [],
-        current: {
-          cpu_usage_percent: server.cpu_usage_percent || 0,
-          memory_used_bytes: server.memory_used_bytes || 0,
-          memory_total_bytes: server.memory_total_bytes || 0,
-          disk_used_bytes: server.disk_bytes || 0,
-          disk_total_bytes: server.disk_total_bytes || 0,
-          tcp_connection_count: server.tcp_connection_count || 0,
-          udp_connection_count: server.udp_connection_count || 0,
-          process_count: server.process_count || 0,
-          network_upload_bps: server.network_upload_bps || 0,
-          network_download_bps: server.network_download_bps || 0,
-          sampled_at: server.telemetry_updated_at,
-        },
-      })
-      setResourceLoading(false)
-      return
-    }
     setResourceLoading(true)
     setResourceError('')
     try {
@@ -8699,12 +8698,8 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
     const coverage = observed + bucket.unknown_seconds > 0 ? observed / (observed + bucket.unknown_seconds) * 100 : 0
     return `${formatTableTime(bucket.start_at)} 至 ${formatTableTime(bucket.end_at)} · SLA ${connectivitySlaDisplay(bucket.sla_percent)} · 可用 ${formatConnectivityDuration(bucket.available_seconds)} · 不可用 ${formatConnectivityDuration(bucket.unavailable_seconds)} · 未观测 ${formatConnectivityDuration(bucket.unknown_seconds)} · 覆盖率 ${coverage.toFixed(1)}%`
   }
-  const latestCheckedAt = probeItems[0]?.checked_at
-  const latestRegionalItems = probeItems.filter(item => item.checked_at === latestCheckedAt && item.kind === 'regional').sort((a, b) => a.province.localeCompare(b.province, 'zh-CN') || a.carrier.localeCompare(b.carrier, 'zh-CN') || a.host.localeCompare(b.host))
-
-  const memoryTotal = server.memory_total_bytes || resourceResponse?.current.memory_total_bytes || 0
-  const memoryUsed = server.memory_used_bytes || resourceResponse?.current.memory_used_bytes || 0
-  const memoryPct = memoryTotal > 0 ? ((memoryUsed / memoryTotal) * 100).toFixed(1) : '0'
+  const retentionDays = Math.max(1, Number(response?.retention_days || resourceResponse?.retention_days) || 30)
+  const latencyWindowOptions = (['1h', '6h', '12h', '24h', '7d', '30d'] as ConnectivityWindowKey[]).filter(key => windowHoursMap[key] <= retentionDays * 24)
   const selectMonitorView = (view: 'load' | 'latency') => {
     setActiveView(view)
     window.requestAnimationFrame(() => document.getElementById(`server-monitor-${view}-tab`)?.focus())
@@ -8714,8 +8709,21 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
     event.preventDefault()
     selectMonitorView(event.key === 'ArrowRight' || event.key === 'End' ? 'latency' : 'load')
   }
+  const selectLatencyWindow = (index: number) => {
+    const key = latencyWindowOptions[index]
+    if (!key) return
+    setWindowKey(key)
+    window.requestAnimationFrame(() => document.getElementById(`server-latency-window-${key}`)?.focus())
+  }
+  const handleLatencyWindowKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    if (event.key === 'Home') selectLatencyWindow(0)
+    else if (event.key === 'End') selectLatencyWindow(latencyWindowOptions.length - 1)
+    else selectLatencyWindow((index + (event.key === 'ArrowRight' ? 1 : -1) + latencyWindowOptions.length) % latencyWindowOptions.length)
+  }
 
-  const isMonitorRefreshing = activeView === 'load' ? resourceLoading : (loading || probeLoading)
+  const isMonitorRefreshing = activeView === 'load' ? resourceLoading : loading
   const refreshMonitorData = () => {
     if (activeView === 'load') {
       void loadResourceData(loadWindowHours)
@@ -8755,21 +8763,26 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
       {activeView === 'load' ? <ServerLoadPanel server={server} response={resourceResponse} loading={resourceLoading} error={resourceError} windowHours={loadWindowHours} onWindowChange={setLoadWindowHours} onRetry={() => void loadResourceData(loadWindowHours)} /> : <div className="server-monitor-panel" role="tabpanel" id="server-monitor-latency-panel" aria-labelledby="server-monitor-latency-tab">
         <div className="server-monitor-window-row">
           <div className="server-monitor-window-toggle" role="radiogroup" aria-label="延迟时间范围">
-            {(['1h', '6h', '12h', '24h'] as ConnectivityWindowKey[]).map(key => (
+            {latencyWindowOptions.map((key, index) => (
               <button
+                id={`server-latency-window-${key}`}
                 key={key}
                 type="button"
                 role="radio"
                 aria-checked={windowKey === key}
+                tabIndex={windowKey === key ? 0 : -1}
                 className={windowKey === key ? 'active' : ''}
                 onClick={() => setWindowKey(key)}
+                onKeyDown={event => handleLatencyWindowKeyDown(event, index)}
                 disabled={loading && windowKey === key}
               >
                 {windowLabels[key]}
               </button>
             ))}
           </div>
+          <span className="server-monitor-window-note">保留 {retentionDays} 天{response?.regional_data_start_at ? ` · 地区数据始于 ${formatTableTime(response.regional_data_start_at)}` : ''}</span>
         </div>
+        {probeError ? <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} aria-hidden="true" /><span>{probeError}</span></div> : null}
 
         {loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载监控与延迟统计</strong></div>
           : loadError && !response ? <div className="connectivity-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载监控与延迟统计</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => void loadAllData(windowKey)}>重试</button></div>
@@ -8777,9 +8790,10 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
             {/* Komari Style Unified Telemetry Chart */}
             <ServerUnifiedTelemetryChart
               latencyPoints={response.latency_points || []}
-              regionalProbes={probeItems || []}
+              regionalProbes={response.regional_latency_points || []}
               includeResources={false}
               windowHours={currentWindowHours}
+              windowEndAt={response.window.to}
             />
 
             <div className={`connectivity-sla-bar-card ${slaTone}`} role="img" aria-label={`统计期 SLA ${connectivitySlaDisplay(response.summary.sla_percent)}`}>
@@ -8830,7 +8844,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
       </div>}
     </div>
     <span className="sr-only" role="status" aria-live="polite">{probeRunning ? '延迟测试正在执行' : ''}</span>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={activeView === 'load' ? () => void loadResourceData(loadWindowHours) : () => void loadAllData(windowKey)} disabled={activeView === 'load' ? resourceLoading : loading || probeLoading || probeRunning} aria-label="刷新数据"><RefreshCw size={14} className={(activeView === 'load' ? resourceLoading : loading || probeLoading) ? 'spin' : ''} />刷新</button>{activeView === 'latency' ? <button type="button" onClick={() => void runProbe()} disabled={probeRunning || !server.latency_probe_enabled} aria-busy={probeRunning}>{probeRunning ? '测试中...' : '立即测试'}</button> : null}<button type="button" className="ghost" onClick={onClose}>关闭</button></footer>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={activeView === 'load' ? () => void loadResourceData(loadWindowHours) : () => void loadAllData(windowKey)} disabled={activeView === 'load' ? resourceLoading : loading || probeRunning} aria-label="刷新数据"><RefreshCw size={14} className={(activeView === 'load' ? resourceLoading : loading) ? 'spin' : ''} />刷新</button>{activeView === 'latency' ? <button type="button" onClick={() => void runProbe()} disabled={probeRunning || !server.latency_probe_enabled} aria-busy={probeRunning}>{probeRunning ? '测试中...' : '立即测试'}</button> : null}<button type="button" className="ghost" onClick={onClose}>关闭</button></footer>
   </MotionDialogPanel>
 }
 

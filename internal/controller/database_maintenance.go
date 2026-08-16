@@ -40,9 +40,9 @@ func (s *Server) runDatabaseMaintenance(ctx context.Context) {
 		log.Printf("database maintenance failed: %v max_open=%d open=%d in_use=%d idle=%d wait_count=%d wait_duration=%s duration=%s", err, stats.MaxOpenConnections, stats.OpenConnections, stats.InUse, stats.Idle, stats.WaitCount, stats.WaitDuration, duration)
 		return
 	}
-	deleted := result.ConnectionAuditsDeleted + result.SubscriptionAuditsDeleted + result.ProbeEpisodesDeleted + result.RateBucketsDeleted
+	deleted := result.ConnectionAuditsDeleted + result.SubscriptionAuditsDeleted + result.ProbeEpisodesDeleted + result.RateBucketsDeleted + result.ServerMetricSamplesDeleted + result.LatencyProbeResultsDeleted + result.ConnectivityProbesDeleted
 	if deleted == 0 && result.WALBusyFrames == 0 && result.WALLogFrames == 0 && result.WALCheckpointedFrames == 0 {
 		return
 	}
-	log.Printf("database maintenance completed: connection_audits_deleted=%d subscription_audits_deleted=%d probe_episodes_deleted=%d rate_buckets_deleted=%d wal_busy=%d wal_log=%d wal_checkpointed=%d max_open=%d open=%d in_use=%d idle=%d wait_count=%d wait_duration=%s duration=%s", result.ConnectionAuditsDeleted, result.SubscriptionAuditsDeleted, result.ProbeEpisodesDeleted, result.RateBucketsDeleted, result.WALBusyFrames, result.WALLogFrames, result.WALCheckpointedFrames, stats.MaxOpenConnections, stats.OpenConnections, stats.InUse, stats.Idle, stats.WaitCount, stats.WaitDuration, duration)
+	log.Printf("database maintenance completed: connection_audits_deleted=%d subscription_audits_deleted=%d probe_episodes_deleted=%d rate_buckets_deleted=%d server_metrics_deleted=%d latency_results_deleted=%d connectivity_probes_deleted=%d wal_busy=%d wal_log=%d wal_checkpointed=%d max_open=%d open=%d in_use=%d idle=%d wait_count=%d wait_duration=%s duration=%s", result.ConnectionAuditsDeleted, result.SubscriptionAuditsDeleted, result.ProbeEpisodesDeleted, result.RateBucketsDeleted, result.ServerMetricSamplesDeleted, result.LatencyProbeResultsDeleted, result.ConnectivityProbesDeleted, result.WALBusyFrames, result.WALLogFrames, result.WALCheckpointedFrames, stats.MaxOpenConnections, stats.OpenConnections, stats.InUse, stats.Idle, stats.WaitCount, stats.WaitDuration, duration)
 }

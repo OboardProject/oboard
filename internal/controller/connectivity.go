@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 type connectivityWindow struct {
@@ -78,16 +79,19 @@ type connectivityOutage struct {
 }
 
 type connectivityResponse struct {
-	ServerID      int64                      `json:"server_id"`
-	Window        connectivityWindow         `json:"window"`
-	Summary       connectivitySummary        `json:"summary"`
-	Probes        connectivityProbeCounts    `json:"probes"`
-	Latency       connectivityLatency        `json:"latency"`
-	Current       connectivityCurrent        `json:"current"`
-	Buckets       []connectivityBucket       `json:"buckets"`
-	LatencyPoints []connectivityLatencyPoint `json:"latency_points"`
-	Outages       []connectivityOutage       `json:"outages"`
-	DataStartAt   *time.Time                 `json:"data_start_at"`
+	ServerID              int64                              `json:"server_id"`
+	RetentionDays         int                                `json:"retention_days"`
+	Window                connectivityWindow                 `json:"window"`
+	Summary               connectivitySummary                `json:"summary"`
+	Probes                connectivityProbeCounts            `json:"probes"`
+	Latency               connectivityLatency                `json:"latency"`
+	Current               connectivityCurrent                `json:"current"`
+	Buckets               []connectivityBucket               `json:"buckets"`
+	LatencyPoints         []connectivityLatencyPoint         `json:"latency_points"`
+	RegionalLatencyPoints []model.ServerRegionalLatencyPoint `json:"regional_latency_points"`
+	Outages               []connectivityOutage               `json:"outages"`
+	DataStartAt           *time.Time                         `json:"data_start_at"`
+	RegionalDataStartAt   *time.Time                         `json:"regional_data_start_at"`
 }
 
 type connectivityAvailability uint8
@@ -375,12 +379,16 @@ func connectivityLatencyStats(probes []model.ServerConnectivityEvent) connectivi
 	return stats
 }
 
-func buildConnectivityLatencyPoints(from time.Time, duration time.Duration, probes []model.ServerConnectivityEvent) []connectivityLatencyPoint {
+func connectivityLatencyPointInterval(duration time.Duration) time.Duration {
 	minutes := int64(math.Ceil(duration.Minutes() / 360))
 	if minutes < 1 {
 		minutes = 1
 	}
-	interval := time.Duration(minutes) * time.Minute
+	return time.Duration(minutes) * time.Minute
+}
+
+func buildConnectivityLatencyPoints(from time.Time, duration time.Duration, probes []model.ServerConnectivityEvent) []connectivityLatencyPoint {
+	interval := connectivityLatencyPointInterval(duration)
 	type group struct {
 		sum             int64
 		min, max, count int
@@ -534,10 +542,32 @@ func (s *Server) serverConnectivity(w http.ResponseWriter, r *http.Request, serv
 		fail(w, err, http.StatusNotFound)
 		return
 	}
-	history, err := s.store.ListConnectivityHistory(r.Context(), serverID, window.From, window.To)
+	settings, err := s.store.ListSettings(r.Context())
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
-	write(w, http.StatusOK, BuildConnectivityResponse(serverID, window, history))
+	retentionDays := store.ServerMonitoringRetentionDays(settings)
+	retainedFrom := window.To.Add(-time.Duration(retentionDays) * 24 * time.Hour)
+	if retainedFrom.Before(window.From) {
+		retainedFrom = window.From
+	}
+	history, err := s.store.ListConnectivityHistory(r.Context(), serverID, retainedFrom, window.To)
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	regionalPoints, regionalDataStart, err := s.store.ListRegionalLatencyPoints(r.Context(), serverID, retainedFrom, window.To, connectivityLatencyPointInterval(window.To.Sub(retainedFrom)))
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	responseWindow := window
+	responseWindow.From = retainedFrom
+	responseWindow.Duration = responseWindow.To.Sub(retainedFrom)
+	response := BuildConnectivityResponse(serverID, responseWindow, history)
+	response.RetentionDays = retentionDays
+	response.RegionalLatencyPoints = regionalPoints
+	response.RegionalDataStartAt = regionalDataStart
+	write(w, http.StatusOK, response)
 }

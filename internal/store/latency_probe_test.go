@@ -80,6 +80,103 @@ func TestLatencyProbeSettingsAndResultsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRegionalLatencyPointsAggregateFullWindow(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "regional-latency.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "regional-history", LatencyProbeEnabled: true}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, time.August, 8, 0, 0, 0, 0, time.UTC)
+	tx, err := db.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 600; index++ {
+		checkedAt := from.Add(time.Duration(index) * time.Minute)
+		ts := checkedAt.Format(time.RFC3339Nano)
+		if _, err := tx.Exec(`insert into server_latency_probe_results(server_id,resource_version,probe_id,kind,mode,province,carrier,host,ip,port,available,latency_ms,sample_count,success_count,checked_at,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, server.ID, "regional-v1", "probe", "regional", "tcp", "广东", "中国电信", "192.0.2.1", "192.0.2.1", 443, 1, index+1, 3, 3, ts, ts); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	points, dataStart, err := db.ListRegionalLatencyPoints(ctx, server.ID, from, from.Add(600*time.Minute), 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 300 {
+		t.Fatalf("regional points = %d, want 300", len(points))
+	}
+	if !points[0].CheckedAt.Equal(from) || !points[len(points)-1].CheckedAt.Equal(from.Add(598*time.Minute)) {
+		t.Fatalf("regional point bounds = %s..%s", points[0].CheckedAt, points[len(points)-1].CheckedAt)
+	}
+	if dataStart == nil || !dataStart.Equal(from) {
+		t.Fatalf("data start = %v, want %s", dataStart, from)
+	}
+}
+
+func TestRegionalLatencyPointsAverageSuccessfulTargets(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "regional-latency-average.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "regional-average", LatencyProbeEnabled: true}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, time.August, 8, 0, 0, 0, 0, time.UTC)
+	insertRegionalLatencyResult(t, db, server.ID, "earliest-failure", "浙江", "中国联通", false, 0, 0, from.Add(-time.Hour))
+	insertRegionalLatencyResult(t, db, server.ID, "ip-1", "广东", "中国电信", true, 10, 3, from.Add(10*time.Second))
+	insertRegionalLatencyResult(t, db, server.ID, "ip-2", "广东", "中国电信", true, 30, 3, from.Add(20*time.Second))
+	insertRegionalLatencyResult(t, db, server.ID, "failed-ip", "广东", "中国电信", false, 0, 0, from.Add(30*time.Second))
+	insertRegionalLatencyResult(t, db, server.ID, "all-failed", "四川", "中国移动", false, 0, 0, from.Add(40*time.Second))
+
+	points, dataStart, err := db.ListRegionalLatencyPoints(ctx, server.ID, from, from.Add(2*time.Minute), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 1 {
+		t.Fatalf("regional points = %#v, want one successful target", points)
+	}
+	point := points[0]
+	if point.Kind != "regional" || !point.Available || point.Province != "广东" || point.Carrier != "中国电信" || point.LatencyMS != 20 || point.MinLatencyMS != 10 || point.MaxLatencyMS != 30 || point.Count != 2 {
+		t.Fatalf("aggregated point = %#v", point)
+	}
+	if dataStart == nil || !dataStart.Equal(from.Add(-time.Hour)) {
+		t.Fatalf("data start = %v, want %s", dataStart, from.Add(-time.Hour))
+	}
+}
+
+func TestRegionalLatencyPointsRejectsUnboundedWindow(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "regional-latency-bounds.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	from := time.Date(2026, time.August, 8, 0, 0, 0, 0, time.UTC)
+	if _, _, err := db.ListRegionalLatencyPoints(context.Background(), 1, from, from.Add(361*time.Minute), time.Minute); err == nil {
+		t.Fatal("expected a bounded regional latency query error")
+	}
+}
+
+func insertRegionalLatencyResult(t *testing.T, db *Store, serverID int64, probeID, province, carrier string, available bool, latencyMS int64, successCount int, checkedAt time.Time) {
+	t.Helper()
+	ts := checkedAt.UTC().Format(time.RFC3339Nano)
+	if _, err := db.db.Exec(`insert into server_latency_probe_results(server_id,resource_version,probe_id,kind,mode,province,carrier,host,ip,port,available,latency_ms,sample_count,success_count,checked_at,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, "aggregate-v1", probeID, "regional", "tcp", province, carrier, "192.0.2.1", "192.0.2.1", 443, boolInt(available), latencyMS, 3, successCount, ts, ts); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLatencyProbeTablesMigrateFromPreviousSchema(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "latency-probe-migration.sqlite")

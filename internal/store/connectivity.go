@@ -12,8 +12,6 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-const connectivityProbeRetention = 35 * 24 * time.Hour
-
 func (s *Store) ensureConnectivityEventKinds(ctx context.Context) error {
 	var schemaSQL string
 	if err := s.db.QueryRowContext(ctx, `select sql from sqlite_master where type='table' and name='server_connectivity_events'`).Scan(&schemaSQL); err != nil {
@@ -34,6 +32,7 @@ func (s *Store) ensureConnectivityEventKinds(ctx context.Context) error {
 		`alter table server_connectivity_events_v2 rename to server_connectivity_events`,
 		`create index idx_server_connectivity_events_server_time on server_connectivity_events(server_id,effective_at)`,
 		`create index idx_server_connectivity_events_server_kind_time on server_connectivity_events(server_id,kind,effective_at desc)`,
+		`create index idx_server_connectivity_events_kind_time on server_connectivity_events(kind,effective_at)`,
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -238,11 +237,6 @@ func scanConnectivityEvents(rows *sql.Rows) ([]model.ServerConnectivityEvent, er
 		events = append(events, event)
 	}
 	return events, rows.Err()
-}
-
-func (s *Store) CleanupOldConnectivityProbeEvents(ctx context.Context, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, `delete from server_connectivity_events where kind=? and effective_at<?`, model.ConnectivityEventProbeResult, now.UTC().Add(-connectivityProbeRetention).Format(time.RFC3339Nano))
-	return err
 }
 
 func (s *Store) SeedConnectivityHistory(ctx context.Context, migrationAt time.Time) error {

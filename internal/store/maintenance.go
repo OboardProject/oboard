@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -10,6 +12,11 @@ const (
 	maintenanceBatchSize        = 2000
 	maintenanceMaxBatches       = 50
 	subscriptionBucketRetention = 24 * time.Hour
+
+	ServerMonitoringRetentionDaysSetting = "server_monitoring_retention_days"
+	DefaultServerMonitoringRetentionDays = 30
+	MinServerMonitoringRetentionDays     = 1
+	MaxServerMonitoringRetentionDays     = 30
 )
 
 type MaintenanceResult struct {
@@ -18,6 +25,8 @@ type MaintenanceResult struct {
 	ProbeEpisodesDeleted       int64
 	RateBucketsDeleted         int64
 	ServerMetricSamplesDeleted int64
+	LatencyProbeResultsDeleted int64
+	ConnectivityProbesDeleted  int64
 	WALBusyFrames              int
 	WALLogFrames               int
 	WALCheckpointedFrames      int
@@ -26,6 +35,11 @@ type MaintenanceResult struct {
 func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceResult, error) {
 	at = at.UTC()
 	result := MaintenanceResult{}
+	settings, err := s.ListSettings(ctx)
+	if err != nil {
+		return result, fmt.Errorf("load monitoring retention setting: %w", err)
+	}
+	monitoringRetention := time.Duration(ServerMonitoringRetentionDays(settings)) * 24 * time.Hour
 	jobs := []struct {
 		name   string
 		query  string
@@ -59,8 +73,29 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 		{
 			name:   "server metric sample retention",
 			query:  `delete from server_metric_samples where rowid in (select rowid from server_metric_samples where sampled_at < ? order by sampled_at limit ?)`,
-			cutoff: at.Add(-serverMetricSampleRetention),
+			cutoff: at.Add(-monitoringRetention),
 			count:  &result.ServerMetricSamplesDeleted,
+		},
+		{
+			name:   "latency probe result retention",
+			query:  `delete from server_latency_probe_results where rowid in (select rowid from server_latency_probe_results where checked_at < ? order by checked_at limit ?)`,
+			cutoff: at.Add(-monitoringRetention),
+			count:  &result.LatencyProbeResultsDeleted,
+		},
+		{
+			name: "connectivity probe event retention",
+			query: `delete from server_connectivity_events where rowid in (
+				select event.rowid from server_connectivity_events event
+				where event.kind='probe_result' and event.effective_at < ?1
+				and event.id <> (
+					select baseline.id from server_connectivity_events baseline
+					where baseline.server_id=event.server_id and baseline.kind='probe_result' and baseline.effective_at < ?1
+					order by baseline.effective_at desc,baseline.id desc limit 1
+				)
+				order by event.effective_at limit ?2
+			)`,
+			cutoff: at.Add(-monitoringRetention),
+			count:  &result.ConnectivityProbesDeleted,
 		},
 	}
 	for _, job := range jobs {
@@ -81,6 +116,14 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 		return result, fmt.Errorf("passive WAL checkpoint: %w", err)
 	}
 	return result, nil
+}
+
+func ServerMonitoringRetentionDays(settings map[string]string) int {
+	days, err := strconv.Atoi(strings.TrimSpace(settings[ServerMonitoringRetentionDaysSetting]))
+	if err != nil || days < MinServerMonitoringRetentionDays || days > MaxServerMonitoringRetentionDays {
+		return DefaultServerMonitoringRetentionDays
+	}
+	return days
 }
 
 func (s *Store) deleteMaintenanceBatches(ctx context.Context, query string, cutoff time.Time) (int64, error) {

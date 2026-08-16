@@ -68,6 +68,7 @@ function getTrafficTimezoneLabel(timezone: string) {
 }
 
 const defaultTimeCheckNTPServers = ['time.cloudflare.com', 'time.google.com', 'ntp.aliyun.com']
+const monitoringRetentionOptions = [1, 3, 7, 15, 30]
 
 function parseNTPServers(value: unknown): string[] {
   if (!Array.isArray(value) || value.length !== 3) return [...defaultTimeCheckNTPServers]
@@ -81,6 +82,7 @@ export function AgentSettingsPanel({ data, client, load, notify }: AgentSettings
   const [timeCheckNTPServers, setTimeCheckNTPServers] = useState<string[]>(() => parseNTPServers(data.settings?.time_check_ntp_servers))
   const [trafficTimezone, setTrafficTimezone] = useState<string>(data.settings?.traffic_timezone || 'Asia/Shanghai')
   const [trafficMode, setTrafficMode] = useState<string>(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
+  const [monitoringRetentionDays, setMonitoringRetentionDays] = useState<number>(Number(data.settings?.server_monitoring_retention_days) || 30)
 
   const [savingKey, setSavingKey] = useState<string>('')
 
@@ -94,7 +96,8 @@ export function AgentSettingsPanel({ data, client, load, notify }: AgentSettings
   useEffect(() => {
     setTrafficTimezone(data.settings?.traffic_timezone || 'Asia/Shanghai')
     setTrafficMode(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
-  }, [data.settings?.traffic_timezone, data.settings?.traffic_enforcement_mode])
+    setMonitoringRetentionDays(Number(data.settings?.server_monitoring_retention_days) || 30)
+  }, [data.settings?.traffic_timezone, data.settings?.traffic_enforcement_mode, data.settings?.server_monitoring_retention_days])
 
   const originalNTPServers = useMemo(() => parseNTPServers(data.settings?.time_check_ntp_servers), [data.settings?.time_check_ntp_servers])
   const isNTPDirty = useMemo(() => {
@@ -142,6 +145,12 @@ export function AgentSettingsPanel({ data, client, load, notify }: AgentSettings
     const val = e.target.value
     setTrafficMode(val)
     void autoSaveSetting({ traffic_enforcement_mode: val }, '达量后处理已保存')
+  }
+
+  const handleMonitoringRetentionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const days = Number(e.target.value) || 30
+    setMonitoringRetentionDays(days)
+    void autoSaveSetting({ server_monitoring_retention_days: days }, '监控数据保留时间已保存')
   }
 
   const saveNTPServers = async () => {
@@ -286,6 +295,34 @@ export function AgentSettingsPanel({ data, client, load, notify }: AgentSettings
                 <div className="agent-settings-help">
                   Agent 会保留本地可用额度；面板暂时不可达时，节点仍会按已下发额度暂停超量用户。
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="agent-settings-divider" />
+
+        <div className="agent-settings-section">
+          <div className="agent-section-header">
+            <h3 className="agent-section-title">监控数据</h3>
+            <p className="agent-section-desc">统一管理负载、公网延迟和地区延迟的历史数据。</p>
+          </div>
+
+          <div className="agent-settings-form">
+            <div className="agent-settings-row">
+              <label className="agent-settings-label" htmlFor="server-monitoring-retention-days">保留时间</label>
+              <div className="agent-settings-control">
+                <Select
+                  id="server-monitoring-retention-days"
+                  value={monitoringRetentionDays}
+                  onChange={handleMonitoringRetentionChange}
+                  disabled={Boolean(savingKey)}
+                  aria-label="服务器监控数据保留时间"
+                  aria-describedby="server-monitoring-retention-help"
+                >
+                  {monitoringRetentionOptions.map(days => <option key={days} value={days}>{days} 天</option>)}
+                </Select>
+                <div id="server-monitoring-retention-help" className="agent-settings-help">缩短后，超出期限的数据会在下一次数据库维护时删除；已删除的数据无法恢复。</div>
               </div>
             </div>
           </div>

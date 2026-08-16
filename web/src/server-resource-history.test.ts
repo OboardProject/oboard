@@ -5,9 +5,9 @@ const source = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 
 describe('server resource history', () => {
   it('keeps live resource values visible when history recording is disabled', () => {
-    expect(source).toContain("if (!server.resource_history_enabled)")
+    expect(source).not.toContain("if (!server.resource_history_enabled)")
     expect(source).toContain('历史记录已关闭，当前只显示 Agent 最新上报值。')
-    expect(source).toContain('current: {')
+    expect(source).toContain('const current = response?.current || {')
     expect(source).toContain('tcp_connection_count: server.tcp_connection_count || 0')
   })
 

@@ -209,6 +209,64 @@ func (s *Store) ListLatencyProbeResults(ctx context.Context, serverID int64, lim
 	return items, rows.Err()
 }
 
+const maxRegionalLatencyPointBuckets = 360
+
+func (s *Store) ListRegionalLatencyPoints(ctx context.Context, serverID int64, from, to time.Time, bucket time.Duration) ([]model.ServerRegionalLatencyPoint, *time.Time, error) {
+	from = from.UTC()
+	to = to.UTC()
+	if serverID <= 0 || from.IsZero() || to.IsZero() || !to.After(from) || bucket < time.Second {
+		return nil, nil, errors.New("invalid regional latency point query")
+	}
+	bucketSeconds := int64(bucket / time.Second)
+	bucketCount := int64((to.Sub(from) + bucket - 1) / bucket)
+	if bucketSeconds <= 0 || bucketCount > maxRegionalLatencyPointBuckets {
+		return nil, nil, errors.New("regional latency point query exceeds 360 buckets")
+	}
+
+	var dataStartText sql.NullString
+	if err := s.db.QueryRowContext(ctx, `select min(checked_at) from server_latency_probe_results where server_id=? and kind='regional'`, serverID).Scan(&dataStartText); err != nil {
+		return nil, nil, err
+	}
+	var dataStart *time.Time
+	if dataStartText.Valid && dataStartText.String != "" {
+		parsed := parseTime(dataStartText.String)
+		dataStart = &parsed
+	}
+
+	fromText := from.Format(time.RFC3339Nano)
+	rows, err := s.db.QueryContext(ctx, `
+		with filtered as (
+			select province,carrier,cast((unixepoch(checked_at)-unixepoch(?))/? as integer) as bucket_index,latency_ms
+			from server_latency_probe_results
+			where server_id=? and kind='regional' and available=1 and success_count>0 and latency_ms>0 and checked_at>=? and checked_at<?
+		)
+		select province,carrier,bucket_index,avg(latency_ms),min(latency_ms),max(latency_ms),count(*)
+		from filtered
+		where bucket_index>=0 and bucket_index<?
+		group by province,carrier,bucket_index
+		order by bucket_index,province,carrier`, fromText, bucketSeconds, serverID, fromText, to.Format(time.RFC3339Nano), bucketCount)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	points := make([]model.ServerRegionalLatencyPoint, 0)
+	for rows.Next() {
+		var point model.ServerRegionalLatencyPoint
+		var bucketIndex int64
+		if err := rows.Scan(&point.Province, &point.Carrier, &bucketIndex, &point.LatencyMS, &point.MinLatencyMS, &point.MaxLatencyMS, &point.Count); err != nil {
+			return nil, nil, err
+		}
+		point.Kind = "regional"
+		point.Available = true
+		point.CheckedAt = from.Add(time.Duration(bucketIndex) * bucket)
+		points = append(points, point)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return points, dataStart, nil
+}
+
 func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, report model.LatencyProbeResultReport) error {
 	if serverID <= 0 || strings.TrimSpace(report.ReportID) == "" || strings.TrimSpace(report.ResourceVersion) == "" {
 		return errors.New("latency probe result is missing server, report, or resource version")
@@ -276,7 +334,6 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 			}
 		}
 	}
-	_, _ = tx.ExecContext(ctx, `delete from server_latency_probe_results where server_id=? and checked_at < ?`, serverID, time.Now().UTC().Add(-35*24*time.Hour).Format(time.RFC3339Nano))
 	return tx.Commit()
 }
 

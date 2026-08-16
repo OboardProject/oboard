@@ -23,6 +23,9 @@ export interface LatencyProbeResultSample {
   sample_count?: number
   error?: string
   checked_at?: string
+  at?: string
+  avg_ms?: number | null
+  count?: number
 }
 
 export interface ServerResourcePoint {
@@ -43,6 +46,7 @@ export interface ServerLatencyPoint {
   bucket_at?: string
   at?: string
   avg_ms: number | null
+  count?: number
 }
 
 export interface UnifiedBucketPoint {
@@ -51,6 +55,11 @@ export interface UnifiedBucketPoint {
   values: Record<string, number | null>
   memoryUsedBytes?: number
   memoryTotalBytes?: number
+}
+
+export interface SeriesSegmentPoint {
+  index: number
+  value: number
 }
 
 export const REGIONAL_SERIES_COLORS = [
@@ -72,6 +81,24 @@ export function formatBucketTime(ts: number): string {
   const hours = String(d.getHours()).padStart(2, '0')
   const mins = String(d.getMinutes()).padStart(2, '0')
   return `${month}-${day} ${hours}:${mins}`
+}
+
+export function splitSeriesSegments(buckets: UnifiedBucketPoint[], seriesID: string): SeriesSegmentPoint[][] {
+  const segments: SeriesSegmentPoint[][] = []
+  let current: SeriesSegmentPoint[] = []
+
+  buckets.forEach((bucket, index) => {
+    const value = bucket.values[seriesID]
+    if (value == null || !Number.isFinite(value)) {
+      if (current.length > 0) segments.push(current)
+      current = []
+      return
+    }
+    current.push({ index, value })
+  })
+
+  if (current.length > 0) segments.push(current)
+  return segments
 }
 
 export function alignUnifiedMetrics({
@@ -101,7 +128,7 @@ export function alignUnifiedMetrics({
   // 1. Discover all regional probe targets
   const regionalTargets = new Map<string, { province: string; carrier: string }>()
   regionalProbes.forEach(probe => {
-    if (probe.kind === 'regional' && probe.province && probe.carrier) {
+    if ((probe.kind === 'regional' || probe.at) && probe.province && probe.carrier) {
       const key = `${probe.province} · ${probe.carrier}`
       if (!regionalTargets.has(key)) {
         regionalTargets.set(key, { province: probe.province, carrier: probe.carrier })
@@ -149,6 +176,17 @@ export function alignUnifiedMetrics({
     return Math.max(0, Math.min(bucketCount - 1, idx))
   }
 
+  const latencyTotals = new Map<string, { bucketIndex: number; seriesID: string; weightedSum: number; weight: number }>()
+  const addLatency = (bucketIndex: number, seriesID: string, value: number, weight: number) => {
+    if (bucketIndex < 0 || !Number.isFinite(value)) return
+    const normalizedWeight = Number.isFinite(weight) && weight > 0 ? weight : 1
+    const key = `${bucketIndex}:${seriesID}`
+    const total = latencyTotals.get(key) || { bucketIndex, seriesID, weightedSum: 0, weight: 0 }
+    total.weightedSum += value * normalizedWeight
+    total.weight += normalizedWeight
+    latencyTotals.set(key, total)
+  }
+
   // 4. Map resourcePoints (CPU & Memory)
   if (includeResources) resourcePoints.forEach(pt => {
     const ts = new Date(pt.sampled_at).getTime()
@@ -171,21 +209,31 @@ export function alignUnifiedMetrics({
     const ts = new Date(timeStr).getTime()
     const idx = getBucketIndex(ts)
     if (idx >= 0 && pt.avg_ms != null) {
-      buckets[idx].values.public_latency = Number(pt.avg_ms)
+      addLatency(idx, 'public_latency', Number(pt.avg_ms), Number(pt.count || 1))
     }
   })
 
   // 6. Map regionalProbes
   regionalProbes.forEach(probe => {
-    if (probe.kind === 'regional' && probe.province && probe.carrier && probe.checked_at && probe.available) {
-      const key = `${probe.province} · ${probe.carrier}`
-      const seriesId = `reg_${key}`
-      const ts = new Date(probe.checked_at).getTime()
-      const idx = getBucketIndex(ts)
-      if (idx >= 0) {
-        buckets[idx].values[seriesId] = Number(probe.latency_ms || 0)
-      }
+    if (!probe.province || !probe.carrier) return
+
+    const isAggregated = Boolean(probe.at)
+    const timeString = isAggregated ? probe.at : probe.checked_at
+    const rawValue = isAggregated ? probe.avg_ms : probe.latency_ms
+    if (!timeString || rawValue == null) return
+    if (!isAggregated && (probe.kind !== 'regional' || !probe.available)) return
+
+    const value = Number(rawValue)
+    if (!Number.isFinite(value)) return
+    const idx = getBucketIndex(new Date(timeString).getTime())
+    if (idx >= 0) {
+      const seriesId = `reg_${probe.province} · ${probe.carrier}`
+      addLatency(idx, seriesId, value, Number(probe.count || 1))
     }
+  })
+
+  latencyTotals.forEach(total => {
+    buckets[total.bucketIndex].values[total.seriesID] = total.weightedSum / total.weight
   })
 
   return { seriesList, buckets }

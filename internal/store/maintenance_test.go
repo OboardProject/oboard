@@ -153,6 +153,151 @@ func TestMaintenancePrunesRateBuckets(t *testing.T) {
 	}
 }
 
+func TestServerMonitoringRetentionDays(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		settings map[string]string
+		want     int
+	}{
+		{name: "missing", settings: nil, want: DefaultServerMonitoringRetentionDays},
+		{name: "invalid", settings: map[string]string{ServerMonitoringRetentionDaysSetting: "not-a-number"}, want: DefaultServerMonitoringRetentionDays},
+		{name: "zero", settings: map[string]string{ServerMonitoringRetentionDaysSetting: "0"}, want: DefaultServerMonitoringRetentionDays},
+		{name: "above maximum", settings: map[string]string{ServerMonitoringRetentionDaysSetting: "31"}, want: DefaultServerMonitoringRetentionDays},
+		{name: "minimum", settings: map[string]string{ServerMonitoringRetentionDaysSetting: "1"}, want: MinServerMonitoringRetentionDays},
+		{name: "maximum", settings: map[string]string{ServerMonitoringRetentionDaysSetting: "30"}, want: MaxServerMonitoringRetentionDays},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ServerMonitoringRetentionDays(test.settings); got != test.want {
+				t.Fatalf("retention days = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
+func TestServerMonitoringMaintenanceIndexesMigrateFromPreviousSchema(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "monitoring-index-migration.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range []string{"idx_server_latency_probe_results_checked", "idx_server_connectivity_events_kind_time"} {
+		if _, err := s.db.ExecContext(ctx, `drop index `+index); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for reopen := 0; reopen < 2; reopen++ {
+		s, err = Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, index := range []string{"idx_server_latency_probe_results_checked", "idx_server_connectivity_events_kind_time"} {
+			var found string
+			if err := s.db.QueryRowContext(ctx, `select name from sqlite_master where type='index' and name=?`, index).Scan(&found); err != nil {
+				t.Fatalf("monitoring maintenance index %s missing after reopen %d: %v", index, reopen+1, err)
+			}
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestMaintenancePrunesUnifiedServerMonitoringHistory(t *testing.T) {
+	s, server, _ := newMaintenanceTestStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
+	if err := s.SetSetting(ctx, ServerMonitoringRetentionDaysSetting, "7"); err != nil {
+		t.Fatal(err)
+	}
+	cutoff := at.Add(-7 * 24 * time.Hour)
+	for _, item := range []struct {
+		name string
+		at   time.Time
+	}{
+		{name: "old", at: cutoff.Add(-time.Second)},
+		{name: "boundary", at: cutoff},
+		{name: "new", at: cutoff.Add(time.Second)},
+	} {
+		insertMaintenanceMonitoringRows(t, s, server.ID, item.name, item.at)
+	}
+	available := true
+	if _, err := insertConnectivityEvent(ctx, s.db, model.ServerConnectivityEvent{ServerID: server.ID, Kind: model.ConnectivityEventProbeResult, Available: &available, EffectiveAt: cutoff.Add(-2 * time.Second), EventKey: "monitoring-oldest-probe"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := insertConnectivityEvent(ctx, s.db, model.ServerConnectivityEvent{ServerID: server.ID, Kind: model.ConnectivityEventServerOffline, EffectiveAt: cutoff.Add(-time.Hour), EventKey: "monitoring-old-offline"}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := s.RunMaintenance(ctx, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ServerMetricSamplesDeleted != 1 || result.LatencyProbeResultsDeleted != 1 || result.ConnectivityProbesDeleted != 1 {
+		t.Fatalf("monitoring deletions = metrics:%d latency:%d probes:%d, want 1 each", result.ServerMetricSamplesDeleted, result.LatencyProbeResultsDeleted, result.ConnectivityProbesDeleted)
+	}
+	for _, tableAndTime := range []struct {
+		table, column string
+	}{
+		{table: "server_metric_samples", column: "sampled_at"},
+		{table: "server_latency_probe_results", column: "checked_at"},
+		{table: "server_connectivity_events", column: "effective_at"},
+	} {
+		var old, boundary, newer int
+		_ = s.db.QueryRow(fmt.Sprintf(`select count(*) from %s where %s=?`, tableAndTime.table, tableAndTime.column), cutoff.Add(-time.Second).Format(time.RFC3339Nano)).Scan(&old)
+		_ = s.db.QueryRow(fmt.Sprintf(`select count(*) from %s where %s=?`, tableAndTime.table, tableAndTime.column), cutoff.Format(time.RFC3339Nano)).Scan(&boundary)
+		_ = s.db.QueryRow(fmt.Sprintf(`select count(*) from %s where %s=?`, tableAndTime.table, tableAndTime.column), cutoff.Add(time.Second).Format(time.RFC3339Nano)).Scan(&newer)
+		wantOld := 0
+		if tableAndTime.table == "server_connectivity_events" {
+			wantOld = 1
+		}
+		if old != wantOld || boundary != 1 || newer != 1 {
+			t.Fatalf("%s retention counts old=%d boundary=%d new=%d", tableAndTime.table, old, boundary, newer)
+		}
+	}
+	if got := connectivityEventCount(t, s, server.ID, model.ConnectivityEventServerOffline); got != 1 {
+		t.Fatalf("non-probe connectivity events retained = %d, want 1", got)
+	}
+	history, err := s.ListConnectivityHistory(ctx, server.ID, cutoff, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Baseline) == 0 || history.Baseline[len(history.Baseline)-1].Kind != model.ConnectivityEventProbeResult {
+		t.Fatalf("connectivity baseline after retention = %#v", history.Baseline)
+	}
+}
+
+func TestMaintenancePrunesLatencyForStoppedServer(t *testing.T) {
+	s, server, _ := newMaintenanceTestStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
+	if err := s.SetSetting(ctx, ServerMonitoringRetentionDaysSetting, "7"); err != nil {
+		t.Fatal(err)
+	}
+	server.LatencyProbeEnabled = false
+	server.Status = model.ServerOffline
+	if err := s.UpdateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	insertMaintenanceLatencyResult(t, s, server.ID, "stopped-old", at.Add(-8*24*time.Hour))
+
+	result, err := s.RunMaintenance(ctx, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.LatencyProbeResultsDeleted != 1 {
+		t.Fatalf("stopped server latency deletions = %d, want 1", result.LatencyProbeResultsDeleted)
+	}
+	var remaining int
+	if err := s.db.QueryRow(`select count(*) from server_latency_probe_results where server_id=?`, server.ID).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("stopped server latency results = %d, err=%v", remaining, err)
+	}
+}
+
 func TestAuditWritesDoNotRunRetentionCleanup(t *testing.T) {
 	s, server, user := newMaintenanceTestStore(t)
 	ctx := context.Background()
@@ -204,5 +349,26 @@ func assertMaintenanceIDs(t *testing.T, s *Store, table, column string, kept []i
 		if err := s.db.QueryRow(fmt.Sprintf(`select count(*) from %s where %s=?`, table, column), id).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("kept id %d count = %d, err=%v", id, count, err)
 		}
+	}
+}
+
+func insertMaintenanceMonitoringRows(t *testing.T, s *Store, serverID int64, name string, at time.Time) {
+	t.Helper()
+	ts := at.UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.Exec(`insert into server_metric_samples(server_id,sampled_at) values(?,?)`, serverID, ts); err != nil {
+		t.Fatal(err)
+	}
+	insertMaintenanceLatencyResult(t, s, serverID, name, at)
+	available := true
+	if _, err := insertConnectivityEvent(context.Background(), s.db, model.ServerConnectivityEvent{ServerID: serverID, Kind: model.ConnectivityEventProbeResult, Available: &available, EffectiveAt: at, EventKey: "monitoring-" + name}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func insertMaintenanceLatencyResult(t *testing.T, s *Store, serverID int64, probeID string, at time.Time) {
+	t.Helper()
+	ts := at.UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.Exec(`insert into server_latency_probe_results(server_id,resource_version,probe_id,kind,mode,province,carrier,host,ip,port,available,latency_ms,sample_count,success_count,checked_at,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, "maintenance-v1", probeID, "regional", "tcp", "广东", "中国电信", "192.0.2.1", "192.0.2.1", 443, 1, 20, 3, 3, ts, ts); err != nil {
+		t.Fatal(err)
 	}
 }

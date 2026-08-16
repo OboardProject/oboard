@@ -221,35 +221,6 @@ func TestConnectivityProbeTargetEventConstraintUpgrade(t *testing.T) {
 	}
 }
 
-func TestConnectivityProbeRetentionKeepsBoundaryEvents(t *testing.T) {
-	ctx := context.Background()
-	db, server := newConnectivityTestStore(t)
-	now := time.Now().UTC()
-	available := true
-	for _, event := range []model.ServerConnectivityEvent{
-		{ServerID: server.ID, Kind: model.ConnectivityEventProbeResult, Available: &available, EffectiveAt: now.Add(-36 * 24 * time.Hour), EventKey: "old-probe"},
-		{ServerID: server.ID, Kind: model.ConnectivityEventProbeResult, Available: &available, EffectiveAt: now.Add(-34 * 24 * time.Hour), EventKey: "new-probe"},
-		{ServerID: server.ID, Kind: model.ConnectivityEventServerOffline, EffectiveAt: now.Add(-60 * 24 * time.Hour), EventKey: "old-offline"},
-		{ServerID: server.ID, Kind: model.ConnectivityEventProbeDisabled, EffectiveAt: now.Add(-60 * 24 * time.Hour), EventKey: "old-disabled"},
-	} {
-		if _, err := insertConnectivityEvent(ctx, db.db, event); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := db.CleanupOldConnectivityProbeEvents(ctx, now); err != nil {
-		t.Fatal(err)
-	}
-	if got := connectivityEventCount(t, db, server.ID, model.ConnectivityEventProbeResult); got != 1 {
-		t.Fatalf("retained probe events = %d, want 1", got)
-	}
-	if got := connectivityEventCount(t, db, server.ID, model.ConnectivityEventServerOffline); got != 1 {
-		t.Fatalf("offline events = %d, want 1", got)
-	}
-	if got := connectivityEventCount(t, db, server.ID, model.ConnectivityEventProbeDisabled); got != 1 {
-		t.Fatalf("disabled events = %d, want 1", got)
-	}
-}
-
 func TestConnectivityOfflineEventUsesEffectiveThreshold(t *testing.T) {
 	for _, test := range []struct {
 		name          string

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { alignUnifiedMetrics, computeMaxLatency, formatBucketTime } from './server-unified-chart'
+import { alignUnifiedMetrics, computeMaxLatency, formatBucketTime, splitSeriesSegments } from './server-unified-chart'
 
 describe('server-unified-chart helper', () => {
   it('formats bucket time correctly', () => {
@@ -34,12 +34,10 @@ describe('server-unified-chart helper', () => {
           latency_ms: 35,
         },
         {
-          kind: 'regional',
           province: '北京',
           carrier: '联通',
-          checked_at: '2026-08-13T11:30:00Z',
-          available: true,
-          latency_ms: 48,
+          at: '2026-08-13T11:30:00Z',
+          avg_ms: 48,
         },
       ],
       windowHours: 24,
@@ -64,6 +62,35 @@ describe('server-unified-chart helper', () => {
     expect(nonEmp?.values.public_latency).toBe(22)
     expect(nonEmp?.values['reg_广东 · 电信']).toBe(35)
     expect(nonEmp?.values['reg_北京 · 联通']).toBe(48)
+  })
+
+  it('splits a series wherever a bucket has no value', () => {
+    const segments = splitSeriesSegments([
+      { timestamp: 1, timeLabel: 't1', values: { public_latency: 20 } },
+      { timestamp: 2, timeLabel: 't2', values: { public_latency: null } },
+      { timestamp: 3, timeLabel: 't3', values: { public_latency: 30 } },
+    ], 'public_latency')
+
+    expect(segments).toEqual([
+      [{ index: 0, value: 20 }],
+      [{ index: 2, value: 30 }],
+    ])
+  })
+
+  it('keeps every aggregate when multiple latency points share a chart bucket', () => {
+    const now = new Date('2026-08-13T12:00:00Z').getTime()
+    const result = alignUnifiedMetrics({
+      latencyPoints: [
+        { at: '2026-08-13T11:10:00Z', avg_ms: 10, count: 1 },
+        { at: '2026-08-13T11:40:00Z', avg_ms: 30, count: 3 },
+      ],
+      includeResources: false,
+      windowHours: 1,
+      bucketCount: 1,
+      now,
+    })
+
+    expect(result.buckets[0].values.public_latency).toBe(25)
   })
 
   it('computes max latency dynamically for scaling right Y-axis', () => {
