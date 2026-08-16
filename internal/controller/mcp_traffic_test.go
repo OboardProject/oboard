@@ -10,6 +10,7 @@ import (
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/model"
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 func trafficAutomationPrincipal(t *testing.T, server *Server, username string) application.Principal {
@@ -62,6 +63,15 @@ func TestOutboundAndRoutingRuleCapabilities(t *testing.T) {
 	if err != nil || updated.Priority != 200 {
 		t.Fatalf("rule not updated: %#v err=%v", updated, err)
 	}
+	listed, err := server.application.Query(ctx, principal, "routing_rules.list", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("routing_rules.list: %v", err)
+	}
+	assertCapabilityOutputSchema(t, server, "routing_rules.list", listed)
+	encoded, _ := json.Marshal(listed)
+	if contains(encoded, `"match_json"`) || contains(encoded, `"sync_source_rule_id"`) || !contains(encoded, `"match_configured":true`) || !contains(encoded, `"revision"`) {
+		t.Fatalf("routing_rules.list returned a non-public view: %s", encoded)
+	}
 	deleteInput, _ := json.Marshal(map[string]any{"routing_rule_id": rule.ID, "confirm": true})
 	applyAutomationChangeset(t, server, principal, "routing-delete", automation.OperationRequest{Capability: "routing_rules.delete", Input: deleteInput})
 	if _, err := db.GetRoutingRule(ctx, rule.ID); err == nil {
@@ -84,7 +94,7 @@ func TestRoutingRuleSetCapabilities(t *testing.T) {
 	}
 	revision := "revision-1"
 	server.routingRuleSetFetcher = func(context.Context, model.RoutingRuleSet, bool) (*fetchedRoutingRuleSet, error) {
-		return &fetchedRoutingRuleSet{content: []byte(`{"version":1,"rules":[{"domain":["example.com"]}]}`), revision: revision}, nil
+		return &fetchedRoutingRuleSet{content: []byte(`{"version":1,"rules":[{"domain":["example.com"]}]}`), revision: revision, etag: "private-etag", lastModified: "private-last-modified"}, nil
 	}
 	principal := trafficAutomationPrincipal(t, server, "operator")
 	createInput := json.RawMessage(`{"routing_rule_set":{"name":"shared","url":"https://rules.example/shared.json","format":"singbox_source"}}`)
@@ -112,8 +122,9 @@ func TestRoutingRuleSetCapabilities(t *testing.T) {
 		t.Fatalf("routing_rule_sets.list: %v", err)
 	}
 	encoded, _ := json.Marshal(listed)
-	if contains(encoded, "content") {
-		t.Fatalf("routing_rule_sets.list leaked content snapshot: %s", encoded)
+	assertCapabilityOutputSchema(t, server, "routing_rule_sets.list", listed)
+	if contains(encoded, `"content"`) || contains(encoded, `"etag"`) || contains(encoded, `"last_modified"`) {
+		t.Fatalf("routing_rule_sets.list leaked internal fetch state: %s", encoded)
 	}
 	deleteInput, _ := json.Marshal(map[string]any{"routing_rule_set_id": item.ID, "confirm": true})
 	applyAutomationChangeset(t, server, principal, "routing-rule-set-delete", automation.OperationRequest{Capability: "routing_rule_sets.delete", Input: deleteInput})
@@ -226,4 +237,35 @@ func bytesContains(raw []byte, needle string) bool {
 		}
 	}
 	return false
+}
+
+func assertCapabilityOutputSchema(t *testing.T, server *Server, capabilityName string, value any) {
+	t.Helper()
+	descriptor, ok := server.capabilities.Get(capabilityName)
+	if !ok {
+		t.Fatalf("capability %s is not registered", capabilityName)
+	}
+	var schemaValue any
+	if err := json.Unmarshal(descriptor.OutputSchema, &schemaValue); err != nil {
+		t.Fatalf("decode %s output schema: %v", capabilityName, err)
+	}
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("output-schema.json", schemaValue); err != nil {
+		t.Fatalf("load %s output schema: %v", capabilityName, err)
+	}
+	compiled, err := compiler.Compile("output-schema.json")
+	if err != nil {
+		t.Fatalf("compile %s output schema: %v", capabilityName, err)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("encode %s output: %v", capabilityName, err)
+	}
+	var normalized any
+	if err := json.Unmarshal(encoded, &normalized); err != nil {
+		t.Fatalf("normalize %s output: %v", capabilityName, err)
+	}
+	if err := compiled.Validate(normalized); err != nil {
+		t.Fatalf("%s output does not match its catalog schema: %v\n%s", capabilityName, err, encoded)
+	}
 }

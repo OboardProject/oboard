@@ -396,6 +396,28 @@ func (s *Server) controllerUpdateInstall(w http.ResponseWriter, r *http.Request)
 		method(w)
 		return
 	}
+	status, _, err := s.beginManualControllerUpdate(r.Context())
+	if err != nil {
+		switch {
+		case errors.Is(err, errControllerUpdaterUnavailable):
+			fail(w, err, http.StatusServiceUnavailable)
+		case errors.Is(err, errControllerUpdatePinned):
+			fail(w, err, http.StatusConflict)
+		default:
+			fail(w, err, http.StatusBadGateway)
+		}
+		return
+	}
+	auditReq(s, r, "install", "controller_update", status.Channel+":"+status.Available.Version)
+	s.writeControllerUpdateStatus(w, r, status)
+}
+
+var (
+	errControllerUpdaterUnavailable = errors.New("主控更新器不可用，请检查 oboard-controller-updater 服务")
+	errControllerUpdatePinned       = errors.New("固定版本不能在面板内更新，请先按提示切换更新通道")
+)
+
+func (s *Server) beginManualControllerUpdate(ctx context.Context) (controllerupdate.Status, bool, error) {
 	s.controllerUpdateRunMu.Lock()
 	backgroundStarted := false
 	defer func() {
@@ -403,47 +425,41 @@ func (s *Server) controllerUpdateInstall(w http.ResponseWriter, r *http.Request)
 			s.controllerUpdateRunMu.Unlock()
 		}
 	}()
-	status, err := s.controllerUpdater.Status(r.Context())
+	status, err := s.controllerUpdater.Status(ctx)
 	if err != nil {
-		fail(w, errors.New("主控更新器不可用，请检查 oboard-controller-updater 服务"), http.StatusServiceUnavailable)
-		return
+		return status, false, errControllerUpdaterUnavailable
 	}
 	if status.Channel == "pinned" {
-		fail(w, errors.New("固定版本不能在面板内更新，请先按提示切换更新通道"), http.StatusConflict)
-		return
+		return status, false, errControllerUpdatePinned
 	}
 	if !status.UpdateAvailable {
-		status, err = s.controllerUpdater.Check(r.Context())
+		status, err = s.controllerUpdater.Check(ctx)
 		if err != nil {
-			fail(w, controllerUpdateOperationError("检查主控更新失败", status, err), http.StatusBadGateway)
-			return
+			return status, false, controllerUpdateOperationError("检查主控更新失败", status, err)
 		}
 	}
 	if !status.UpdateAvailable {
-		s.writeControllerUpdateStatus(w, r, status)
-		return
+		return status, false, nil
 	}
 	checkedStatus := status
 	prepared := true
-	prepareStatus, err := s.controllerUpdater.Prepare(r.Context())
+	prepareStatus, err := s.controllerUpdater.Prepare(ctx)
 	status = prepareStatus
 	if err != nil {
 		if !controllerUpdaterPrepareUnsupported(err) {
 			publicErr := controllerUpdateOperationError("启动主控更新下载失败", status, err)
-			_ = s.store.SetSetting(r.Context(), controllerUpdateErrorSetting, publicErr.Error())
-			fail(w, publicErr, http.StatusBadGateway)
-			return
+			_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, publicErr.Error())
+			return status, false, publicErr
 		}
 		prepared = false
 		status = checkedStatus
 	} else {
 		s.startControllerUpdateWatch()
 	}
-	_ = s.store.SetSetting(r.Context(), controllerUpdateErrorSetting, "")
-	auditReq(s, r, "install", "controller_update", status.Channel+":"+status.Available.Version)
-	s.writeControllerUpdateStatus(w, r, status)
+	_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
 	backgroundStarted = true
 	go s.finishManualControllerUpdate(status, prepared)
+	return status, true, nil
 }
 
 func (s *Server) finishManualControllerUpdate(status controllerupdate.Status, prepared bool) {

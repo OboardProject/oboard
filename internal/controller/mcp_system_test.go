@@ -3,7 +3,9 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/automation"
@@ -110,7 +112,8 @@ func TestApprovalPolicyAndNotificationCapabilities(t *testing.T) {
 	if err := db.CreateAPIPrincipal(ctx, serviceAccount); err != nil {
 		t.Fatal(err)
 	}
-	policyInput, _ := json.Marshal(map[string]any{"principal_id": serviceAccount.ID, "capability": "servers.update", "mode": "automatic"})
+	expiresAt := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	policyInput, _ := json.Marshal(map[string]any{"principal_id": serviceAccount.ID, "capability": "servers.update", "mode": "automatic", "expires_at": expiresAt})
 	applyAutomationChangeset(t, server, principal, "policy-set", automation.OperationRequest{Capability: "approval_policies.set", Input: policyInput})
 	policies, err := db.ListApprovalPolicies(ctx, serviceAccount.ID)
 	if err != nil || len(policies) != 1 {
@@ -118,6 +121,9 @@ func TestApprovalPolicyAndNotificationCapabilities(t *testing.T) {
 	}
 	if policies[0].Mode != model.ApprovalAutomatic || policies[0].Capability != "servers.update" {
 		t.Fatalf("unexpected policy: %#v", policies[0])
+	}
+	if policies[0].ExpiresAt == nil || !policies[0].ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("approval policy expiry = %v, want %v", policies[0].ExpiresAt, expiresAt)
 	}
 	channelInput := json.RawMessage(`{"notification_channel":{"name":"测试频道","type":"bark","enabled":true,"events":"server_offline","config_json":"{\"device_key\":\"test-device-key\",\"group\":\"测试\"}","user_ids":[]}}`)
 	applyAutomationChangeset(t, server, principal, "channel-create", automation.OperationRequest{Capability: "notification_channels.create", Input: channelInput})
@@ -140,6 +146,108 @@ func TestApprovalPolicyAndNotificationCapabilities(t *testing.T) {
 	if _, err := db.GetNotificationChannel(ctx, channel.ID); err == nil {
 		t.Fatal("deleted channel still exists")
 	}
+}
+
+func TestServiceAccountAndTokenCapabilities(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "service-admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111118", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	create := json.RawMessage(`{"service_account":{"name":"automation","scopes":["settings:read"],"resource_filter":{},"allowed_cidrs":["192.0.2.0/24"],"rate_limit_per_minute":30,"max_concurrency":2}}`)
+	applyAutomationChangeset(t, server, principal, "service-create", automation.OperationRequest{Capability: "api_principals.create", Input: create})
+	items, err := db.ListAPIPrincipals(ctx)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("service accounts=%#v err=%v", items, err)
+	}
+	serviceAccount := items[0]
+	if serviceAccount.Name != "automation" || serviceAccount.RateLimitPerMinute != 30 || serviceAccount.MaxConcurrency != 2 {
+		t.Fatalf("unexpected service account: %#v", serviceAccount)
+	}
+	listedPrincipals, err := server.queryManagementCapability(ctx, principal, "api_principals.list", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCapabilityOutputSchema(t, server, "api_principals.list", listedPrincipals)
+	update, _ := json.Marshal(map[string]any{"principal_id": serviceAccount.ID, "changes": map[string]any{"name": "automation-v2", "enabled": false}})
+	applyAutomationChangeset(t, server, principal, "service-update", automation.OperationRequest{Capability: "api_principals.update", Input: update})
+	updated, err := db.GetAPIPrincipal(ctx, serviceAccount.ID)
+	if err != nil || updated.Name != "automation-v2" || updated.Enabled {
+		t.Fatalf("updated service account=%#v err=%v", updated, err)
+	}
+
+	issue, _ := json.Marshal(map[string]any{"principal_id": serviceAccount.ID})
+	applied := applyAutomationChangesetResult(t, server, principal, "token-issue", automation.OperationRequest{Capability: "api_tokens.issue", Input: issue})
+	var oneTimeResult struct {
+		Operations []struct {
+			APIToken string `json:"api_token"`
+		} `json:"operations"`
+	}
+	if err := json.Unmarshal(applied.Result, &oneTimeResult); err != nil || len(oneTimeResult.Operations) != 1 || !strings.HasPrefix(oneTimeResult.Operations[0].APIToken, "obk_") {
+		t.Fatalf("one-time token missing from immediate result: %s", applied.Result)
+	}
+	plainToken := oneTimeResult.Operations[0].APIToken
+	persisted, err := server.automation.Get(ctx, applied.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(persisted.Result), plainToken) || strings.Contains(string(persisted.Result), `"api_token":`) {
+		t.Fatalf("one-time token leaked into persisted changeset: %s", persisted.Result)
+	}
+	tokens, err := db.ListAPITokens(ctx, serviceAccount.ID)
+	encodedTokens, _ := json.Marshal(tokens)
+	if err != nil || len(tokens) != 1 || strings.Contains(string(encodedTokens), plainToken) {
+		t.Fatalf("token metadata=%#v err=%v", tokens, err)
+	}
+	listTokensInput, _ := json.Marshal(map[string]any{"principal_id": serviceAccount.ID})
+	listedTokens, err := server.queryManagementCapability(ctx, principal, "api_tokens.list", listTokensInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCapabilityOutputSchema(t, server, "api_tokens.list", listedTokens)
+	listedTokensJSON, _ := json.Marshal(listedTokens)
+	if strings.Contains(string(listedTokensJSON), plainToken) || strings.Contains(string(listedTokensJSON), "token_hash") {
+		t.Fatalf("api_tokens.list leaked secret material: %s", listedTokensJSON)
+	}
+	revoke, _ := json.Marshal(map[string]any{"principal_id": serviceAccount.ID, "token_id": tokens[0].ID, "confirm": true})
+	applyAutomationChangeset(t, server, principal, "token-revoke", automation.OperationRequest{Capability: "api_tokens.revoke", Input: revoke})
+	tokens, err = db.ListAPITokens(ctx, serviceAccount.ID)
+	if err != nil || tokens[0].RevokedAt == nil {
+		t.Fatalf("token was not revoked: %#v err=%v", tokens, err)
+	}
+	deleteInput, _ := json.Marshal(map[string]any{"principal_id": serviceAccount.ID, "confirm": true})
+	applyAutomationChangeset(t, server, principal, "service-delete", automation.OperationRequest{Capability: "api_principals.delete", Input: deleteInput})
+	if _, err := db.GetAPIPrincipal(ctx, serviceAccount.ID); err == nil {
+		t.Fatal("deleted service account still exists")
+	}
+}
+
+func applyAutomationChangesetResult(t *testing.T, server *Server, principal application.Principal, idempotencyKey string, operation automation.OperationRequest) *model.AutomationChangeset {
+	t.Helper()
+	ctx := context.Background()
+	draft, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{operation}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, _ := json.Marshal(draft.ExpectedRevisions)
+	changeset, err := server.automation.Create(ctx, principal, automation.CreateRequest{IdempotencyKey: idempotencyKey, BaseRevisions: base, Operations: []automation.OperationRequest{operation}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.automation.Validate(ctx, principal, changeset.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.automation.Approve(ctx, principal, changeset.ID, "approved"); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := server.automation.Apply(ctx, principal, changeset.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return applied
 }
 
 func (s *Server) readSystemResource(ctx context.Context, principal application.Principal, name string) (any, error) {

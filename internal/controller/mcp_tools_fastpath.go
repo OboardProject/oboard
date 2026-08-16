@@ -117,6 +117,9 @@ func (s *Server) prepareMCPTask(ctx context.Context, principal application.Princ
 		return newToolEnvelope("fallback_required", "", map[string]any{"reason": "no deterministic Fast Path recipe matched the request", "recommended_capabilities": []string{"oboard_discover", "oboard_get_capability_schema", "oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_submit_changeset"}})
 	}
 	recipe = matched
+	if recipe.Prepare == nil {
+		return fastPathError("recipe_unavailable", "matched Fast Path recipe is not executable", true, "fallback")
+	}
 	prepared, err := recipe.Prepare(ctx, principal, input)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

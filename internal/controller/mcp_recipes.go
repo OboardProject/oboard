@@ -14,7 +14,7 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-const mcpRecipeVersion = "1"
+const mcpRecipeVersion = "2"
 
 type mcpRecipe struct {
 	ID      string
@@ -49,13 +49,15 @@ func (s *Server) mcpRecipes() []mcpRecipe {
 		{ID: "proxy_path.manage", Version: mcpRecipeVersion, Aliases: []string{"proxy_path.manage", "proxy path", "proxy chain", "代理链", "代理路径", "链路", "direct branch"}, Verbs: []string{"create", "add", "connect", "route", "创建", "增加", "连接", "经过", "通过"}, Nouns: []string{"proxy path", "chain", "branch", "代理链", "链路", "路径", "wireguard", "ssh"}, Prepare: s.prepareProxyPathRecipe},
 		{ID: "deployment.apply", Version: mcpRecipeVersion, Aliases: []string{"deployment.apply", "deploy all", "apply deployment", "部署全部", "部署所有", "下发修改", "重新应用配置"}, Verbs: []string{"deploy", "apply", "redeploy", "部署", "下发", "应用"}, Nouns: []string{"deployment", "configuration", "changes", "部署", "配置", "修改"}, Prepare: s.prepareDeploymentRecipe},
 		{ID: "outbound.manage", Version: mcpRecipeVersion, Aliases: []string{"outbound.manage", "manage outbound", "出口管理", "服务器出口"}, Verbs: []string{"create", "add", "update", "change", "delete", "remove", "创建", "新增", "添加", "修改", "删除"}, Nouns: []string{"outbound", "出口", "下一跳"}, Prepare: s.prepareOutboundRecipe},
+		{ID: "routing_rule_set.manage", Version: mcpRecipeVersion, Aliases: []string{"routing_rule_set.manage", "routing rule set", "routing ruleset", "rule set", "分流规则集", "路由规则集", "远程规则集"}, Verbs: []string{"create", "add", "update", "change", "delete", "remove", "refresh", "reload", "创建", "新增", "添加", "修改", "删除", "刷新", "重新拉取"}, Nouns: []string{"routing rule set", "routing ruleset", "rule set", "分流规则集", "路由规则集", "远程规则集"}, Prepare: s.prepareRoutingRuleSetRecipe},
 		{ID: "routing.manage", Version: mcpRecipeVersion, Aliases: []string{"routing.manage", "routing rule", "分流规则", "路由规则"}, Verbs: []string{"create", "add", "update", "change", "delete", "remove", "创建", "新增", "添加", "修改", "删除"}, Nouns: []string{"routing rule", "routing rules", "分流", "分流规则", "路由规则"}, Prepare: s.prepareRoutingRuleRecipe},
 		{ID: "external_outbound.import", Version: mcpRecipeVersion, Aliases: []string{"external_outbound.import", "import node", "导入节点", "导入第三方节点"}, Verbs: []string{"import", "导入"}, Nouns: []string{"node", "节点", "external outbound", "导入节点"}, Prepare: s.prepareExternalOutboundImportRecipe},
 		{ID: "dns_policy.manage", Version: mcpRecipeVersion, Aliases: []string{"dns_policy.manage", "dns policy", "dns 策略", "DNS 策略"}, Verbs: []string{"set", "update", "change", "test", "设置", "修改", "测试", "检查"}, Nouns: []string{"dns policy", "dns 策略", "dns 设置", "DNS 策略", "解析服务"}, Prepare: s.prepareDNSPolicyRecipe},
 		{ID: "dns_record.manage", Version: mcpRecipeVersion, Aliases: []string{"dns_record.manage", "dns record", "解析记录", "dns 记录"}, Verbs: []string{"create", "add", "update", "change", "delete", "upsert", "创建", "新增", "添加", "修改", "删除"}, Nouns: []string{"dns record", "dns records", "解析记录", "dns 记录"}, Prepare: s.prepareDNSRecordRecipe},
 		{ID: "port_forward.manage", Version: mcpRecipeVersion, Aliases: []string{"port_forward.manage", "port forward", "端口转发"}, Verbs: []string{"create", "add", "update", "change", "delete", "创建", "新增", "添加", "修改", "删除"}, Nouns: []string{"port forward", "port forwards", "端口转发"}, Prepare: s.preparePortForwardRecipe},
 		{ID: "tunnel.manage", Version: mcpRecipeVersion, Aliases: []string{"tunnel.manage", "tunnel", "隧道", "wireguard 隧道", "ssh 隧道"}, Verbs: []string{"create", "add", "update", "change", "delete", "创建", "新增", "添加", "修改", "删除"}, Nouns: []string{"tunnel", "tunnels", "隧道", "wireguard", "ssh 隧道"}, Prepare: s.prepareTunnelRecipe},
-		{ID: "host_ops.manage", Version: mcpRecipeVersion, Aliases: []string{"host_ops.manage", "diagnose", "agent update", "collect logs", "manage logs", "诊断", "升级 agent", "升级服务器", "拉取日志", "管理日志"}, Verbs: []string{"diagnose", "update", "collect", "rotate", "clear", "detect", "诊断", "升级", "拉取", "轮转", "清空", "检测"}, Nouns: []string{"agent", "log", "logs", "日志", "mtu"}, Prepare: s.prepareHostOpsRecipe},
+		{ID: "host_ops.manage", Version: mcpRecipeVersion, Aliases: []string{"host_ops.manage", "diagnose", "agent update", "collect logs", "manage logs", "network interfaces", "诊断", "升级 agent", "升级服务器", "拉取日志", "管理日志", "读取网卡"}, Verbs: []string{"diagnose", "update", "collect", "rotate", "clear", "detect", "list", "诊断", "升级", "拉取", "轮转", "清空", "检测", "读取", "列出"}, Nouns: []string{"agent", "log", "logs", "network interface", "network interfaces", "日志", "mtu", "网卡", "网络接口"}, Prepare: s.prepareHostOpsRecipe},
+		{ID: "controller_update.manage", Version: mcpRecipeVersion, Aliases: []string{"controller_update.manage", "controller update", "controller update channel", "主控更新", "主控升级", "主控更新通道"}, Verbs: []string{"check", "set", "switch", "install", "update", "cancel", "检查", "切换", "安装", "更新", "升级", "取消"}, Nouns: []string{"controller update", "controller channel", "主控更新", "主控升级", "更新通道"}, Prepare: s.prepareControllerUpdateRecipe},
 		{ID: "notification.manage", Version: mcpRecipeVersion, Aliases: []string{"notification.manage", "notification channel", "通知频道", "通知设置"}, Verbs: []string{"create", "add", "update", "change", "delete", "test", "创建", "新增", "添加", "修改", "删除", "测试", "发布"}, Nouns: []string{"notification", "通知", "频道", "公告"}, Prepare: s.prepareNotificationRecipe},
 		{ID: "certificate.manage", Version: mcpRecipeVersion, Aliases: []string{"certificate.manage", "certificate", "证书", "ssl 证书", "tls 证书"}, Verbs: []string{"issue", "renew", "delete", "签发", "续期", "删除", "申请"}, Nouns: []string{"certificate", "证书"}, Prepare: s.prepareCertificateRecipe},
 		{ID: "settings.manage", Version: mcpRecipeVersion, Aliases: []string{"settings.manage", "global settings", "全局设置", "面板设置"}, Verbs: []string{"update", "change", "set", "修改", "设置", "开启", "关闭"}, Nouns: []string{"global settings", "全局设置", "面板设置", "审计开关"}, Prepare: s.prepareSettingsRecipe},
@@ -76,7 +78,7 @@ func (s *Server) matchMCPRecipe(input mcpTaskInput) (mcpRecipe, []MCPResourceRef
 		recipe, ok := s.mcpRecipeByID(input.Intent)
 		return recipe, nil, ok
 	}
-	if recipe, ok := matchDistinctiveRecipeGoal(input.Goal); ok {
+	if recipe, ok := s.matchDistinctiveRecipeGoal(input.Goal); ok {
 		return recipe, nil, true
 	}
 	refTypes := map[string]bool{}
@@ -172,14 +174,14 @@ func (s *Server) matchMCPRecipe(input mcpTaskInput) (mcpRecipe, []MCPResourceRef
 }
 
 // matchDistinctiveRecipeGoal routes goals that carry a uniquely distinctive
-// domain noun (routing, outbound, DNS record/policy, port forward, tunnel,
-// certificate, notification, logs/diagnose) before generic param-based checks
-// can hijack them. It never fires when no distinctive token is present.
-func matchDistinctiveRecipeGoal(goal string) (mcpRecipe, bool) {
+// domain noun before generic param-based checks can hijack them. It returns the
+// bound recipe, including its Prepare function, rather than an ID-only stub.
+func (s *Server) matchDistinctiveRecipeGoal(goal string) (mcpRecipe, bool) {
 	distinctive := []struct {
 		recipeID string
 		tokens   []string
 	}{
+		{"routing_rule_set.manage", []string{"分流规则集", "路由规则集", "远程规则集", "routing rule set", "routing ruleset", "rule set", "规则集"}},
 		{"routing.manage", []string{"分流", "routing rule", "routing rules", "路由规则"}},
 		{"external_outbound.import", []string{"导入节点", "import node", "导入第三方节点"}},
 		{"dns_record.manage", []string{"解析记录", "dns record", "dns records", "dns 记录"}},
@@ -189,7 +191,8 @@ func matchDistinctiveRecipeGoal(goal string) (mcpRecipe, bool) {
 		{"certificate.manage", []string{"证书", "certificate"}},
 		{"notification.manage", []string{"通知频道", "notification channel", "公告"}},
 		{"settings.manage", []string{"全局设置", "global settings", "面板设置"}},
-		{"host_ops.manage", []string{"诊断", "diagnose", "日志", "logs", "升级 agent", "拉取"}},
+		{"controller_update.manage", []string{"主控更新", "主控升级", "主控更新通道", "controller update", "controller channel"}},
+		{"host_ops.manage", []string{"诊断", "diagnose", "日志", "logs", "升级 agent", "拉取", "网卡", "网络接口", "network interface"}},
 		{"outbound.manage", []string{"出口", "outbound"}},
 	}
 	type scored struct {
@@ -198,7 +201,10 @@ func matchDistinctiveRecipeGoal(goal string) (mcpRecipe, bool) {
 	}
 	scores := []scored{}
 	for _, item := range distinctive {
-		recipe, _ := mcpRecipeByIDStatic(item.recipeID)
+		recipe, ok := s.mcpRecipeByID(item.recipeID)
+		if !ok {
+			continue
+		}
 		score := 0
 		for _, token := range item.tokens {
 			if containsAnyFold(goal, token) {
@@ -217,23 +223,6 @@ func matchDistinctiveRecipeGoal(goal string) (mcpRecipe, bool) {
 		return mcpRecipe{}, false
 	}
 	return scores[0].recipe, true
-}
-
-func mcpRecipeByIDStatic(id string) (mcpRecipe, bool) {
-	for _, recipe := range staticRecipeIDs {
-		if recipe == id {
-			return mcpRecipe{ID: id, Version: mcpRecipeVersion}, true
-		}
-	}
-	return mcpRecipe{}, false
-}
-
-var staticRecipeIDs = []string{
-	"server.onboard", "user.manage", "user_group.manage", "user_device.manage",
-	"server.manage", "inbound.create", "subscription_plan.nodes.manage", "proxy_path.manage",
-	"deployment.apply", "outbound.manage", "routing.manage", "external_outbound.import",
-	"dns_policy.manage", "dns_record.manage", "port_forward.manage", "tunnel.manage",
-	"host_ops.manage", "notification.manage", "certificate.manage", "settings.manage",
 }
 
 func hasInboundCreateParams(params map[string]any) bool {

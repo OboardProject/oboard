@@ -1,6 +1,7 @@
 package application
 
 import (
+	"strings"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -102,6 +103,47 @@ type ProxyPathStepDTO struct {
 	AdvancedConfigured bool                             `json:"advanced_configured"`
 }
 
+type RoutingRuleDTO struct {
+	ID                 int64             `json:"id"`
+	Revision           string            `json:"revision"`
+	ServerID           int64             `json:"server_id"`
+	Name               string            `json:"name"`
+	Scope              string            `json:"scope"`
+	ProxyPathID        *int64            `json:"proxy_path_id"`
+	StageStepID        *int64            `json:"stage_step_id"`
+	SortPosition       int               `json:"sort_position"`
+	MatchSource        string            `json:"match_source"`
+	RuleSetID          *int64            `json:"rule_set_id"`
+	Priority           int               `json:"priority"`
+	Action             model.RouteAction `json:"action"`
+	OutboundID         *int64            `json:"outbound_id"`
+	ExternalOutboundID *int64            `json:"external_outbound_id"`
+	TargetProxyPathID  *int64            `json:"target_proxy_path_id"`
+	OutboundTag        string            `json:"outbound_tag"`
+	InterfaceName      string            `json:"interface_name"`
+	SourcePrefix       string            `json:"source_prefix"`
+	SyncGroupID        string            `json:"sync_group_id"`
+	MatchConfigured    bool              `json:"match_configured"`
+	Enabled            bool              `json:"enabled"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
+}
+
+type RoutingRuleSetDTO struct {
+	ID             int64      `json:"id"`
+	Revision       string     `json:"revision"`
+	Name           string     `json:"name"`
+	URL            string     `json:"url"`
+	Format         string     `json:"format"`
+	MihomoBehavior string     `json:"mihomo_behavior"`
+	Status         string     `json:"status"`
+	LastError      string     `json:"last_error"`
+	LastAttemptAt  *time.Time `json:"last_attempt_at"`
+	LastSuccessAt  *time.Time `json:"last_success_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
 type InventoryDTO struct {
 	Servers     []ServerDTO `json:"servers"`
 	Users       []UserDTO   `json:"users"`
@@ -191,6 +233,29 @@ func userDTO(item model.User) UserDTO {
 		SubscriptionConfigured: item.SubscriptionToken != "", SubscriptionAgeEnabled: item.SubscriptionAgeEnabled,
 		SubscriptionSuspended: item.SubscriptionSuspended, SubscriptionSuspendedAt: item.SubscriptionSuspendedAt,
 		SubscriptionSuspendReason: item.SubscriptionSuspendReason, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+	}
+}
+
+func routingRuleDTO(item model.RoutingRule) RoutingRuleDTO {
+	return RoutingRuleDTO{
+		ID: item.ID, Revision: revision(item.UpdatedAt), ServerID: item.ServerID, Name: item.Name,
+		Scope: item.Scope, ProxyPathID: item.ProxyPathID, StageStepID: item.StageStepID,
+		SortPosition: item.SortPosition, MatchSource: item.MatchSource, RuleSetID: item.RuleSetID,
+		Priority: item.Priority, Action: item.Action, OutboundID: item.OutboundID,
+		ExternalOutboundID: item.ExternalOutboundID, TargetProxyPathID: item.TargetProxyPathID,
+		OutboundTag:   item.OutboundTag,
+		InterfaceName: item.InterfaceName, SourcePrefix: item.SourcePrefix, SyncGroupID: item.SyncGroupID,
+		MatchConfigured: strings.TrimSpace(item.MatchJSON) != "" && strings.TrimSpace(item.MatchJSON) != "{}",
+		Enabled:         item.Enabled, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+	}
+}
+
+func routingRuleSetDTO(item model.RoutingRuleSet) RoutingRuleSetDTO {
+	return RoutingRuleSetDTO{
+		ID: item.ID, Revision: item.Revision, Name: item.Name, URL: item.URL, Format: item.Format,
+		MihomoBehavior: item.MihomoBehavior, Status: item.Status, LastError: item.LastError,
+		LastAttemptAt: item.LastAttemptAt, LastSuccessAt: item.LastSuccessAt,
+		CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 	}
 }
 

@@ -133,6 +133,9 @@ func (s *Server) routingRuleSetAutomationCandidate(ctx context.Context, input js
 		if err != nil {
 			return model.RoutingRuleSet{}, nil, err
 		}
+		if len(fields) == 0 {
+			return model.RoutingRuleSet{}, nil, errors.New("changes must contain at least one routing rule set field")
+		}
 		current, err := s.store.GetRoutingRuleSet(ctx, request.RoutingRuleSetID)
 		if err != nil {
 			return model.RoutingRuleSet{}, nil, err

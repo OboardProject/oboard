@@ -23,6 +23,7 @@ import (
 
 func (s *Server) registerSystemAutomationOperations() {
 	s.registerSettingsOperations()
+	s.registerControllerUpdateOperations()
 	s.registerSubscriptionRelayOperations()
 	s.registerBackupOperations()
 	s.registerCertificateOperations()
@@ -271,7 +272,8 @@ var settingsAutomationFields = map[string]bool{
 	"subscription_relay_url": true, "subscription_controller_direct_enabled": true,
 	"server_default_mtu_mode": true, "server_default_bbr_enabled": true,
 	"server_default_time_correction_mode": true, "time_check_ntp_servers": true,
-	"trusted_proxy_cidrs": true, "controller_log_max_mb": true, "controller_log_backups": true,
+	"server_monitoring_retention_days": true,
+	"trusted_proxy_cidrs":              true, "controller_log_max_mb": true, "controller_log_backups": true,
 	"agent_auto_update_enabled":              true,
 	"subscription_relay_auto_update_enabled": true, "update_window_enabled": true,
 	"update_window_start_hour": true, "update_window_end_hour": true,
@@ -449,6 +451,13 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 		if err := setString(settingServerDefaultTimeCorrection, value); err != nil {
 			return nil, err
 		}
+	}
+	if value, ok := fields["server_monitoring_retention_days"]; ok {
+		var days int
+		if err := json.Unmarshal(value, &days); err != nil || days < 1 || days > 30 {
+			return nil, errors.New("server_monitoring_retention_days must be between 1 and 30")
+		}
+		updates["server_monitoring_retention_days"] = strconv.Itoa(days)
 	}
 	if value, ok := fields["time_check_ntp_servers"]; ok {
 		var servers []string
@@ -685,6 +694,46 @@ func (s *Server) registerAutomationAdminOperations() {
 		return map[string]any{"deleted": true, "policy_id": policyID}, nil
 	})
 
+	for _, capabilityName := range []string{"api_principals.create", "api_principals.update"} {
+		name := capabilityName
+		s.automation.RegisterValidator(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+			item, err := s.serviceAccountCandidate(ctx, principal, input, name)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"api_principal": automationAPIPrincipalView(*item)}, nil
+		})
+		s.automation.RegisterRevisionResolver(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+			item, err := s.serviceAccountCandidate(ctx, principal, input, name)
+			if err != nil {
+				return nil, err
+			}
+			if name == "api_principals.create" {
+				return map[string]string{}, nil
+			}
+			return map[string]string{"api_principal:" + item.ID: item.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
+		})
+		s.automation.Register(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+			item, err := s.serviceAccountCandidate(ctx, principal, input, name)
+			if err != nil {
+				return nil, err
+			}
+			if name == "api_principals.create" {
+				err = s.store.CreateAPIPrincipal(ctx, item)
+			} else {
+				err = s.store.UpdateAPIPrincipal(ctx, item)
+			}
+			if err != nil {
+				return nil, err
+			}
+			persisted, err := s.store.GetAPIPrincipal(ctx, item.ID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"api_principal": automationAPIPrincipalView(*persisted)}, nil
+		})
+	}
+
 	s.automation.RegisterValidator("api_principals.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		principalID, err := apiPrincipalDeleteInput(input)
 		if err != nil {
@@ -696,8 +745,16 @@ func (s *Server) registerAutomationAdminOperations() {
 		}
 		return map[string]any{"principal_id": principalID}, nil
 	})
-	s.automation.RegisterRevisionResolver("api_principals.delete", func(context.Context, application.Principal, json.RawMessage) (map[string]string, error) {
-		return map[string]string{}, nil
+	s.automation.RegisterRevisionResolver("api_principals.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		principalID, err := apiPrincipalDeleteInput(input)
+		if err != nil {
+			return nil, err
+		}
+		item, err := s.store.GetAPIPrincipal(ctx, principalID)
+		if err != nil || item.Type != model.APIPrincipalServiceAccount {
+			return nil, errors.New("service account not found")
+		}
+		return map[string]string{"api_principal:" + item.ID: item.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
 	})
 	s.automation.Register("api_principals.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		principalID, err := apiPrincipalDeleteInput(input)
@@ -709,6 +766,265 @@ func (s *Server) registerAutomationAdminOperations() {
 		}
 		return map[string]any{"deleted": true, "principal_id": principalID}, nil
 	})
+
+	s.automation.RegisterValidator("api_tokens.issue", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		item, expiresAt, err := s.apiTokenIssueCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"principal_id": item.ID, "expires_at": expiresAt}, nil
+	})
+	s.automation.RegisterRevisionResolver("api_tokens.issue", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		item, _, err := s.apiTokenIssueCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"api_principal:" + item.ID: item.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
+	})
+	s.automation.Register("api_tokens.issue", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		item, expiresAt, err := s.apiTokenIssueCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := security.RandomToken(32)
+		if err != nil {
+			return nil, err
+		}
+		plain := "obk_" + raw
+		id, err := security.RandomToken(18)
+		if err != nil {
+			return nil, err
+		}
+		token := &model.APIToken{ID: "tok_" + id, PrincipalID: item.ID, TokenHash: security.HashAPISecret(s.sessionSecret, plain), Prefix: plain[:12], ExpiresAt: expiresAt}
+		if err := s.store.CreateAPIToken(ctx, token); err != nil {
+			return nil, err
+		}
+		info := automationAPITokenView(*token)
+		return automation.MutationResult{
+			Public:  map[string]any{"token_info": info},
+			OneTime: map[string]any{"api_token": plain, "token_info": info},
+		}, nil
+	})
+
+	s.automation.RegisterValidator("api_tokens.revoke", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		token, err := s.apiTokenRevokeCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"token_info": automationAPITokenView(*token)}, nil
+	})
+	s.automation.RegisterRevisionResolver("api_tokens.revoke", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		token, err := s.apiTokenRevokeCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"api_token:" + token.ID: apiTokenRevision(*token)}, nil
+	})
+	s.automation.Register("api_tokens.revoke", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		token, err := s.apiTokenRevokeCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		if token.RevokedAt == nil {
+			if err := s.store.RevokeAPIToken(ctx, token.PrincipalID, token.ID); err != nil {
+				return nil, err
+			}
+			now := time.Now().UTC()
+			token.RevokedAt = &now
+		}
+		return map[string]any{"revoked": true, "token_info": automationAPITokenView(*token)}, nil
+	})
+}
+
+type serviceAccountAutomationFields struct {
+	Name               string          `json:"name"`
+	Enabled            *bool           `json:"enabled"`
+	Scopes             []string        `json:"scopes"`
+	ResourceFilter     json.RawMessage `json:"resource_filter"`
+	AllowedCIDRs       []string        `json:"allowed_cidrs"`
+	RateLimitPerMinute int             `json:"rate_limit_per_minute"`
+	MaxConcurrency     int             `json:"max_concurrency"`
+	ExpiresAt          *time.Time      `json:"expires_at"`
+}
+
+func (s *Server) serviceAccountCandidate(ctx context.Context, actor application.Principal, input json.RawMessage, capabilityName string) (*model.APIPrincipal, error) {
+	if actor.UserID == nil {
+		return nil, errors.New("an administrator user identity is required")
+	}
+	owner, err := s.store.GetUser(ctx, *actor.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if capabilityName == "api_principals.create" {
+		var request struct {
+			ServiceAccount serviceAccountAutomationFields `json:"service_account"`
+		}
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		fields := request.ServiceAccount
+		if fields.ExpiresAt != nil && !fields.ExpiresAt.After(time.Now().UTC()) {
+			return nil, errors.New("service account expiry must be in the future")
+		}
+		return s.newServicePrincipal(*owner, fields.Name, fields.Scopes, fields.ResourceFilter, fields.AllowedCIDRs, fields.RateLimitPerMinute, fields.MaxConcurrency, fields.ExpiresAt)
+	}
+
+	var request struct {
+		PrincipalID string          `json:"principal_id"`
+		Changes     json.RawMessage `json:"changes"`
+	}
+	if err := strictAutomationInput(input, &request); err != nil {
+		return nil, err
+	}
+	request.PrincipalID = strings.TrimSpace(request.PrincipalID)
+	if request.PrincipalID == "" {
+		return nil, errors.New("principal_id is required")
+	}
+	current, err := s.store.GetAPIPrincipal(ctx, request.PrincipalID)
+	if err != nil || current.Type != model.APIPrincipalServiceAccount {
+		return nil, errors.New("service account not found")
+	}
+	changes := map[string]json.RawMessage{}
+	if len(request.Changes) == 0 || json.Unmarshal(request.Changes, &changes) != nil || len(changes) == 0 {
+		return nil, errors.New("changes must be a non-empty object")
+	}
+	candidate := *current
+	candidate.Scopes = append([]string(nil), current.Scopes...)
+	candidate.AllowedCIDRs = append([]string(nil), current.AllowedCIDRs...)
+	candidate.ResourceFilter = append(json.RawMessage(nil), current.ResourceFilter...)
+	for field, raw := range changes {
+		switch field {
+		case "name":
+			if err := json.Unmarshal(raw, &candidate.Name); err != nil {
+				return nil, errors.New("changes.name must be a string")
+			}
+		case "enabled":
+			if err := json.Unmarshal(raw, &candidate.Enabled); err != nil {
+				return nil, errors.New("changes.enabled must be a boolean")
+			}
+		case "scopes":
+			if err := json.Unmarshal(raw, &candidate.Scopes); err != nil {
+				return nil, errors.New("changes.scopes must be an array of strings")
+			}
+		case "resource_filter":
+			var filter map[string]any
+			if json.Unmarshal(raw, &filter) != nil {
+				return nil, errors.New("changes.resource_filter must be an object")
+			}
+			candidate.ResourceFilter = append(json.RawMessage(nil), raw...)
+		case "allowed_cidrs":
+			if err := json.Unmarshal(raw, &candidate.AllowedCIDRs); err != nil {
+				return nil, errors.New("changes.allowed_cidrs must be an array of strings")
+			}
+		case "rate_limit_per_minute":
+			if err := json.Unmarshal(raw, &candidate.RateLimitPerMinute); err != nil {
+				return nil, errors.New("changes.rate_limit_per_minute must be an integer")
+			}
+		case "max_concurrency":
+			if err := json.Unmarshal(raw, &candidate.MaxConcurrency); err != nil {
+				return nil, errors.New("changes.max_concurrency must be an integer")
+			}
+		case "expires_at":
+			if string(raw) == "null" {
+				candidate.ExpiresAt = nil
+			} else if err := json.Unmarshal(raw, &candidate.ExpiresAt); err != nil {
+				return nil, errors.New("changes.expires_at must be an RFC3339 timestamp or null")
+			}
+		default:
+			return nil, fmt.Errorf("unsupported service account field %q", field)
+		}
+	}
+	if candidate.ExpiresAt != nil && !candidate.ExpiresAt.After(time.Now().UTC()) {
+		return nil, errors.New("service account expiry must be in the future")
+	}
+	validated, err := s.newServicePrincipal(*owner, candidate.Name, candidate.Scopes, candidate.ResourceFilter, candidate.AllowedCIDRs, candidate.RateLimitPerMinute, candidate.MaxConcurrency, candidate.ExpiresAt)
+	if err != nil {
+		return nil, err
+	}
+	validated.ID, validated.OwnerUserID, validated.Enabled = current.ID, current.OwnerUserID, candidate.Enabled
+	validated.CreatedAt, validated.UpdatedAt, validated.LastUsedAt = current.CreatedAt, current.UpdatedAt, current.LastUsedAt
+	return validated, nil
+}
+
+func automationAPIPrincipalView(item model.APIPrincipal) map[string]any {
+	filter := map[string]any{}
+	_ = json.Unmarshal(item.ResourceFilter, &filter)
+	return map[string]any{
+		"id": item.ID, "name": item.Name, "enabled": item.Enabled, "type": item.Type,
+		"scopes": item.Scopes, "resource_filter": filter, "allowed_cidrs": item.AllowedCIDRs,
+		"rate_limit_per_minute": item.RateLimitPerMinute, "max_concurrency": item.MaxConcurrency,
+		"expires_at": item.ExpiresAt, "last_used_at": item.LastUsedAt, "created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
+	}
+}
+
+func automationAPITokenView(item model.APIToken) map[string]any {
+	return map[string]any{
+		"id": item.ID, "principal_id": item.PrincipalID, "prefix": item.Prefix,
+		"expires_at": item.ExpiresAt, "revoked_at": item.RevokedAt, "last_used_at": item.LastUsedAt, "created_at": item.CreatedAt,
+	}
+}
+
+func (s *Server) apiTokenIssueCandidate(ctx context.Context, input json.RawMessage) (*model.APIPrincipal, time.Time, error) {
+	var request struct {
+		PrincipalID string     `json:"principal_id"`
+		ExpiresAt   *time.Time `json:"expires_at"`
+	}
+	if err := strictAutomationInput(input, &request); err != nil {
+		return nil, time.Time{}, err
+	}
+	request.PrincipalID = strings.TrimSpace(request.PrincipalID)
+	item, err := s.store.GetAPIPrincipal(ctx, request.PrincipalID)
+	if err != nil || item.Type != model.APIPrincipalServiceAccount {
+		return nil, time.Time{}, errors.New("service account not found")
+	}
+	now := time.Now().UTC()
+	expiresAt := now.Add(90 * 24 * time.Hour)
+	if request.ExpiresAt != nil {
+		expiresAt = request.ExpiresAt.UTC()
+	}
+	if !expiresAt.After(now) || expiresAt.After(now.Add(366*24*time.Hour)) {
+		return nil, time.Time{}, errors.New("token expiry must be within the next year")
+	}
+	if item.ExpiresAt != nil && expiresAt.After(*item.ExpiresAt) {
+		return nil, time.Time{}, errors.New("token expiry cannot exceed the service account expiry")
+	}
+	return item, expiresAt, nil
+}
+
+func (s *Server) apiTokenRevokeCandidate(ctx context.Context, input json.RawMessage) (*model.APIToken, error) {
+	var request struct {
+		PrincipalID string `json:"principal_id"`
+		TokenID     string `json:"token_id"`
+		Confirm     bool   `json:"confirm"`
+	}
+	if err := strictAutomationInput(input, &request); err != nil {
+		return nil, err
+	}
+	request.PrincipalID, request.TokenID = strings.TrimSpace(request.PrincipalID), strings.TrimSpace(request.TokenID)
+	if request.PrincipalID == "" || request.TokenID == "" || !request.Confirm {
+		return nil, errors.New("principal_id, token_id, and confirm=true are required")
+	}
+	principal, err := s.store.GetAPIPrincipal(ctx, request.PrincipalID)
+	if err != nil || principal.Type != model.APIPrincipalServiceAccount {
+		return nil, errors.New("service account not found")
+	}
+	tokens, err := s.store.ListAPITokens(ctx, request.PrincipalID)
+	if err != nil {
+		return nil, err
+	}
+	for index := range tokens {
+		if tokens[index].ID == request.TokenID {
+			return &tokens[index], nil
+		}
+	}
+	return nil, errors.New("API token not found")
+}
+
+func apiTokenRevision(item model.APIToken) string {
+	if item.RevokedAt != nil {
+		return item.RevokedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return item.CreatedAt.UTC().Format(time.RFC3339Nano)
 }
 
 func (s *Server) approvalPolicySetCandidate(ctx context.Context, input json.RawMessage) (*model.ApprovalPolicy, error) {
@@ -718,6 +1034,7 @@ func (s *Server) approvalPolicySetCandidate(ctx context.Context, input json.RawM
 		ResourceFilter json.RawMessage `json:"resource_filter"`
 		Mode           string          `json:"mode"`
 		AllowRisk4     bool            `json:"allow_risk4"`
+		ExpiresAt      *time.Time      `json:"expires_at"`
 	}
 	if err := strictAutomationInput(input, &request); err != nil {
 		return nil, err
@@ -756,7 +1073,7 @@ func (s *Server) approvalPolicySetCandidate(ctx context.Context, input json.RawM
 	if existing, findErr := s.store.GetApprovalPolicy(ctx, principal.ID, descriptor.Name, time.Time{}); findErr == nil {
 		id = strings.TrimPrefix(existing.ID, "pol_")
 	}
-	return &model.ApprovalPolicy{ID: "pol_" + id, PrincipalID: principal.ID, Capability: descriptor.Name, ResourceFilter: filter, Mode: mode, AllowRisk4: request.AllowRisk4}, nil
+	return &model.ApprovalPolicy{ID: "pol_" + id, PrincipalID: principal.ID, Capability: descriptor.Name, ResourceFilter: filter, Mode: mode, AllowRisk4: request.AllowRisk4, ExpiresAt: request.ExpiresAt}, nil
 }
 
 func automationApprovalPolicyView(policy model.ApprovalPolicy) map[string]any {

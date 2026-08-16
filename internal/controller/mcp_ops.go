@@ -84,6 +84,44 @@ func (s *Server) registerTaskTriggerOperations() {
 		return map[string]any{"task_id": task.ID, "task_status": task.Status, "entry_target_count": len(targets)}, nil
 	})
 
+	s.automation.RegisterValidator("servers.list_network_interfaces", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		server, err := s.serverTaskBoundary(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		if reason := agentTaskImmediateFailure(server); reason != "" {
+			return nil, errors.New(reason)
+		}
+		if strings.TrimSpace(server.AgentBuild) != "" && !agentBuildSupportsTask(server.AgentBuild, agentBuildMinNetworkInterfaces) {
+			return nil, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再读取网卡")
+		}
+		return map[string]any{"server_id": server.ID}, nil
+	})
+	s.automation.RegisterRevisionResolver("servers.list_network_interfaces", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		server, err := s.serverTaskBoundary(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"server:" + strconv.FormatInt(server.ID, 10): server.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
+	})
+	s.automation.Register("servers.list_network_interfaces", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		server, err := s.serverTaskBoundary(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		if reason := agentTaskImmediateFailure(server); reason != "" {
+			return nil, errors.New(reason)
+		}
+		if strings.TrimSpace(server.AgentBuild) != "" && !agentBuildSupportsTask(server.AgentBuild, agentBuildMinNetworkInterfaces) {
+			return nil, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再读取网卡")
+		}
+		task, err := s.queueAgentTask(ctx, server.ID, model.AgentTaskTypeListNetworkInterfaces, map[string]any{}, time.Now().Unix())
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"task_id": task.ID, "task_status": task.Status}, nil
+	})
+
 	s.automation.RegisterValidator("servers.update_agent", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		if _, err := s.serverTaskBoundary(ctx, principal, input); err != nil {
 			return nil, err

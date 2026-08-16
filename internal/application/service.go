@@ -230,23 +230,31 @@ func (s *Service) ListOutbounds(ctx context.Context, principal Principal) ([]map
 	return out, nil
 }
 
-func (s *Service) ListRoutingRules(ctx context.Context, principal Principal) ([]model.RoutingRule, error) {
+func (s *Service) ListRoutingRules(ctx context.Context, principal Principal) ([]RoutingRuleDTO, error) {
 	items, err := s.store.ListRoutingRules(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]model.RoutingRule, 0, len(items))
+	out := make([]RoutingRuleDTO, 0, len(items))
 	for _, item := range items {
 		if !principal.AllowsInt64("server_ids", item.ServerID) {
 			continue
 		}
-		out = append(out, item)
+		out = append(out, routingRuleDTO(item))
 	}
 	return out, nil
 }
 
-func (s *Service) ListRoutingRuleSets(ctx context.Context, principal Principal) ([]model.RoutingRuleSet, error) {
-	return s.store.ListRoutingRuleSets(ctx)
+func (s *Service) ListRoutingRuleSets(ctx context.Context, principal Principal) ([]RoutingRuleSetDTO, error) {
+	items, err := s.store.ListRoutingRuleSets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RoutingRuleSetDTO, 0, len(items))
+	for _, item := range items {
+		out = append(out, routingRuleSetDTO(item))
+	}
+	return out, nil
 }
 
 // ListExternalOutbounds returns redacted imported-node views. The node auth

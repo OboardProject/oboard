@@ -517,6 +517,9 @@ func (s *Server) planHasExternalAction(item *model.AutomationChangeset) bool {
 		if token, _ := operation["enrollment_token"].(string); token != "" {
 			return true
 		}
+		if token, _ := operation["api_token"].(string); token != "" {
+			return true
+		}
 	}
 	return false
 }
@@ -533,6 +536,44 @@ func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal appli
 	}
 	if json.Unmarshal(item.Result, &result) != nil {
 		return "", nil
+	}
+	for _, operation := range result.Operations {
+		token, _ := operation["api_token"].(string)
+		tokenInfo, _ := operation["token_info"].(map[string]any)
+		if token == "" || tokenInfo == nil {
+			continue
+		}
+		action := map[string]any{
+			"type": "present_secret", "title": "OBoard 服务账号访问令牌",
+			"token": token, "token_info": tokenInfo,
+			"sensitive": true, "must_not_log": true,
+		}
+		encoded, err := json.Marshal(action)
+		if err != nil {
+			return "", err
+		}
+		encrypted, err := security.EncryptSecret(s.sessionSecret, "external-action", string(encoded))
+		if err != nil {
+			return "", err
+		}
+		id, err := security.RandomToken(18)
+		if err != nil {
+			return "", err
+		}
+		expiresAt := time.Now().UTC().Add(10 * time.Minute)
+		if expires, _ := tokenInfo["expires_at"].(string); expires != "" {
+			if parsed, parseErr := time.Parse(time.RFC3339Nano, expires); parseErr == nil && parsed.Before(expiresAt) {
+				expiresAt = parsed
+			}
+		}
+		actionID := "ext_" + id
+		if err := s.store.CreateExternalAction(ctx, &store.ExternalAction{ID: actionID, GrantID: principal.GrantID, WorkflowID: workflow.ID, Kind: "present_secret", Payload: encrypted, ExpiresAt: expiresAt}); err != nil {
+			if existing, findErr := s.store.FindExternalActionByWorkflow(ctx, workflow.ID); findErr == nil && existing.GrantID == principal.GrantID && existing.ConsumedAt == nil && existing.ExpiresAt.After(time.Now().UTC()) {
+				return existing.ID, nil
+			}
+			return "", err
+		}
+		return actionID, nil
 	}
 	for _, operation := range result.Operations {
 		token, _ := operation["enrollment_token"].(string)

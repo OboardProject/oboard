@@ -19,7 +19,7 @@ func TestOpsTaskTriggerCapabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal := userAutomationPrincipal(t, db, admin.ID)
-	node := &model.Server{Name: "entry", PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline, AgentID: "agent_1"}
+	node := &model.Server{Name: "entry", PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline, AgentID: "agent_1", AgentBuild: agentBuildMinNetworkInterfaces}
 	if err := db.CreateServer(ctx, node); err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +52,22 @@ func TestOpsTaskTriggerCapabilities(t *testing.T) {
 	if !found {
 		t.Fatal("collect_logs task was not queued")
 	}
+	interfacesInput, _ := json.Marshal(map[string]any{"server_id": node.ID})
+	applyAutomationChangeset(t, server, principal, "ops-network-interfaces", automation.OperationRequest{Capability: "servers.list_network_interfaces", Input: interfacesInput})
+	interfaceTasks, err := db.ListTasksByServer(ctx, node.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundInterfaces := false
+	for _, task := range interfaceTasks {
+		if task.Type == model.AgentTaskTypeListNetworkInterfaces {
+			foundInterfaces = true
+			break
+		}
+	}
+	if !foundInterfaces {
+		t.Fatal("list_network_interfaces task was not queued")
+	}
 	probeInput, _ := json.Marshal(map[string]any{"inbound_id": inbound.ID})
 	applyAutomationChangeset(t, server, principal, "ops-probe", automation.OperationRequest{Capability: "inbounds.probe", Input: probeInput})
 	probeTasks, err := db.ListTasksByServer(ctx, node.ID, 20)
@@ -75,6 +91,32 @@ func TestOpsTaskTriggerCapabilities(t *testing.T) {
 	encoded, _ := json.Marshal(payload)
 	if contains(encoded, "nonce") && contains(encoded, "token") {
 		t.Fatalf("agent task output may leak material: %s", encoded)
+	}
+}
+
+func TestNetworkInterfacesCapabilityRejectsUnavailableAgents(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111119", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	tests := []model.Server{
+		{Name: "old-agent", Status: model.ServerOnline, AgentID: "old", AgentBuild: "20260801000000"},
+		{Name: "offline-agent", Status: model.ServerOffline, AgentID: "offline", AgentBuild: agentBuildMinNetworkInterfaces},
+	}
+	for index := range tests {
+		node := &tests[index]
+		if err := db.CreateServer(ctx, node); err != nil {
+			t.Fatal(err)
+		}
+		input, _ := json.Marshal(map[string]any{"server_id": node.ID})
+		_, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{{Capability: "servers.list_network_interfaces", Input: input}}})
+		if err == nil {
+			t.Fatalf("server %q unexpectedly accepted list_network_interfaces", node.Name)
+		}
 	}
 }
 

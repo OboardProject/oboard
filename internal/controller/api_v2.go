@@ -337,7 +337,7 @@ func (s *Server) apiV2Query(w http.ResponseWriter, r *http.Request) {
 		v2Error(w, r, http.StatusForbidden, "capability_denied", "当前身份无权调用该查询能力")
 		return
 	}
-	result, err := s.application.Query(r.Context(), principal, request.Capability, request.Arguments)
+	result, err := s.queryManagementCapability(r.Context(), principal, request.Capability, request.Arguments)
 	if err != nil {
 		s.recordToolCall(r.Context(), principal, request.Capability, request.Arguments, "failed", descriptor.DataClassification)
 		v2HandleError(w, r, err)

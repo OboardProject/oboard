@@ -37,40 +37,48 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"sort_position": map[string]any{"type": "integer"}, "match_source": stringValue, "rule_set_id": nullableInteger(),
 		"priority": map[string]any{"type": "integer"}, "action": stringValue,
 		"outbound_id": nullableInteger(), "external_outbound_id": nullableInteger(),
-		"target_proxy_path_id": nullableInteger(), "target_server_id": nullableInteger(), "outbound_tag": stringValue, "interface_name": stringValue,
+		"target_proxy_path_id": nullableInteger(), "outbound_tag": stringValue, "interface_name": stringValue,
 		"source_prefix":    stringValue,
 		"sync_group_id":    stringValue,
 		"match_configured": boolValue, "enabled": boolValue,
 		"created_at": stringValue, "updated_at": stringValue,
 	})
+	nullablePositiveID := func(description string) map[string]any {
+		return map[string]any{"type": []string{"integer", "null"}, "minimum": 1, "description": description}
+	}
 	routingRuleFieldProperties := map[string]any{
-		"server_id":            positiveID,
-		"scope":                map[string]any{"type": "string", "enum": []string{"server", "path_stage"}},
-		"proxy_path_id":        nullableInteger(),
-		"stage_step_id":        nullableInteger(),
-		"sort_position":        map[string]any{"type": "integer", "minimum": 0, "maximum": 100000},
-		"match_source":         map[string]any{"type": "string", "enum": []string{"inline", "rule_set"}},
-		"rule_set_id":          nullableInteger(),
-		"name":                 map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-		"priority":             map[string]any{"type": "integer", "minimum": 0, "maximum": 100000},
-		"match_json":           map[string]any{"type": "string", "maxLength": 8192},
-		"action":               map[string]any{"type": "string", "enum": []string{"direct", "block", "outbound", "external", "proxy_path", "interface", "source_prefix"}},
-		"outbound_id":          nullableInteger(),
-		"external_outbound_id": nullableInteger(),
-		"target_proxy_path_id": nullableInteger(),
-		"target_server_id":     nullableInteger(),
-		"interface_name":       map[string]any{"type": "string", "maxLength": 64},
-		"source_prefix":        map[string]any{"type": "string", "maxLength": 64},
-		"enabled":              boolValue,
+		"server_id":            map[string]any{"type": "integer", "minimum": 1, "description": "server scope 的目标服务器；path_stage scope 会根据分支节点自动推导"},
+		"scope":                map[string]any{"type": "string", "enum": []string{"server", "path_stage"}, "default": "server", "description": "server 表示服务器级规则；path_stage 表示代理分支根节点或受控节点规则"},
+		"proxy_path_id":        nullablePositiveID("path_stage 规则所属代理分支；scope=path_stage 时必填"),
+		"stage_step_id":        nullablePositiveID("分支内受控 server_inbound 步骤；null 表示分支根入口"),
+		"sort_position":        map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "default": 0, "description": "path_stage 节点内的稳定排序位置"},
+		"match_source":         map[string]any{"type": "string", "enum": []string{"inline", "rule_set"}, "default": "inline", "description": "inline 使用 match_json；rule_set 使用已成功抓取的远程规则集"},
+		"rule_set_id":          nullablePositiveID("match_source=rule_set 时必填；远程规则集仅适用于 path_stage"),
+		"name":                 map[string]any{"type": "string", "minLength": 1, "maxLength": 128, "description": "规则名称；从 sync_source_rule_id 复用匹配条件时可省略"},
+		"priority":             map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "default": 100, "description": "server scope 的匹配优先级；path_stage 优先使用 sort_position"},
+		"match_json":           map[string]any{"type": "string", "maxLength": 8192, "default": "{}", "description": "inline 匹配对象的 JSON 字符串；rule_set 模式会规范化为 {}"},
+		"action":               map[string]any{"type": "string", "enum": []string{"direct", "block", "outbound", "external", "proxy_path", "interface", "source_prefix"}, "description": "direct/block 无目标；其他动作分别使用 outbound_id、external_outbound_id、target_proxy_path_id、interface_name 或 source_prefix"},
+		"outbound_id":          nullablePositiveID("action=outbound 时必填，且出口必须属于规则所在服务器"),
+		"external_outbound_id": nullablePositiveID("action=external 时必填，且服务器级导入节点必须属于规则所在服务器"),
+		"target_proxy_path_id": nullablePositiveID("action=proxy_path 时必填；该动作仅适用于 path_stage"),
+		"interface_name":       map[string]any{"type": "string", "minLength": 1, "maxLength": 15, "pattern": "^[A-Za-z0-9._:-]+$", "description": "action=interface 时必填；proxy_path 可选绑定接口，与 source_prefix 互斥"},
+		"source_prefix":        map[string]any{"type": "string", "minLength": 3, "maxLength": 64, "description": "action=source_prefix 时必填的 IPv4/IPv6 CIDR；proxy_path 可选绑定源前缀，与 interface_name 互斥"},
+		"enabled":              map[string]any{"type": "boolean", "description": "是否启用该规则"},
 	}
 	routingRuleFields := closedObject(routingRuleFieldProperties)
+	routingRuleFields["minProperties"] = 1
 	routingRuleCreateProperties := make(map[string]any, len(routingRuleFieldProperties)+2)
 	for key, value := range routingRuleFieldProperties {
 		routingRuleCreateProperties[key] = value
 	}
-	routingRuleCreateProperties["sync_source_rule_id"] = nullableInteger()
-	routingRuleCreateProperties["sync_enabled"] = boolValue
-	routingRuleCreateFields := closedObject(routingRuleCreateProperties)
+	routingRuleCreateProperties["sync_source_rule_id"] = nullablePositiveID("仅创建时可用：复制另一条 path_stage 规则的名称与匹配条件")
+	routingRuleCreateProperties["sync_enabled"] = map[string]any{"type": "boolean", "default": false, "description": "仅创建时可用：持续同步源规则的名称与匹配条件；为 true 时必须提供 sync_source_rule_id"}
+	routingRuleCreateFields := closedObject(routingRuleCreateProperties, "action")
+	routingRuleCreateFields["anyOf"] = []any{
+		map[string]any{"required": []string{"name"}},
+		map[string]any{"required": []string{"sync_source_rule_id"}},
+	}
+	routingRuleCreateFields["allOf"] = routingRuleCreateConstraints()
 	warpProfile := closedObject(map[string]any{
 		"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
 		"status": stringValue, "mtu": map[string]any{"type": "integer"}, "dns_strategy": stringValue,
@@ -82,12 +90,15 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"format": stringValue, "mihomo_behavior": stringValue, "status": stringValue, "last_error": stringValue,
 		"last_attempt_at": nullableString(), "last_success_at": nullableString(), "created_at": stringValue, "updated_at": stringValue,
 	})
-	routingRuleSetFields := closedObject(map[string]any{
-		"name":            map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-		"url":             map[string]any{"type": "string", "format": "uri", "maxLength": 2048},
-		"format":          map[string]any{"type": "string", "enum": []string{"singbox_source", "singbox_binary", "mihomo_domain", "mihomo_ipcidr", "mihomo_classical"}},
-		"mihomo_behavior": map[string]any{"type": "string", "enum": []string{"", "domain", "ipcidr", "classical"}},
-	})
+	routingRuleSetProperties := map[string]any{
+		"name":            map[string]any{"type": "string", "minLength": 1, "maxLength": 128, "description": "远程规则集名称"},
+		"url":             map[string]any{"type": "string", "format": "uri", "pattern": "^https://", "maxLength": 2048, "description": "不含凭据或 fragment 的 HTTPS URL；创建和来源变更会立即抓取校验"},
+		"format":          map[string]any{"type": "string", "enum": []string{"singbox_source", "singbox_binary", "mihomo_domain", "mihomo_ipcidr", "mihomo_classical"}, "description": "sing-box source/binary 或受支持的 Mihomo 文本格式；.mrs 不受支持"},
+		"mihomo_behavior": map[string]any{"type": "string", "enum": []string{"", "domain", "ipcidr", "classical"}, "description": "由 format 规范化，通常无需显式提供"},
+	}
+	routingRuleSetFields := closedObject(routingRuleSetProperties)
+	routingRuleSetFields["minProperties"] = 1
+	routingRuleSetCreateFields := closedObject(routingRuleSetProperties, "name", "url", "format")
 	reads := []Descriptor{
 		{Name: "outbounds.list", Description: "列出服务器出口（下一跳）及其认证配置状态", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(outbound)), RequiredScopes: []string{"outbounds:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "routing_rules.list", Description: "列出全部分流规则", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(routingRule)), RequiredScopes: []string{"routing_rules:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
@@ -95,10 +106,10 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		{Name: "warp_profiles.list", Description: "列出各服务器的 WARP 配置档状态（不含私钥）", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(warpProfile)), RequiredScopes: []string{"warp_profiles:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 	}
 	reads = append(reads, trafficWriteDescriptors(outbound, routingRule, outboundFields, routingRuleCreateFields, routingRuleFields, positiveID, stringValue, boolValue, nullableInteger)...)
-	placements := map[string]any{"type": "array", "minItems": 1, "maxItems": 512, "items": closedObject(map[string]any{"rule_id": positiveID, "stage_step_id": nullableInteger(), "sort_position": map[string]any{"type": "integer", "minimum": 0}})}
+	placements := map[string]any{"type": "array", "minItems": 1, "maxItems": 512, "items": closedObject(map[string]any{"rule_id": positiveID, "stage_step_id": nullablePositiveID("目标受控节点；null 表示分支根入口"), "sort_position": map[string]any{"type": "integer", "minimum": 0}}, "rule_id", "sort_position")}
 	for _, descriptor := range []Descriptor{
 		{Name: "routing_rules.place", Description: "原子移动并重排代理分支节点规则", InputSchema: schemaObject(map[string]any{"proxy_path_id": positiveID, "placements": placements}, "proxy_path_id", "placements"), OutputSchema: schemaObject(map[string]any{"proxy_path_id": positiveID, "placements": placements}, "proxy_path_id", "placements"), RequiredScopes: []string{"routing_rules:write"}, ResourceTypes: []string{"proxy_path", "routing_rule"}, ResourceEvaluator: "server_ids", RiskClass: 2, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: trafficWriteResolver("routing_rules.place")},
-		{Name: "routing_rule_sets.create", Description: "创建并首次校验远程分流规则集", InputSchema: schemaObject(map[string]any{"routing_rule_set": routingRuleSetFields}, "routing_rule_set"), OutputSchema: schemaObject(map[string]any{"routing_rule_set": routingRuleSet}, "routing_rule_set"), RequiredScopes: []string{"routing_rule_sets:write"}, ResourceTypes: []string{"routing_rule_set"}, RiskClass: 2, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: noRefs},
+		{Name: "routing_rule_sets.create", Description: "创建并首次校验远程分流规则集", InputSchema: schemaObject(map[string]any{"routing_rule_set": routingRuleSetCreateFields}, "routing_rule_set"), OutputSchema: schemaObject(map[string]any{"routing_rule_set": routingRuleSet}, "routing_rule_set"), RequiredScopes: []string{"routing_rule_sets:write"}, ResourceTypes: []string{"routing_rule_set"}, RiskClass: 2, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: noRefs},
 		{Name: "routing_rule_sets.update", Description: "修改并校验远程分流规则集", InputSchema: schemaObject(map[string]any{"routing_rule_set_id": positiveID, "changes": routingRuleSetFields}, "routing_rule_set_id", "changes"), OutputSchema: schemaObject(map[string]any{"routing_rule_set": routingRuleSet, "changed_fields": stringArray(1, 8)}, "routing_rule_set"), RequiredScopes: []string{"routing_rule_sets:write"}, ResourceTypes: []string{"routing_rule_set"}, RiskClass: 2, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: trafficWriteResolver("routing_rule_sets.update")},
 		{Name: "routing_rule_sets.delete", Description: "删除未被引用的远程分流规则集", InputSchema: schemaObject(map[string]any{"routing_rule_set_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "routing_rule_set_id", "confirm"), OutputSchema: schemaObject(map[string]any{"deleted": boolValue, "routing_rule_set_id": positiveID}, "deleted"), RequiredScopes: []string{"routing_rule_sets:write"}, ResourceTypes: []string{"routing_rule_set"}, RiskClass: 3, ApprovalPolicy: "required", Idempotent: true, Destructive: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: trafficWriteResolver("routing_rule_sets.delete")},
 		{Name: "routing_rule_sets.refresh", Description: "立即刷新远程分流规则集并在内容变化时下发", InputSchema: schemaObject(map[string]any{"routing_rule_set_id": positiveID}, "routing_rule_set_id"), OutputSchema: schemaObject(map[string]any{"routing_rule_set": routingRuleSet, "changed": boolValue}, "routing_rule_set", "changed"), RequiredScopes: []string{"routing_rule_sets:write"}, ResourceTypes: []string{"routing_rule_set"}, RiskClass: 2, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: trafficWriteResolver("routing_rule_sets.refresh")},
@@ -106,6 +117,51 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		reads = append(reads, descriptor)
 	}
 	return reads
+}
+
+func routingRuleCreateConstraints() []any {
+	return []any{
+		map[string]any{
+			"if":   map[string]any{"properties": map[string]any{"scope": map[string]any{"const": "path_stage"}}, "required": []string{"scope"}},
+			"then": map[string]any{"required": []string{"proxy_path_id"}},
+		},
+		map[string]any{
+			"if":   map[string]any{"not": map[string]any{"properties": map[string]any{"scope": map[string]any{"const": "path_stage"}}, "required": []string{"scope"}}},
+			"then": map[string]any{"required": []string{"server_id"}},
+		},
+		map[string]any{
+			"if":   map[string]any{"properties": map[string]any{"match_source": map[string]any{"const": "rule_set"}}, "required": []string{"match_source"}},
+			"then": map[string]any{"properties": map[string]any{"scope": map[string]any{"const": "path_stage"}}, "required": []string{"scope", "rule_set_id"}},
+		},
+		map[string]any{
+			"if":   map[string]any{"properties": map[string]any{"sync_enabled": map[string]any{"const": true}}, "required": []string{"sync_enabled"}},
+			"then": map[string]any{"required": []string{"sync_source_rule_id"}},
+		},
+		map[string]any{
+			"if":   map[string]any{"properties": map[string]any{"action": map[string]any{"const": "outbound"}}, "required": []string{"action"}},
+			"then": map[string]any{"required": []string{"outbound_id"}},
+		},
+		map[string]any{
+			"if":   map[string]any{"properties": map[string]any{"action": map[string]any{"const": "external"}}, "required": []string{"action"}},
+			"then": map[string]any{"required": []string{"external_outbound_id"}},
+		},
+		map[string]any{
+			"if": map[string]any{"properties": map[string]any{"action": map[string]any{"const": "proxy_path"}}, "required": []string{"action"}},
+			"then": map[string]any{
+				"properties": map[string]any{"scope": map[string]any{"const": "path_stage"}},
+				"required":   []string{"scope", "proxy_path_id", "target_proxy_path_id"},
+				"not":        map[string]any{"required": []string{"interface_name", "source_prefix"}},
+			},
+		},
+		map[string]any{
+			"if":   map[string]any{"properties": map[string]any{"action": map[string]any{"const": "interface"}}, "required": []string{"action"}},
+			"then": map[string]any{"required": []string{"interface_name"}},
+		},
+		map[string]any{
+			"if":   map[string]any{"properties": map[string]any{"action": map[string]any{"const": "source_prefix"}}, "required": []string{"action"}},
+			"then": map[string]any{"required": []string{"source_prefix"}},
+		},
+	}
 }
 
 func trafficWriteDescriptors(outbound, routingRule, outboundFields, routingRuleCreateFields, routingRuleFields, positiveID map[string]any, stringValue, boolValue map[string]any, nullableInteger func() map[string]any) []Descriptor {

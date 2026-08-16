@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -15,7 +16,6 @@ import (
 	"github.com/OboardProject/oboard/internal/mcpauth"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/version"
-	"time"
 )
 
 type mcpResourceDef struct {
@@ -55,10 +55,11 @@ func (s *Server) mcpResourceDefs() []mcpResourceDef {
 		{uri: "oboard://tunnels", title: "Tunnels", name: "Tunnels", description: "Return all WireGuard / SSH inter-server tunnels.", capability: "tunnels.list", kind: "query"},
 		{uri: "oboard://agent-tasks", title: "Agent Tasks", name: "Agent tasks", description: "Return sanitized Agent tasks (deployments, probes, diagnostics, log jobs). Never includes payloads or results that contain secrets.", capability: "agent_tasks.list", kind: "query_agent_tasks"},
 		{uri: "oboard://settings", title: "Global Settings", name: "Global settings", description: "Return the global Controller settings (audit, subscription, notification, agent settings) without secrets.", capability: "settings.get", kind: "query_settings"},
+		{uri: "oboard://controller-update", title: "Controller Update", name: "Controller update", description: "Return the Controller update channel, available build, and current asynchronous update state without local paths or shell commands.", capability: "controller_update.status", kind: "query"},
 		{uri: "oboard://backups", title: "Backups", name: "Backups", description: "Return Controller backup history and backup settings. Never includes recovery passwords or remote credentials.", capability: "backups.list", kind: "query_backups"},
 		{uri: "oboard://certificates", title: "Certificates", name: "Certificates", description: "Return TLS certificates and their issuance status. Private keys stay encrypted in Controller and are never exposed.", capability: "certificates.list", kind: "query_certificates"},
 		{uri: "oboard://approval-policies", title: "Approval Policies", name: "Approval policies", description: "Return automation approval policies for service accounts.", capability: "approval_policies.list", kind: "query_approval_policies"},
-		{uri: "oboard://api-principals", title: "API Principals", name: "API principals", description: "Return service accounts with token prefixes only. Never includes tokens.", capability: "api_principals.list", kind: "query_api_principals"},
+		{uri: "oboard://api-principals", title: "API Principals", name: "API principals", description: "Return service-account scopes, resource boundaries, limits, and status. Never includes token plaintext or hashes.", capability: "api_principals.list", kind: "query_api_principals"},
 		{uri: "oboard://ai/providers", title: "AI Providers", name: "AI providers", description: "Return AI provider metadata with API key presence only. Never includes keys.", capability: "ai.providers.list", kind: "query_ai_providers"},
 		{uri: "oboard://tool-audits", title: "Tool Audits", name: "Tool audits", description: "Return automation tool-call audit records.", capability: "tool_audits.list", kind: "query_tool_audits"},
 		{uri: "oboard://notification-channels", title: "Notification Channels", name: "Notification channels", description: "Return the acting user's notification channels without channel secrets.", capability: "notification_channels.list", kind: "query_notification_channels"},
@@ -349,19 +350,11 @@ func (s *Server) readMCPResource(ctx context.Context, principal application.Prin
 		}
 		return map[string]any{"approval_policies": views, "count": len(views)}, nil
 	case "query_api_principals":
-		items, err := s.store.ListAPIPrincipals(ctx)
+		payload, err := s.queryManagementCapability(ctx, principal, "api_principals.list", json.RawMessage(`{}`))
 		if err != nil {
 			return nil, err
 		}
-		views := make([]map[string]any, 0, len(items))
-		for _, item := range items {
-			views = append(views, map[string]any{
-				"id": item.ID, "name": item.Name, "enabled": item.Enabled, "type": item.Type,
-				"scope_count": len(item.Scopes), "rate_limit_per_minute": item.RateLimitPerMinute,
-				"max_concurrency": item.MaxConcurrency, "expires_at": item.ExpiresAt, "last_used_at": item.LastUsedAt,
-				"created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
-			})
-		}
+		views := payload.([]map[string]any)
 		return map[string]any{"api_principals": views, "count": len(views)}, nil
 	case "query_ai_providers":
 		items, err := s.store.ListAIProviders(ctx)
@@ -811,7 +804,7 @@ func (s *Server) queryMCPResource(ctx context.Context, capabilityName string, ar
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.application.Query(ctx, principal, capabilityName, arguments)
+	result, err := s.queryManagementCapability(ctx, principal, capabilityName, arguments)
 	if err != nil {
 		return nil, err
 	}

@@ -282,7 +282,7 @@ func automationOutboundResult(outbound model.Outbound, changed []string) (any, e
 
 var routingRuleAutomationFields = map[string]bool{
 	"server_id": true, "name": true, "priority": true, "match_json": true, "action": true,
-	"outbound_id": true, "external_outbound_id": true, "target_server_id": true,
+	"outbound_id": true, "external_outbound_id": true,
 	"target_proxy_path_id": true, "sync_source_rule_id": true, "sync_enabled": true,
 	"interface_name": true, "source_prefix": true, "enabled": true, "scope": true, "proxy_path_id": true,
 	"stage_step_id": true, "sort_position": true, "match_source": true, "rule_set_id": true,
@@ -588,9 +588,6 @@ func mergeRoutingRulePatch(current model.RoutingRule, patch model.RoutingRule, f
 	if _, ok := fields["target_proxy_path_id"]; ok {
 		merged.TargetProxyPathID = patch.TargetProxyPathID
 	}
-	if _, ok := fields["target_server_id"]; ok {
-		merged.TargetServerID = patch.TargetServerID
-	}
 	if _, ok := fields["interface_name"]; ok {
 		merged.InterfaceName = patch.InterfaceName
 	}
@@ -659,7 +656,7 @@ func automationRoutingRuleResult(rule model.RoutingRule, changed []string) (any,
 		"server_id": rule.ServerID, "scope": rule.Scope, "proxy_path_id": rule.ProxyPathID, "stage_step_id": rule.StageStepID,
 		"sort_position": rule.SortPosition, "match_source": rule.MatchSource, "rule_set_id": rule.RuleSetID, "name": rule.Name, "priority": rule.Priority,
 		"action": rule.Action, "outbound_id": rule.OutboundID, "external_outbound_id": rule.ExternalOutboundID,
-		"target_proxy_path_id": rule.TargetProxyPathID, "target_server_id": rule.TargetServerID, "outbound_tag": rule.OutboundTag, "interface_name": rule.InterfaceName, "source_prefix": rule.SourcePrefix,
+		"target_proxy_path_id": rule.TargetProxyPathID, "outbound_tag": rule.OutboundTag, "interface_name": rule.InterfaceName, "source_prefix": rule.SourcePrefix,
 		"sync_group_id":    rule.SyncGroupID,
 		"match_configured": strings.TrimSpace(rule.MatchJSON) != "" && strings.TrimSpace(rule.MatchJSON) != "{}",
 		"enabled":          rule.Enabled, "created_at": rule.CreatedAt, "updated_at": rule.UpdatedAt,

@@ -2,10 +2,12 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 
 	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/model"
 )
 
 // Additional Fast Path recipes for the domains added to the MCP capability
@@ -97,12 +99,80 @@ func (s *Server) prepareOutboundRecipe(ctx context.Context, principal applicatio
 	return &mcpPreparedRecipe{Status: "ready", Intent: "outbound.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "create_outbound", "server_id": serverID, "name": outbound["name"]}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
 }
 
-// prepareRoutingRuleRecipe routes routing rule create / update / delete.
+var routingRuleRecipeFields = []string{
+	"server_id", "scope", "proxy_path_id", "stage_step_id", "sort_position",
+	"match_source", "rule_set_id", "name", "priority", "match_json", "action",
+	"outbound_id", "external_outbound_id", "target_proxy_path_id",
+	"interface_name", "source_prefix", "enabled",
+}
+
+func taskResourceRefID(input mcpTaskInput, resourceType string) int64 {
+	ref := firstTaskRef(input, resourceType)
+	_, target, err := splitMCPResourceRef(ref, resourceType)
+	if err != nil {
+		return 0
+	}
+	id, err := strconv.ParseInt(target, 10, 64)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
+}
+
+func copyRecipeFields(dst, src map[string]any, fields []string) {
+	for _, key := range fields {
+		if value, ok := src[key]; ok {
+			dst[key] = value
+		}
+	}
+}
+
+func (s *Server) routingRuleRecipeServerID(ctx context.Context, pathID, stageStepID int64) (int64, error) {
+	path, err := s.store.GetProxyPath(ctx, pathID)
+	if err != nil {
+		return 0, err
+	}
+	if stageStepID > 0 {
+		step, err := s.store.GetProxyPathStep(ctx, stageStepID)
+		if err != nil {
+			return 0, err
+		}
+		if step.PathID != path.ID || step.NodeType != model.ProxyPathStepServerInbound || step.ServerID == nil {
+			return 0, errors.New("stage_step_id must identify a controlled server node in the selected proxy path")
+		}
+		return *step.ServerID, nil
+	}
+	inbound, err := s.store.GetInbound(ctx, path.InboundID)
+	if err != nil {
+		return 0, err
+	}
+	return inbound.ServerID, nil
+}
+
+// prepareRoutingRuleRecipe routes routing rule create, update, delete, and
+// atomic path-stage placement.
 func (s *Server) prepareRoutingRuleRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	placing := input.Params["placements"] != nil || containsAnyFold(input.Goal, "放置", "移动", "重排", "重新排序", "排序", "place", "move", "reorder")
+	if placing {
+		pathID := int64(taskIntParam(input.Params, "proxy_path_id"))
+		if pathID == 0 {
+			pathID = taskResourceRefID(input, "proxy_path")
+		}
+		if pathID == 0 {
+			return recipeNeedInput("routing.manage", "proxy_path_id", "需要指定要重排分流规则的代理路径 ID"), nil
+		}
+		placements, ok := input.Params["placements"]
+		if !ok || placements == nil {
+			return recipeNeedInput("routing.manage", "placements", "需要提供代理路径中全部分流规则的位置"), nil
+		}
+		operation := mcpOperationRef{Capability: "routing_rules.place", Input: map[string]any{"proxy_path_id": pathID, "placements": placements}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "routing.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "place_routing_rules", "proxy_path_id": pathID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+	}
+
 	deleting := containsAnyFold(input.Goal, "删除", "delete", "remove")
-	ruleID := int64(0)
-	if value := taskIntParam(input.Params, "routing_rule_id"); value > 0 {
-		ruleID = int64(value)
+	ruleID := int64(taskIntParam(input.Params, "routing_rule_id"))
+	if ruleID == 0 {
+		ruleID = taskResourceRefID(input, "routing_rule")
 	}
 	if deleting && ruleID == 0 {
 		return recipeNeedInput("routing.manage", "routing_rule_id", "需要指定要删除的分流规则 ID"), nil
@@ -114,43 +184,105 @@ func (s *Server) prepareRoutingRuleRecipe(ctx context.Context, principal applica
 	if ruleID > 0 {
 		changes := map[string]any{}
 		if nested, ok := input.Params["changes"].(map[string]any); ok {
-			changes = nested
+			copyRecipeFields(changes, nested, routingRuleRecipeFields)
 		}
-		for _, key := range []string{"name", "priority", "match_json", "action", "outbound_id", "external_outbound_id", "interface_name", "source_prefix", "enabled", "server_id"} {
-			if value, ok := input.Params[key]; ok {
-				changes[key] = value
-			}
-		}
+		copyRecipeFields(changes, input.Params, routingRuleRecipeFields)
 		if len(changes) == 0 {
 			return recipeNeedInput("routing.manage", "changes", "未识别到要修改的分流规则设置"), nil
 		}
 		operation := mcpOperationRef{Capability: "routing_rules.update", Input: map[string]any{"routing_rule_id": ruleID, "changes": changes}}
 		return &mcpPreparedRecipe{Status: "ready", Intent: "routing.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "update_routing_rule", "routing_rule_id": ruleID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
 	}
-	serverID, candidate, err := recipeTargetServer(ctx, s, principal, input)
-	if err != nil {
-		return nil, err
-	}
-	if candidate != nil {
-		candidate.Intent = "routing.manage"
-		return candidate, nil
-	}
-	rule := map[string]any{"server_id": serverID}
-	for _, key := range []string{"name", "priority", "match_json", "action", "outbound_id", "external_outbound_id", "interface_name", "source_prefix", "enabled"} {
-		if value, ok := input.Params[key]; ok {
-			rule[key] = value
-		}
-	}
+	rule := map[string]any{}
+	copyRecipeFields(rule, input.Params, append(routingRuleRecipeFields, "sync_source_rule_id", "sync_enabled"))
 	if nested, ok := input.Params["routing_rule"].(map[string]any); ok {
-		for key, value := range nested {
-			rule[key] = value
-		}
+		copyRecipeFields(rule, nested, append(routingRuleRecipeFields, "sync_source_rule_id", "sync_enabled"))
 	}
-	if rule["name"] == nil {
+	if _, hasScope := rule["scope"]; !hasScope && taskIntParam(rule, "proxy_path_id") > 0 {
+		rule["scope"] = model.RoutingRuleScopePathStage
+	}
+	serverID := int64(taskIntParam(rule, "server_id"))
+	if taskStringParam(rule, "scope") == model.RoutingRuleScopePathStage {
+		pathID := int64(taskIntParam(rule, "proxy_path_id"))
+		if pathID == 0 {
+			pathID = taskResourceRefID(input, "proxy_path")
+			if pathID > 0 {
+				rule["proxy_path_id"] = pathID
+			}
+		}
+		if pathID == 0 {
+			return recipeNeedInput("routing.manage", "proxy_path_id", "path_stage 分流规则需要指定代理路径 ID"), nil
+		}
+		var err error
+		serverID, err = s.routingRuleRecipeServerID(ctx, pathID, int64(taskIntParam(rule, "stage_step_id")))
+		if err != nil {
+			return nil, err
+		}
+		rule["server_id"] = serverID
+	} else if serverID == 0 {
+		resolvedID, candidate, err := recipeTargetServer(ctx, s, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		if candidate != nil {
+			candidate.Intent = "routing.manage"
+			return candidate, nil
+		}
+		serverID = resolvedID
+		rule["server_id"] = serverID
+	}
+	if rule["name"] == nil && taskIntParam(rule, "sync_source_rule_id") == 0 {
 		return recipeNeedInput("routing.manage", "name", "需要指定分流规则名称"), nil
 	}
 	operation := mcpOperationRef{Capability: "routing_rules.create", Input: map[string]any{"routing_rule": rule}}
 	return &mcpPreparedRecipe{Status: "ready", Intent: "routing.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "create_routing_rule", "server_id": serverID, "name": rule["name"]}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+}
+
+// prepareRoutingRuleSetRecipe routes reusable remote rule-set CRUD and refresh.
+func (s *Server) prepareRoutingRuleSetRecipe(_ context.Context, _ application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	setID := int64(taskIntParam(input.Params, "routing_rule_set_id", "rule_set_id"))
+	if setID == 0 {
+		setID = taskResourceRefID(input, "routing_rule_set")
+	}
+	refreshing := containsAnyFold(input.Goal, "刷新", "重新拉取", "refresh", "reload")
+	deleting := containsAnyFold(input.Goal, "删除", "delete", "remove")
+	if refreshing || deleting {
+		if setID == 0 {
+			return recipeNeedInput("routing_rule_set.manage", "routing_rule_set_id", "需要指定远程分流规则集 ID"), nil
+		}
+		capability := "routing_rule_sets.refresh"
+		action := "refresh_routing_rule_set"
+		operationInput := map[string]any{"routing_rule_set_id": setID}
+		if deleting {
+			capability = "routing_rule_sets.delete"
+			action = "delete_routing_rule_set"
+			operationInput["confirm"] = true
+		}
+		operation := mcpOperationRef{Capability: capability, Input: operationInput}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "routing_rule_set.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": action, "routing_rule_set_id": setID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+	}
+
+	fields := map[string]any{}
+	if setID > 0 {
+		if nested, ok := input.Params["changes"].(map[string]any); ok {
+			copyRecipeFields(fields, nested, []string{"name", "url", "format", "mihomo_behavior"})
+		}
+	} else if nested, ok := input.Params["routing_rule_set"].(map[string]any); ok {
+		copyRecipeFields(fields, nested, []string{"name", "url", "format", "mihomo_behavior"})
+	}
+	copyRecipeFields(fields, input.Params, []string{"name", "url", "format", "mihomo_behavior"})
+	if setID > 0 {
+		if len(fields) == 0 {
+			return recipeNeedInput("routing_rule_set.manage", "changes", "未识别到要修改的远程分流规则集设置"), nil
+		}
+		operation := mcpOperationRef{Capability: "routing_rule_sets.update", Input: map[string]any{"routing_rule_set_id": setID, "changes": fields}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "routing_rule_set.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "update_routing_rule_set", "routing_rule_set_id": setID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+	}
+	if fields["name"] == nil || fields["url"] == nil || fields["format"] == nil {
+		return recipeNeedInput("routing_rule_set.manage", "routing_rule_set", "需要指定规则集名称、URL 和格式"), nil
+	}
+	operation := mcpOperationRef{Capability: "routing_rule_sets.create", Input: map[string]any{"routing_rule_set": fields}}
+	return &mcpPreparedRecipe{Status: "ready", Intent: "routing_rule_set.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "create_routing_rule_set", "name": fields["name"]}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
 }
 
 // prepareExternalOutboundImportRecipe imports third-party nodes from text.
@@ -357,7 +489,7 @@ func (s *Server) prepareTunnelRecipe(ctx context.Context, principal application.
 	return &mcpPreparedRecipe{Status: "ready", Intent: "tunnel.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "create_tunnel", "name": fields["name"]}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
 }
 
-// prepareHostOpsRecipe routes diagnose / agent update / log / MTU operations.
+// prepareHostOpsRecipe routes diagnose / agent update / log / MTU / interface operations.
 func (s *Server) prepareHostOpsRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
 	serverID, candidate, err := recipeTargetServer(ctx, s, principal, input)
 	if err != nil {
@@ -369,6 +501,9 @@ func (s *Server) prepareHostOpsRecipe(ctx context.Context, principal application
 	}
 	goal := strings.ToLower(input.Goal)
 	switch {
+	case containsAnyFold(goal, "网卡", "网络接口", "network interface", "interfaces"):
+		operation := mcpOperationRef{Capability: "servers.list_network_interfaces", Input: map[string]any{"server_id": serverID}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "host_ops.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "list_network_interfaces", "server_id": serverID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "network_interface_task_queued"}}}, nil
 	case containsAnyFold(goal, "诊断", "diagnose"):
 		operation := mcpOperationRef{Capability: "servers.diagnose", Input: map[string]any{"server_id": serverID}}
 		return &mcpPreparedRecipe{Status: "ready", Intent: "host_ops.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "diagnose_server", "server_id": serverID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "diagnose_task_queued"}}}, nil
@@ -391,8 +526,35 @@ func (s *Server) prepareHostOpsRecipe(ctx context.Context, principal application
 		operation := mcpOperationRef{Capability: "servers.collect_logs", Input: map[string]any{"server_id": serverID, "services": firstNonEmptyString(taskStringParam(input.Params, "services"), "all"), "lines": taskIntParam(input.Params, "lines")}}
 		return &mcpPreparedRecipe{Status: "ready", Intent: "host_ops.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "collect_logs", "server_id": serverID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "logs_task_queued"}}}, nil
 	default:
-		return recipeNeedInput("host_ops.manage", "operation", "需要指定操作：诊断、升级 Agent、MTU 检测或日志"), nil
+		return recipeNeedInput("host_ops.manage", "operation", "需要指定操作：诊断、升级 Agent、读取网卡、MTU 检测或日志"), nil
 	}
+}
+
+func (s *Server) prepareControllerUpdateRecipe(_ context.Context, _ application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	goal := strings.ToLower(input.Goal)
+	channel := strings.ToLower(taskStringParam(input.Params, "channel"))
+	var operation mcpOperationRef
+	action := ""
+	switch {
+	case containsAnyFold(goal, "取消", "cancel"):
+		operation = mcpOperationRef{Capability: "controller_update.cancel", Input: map[string]any{"confirm": true}}
+		action = "cancel_controller_update"
+	case channel != "" || containsAnyFold(goal, "通道", "channel"):
+		if channel != "stable" && channel != "dev" {
+			return recipeNeedInput("controller_update.manage", "channel", "需要指定 stable 或 dev 更新通道"), nil
+		}
+		operation = mcpOperationRef{Capability: "controller_update.set_channel", Input: map[string]any{"channel": channel}}
+		action = "set_controller_update_channel"
+	case containsAnyFold(goal, "安装", "升级", "更新主控", "install", "update controller"):
+		operation = mcpOperationRef{Capability: "controller_update.install", Input: map[string]any{"confirm": true}}
+		action = "install_controller_update"
+	case containsAnyFold(goal, "检查", "check"):
+		operation = mcpOperationRef{Capability: "controller_update.check", Input: map[string]any{}}
+		action = "check_controller_update"
+	default:
+		return recipeNeedInput("controller_update.manage", "operation", "需要指定操作：检查更新、切换通道、安装更新或取消更新"), nil
+	}
+	return &mcpPreparedRecipe{Status: "ready", Intent: "controller_update.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": action}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "controller_update_status"}}}, nil
 }
 
 // prepareNotificationRecipe routes notification channel create / update /
@@ -483,7 +645,7 @@ func (s *Server) prepareSettingsRecipe(ctx context.Context, principal applicatio
 	if nested, ok := input.Params["changes"].(map[string]any); ok {
 		changes = nested
 	}
-	for _, key := range []string{"audit_enabled", "subscription_audit_enabled", "connection_audit_enabled", "audit_action", "traffic_timezone", "traffic_enforcement_mode", "subscription_age_policy", "subscription_custom_path_mode", "server_default_mtu_mode", "server_default_bbr_enabled", "server_default_time_correction_mode", "time_check_ntp_servers", "trusted_proxy_cidrs", "controller_log_max_mb", "controller_log_backups", "agent_auto_update_enabled", "subscription_relay_auto_update_enabled", "update_window_enabled", "update_window_start_hour", "update_window_end_hour", "registration_enabled"} {
+	for _, key := range []string{"audit_enabled", "subscription_audit_enabled", "connection_audit_enabled", "audit_action", "traffic_timezone", "traffic_enforcement_mode", "subscription_age_policy", "subscription_custom_path_mode", "server_default_mtu_mode", "server_default_bbr_enabled", "server_default_time_correction_mode", "server_monitoring_retention_days", "time_check_ntp_servers", "trusted_proxy_cidrs", "controller_log_max_mb", "controller_log_backups", "agent_auto_update_enabled", "subscription_relay_auto_update_enabled", "update_window_enabled", "update_window_start_hour", "update_window_end_hour", "registration_enabled"} {
 		if value, ok := input.Params[key]; ok {
 			changes[key] = value
 		}

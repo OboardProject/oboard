@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/controllerupdate"
+	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
 
@@ -326,6 +328,81 @@ func TestControllerUpdateInstallContinuesAfterRequestDisconnect(t *testing.T) {
 	}
 	if strings.TrimSpace(settings[controllerBackupSetting]) == "" {
 		t.Fatal("background update did not record its database backup")
+	}
+}
+
+func TestControllerUpdateCapabilitiesAndPublicView(t *testing.T) {
+	socketDir, err := os.MkdirTemp("/tmp", "obu-mcp-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "updater.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	channel := "stable"
+	checkCalls, channelCalls, cancelCalls := 0, 0, 0
+	updater := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		status := controllerupdate.Status{
+			Channel: channel, State: "available", UpdateAvailable: true, CanCancel: true,
+			Available:     controllerupdate.BuildInfo{Version: "2.0.0", Build: "20260817000000"},
+			BackupPath:    "/private/controller.sqlite",
+			ManualCommand: "sudo updater install --secret",
+		}
+		switch r.URL.Path {
+		case "/v1/check":
+			checkCalls++
+		case "/v1/channel":
+			var request controllerupdate.ChannelRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode channel request: %v", err)
+			}
+			channel = request.Channel
+			status.Channel = channel
+			channelCalls++
+		case "/v1/cancel":
+			status.State = "cancelling"
+			cancelCalls++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(status)
+	})}
+	done := make(chan error, 1)
+	go func() { done <- updater.Serve(listener) }()
+	t.Cleanup(func() {
+		_ = updater.Close()
+		<-done
+	})
+
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	server.controllerUpdater = controllerupdate.NewClient(socketPath)
+	admin := &model.User{Username: "update-admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111117", ProxyPassword: "unused"}
+	if err := db.CreateUser(t.Context(), admin); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	view, err := server.queryManagementCapability(t.Context(), principal, "controller_update.status", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(view)
+	if strings.Contains(string(encoded), "backup_path") || strings.Contains(string(encoded), "manual_command") || strings.Contains(string(encoded), "/private/") || strings.Contains(string(encoded), "sudo updater") {
+		t.Fatalf("controller update public view leaked local details: %s", encoded)
+	}
+
+	applyAutomationChangeset(t, server, principal, "controller-check", automation.OperationRequest{Capability: "controller_update.check", Input: json.RawMessage(`{}`)})
+	applyAutomationChangeset(t, server, principal, "controller-channel", automation.OperationRequest{Capability: "controller_update.set_channel", Input: json.RawMessage(`{"channel":"dev"}`)})
+	applyAutomationChangeset(t, server, principal, "controller-cancel", automation.OperationRequest{Capability: "controller_update.cancel", Input: json.RawMessage(`{"confirm":true}`)})
+	mu.Lock()
+	defer mu.Unlock()
+	if checkCalls != 1 || channelCalls != 1 || cancelCalls != 1 || channel != "dev" {
+		t.Fatalf("updater calls check=%d channel=%d cancel=%d current_channel=%q", checkCalls, channelCalls, cancelCalls, channel)
 	}
 }
 
