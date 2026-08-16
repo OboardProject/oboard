@@ -183,6 +183,47 @@ func inboundListenResource(inbound model.Inbound) listenResource {
 	}
 }
 
+// ValidateInboundManagedPortAvailability prevents a manually configured
+// inbound from taking a port that belongs to a generated proxy-path listener.
+// Every allocation generation remains reserved until the migration lifecycle
+// explicitly removes it.
+func ValidateInboundManagedPortAvailability(inbound model.Inbound, allocations []model.ProxyPathPortAllocation) error {
+	if !inbound.Enabled {
+		return nil
+	}
+	ports, err := MieruInboundPorts(inbound)
+	if err != nil {
+		return err
+	}
+	protocol := portForwardListenTransport(transparentForwardProtocol(inbound))
+	for _, port := range ports {
+		candidate := listenResource{
+			serverID: inbound.ServerID,
+			address:  inbound.ListenIP,
+			port:     port,
+			protocol: protocol,
+			owner:    fmt.Sprintf("inbound %q", inbound.Name),
+		}
+		for _, allocation := range allocations {
+			network := model.ForwardProtocol(allocation.Network)
+			if network != model.ForwardProtocolTCP && network != model.ForwardProtocolUDP {
+				network = model.ForwardProtocolTCPUDP
+			}
+			managed := listenResource{
+				serverID: allocation.ServerID,
+				address:  allocation.ListenIP,
+				port:     allocation.Port,
+				protocol: portForwardListenTransport(network),
+				owner:    fmt.Sprintf("managed %s/%s", allocation.Kind, allocation.ScopeKey),
+			}
+			if candidate.conflicts(managed) {
+				return fmt.Errorf("inbound listen resource %s:%d (%s) is reserved by %s", normalizeListenAddress(inbound.ListenIP), port, listenTransportName(candidate.protocol&managed.protocol), managed.owner)
+			}
+		}
+	}
+	return nil
+}
+
 func portForwardListenTransport(protocol model.ForwardProtocol) listenTransport {
 	switch protocol {
 	case model.ForwardProtocolTCP:

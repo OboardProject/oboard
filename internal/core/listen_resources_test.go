@@ -91,3 +91,22 @@ func TestInboundListenResourceAndAllocationShareConflictModel(t *testing.T) {
 		t.Fatalf("wildcard inbound did not block a specific candidate, got %d", port)
 	}
 }
+
+func TestInboundCannotTakeManagedPortWithOverlappingTransport(t *testing.T) {
+	allocation := model.ProxyPathPortAllocation{
+		Kind: model.ProxyPathPortKindChainService, ScopeKey: DefaultProxyPathChainMethod,
+		ServerID: 1, ListenIP: "0.0.0.0", Network: "tcp", Port: 55000,
+	}
+	tcpInbound := model.Inbound{ServerID: 1, Name: "manual", Protocol: model.ProtocolVLESS, ListenIP: "192.0.2.10", Port: 55000, Enabled: true}
+	if err := ValidateInboundManagedPortAvailability(tcpInbound, []model.ProxyPathPortAllocation{allocation}); err == nil {
+		t.Fatal("specific TCP inbound took a wildcard managed TCP port")
+	}
+	udpInbound := model.Inbound{ServerID: 1, Name: "udp", Protocol: model.ProtocolHY2, ListenIP: "0.0.0.0", Port: 55000, Enabled: true}
+	if err := ValidateInboundManagedPortAvailability(udpInbound, []model.ProxyPathPortAllocation{allocation}); err != nil {
+		t.Fatalf("UDP inbound conflicted with TCP-only allocation: %v", err)
+	}
+	tcpInbound.Enabled = false
+	if err := ValidateInboundManagedPortAvailability(tcpInbound, []model.ProxyPathPortAllocation{allocation}); err != nil {
+		t.Fatalf("disabled inbound reserved a managed port: %v", err)
+	}
+}

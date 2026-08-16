@@ -3341,10 +3341,11 @@ func TestDeploymentPersistsAndReusesGeneratedPorts(t *testing.T) {
 		t.Fatalf("allocated port %d is outside the target's configured range", assigned)
 	}
 
-	// Occupy the allocated port with a new inbound on the target, then deploy
-	// again. The stored allocation must win so the live listener does not move.
-	request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverBID, "name": "squatter", "protocol": "vless", "listen_ip": "0.0.0.0", "port": assigned, "config_json": `{}`, "enabled": true}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusBadRequest)
+	// A manual inbound must not be allowed to take a persisted generated port.
+	// Letting the write succeed makes the next deployment fail after the
+	// operator has already saved an apparently valid topology.
+	request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverBID, "name": "squatter", "protocol": "vless", "listen_ip": "0.0.0.0", "port": assigned, "config_json": `{}`, "enabled": true}, http.StatusConflict)
+	request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 	after, err := db.ListProxyPathPortAllocations(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -3363,6 +3364,45 @@ func TestDeploymentPersistsAndReusesGeneratedPorts(t *testing.T) {
 	if len(released) != 0 {
 		t.Fatalf("allocation survived removal of its only consumer: %#v", released)
 	}
+}
+
+func TestProxyPathStepDeletePreservesRootRoutingRulesAsDirectPath(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+
+	serverA := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
+	serverB := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
+	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
+	path := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	pathID := int64(path["proxy_path"].(map[string]any)["id"].(float64))
+	step := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox"}, http.StatusCreated)
+	stepID := int64(step["proxy_path_step"].(map[string]any)["id"].(float64))
+	rule := request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"scope": "path_stage", "proxy_path_id": pathID, "sort_position": 0, "match_source": "inline", "name": "all-via-eth0", "match_json": `{}`, "action": "interface", "interface_name": "eth0", "enabled": true}, http.StatusCreated)
+	ruleID := int64(rule["routing_rule"].(map[string]any)["id"].(float64))
+
+	deleted := request(t, h, http.MethodDelete, "/api/v2/ui/proxy-path-steps/"+itoa(stepID), token, nil, http.StatusOK)
+	if deleted["path_deleted"] != false || int(deleted["deleted_steps"].(float64)) != 1 {
+		t.Fatalf("delete result = %#v", deleted)
+	}
+	retained := deleted["proxy_path"].(map[string]any)
+	if retained["id"] != float64(pathID) || retained["kind"] != "direct" {
+		t.Fatalf("retained path = %#v, want direct path %d", retained, pathID)
+	}
+	storedRule, err := db.GetRoutingRule(context.Background(), ruleID)
+	if err != nil || storedRule.ProxyPathID == nil || *storedRule.ProxyPathID != pathID || storedRule.StageStepID != nil {
+		t.Fatalf("root routing rule disappeared after removing its downstream hop: %#v err=%v", storedRule, err)
+	}
+	request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 }
 
 func TestTrustedForwardAgentBuildGateAndSecretScrubbing(t *testing.T) {

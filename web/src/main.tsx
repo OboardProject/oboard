@@ -70,7 +70,7 @@ import {
 } from './components/proxy-path/graph-routing-stages'
 import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
 import { proxyPathGeneratedReuseCountKey } from './components/proxy-path/reuse-target-options'
-import { detachedPathSuffix, detachedStepCreateRequest, disconnectPathCandidates, type CanvasDetachedChain } from './components/proxy-path/detached-chain'
+import { detachedPathSuffix, detachedStepCreateRequest, disconnectPathCandidates, proxyPathStepDeleteRemovals, type CanvasDetachedChain } from './components/proxy-path/detached-chain'
 import { mergeTopologyMutation, removeTopologyRows } from './components/proxy-path/mutation-data'
 import './style.css'
 import { alignUnifiedMetrics, computeMaxLatency, splitSeriesSegments, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
@@ -10617,7 +10617,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     })
 	    if (!ok) return
 	    try {
-	      await client.request(item.path, { method: 'DELETE' })
+	      const result = await client.request(item.path, { method: 'DELETE' }) as Record<string, any>
+	      applyMutationResult(result)
 	      const removals: Partial<Record<string, readonly number[]>> = {}
 	      if (entity.type === 'server') removals.servers = [entity.id]
 	      if (entity.type === 'entry') removals.inbounds = [entity.id]
@@ -10632,10 +10633,12 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      if (entity.type === 'proxy-path-step') {
 	        const selectedStep = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === entity.id)
 	        if (selectedStep) {
-	          const pathSteps = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === selectedStep.path_id)
-	          const suffixIDs = pathSteps.filter(step => step.position >= selectedStep.position).map(step => step.id)
-	          removals.proxy_path_steps = suffixIDs
-	          if (suffixIDs.length === pathSteps.length) removals.proxy_paths = [selectedStep.path_id]
+	          Object.assign(removals, proxyPathStepDeleteRemovals(
+	            selectedStep.path_id,
+	            selectedStep.id,
+	            (data.proxy_path_steps || []) as ProxyPathStep[],
+	            result.path_deleted === true,
+	          ))
 	        }
 	      }
 	      removeMutationRows(removals)
@@ -10725,11 +10728,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		    })
 
 		    try {
-		      await client.request(`/proxy-path-steps/${selectedCandidate.step.id}`, { method: 'DELETE' })
-		      removeMutationRows({
-		        proxy_path_steps: suffix.map(step => step.id),
-		        ...(suffix.length === allSteps.filter(step => step.path_id === path.id).length ? { proxy_paths: [path.id] } : {}),
-		      })
+		      const result = await client.request(`/proxy-path-steps/${selectedCandidate.step.id}`, { method: 'DELETE' }) as Record<string, any>
+		      applyMutationResult(result)
+		      removeMutationRows(proxyPathStepDeleteRemovals(path.id, selectedCandidate.step.id, allSteps, result.path_deleted === true))
 		      setCanvasDetachedChains(chains => [...chains, {
 		        instance_id: instanceID,
 		        root_server_id: rootEntry.server_id,

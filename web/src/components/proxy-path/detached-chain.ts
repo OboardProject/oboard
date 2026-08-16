@@ -61,3 +61,16 @@ export function detachedStepCreateRequest(step: ProxyPathStep, pathID: number, p
     config_json: step.config_json || '{}',
   }
 }
+
+export function proxyPathStepDeleteRemovals(
+  pathID: number,
+  fromStepID: number,
+  steps: readonly ProxyPathStep[],
+  pathDeleted: boolean,
+) {
+  const suffix = detachedPathSuffix(pathID, fromStepID, steps)
+  return {
+    proxy_path_steps: suffix.map(step => step.id),
+    ...(pathDeleted ? { proxy_paths: [pathID] } : {}),
+  }
+}

@@ -170,11 +170,22 @@ func TestProxyPathEditCapabilitiesApplyThroughChangesets(t *testing.T) {
 	if err != nil || len(paths) != 2 {
 		t.Fatalf("paths after direct branch=%#v err=%v", paths, err)
 	}
+	rule := &model.RoutingRule{ServerID: entry.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &path.ID, MatchSource: model.RoutingMatchSourceInline, Name: "keep-root-stage", MatchJSON: `{}`, Action: model.RouteActionDirect, Enabled: true}
+	if err := db.CreateRoutingRule(ctx, rule); err != nil {
+		t.Fatal(err)
+	}
 	truncateInput, _ := json.Marshal(map[string]any{"path_id": path.ID, "step_id": steps[0].ID, "confirm": true})
 	apply("truncate-path", "proxy_path_steps.truncate", truncateInput)
 	paths, err = db.ListProxyPaths(ctx)
-	if err != nil || len(paths) != 1 || paths[0].Kind != model.ProxyPathKindDirect {
+	if err != nil || len(paths) != 2 {
 		t.Fatalf("paths after truncate=%#v err=%v", paths, err)
+	}
+	retained, err := db.GetProxyPath(ctx, path.ID)
+	if err != nil || retained.Kind != model.ProxyPathKindDirect {
+		t.Fatalf("routing path after truncate=%#v err=%v", retained, err)
+	}
+	if _, err := db.GetRoutingRule(ctx, rule.ID); err != nil {
+		t.Fatalf("root routing rule disappeared after automation truncate: %v", err)
 	}
 	deleteInboundInput, _ := json.Marshal(map[string]any{"inbound_id": inbound.ID, "confirm": true})
 	apply("delete-inbound", "inbounds.delete", deleteInboundInput)

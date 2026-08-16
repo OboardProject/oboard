@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ProxyPathStep } from './types'
-import { detachedPathSuffix, detachedStepCreateRequest, disconnectPathCandidates } from './detached-chain'
+import { detachedPathSuffix, detachedStepCreateRequest, disconnectPathCandidates, proxyPathStepDeleteRemovals } from './detached-chain'
 
 const steps: ProxyPathStep[] = [
   { id: 11, path_id: 1, position: 1, node_type: 'server_inbound', server_id: 101, transport_mode: 'port_forward', config_json: '{"listen_port":31001}' },
@@ -33,6 +33,16 @@ describe('detached proxy path chains', () => {
       inbound_id: undefined,
       external_outbound_id: 201,
       config_json: '{"password":"secret"}',
+    })
+  })
+
+  it('keeps a retained routing path while removing its deleted step suffix', () => {
+    expect(proxyPathStepDeleteRemovals(1, 11, steps, false)).toEqual({
+      proxy_path_steps: [11, 12],
+    })
+    expect(proxyPathStepDeleteRemovals(1, 11, steps, true)).toEqual({
+      proxy_path_steps: [11, 12],
+      proxy_paths: [1],
     })
   })
 })

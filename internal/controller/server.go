@@ -5208,7 +5208,11 @@ func (s *Server) ensureInboundListenAvailable(ctx context.Context, v model.Inbou
 			}
 		}
 	}
-	return nil
+	allocations, err := s.store.ListProxyPathPortAllocations(ctx)
+	if err != nil {
+		return err
+	}
+	return core.ValidateInboundManagedPortAvailability(v, allocations)
 }
 
 func (s *Server) userGroups(w http.ResponseWriter, r *http.Request) {
@@ -7995,31 +7999,76 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		pathDeleted := len(remaining) == 0
-		if pathDeleted {
-			if err := s.store.DeleteProxyPath(r.Context(), current.PathID); err != nil {
-				fail(w, err, 500)
-				return
-			}
-		} else {
-			if err := s.normalizeAndValidateProxyPath(r.Context(), current.PathID); err != nil {
-				fail(w, err, 500)
-				return
-			}
-			if err := s.store.ClearProxyPathBranchSource(r.Context(), current.PathID); err != nil {
-				fail(w, err, 500)
-				return
-			}
-		}
-		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
+		retainedPath, pathDeleted, err := s.finishProxyPathTruncation(r.Context(), current.PathID, len(remaining) == 0)
+		if err != nil {
 			fail(w, err, 500)
 			return
 		}
 		auditReq(s, r, "delete", "proxy-path-step", fmt.Sprint(id))
-		write(w, 200, map[string]any{"deleted": true, "deleted_steps": deletedSteps, "path_deleted": pathDeleted})
+		result := map[string]any{"deleted": true, "deleted_steps": deletedSteps, "path_deleted": pathDeleted}
+		if retainedPath != nil {
+			result["proxy_path"] = *retainedPath
+		}
+		write(w, 200, result)
 	default:
 		method(w)
 	}
+}
+
+func (s *Server) finishProxyPathTruncation(ctx context.Context, pathID int64, empty bool) (*model.ProxyPath, bool, error) {
+	if empty {
+		keepAsDirect, err := s.proxyPathHasRootRoutingRules(ctx, pathID)
+		if err != nil {
+			return nil, false, err
+		}
+		if !keepAsDirect {
+			if err := s.store.DeleteProxyPath(ctx, pathID); err != nil {
+				return nil, false, err
+			}
+			if err := s.reconcileProxyPathNameTemplates(ctx); err != nil {
+				return nil, false, err
+			}
+			return nil, true, nil
+		}
+		path, err := s.store.GetProxyPath(ctx, pathID)
+		if err != nil {
+			return nil, false, err
+		}
+		path.Kind = model.ProxyPathKindDirect
+		path.BranchSourceStepID = nil
+		if err := s.store.UpdateProxyPath(ctx, path); err != nil {
+			return nil, false, err
+		}
+	} else {
+		if err := s.normalizeAndValidateProxyPath(ctx, pathID); err != nil {
+			return nil, false, err
+		}
+		if err := s.store.ClearProxyPathBranchSource(ctx, pathID); err != nil {
+			return nil, false, err
+		}
+	}
+	if err := s.reconcileProxyPathNameTemplates(ctx); err != nil {
+		return nil, false, err
+	}
+	path, err := s.store.GetProxyPath(ctx, pathID)
+	if err != nil {
+		return nil, false, err
+	}
+	resolved := s.resolvedProxyPath(ctx, *path)
+	return &resolved, false, nil
+}
+
+func (s *Server) proxyPathHasRootRoutingRules(ctx context.Context, pathID int64) (bool, error) {
+	rules, err := s.store.ListRoutingRules(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, rule := range rules {
+		if rule.Scope == model.RoutingRuleScopePathStage && rule.ProxyPathID != nil && *rule.ProxyPathID == pathID && rule.StageStepID == nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Server) nextProxyPathStepPosition(ctx context.Context, pathID int64) (int, error) {
