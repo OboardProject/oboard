@@ -94,8 +94,8 @@ func analyzeReport(ctx context.Context, runtime *workerRuntime, job *model.Audit
 }
 
 func bindReportRoute(input, output json.RawMessage, capability *model.AIProviderCapability, modelID string) (json.RawMessage, json.RawMessage, error) {
-	if capability == nil {
-		return nil, nil, errors.New("selected endpoint has no capability profile")
+	if !aiprovider.CapabilityAuditReady(capability) {
+		return nil, nil, errors.New("selected endpoint is not audit-ready")
 	}
 	var envelope map[string]any
 	if err := json.Unmarshal(input, &envelope); err != nil {
@@ -106,7 +106,6 @@ func bindReportRoute(input, output json.RawMessage, capability *model.AIProvider
 		return nil, nil, errors.New("audit report input has no engine summary")
 	}
 	engine["provider_profile_version"] = capability.ProviderProfileVersion
-	engine["provider_grade"] = capability.AuditGrade
 	engine["structured_output"] = capability.StructuredOutput
 	engine["output_mode"] = capability.OutputMode
 	engine["model"] = modelID
@@ -119,7 +118,6 @@ func bindReportRoute(input, output json.RawMessage, capability *model.AIProvider
 		return nil, nil, err
 	}
 	report.Methodology.ProviderProfileVersion = capability.ProviderProfileVersion
-	report.Methodology.ProviderGrade = capability.AuditGrade
 	report.Methodology.StructuredOutput = capability.StructuredOutput
 	report.Methodology.OutputMode = capability.OutputMode
 	report.Methodology.Model = modelID
@@ -140,7 +138,7 @@ func analyzeStructured(ctx context.Context, runtime *workerRuntime, wire *airpc.
 		raw = extractJSON(response.Text)
 	}
 	validationErr := aiprovider.ValidateJSONSchema(schema, raw)
-	if validationErr != nil && capability != nil && capability.AuditGrade == model.AuditProviderGradeB {
+	if validationErr != nil {
 		repairCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		request.Messages = append(request.Messages, aiprovider.Message{Role: "assistant", Content: response.Text}, aiprovider.Message{Role: "user", Content: "上一条输出未通过本地校验：" + validationErr.Error() + "。仅重新输出完整合法 JSON。"})

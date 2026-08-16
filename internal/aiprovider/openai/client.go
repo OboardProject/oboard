@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"sort"
@@ -58,32 +57,61 @@ func (c *Client) ListModels(ctx context.Context, endpoint aiprovider.RuntimeEndp
 	if err != nil {
 		return nil, err
 	}
-	var envelope struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if json.Unmarshal(body, &envelope) != nil || len(envelope.Data) == 0 || len(envelope.Data) > 1000 {
+	ids, ok := decodeModelIDs(body)
+	if !ok || len(ids) == 0 || len(ids) > 1000 {
 		return nil, aiprovider.NewError(aiprovider.ErrorParse, false, response.StatusCode, "unsupported OpenAI model list", nil)
 	}
 	unique := map[string]struct{}{}
-	for _, item := range envelope.Data {
-		id := strings.TrimSpace(item.ID)
+	for _, value := range ids {
+		id := strings.TrimSpace(value)
 		if id == "" || len(id) > 512 {
 			return nil, aiprovider.NewError(aiprovider.ErrorParse, false, response.StatusCode, "invalid model ID", nil)
 		}
 		unique[id] = struct{}{}
 	}
-	ids := make([]string, 0, len(unique))
+	sortedIDs := make([]string, 0, len(unique))
 	for id := range unique {
-		ids = append(ids, id)
+		sortedIDs = append(sortedIDs, id)
 	}
-	sort.Strings(ids)
-	models := make([]aiprovider.ModelInfo, 0, len(ids))
-	for _, id := range ids {
+	sort.Strings(sortedIDs)
+	models := make([]aiprovider.ModelInfo, 0, len(sortedIDs))
+	for _, id := range sortedIDs {
 		models = append(models, aiprovider.ModelInfo{ID: id})
 	}
 	return models, nil
+}
+
+func decodeModelIDs(body []byte) ([]string, bool) {
+	var root any
+	if json.Unmarshal(body, &root) != nil {
+		return nil, false
+	}
+	items := root
+	if object, ok := root.(map[string]any); ok {
+		items = object["data"]
+		if items == nil {
+			items = object["models"]
+		}
+	}
+	list, ok := items.([]any)
+	if !ok {
+		return nil, false
+	}
+	ids := make([]string, 0, len(list))
+	for _, item := range list {
+		switch value := item.(type) {
+		case string:
+			ids = append(ids, value)
+		case map[string]any:
+			for _, key := range []string{"id", "name", "model"} {
+				if id, ok := value[key].(string); ok && strings.TrimSpace(id) != "" {
+					ids = append(ids, id)
+					break
+				}
+			}
+		}
+	}
+	return ids, true
 }
 
 func (c *Client) Complete(ctx context.Context, endpoint aiprovider.RuntimeEndpoint, input aiprovider.Request) (*aiprovider.Response, error) {
@@ -134,7 +162,7 @@ func (c *Client) Complete(ctx context.Context, endpoint aiprovider.RuntimeEndpoi
 	result.ProviderRequestID = firstNonEmpty(response.Header.Get("x-request-id"), response.Header.Get("request-id"))
 	result.Latency = time.Since(started)
 	result.Model = input.Model
-	if raw, err := extractStructured(result.Text); err == nil {
+	if raw := aiprovider.ExtractJSONObject(result.Text); raw != nil {
 		result.Structured = raw
 	}
 	return result, nil
@@ -280,18 +308,6 @@ func streamInt(values map[string]any, keys ...string) int64 {
 	return 0
 }
 
-func extractStructured(text string) (json.RawMessage, error) {
-	value := strings.TrimSpace(text)
-	value = strings.TrimPrefix(value, "```json")
-	value = strings.TrimPrefix(value, "```")
-	value = strings.TrimSuffix(value, "```")
-	value = strings.TrimSpace(value)
-	var object any
-	if json.Unmarshal([]byte(value), &object) != nil {
-		return nil, errors.New("not JSON")
-	}
-	return json.RawMessage(value), nil
-}
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {

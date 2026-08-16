@@ -20,23 +20,36 @@ func (c *Client) payload(input aiprovider.Request, stream bool) map[string]any {
 		if input.Temperature != nil {
 			payload["temperature"] = *input.Temperature
 		}
-		if input.Schema != nil && input.OutputMode != "json_object" {
-			payload["text"] = map[string]any{"format": map[string]any{"type": "json_schema", "name": "oboard_result", "strict": true, "schema": input.Schema}}
+		if input.Schema != nil && input.OutputMode != "text" {
+			format := map[string]any{"type": "json_object"}
+			if input.OutputMode != "json_object" {
+				format = map[string]any{"type": "json_schema", "name": "oboard_result", "strict": true, "schema": input.Schema}
+			}
+			payload["text"] = map[string]any{"format": format}
 		}
 		return payload
 	}
 	messages := make([]map[string]any, 0, len(input.Messages)+1)
 	if input.System != "" {
-		messages = append(messages, map[string]any{"role": "system", "content": input.System})
+		role := "system"
+		if usesMaxCompletionTokens(input.Model) {
+			role = "developer"
+		}
+		messages = append(messages, map[string]any{"role": role, "content": input.System})
 	}
 	for _, message := range input.Messages {
 		messages = append(messages, map[string]any{"role": message.Role, "content": message.Content})
 	}
-	payload := map[string]any{"model": input.Model, "messages": messages, "max_tokens": input.MaxOutputTokens, "stream": stream}
+	payload := map[string]any{"model": input.Model, "messages": messages, "stream": stream}
+	if usesMaxCompletionTokens(input.Model) {
+		payload["max_completion_tokens"] = input.MaxOutputTokens
+	} else {
+		payload["max_tokens"] = input.MaxOutputTokens
+	}
 	if input.Temperature != nil {
 		payload["temperature"] = *input.Temperature
 	}
-	if input.Schema != nil {
+	if input.Schema != nil && input.OutputMode != "text" {
 		if input.OutputMode == "json_object" {
 			payload["response_format"] = map[string]any{"type": "json_object"}
 		} else {
@@ -44,6 +57,14 @@ func (c *Client) payload(input aiprovider.Request, stream bool) map[string]any {
 		}
 	}
 	return payload
+}
+
+func usesMaxCompletionTokens(modelID string) bool {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	if slash := strings.LastIndex(modelID, "/"); slash >= 0 {
+		modelID = modelID[slash+1:]
+	}
+	return strings.HasPrefix(modelID, "gpt-5") || strings.HasPrefix(modelID, "o1") || strings.HasPrefix(modelID, "o3") || strings.HasPrefix(modelID, "o4")
 }
 
 func (c *Client) decode(body []byte) (*aiprovider.Response, error) {
@@ -95,28 +116,74 @@ func (c *Client) decode(body []byte) (*aiprovider.Response, error) {
 		Model   string `json:"model"`
 		Choices []struct {
 			Message struct {
-				Content string `json:"content"`
+				Content          json.RawMessage `json:"content"`
+				ReasoningContent string          `json:"reasoning_content"`
 			} `json:"message"`
-			Finish string `json:"finish_reason"`
+			Finish     string `json:"finish_reason"`
+			StopReason string `json:"stop_reason"`
 		} `json:"choices"`
 		Usage struct {
-			Input  int64 `json:"prompt_tokens"`
-			Output int64 `json:"completion_tokens"`
-			Total  int64 `json:"total_tokens"`
+			Prompt     int64 `json:"prompt_tokens"`
+			Completion int64 `json:"completion_tokens"`
+			Input      int64 `json:"input_tokens"`
+			Output     int64 `json:"output_tokens"`
+			Total      int64 `json:"total_tokens"`
 		} `json:"usage"`
 	}
-	if json.Unmarshal(body, &envelope) != nil || len(envelope.Choices) == 0 || envelope.Choices[0].Message.Content == "" {
+	if json.Unmarshal(body, &envelope) != nil || len(envelope.Choices) == 0 {
 		return nil, aiprovider.NewError(aiprovider.ErrorParse, false, 0, "malformed OpenAI Chat payload", nil)
 	}
-	raw := envelope.Choices[0].Finish
-	return &aiprovider.Response{Text: envelope.Choices[0].Message.Content, Usage: aiprovider.Usage{InputTokens: envelope.Usage.Input, OutputTokens: envelope.Usage.Output, TotalTokens: envelope.Usage.Total}, FinishReason: normalizeFinish(raw), RawFinishReason: raw, Model: envelope.Model}, nil
+	choice := envelope.Choices[0]
+	text := decodeChatContent(choice.Message.Content)
+	if text == "" {
+		text = choice.Message.ReasoningContent
+	}
+	if text == "" {
+		return nil, aiprovider.NewError(aiprovider.ErrorParse, false, 0, "OpenAI Chat returned no text", nil)
+	}
+	inputTokens, outputTokens := envelope.Usage.Prompt, envelope.Usage.Completion
+	if inputTokens == 0 {
+		inputTokens = envelope.Usage.Input
+	}
+	if outputTokens == 0 {
+		outputTokens = envelope.Usage.Output
+	}
+	totalTokens := envelope.Usage.Total
+	if totalTokens == 0 {
+		totalTokens = inputTokens + outputTokens
+	}
+	raw := choice.Finish
+	if raw == "" {
+		raw = choice.StopReason
+	}
+	return &aiprovider.Response{Text: text, Usage: aiprovider.Usage{InputTokens: inputTokens, OutputTokens: outputTokens, TotalTokens: totalTokens}, FinishReason: normalizeFinish(raw), RawFinishReason: raw, Model: envelope.Model}, nil
+}
+
+func decodeChatContent(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	var parts []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &parts) != nil {
+		return ""
+	}
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part.Text != "" {
+			values = append(values, part.Text)
+		}
+	}
+	return strings.Join(values, "")
 }
 
 func normalizeFinish(raw string) string {
 	switch raw {
-	case "completed", "stop", "stop_sequence":
+	case "completed", "stop", "stop_sequence", "end_turn", "eos", "finished", "normal", "success":
 		return "stop"
-	case "incomplete", "length", "max_tokens", "max_output_tokens":
+	case "incomplete", "length", "max_tokens", "max_output_tokens", "max_completion_tokens":
 		return "length"
 	case "tool_calls", "function_call", "tool_use":
 		return "tool"

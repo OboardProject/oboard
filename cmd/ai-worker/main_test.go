@@ -16,13 +16,16 @@ import (
 func TestBindReportRouteUsesSelectedEndpointCapability(t *testing.T) {
 	capability := &model.AIProviderCapability{
 		ProviderProfileVersion: model.AuditProviderProfileVersion,
-		AuditGrade:             model.AuditProviderGradeB,
-		StructuredOutput:       model.AuditProviderStructuredJSONObject,
-		OutputMode:             model.AuditOutputModeJSONObject,
+		ConnectivityOK:         true,
+		AuthenticationOK:       true,
+		TextSupported:          true,
+		AuditReady:             true,
+		StructuredOutput:       model.AuditProviderStructuredPromptedJSON,
+		OutputMode:             model.AuditOutputModeText,
 	}
 	boundInput, boundOutput, err := bindReportRoute(
-		json.RawMessage(`{"engine":{"provider_grade":"A","model":"primary"}}`),
-		json.RawMessage(`{"methodology":{"provider_grade":"A","model":"primary"}}`),
+		json.RawMessage(`{"engine":{"structured_output":"json_schema","output_mode":"strict_schema","model":"primary"}}`),
+		json.RawMessage(`{"methodology":{"structured_output":"json_schema","output_mode":"strict_schema","model":"primary"}}`),
 		capability,
 		"fallback-model",
 	)
@@ -35,15 +38,23 @@ func TestBindReportRouteUsesSelectedEndpointCapability(t *testing.T) {
 	if err := json.Unmarshal(boundInput, &input); err != nil {
 		t.Fatal(err)
 	}
-	if input.Engine["provider_grade"] != model.AuditProviderGradeB || input.Engine["model"] != "fallback-model" {
+	if input.Engine["structured_output"] != model.AuditProviderStructuredPromptedJSON || input.Engine["output_mode"] != model.AuditOutputModeText || input.Engine["model"] != "fallback-model" {
 		t.Fatalf("bound engine = %#v", input.Engine)
 	}
-	var report model.AuditReviewReport
+	if _, exists := input.Engine["provider_grade"]; exists {
+		t.Fatalf("bound engine retained provider grade: %#v", input.Engine)
+	}
+	var report struct {
+		Methodology map[string]any `json:"methodology"`
+	}
 	if err := json.Unmarshal(boundOutput, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Methodology.ProviderGrade != model.AuditProviderGradeB || report.Methodology.OutputMode != model.AuditOutputModeJSONObject || report.Methodology.Model != "fallback-model" {
+	if report.Methodology["structured_output"] != model.AuditProviderStructuredPromptedJSON || report.Methodology["output_mode"] != model.AuditOutputModeText || report.Methodology["model"] != "fallback-model" {
 		t.Fatalf("bound methodology = %#v", report.Methodology)
+	}
+	if _, exists := report.Methodology["provider_grade"]; exists {
+		t.Fatalf("bound methodology retained provider grade: %#v", report.Methodology)
 	}
 }
 
@@ -82,6 +93,9 @@ func TestProviderTestProducesEndpointCapabilityWithoutSecret(t *testing.T) {
 	if outcome.err != nil || outcome.capability.EndpointID != "e" || outcome.capability.ConfigDigest == "" {
 		t.Fatalf("outcome=%#v", outcome)
 	}
+	if !outcome.capability.AuditReady || outcome.capability.StructuredOutput != model.AuditProviderStructuredJSONSchema || outcome.capability.OutputMode != model.AuditOutputModeStrictSchema {
+		t.Fatalf("capability=%#v", outcome.capability)
+	}
 	if contains := json.Valid([]byte(outcome.responseJSON)) && string(outcome.responseJSON) != ""; !contains {
 		t.Fatal("missing safe summary")
 	}
@@ -106,17 +120,17 @@ func TestProviderTestReturnsUnusableCapabilityForAuthenticationFailure(t *testin
 	if outcome.err == nil || outcome.statusCode != http.StatusUnauthorized || outcome.capability == nil {
 		t.Fatalf("outcome=%#v", outcome)
 	}
-	if outcome.capability.ProviderID != "draft:draft-test" || !outcome.capability.ConnectivityOK || outcome.capability.AuthenticationOK || outcome.capability.AuditGrade != model.AuditProviderGradeUnusable {
+	if outcome.capability.ProviderID != "draft:draft-test" || !outcome.capability.ConnectivityOK || outcome.capability.AuthenticationOK || outcome.capability.AuditReady || outcome.capability.StructuredOutput != model.AuditProviderStructuredNone || outcome.capability.OutputMode != model.AuditOutputModeText {
 		t.Fatalf("capability=%#v", outcome.capability)
 	}
 }
 
-func TestProviderTestCapsAnthropicOpenAICompatibilityAtGradeB(t *testing.T) {
+func TestProviderTestFallsBackToPromptedJSON(t *testing.T) {
 	const finding = `{"schema_version":"audit-user-finding-v1","subject_ref":"user:sample","behavior_profile":{"usual_pattern":[],"current_pattern":[],"key_changes":[]},"findings":[],"counter_evidence":[],"data_gaps":[]}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
-			_, _ = w.Write([]byte(`{"data":[{"id":"m"}]}`))
+			_, _ = w.Write([]byte(`{"models":["deepseek-v4-flash"]}`))
 		case "/v1/chat/completions":
 			var payload map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&payload)
@@ -124,20 +138,35 @@ func TestProviderTestCapsAnthropicOpenAICompatibilityAtGradeB(t *testing.T) {
 				_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n"))
 				return
 			}
-			finish, content := "stop", finding
+			finish, content := "stop", "not-json"
 			if payload["max_tokens"] == float64(16) && payload["response_format"] == nil {
 				finish, content = "length", "partial"
+			} else if payload["response_format"] == nil {
+				messages, _ := payload["messages"].([]any)
+				if len(messages) == 0 || !strings.Contains(messages[0].(map[string]any)["content"].(string), "JSON Schema") {
+					t.Fatalf("prompted JSON instructions missing: %#v", payload)
+				}
+				content = "Result: " + finding + ` ignored: {"example":true}`
 			}
-			response, _ := json.Marshal(map[string]any{"model": "m", "choices": []any{map[string]any{"message": map[string]any{"content": content}, "finish_reason": finish}}, "usage": map[string]any{"prompt_tokens": 2, "completion_tokens": 2, "total_tokens": 4}})
+			response, _ := json.Marshal(map[string]any{"model": "deepseek-v4-flash", "choices": []any{map[string]any{"message": map[string]any{"content": content}, "finish_reason": finish}}, "usage": map[string]any{"prompt_tokens": 2, "completion_tokens": 2, "total_tokens": 4}})
 			_, _ = w.Write(response)
 		}
 	}))
 	defer server.Close()
-	outcome := testProvider(context.Background(), newWorkerRuntime(), &airpc.AITestRequest{ID: "compat", ProviderID: "p", ProviderKind: "anthropic", Model: "m", Endpoint: airpc.RuntimeEndpoint{ID: "e", BaseURL: server.URL + "/v1", APIStyle: string(aiprovider.APIStyleOpenAIChatCompletions), AuthMode: aiprovider.AuthModeBearer, Credential: "key", Enabled: true, AllowPrivateNetwork: true, TimeoutMS: 2000}})
-	if outcome.err != nil || outcome.capability.AuditGrade != model.AuditProviderGradeB || outcome.capability.OutputMode != model.AuditOutputModeJSONObject || !outcome.capability.FinishReasonSupported {
+	outcome := testProvider(context.Background(), newWorkerRuntime(), &airpc.AITestRequest{ID: "compat", ProviderID: "p", ProviderKind: "custom", Model: "deepseek-v4-flash", Endpoint: airpc.RuntimeEndpoint{ID: "e", BaseURL: server.URL + "/v1", APIStyle: string(aiprovider.APIStyleOpenAIChatCompletions), AuthMode: aiprovider.AuthModeBearer, Credential: "key", Enabled: true, AllowPrivateNetwork: true, TimeoutMS: 2000}})
+	if outcome.err != nil || !outcome.capability.AuditReady || outcome.capability.StructuredOutput != model.AuditProviderStructuredPromptedJSON || outcome.capability.OutputMode != model.AuditOutputModeText || !outcome.capability.FinishReasonSupported || !outcome.capability.ModelsSupported {
 		t.Fatalf("outcome=%#v", outcome)
 	}
-	if !strings.Contains(strings.Join(outcome.capability.Notes, " "), "compatibility") {
+	if !strings.Contains(strings.Join(outcome.capability.Notes, " "), "提示词 JSON") || strings.Contains(outcome.responseJSON, "grade") || !strings.Contains(outcome.responseJSON, `"prompted_json_success":2`) {
 		t.Fatalf("notes=%#v", outcome.capability.Notes)
+	}
+}
+
+func TestJSONObjectProbeSupportMatchesAPIAdapters(t *testing.T) {
+	if !supportsJSONObjectProbe(aiprovider.APIStyleOpenAIResponses) || !supportsJSONObjectProbe(aiprovider.APIStyleOpenAIChatCompletions) {
+		t.Fatal("OpenAI adapters must probe JSON Object mode")
+	}
+	if supportsJSONObjectProbe(aiprovider.APIStyleAnthropicMessages) {
+		t.Fatal("Anthropic adapter must report prompt JSON instead of JSON Object fallback")
 	}
 }

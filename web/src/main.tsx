@@ -143,6 +143,7 @@ import {
   type AutomationConnectClient,
 } from './automation-connect'
 import { ProviderEditor } from './components/ai-provider/ProviderEditor'
+import { capabilityOutputModeLabel } from './components/ai-provider/CapabilityBadge'
 import { auditHealthScoreTone, normalizeAuditHealthScore } from './ai-audit-score'
 import { getDashboardAttention, type DashboardAttention } from './dashboard-attention'
 import {
@@ -362,7 +363,7 @@ type AuditReviewReport = {
   recommended_actions: Array<{ action: string; reason?: string }>
   data_quality: { coverage: number; baseline_days: number; dropped_buckets: number; identity_quality: number }
   data_gaps: string[]
-  methodology: { feature_version: number; scoring_version: string; baseline_version: string; evidence_schema_version: string; prompt_version: string; report_schema_version: string; provider_profile_version: string; provider_grade: string; structured_output: string; output_mode: string; model: string }
+  methodology: { feature_version: number; scoring_version: string; baseline_version: string; evidence_schema_version: string; prompt_version: string; report_schema_version: string; provider_profile_version: string; structured_output: 'json_schema' | 'json_object' | 'prompted_json' | 'none'; output_mode: 'strict_schema' | 'json_object' | 'text'; model: string }
 }
 type AuditReview = {
   id: string; request_id: string; provider_id: string; requested_by: number; status: string
@@ -5532,7 +5533,7 @@ function localDateTimeValue(date: Date) {
 }
 
 function aiProviderAuditReady(provider: any) {
-  return Boolean(provider?.enabled && provider?.endpoints?.some((endpoint: any) => endpoint.enabled && (endpoint.auth_mode === 'none' || endpoint.has_credential) && (endpoint.capability?.audit_grade === 'A' || endpoint.capability?.audit_grade === 'B')))
+  return Boolean(provider?.enabled && provider?.endpoints?.some((endpoint: any) => endpoint.enabled && (endpoint.auth_mode === 'none' || endpoint.has_credential) && endpoint.capability?.audit_ready === true))
 }
 
 function AIAuditReviews({ data, client, notify }: any) {
@@ -5699,7 +5700,7 @@ function AIAuditReviews({ data, client, notify }: any) {
       <Bot size={16} />
       <span><strong>Beta 功能提示：</strong>部分功能正在开发中，可能不可用。</span>
     </div>
-    {!providers.some(aiProviderAuditReady) && <div className="audit-paused-notice"><Bot size={16} /><span>请先配置至少一个通过 A/B 级测试的 Endpoint。</span></div>}
+    {!providers.some(aiProviderAuditReady) && <div className="audit-paused-notice"><Bot size={16} /><span>请先配置至少一个测试为“可用于审计”的 Endpoint。</span></div>}
     {loadingReviews && !reviews.length ? <TableSkeleton /> : !reviews.length ? <div className="automation-empty"><Bot size={22} /><span>暂无 AI 审查记录</span></div> : <div className="ai-review-list">{reviews.map(review => {
       const report = review.final_output
       const reportVerdict = report?.executive?.verdict
@@ -5774,7 +5775,7 @@ function AuditReviewDetailDialog({ detail, evidence, evidenceTotal, client, work
         {report.timeline?.length > 0 && <section><h3>异常时间线</h3><div className="ai-review-report-list">{report.timeline.map(item => <article key={item.timeline_id}><div><strong>{item.title}</strong><span className="muted">{item.kind}</span></div><p>{item.detail || '—'}</p><small>{item.started_at ? formatTableTime(item.started_at) : ''}{item.ended_at ? ` - ${formatTableTime(item.ended_at)}` : ''}{item.evidence_refs?.length ? ` · ${item.evidence_refs.join('、')}` : ''}</small></article>)}</div></section>}
         {report.counter_evidence?.length > 0 && <section><h3>反证与正常解释</h3><div className="ai-review-report-list">{report.counter_evidence.map(item => <article key={item.counter_id}><p>{item.text}</p>{item.evidence_refs?.length ? <small>{item.evidence_refs.join('、')}</small> : null}</article>)}</div></section>}
         <div className="ai-review-report-columns"><section><h3>建议</h3>{report.recommended_actions?.length ? <ul>{report.recommended_actions.map(item => <li key={item.action}>{auditReviewActionLabel(item.action)}{item.reason ? `：${item.reason}` : ''}</li>)}</ul> : <p className="muted">无</p>}</section><section><h3>数据缺口</h3>{report.data_gaps?.length ? <ul>{report.data_gaps.map(item => <li key={item}>{item}</li>)}</ul> : <p className="muted">无</p>}</section></div>
-        {report.methodology ? <section className="ai-review-methodology"><div className="audit-recent-head"><h3>方法与版本</h3><span className={`ai-provider-grade grade-${String(report.methodology.provider_grade || 'none').toLowerCase()}`}>{report.methodology.provider_grade ? `${report.methodology.provider_grade} 级` : '—'}</span></div><small>评分 {report.methodology.scoring_version} · 特征 v{report.methodology.feature_version} · 证据 {report.methodology.evidence_schema_version} · 报告 {report.methodology.report_schema_version} · {report.methodology.output_mode === 'strict_schema' ? '严格 Schema' : 'JSON Object'} · {report.methodology.model}</small></section> : null}
+        {report.methodology ? <section className="ai-review-methodology"><div className="audit-recent-head"><h3>方法与版本</h3><span className="ai-provider-output-mode">{capabilityOutputModeLabel(report.methodology)}</span></div><small>规则 {report.methodology.scoring_version} · 特征 v{report.methodology.feature_version} · 证据 {report.methodology.evidence_schema_version} · 报告 {report.methodology.report_schema_version} · {report.methodology.model}</small></section> : null}
       </div> : <div className="ai-review-pending"><Bot size={20} /><strong>{detail.review.status === 'failed' ? '审查失败' : detail.review.status === 'cancelled' ? '审查已取消' : '正在生成综合判断'}</strong>{detail.review.error && <span>{detail.review.error}</span>}</div>}
       <section className="ai-review-technical"><div className="audit-recent-head"><h3>证据快照</h3><span>{evidence.length}/{evidenceTotal}</span></div><div className="ai-review-technical-list">{evidence.map(item => <button type="button" className="ghost" key={item.ref} onClick={() => void showEvidence(item)}><span><strong>{item.ref}</strong><small>{item.kind}</small></span><Eye size={14} /></button>)}</div>{evidence.length < evidenceTotal && <button type="button" className="ghost" onClick={onLoadMore} disabled={working === 'evidence-more'}>加载更多证据</button>}</section>
       <section className="ai-review-technical"><div className="audit-recent-head"><h3>模型任务</h3><span>{detail.jobs.length} 个</span></div><div className="ai-review-technical-list">{detail.jobs.map(job => <button type="button" className="ghost" key={job.id} onClick={() => void showJob(job)}><span><strong>阶段 {job.stage + 1} · 任务 {job.position + 1}</strong><small>{job.kind === 'synthesis' ? '综合归并' : '证据分析'} · {auditReviewStatusLabel(job.status)} · 尝试 {job.attempts}</small></span><Eye size={14} /></button>)}</div></section>

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/aiprovider"
 	"github.com/OboardProject/oboard/internal/airpc"
@@ -90,8 +91,8 @@ func TestAIProviderV2RejectsReservedHeaders(t *testing.T) {
 	request(t, handler, http.MethodPost, "/api/v2/ai/providers/"+provider["id"].(string)+"/endpoints", token, map[string]any{"name": "Unsafe", "base_url": "https://api.example.com/v1", "api_style": "openai_responses", "auth_mode": "bearer", "api_key": "key", "headers": map[string]string{"Authorization": "override"}}, http.StatusBadRequest)
 }
 
-func TestValidateAuditRouteEvidenceRejectsStaleCapability(t *testing.T) {
-	capability := &model.AIProviderCapability{ProviderProfileVersion: model.AuditProviderProfileVersion, ProviderID: "provider", EndpointID: "endpoint", APIStyle: string(aiprovider.APIStyleOpenAIResponses), Model: "model", ConfigDigest: "current", AuditGrade: model.AuditProviderGradeA}
+func TestValidateAuditRouteEvidenceRejectsStaleOrNonReadyCapability(t *testing.T) {
+	capability := &model.AIProviderCapability{ProviderProfileVersion: model.AuditProviderProfileVersion, ProviderID: "provider", EndpointID: "endpoint", APIStyle: string(aiprovider.APIStyleOpenAIResponses), Model: "model", ConfigDigest: "current", ConnectivityOK: true, AuthenticationOK: true, TextSupported: true, AuditReady: true, StructuredOutput: model.AuditProviderStructuredPromptedJSON, OutputMode: model.AuditOutputModeText}
 	provider := &model.AIProvider{ID: "provider", DefaultModel: "model", Endpoints: []model.AIProviderEndpoint{{ID: "endpoint", APIStyle: string(aiprovider.APIStyleOpenAIResponses), Enabled: true, Capability: capability}}}
 	route := &airpc.RouteEvidence{ProviderID: provider.ID, EndpointID: "endpoint", APIStyle: string(aiprovider.APIStyleOpenAIResponses), Model: "model", CapabilityProfileVersion: model.AuditProviderProfileVersion, CapabilityConfigDigest: "current"}
 	if got, err := validateAuditRouteEvidence(provider, route); err != nil || got != capability {
@@ -102,9 +103,39 @@ func TestValidateAuditRouteEvidenceRejectsStaleCapability(t *testing.T) {
 		t.Fatal("stale route capability was accepted")
 	}
 	route.CapabilityConfigDigest = "current"
-	provider.Endpoints[0].Capability.AuditGrade = model.AuditProviderGradeC
+	provider.Endpoints[0].Capability.AuditReady = false
+	provider.Endpoints[0].Capability.StructuredOutput = model.AuditProviderStructuredNone
 	if _, err := validateAuditRouteEvidence(provider, route); err == nil {
-		t.Fatal("grade C route capability was accepted")
+		t.Fatal("non-audit-ready route capability was accepted")
+	}
+}
+
+func TestValidateAITestCapabilityAcceptsPromptedJSONAndRejectsContradictions(t *testing.T) {
+	capability := &model.AIProviderCapability{
+		ProviderProfileVersion:  model.AuditProviderProfileVersion,
+		ProviderID:              "provider",
+		EndpointID:              "endpoint",
+		Model:                   "model",
+		ConfigDigest:            "digest",
+		TestedAt:                time.Now().UTC(),
+		ConnectivityOK:          true,
+		AuthenticationOK:        true,
+		TextSupported:           true,
+		AuditReady:              true,
+		StructuredOutput:        model.AuditProviderStructuredPromptedJSON,
+		OutputMode:              model.AuditOutputModeText,
+		MaxVerifiedOutputTokens: 4096,
+	}
+	if err := validateAITestCapability(capability); err != nil {
+		t.Fatalf("prompted JSON capability rejected: %v", err)
+	}
+	capability.StructuredOutput = model.AuditProviderStructuredNone
+	if err := validateAITestCapability(capability); err == nil {
+		t.Fatal("contradictory audit-ready capability was accepted")
+	}
+	capability.AuditReady = false
+	if err := validateAITestCapability(capability); err != nil {
+		t.Fatalf("consistent non-ready capability rejected: %v", err)
 	}
 }
 

@@ -93,6 +93,7 @@ func (r *Router) Complete(ctx context.Context, provider RuntimeProvider, request
 			if formalAudit && endpoint.Capability != nil {
 				candidate.OutputMode = endpoint.Capability.OutputMode
 			}
+			candidate = PrepareStructuredRequest(candidate)
 			started := r.now()
 			response, callErr := client.Complete(ctx, endpoint, candidate)
 			if callErr == nil {
@@ -122,7 +123,7 @@ func (r *Router) Complete(ctx context.Context, provider RuntimeProvider, request
 		}
 	}
 	if eligible == 0 {
-		return nil, &ProviderError{Kind: ErrorNoEligible, Retryable: false, ProviderID: provider.ID, Message: "no A/B endpoint with a current capability profile is eligible"}
+		return nil, &ProviderError{Kind: ErrorNoEligible, Retryable: false, ProviderID: provider.ID, Message: "no endpoint with a current audit-ready capability profile is eligible"}
 	}
 	if lastErr == nil {
 		lastErr = errors.New("all enabled endpoints failed")
@@ -149,6 +150,7 @@ func (r *Router) CompleteEndpoint(ctx context.Context, provider RuntimeProvider,
 		if endpoint.Capability != nil {
 			request.OutputMode = endpoint.Capability.OutputMode
 		}
+		request = PrepareStructuredRequest(request)
 		started := r.now()
 		response, err := client.Complete(ctx, endpoint, request)
 		if err != nil {
@@ -166,7 +168,7 @@ func formalCapabilityEligible(endpoint RuntimeEndpoint, modelID string) bool {
 	if capability == nil || capability.ProviderProfileVersion != model.AuditProviderProfileVersion || capability.EndpointID != endpoint.ID || capability.Model != modelID || capability.ConfigDigest != ConfigDigest(endpoint, modelID) {
 		return false
 	}
-	return capability.AuditGrade == model.AuditProviderGradeA || capability.AuditGrade == model.AuditProviderGradeB
+	return CapabilityAuditReady(capability)
 }
 
 func retryDelay(attempt int, retryAfter time.Duration) time.Duration {

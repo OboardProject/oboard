@@ -10,24 +10,21 @@ const (
 	AuditReviewEvidenceConnection   = "connection"
 	AuditReviewEvidenceDestination  = "destination"
 
-	AuditEvidenceSchemaVersion        = "audit-evidence-v2"
-	AuditUserFindingSchemaVersion     = "audit-user-finding-v1"
-	AuditReportSchemaVersion          = "audit-report-v2"
-	AuditProviderProfileVersion       = "provider-profile-v2"
-	AuditScoringVersion               = "deterministic-v2"
-	AuditBaselineVersion              = "feature-snapshot-v1"
-	AuditPromptFindingVersion         = "audit-finding-v1"
-	AuditPromptReportVersion          = "audit-report-v2"
-	AuditProviderGradeA               = "A"
-	AuditProviderGradeB               = "B"
-	AuditProviderGradeC               = "C"
-	AuditProviderGradeUnusable        = "unusable"
-	AuditProviderStructuredJSONSchema = "json_schema"
-	AuditProviderStructuredJSONObject = "json_object"
-	AuditProviderStructuredNone       = "none"
-	AuditOutputModeStrictSchema       = "strict_schema"
-	AuditOutputModeJSONObject         = "json_object"
-	AuditOutputModeText               = "text"
+	AuditEvidenceSchemaVersion          = "audit-evidence-v2"
+	AuditUserFindingSchemaVersion       = "audit-user-finding-v1"
+	AuditReportSchemaVersion            = "audit-report-v3"
+	AuditProviderProfileVersion         = "provider-profile-v3"
+	AuditScoringVersion                 = "deterministic-v2"
+	AuditBaselineVersion                = "feature-snapshot-v1"
+	AuditPromptFindingVersion           = "audit-finding-v1"
+	AuditPromptReportVersion            = "audit-report-v3"
+	AuditProviderStructuredJSONSchema   = "json_schema"
+	AuditProviderStructuredJSONObject   = "json_object"
+	AuditProviderStructuredPromptedJSON = "prompted_json"
+	AuditProviderStructuredNone         = "none"
+	AuditOutputModeStrictSchema         = "strict_schema"
+	AuditOutputModeJSONObject           = "json_object"
+	AuditOutputModeText                 = "text"
 )
 
 type AuditReviewSelector struct {
@@ -98,11 +95,8 @@ type AuditReviewJob struct {
 	CompletedAt  *time.Time      `json:"completed_at,omitempty"`
 }
 
-// AIProviderCapability records the outcome of the audit readiness test for a
-// provider/model pair. It is the single source for deciding which output mode a
-// formal audit job may use; grades are A (strict schema), B (JSON object with
-// local validation and one repair), C (text only, excluded from formal audits)
-// and unusable (could not return a stable usable result).
+// AIProviderCapability records the tested capabilities of one endpoint/model
+// pair. AuditReady and OutputMode are the source of truth for formal jobs.
 type AIProviderCapability struct {
 	ProviderProfileVersion     string    `json:"provider_profile_version"`
 	ProviderID                 string    `json:"provider_id"`
@@ -113,11 +107,11 @@ type AIProviderCapability struct {
 	TestedAt                   time.Time `json:"tested_at"`
 	ConnectivityOK             bool      `json:"connectivity_ok"`
 	AuthenticationOK           bool      `json:"authentication_ok"`
+	TextSupported              bool      `json:"text_supported"`
 	ModelsSupported            bool      `json:"models_supported"`
-	AuditGrade                 string    `json:"audit_grade"`
+	AuditReady                 bool      `json:"audit_ready"`
 	StructuredOutput           string    `json:"structured_output"`
 	OutputMode                 string    `json:"output_mode"`
-	SchemaSuccessRate          float64   `json:"schema_success_rate"`
 	UsageSupported             bool      `json:"usage_supported"`
 	FinishReasonSupported      bool      `json:"finish_reason_supported"`
 	StreamingSupported         bool      `json:"streaming_supported"`
@@ -338,7 +332,6 @@ type AuditReportMethodology struct {
 	PromptVersion          string `json:"prompt_version"`
 	ReportSchemaVersion    string `json:"report_schema_version"`
 	ProviderProfileVersion string `json:"provider_profile_version"`
-	ProviderGrade          string `json:"provider_grade"`
 	StructuredOutput       string `json:"structured_output"`
 	OutputMode             string `json:"output_mode"`
 	Model                  string `json:"model"`

@@ -3,7 +3,7 @@ import type { AIAPIStyle, AIAuthMode } from '../../ai-provider'
 import { FormField } from '../ui/form-field'
 import { Switch } from '../ui/switch'
 import { Select } from '../ui/select'
-import { CapabilityBadge } from './CapabilityBadge'
+import { CapabilityBadge, capabilityOutputModeLabel } from './CapabilityBadge'
 import type { EndpointDraft } from './types'
 
 export function EndpointEditor({ endpoint, index, canDelete, testing, onChange, onDelete, onTest }: { endpoint: EndpointDraft; index: number; canDelete: boolean; testing: boolean; onChange: (next: EndpointDraft) => void; onDelete: () => void; onTest: () => void }) {
@@ -12,7 +12,7 @@ export function EndpointEditor({ endpoint, index, canDelete, testing, onChange, 
   const hasCredential = endpoint.hasCredential && !endpoint.removeCredential || Boolean(endpoint.apiKey.trim())
   return <section className="ai-endpoint-editor">
     <div className="ai-endpoint-editor-head">
-      <div><strong>{endpoint.name || `Endpoint ${index + 1}`}</strong><span>优先级 {endpoint.priority}</span><CapabilityBadge capability={endpoint.capability} /></div>
+      <div><strong>{endpoint.name || `Endpoint ${index + 1}`}</strong><span>优先级 {endpoint.priority}</span><CapabilityBadge capability={endpoint.capability} />{endpoint.capability ? <span>{capabilityOutputModeLabel(endpoint.capability)}</span> : null}</div>
       <div>
         <button type="button" className="ghost icon-button" disabled={testing || (needsCredential && !hasCredential)} onClick={onTest} title="测试 Endpoint" aria-label={`测试 ${endpoint.name || `Endpoint ${index + 1}`}`}><Send size={15} /></button>
         <button type="button" className="ghost icon-button danger-text" disabled={!canDelete} onClick={onDelete} title="删除 Endpoint" aria-label={`删除 ${endpoint.name || `Endpoint ${index + 1}`}`}><Trash2 size={15} /></button>

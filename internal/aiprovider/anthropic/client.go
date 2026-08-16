@@ -275,7 +275,7 @@ func anthropicPayload(input aiprovider.Request, stream bool) map[string]any {
 	if input.Temperature != nil {
 		payload["temperature"] = *input.Temperature
 	}
-	if input.Schema != nil && input.OutputMode != "json_object" {
+	if input.Schema != nil && input.OutputMode != "json_object" && input.OutputMode != "text" {
 		payload["output_config"] = map[string]any{"format": map[string]any{"type": "json_schema", "schema": input.Schema}}
 	}
 	return payload
@@ -307,11 +307,7 @@ func decode(body []byte) (*aiprovider.Response, error) {
 	if text == "" {
 		return nil, aiprovider.NewError(aiprovider.ErrorParse, false, 0, "Anthropic Messages returned no text content", nil)
 	}
-	raw := json.RawMessage(nil)
-	trimmed := strings.TrimSpace(text)
-	if json.Valid([]byte(trimmed)) {
-		raw = json.RawMessage(trimmed)
-	}
+	raw := aiprovider.ExtractJSONObject(text)
 	usage := aiprovider.Usage{InputTokens: envelope.Usage.Input, OutputTokens: envelope.Usage.Output, TotalTokens: envelope.Usage.Input + envelope.Usage.Output}
 	return &aiprovider.Response{Text: text, Structured: raw, Usage: usage, FinishReason: normalizeFinish(envelope.StopReason), RawFinishReason: envelope.StopReason, Model: envelope.Model}, nil
 }

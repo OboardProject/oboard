@@ -149,7 +149,7 @@ func (s *Server) aiRPCLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if provider == nil || !providerHasAuditEndpoint(provider) {
-		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "provider 未通过审计就绪测试（需要 A/B 级能力）", nil)
+		_ = s.store.FailAuditReviewJob(r.Context(), request.WorkerID, job.ID, "provider 没有通过兼容性测试的 Endpoint", nil)
 		http.Error(w, "provider capability is not audit-ready", http.StatusConflict)
 		return
 	}
@@ -176,7 +176,7 @@ func (s *Server) aiRPCLease(w http.ResponseWriter, r *http.Request) {
 func providerHasAuditEndpoint(provider *model.AIProvider) bool {
 	for _, endpoint := range provider.Endpoints {
 		capability := endpoint.Capability
-		if endpoint.Enabled && capability != nil && (capability.AuditGrade == model.AuditProviderGradeA || capability.AuditGrade == model.AuditProviderGradeB) {
+		if endpoint.Enabled && aiprovider.CapabilityAuditReady(capability) {
 			return true
 		}
 	}
@@ -295,7 +295,7 @@ func validateAuditRouteEvidence(provider *model.AIProvider, route *airpc.RouteEv
 		if endpoint.ModelOverride != "" {
 			expectedModel = endpoint.ModelOverride
 		}
-		if !endpoint.Enabled || endpoint.APIStyle != route.APIStyle || route.Model != expectedModel || capability == nil || capability.ProviderProfileVersion != route.CapabilityProfileVersion || capability.ProviderID != provider.ID || capability.EndpointID != endpoint.ID || capability.APIStyle != endpoint.APIStyle || capability.Model != route.Model || capability.ConfigDigest != route.CapabilityConfigDigest || (capability.AuditGrade != model.AuditProviderGradeA && capability.AuditGrade != model.AuditProviderGradeB) {
+		if !endpoint.Enabled || endpoint.APIStyle != route.APIStyle || route.Model != expectedModel || capability == nil || capability.ProviderProfileVersion != route.CapabilityProfileVersion || capability.ProviderID != provider.ID || capability.EndpointID != endpoint.ID || capability.APIStyle != endpoint.APIStyle || capability.Model != route.Model || capability.ConfigDigest != route.CapabilityConfigDigest || !aiprovider.CapabilityAuditReady(capability) {
 			return nil, errors.New("stale or ineligible AI route evidence")
 		}
 		return capability, nil

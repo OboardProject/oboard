@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/net/publicsuffix"
 
+	"github.com/OboardProject/oboard/internal/aiprovider"
 	"github.com/OboardProject/oboard/internal/auditcontract"
 	"github.com/OboardProject/oboard/internal/auditintel"
 	"github.com/OboardProject/oboard/internal/core"
@@ -59,7 +60,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (*model.Aud
 		return nil, errors.New("AI Provider 未启用或缺少凭据")
 	}
 	if !auditCapabilityAllowed(provider) {
-		return nil, errors.New("该 AI Provider 尚未通过审计就绪测试或能力等级不足（需要 A/B 级），请先在 AI Provider 页面运行“审计就绪测试”")
+		return nil, errors.New("该 AI Provider 尚未通过兼容性测试，请先在 AI Provider 页面测试至少一个 Endpoint")
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
 	if request.RequestedBy <= 0 || request.RequestID == "" || len(request.RequestID) > 128 {
@@ -149,7 +150,7 @@ func auditCapabilityAllowed(provider *model.AIProvider) bool {
 	}
 	for _, endpoint := range provider.Endpoints {
 		capability := endpoint.Capability
-		if endpoint.Enabled && capability != nil && (capability.AuditGrade == model.AuditProviderGradeA || capability.AuditGrade == model.AuditProviderGradeB) {
+		if endpoint.Enabled && aiprovider.CapabilityAuditReady(capability) {
 			return true
 		}
 	}
@@ -453,18 +454,16 @@ func (s *Service) engineSummary(ctx context.Context, reviewID string, provider *
 	}
 	if routeCapability != nil {
 		summary.ProviderProfileVersion = routeCapability.ProviderProfileVersion
-		summary.ProviderGrade = routeCapability.AuditGrade
 		summary.StructuredOutput = routeCapability.StructuredOutput
 		summary.OutputMode = routeCapability.OutputMode
 		summary.Model = routeCapability.Model
 	} else if provider != nil {
 		for _, endpoint := range provider.Endpoints {
 			capability := endpoint.Capability
-			if !endpoint.Enabled || capability == nil || (capability.AuditGrade != model.AuditProviderGradeA && capability.AuditGrade != model.AuditProviderGradeB) {
+			if !endpoint.Enabled || !aiprovider.CapabilityAuditReady(capability) {
 				continue
 			}
 			summary.ProviderProfileVersion = capability.ProviderProfileVersion
-			summary.ProviderGrade = capability.AuditGrade
 			summary.StructuredOutput = capability.StructuredOutput
 			summary.OutputMode = capability.OutputMode
 			summary.Model = capability.Model

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,28 +138,36 @@ func TestRouterRetriesRateLimitAndFailsOverUpstreamErrors(t *testing.T) {
 	}
 }
 
-func TestRouterFormalAuditDoesNotFallBackToGradeC(t *testing.T) {
+func TestRouterFormalAuditDoesNotFallBackToNonAuditReadyEndpoint(t *testing.T) {
 	primary := &scriptedClient{results: []error{NewError(ErrorTimeout, true, 0, "timeout", nil)}}
 	secondary := &scriptedClient{}
 	router := NewRouter(Registry{APIStyleOpenAIResponses: primary, APIStyleOpenAIChatCompletions: secondary})
-	gradeA := RuntimeEndpoint{ID: "a", BaseURL: "https://a.example/v1", APIStyle: APIStyleOpenAIResponses, AuthMode: AuthModeBearer, Enabled: true, Priority: 10, Capability: &model.AIProviderCapability{ProviderProfileVersion: model.AuditProviderProfileVersion, EndpointID: "a", Model: "m", AuditGrade: model.AuditProviderGradeA}}
-	gradeA.Capability.ConfigDigest = ConfigDigest(gradeA, "m")
-	gradeC := RuntimeEndpoint{ID: "c", BaseURL: "https://c.example/v1", APIStyle: APIStyleOpenAIChatCompletions, AuthMode: AuthModeBearer, Enabled: true, Priority: 20, Capability: &model.AIProviderCapability{ProviderProfileVersion: model.AuditProviderProfileVersion, EndpointID: "c", Model: "m", AuditGrade: model.AuditProviderGradeC}}
-	gradeC.Capability.ConfigDigest = ConfigDigest(gradeC, "m")
-	_, err := router.Complete(context.Background(), RuntimeProvider{ID: "p", Model: "m", Endpoints: []RuntimeEndpoint{gradeA, gradeC}}, Request{}, true)
+	ready := RuntimeEndpoint{ID: "ready", BaseURL: "https://ready.example/v1", APIStyle: APIStyleOpenAIResponses, AuthMode: AuthModeBearer, Enabled: true, Priority: 10, Capability: &model.AIProviderCapability{ProviderProfileVersion: model.AuditProviderProfileVersion, EndpointID: "ready", Model: "m", ConnectivityOK: true, AuthenticationOK: true, TextSupported: true, AuditReady: true, StructuredOutput: model.AuditProviderStructuredJSONSchema, OutputMode: model.AuditOutputModeStrictSchema}}
+	ready.Capability.ConfigDigest = ConfigDigest(ready, "m")
+	notReady := RuntimeEndpoint{ID: "not-ready", BaseURL: "https://not-ready.example/v1", APIStyle: APIStyleOpenAIChatCompletions, AuthMode: AuthModeBearer, Enabled: true, Priority: 20, Capability: &model.AIProviderCapability{ProviderProfileVersion: model.AuditProviderProfileVersion, EndpointID: "not-ready", Model: "m", ConnectivityOK: true, AuthenticationOK: true, AuditReady: false, StructuredOutput: model.AuditProviderStructuredNone, OutputMode: model.AuditOutputModeText}}
+	notReady.Capability.ConfigDigest = ConfigDigest(notReady, "m")
+	_, err := router.Complete(context.Background(), RuntimeProvider{ID: "p", Model: "m", Endpoints: []RuntimeEndpoint{ready, notReady}}, Request{}, true)
 	if AsProviderError(err).Kind != ErrorAllEndpoints || primary.calls != 1 || secondary.calls != 0 {
 		t.Fatalf("formal failover err=%v calls=%d/%d", err, primary.calls, secondary.calls)
 	}
 }
 
-func TestRouterFormalAuditRejectsStaleOrGradeCEndpoints(t *testing.T) {
+func TestRouterFormalAuditRejectsStaleOrNonAuditReadyEndpoints(t *testing.T) {
 	client := &scriptedClient{}
 	router := NewRouter(Registry{APIStyleOpenAIResponses: client})
-	endpoint := RuntimeEndpoint{ID: "e", ProviderID: "p", BaseURL: "https://api.example.com/v1", APIStyle: APIStyleOpenAIResponses, AuthMode: AuthModeBearer, Enabled: true, Capability: &model.AIProviderCapability{ProviderProfileVersion: model.AuditProviderProfileVersion, EndpointID: "e", Model: "m", AuditGrade: model.AuditProviderGradeC}}
+	endpoint := RuntimeEndpoint{ID: "e", ProviderID: "p", BaseURL: "https://api.example.com/v1", APIStyle: APIStyleOpenAIResponses, AuthMode: AuthModeBearer, Enabled: true, Capability: &model.AIProviderCapability{ProviderProfileVersion: model.AuditProviderProfileVersion, EndpointID: "e", Model: "m", ConnectivityOK: true, AuthenticationOK: true, StructuredOutput: model.AuditProviderStructuredNone, OutputMode: model.AuditOutputModeText}}
 	endpoint.Capability.ConfigDigest = ConfigDigest(endpoint, "m")
 	_, err := router.Complete(context.Background(), RuntimeProvider{ID: "p", Model: "m", Endpoints: []RuntimeEndpoint{endpoint}}, Request{}, true)
 	if AsProviderError(err).Kind != ErrorNoEligible || client.calls != 0 {
 		t.Fatalf("formal route err=%v calls=%d", err, client.calls)
+	}
+
+	endpoint.Capability.AuditReady = true
+	endpoint.Capability.StructuredOutput = model.AuditProviderStructuredPromptedJSON
+	endpoint.Capability.ConfigDigest = "stale"
+	_, err = router.Complete(context.Background(), RuntimeProvider{ID: "p", Model: "m", Endpoints: []RuntimeEndpoint{endpoint}}, Request{}, true)
+	if AsProviderError(err).Kind != ErrorNoEligible || client.calls != 0 {
+		t.Fatalf("stale formal route err=%v calls=%d", err, client.calls)
 	}
 }
 
@@ -210,5 +219,48 @@ func TestValidateJSONSchema(t *testing.T) {
 		if err := ValidateJSONSchema(schema, []byte(raw)); err == nil {
 			t.Fatalf("invalid document accepted: %s", raw)
 		}
+	}
+}
+
+func TestAdaptiveStructuredOutputHelpers(t *testing.T) {
+	schema := map[string]any{"type": "object", "required": []string{"ok"}, "properties": map[string]any{"ok": map[string]any{"type": "boolean"}}}
+	request := PrepareStructuredRequest(Request{System: "existing instructions", Schema: schema, OutputMode: model.AuditOutputModeText})
+	if !strings.Contains(request.System, "existing instructions") || !strings.Contains(request.System, `"type":"object"`) || !strings.Contains(request.System, "不要使用 Markdown") {
+		t.Fatalf("prompted JSON instructions = %q", request.System)
+	}
+	strict := PrepareStructuredRequest(Request{System: "unchanged", Schema: schema, OutputMode: model.AuditOutputModeStrictSchema})
+	if strict.System != "unchanged" {
+		t.Fatalf("strict-schema instructions changed: %q", strict.System)
+	}
+
+	raw := ExtractJSONObject("prefix {not-json} then {\"ok\":true} trailing {\"ok\":false}")
+	if string(raw) != `{"ok":true}` {
+		t.Fatalf("first valid object = %s", raw)
+	}
+	if raw := ExtractJSONObject("text without an object"); raw != nil {
+		t.Fatalf("unexpected object = %s", raw)
+	}
+}
+
+func TestCapabilityAuditReadyAcceptsEverySupportedOutputMode(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		structured string
+		mode       string
+	}{
+		{name: "strict schema", structured: model.AuditProviderStructuredJSONSchema, mode: model.AuditOutputModeStrictSchema},
+		{name: "JSON object", structured: model.AuditProviderStructuredJSONObject, mode: model.AuditOutputModeJSONObject},
+		{name: "prompted JSON", structured: model.AuditProviderStructuredPromptedJSON, mode: model.AuditOutputModeText},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			capability := &model.AIProviderCapability{ProviderProfileVersion: model.AuditProviderProfileVersion, ConnectivityOK: true, AuthenticationOK: true, TextSupported: true, AuditReady: true, StructuredOutput: testCase.structured, OutputMode: testCase.mode}
+			if !CapabilityAuditReady(capability) {
+				t.Fatalf("capability was not audit ready: %#v", capability)
+			}
+			capability.StructuredOutput = model.AuditProviderStructuredNone
+			if CapabilityAuditReady(capability) {
+				t.Fatalf("contradictory capability was accepted: %#v", capability)
+			}
+		})
 	}
 }

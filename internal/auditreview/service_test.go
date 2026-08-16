@@ -171,7 +171,7 @@ func testService(db *store.Store) *Service {
 }
 
 func testCapabilityFixture() *model.AIProviderCapability {
-	return &model.AIProviderCapability{ProviderProfileVersion: model.AuditProviderProfileVersion, Model: "model", TestedAt: time.Now().UTC(), AuditGrade: model.AuditProviderGradeA, StructuredOutput: model.AuditProviderStructuredJSONSchema, OutputMode: model.AuditOutputModeStrictSchema, SchemaSuccessRate: 1, MaxVerifiedOutputTokens: 4096}
+	return &model.AIProviderCapability{ProviderProfileVersion: model.AuditProviderProfileVersion, Model: "model", TestedAt: time.Now().UTC(), ConnectivityOK: true, AuthenticationOK: true, TextSupported: true, AuditReady: true, StructuredOutput: model.AuditProviderStructuredJSONSchema, OutputMode: model.AuditOutputModeStrictSchema, MaxVerifiedOutputTokens: 4096}
 }
 
 func testProviderFixture() *model.AIProvider {
@@ -208,19 +208,32 @@ func TestCreateRequiresAuditReadyProvider(t *testing.T) {
 	service := testService(db)
 	nowTime := time.Date(2026, 8, 3, 8, 0, 0, 0, time.UTC)
 	request := CreateRequest{RequestID: "request-1", ProviderID: provider.ID, RequestedBy: actor.ID, Scope: model.AuditReviewScope{Users: model.AuditReviewSelector{Mode: "all"}, Servers: model.AuditReviewSelector{Mode: "all"}}, EvidenceTypes: []string{"subscription"}, WindowStart: nowTime.Add(-time.Hour), WindowEnd: nowTime}
-	if _, err := service.Create(ctx, request); err == nil || !strings.Contains(err.Error(), "审计就绪测试") {
+	if _, err := service.Create(ctx, request); err == nil || !strings.Contains(err.Error(), "兼容性测试") {
 		t.Fatalf("provider without capability was accepted: %v", err)
 	}
 	capability := testCapabilityFixture()
-	capability.AuditGrade = model.AuditProviderGradeC
+	capability.AuditReady = false
 	createCapability := capability
 	createCapability.ProviderID, createCapability.EndpointID, createCapability.APIStyle = provider.ID, "endpoint", string(aiprovider.APIStyleOpenAIResponses)
 	createCapability.ConfigDigest = aiprovider.ConfigDigest(aiprovider.RuntimeEndpoint{ID: "endpoint", BaseURL: "https://api.example.com/v1", APIStyle: aiprovider.APIStyleOpenAIResponses, AuthMode: aiprovider.AuthModeNone}, "model")
 	if err := db.UpsertAIProviderEndpointCapability(ctx, createCapability); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Create(ctx, request); err == nil || !strings.Contains(err.Error(), "审计就绪测试") {
-		t.Fatalf("grade C provider was accepted: %v", err)
+	if _, err := service.Create(ctx, request); err == nil || !strings.Contains(err.Error(), "兼容性测试") {
+		t.Fatalf("non-ready provider was accepted: %v", err)
+	}
+	createCapability.AuditReady = true
+	createCapability.StructuredOutput = model.AuditProviderStructuredPromptedJSON
+	createCapability.OutputMode = model.AuditOutputModeText
+	if err := db.UpsertAIProviderEndpointCapability(ctx, createCapability); err != nil {
+		t.Fatal(err)
+	}
+	storedProvider, err := db.GetAIProvider(ctx, provider.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !auditCapabilityAllowed(storedProvider) {
+		t.Fatal("audit-ready prompted JSON endpoint was rejected")
 	}
 }
 
@@ -312,7 +325,7 @@ func auditcontractEngineFixture() auditcontract.EngineSummary {
 		FeatureVersion: 1, ScoringVersion: model.AuditScoringVersion, BaselineVersion: model.AuditBaselineVersion,
 		EvidenceSchemaVersion: model.AuditEvidenceSchemaVersion, PromptVersion: model.AuditPromptReportVersion,
 		ReportSchemaVersion: model.AuditReportSchemaVersion, ProviderProfileVersion: model.AuditProviderProfileVersion,
-		ProviderGrade: "A", StructuredOutput: "json_schema", OutputMode: "strict_schema", Model: "model",
+		StructuredOutput: "json_schema", OutputMode: "strict_schema", Model: "model",
 		Subjects: []string{"user:2"},
 	}
 }
@@ -395,11 +408,21 @@ func TestValidateReportEnforcesEngineValues(t *testing.T) {
 		RecommendedActions: []model.AuditReportAction{{Action: "request_manual_review"}},
 		DataQuality:        model.AuditReportDataQuality{Coverage: 0.94, BaselineDays: 24, DroppedBuckets: 1, IdentityQuality: 0.9},
 		DataGaps:           []string{"无"},
-		Methodology:        model.AuditReportMethodology{FeatureVersion: 1, ScoringVersion: model.AuditScoringVersion, BaselineVersion: model.AuditBaselineVersion, EvidenceSchemaVersion: model.AuditEvidenceSchemaVersion, PromptVersion: model.AuditPromptReportVersion, ReportSchemaVersion: model.AuditReportSchemaVersion, ProviderProfileVersion: model.AuditProviderProfileVersion, ProviderGrade: "A", StructuredOutput: "json_schema", OutputMode: "strict_schema", Model: "model"},
+		Methodology:        model.AuditReportMethodology{FeatureVersion: 1, ScoringVersion: model.AuditScoringVersion, BaselineVersion: model.AuditBaselineVersion, EvidenceSchemaVersion: model.AuditEvidenceSchemaVersion, PromptVersion: model.AuditPromptReportVersion, ReportSchemaVersion: model.AuditReportSchemaVersion, ProviderProfileVersion: model.AuditProviderProfileVersion, StructuredOutput: "json_schema", OutputMode: "strict_schema", Model: "model"},
 	}
 	validJSON, _ := json.Marshal(report)
 	if err := service.ValidateReport(ctx, "review-1", job, validJSON); err != nil {
 		t.Fatalf("valid report rejected: %v", err)
+	}
+	promptedCapability := testCapabilityFixture()
+	promptedCapability.StructuredOutput = model.AuditProviderStructuredPromptedJSON
+	promptedCapability.OutputMode = model.AuditOutputModeText
+	promptedReport := report
+	promptedReport.Methodology.StructuredOutput = model.AuditProviderStructuredPromptedJSON
+	promptedReport.Methodology.OutputMode = model.AuditOutputModeText
+	promptedJSON, _ := json.Marshal(promptedReport)
+	if err := service.ValidateReportWithCapability(ctx, "review-1", job, promptedJSON, promptedCapability); err != nil {
+		t.Fatalf("prompted JSON report rejected: %v", err)
 	}
 	tampered := report
 	tampered.Executive.RiskScore = 60

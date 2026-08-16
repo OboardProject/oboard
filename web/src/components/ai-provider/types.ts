@@ -10,11 +10,11 @@ export type AIProviderCapability = {
   tested_at: string
   connectivity_ok: boolean
   authentication_ok: boolean
+  text_supported: boolean
   models_supported: boolean
-  audit_grade: 'A' | 'B' | 'C' | 'unusable'
-  structured_output: 'json_schema' | 'json_object' | 'none'
+  audit_ready: boolean
+  structured_output: 'json_schema' | 'json_object' | 'prompted_json' | 'none'
   output_mode: 'strict_schema' | 'json_object' | 'text'
-  schema_success_rate: number
   usage_supported: boolean
   finish_reason_supported: boolean
   streaming_supported: boolean

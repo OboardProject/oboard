@@ -239,7 +239,7 @@ func (s *Store) DeleteAIProviderEndpoint(ctx context.Context, providerID, endpoi
 }
 
 func (s *Store) UpsertAIProviderEndpointCapability(ctx context.Context, capability *model.AIProviderCapability) error {
-	if capability == nil || capability.EndpointID == "" || capability.Model == "" || capability.ConfigDigest == "" {
+	if capability == nil || capability.ProviderProfileVersion != model.AuditProviderProfileVersion || capability.EndpointID == "" || capability.Model == "" || capability.ConfigDigest == "" {
 		return errors.New("complete endpoint capability is required")
 	}
 	_, err := s.db.ExecContext(ctx, `insert into ai_provider_endpoint_capabilities(provider_id,endpoint_id,model,config_digest,capability_json,tested_at) values(?,?,?,?,?,?) on conflict(endpoint_id,model,config_digest) do update set provider_id=excluded.provider_id,capability_json=excluded.capability_json,tested_at=excluded.tested_at`, capability.ProviderID, capability.EndpointID, capability.Model, capability.ConfigDigest, marshalCapability(capability), capability.TestedAt.UTC().Format(time.RFC3339Nano))
@@ -255,6 +255,9 @@ func (s *Store) GetAIProviderEndpointCapability(ctx context.Context, endpointID,
 	var capability model.AIProviderCapability
 	if err := json.Unmarshal([]byte(encoded), &capability); err != nil {
 		return nil, err
+	}
+	if capability.ProviderProfileVersion != model.AuditProviderProfileVersion {
+		return nil, sql.ErrNoRows
 	}
 	return &capability, nil
 }

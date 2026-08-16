@@ -20,7 +20,7 @@ func TestMigrateAIProvidersV2ReencryptsCredentialAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := &model.AIProvider{ID: "legacy", Name: "Legacy", BaseURL: "https://api.example.com/v1", Model: "legacy-model", APIFormat: "responses", CredentialEncrypted: legacyCredential, Enabled: true, Capability: &model.AIProviderCapability{AuditGrade: model.AuditProviderGradeA}}
+	provider := &model.AIProvider{ID: "legacy", Name: "Legacy", BaseURL: "https://api.example.com/v1", Model: "legacy-model", APIFormat: "responses", CredentialEncrypted: legacyCredential, Enabled: true, Capability: &model.AIProviderCapability{AuditReady: true, StructuredOutput: model.AuditProviderStructuredJSONSchema, OutputMode: model.AuditOutputModeStrictSchema}}
 	if err := db.CreateAIProvider(ctx, provider); err != nil {
 		t.Fatal(err)
 	}
@@ -125,12 +125,16 @@ func TestAIProviderEndpointCapabilityUsesDigest(t *testing.T) {
 	if err := db.CreateAIProviderEndpoint(ctx, endpoint); err != nil {
 		t.Fatal(err)
 	}
-	capability := &model.AIProviderCapability{ProviderProfileVersion: model.AuditProviderProfileVersion, ProviderID: provider.ID, EndpointID: endpoint.ID, Model: "m", ConfigDigest: "digest-a", AuditGrade: model.AuditProviderGradeA}
+	capability := &model.AIProviderCapability{ProviderProfileVersion: model.AuditProviderProfileVersion, ProviderID: provider.ID, EndpointID: endpoint.ID, Model: "m", ConfigDigest: "digest-a", ConnectivityOK: true, AuthenticationOK: true, TextSupported: true, AuditReady: true, StructuredOutput: model.AuditProviderStructuredPromptedJSON, OutputMode: model.AuditOutputModeText}
 	if err := db.UpsertAIProviderEndpointCapability(ctx, capability); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.GetAIProviderEndpointCapability(ctx, endpoint.ID, "m", "digest-a"); err != nil {
+	stored, err := db.GetAIProviderEndpointCapability(ctx, endpoint.ID, "m", "digest-a")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !stored.AuditReady || stored.StructuredOutput != model.AuditProviderStructuredPromptedJSON || stored.OutputMode != model.AuditOutputModeText {
+		t.Fatalf("stored capability = %#v", stored)
 	}
 	if _, err := db.GetAIProviderEndpointCapability(ctx, endpoint.ID, "m", "digest-b"); err == nil {
 		t.Fatal("changed config digest reused stale capability")

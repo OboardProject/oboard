@@ -114,6 +114,103 @@ func TestOpenAIChatJSONObjectFallback(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatPromptedJSONFallbackExtractsFirstObject(t *testing.T) {
+	schema := map[string]any{"type": "object", "required": []string{"ok"}, "properties": map[string]any{"ok": map[string]any{"type": "boolean"}}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if _, exists := payload["response_format"]; exists {
+			t.Fatalf("prompted JSON sent response_format: %#v", payload["response_format"])
+		}
+		messages, _ := payload["messages"].([]any)
+		if len(messages) == 0 {
+			t.Fatalf("messages=%#v", messages)
+		}
+		system, _ := messages[0].(map[string]any)
+		if system["role"] != "system" || !strings.Contains(system["content"].(string), `"type":"object"`) {
+			t.Fatalf("system message=%#v", system)
+		}
+		response, _ := json.Marshal(map[string]any{
+			"model": "deepseek-v4-flash",
+			"choices": []any{map[string]any{
+				"message":       map[string]any{"content": "Here is the result: {\"ok\":true} and an ignored example {\"ok\":false}"},
+				"finish_reason": "stop",
+			}},
+		})
+		_, _ = w.Write(response)
+	}))
+	defer server.Close()
+
+	request := aiprovider.PrepareStructuredRequest(aiprovider.Request{Model: "deepseek-v4-flash", MaxOutputTokens: 10, Schema: schema, OutputMode: "text"})
+	response, err := NewChatClient(aiprovider.NewHTTPClient()).Complete(context.Background(), aiprovider.RuntimeEndpoint{BaseURL: server.URL, AuthMode: aiprovider.AuthModeBearer, Credential: "key", AllowPrivateNetwork: true, TimeoutMS: 2000}, request)
+	if err != nil || string(response.Structured) != `{"ok":true}` {
+		t.Fatalf("response=%#v err=%v", response, err)
+	}
+}
+
+func TestOpenAIAdaptivePayloadTokensAndFormats(t *testing.T) {
+	client := NewChatClient(aiprovider.NewHTTPClient())
+	for _, testCase := range []struct {
+		model              string
+		completionTokenKey bool
+	}{
+		{model: "gpt-5", completionTokenKey: true},
+		{model: "vendor/gpt-5-mini", completionTokenKey: true},
+		{model: "o1-preview", completionTokenKey: true},
+		{model: "o3-mini", completionTokenKey: true},
+		{model: "o4-mini", completionTokenKey: true},
+		{model: "gpt-4o"},
+		{model: "deepseek-v4-flash"},
+	} {
+		t.Run(testCase.model, func(t *testing.T) {
+			payload := client.payload(aiprovider.Request{Model: testCase.model, MaxOutputTokens: 17}, false)
+			_, hasCompletion := payload["max_completion_tokens"]
+			_, hasLegacy := payload["max_tokens"]
+			if hasCompletion != testCase.completionTokenKey || hasLegacy == testCase.completionTokenKey {
+				t.Fatalf("token fields=%#v", payload)
+			}
+		})
+	}
+
+	schema := map[string]any{"type": "object"}
+	textPayload := client.payload(aiprovider.Request{Model: "m", Schema: schema, OutputMode: "text"}, false)
+	if _, exists := textPayload["response_format"]; exists {
+		t.Fatalf("text-mode response_format=%#v", textPayload["response_format"])
+	}
+	responses := NewResponsesClient(aiprovider.NewHTTPClient())
+	responseObjectPayload := responses.payload(aiprovider.Request{Model: "m", Schema: schema, OutputMode: "json_object"}, false)
+	responseText, _ := responseObjectPayload["text"].(map[string]any)
+	responseFormat, _ := responseText["format"].(map[string]any)
+	if responseFormat["type"] != "json_object" {
+		t.Fatalf("responses JSON object format=%#v", responseObjectPayload)
+	}
+	if payload := responses.payload(aiprovider.Request{Model: "m", Schema: schema, OutputMode: "text"}, false); payload["text"] != nil {
+		t.Fatalf("responses text format=%#v", payload["text"])
+	}
+	if payload := responses.payload(aiprovider.Request{Model: "m", Schema: schema, OutputMode: "strict_schema"}, false); payload["text"] == nil {
+		t.Fatalf("responses strict format missing: %#v", payload)
+	}
+}
+
+func TestDecodeOpenAIModelListVariants(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "OpenAI data objects", body: `{"data":[{"id":"a"},{"name":"b"},{"model":"c"}]}`, want: "a,b,c"},
+		{name: "models strings and objects", body: `{"models":["a",{"name":"b"},{"id":"c"}]}`, want: "a,b,c"},
+		{name: "top-level array", body: `["a",{"model":"b"}]`, want: "a,b"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ids, ok := decodeModelIDs([]byte(testCase.body))
+			if !ok || strings.Join(ids, ",") != testCase.want {
+				t.Fatalf("ids=%#v ok=%v", ids, ok)
+			}
+		})
+	}
+}
+
 func TestOpenAIErrorClassificationAndBounds(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

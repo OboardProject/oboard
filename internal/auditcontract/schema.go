@@ -78,7 +78,7 @@ func dataQualitySchema() map[string]any {
 }
 
 func methodologySchema() map[string]any {
-	return map[string]any{"type": "object", "additionalProperties": false, "required": []string{"feature_version", "scoring_version", "baseline_version", "evidence_schema_version", "prompt_version", "report_schema_version", "provider_profile_version", "provider_grade", "structured_output", "output_mode", "model"}, "properties": map[string]any{
+	return map[string]any{"type": "object", "additionalProperties": false, "required": []string{"feature_version", "scoring_version", "baseline_version", "evidence_schema_version", "prompt_version", "report_schema_version", "provider_profile_version", "structured_output", "output_mode", "model"}, "properties": map[string]any{
 		"feature_version":          map[string]any{"type": "integer", "minimum": 0},
 		"scoring_version":          stringItem(),
 		"baseline_version":         stringItem(),
@@ -86,9 +86,8 @@ func methodologySchema() map[string]any {
 		"prompt_version":           stringItem(),
 		"report_schema_version":    stringItem(),
 		"provider_profile_version": stringItem(),
-		"provider_grade":           map[string]any{"type": "string", "enum": []string{"A", "B"}},
-		"structured_output":        map[string]any{"type": "string", "enum": []string{"json_schema", "json_object", "none"}},
-		"output_mode":              map[string]any{"type": "string", "enum": []string{"strict_schema", "json_object"}},
+		"structured_output":        map[string]any{"type": "string", "enum": []string{"json_schema", "json_object", "prompted_json"}},
+		"output_mode":              map[string]any{"type": "string", "enum": []string{"strict_schema", "json_object", "text"}},
 		"model":                    map[string]any{"type": "string", "maxLength": 512},
 	}}
 }

@@ -27,7 +27,6 @@ type EngineSummary struct {
 	PromptVersion          string              `json:"prompt_version"`
 	ReportSchemaVersion    string              `json:"report_schema_version"`
 	ProviderProfileVersion string              `json:"provider_profile_version"`
-	ProviderGrade          string              `json:"provider_grade"`
 	StructuredOutput       string              `json:"structured_output"`
 	OutputMode             string              `json:"output_mode"`
 	Model                  string              `json:"model"`
@@ -219,7 +218,7 @@ func engineMethodology(engine EngineSummary) model.AuditReportMethodology {
 	return model.AuditReportMethodology{
 		FeatureVersion: engine.FeatureVersion, ScoringVersion: engine.ScoringVersion, BaselineVersion: engine.BaselineVersion,
 		EvidenceSchemaVersion: engine.EvidenceSchemaVersion, PromptVersion: engine.PromptVersion, ReportSchemaVersion: engine.ReportSchemaVersion,
-		ProviderProfileVersion: engine.ProviderProfileVersion, ProviderGrade: engine.ProviderGrade, StructuredOutput: engine.StructuredOutput,
+		ProviderProfileVersion: engine.ProviderProfileVersion, StructuredOutput: engine.StructuredOutput,
 		OutputMode: engine.OutputMode, Model: engine.Model,
 	}
 }
@@ -227,15 +226,24 @@ func engineMethodology(engine EngineSummary) model.AuditReportMethodology {
 func validateMethodology(value model.AuditReportMethodology, engine EngineSummary) error {
 	if value.FeatureVersion != engine.FeatureVersion || value.ScoringVersion != engine.ScoringVersion || value.BaselineVersion != engine.BaselineVersion ||
 		value.EvidenceSchemaVersion != engine.EvidenceSchemaVersion || value.PromptVersion != engine.PromptVersion || value.ReportSchemaVersion != engine.ReportSchemaVersion ||
-		value.ProviderProfileVersion != engine.ProviderProfileVersion || value.ProviderGrade != engine.ProviderGrade || value.StructuredOutput != engine.StructuredOutput ||
-		value.Model != engine.Model {
+		value.ProviderProfileVersion != engine.ProviderProfileVersion || value.StructuredOutput != engine.StructuredOutput || value.OutputMode != engine.OutputMode || value.Model != engine.Model {
 		return errors.New("AI 审查方法学版本无效")
 	}
-	if value.ProviderGrade != model.AuditProviderGradeA && value.ProviderGrade != model.AuditProviderGradeB {
-		return errors.New("AI 审查 Provider 等级无效")
-	}
-	if value.OutputMode != model.AuditOutputModeStrictSchema && value.OutputMode != model.AuditOutputModeJSONObject {
-		return errors.New("AI 审查输出模式无效（禁止纯文本）")
+	switch value.OutputMode {
+	case model.AuditOutputModeStrictSchema:
+		if value.StructuredOutput != model.AuditProviderStructuredJSONSchema {
+			return errors.New("AI 审查结构化输出模式无效")
+		}
+	case model.AuditOutputModeJSONObject:
+		if value.StructuredOutput != model.AuditProviderStructuredJSONObject {
+			return errors.New("AI 审查结构化输出模式无效")
+		}
+	case model.AuditOutputModeText:
+		if value.StructuredOutput != model.AuditProviderStructuredPromptedJSON {
+			return errors.New("AI 审查结构化输出模式无效")
+		}
+	default:
+		return errors.New("AI 审查输出模式无效")
 	}
 	return nil
 }

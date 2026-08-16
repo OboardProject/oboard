@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/aiprovider"
 	"github.com/OboardProject/oboard/internal/airpc"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
@@ -48,23 +49,16 @@ func validateAITestCapability(capability *model.AIProviderCapability) error {
 			return errors.New("AI provider capability 备注过长")
 		}
 	}
-	gradeOK := capability.AuditGrade == model.AuditProviderGradeA || capability.AuditGrade == model.AuditProviderGradeB || capability.AuditGrade == model.AuditProviderGradeC || capability.AuditGrade == model.AuditProviderGradeUnusable
-	structuredOK := capability.StructuredOutput == model.AuditProviderStructuredJSONSchema || capability.StructuredOutput == model.AuditProviderStructuredJSONObject || capability.StructuredOutput == model.AuditProviderStructuredNone
+	structuredOK := capability.StructuredOutput == model.AuditProviderStructuredJSONSchema || capability.StructuredOutput == model.AuditProviderStructuredJSONObject || capability.StructuredOutput == model.AuditProviderStructuredPromptedJSON || capability.StructuredOutput == model.AuditProviderStructuredNone
 	outputOK := capability.OutputMode == model.AuditOutputModeStrictSchema || capability.OutputMode == model.AuditOutputModeJSONObject || capability.OutputMode == model.AuditOutputModeText
-	if !gradeOK || !structuredOK || !outputOK || capability.SchemaSuccessRate < 0 || capability.SchemaSuccessRate > 1 || capability.MaxVerifiedOutputTokens <= 0 || capability.MaxVerifiedOutputTokens > 1<<20 {
+	if !structuredOK || !outputOK || capability.MaxVerifiedOutputTokens <= 0 || capability.MaxVerifiedOutputTokens > 1<<20 {
 		return errors.New("AI provider capability 枚举无效")
 	}
-	if (capability.AuditGrade == model.AuditProviderGradeA || capability.AuditGrade == model.AuditProviderGradeB) && capability.OutputMode == model.AuditOutputModeText {
-		return errors.New("AI provider A/B 级能力不允许纯文本输出")
+	if capability.AuditReady != aiprovider.CapabilityAuditReady(capability) {
+		return errors.New("AI provider capability 审计就绪状态矛盾")
 	}
-	if (capability.AuditGrade == model.AuditProviderGradeA || capability.AuditGrade == model.AuditProviderGradeB) && (!capability.ConnectivityOK || !capability.AuthenticationOK) {
-		return errors.New("AI provider A/B 级能力必须通过连接和认证测试")
-	}
-	if capability.AuditGrade == model.AuditProviderGradeA && (capability.StructuredOutput != model.AuditProviderStructuredJSONSchema || capability.OutputMode != model.AuditOutputModeStrictSchema || capability.SchemaSuccessRate != 1 || !capability.UsageSupported || !capability.FinishReasonSupported) {
-		return errors.New("AI provider A 级能力必须完整支持 strict schema、Usage 和 Finish Reason")
-	}
-	if capability.AuditGrade == model.AuditProviderGradeC && capability.OutputMode != model.AuditOutputModeText {
-		return errors.New("AI provider C 级能力必须标记为纯文本输出")
+	if !capability.AuditReady && (capability.StructuredOutput != model.AuditProviderStructuredNone || capability.OutputMode != model.AuditOutputModeText) {
+		return errors.New("未就绪的 AI provider capability 输出模式无效")
 	}
 	return nil
 }
@@ -171,15 +165,16 @@ func auditTestMessage(capability *model.AIProviderCapability) string {
 	if capability == nil {
 		return "连接成功，但未完成审计就绪测试"
 	}
-	switch capability.AuditGrade {
-	case model.AuditProviderGradeA:
-		return "审计就绪测试通过（A 级）：严格 Schema 输出稳定，可用于正式审计"
-	case model.AuditProviderGradeB:
-		return "审计就绪测试通过（B 级）：支持 JSON Object 输出并在本地校验修复后可用"
-	case model.AuditProviderGradeC:
-		return "审计就绪测试完成（C 级）：仅支持文本输出，不能用于正式审计报告"
+	if !capability.AuditReady {
+		return "兼容性测试完成：文本调用可用，但审计 JSON 不稳定"
+	}
+	switch capability.OutputMode {
+	case model.AuditOutputModeStrictSchema:
+		return "兼容性测试通过：可使用严格 Schema 生成审计报告"
+	case model.AuditOutputModeJSONObject:
+		return "兼容性测试通过：可使用 JSON Object 与本地校验生成审计报告"
 	default:
-		return "审计就绪测试未通过：无法稳定返回结构化结果"
+		return "兼容性测试通过：可使用提示词 JSON 与本地校验生成审计报告"
 	}
 }
 
