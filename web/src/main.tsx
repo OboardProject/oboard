@@ -71,6 +71,7 @@ import {
 import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
 import { proxyPathGeneratedReuseCountKey } from './components/proxy-path/reuse-target-options'
 import { detachedPathSuffix, detachedStepCreateRequest, disconnectPathCandidates, type CanvasDetachedChain } from './components/proxy-path/detached-chain'
+import { mergeTopologyMutation, removeTopologyRows } from './components/proxy-path/mutation-data'
 import './style.css'
 import { alignUnifiedMetrics, computeMaxLatency, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
 import { Badge } from './components/ui/badge'
@@ -203,6 +204,7 @@ function stripAppBasePath(pathname: string) {
 type Role = 'admin' | 'operator' | 'viewer' | 'none'
 type PageLoadOptions = { background?: boolean; forceFresh?: boolean }
 type PageLoad = (targetTab?: string, options?: PageLoadOptions) => Promise<void>
+type PageDataPatch = (patch: (current: any) => any) => void
 type ControllerUpdateIntervalHours = 1 | 6 | 24 | 72 | 168
 const controllerUpdateIntervalOptions = [
   { hours: 1, label: '1h' },
@@ -1664,6 +1666,16 @@ function App() {
     pageCacheRef.current[page] = { data: mergeServerTelemetryData({ ...data, load_errors: [] as string[] }, latestTelemetryRef.current), fetchedAt: Date.now() }
   }
 
+  const patchPageData: PageDataPatch = React.useCallback((patch) => {
+    setData((current: any) => {
+      const next = patch(current)
+      const page = activeTabRef.current
+      const cached = pageCacheRef.current[page]
+      pageCacheRef.current[page] = { data: next, fetchedAt: cached?.fetchedAt || 0 }
+      return next
+    })
+  }, [])
+
   // warmPage fetches a page in the background and stores it in the per-tab
   // cache. It never surfaces errors: foreground navigation retries and shows
   // them when needed, and aborted preloads are expected.
@@ -2355,7 +2367,7 @@ function App() {
             <div className="page-stage">
               <AnimatePresence initial={false} mode="popLayout">
                 <MotionPage key={tab}>
-                  {renderTab(tab, data, client, load, apply, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange)}
+                  {renderTab(tab, data, client, load, apply, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange, patchPageData)}
                 </MotionPage>
               </AnimatePresence>
             </div>
@@ -2682,7 +2694,7 @@ $ _`}</pre>
   )
 }
 
-function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', serverTelemetryStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange) {
+function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', serverTelemetryStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange, patchPageData?: PageDataPatch) {
   if (tab === 'account') return (
     <AccountPage
       data={data}
@@ -2708,7 +2720,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
       : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} announcements={data.user_announcements || []} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('subscriptions')} />
   }
   if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={serverTelemetryStatus} />
-  if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} apply={apply} loading={loading} topbarTarget={proxyPathTopbarTarget} />
+  if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} apply={apply} loading={loading} topbarTarget={proxyPathTopbarTarget} patchPageData={patchPageData} />
   if (tab === 'inbounds') return <Inbounds data={data} client={client} load={load} />
   if (tab === 'outbounds') return <Outbounds data={data} client={client} load={load} />
   if (tab === 'routing') return <RoutingRules data={data} client={client} load={load} />
@@ -8957,7 +8969,7 @@ function inboundEntryAddress(data: any, entry: Inbound) {
 type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'routing' | 'transport'
 const proxyToolDragType = 'application/oboard-proxy-tool'
 
-function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget }: any) {
+function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget, patchPageData }: any) {
   const [servers, setServers] = useState<Server[]>(data.servers || [])
   useEffect(() => { setServers(data.servers || []) }, [data.servers])
   const visibleData = useMemo(() => ({ ...data, servers }), [data, servers])
@@ -8974,7 +8986,7 @@ function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget }: any)
     {conflicts.length > 0 && <div className="error"><strong>下发前需要处理：</strong>{conflicts.map((x, i) => <div key={i}>{x}</div>)}</div>}
     <div className="proxy-shell">
       <ProxyGraphBoundary onRetry={load}>
-        <ProxyOverview data={visibleData} client={client} load={load} selectedServer={selectedServer} setSelectedServer={setSelectedServer} topbarTarget={topbarTarget} onServerSnapshot={(server: Server) => setServers(current => upsertServerSnapshot(current, server))} />
+        <ProxyOverview data={visibleData} client={client} load={load} selectedServer={selectedServer} setSelectedServer={setSelectedServer} topbarTarget={topbarTarget} patchPageData={patchPageData} onServerSnapshot={(server: Server) => setServers(current => upsertServerSnapshot(current, server))} />
       </ProxyGraphBoundary>
     </div>
   </Panel>
@@ -9039,13 +9051,16 @@ type TransportDialogRequest = {
 }
 type GraphSourceSelectionRequest = { title: string; options: GraphSourceOption[]; multiple: boolean; resolve: (value: ProxyPathReuseSource[] | null) => void }
 
-function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget, onServerSnapshot }: any) {
+function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget, onServerSnapshot, patchPageData }: any) {
   const dialogs = useDialogs()
   const latencyProbeResource = useLatencyProbeResource(client)
   const servers: Server[] = data.servers || []
   const entries: Inbound[] = data.inbounds || []
   const selected = servers.find(s => s.id === selectedServer) || servers[0]
   const selectedEntries = selected ? entries.filter(x => x.server_id === selected.id) : []
+  const applyMutationResult = (result: Record<string, any>) => patchPageData?.((current: any) => mergeTopologyMutation(current, result))
+  const removeMutationRows = (removals: Partial<Record<string, readonly number[]>>) => patchPageData?.((current: any) => removeTopologyRows(current, removals))
+  const reconcileTopology = () => { void load(undefined, { background: true, forceFresh: true }) }
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(() => window.innerWidth <= 820)
   const [entryServerQuery, setEntryServerQuery] = useState('')
@@ -9609,11 +9624,12 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const selection = await chooseTransportForTarget(target, undefined, sourceLabel, sources)
 	  if (!selection?.reuse_request) return [] as ProxyPathStep[]
 	  const result = await client.request('/proxy-paths/reuse', { method: 'POST', body: JSON.stringify(selection.reuse_request) }) as { proxy_path_steps?: ProxyPathStep[] }
+	  applyMutationResult(result)
 	  const targetSteps = (result.proxy_path_steps || []).filter(step => {
 	    if (selection.reuse_request?.target_kind === 'existing') return step.inbound_id === selection.reuse_request.target_inbound_id
 	    return step.node_type === 'server_inbound' && !step.inbound_id && step.server_id === selection.reuse_request?.target_server_id
 	  })
-		  await load()
+		  reconcileTopology()
 		  return targetSteps
 		}
 		const proxyPathDisplayName = (path: ProxyPath) => path.name || `路径 ${path.id}`
@@ -9682,6 +9698,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  for (const path of incompatible) {
 	    try {
 	      await client.request(`/proxy-paths/${path.id}`, { method: 'DELETE' })
+	      removeMutationRows({
+	        proxy_paths: [path.id],
+	        proxy_path_steps: ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === path.id).map(step => step.id),
+	      })
 	    } catch (error: any) {
 	      failures.push(`${proxyPathDisplayName(path)}：${localizeErrorMessage(error?.message || error)}`)
 	    }
@@ -9703,18 +9723,22 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  if (target.transport_mode === 'port_forward' && !await ensureTransparentPrefixCompatible(0, entry.id, [candidateStep])) return null
 	  const result = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: entry.id, enabled: true }) }) as { proxy_path?: ProxyPath }
 	  if (!result.proxy_path?.id) return null
+	  applyMutationResult(result)
 	  let createdStep: ProxyPathStep | null = null
 	  try {
 	    const stepResult = await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({ path_id: result.proxy_path.id, position: 1, transport_mode: 'singbox', config_json: '{}', ...target }) }) as { proxy_path_step?: ProxyPathStep }
+	    applyMutationResult(stepResult)
 	    createdStep = stepResult.proxy_path_step || null
 	  } catch (error) {
 	    await client.request(`/proxy-paths/${result.proxy_path.id}`, { method: 'DELETE' }).catch(() => undefined)
+	    removeMutationRows({ proxy_paths: [result.proxy_path.id] })
 	    throw error
 	  }
 	  return createdStep
 	}
 	const createDirectBranch = async (request: { inbound_id: number } | { source_step_id: number }): Promise<ProxyPath | null> => {
 	  const result = await client.request('/proxy-paths/direct-branches', { method: 'POST', body: JSON.stringify(request) }) as { proxy_path?: ProxyPath }
+	  applyMutationResult(result)
 	  return result.proxy_path || null
 	}
 	const appendPathAfterStep = async (stepID: number, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
@@ -9730,6 +9754,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const candidateStep = { position: nextPosition, transport_mode: 'singbox' as ProxyPathTransportMode, config_json: '{}', ...target }
 	  if (target.transport_mode === 'port_forward' && path && !await ensureTransparentPrefixCompatible(path.id, path.inbound_id, [...pathSteps, candidateStep])) return null
 	  const result = await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({ path_id: step.path_id, position: nextPosition, transport_mode: 'singbox', config_json: '{}', ...target }) }) as { proxy_path_step?: ProxyPathStep }
+	  applyMutationResult(result)
 	  return result.proxy_path_step || null
 	}
 	const appendPathAfterRoutingStage = async (pathID: number, stageStepID: number, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
@@ -9750,6 +9775,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const candidateStep = { position: nextPosition, transport_mode: 'singbox' as ProxyPathTransportMode, config_json: '{}', ...target }
 	  if (target.transport_mode === 'port_forward' && !await ensureTransparentPrefixCompatible(path.id, path.inbound_id, [...pathSteps, candidateStep])) return null
 	  const result = await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({ path_id: path.id, ...candidateStep }) }) as { proxy_path_step?: ProxyPathStep }
+	  applyMutationResult(result)
 	  return result.proxy_path_step || null
 	}
 	const createRoutingRuleTargetPath = async (rule: RoutingRule, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
@@ -9764,10 +9790,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const createdPath = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ kind: 'chain', name_mode: 'auto', name_template: [], inbound_id: sourcePath.inbound_id, enabled: false }) }) as { proxy_path?: ProxyPath }
 	  const pathID = createdPath.proxy_path?.id || 0
 	  if (!pathID) throw new Error('目标路径已创建，但接口没有返回路径数据。')
+	  applyMutationResult(createdPath)
 	  let targetStep: ProxyPathStep | null = null
 	  try {
 		for (const source of prefix) {
-		  await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({
+		  const prefixResult = await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({
 			path_id: pathID,
 			position: source.position,
 			node_type: source.node_type,
@@ -9777,16 +9804,24 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			inbound_id: source.inbound_id,
 			external_outbound_id: source.external_outbound_id,
 			config_json: source.config_json || '{}',
-		  }) })
+		  }) }) as { proxy_path_step?: ProxyPathStep }
+		  applyMutationResult(prefixResult)
 		}
 		const stepResult = await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({ path_id: pathID, position: stagePosition + 1, transport_mode: 'singbox', processing_role: false, config_json: '{}', ...target }) }) as { proxy_path_step?: ProxyPathStep }
+		applyMutationResult(stepResult)
 		targetStep = stepResult.proxy_path_step || null
 		if (!targetStep?.id) throw new Error('目标路径缺少第一个节点。')
-		await client.request(`/proxy-paths/${pathID}`, { method: 'PATCH', body: JSON.stringify({ enabled: true }) })
-		await client.request(`/routing-rules/${rule.id}`, { method: 'PATCH', body: JSON.stringify({ ...rule, action: 'proxy_path', target_proxy_path_id: pathID }) })
+		const enabledPath = await client.request(`/proxy-paths/${pathID}`, { method: 'PATCH', body: JSON.stringify({ enabled: true }) }) as Record<string, any>
+		applyMutationResult(enabledPath)
+		const updatedRule = await client.request(`/routing-rules/${rule.id}`, { method: 'PATCH', body: JSON.stringify({ ...rule, action: 'proxy_path', target_proxy_path_id: pathID }) }) as Record<string, any>
+		applyMutationResult(updatedRule)
 		return targetStep
 	  } catch (error) {
 		await client.request(`/proxy-paths/${pathID}`, { method: 'DELETE' }).catch(() => undefined)
+		removeMutationRows({
+		  proxy_paths: [pathID],
+		  proxy_path_steps: ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === pathID).map(step => step.id),
+		})
 		throw error
 	  }
 	}
@@ -9891,6 +9926,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	        method: 'POST',
 	        body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: inboundID, enabled: true }),
 	      }) as { proxy_path?: ProxyPath }
+	      applyMutationResult(result)
 	      pathID = result.proxy_path?.id || 0
 	      createdPathID = pathID
 	      if (!pathID) throw new Error('路径已创建，但接口未返回路径数据')
@@ -9901,6 +9937,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	        method: 'POST',
 	        body: JSON.stringify(detachedStepCreateRequest(chain.steps[index].step, pathID, nextPosition + index)),
 	      }) as { proxy_path_step?: ProxyPathStep }
+	      applyMutationResult(result)
 	      const created = result.proxy_path_step
 	      if (!created?.id) throw new Error(`第 ${index + 1} 个节点未返回创建结果`)
 	      if (!firstCreatedStepID) firstCreatedStepID = created.id
@@ -9914,7 +9951,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      return next
 	    })
 	    setCanvasDetachedChains(chains => chains.filter(item => item.instance_id !== chain.instance_id))
-	    await load(undefined, { background: true, forceFresh: true })
+	    reconcileTopology()
 	    return true
 	  } catch (error) {
 	    if (createdPathID) await client.request(`/proxy-paths/${createdPathID}`, { method: 'DELETE' }).catch(() => undefined)
@@ -9935,8 +9972,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 				const rule = ((data.routing_rules || []) as RoutingRule[]).find(item => item.id === routingRuleID)
 				if (!rule) return dialogs.alert({ title: '规则已经变化', message: '没有找到这条分流规则，请刷新后重试。' })
 				if (targetEntity?.type === 'direct') {
-				  await client.request(`/routing-rules/${rule.id}`, { method: 'PATCH', body: JSON.stringify({ ...rule, action: 'direct', target_proxy_path_id: undefined }) })
-				  await load(undefined, { background: true, forceFresh: true })
+				  const result = await client.request(`/routing-rules/${rule.id}`, { method: 'PATCH', body: JSON.stringify({ ...rule, action: 'direct', target_proxy_path_id: undefined }) }) as Record<string, any>
+				  applyMutationResult(result)
+				  reconcileTopology()
 				  return
 				}
 				if (targetEntity?.type === 'routing' || targetEntity?.type === 'detached-step') {
@@ -9965,7 +10003,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 				if (!created) return
 				if (target.node_type === 'server_inbound') consumeCanvasServerTarget(conn.target, [created])
 				if (target.node_type === 'warp') consumeCanvasWARPTarget(conn.target, [created])
-				await load(undefined, { background: true, forceFresh: true })
+				reconcileTopology()
 				return
 			  }
 			  const routingSource = sourceEntity?.type === 'routing' && sourceEntity.path_id
@@ -10002,7 +10040,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			    if (!created) return
 			    if (target.node_type === 'server_inbound') consumeCanvasServerTarget(conn.target, [created])
 			    if (target.node_type === 'warp') consumeCanvasWARPTarget(conn.target, [created])
-			    await load(undefined, { background: true, forceFresh: true })
+			    reconcileTopology()
 			    return
 			  }
 				  if (conn.sourceHandle === SERVER_GRAPH_SOURCE_HANDLE) {
@@ -10033,7 +10071,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			        }
 			      }
 			      consumeCanvasDirectTarget(conn.target, createdPaths)
-			      await load(undefined, { background: true, forceFresh: true })
+			      reconcileTopology()
 			      if (failures.length) await dialogs.alert({ title: createdPaths.length ? '部分直接出口未添加' : '直接出口添加失败', message: failures.join('\n') })
 			      return
 			    }
@@ -10045,7 +10083,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			        return entry ? createPathFromEntry(entry, target) : Promise.resolve(null)
 			      })
 			      consumeCanvasWARPTarget(conn.target, created)
-			      await load(undefined, { background: true, forceFresh: true })
+			      reconcileTopology()
 			      return
 			    }
 			    const target = await targetStepForGraphTarget(conn.target)
@@ -10062,7 +10100,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			      const entry = entries.find(item => item.id === source.inbound_id)
 			      return entry ? createPathFromEntry(entry, { ...target, ...transport }) : Promise.resolve(null)
 			    })
-			    await load(undefined, { background: true, forceFresh: true })
+			    reconcileTopology()
 			    return
 			  }
 			  if (targetEntity?.type === 'detached-step') {
@@ -10104,7 +10142,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      const created = await appendPathAfterStep(sourcePathStepID, target)
 	      if (created) {
 	        consumeCanvasWARPTarget(conn.target, [created])
-	        await load(undefined, { background: true, forceFresh: true })
+	        reconcileTopology()
 	      }
 	      return
 	    }
@@ -10113,7 +10151,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      const created = await createPathFromEntry(sourceEntry, target)
 	      if (created) {
 	        consumeCanvasWARPTarget(conn.target, [created])
-	        await load(undefined, { background: true, forceFresh: true })
+	        reconcileTopology()
 	      }
 	      return
 	    }
@@ -10128,7 +10166,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      const created = await createDirectBranch({ source_step_id: sourcePathStepID })
 	      if (created) {
 	        consumeCanvasDirectTarget(conn.target, [created])
-	        await load(undefined, { background: true, forceFresh: true })
+	        reconcileTopology()
 	      }
 	      return
 	    }
@@ -10137,7 +10175,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      const created = await createDirectBranch({ inbound_id: sourceEntry.id })
 	      if (created) {
 	        consumeCanvasDirectTarget(conn.target, [created])
-	        await load(undefined, { background: true, forceFresh: true })
+	        reconcileTopology()
 	      }
 	      return
 	    }
@@ -10153,7 +10191,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      const transport = await chooseTransportForTarget(target)
 	      if (transport) {
 	        await appendPathAfterStep(sourcePathStepID, { ...target, ...transport })
-	        await load(undefined, { background: true, forceFresh: true })
+	        reconcileTopology()
 	      }
 	    }
 	    return
@@ -10164,7 +10202,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	      const transport = await chooseTransportForTarget(target, undefined, sourceHandleEntry.name || sourceEntity?.label)
 	      if (transport) {
 	        await createPathFromEntry(sourceHandleEntry, { ...target, ...transport })
-	        await load(undefined, { background: true, forceFresh: true })
+	        reconcileTopology()
 	      }
 	    } else if (target?.node_type === 'server_inbound') {
 	      const created = await reuseControlledTarget([{ inbound_id: sourceHandleEntry.id }], target, sourceHandleEntry.name || sourceEntity?.label)
@@ -10177,7 +10215,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    const transport = await chooseTransportForTarget({ node_type: 'imported', external_outbound_id: targetEntity.id } as any, undefined, sourceEntity.label)
 	    if (entry && transport) {
 	      await createPathFromEntry(entry, { node_type: 'imported', external_outbound_id: targetEntity.id, ...transport })
-	      await load(undefined, { background: true, forceFresh: true })
+	      reconcileTopology()
 	    }
 	    return
 	  }
@@ -10221,11 +10259,12 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     try {
       const result = await client.request('/servers', { method: 'POST', body: JSON.stringify(serverDraft) }) as { server?: Server }
       if (!result.server?.id) throw new Error('服务器已创建，但接口未返回服务器数据')
+      applyMutationResult(result)
       onServerSnapshot(result.server)
       placeGraphNode(`server-${result.server.id}`, serverDraftPosition.current || nextServerGraphPosition(data))
       setServerDraft(null)
       serverDraftPosition.current = null
-      void load(undefined, { background: true, forceFresh: true })
+      reconcileTopology()
     } catch (e: any) {
       await dialogs.alert({ title: '添加服务器失败', message: localizeErrorMessage(e.message || e) })
     }
@@ -10254,12 +10293,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         finalDraft = { ...finalDraft, config_json: JSON.stringify({ ...(parseConfig(finalDraft.config_json) || {}), exposure_confirmed: true, exposure_confirmation_version: 'ssh-inbound-v1', access_mode: 'restricted_proxy' }) }
       }
       const { __graphPosition, __port_manual, __custom_sni, ...body } = finalDraft
-      const result = await client.request('/inbounds', { method: 'POST', body: JSON.stringify(body) }) as { inbound?: Inbound }
+	      const result = await client.request('/inbounds', { method: 'POST', body: JSON.stringify(body) }) as { inbound?: Inbound }
+	      applyMutationResult(result)
       if (result.inbound?.id) {
         placeGraphNode(`entry-${result.inbound.id}`, __graphPosition || nextEntryGraphPosition(data, positions, Number(body.server_id), selected?.id || Number(body.server_id)))
       }
-      setEntryDraft(null)
-      await load()
+	      setEntryDraft(null)
+	      reconcileTopology()
     } catch (e: any) {
       await dialogs.alert({ title: '创建入口失败', message: localizeErrorMessage(e.message || e) })
     }
@@ -10274,9 +10314,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         finalDraft = { ...finalDraft, config_json: JSON.stringify({ ...(parseConfig(finalDraft.config_json) || {}), exposure_confirmed: true, exposure_confirmation_version: 'ssh-inbound-v1', access_mode: 'restricted_proxy' }) }
       }
       const { __edit, __graphPosition, __port_manual, __custom_sni, ...body } = finalDraft
-      await client.request(`/inbounds/${body.id}`, { method: 'PATCH', body: JSON.stringify(body) })
-      setEditEntry(null)
-      await load()
+	      const result = await client.request(`/inbounds/${body.id}`, { method: 'PATCH', body: JSON.stringify(body) }) as Record<string, any>
+	      applyMutationResult(result)
+	      setEditEntry(null)
+	      reconcileTopology()
     } catch (e: any) {
       await dialogs.alert({ title: '保存入口失败', message: localizeErrorMessage(e.message || e) })
     }
@@ -10369,13 +10410,14 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }
       if (routingDraft.action === 'interface') body.interface_name = routingDraft.interface_name.trim()
       if (routingDraft.action === 'source_prefix') body.source_prefix = routingDraft.source_prefix.trim()
-	      await client.request(routingDraft.id ? `/routing-rules/${routingDraft.id}` : '/routing-rules', { method: routingDraft.id ? 'PATCH' : 'POST', body: JSON.stringify(body) })
+		      const result = await client.request(routingDraft.id ? `/routing-rules/${routingDraft.id}` : '/routing-rules', { method: routingDraft.id ? 'PATCH' : 'POST', body: JSON.stringify(body) }) as Record<string, any>
+		      applyMutationResult(result)
 	      uncommittedPathID = 0
 	      if (routingCanvasTargetID) {
 	        consumeCanvasRoutingTarget(routingCanvasTargetID, proxyPathID, routingDraft.stage_step_id)
 	        setRoutingCanvasTargetID('')
 	      }
-      await load()
+	      reconcileTopology()
 		setRoutingDraft(current => current ? { ...current, id: 0, proxy_path_id: proxyPathID, inbound_id: 0, name: '', sync_source_rule_id: 0, sync_enabled: false, match_value: current.match_kind === 'all' ? '' : current.match_value } : current)
     } catch (e: any) {
       if (uncommittedPathID) await client.request(`/proxy-paths/${uncommittedPathID}`, { method: 'DELETE' }).catch(() => undefined)
@@ -10392,11 +10434,12 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const submitImportNode = async () => {
 	  if (!importDraft) return
 	  try {
-	    const result = await client.request('/external-outbounds/import', { method: 'POST', body: JSON.stringify({ content: importDraft.content, scope: importDraft.scope, server_id: importDraft.scope === 'server' && importDraft.server_id ? importDraft.server_id : undefined, expose_to_users: importDraft.expose_to_users }) }) as { external_outbounds?: ExternalOutbound[] }
+		    const result = await client.request('/external-outbounds/import', { method: 'POST', body: JSON.stringify({ content: importDraft.content, scope: importDraft.scope, server_id: importDraft.scope === 'server' && importDraft.server_id ? importDraft.server_id : undefined, expose_to_users: importDraft.expose_to_users }) }) as { external_outbounds?: ExternalOutbound[] }
+		    applyMutationResult(result)
 	    const first = result.external_outbounds?.[0]
 	    if (first?.id && importDraft.position) { setCanvasImportedIDs(ids => ids.includes(first.id) ? ids : [...ids, first.id]); placeGraphNode(`imported-${first.id}`, importDraft.position) }
 	    setImportDraft(null)
-	    await load()
+		    reconcileTopology()
 	  } catch (e: any) {
 	    await dialogs.alert({ title: '导入节点失败', message: localizeErrorMessage(e.message || e) })
 	  }
@@ -10404,8 +10447,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const submitTransportDraft = async () => {
     if (!transportDraft) return
     try {
-      if (transportDraft.mode === 'port-forward') {
-        await client.request('/port-forwards', { method: 'POST', body: JSON.stringify({
+	      let result: Record<string, any>
+	      if (transportDraft.mode === 'port-forward') {
+	        result = await client.request('/port-forwards', { method: 'POST', body: JSON.stringify({
           name: transportDraft.name,
           source_server_id: transportDraft.source_server_id,
           target_server_id: transportDraft.target_server_id,
@@ -10420,9 +10464,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
           priority: transportDraft.priority,
           config_json: '{}',
           enabled: transportDraft.enabled,
-        }) })
-      } else {
-        await client.request('/tunnels', { method: 'POST', body: JSON.stringify({
+	        }) }) as Record<string, any>
+	      } else {
+	        result = await client.request('/tunnels', { method: 'POST', body: JSON.stringify({
           name: transportDraft.name,
           source_server_id: transportDraft.source_server_id,
           target_server_id: transportDraft.target_server_id,
@@ -10435,10 +10479,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
           priority: transportDraft.priority,
           config_json: transportDraft.config_json,
           enabled: transportDraft.enabled,
-        }) })
-      }
-      setTransportDraft(null)
-      await load()
+	        }) }) as Record<string, any>
+	      }
+	      applyMutationResult(result)
+	      setTransportDraft(null)
+	      reconcileTopology()
     } catch (e: any) {
       await dialogs.alert({ title: '创建转发隧道失败', message: localizeErrorMessage(e.message || e) })
     }
@@ -10471,12 +10516,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			    const failures: string[] = []
 			    for (const rule of stageRules) {
 			      try {
-			        await client.request(`/routing-rules/${rule.id}`, { method: 'DELETE' })
+				        await client.request(`/routing-rules/${rule.id}`, { method: 'DELETE' })
+				        removeMutationRows({ routing_rules: [rule.id] })
 			      } catch (error: any) {
 			        failures.push(`${rule.name}：${localizeErrorMessage(error?.message || error)}`)
 			      }
 			    }
-			    await load()
+				    reconcileTopology()
 			    if (failures.length) await dialogs.alert({ title: '部分规则未删除', message: failures.join('\n') })
 			    return
 			  }
@@ -10554,10 +10600,31 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       tone: 'danger',
       confirmText: cascading ? '取消后续节点' : '删除',
     })
-    if (!ok) return
-    try {
-      await client.request(item.path, { method: 'DELETE' })
-      await load()
+	    if (!ok) return
+	    try {
+	      await client.request(item.path, { method: 'DELETE' })
+	      const removals: Partial<Record<string, readonly number[]>> = {}
+	      if (entity.type === 'server') removals.servers = [entity.id]
+	      if (entity.type === 'entry') removals.inbounds = [entity.id]
+	      if (entity.type === 'imported') removals.external_outbounds = [entity.id]
+	      if (entity.type === 'port-forward') removals.port_forwards = [entity.id]
+	      if (entity.type === 'tunnel') removals.tunnels = [entity.id]
+	      if (entity.type === 'proxy-path' || entity.type === 'direct') {
+	        const pathID = entity.path_id || entity.id
+	        removals.proxy_paths = [pathID]
+	        removals.proxy_path_steps = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === pathID).map(step => step.id)
+	      }
+	      if (entity.type === 'proxy-path-step') {
+	        const selectedStep = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === entity.id)
+	        if (selectedStep) {
+	          const pathSteps = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === selectedStep.path_id)
+	          const suffixIDs = pathSteps.filter(step => step.position >= selectedStep.position).map(step => step.id)
+	          removals.proxy_path_steps = suffixIDs
+	          if (suffixIDs.length === pathSteps.length) removals.proxy_paths = [selectedStep.path_id]
+	        }
+	      }
+	      removeMutationRows(removals)
+	      reconcileTopology()
 	    } catch (e: any) {
 	      await dialogs.alert({ title: '删除失败', message: localizeErrorMessage(e.message || e) })
 	    }
@@ -10644,6 +10711,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 
 		    try {
 		      await client.request(`/proxy-path-steps/${selectedCandidate.step.id}`, { method: 'DELETE' })
+		      removeMutationRows({
+		        proxy_path_steps: suffix.map(step => step.id),
+		        ...(suffix.length === allSteps.filter(step => step.path_id === path.id).length ? { proxy_paths: [path.id] } : {}),
+		      })
 		      setCanvasDetachedChains(chains => [...chains, {
 		        instance_id: instanceID,
 		        root_server_id: rootEntry.server_id,
@@ -10658,7 +10729,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		        return next
 		      })
 		      setFocusedPathID(path.id)
-		      await load(undefined, { background: true, forceFresh: true })
+		      reconcileTopology()
 		    } catch (error: any) {
 		      await dialogs.alert({ title: '断开失败', message: localizeErrorMessage(error?.message || error) })
 		    }
@@ -10680,8 +10751,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    const pathSteps: ProxyPathStep[] = (data.proxy_path_steps || []).filter((item: ProxyPathStep) => item.path_id === step.path_id)
 	    const candidateSteps = pathSteps.map(item => item.id === step.id ? { ...item, ...stepPatch } : item)
 	    if (transport.transport_mode === 'port_forward' && path && !await ensureTransparentPrefixCompatible(path.id, path.inbound_id, candidateSteps)) return
-	    await client.request(`/proxy-path-steps/${step.id}`, { method: 'PATCH', body: JSON.stringify({ ...step, ...stepPatch }) })
-	    await load()
+	    const result = await client.request(`/proxy-path-steps/${step.id}`, { method: 'PATCH', body: JSON.stringify({ ...step, ...stepPatch }) }) as Record<string, any>
+	    applyMutationResult(result)
+	    reconcileTopology()
 	  } catch (e: any) {
 	    await dialogs.alert({ title: '更新失败', message: localizeErrorMessage(e.message || e) })
     }

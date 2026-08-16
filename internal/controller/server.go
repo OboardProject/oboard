@@ -7751,10 +7751,14 @@ func (s *Server) validateEnabledProxyPathPlan(ctx context.Context, pathID int64)
 }
 
 func (s *Server) ensureWARPProfilesForProxyPaths(ctx context.Context) error {
-	data, err := s.store.FullRoutingConfigData(ctx)
+	data, err := s.store.ProxyTopologyData(ctx)
 	if err != nil {
 		return err
 	}
+	return s.ensureWARPProfilesForProxyTopology(ctx, data)
+}
+
+func (s *Server) ensureWARPProfilesForProxyTopology(ctx context.Context, data store.ProxyTopologyData) error {
 	serverIDs, err := core.ProxyPathWARPServerIDs(data.ProxyPaths, data.ProxyPathSteps, data.Inbounds)
 	if err != nil {
 		return err
@@ -7835,14 +7839,15 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		if err := s.normalizeAndValidateProxyPath(r.Context(), v.PathID); err != nil {
+		topology, err := s.normalizeAndValidateProxyPathData(r.Context(), v.PathID)
+		if err != nil {
 			_ = s.store.Delete(r.Context(), "proxy_path_steps", v.ID)
 			restoreDirectPath()
 			_ = s.normalizeProxyPathProcessingRoles(r.Context(), v.PathID)
 			fail(w, err, 400)
 			return
 		}
-		if err := s.ensureWARPProfilesForProxyPaths(r.Context()); err != nil {
+		if err := s.ensureWARPProfilesForProxyTopology(r.Context(), topology); err != nil {
 			_ = s.store.Delete(r.Context(), "proxy_path_steps", v.ID)
 			restoreDirectPath()
 			_ = s.normalizeProxyPathProcessingRoles(r.Context(), v.PathID)
@@ -7856,7 +7861,7 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
+		if err := s.reconcileProxyPathNameTemplatesWithData(r.Context(), topology); err != nil {
 			_ = s.store.Delete(r.Context(), "proxy_path_steps", v.ID)
 			restoreDirectPath()
 			_ = s.normalizeProxyPathProcessingRoles(r.Context(), v.PathID)
@@ -7894,13 +7899,14 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		if err := s.normalizeAndValidateProxyPath(r.Context(), v.PathID); err != nil {
+		topology, err := s.normalizeAndValidateProxyPathData(r.Context(), v.PathID)
+		if err != nil {
 			_ = s.store.UpdateProxyPathStep(r.Context(), current)
 			_ = s.normalizeProxyPathProcessingRoles(r.Context(), current.PathID)
 			fail(w, err, 400)
 			return
 		}
-		if err := s.ensureWARPProfilesForProxyPaths(r.Context()); err != nil {
+		if err := s.ensureWARPProfilesForProxyTopology(r.Context(), topology); err != nil {
 			_ = s.store.UpdateProxyPathStep(r.Context(), current)
 			_ = s.normalizeProxyPathProcessingRoles(r.Context(), current.PathID)
 			fail(w, err, 500)
@@ -7914,7 +7920,7 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
+		if err := s.reconcileProxyPathNameTemplatesWithData(r.Context(), topology); err != nil {
 			fail(w, err, 500)
 			return
 		}
@@ -8308,16 +8314,21 @@ func (s *Server) normalizeProxyPathProcessingRoles(ctx context.Context, pathID i
 }
 
 func (s *Server) normalizeAndValidateProxyPath(ctx context.Context, pathID int64) error {
-	if err := s.normalizeProxyPathProcessingRoles(ctx, pathID); err != nil {
-		return err
-	}
-	data, err := s.store.FullRoutingConfigData(ctx)
-	if err != nil {
-		return err
-	}
-	resolveRoutingProxyPathNames(&data)
-	_, err = core.BuildProxyPathPlansWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, core.NewProxyPathPortLedger(data.ProxyPathPortAllocations))
+	_, err := s.normalizeAndValidateProxyPathData(ctx, pathID)
 	return err
+}
+
+func (s *Server) normalizeAndValidateProxyPathData(ctx context.Context, pathID int64) (store.ProxyTopologyData, error) {
+	if err := s.normalizeProxyPathProcessingRoles(ctx, pathID); err != nil {
+		return store.ProxyTopologyData{}, err
+	}
+	data, err := s.store.ProxyTopologyData(ctx)
+	if err != nil {
+		return store.ProxyTopologyData{}, err
+	}
+	data.ProxyPaths = core.ResolveProxyPathNames(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, data.ExternalOutbounds)
+	_, err = core.BuildProxyPathPlansWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, core.NewProxyPathPortLedger(data.ProxyPathPortAllocations))
+	return data, err
 }
 
 func (s *Server) proxyPathNameData(ctx context.Context) ([]model.ProxyPath, []model.ProxyPathStep, []model.Server, []model.Inbound, []model.ExternalOutbound, error) {
@@ -8380,18 +8391,21 @@ func (s *Server) resolvedProxyPath(ctx context.Context, fallback model.ProxyPath
 }
 
 func (s *Server) reconcileProxyPathNameTemplates(ctx context.Context) error {
-	paths, steps, servers, inbounds, externals, err := s.proxyPathNameData(ctx)
+	data, err := s.store.ProxyTopologyData(ctx)
 	if err != nil {
 		return err
 	}
+	return s.reconcileProxyPathNameTemplatesWithData(ctx, data)
+}
+
+func (s *Server) reconcileProxyPathNameTemplatesWithData(ctx context.Context, data store.ProxyTopologyData) error {
+	paths, externals := core.ResolveProxyPathExitRegions(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, data.ExternalOutbounds, data.ProxyPathEgressResults)
 	for index := range paths {
 		path := &paths[index]
-		if path.NameMode != model.ProxyPathNameCustom || core.ProxyPathNameTemplateIsValid(*path, steps, servers, inbounds, externals) {
+		if path.NameMode != model.ProxyPathNameCustom || core.ProxyPathNameTemplateIsValid(*path, data.ProxyPathSteps, data.Servers, data.Inbounds, externals) {
 			continue
 		}
-		path.NameMode = model.ProxyPathNameAuto
-		path.NameTemplate = []model.ProxyPathNamePart{}
-		if err := s.store.UpdateProxyPath(ctx, path); err != nil {
+		if err := s.store.ResetProxyPathNameTemplate(ctx, path.ID); err != nil {
 			return err
 		}
 	}
