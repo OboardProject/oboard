@@ -7383,6 +7383,19 @@ function TimeCorrectionSelector({ value, onChange, compact = false }: { value: T
   </div>
 }
 
+type ServerActionItem = {
+  label: string
+  type: string
+  icon: React.ComponentType<{ size?: number; className?: string; 'aria-hidden'?: boolean | 'true' | 'false' }>
+  admin?: boolean
+  danger?: boolean
+}
+
+type ServerActionGroup = {
+  title?: string
+  items: ServerActionItem[]
+}
+
 function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: Server; role?: Role; onAction: (type: string, server: Server) => void }) {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -7390,64 +7403,100 @@ function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: 
   const menuRef = useRef<HTMLDivElement>(null)
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 })
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      const target = event.target as HTMLElement | null
-      if (target && ref.current && !ref.current.contains(target) && !menuRef.current?.contains(target)) {
-        setIsOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  const groups: ServerActionGroup[] = [
+    {
+      title: '监控与运维',
+      items: [
+        { label: '详细信息', type: 'details', icon: Info },
+        { label: '运行日志', type: 'logs', icon: FileText, admin: true },
+        { label: '网络诊断', type: 'diagnose', icon: Activity, admin: true },
+        { label: '任务记录', type: 'tasks', icon: ClipboardList },
+      ],
+    },
+    {
+      title: '配置与策略',
+      items: [
+        { label: '基础设置', type: 'edit', icon: SlidersHorizontal },
+        { label: 'DNS 设置', type: 'dns', icon: Globe },
+        { label: 'MTU 设置', type: 'mtu', icon: Gauge },
+        { label: 'Agent 设置', type: 'agent-config', icon: Sliders, admin: true },
+      ],
+    },
+    {
+      title: 'Agent 维护',
+      items: [
+        { label: '更新 Agent', type: 'update-agent', icon: ArrowUpCircle, admin: true },
+        { label: '接入命令', type: 'enroll', icon: Terminal, admin: true },
+      ],
+    },
+    {
+      items: [
+        { label: '删除服务器', type: 'delete', icon: Trash2, danger: true },
+      ],
+    },
+  ]
 
-  const items = [
-	{ label: '详细信息', type: 'details' },
-	{ label: '基础设置', type: 'edit' },
-	{ label: 'DNS 设置', type: 'dns' },
-	{ label: 'MTU 设置', type: 'mtu' },
-	{ label: 'Agent 设置', type: 'agent-config', admin: true },
-	{ label: '更新 Agent', type: 'update-agent', admin: true },
-	{ label: 'Agent 命令', type: 'enroll', admin: true },
-	{ label: '日志', type: 'logs', admin: true },
-	{ label: '诊断', type: 'diagnose', admin: true },
-	{ label: '任务', type: 'tasks' },
-	{ label: '删除', type: 'delete', danger: true },
-	].filter(item => !item.admin || role === 'admin');
+  const visibleGroups = groups
+    .map(g => ({ ...g, items: g.items.filter(item => !item.admin || role === 'admin') }))
+    .filter(g => g.items.length > 0)
+
+  const totalVisibleItems = visibleGroups.reduce((acc, g) => acc + g.items.length, 0)
 
   const updateMenuPosition = () => {
     const button = buttonRef.current
     if (!button) return
     const rect = button.getBoundingClientRect()
-    const width = 148
-    const estimatedHeight = items.length * 34 + 16
+    const width = 176
+    const estimatedHeight = Math.min(totalVisibleItems * 32 + visibleGroups.length * 28 + 16, window.innerHeight - 16)
+    const height = menuRef.current?.offsetHeight || estimatedHeight
+    const roomBelow = window.innerHeight - rect.bottom - 8 - 6
+    const roomAbove = rect.top - 8 - 6
+    const openBelow = roomBelow >= height || roomBelow >= roomAbove
     const left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width))
-    const top = rect.bottom + estimatedHeight + 8 <= window.innerHeight
-      ? rect.bottom + 6
-      : Math.max(8, rect.top - estimatedHeight - 6)
+    const top = openBelow
+      ? Math.min(rect.bottom + 6, window.innerHeight - height - 8)
+      : Math.max(8, rect.top - height - 6)
     setMenuPosition({ top, left })
   }
 
   useEffect(() => {
     if (!isOpen) return
     updateMenuPosition()
-    const sync = () => updateMenuPosition()
-    window.addEventListener('resize', sync)
-    window.addEventListener('scroll', sync, true)
-    return () => {
-      window.removeEventListener('resize', sync)
-      window.removeEventListener('scroll', sync, true)
+    const frame = window.requestAnimationFrame(updateMenuPosition)
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target && ref.current && !ref.current.contains(target) && !menuRef.current?.contains(target)) {
+        setIsOpen(false)
+      }
     }
-  }, [isOpen, items.length])
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false)
+        buttonRef.current?.focus()
+      }
+    }
+    window.addEventListener('resize', updateMenuPosition)
+    window.addEventListener('scroll', updateMenuPosition, true)
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('resize', updateMenuPosition)
+      window.removeEventListener('scroll', updateMenuPosition, true)
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [isOpen, totalVisibleItems])
 
   return (
     <div ref={ref} className={isOpen ? 'server-actions-dropdown is-open' : 'server-actions-dropdown'}>
       <button
         ref={buttonRef}
+        type="button"
         onClick={(e) => {
-          e.stopPropagation();
+          e.stopPropagation()
           if (!isOpen) updateMenuPosition()
-          setIsOpen(!isOpen);
+          setIsOpen(!isOpen)
         }}
         className="ghost icon-button"
         style={{
@@ -7460,7 +7509,7 @@ function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: 
           cursor: 'pointer',
           backgroundColor: isOpen ? 'var(--bg-control)' : 'var(--bg-card)',
           color: 'var(--text-primary)',
-          transition: 'all 0.15s'
+          transition: 'all 0.15s',
         }}
         title="服务器操作"
         aria-label="打开服务器操作菜单"
@@ -7470,59 +7519,42 @@ function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: 
         <MoreHorizontal size={16} aria-hidden="true" />
       </button>
       {isOpen && createPortal(
-        <div ref={menuRef} className="server-actions-menu action-menu-portal" role="menu" style={{
-          position: 'fixed',
-          top: menuPosition.top,
-          left: menuPosition.left,
-          right: 'auto',
-          bottom: 'auto',
-          zIndex: 'var(--z-popover)',
-          width: '148px',
-          minWidth: '148px',
-          maxWidth: 'calc(100vw - 16px)',
-          maxHeight: 'calc(100vh - 16px)',
-          overflowY: 'auto',
-          backgroundColor: 'var(--bg-card)',
-          border: '1.5px solid var(--border-color)',
-          borderRadius: 'var(--radius-md)',
-          boxShadow: 'var(--shadow-lg)',
-          padding: '6px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '2px',
-          textAlign: 'left'
-        }}>
-          {items.map(item => (
-            <button
-              key={item.type}
-              role="menuitem"
-              onClick={(e) => {
-                e.stopPropagation();
-                onAction(item.type, server);
-                setIsOpen(false);
-              }}
-              style={{
-                width: '100%',
-                padding: '6px 12px',
-                border: 'none',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '12px',
-                fontWeight: 600,
-                textAlign: 'left',
-                cursor: 'pointer',
-                backgroundColor: 'transparent',
-                color: item.danger ? 'var(--color-danger)' : 'var(--text-primary)',
-                transition: 'background-color 0.15s'
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.backgroundColor = item.danger ? 'var(--color-danger-bg)' : 'var(--bg-control)';
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.backgroundColor = 'transparent';
-              }}
-            >
-              {item.label}
-            </button>
+        <div
+          ref={menuRef}
+          className="server-actions-menu action-menu-portal"
+          role="menu"
+          style={{
+            position: 'fixed',
+            top: menuPosition.top,
+            left: menuPosition.left,
+          }}
+        >
+          {visibleGroups.map((group, groupIdx) => (
+            <React.Fragment key={group.title || groupIdx}>
+              {groupIdx > 0 && <div className="server-actions-divider" role="separator" />}
+              <div className="server-actions-section">
+                {group.title && <div className="server-actions-section-title">{group.title}</div>}
+                {group.items.map((item) => {
+                  const Icon = item.icon
+                  return (
+                    <button
+                      key={item.type}
+                      type="button"
+                      role="menuitem"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onAction(item.type, server)
+                        setIsOpen(false)
+                      }}
+                      className={item.danger ? 'danger' : ''}
+                    >
+                      <span className="server-action-icon"><Icon size={14} aria-hidden="true" /></span>
+                      <span className="server-action-label">{item.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </React.Fragment>
           ))}
         </div>,
         document.body
