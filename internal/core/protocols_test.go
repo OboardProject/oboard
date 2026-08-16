@@ -385,6 +385,39 @@ func TestProxyPathStageRulesRunBeforeEachStageContinuation(t *testing.T) {
 	}
 }
 
+func TestPathStageInterfaceRuleRoutesThroughBoundDirectOutbound(t *testing.T) {
+	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
+	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
+	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindDirect, Name: "A-B", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	serverBID, pathID := serverB.ID, path.ID
+	stepB := model.ProxyPathStep{ID: 101, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID}
+	rule := model.RoutingRule{
+		ID: 7, ServerID: serverA.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &pathID,
+		SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: "all-via-eth0", MatchJSON: `{}`,
+		Action: model.RouteActionInterface, InterfaceName: "eth0", Enabled: true,
+	}
+	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	config := mustServerConfig(t, serverA, []model.Inbound{root}, []model.User{user}, ConfigOptions{
+		Servers: []model.Server{serverA, serverB}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{path},
+		ProxyPathSteps: []model.ProxyPathStep{stepB}, InboundUsers: []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}},
+		RoutingRules: []model.RoutingRule{rule},
+	})
+
+	boundTag := routingRuleInterfaceOutboundTag(rule.ID)
+	bound := findOutbound(config, boundTag)
+	if bound["type"] != "direct" || bound["bind_interface"] != "eth0" {
+		t.Fatalf("bound interface outbound = %#v, want direct outbound on eth0; config=%s", bound, config)
+	}
+	routes := mapList(parseSingBoxConfig(t, config).Route["rules"])
+	if len(routes) < 2 || routes[0]["action"] != "route" || routes[0]["outbound"] != boundTag {
+		t.Fatalf("first path-stage rule = %#v, want route through %q; config=%s", routes, boundTag, config)
+	}
+	if routes[1]["outbound"] != proxyPathStepTag(path.ID, stepB.Position) {
+		t.Fatalf("path fallback changed unexpectedly: %#v", routes)
+	}
+}
+
 func TestProxyPathStageRuleDoesNotAffectSiblingBranch(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
 	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
@@ -2015,8 +2048,8 @@ func TestGenerateServerConfigWithRoutingRulesIgnoresUnreferencedWARP(t *testing.
 	if err := json.Unmarshal([]byte(config), &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if len(parsed.Outbounds) != 5 {
-		t.Fatalf("outbounds = %d, want direct/block + normal + external + source-prefix", len(parsed.Outbounds))
+	if len(parsed.Outbounds) != 6 {
+		t.Fatalf("outbounds = %d, want direct/block + normal + external + source-prefix + bound interface", len(parsed.Outbounds))
 	}
 	if len(parsed.Endpoints) != 0 {
 		t.Fatalf("unreferenced WARP profile emitted endpoints: %#v", parsed.Endpoints)
@@ -2043,8 +2076,12 @@ func TestGenerateServerConfigWithRoutingRulesIgnoresUnreferencedWARP(t *testing.
 		}
 	}
 	interfaceRule := rules[3].(map[string]any)
-	if interfaceRule["action"] != "direct" || interfaceRule["bind_interface"] != "eth1" {
-		t.Fatalf("interface route = %#v, want direct action bound to eth1", interfaceRule)
+	if interfaceRule["action"] != "route" || interfaceRule["outbound"] != routingRuleInterfaceOutboundTag(6) {
+		t.Fatalf("interface route = %#v, want bound direct outbound", interfaceRule)
+	}
+	interfaceOutbound := findOutbound(config, routingRuleInterfaceOutboundTag(6))
+	if interfaceOutbound["type"] != "direct" || interfaceOutbound["bind_interface"] != "eth1" {
+		t.Fatalf("interface outbound = %#v, want direct outbound bound to eth1", interfaceOutbound)
 	}
 	ports, ok := interfaceRule["port"].([]any)
 	if !ok || len(ports) != 1 || ports[0].(float64) != 22 {

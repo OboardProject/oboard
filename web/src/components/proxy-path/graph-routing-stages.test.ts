@@ -8,6 +8,7 @@ import {
   graphRoutingStageSource,
   graphRoutingStageSourceHandleID,
   graphPathHasImplicitDirectFallback,
+  graphPathHasTerminalCatchAll,
 } from './graph-routing-stages'
 
 it('encodes and parses rule-specific source handles separately from fallback handles', () => {
@@ -85,5 +86,28 @@ describe('graph routing stages', () => {
       { id: 501, path_id: 42, position: 1, node_type: 'server_inbound' },
       { id: 502, path_id: 42, position: 2, node_type: 'imported' },
     ], terminalStages)).toBe(false)
+  })
+
+  it('omits the default direct exit after an earlier catch-all routing rule', () => {
+    const stages = buildGraphRoutingStages(
+      [{ id: 41, inbound_id: 7, enabled: true }],
+      [{ id: 501, path_id: 41, position: 1, node_type: 'server_inbound' }],
+      [{ id: 101, scope: 'path_stage', proxy_path_id: 41, name: 'all-via-eth0', match_source: 'inline', match_json: '{}', action: 'interface', enabled: true }],
+    )
+
+    expect(graphPathHasTerminalCatchAll(41, stages)).toBe(true)
+  })
+
+  it('keeps the default direct exit when the catch-all rule is disabled or remote', () => {
+    const stages = buildGraphRoutingStages(
+      [{ id: 41, inbound_id: 7, enabled: true }],
+      [],
+      [
+        { id: 101, scope: 'path_stage', proxy_path_id: 41, name: 'disabled', match_source: 'inline', match_json: '{}', action: 'interface', enabled: false },
+        { id: 102, scope: 'path_stage', proxy_path_id: 41, name: 'remote', match_source: 'rule_set', match_json: '{}', action: 'interface', enabled: true },
+      ],
+    )
+
+    expect(graphPathHasTerminalCatchAll(41, stages)).toBe(false)
   })
 })

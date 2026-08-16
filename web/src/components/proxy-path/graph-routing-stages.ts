@@ -17,6 +17,9 @@ export type GraphRoutingRule = {
   proxy_path_id?: number
   stage_step_id?: number
   sort_position?: number
+  match_source?: string
+  match_json?: string
+  action?: string
   name: string
   enabled?: boolean
 }
@@ -26,6 +29,7 @@ export type GraphRoutingStage = {
   stageStepID: number
   ruleIDs: number[]
   enabledRuleCount: number
+  hasCatchAll?: boolean
 }
 
 export function graphRoutingStageKey(pathID: number, stageStepID: number) {
@@ -72,6 +76,20 @@ export function graphPathHasImplicitDirectFallback(pathID: number, steps: GraphR
   return stages.some(stage => stage.pathID === pathID && stage.stageStepID === terminalStageStepID)
 }
 
+export function graphPathHasTerminalCatchAll(pathID: number, stages: GraphRoutingStage[]) {
+  return stages.some(stage => stage.pathID === pathID && stage.hasCatchAll)
+}
+
+function isEnabledInlineCatchAll(rule: GraphRoutingRule) {
+  if (rule.enabled === false || rule.match_source !== 'inline') return false
+  try {
+    const match = JSON.parse(rule.match_json || '')
+    return Boolean(match) && typeof match === 'object' && !Array.isArray(match) && Object.keys(match).length === 0
+  } catch {
+    return false
+  }
+}
+
 export function buildGraphRoutingStages(
   paths: GraphRoutingPath[],
   steps: GraphRoutingStep[],
@@ -106,6 +124,7 @@ export function buildGraphRoutingStages(
         ...stage,
         ruleIDs: stageRules.map(rule => rule.id),
         enabledRuleCount: stageRules.filter(rule => rule.enabled !== false).length,
+        ...(stageRules.some(isEnabledInlineCatchAll) ? { hasCatchAll: true } : {}),
       }
     })
 }

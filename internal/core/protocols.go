@@ -632,6 +632,11 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		return "", err
 	}
 	config.Outbounds = append(config.Outbounds, sourcePrefixOutbounds...)
+	interfaceOutbounds, err := buildRoutingRuleInterfaceOutbounds(server, opts.RoutingRules)
+	if err != nil {
+		return "", err
+	}
+	config.Outbounds = append(config.Outbounds, interfaceOutbounds...)
 	pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, outbounds, opts, users, plannedPathInbounds)
 	if err != nil {
 		return "", err
@@ -1925,8 +1930,8 @@ func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds [
 			}
 		}
 		if rule.Action == model.RouteActionInterface {
-			item["action"] = "direct"
-			item["bind_interface"] = rule.InterfaceName
+			item["action"] = "route"
+			item["outbound"] = routingRuleInterfaceOutboundTag(rule.ID)
 			out = append(out, item)
 			continue
 		}
@@ -1984,8 +1989,8 @@ func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.
 			delete(item, "auth_user")
 		}
 		if rule.Action == model.RouteActionInterface {
-			item["action"] = "direct"
-			item["bind_interface"] = rule.InterfaceName
+			item["action"] = "route"
+			item["outbound"] = routingRuleInterfaceOutboundTag(rule.ID)
 			result = append(result, item)
 			continue
 		}
@@ -2094,6 +2099,32 @@ func routingRuleHasProxyPathBinding(rule model.RoutingRule) bool {
 
 func routingRuleBoundOutboundTag(ruleID int64, outboundTag string) string {
 	return fmt.Sprintf("routing-rule-%d-%s", ruleID, outboundTag)
+}
+
+func routingRuleInterfaceOutboundTag(ruleID int64) string {
+	return fmt.Sprintf("routing-rule-%d-interface", ruleID)
+}
+
+func buildRoutingRuleInterfaceOutbounds(server model.Server, rules []model.RoutingRule) ([]map[string]any, error) {
+	result := make([]map[string]any, 0)
+	for _, rule := range rules {
+		if !rule.Enabled || rule.ServerID != server.ID || rule.Action != model.RouteActionInterface {
+			continue
+		}
+		interfaceName := strings.TrimSpace(rule.InterfaceName)
+		if err := ValidateNetworkInterfaceName(interfaceName); err != nil {
+			return nil, fmt.Errorf("routing rule %s interface_name: %w", rule.Name, err)
+		}
+		if interfaceName == "" {
+			return nil, fmt.Errorf("routing rule %s interface_name is required", rule.Name)
+		}
+		result = append(result, map[string]any{
+			"type":           "direct",
+			"tag":            routingRuleInterfaceOutboundTag(rule.ID),
+			"bind_interface": interfaceName,
+		})
+	}
+	return result, nil
 }
 
 func applyRoutingRuleProxyPathBindings(server model.Server, rules []model.RoutingRule, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile, outbounds *[]map[string]any) error {

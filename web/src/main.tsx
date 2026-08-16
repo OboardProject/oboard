@@ -65,6 +65,7 @@ import {
   graphRoutingStageSource,
   graphRoutingStageSourceHandleID,
   graphPathHasImplicitDirectFallback,
+  graphPathHasTerminalCatchAll,
   type GraphRoutingStage,
 } from './components/proxy-path/graph-routing-stages'
 import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
@@ -14029,13 +14030,14 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
 	      data: {
 	        entity: { type: 'routing', id: stage.ruleIDs[0] || 0, path_id: path.id, stage_step_id: stage.stageStepID, rule_ids: stage.ruleIDs, label: `${pathDisplayName(path.id)} / 分流规则`, node_id: id } as GraphEntity,
 	        pathIDs: [path.id],
-	        label: <RoutingGraphNode connected pathID={path.id} stageStepID={stage.stageStepID} title="分流规则" meta={`${ruleSummary} · ${hasContinuation ? '未命中继续链路' : '未命中直接出口'}`} rules={stageRules} />,
+	        label: <RoutingGraphNode connected pathID={path.id} stageStepID={stage.stageStepID} title="分流规则" meta={`${ruleSummary} · ${stage.hasCatchAll ? '全部流量已分流' : hasContinuation ? '未命中继续链路' : '未命中直接出口'}`} rules={stageRules} />,
 	      },
 	    })
 	  })
 	  const directPaths = visiblePaths.filter(path => {
     if (path.kind !== 'direct') return false
 	if (graphPathHasImplicitDirectFallback(path.id, stepsByPath.get(path.id) || [], graphRoutingStages)) return false
+	if (graphPathHasTerminalCatchAll(path.id, graphRoutingStages)) return false
     if (path.branch_source_step_id) return Boolean(stepByID.get(path.branch_source_step_id))
     return Boolean(inboundByID.get(path.inbound_id))
   })
@@ -14200,6 +14202,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
 	    })
 	    if (path.kind === 'direct') {
 	      if (insertRoutingStage()) return
+	      if (graphPathHasTerminalCatchAll(path.id, graphRoutingStages)) return
 	      edges.push(graphTransportEdge(
         `proxy-path-direct-${path.id}`,
         source,
