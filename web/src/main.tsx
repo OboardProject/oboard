@@ -7966,7 +7966,7 @@ function ServerLoadPanel({ server, response, loading, error, windowHours, onWind
   const downloadValues = points.map(point => Number(point.network_download_bps || 0))
   const uploadValues = points.map(point => Number(point.network_upload_bps || 0))
   const networkMax = Math.max(1, ...downloadValues, ...uploadValues)
-  const retentionDays = Math.max(1, Number(response?.retention_days) || 30)
+  const retentionDays = Math.max(1, Number(response?.retention_days) || 7)
   const windowOptions = [{ hours: 1, label: '实时' }, { hours: 4, label: '4 小时' }, { hours: 24, label: '1 天' }, { hours: 168, label: '7 天' }, { hours: 720, label: '30 天' }].filter(option => option.hours <= retentionDays * 24)
   const selectWindow = (index: number) => {
     const option = windowOptions[index]
@@ -8699,7 +8699,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
     const coverage = observed + bucket.unknown_seconds > 0 ? observed / (observed + bucket.unknown_seconds) * 100 : 0
     return `${formatTableTime(bucket.start_at)} 至 ${formatTableTime(bucket.end_at)} · SLA ${connectivitySlaDisplay(bucket.sla_percent)} · 可用 ${formatConnectivityDuration(bucket.available_seconds)} · 不可用 ${formatConnectivityDuration(bucket.unavailable_seconds)} · 未观测 ${formatConnectivityDuration(bucket.unknown_seconds)} · 覆盖率 ${coverage.toFixed(1)}%`
   }
-  const retentionDays = Math.max(1, Number(response?.retention_days || resourceResponse?.retention_days) || 30)
+  const retentionDays = Math.max(1, Number(response?.retention_days || resourceResponse?.retention_days) || 7)
   const latencyWindowOptions = (['1h', '6h', '12h', '24h', '7d', '30d'] as ConnectivityWindowKey[]).filter(key => windowHoursMap[key] <= retentionDays * 24)
   const selectMonitorView = (view: 'load' | 'latency') => {
     setActiveView(view)

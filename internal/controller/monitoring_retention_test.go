@@ -28,7 +28,7 @@ func TestServerMonitoringRetentionSettingsAndAggregatedHistory(t *testing.T) {
 
 	settingsResponse := request(t, handler, http.MethodGet, "/api/v2/ui/settings", token, nil, http.StatusOK)
 	settings := settingsResponse["settings"].(map[string]any)
-	if settings[store.ServerMonitoringRetentionDaysSetting] != float64(store.DefaultServerMonitoringRetentionDays) {
+	if settings[store.ServerMonitoringRetentionDaysSetting] != float64(7) {
 		t.Fatalf("default monitoring retention = %#v", settings[store.ServerMonitoringRetentionDaysSetting])
 	}
 	for _, days := range []int{0, store.MaxServerMonitoringRetentionDays + 1} {

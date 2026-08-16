@@ -82,7 +82,7 @@ export function AgentSettingsPanel({ data, client, load, notify }: AgentSettings
   const [timeCheckNTPServers, setTimeCheckNTPServers] = useState<string[]>(() => parseNTPServers(data.settings?.time_check_ntp_servers))
   const [trafficTimezone, setTrafficTimezone] = useState<string>(data.settings?.traffic_timezone || 'Asia/Shanghai')
   const [trafficMode, setTrafficMode] = useState<string>(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
-  const [monitoringRetentionDays, setMonitoringRetentionDays] = useState<number>(Number(data.settings?.server_monitoring_retention_days) || 30)
+  const [monitoringRetentionDays, setMonitoringRetentionDays] = useState<number>(Number(data.settings?.server_monitoring_retention_days) || 7)
 
   const [savingKey, setSavingKey] = useState<string>('')
 
@@ -96,7 +96,7 @@ export function AgentSettingsPanel({ data, client, load, notify }: AgentSettings
   useEffect(() => {
     setTrafficTimezone(data.settings?.traffic_timezone || 'Asia/Shanghai')
     setTrafficMode(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
-    setMonitoringRetentionDays(Number(data.settings?.server_monitoring_retention_days) || 30)
+    setMonitoringRetentionDays(Number(data.settings?.server_monitoring_retention_days) || 7)
   }, [data.settings?.traffic_timezone, data.settings?.traffic_enforcement_mode, data.settings?.server_monitoring_retention_days])
 
   const originalNTPServers = useMemo(() => parseNTPServers(data.settings?.time_check_ntp_servers), [data.settings?.time_check_ntp_servers])

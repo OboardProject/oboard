@@ -159,7 +159,7 @@ func TestServerMonitoringRetentionDays(t *testing.T) {
 		settings map[string]string
 		want     int
 	}{
-		{name: "missing", settings: nil, want: DefaultServerMonitoringRetentionDays},
+		{name: "missing", settings: nil, want: 7},
 		{name: "invalid", settings: map[string]string{ServerMonitoringRetentionDaysSetting: "not-a-number"}, want: DefaultServerMonitoringRetentionDays},
 		{name: "zero", settings: map[string]string{ServerMonitoringRetentionDaysSetting: "0"}, want: DefaultServerMonitoringRetentionDays},
 		{name: "above maximum", settings: map[string]string{ServerMonitoringRetentionDaysSetting: "31"}, want: DefaultServerMonitoringRetentionDays},

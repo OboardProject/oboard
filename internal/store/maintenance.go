@@ -14,7 +14,7 @@ const (
 	subscriptionBucketRetention = 24 * time.Hour
 
 	ServerMonitoringRetentionDaysSetting = "server_monitoring_retention_days"
-	DefaultServerMonitoringRetentionDays = 30
+	DefaultServerMonitoringRetentionDays = 7
 	MinServerMonitoringRetentionDays     = 1
 	MaxServerMonitoringRetentionDays     = 30
 )
