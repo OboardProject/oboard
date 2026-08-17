@@ -1,10 +1,14 @@
 package controller
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/netip"
 	"testing"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -218,6 +222,78 @@ func TestPlanOrderingAPI(t *testing.T) {
 	// Auto mode still reports zero unplaced.
 	if auto["unplaced_count"].(float64) != 0 {
 		t.Fatalf("auto-mode unplaced = %#v", auto["unplaced_count"])
+	}
+}
+
+func TestFailedPlanPublishCanBeAbandonedBeforeActivation(t *testing.T) {
+	h, srv, token, ids := setupOrderingTestTopology(t)
+	planID := ids["plan"]
+
+	applied := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
+		"op": "remove", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p1"]}},
+	}, http.StatusOK)
+	changeID := int64(applied["access_change_id"].(float64))
+	if err := srv.store.UpdateAccessChangeStatus(t.Context(), changeID, []model.AccessChangeStatus{model.AccessChangePreparing}, model.AccessChangeFailed, "server 41 task 5028 failed"); err != nil {
+		t.Fatalf("mark access change failed: %v", err)
+	}
+	failedChange, err := srv.store.GetAccessChange(t.Context(), changeID)
+	if err != nil || !srv.accessChangeAbandonable(t.Context(), failedChange) {
+		t.Fatalf("failed unactivated plan change should be abandonable: change=%#v err=%v", failedChange, err)
+	}
+
+	request(t, h, http.MethodPost, "/api/v2/ui/access-changes/"+itoa(changeID)+"/cancel", token, map[string]any{}, http.StatusOK)
+	cancelledChange, err := srv.store.GetAccessChange(t.Context(), changeID)
+	if err != nil || cancelledChange.Status != model.AccessChangeCancelled || cancelledChange.Error != "server 41 task 5028 failed" {
+		t.Fatalf("cancelled change lost failure audit: change=%#v err=%v", cancelledChange, err)
+	}
+	detail := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID), token, nil, http.StatusOK)
+	plan := detail["subscription_plan"].(map[string]any)
+	if pending, _ := plan["pending_revision_id"].(float64); pending != 0 {
+		t.Fatalf("abandoned plan still has pending revision: %#v", plan)
+	}
+	if plan["latest_revision_id"] != plan["current_revision_id"] {
+		t.Fatalf("abandoned plan did not restore current version: %#v", plan)
+	}
+
+	second := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
+		"op": "remove", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p2"]}},
+	}, http.StatusOK)
+	secondChangeID := int64(second["access_change_id"].(float64))
+	if err := srv.store.UpdateAccessChangeStatus(t.Context(), secondChangeID, []model.AccessChangeStatus{model.AccessChangePreparing}, model.AccessChangeFailed, "server 41 task 5028 failed"); err != nil {
+		t.Fatalf("mark second access change failed: %v", err)
+	}
+	users, err := srv.store.ListUsers(t.Context())
+	if err != nil || len(users) == 0 {
+		t.Fatalf("load admin: users=%#v err=%v", users, err)
+	}
+	principal := application.HumanPrincipal(users[0], model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
+	if err := srv.store.CreateAPIPrincipal(t.Context(), &model.APIPrincipal{
+		ID: principal.ID, OwnerUserID: &users[0].ID, Name: principal.Name, Type: principal.Type,
+		Enabled: true, Scopes: principal.Scopes, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2,
+	}); err != nil {
+		t.Fatalf("create workflow principal: %v", err)
+	}
+	input, _ := json.Marshal(map[string]any{"plan_id": planID, "op": "remove", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p2"]}}})
+	changeset, err := srv.automation.Create(t.Context(), principal, automation.CreateRequest{
+		IdempotencyKey: "abandon-failed-plan-change", Operations: []automation.OperationRequest{{Capability: "subscription_plans.nodes.update", Input: input}},
+	})
+	if err != nil {
+		t.Fatalf("create workflow changeset: %v", err)
+	}
+	workflow, err := srv.automation.StartWorkflow(t.Context(), principal, automation.StartWorkflowRequest{Kind: "access_change", IdempotencyKey: "abandon-failed-plan-workflow", ChangesetID: changeset.ID})
+	if err != nil {
+		t.Fatalf("start workflow: %v", err)
+	}
+	resources, _ := json.Marshal([]map[string]any{{"type": "access_change", "id": secondChangeID}})
+	now := time.Now().UTC()
+	workflow.Status, workflow.AffectedResources, workflow.CompletedAt = model.WorkflowFailed, resources, &now
+	workflow.Steps[0].Status, workflow.Steps[0].Retryable, workflow.Steps[0].FinishedAt = "failed", true, &now
+	if err := srv.store.UpdateAutomationWorkflowAndStep(t.Context(), workflow, &workflow.Steps[0]); err != nil {
+		t.Fatalf("mark workflow failed: %v", err)
+	}
+	abandoned, err := srv.cancelWorkflow(t.Context(), principal, workflow.ID)
+	if err != nil || abandoned.Status != model.WorkflowCancelled {
+		t.Fatalf("MCP workflow abandon: workflow=%#v err=%v", abandoned, err)
 	}
 }
 

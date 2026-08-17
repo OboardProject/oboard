@@ -710,13 +710,38 @@ func (s *Server) addMCPCancelWorkflowTool(server *mcp.Server, principal applicat
 		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"workflow_id": map[string]any{"type": "string", "minLength": 1}, "idempotency_key": map[string]any{"type": "string", "minLength": 8, "maxLength": 200}, "reason": map[string]any{"type": "string", "minLength": 1, "maxLength": 4000}}, "workflow_id", "idempotency_key", "reason")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotationsWrite(true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpCancelWorkflowInput) (*mcp.CallToolResult, any, error) {
-		item, err := s.automation.CancelWorkflow(ctx, principal, strings.TrimSpace(input.WorkflowID))
+		item, err := s.cancelWorkflow(ctx, principal, strings.TrimSpace(input.WorkflowID))
 		if err != nil {
 			return mcpPlainFailureResult("", "workflow cannot be cancelled in its current state"), nil, nil
 		}
 		s.recordToolCall(ctx, principal, "workflows.cancel", input, "succeeded", capability.DataInternal)
 		return &mcp.CallToolResult{}, newToolEnvelope(workflowResultStatus(item.Status), "", item), nil
 	})
+}
+
+func (s *Server) cancelWorkflow(ctx context.Context, principal application.Principal, workflowID string) (*model.AutomationWorkflow, error) {
+	workflow, err := s.automation.GetWorkflow(ctx, principal, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	if workflow.Kind != "access_change" || workflow.Status != model.WorkflowFailed {
+		return s.automation.CancelWorkflow(ctx, principal, workflowID)
+	}
+	changeID := mcpWorkflowAccessChangeID(workflow)
+	if changeID == 0 {
+		return nil, errors.New("access change workflow has no associated access change id")
+	}
+	change, err := s.store.GetAccessChange(ctx, changeID)
+	if err != nil {
+		return nil, err
+	}
+	if !s.accessChangeAbandonable(ctx, change) {
+		return nil, errors.New("failed access change cannot be abandoned after activation")
+	}
+	if err := s.store.MarkAccessChangeCancelled(ctx, changeID); err != nil {
+		return nil, err
+	}
+	return s.automation.AbandonFailedWorkflow(ctx, principal, workflowID)
 }
 
 type mcpRetryWorkflowInput struct {

@@ -61,6 +61,7 @@ type AccessChange = {
   id: number
   change_type: string
   source_plan_id?: number
+  candidate_revision_id?: number
   status: 'preparing' | 'activating' | 'finalizing' | 'finalized' | 'failed' | 'cancelled'
   affected_user_count: number
   activate_at?: string
@@ -683,9 +684,12 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
 
   const cancelChange = async (id: number) => {
     try {
+      const failed = changes.some(change => change.id === id && change.status === 'failed')
       await client.request(`/access-changes/${id}/cancel`, { method: 'POST', body: '{}' })
       await loadChanges()
-      notify?.(`变更 #${id} 已取消`, 'success')
+      await loadDetail(selectedID)
+      await refreshPlans()
+      notify?.(failed ? `已放弃失败变更 #${id}，现在可以重新保存节点` : `变更 #${id} 已取消`, 'success')
     } catch (e: any) {
       setMessage('取消失败：' + (e?.message || String(e)))
     }
@@ -696,6 +700,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const latestVersionCreatedAt = latestRevision?.created_at
   const planChanges = changes.filter(c => c.source_plan_id === selectedID)
   const applying = Boolean(plan?.pending_revision_id)
+  const failedPendingChange = applying ? planChanges.find(change => change.status === 'failed' && !change.activated_at && change.candidate_revision_id === plan?.pending_revision_id) : undefined
   const orderingPlan: OrderingPlan | null = plan ? {
     id: plan.id,
     name: plan.name,
@@ -893,7 +898,18 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
               </div>
 
               <div className="animate-page-in" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {applying && <p style={{ color: 'var(--color-warning)', margin: 0 }}>有套餐版本正在应用，应用完成前不能保存新的节点版本。</p>}
+                {failedPendingChange ? (
+                  <div role="alert" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '10px 12px', border: '1px solid var(--color-danger)', borderRadius: 6 }}>
+                    <div>
+                      <strong style={{ color: 'var(--color-danger)' }}>上一次节点变更应用失败</strong>
+                      <p style={{ margin: '2px 0 0', fontSize: 12 }}>{failedPendingChange.error || `变更 #${failedPendingChange.id} 未能完成`}。可重试原变更，或放弃后保存当前编辑。</p>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <Button variant="outline" size="sm" onClick={() => void retryChange(failedPendingChange.id)}>重试</Button>
+                      <Button variant="outline" size="sm" onClick={() => void cancelChange(failedPendingChange.id)}>放弃失败变更</Button>
+                    </div>
+                  </div>
+                ) : applying ? <p style={{ color: 'var(--color-warning)', margin: 0 }}>有套餐版本正在应用，应用完成前不能保存新的节点版本。</p> : null}
                 <PlanMembershipRulesPanel plan={plan} client={client} notify={notify} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
                 <div className="section-toolbar">
                   <div>
@@ -1304,6 +1320,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                       </div>
                     )}
                     {(c.status === 'failed') && <Button variant="outline" size="sm" style={{ marginTop: 8 }} onClick={() => void retryChange(c.id)}>重试</Button>}
+                    {(c.status === 'failed' && !c.activated_at && c.candidate_revision_id && (c.change_type === 'plan_publish' || c.change_type === 'plan_restore')) && <Button variant="ghost" size="sm" style={{ marginTop: 8 }} onClick={() => void cancelChange(c.id)}>放弃</Button>}
                     {(c.status === 'preparing' || c.status === 'activating') && <Button variant="ghost" size="sm" style={{ marginTop: 8 }} onClick={() => void cancelChange(c.id)}>取消</Button>}
                   </div>
                 )

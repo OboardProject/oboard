@@ -641,6 +641,27 @@ func (s *Service) CancelWorkflow(ctx context.Context, principal application.Prin
 	return item, nil
 }
 
+// AbandonFailedWorkflow marks a failed workflow cancelled after its durable
+// operation has independently confirmed that no activation took place.
+func (s *Service) AbandonFailedWorkflow(ctx context.Context, principal application.Principal, id string) (*model.AutomationWorkflow, error) {
+	item, err := s.GetWorkflow(ctx, principal, id)
+	if err != nil {
+		return nil, err
+	}
+	if item.Status != model.WorkflowFailed || len(item.Steps) == 0 {
+		return nil, errors.New("only failed workflows can be abandoned")
+	}
+	now := s.now().UTC()
+	item.Status, item.CurrentStep, item.CompletedAt = model.WorkflowCancelled, "", &now
+	item.NextAction = json.RawMessage(`{}`)
+	step := &item.Steps[0]
+	step.Status, step.Retryable, step.NextAction, step.FinishedAt = "cancelled", false, json.RawMessage(`{}`), &now
+	if err := s.store.UpdateAutomationWorkflowAndStep(ctx, item, step); err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
 func (s *Service) RetryWorkflowStep(ctx context.Context, principal application.Principal, workflowID, stepID string) (*model.AutomationWorkflow, error) {
 	item, err := s.GetWorkflow(ctx, principal, workflowID)
 	if err != nil {

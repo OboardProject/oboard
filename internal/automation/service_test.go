@@ -314,6 +314,22 @@ func TestWorkflowSynchronizesChangesetAndCancellationState(t *testing.T) {
 	if err != nil || persisted.Steps[0].Status != "cancelled" {
 		t.Fatalf("persisted cancelled workflow=%#v err=%v", persisted, err)
 	}
+
+	failedChangeset := createAutomationTestChangeset(t, service, machine, "workflow-failed-abandon", json.RawMessage(`{}`))
+	abandoned, err := service.StartWorkflow(context.Background(), machine, StartWorkflowRequest{IdempotencyKey: "workflow-failed-abandon", ChangesetID: failedChangeset.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	abandoned.Status, abandoned.CompletedAt = model.WorkflowFailed, &now
+	abandoned.Steps[0].Status, abandoned.Steps[0].Retryable, abandoned.Steps[0].FinishedAt = "failed", true, &now
+	if err := db.UpdateAutomationWorkflowAndStep(context.Background(), abandoned, &abandoned.Steps[0]); err != nil {
+		t.Fatal(err)
+	}
+	abandoned, err = service.AbandonFailedWorkflow(context.Background(), machine, abandoned.ID)
+	if err != nil || abandoned.Status != model.WorkflowCancelled || abandoned.Steps[0].Status != "cancelled" || abandoned.Steps[0].Retryable {
+		t.Fatalf("abandoned workflow=%#v err=%v", abandoned, err)
+	}
 }
 
 func createAutomationTestChangeset(t *testing.T, service *Service, principal application.Principal, key string, refs json.RawMessage) *model.AutomationChangeset {

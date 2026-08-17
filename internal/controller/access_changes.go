@@ -946,7 +946,8 @@ func (s *Server) accessChangeCancel(w http.ResponseWriter, r *http.Request, id i
 		fail(w, err, 404)
 		return
 	}
-	if change.Status != model.AccessChangePreparing && change.Status != model.AccessChangeActivating {
+	failedPlanChange := change.Status == model.AccessChangeFailed && change.ActivatedAt == nil && (change.ChangeType == model.AccessChangePlanPublish || change.ChangeType == model.AccessChangePlanRestore)
+	if change.Status != model.AccessChangePreparing && change.Status != model.AccessChangeActivating && !failedPlanChange {
 		fail(w, errors.New("access change already activated; cancel is not possible"), http.StatusConflict)
 		return
 	}
@@ -957,6 +958,15 @@ func (s *Server) accessChangeCancel(w http.ResponseWriter, r *http.Request, id i
 	s.wakeAccessWorkers()
 	auditReq(s, r, "cancel", "access-change", fmt.Sprint(id))
 	write(w, 200, map[string]any{"access_change_id": id, "status": model.AccessChangeCancelled})
+}
+
+func (s *Server) accessChangeAbandonable(ctx context.Context, change *model.AccessChange) bool {
+	if change == nil || change.Status != model.AccessChangeFailed || change.ActivatedAt != nil || change.SourcePlanID == 0 || change.CandidateRevisionID == 0 ||
+		(change.ChangeType != model.AccessChangePlanPublish && change.ChangeType != model.AccessChangePlanRestore) {
+		return false
+	}
+	plan, err := s.store.GetSubscriptionPlan(ctx, change.SourcePlanID)
+	return err == nil && plan.PendingRevisionID == change.CandidateRevisionID
 }
 
 // planChangePreviewHandler serves POST /subscription-plans/:id/changes/preview.

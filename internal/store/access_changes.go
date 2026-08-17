@@ -232,19 +232,53 @@ func (s *Store) ListAccessChangeTargets(ctx context.Context, changeID int64) ([]
 }
 
 // MarkAccessChangeCancelled cancels a change that has not been activated yet.
+// Plan publishes also release their pending candidate so a failed prepare does
+// not permanently block later edits.
 func (s *Store) MarkAccessChangeCancelled(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `update access_changes set status=?,error='',updated_at=? where id=? and status in (?,?)`, string(model.AccessChangeCancelled), now(), id, string(model.AccessChangePreparing), string(model.AccessChangeActivating))
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
+
 	var current model.AccessChangeStatus
-	if err := s.db.QueryRowContext(ctx, `select status from access_changes where id=?`, id).Scan(&current); err != nil {
+	var changeType model.AccessChangeType
+	var sourcePlanID, candidateRevisionID int64
+	var currentError string
+	var activatedAt sql.NullString
+	if err := tx.QueryRowContext(ctx, `select status,change_type,coalesce(source_plan_id,0),candidate_revision_id,coalesce(error,''),activated_at from access_changes where id=?`, id).Scan(&current, &changeType, &sourcePlanID, &candidateRevisionID, &currentError, &activatedAt); err != nil {
 		return err
 	}
-	if current != model.AccessChangeCancelled {
+	failedPlanChange := current == model.AccessChangeFailed && (changeType == model.AccessChangePlanPublish || changeType == model.AccessChangePlanRestore)
+	canCancel := current == model.AccessChangePreparing || current == model.AccessChangeActivating || failedPlanChange
+	if !canCancel || activatedAt.Valid {
 		return fmt.Errorf("access change %d cannot be cancelled in status %s", id, current)
 	}
-	return nil
+	ts := now()
+	if current != model.AccessChangeFailed {
+		currentError = ""
+	}
+	res, err := tx.ExecContext(ctx, `update access_changes set status=?,error=?,updated_at=? where id=? and status=?`, string(model.AccessChangeCancelled), currentError, ts, id, string(current))
+	if err != nil {
+		return err
+	}
+	if affected, err := res.RowsAffected(); err != nil {
+		return err
+	} else if affected != 1 {
+		return ErrAccessChangeNotActive
+	}
+	if changeType == model.AccessChangePlanPublish || changeType == model.AccessChangePlanRestore {
+		res, err = tx.ExecContext(ctx, `update subscription_plans set latest_revision_id=current_revision_id,pending_revision_id=null,lock_version=lock_version+1,updated_at=? where id=? and pending_revision_id=?`, ts, sourcePlanID, candidateRevisionID)
+		if err != nil {
+			return err
+		}
+		if affected, err := res.RowsAffected(); err != nil {
+			return err
+		} else if affected != 1 {
+			return fmt.Errorf("access change %d plan candidate is no longer pending", id)
+		}
+	}
+	return tx.Commit()
 }
 
 func nullInt64(v int64) any {

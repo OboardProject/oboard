@@ -648,7 +648,8 @@ func (s *Server) listAccessChangesMCP(ctx context.Context, principal application
 			"activate_at": change.ActivateAt, "error": change.Error,
 			"created_by": change.CreatedBy, "created_at": change.CreatedAt,
 			"activated_at": change.ActivatedAt, "finalized_at": change.FinalizedAt, "failed_at": change.FailedAt,
-			"retryable": change.Status == model.AccessChangeFailed,
+			"retryable":   change.Status == model.AccessChangeFailed,
+			"abandonable": s.accessChangeAbandonable(ctx, &change),
 		})
 	}
 	return map[string]any{"access_changes": views, "count": len(views)}, nil

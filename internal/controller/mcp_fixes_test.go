@@ -30,8 +30,8 @@ func TestVLESSRecipeDefaultsMatchPanelPreset(t *testing.T) {
 	}
 	principal := application.HumanPrincipal(*admin, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
 	prepared, err := server.prepareInboundCreateRecipe(ctx, principal, mcpTaskInput{
-		Goal:   "在东京节点创建 VLESS 入口",
-		Params: map[string]any{"protocol": "vless", "port": 443},
+		Goal:       "在东京节点创建 VLESS 入口",
+		Params:     map[string]any{"protocol": "vless", "port": 443},
 		TargetRefs: []string{"server:" + int64String(node.ID)},
 	})
 	if err != nil {
@@ -88,7 +88,8 @@ func TestSubscriptionPlanListCarriesNodes(t *testing.T) {
 }
 
 // TestAccessChangeResourceSurface verifies the MCP access-change resource
-// exposes status, durable error text, and retryability for a failed release.
+// exposes status, durable error text, retryability, and abandonability for a
+// failed release.
 func TestAccessChangeResourceSurface(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")
@@ -115,7 +116,7 @@ func TestAccessChangeResourceSurface(t *testing.T) {
 	}
 	encoded, _ := json.Marshal(payload)
 	text := string(encoded)
-	for _, needle := range []string{`"status":"failed"`, "database is locked", `"retryable":true`, `"change_type":"plan_publish"`} {
+	for _, needle := range []string{`"status":"failed"`, "database is locked", `"retryable":true`, `"abandonable":false`, `"change_type":"plan_publish"`} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("access change payload missing %s: %s", needle, text)
 		}

@@ -154,4 +154,50 @@ describe('SubscriptionPlansPage', () => {
     ])
     expect(applyBodies).toHaveLength(1)
   })
+
+  it('offers to abandon a failed unactivated node change that blocks saving', async () => {
+    const blockedPlan = { ...plan, lock_version: 2, latest_revision_id: 2, pending_revision_id: 2, node_count: 1 }
+    const request = vi.fn(async (path: string) => {
+      if (path === '/subscription-plans') return { subscription_plans: [blockedPlan] }
+      if (path === '/access-changes?limit=50') return {
+        access_changes: [{
+          id: 17,
+          change_type: 'plan_publish',
+          source_plan_id: 1,
+          candidate_revision_id: 2,
+          status: 'failed',
+          affected_user_count: 1,
+          error: 'server 41 task 5028 failed',
+          created_at: '2026-08-17T00:00:00Z',
+          targets: [{ server_id: 41, prepare_task_id: 5028, status: 'failed' }],
+        }],
+      }
+      if (path === '/subscription-plans/1') return {
+        subscription_plan: blockedPlan,
+        latest_nodes: [{ node_type: 'proxy_path', node_id: 11, display_group: '', source_type: 'explicit' }],
+        revisions: [{ id: 2, revision: 2, version_no: 2, status: 'latest', speed_limit_mbps: 100, traffic_limit_bytes: 1073741824, traffic_reset_mode: 'monthly', traffic_reset_day: 1, created_at: '2026-08-17T00:00:00Z' }],
+        member_count: 1,
+      }
+      if (path.startsWith('/assignable-nodes?')) return { nodes: [{ type: 'proxy_path', id: 11, key: 'proxy_path:11', name: 'CDT | Starhub', effective_global_name: 'CDT | Starhub', entry_server_name: 'CDT', exit_region: 'SG', status: 'ok' }], total: 1, page: 1, page_size: 200 }
+      if (path === '/subscription-plans/1/membership-rules') return { rules: [], exclusions: [] }
+      if (path === '/access-changes/17/cancel') return { access_change_id: 17, status: 'cancelled' }
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    await act(async () => {
+      root.render(<SubscriptionPlansPage data={{ subscription_plans: [blockedPlan] }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />)
+    })
+    await flushEffects()
+
+    const editButton = Array.from(container.querySelectorAll('button')).find(button => button.textContent === '编辑')
+    act(() => editButton?.click())
+    await flushEffects()
+
+    expect(document.body.textContent).toContain('server 41 task 5028 failed')
+    const abandonButton = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent?.includes('放弃失败变更'))
+    expect(abandonButton).toBeTruthy()
+    act(() => abandonButton?.click())
+    await flushEffects()
+    expect(request).toHaveBeenCalledWith('/access-changes/17/cancel', { method: 'POST', body: '{}' })
+  })
 })
