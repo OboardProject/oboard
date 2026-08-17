@@ -84,4 +84,74 @@ describe('SubscriptionPlansPage', () => {
     expect(document.body.textContent).toContain('将此套餐分配给用户')
     expect(document.body.textContent).toContain('alice')
   })
+
+  it('drops stale node references before saving a normally added node', async () => {
+    const latestNodes = [
+      { node_type: 'inbound', node_id: 24, display_group: '', source_type: 'explicit' },
+      { node_type: 'inbound', node_id: 30, display_group: '', source_type: 'explicit' },
+      { node_type: 'proxy_path', node_id: 1, display_group: '', source_type: 'explicit' },
+    ]
+    const catalogNodes = [
+      { type: 'inbound', id: 24, key: 'inbound:24', name: 'NB TYO', effective_global_name: 'NB TYO', entry_server_name: 'NB TYO', exit_region: 'JP', status: 'ok' },
+      { type: 'proxy_path', id: 11, key: 'proxy_path:11', name: 'CDT | Starhub', effective_global_name: 'CDT | Starhub', entry_server_name: 'CDT', exit_region: 'SG', status: 'ok' },
+    ]
+    const previewBodies: any[] = []
+    const applyBodies: any[] = []
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/subscription-plans') return { subscription_plans: [{ ...plan, node_count: 3 }] }
+      if (path === '/access-changes?limit=50') return { access_changes: [] }
+      if (path === '/subscription-plans/1') return {
+        subscription_plan: { ...plan, node_count: 3 },
+        latest_nodes: latestNodes,
+        revisions: [{ id: 1, revision: 1, version_no: 1, status: 'current', speed_limit_mbps: 100, traffic_limit_bytes: 1073741824, traffic_reset_mode: 'monthly', traffic_reset_day: 1, created_at: '2026-08-11T00:00:00Z' }],
+        member_count: 0,
+      }
+      if (path.startsWith('/assignable-nodes?')) return { nodes: catalogNodes, total: catalogNodes.length, page: 1, page_size: 200 }
+      if (path === '/subscription-plans/1/membership-rules') return { rules: [], exclusions: [] }
+      if (path === '/subscription-plans/1/nodes/preview') {
+        const body = JSON.parse(String(init?.body || '{}'))
+        previewBodies.push(body)
+        if (body.nodes.some((node: any) => node.node_id === 30 || (node.node_type === 'proxy_path' && node.node_id === 1))) {
+          throw new Error('node is not assignable')
+        }
+        return { base_revision_id: 1, expected_lock_version: 1, node_count: body.nodes.length, preview: {} }
+      }
+      if (path === '/subscription-plans/1/nodes/apply') {
+        const body = JSON.parse(String(init?.body || '{}'))
+        applyBodies.push(body)
+        return { no_change: false, access_change_id: 9 }
+      }
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    await act(async () => {
+      root.render(<SubscriptionPlansPage data={{ subscription_plans: [{ ...plan, node_count: 3 }] }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />)
+    })
+    await flushEffects()
+
+    const editButton = Array.from(container.querySelectorAll('button')).find(button => button.textContent === '编辑')
+    act(() => editButton?.click())
+    await flushEffects()
+
+    const addButton = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent?.includes('添加节点'))
+    act(() => addButton?.click())
+    await flushEffects()
+
+    const newNodeCheckbox = Array.from(document.body.querySelectorAll('label')).find(label => label.textContent?.includes('CDT | Starhub'))?.querySelector('input[type="checkbox"]') as HTMLInputElement | undefined
+    expect(newNodeCheckbox).toBeTruthy()
+    act(() => newNodeCheckbox?.click())
+    const doneButton = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent?.includes('完成（新增'))
+    act(() => doneButton?.click())
+
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent?.includes('保存节点变更'))
+    act(() => saveButton?.click())
+    await flushEffects()
+
+    expect(previewBodies).toHaveLength(1)
+    expect(previewBodies[0].nodes).toEqual([
+      { node_type: 'inbound', node_id: 24, display_group: '' },
+      { node_type: 'proxy_path', node_id: 11, display_group: '' },
+    ])
+    expect(applyBodies).toHaveLength(1)
+  })
 })

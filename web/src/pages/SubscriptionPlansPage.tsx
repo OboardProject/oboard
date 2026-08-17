@@ -85,6 +85,13 @@ type CatalogNode = {
   status: string
 }
 
+type CatalogPage = {
+  nodes: CatalogNode[]
+  total: number
+  page: number
+  page_size: number
+}
+
 type NodeChangePreview = {
   preview: any
   expected_lock_version: number
@@ -169,6 +176,16 @@ function revisionStatus(r: Revision, plan: Plan) {
 }
 
 function nodeKey(n: PlanNode) { return `${n.node_type}:${n.node_id}` }
+
+async function loadAssignableNodeCatalog(client: AnyClient): Promise<CatalogNode[]> {
+  const firstPage = await client.request<CatalogPage>('/assignable-nodes?page=1&page_size=200')
+  const pageSize = firstPage.page_size || 200
+  const pageCount = Math.ceil((firstPage.total || 0) / pageSize)
+  const remainingPages = pageCount > 1
+    ? await Promise.all(Array.from({ length: pageCount - 1 }, (_, index) => client.request<CatalogPage>(`/assignable-nodes?page=${index + 2}&page_size=${pageSize}`)))
+    : []
+  return [...(firstPage.nodes || []), ...remainingPages.flatMap(page => page.nodes || [])]
+}
 
 function SortablePlanNodeRow({ node, children, disabled }: { node: PlanNode; children: React.ReactNode; disabled?: boolean }) {
   const id = nodeKey(node)
@@ -275,34 +292,35 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     try {
       const [res, catalog] = await Promise.all([
         client.request<any>(`/subscription-plans/${id}`),
-        client.request<{ nodes: CatalogNode[] }>('/assignable-nodes?page=1&page_size=200'),
+        loadAssignableNodeCatalog(client),
       ])
       const names: Record<string, string> = {}
       const catalogByKey = new Map<string, CatalogNode>()
-      for (const n of catalog.nodes || []) {
+      for (const n of catalog) {
         names[`${n.type}:${n.id}`] = n.effective_global_name || n.name
         catalogByKey.set(`${n.type}:${n.id}`, n)
       }
       setNodeNames(names)
       setDetail(res)
       setWorkingSettings(res.subscription_plan)
-      setWorkingNodes((res.latest_nodes || []).map((n: any) => {
+      setWorkingNodes((res.latest_nodes || []).flatMap((n: any) => {
         const key = `${n.node_type}:${n.node_id}`
         const catalogNode = catalogByKey.get(key)
-        const globalName = catalogNode?.effective_global_name || catalogNode?.name || key
-        return {
+        if (!catalogNode) return []
+        const globalName = catalogNode.effective_global_name || catalogNode.name
+        return [{
           node_type: n.node_type,
           node_id: n.node_id,
           display_group: n.display_group || '',
           display_name_override: n.display_name_override ?? null,
           name: n.display_name_override || globalName,
           global_name: globalName,
-          source_name: catalogNode?.source_name || globalName,
-          exit_region: catalogNode?.exit_region,
-          entry_server_name: catalogNode?.entry_server_name,
+          source_name: catalogNode.source_name || globalName,
+          exit_region: catalogNode.exit_region,
+          entry_server_name: catalogNode.entry_server_name,
           source_type: n.source_type || 'explicit',
           source_rule_id: n.source_rule_id,
-        }
+        }]
       }))
     } catch (e: any) {
       setDetailError(e?.message || String(e))
