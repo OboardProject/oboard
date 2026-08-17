@@ -277,6 +277,86 @@ const (
 	SubscriptionFormatClash        SubscriptionFormat = "clash"
 )
 
+// PrivateSubscriptionProtocol is intentionally separate from Protocol. These
+// nodes are rendered by Controller for a user's subscription and never enter
+// Agent or kernel desired state.
+type PrivateSubscriptionProtocol string
+
+const (
+	PrivateProtocolVLESS       PrivateSubscriptionProtocol = "vless"
+	PrivateProtocolVMess       PrivateSubscriptionProtocol = "vmess"
+	PrivateProtocolTrojan      PrivateSubscriptionProtocol = "trojan"
+	PrivateProtocolTUIC        PrivateSubscriptionProtocol = "tuic"
+	PrivateProtocolHysteria2   PrivateSubscriptionProtocol = "hysteria2"
+	PrivateProtocolAnyTLS      PrivateSubscriptionProtocol = "anytls"
+	PrivateProtocolShadowsocks PrivateSubscriptionProtocol = "shadowsocks"
+	PrivateProtocolSOCKS5      PrivateSubscriptionProtocol = "socks5"
+	PrivateProtocolMieru       PrivateSubscriptionProtocol = "mieru"
+)
+
+type NodeGroupKind string
+
+const (
+	NodeGroupOBoard NodeGroupKind = "oboard"
+	NodeGroupRemote NodeGroupKind = "remote"
+	NodeGroupManual NodeGroupKind = "manual"
+)
+
+type NodeGroup struct {
+	ID        int64         `json:"id"`
+	UserID    int64         `json:"user_id"`
+	Kind      NodeGroupKind `json:"kind"`
+	SystemKey string        `json:"system_key,omitempty"`
+	Name      string        `json:"name"`
+	Position  int           `json:"position"`
+	NodeCount int           `json:"node_count"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
+}
+
+type NodeSource struct {
+	ID             int64      `json:"id"`
+	UserID         int64      `json:"user_id"`
+	GroupID        int64      `json:"group_id"`
+	URLFingerprint string     `json:"-"`
+	URLEncrypted   string     `json:"-"`
+	URLDisplay     string     `json:"url_display"`
+	ETag           string     `json:"-"`
+	LastModified   string     `json:"-"`
+	Status         string     `json:"status"`
+	LastError      string     `json:"last_error,omitempty"`
+	LastAttemptAt  *time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt  *time.Time `json:"last_success_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+type ImportedNode struct {
+	ID              int64                       `json:"id"`
+	UserID          int64                       `json:"user_id"`
+	GroupID         int64                       `json:"group_id"`
+	SourceID        *int64                      `json:"source_id,omitempty"`
+	Protocol        PrivateSubscriptionProtocol `json:"protocol"`
+	Name            string                      `json:"name"`
+	Fingerprint     string                      `json:"fingerprint"`
+	ConfigEncrypted string                      `json:"-"`
+	Position        int                         `json:"position"`
+	Enabled         bool                        `json:"enabled"`
+	CreatedAt       time.Time                   `json:"created_at"`
+	UpdatedAt       time.Time                   `json:"updated_at"`
+}
+
+type SubscriptionOutput struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	Name      string    `json:"name"`
+	IsDefault bool      `json:"is_default"`
+	Enabled   bool      `json:"enabled"`
+	GroupIDs  []int64   `json:"group_ids"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // AssignableNodeType identifies a client-visible node in the assignable node
 // catalog. proxy_path and external_outbound are the final assignable units;
 // inbound is transitional and only covers standalone inbounds that have no

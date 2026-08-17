@@ -412,6 +412,11 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists subscription_plan_revision_nodes (id integer primary key autoincrement, revision_id integer not null references subscription_plan_revisions(id) on delete cascade, node_type text not null, node_id integer not null, display_group text not null default '', source_type text not null default 'explicit', source_rule_id integer not null default 0, created_at text not null, unique(revision_id, node_type, node_id))`,
 		`create table if not exists subscription_plan_revision_rules (id integer primary key autoincrement, revision_id integer not null references subscription_plan_revisions(id) on delete cascade, rule_id integer not null, kind text not null, scope_key text not null, created_at text not null, unique(revision_id,rule_id))`,
 		`create table if not exists subscription_plan_revision_node_exclusions (revision_id integer not null references subscription_plan_revisions(id) on delete cascade, node_type text not null, node_id integer not null, created_at text not null, primary key(revision_id,node_type,node_id))`,
+		`create table if not exists node_groups (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, kind text not null, system_key text not null default '', name text not null, position integer not null default 0, created_at text not null, updated_at text not null)`,
+		`create table if not exists node_sources (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, group_id integer not null unique references node_groups(id) on delete cascade, url_fingerprint text not null, url_encrypted text not null, etag text not null default '', last_modified text not null default '', status text not null default 'pending', last_error text not null default '', last_attempt_at text, last_success_at text, created_at text not null, updated_at text not null)`,
+		`create table if not exists imported_nodes (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, group_id integer not null references node_groups(id) on delete cascade, source_id integer references node_sources(id) on delete cascade, protocol text not null, name text not null, fingerprint text not null, config_encrypted text not null, position integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists subscription_outputs (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, name text not null, is_default integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists subscription_output_groups (output_id integer not null references subscription_outputs(id) on delete cascade, group_id integer not null references node_groups(id) on delete cascade, position integer not null, primary key(output_id,group_id), unique(output_id,position))`,
 		`create table if not exists subscription_plan_rule_reconcile_states (plan_id integer primary key references subscription_plans(id) on delete cascade, catalog_digest text not null default '', desired_digest text not null default '', status text not null default 'idle', last_error text not null default '', last_reconciled_at text, updated_at text not null)`,
 		`create table if not exists assignable_node_metadata (node_type text not null, node_id integer not null, display_name_override text, lock_version integer not null default 1, created_by integer references users(id) on delete set null, updated_by integer references users(id) on delete set null, created_at text not null, updated_at text not null, primary key(node_type,node_id))`,
 		`create table if not exists node_order_templates (id integer primary key autoincrement, name text not null unique, description text not null default '', enabled integer not null default 1, revision integer not null default 1, policy_json text not null, created_by integer references users(id) on delete set null, updated_by integer references users(id) on delete set null, created_at text not null, updated_at text not null)`,
@@ -459,6 +464,13 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create unique index if not exists idx_plan_revisions_one_draft on subscription_plan_revisions(plan_id) where status='draft'`,
 		`create index if not exists idx_plan_revision_nodes_revision on subscription_plan_revision_nodes(revision_id)`,
 		`create index if not exists idx_plan_revision_nodes_node on subscription_plan_revision_nodes(node_type, node_id)`,
+		`create unique index if not exists idx_node_groups_user_name on node_groups(user_id,lower(name))`,
+		`create unique index if not exists idx_node_groups_system on node_groups(user_id,system_key) where system_key<>''`,
+		`create index if not exists idx_node_sources_refresh on node_sources(status,last_attempt_at)`,
+		`create unique index if not exists idx_imported_nodes_source_fingerprint on imported_nodes(source_id,fingerprint) where source_id is not null`,
+		`create index if not exists idx_imported_nodes_user_group on imported_nodes(user_id,group_id,position,id)`,
+		`create unique index if not exists idx_subscription_outputs_user_name on subscription_outputs(user_id,lower(name))`,
+		`create unique index if not exists idx_subscription_outputs_default on subscription_outputs(user_id) where is_default=1`,
 		`create index if not exists idx_plan_revision_rules_revision on subscription_plan_revision_rules(revision_id,rule_id)`,
 		`create index if not exists idx_node_order_templates_enabled on node_order_templates(enabled,updated_at desc)`,
 		`create index if not exists idx_user_node_exceptions_user on user_node_exceptions(user_id, expires_at)`,
@@ -918,6 +930,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		if _, err := s.db.ExecContext(ctx, `drop table if exists `+legacyTable); err != nil {
 			return err
 		}
+	}
+	if err := s.ensureNodeWorkspaceDefaults(ctx); err != nil {
+		return err
 	}
 	if err := s.ensureDefaultDNSLists(ctx); err != nil {
 		return err
@@ -1668,6 +1683,9 @@ func (s *Store) BootstrapAdmin(ctx context.Context, u *model.User) (created bool
 	if u.SSHRandomID, err = assignSSHUserAlias(ctx, conn, u.ID, ts); err != nil {
 		return false, err
 	}
+	if err := ensureNodeWorkspaceDefaultsForUser(ctx, conn, u.ID, ts); err != nil {
+		return false, err
+	}
 	if _, err := conn.ExecContext(ctx, `insert into app_settings(key,value,updated_at) values(?,?,?) on conflict(key) do update set value=excluded.value,updated_at=excluded.updated_at`, bootstrapAdminSetting, fmt.Sprint(u.ID), ts); err != nil {
 		return false, err
 	}
@@ -1709,6 +1727,9 @@ func (s *Store) CreateUser(ctx context.Context, u *model.User) error {
 		return err
 	}
 	if u.SSHRandomID, err = assignSSHUserAlias(ctx, tx, u.ID, ts); err != nil {
+		return err
+	}
+	if err := ensureNodeWorkspaceDefaultsForUser(ctx, tx, u.ID, ts); err != nil {
 		return err
 	}
 	return tx.Commit()

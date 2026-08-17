@@ -20,6 +20,8 @@ type controllerUpdateAutomationInput struct {
 
 func (s *Server) queryManagementCapability(ctx context.Context, principal application.Principal, capabilityName string, input json.RawMessage) (any, error) {
 	switch capabilityName {
+	case "node_library.list", "node_groups.list", "node_sources.list", "subscription_outputs.list", "subscription_outputs.preview":
+		return s.queryNodeWorkspaceCapability(ctx, principal, capabilityName, input)
 	case "api_principals.list":
 		var request struct{}
 		if err := strictAutomationInput(input, &request); err != nil {

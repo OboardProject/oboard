@@ -173,6 +173,9 @@ type Server struct {
 	// authorization lifecycle workers; the database remains the recovery
 	// fallback for both.
 	accessWorkersWake chan struct{}
+	nodeRefreshSem    chan struct{}
+	nodeRefreshMu     sync.Mutex
+	nodeRefreshUsers  map[int64]bool
 }
 
 type connectionAuditGeoResolver interface {
@@ -193,7 +196,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	socketPath := strings.TrimSpace(os.Getenv("OBOARD_CONTROLLER_UPDATER_SOCKET"))
 	catalog := capability.NewCatalog()
 	auditIntel := auditintel.New(store, sessionSecret)
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, accessWorkersWake: make(chan struct{}, 1)}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, accessWorkersWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	_ = store.CloseOpenControllerConnections(context.Background(), time.Now().UTC())
 	s.initializeTrustedProxies()
@@ -314,6 +317,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/assignable-nodes", s.auth(s.assignableNodes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/assignable-nodes/", s.auth(s.assignableNodeDetail, model.RoleOperator))
 	mux.HandleFunc("/api/v1/assignable-node-scopes/preview", s.auth(s.assignableNodeScopePreview, model.RoleOperator))
+	mux.HandleFunc("/api/v1/node-workspace", s.auth(s.nodeWorkspace, model.RoleNone))
+	mux.HandleFunc("/api/v1/node-groups", s.auth(s.nodeGroups, model.RoleNone))
+	mux.HandleFunc("/api/v1/node-groups/", s.auth(s.nodeGroup, model.RoleNone))
+	mux.HandleFunc("/api/v1/node-sources/", s.auth(s.nodeSource, model.RoleNone))
+	mux.HandleFunc("/api/v1/node-import-preview", s.auth(s.nodeImportPreview, model.RoleNone))
+	mux.HandleFunc("/api/v1/node-library", s.auth(s.nodeLibrary, model.RoleNone))
+	mux.HandleFunc("/api/v1/node-library/", s.auth(s.nodeLibraryItem, model.RoleNone))
+	mux.HandleFunc("/api/v1/subscription-outputs", s.auth(s.subscriptionOutputs, model.RoleNone))
+	mux.HandleFunc("/api/v1/subscription-outputs/", s.auth(s.subscriptionOutput, model.RoleNone))
 	mux.HandleFunc("/api/v1/node-order-templates", s.auth(s.nodeOrderTemplates, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/node-order-templates/", s.auth(s.nodeOrderTemplates, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/subscription-plans", s.auth(s.subscriptionPlans, model.RoleAdmin))
@@ -2085,15 +2097,32 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "nodes":
-		if err = require(model.RoleOperator); err == nil {
-			err = addServers()
+		if err = addSubscriptionPublicBaseURL(); err != nil {
+			break
 		}
-		if err == nil {
+		if !roleAllows(role, model.RoleAdmin) {
+			if user := currentUser(r); user != nil {
+				out["account_user"] = selfUserResponse(ctx, s.store, *user, role)
+			} else {
+				err = errors.New("invalid session")
+			}
+			break
+		}
+		if err = addServers(); err == nil {
 			var plans []model.SubscriptionPlan
 			plans, err = s.store.ListSubscriptionPlans(ctx)
 			if err == nil {
 				out["subscription_plans"] = plans
 			}
+		}
+		if err == nil {
+			err = addUsers()
+		}
+		if err == nil {
+			err = addSettings()
+		}
+		if err == nil {
+			err = addGroups()
 		}
 	case "plans":
 		if err = require(model.RoleAdmin); err == nil {
@@ -11042,6 +11071,28 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var requestedProfileID *int64
+	var subscriptionOutput *model.SubscriptionOutput
+	if rawProfileID := strings.TrimSpace(r.URL.Query().Get("profile_id")); rawProfileID != "" {
+		profileID, parseErr := strconv.ParseInt(rawProfileID, 10, 64)
+		if parseErr != nil || profileID <= 0 {
+			s.recordRejectedSubscriptionPull(r, user.ID, string(format), nil, ageEncrypted, "invalid profile_id")
+			fail(w, errors.New("invalid profile_id"), http.StatusBadRequest)
+			return
+		}
+		subscriptionOutput, err = s.store.GetSubscriptionOutput(r.Context(), user.ID, profileID)
+		if err != nil || !subscriptionOutput.Enabled {
+			s.recordRejectedSubscriptionPull(r, user.ID, string(format), &profileID, ageEncrypted, "subscription profile not found")
+			fail(w, errors.New("subscription profile not found"), http.StatusNotFound)
+			return
+		}
+	} else {
+		subscriptionOutput, err = s.store.GetDefaultSubscriptionOutput(r.Context(), user.ID)
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+	}
+	requestedProfileID = &subscriptionOutput.ID
 	data, err := s.store.FullRoutingConfigData(r.Context())
 	if err != nil {
 		fail(w, err, 500)
@@ -11121,13 +11172,25 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	if orderPolicy != nil {
 		opts.NodeOrderPolicy = *orderPolicy
 	}
-	sub, err := core.GenerateSubscriptionWithOptions(subscriptionUser, servers, in, opts)
+	oboardNodes, err := core.BuildSubscriptionNodes(subscriptionUser, servers, in, opts)
 	if err != nil {
 		s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, "subscription generation failed")
 		fail(w, err, 500)
 		return
 	}
-	revisionDigest := sha256.Sum256([]byte("oboard-subscription-v2\x00" + sub + "\x00" + fmt.Sprint(ageRecipient)))
+	selectedNodes, err := s.mergeWorkspaceOutputNodes(r.Context(), subscriptionUser, subscriptionOutput, oboardNodes)
+	if err != nil {
+		s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, "subscription profile generation failed")
+		fail(w, err, 500)
+		return
+	}
+	sub, err := core.RenderSubscriptionNodes(selectedNodes, format)
+	if err != nil {
+		s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, "subscription generation failed")
+		fail(w, err, 500)
+		return
+	}
+	revisionDigest := sha256.Sum256([]byte("oboard-subscription-v2\x00" + strconv.FormatInt(subscriptionOutput.ID, 10) + "\x00" + sub + "\x00" + fmt.Sprint(ageRecipient)))
 	subscriptionRevision := fmt.Sprintf("sub_%x", revisionDigest[:16])
 	etag := fmt.Sprintf("W/\"%s\"", subscriptionRevision)
 	event := s.newSubscriptionPullAudit(r, user.ID, string(format), requestedProfileID, ageEncrypted)

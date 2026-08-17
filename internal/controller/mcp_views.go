@@ -211,6 +211,7 @@ func (s *Server) mcpResourceGroups(principal application.Principal) []map[string
 			map[string]any{"group": "identity", "uris": []string{"oboard://context/bootstrap", "oboard://auth/grant", "oboard://system/version", "oboard://system/capabilities"}},
 			map[string]any{"group": "docs", "uris": []string{"oboard://docs/guide", "oboard://docs/security", "oboard://docs/workflows", "oboard://docs/capabilities"}},
 			map[string]any{"group": "inventory", "uris": []string{"oboard://inventory/summary", "oboard://servers", "oboard://users", "oboard://topology/current", "oboard://subscriptions", "oboard://subscription-plans", "oboard://proxy-paths", "oboard://deployments"}},
+			map[string]any{"group": "node_workspace", "uris": []string{"oboard://users/{id}/node-library", "oboard://users/{id}/node-groups", "oboard://users/{id}/node-sources", "oboard://users/{id}/subscription-outputs"}},
 			map[string]any{"group": "access_control", "uris": []string{"oboard://user-groups", "oboard://user-group-members"}},
 			map[string]any{"group": "traffic", "uris": []string{"oboard://outbounds", "oboard://routing-rules", "oboard://external-outbounds", "oboard://warp-profiles"}},
 			map[string]any{"group": "network", "uris": []string{"oboard://dns-lists", "oboard://dns-credentials", "oboard://port-forwards", "oboard://tunnels"}},

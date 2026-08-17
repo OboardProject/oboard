@@ -162,6 +162,7 @@ func (s *Server) StartMonitor(ctx context.Context) {
 		{400 * time.Millisecond, 30 * time.Second, s.maybeFinalizeBasePathMigration},
 		{600 * time.Millisecond, time.Minute, s.schedulePeriodicInboundProbes},
 		{800 * time.Millisecond, time.Minute, s.scheduleDailyTimeChecks},
+		{time.Second, 10 * time.Minute, s.scheduleNodeSourceRefreshes},
 	}
 	var workers sync.WaitGroup
 	for _, job := range jobs {

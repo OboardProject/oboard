@@ -24,6 +24,8 @@ type subscriptionProxy struct {
 	Server         string
 	Port           int
 	UUID           string
+	AlterID        int
+	Security       string
 	Username       string
 	Password       string
 	HostKeys       []string
@@ -127,6 +129,8 @@ func normalizeSubscriptionNode(node SubscriptionNode) (subscriptionProxy, error)
 		Server:         strings.TrimSpace(stringFromAny(raw["server"])),
 		Port:           intFromAny(raw["server_port"]),
 		UUID:           stringFromAny(raw["uuid"]),
+		AlterID:        intFromAny(raw["alter_id"]),
+		Security:       stringFromAny(raw["security"]),
 		Username:       stringFromAny(raw["username"]),
 		Password:       stringFromAny(raw["password"]),
 		HostKeys:       stringListFromAny(raw["host_key"]),
@@ -185,6 +189,12 @@ func normalizeSubscriptionProxyType(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "vless":
 		return "vless"
+	case "vmess":
+		return "vmess"
+	case "trojan":
+		return "trojan"
+	case "tuic":
+		return "tuic"
 	case "hysteria2", "hy2":
 		return "hysteria2"
 	case "anytls":
@@ -207,13 +217,17 @@ func validateNormalizedSubscriptionProxy(proxy subscriptionProxy) error {
 		return fmt.Errorf("subscription node %s missing %s", proxy.Name, field)
 	}
 	switch proxy.Type {
-	case "vless":
+	case "vless", "vmess":
 		if proxy.UUID == "" {
 			return missing("uuid")
 		}
-	case "hysteria2", "anytls":
+	case "trojan", "hysteria2", "anytls":
 		if proxy.Password == "" {
 			return missing("password")
+		}
+	case "tuic":
+		if proxy.UUID == "" || proxy.Password == "" {
+			return missing("tuic uuid/password")
 		}
 	case "ss":
 		if proxy.Method == "" || proxy.Password == "" {
@@ -301,6 +315,9 @@ func normalizeSubscriptionObfs(raw map[string]any) (string, string) {
 func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionProxy) map[string]any {
 	allowed := map[string][]string{
 		"vless":     {"uuid", "flow", "packet_encoding", "tls", "transport", "network", "multiplex"},
+		"vmess":     {"uuid", "security", "alter_id", "tls", "transport", "network", "multiplex"},
+		"trojan":    {"password", "tls", "transport", "network", "multiplex"},
+		"tuic":      {"uuid", "password", "congestion_control", "udp_relay_mode", "zero_rtt_handshake", "heartbeat", "tls"},
 		"hysteria2": {"password", "tls", "server_ports", "hop_interval", "hop_interval_max", "up_mbps", "down_mbps", "obfs", "network"},
 		"anytls":    {"password", "tls", "padding_scheme"},
 		"ss":        {"method", "password", "plugin", "plugin_opts", "network", "udp_over_tcp", "multiplex"},
@@ -355,6 +372,17 @@ func cloneSubscriptionValue(value any) any {
 }
 
 func subscriptionTargetSupports(format model.SubscriptionFormat, proxy subscriptionProxy) bool {
+	if proxy.Type == "vmess" || proxy.Type == "trojan" || proxy.Type == "tuic" {
+		switch format {
+		case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru,
+			model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo,
+			model.SubscriptionFormatStash, model.SubscriptionFormatShadowrocket,
+			model.SubscriptionFormatV2Ray, model.SubscriptionFormatV2RayURI:
+			return true
+		default:
+			return false
+		}
+	}
 	if format == model.SubscriptionFormatSingBoxMieru {
 		return proxy.Type != "ssh"
 	}
@@ -640,6 +668,25 @@ func clashStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionFormat
 		setNonEmpty(out, "packet-encoding", proxy.PacketEncoding)
 		applyClashTransportMap(out, proxy.Transport)
 		applyClashTLSMap(out, proxy.TLS)
+	case "vmess":
+		out["uuid"] = proxy.UUID
+		out["alterId"] = proxy.AlterID
+		out["cipher"] = defaultString(proxy.Security, "auto")
+		applyClashTransportMap(out, proxy.Transport)
+		applyClashTLSMap(out, proxy.TLS)
+	case "trojan":
+		out["password"] = proxy.Password
+		out["udp"] = true
+		applyClashTransportMap(out, proxy.Transport)
+		applyClashTLSMap(out, proxy.TLS)
+	case "tuic":
+		out["uuid"] = proxy.UUID
+		out["password"] = proxy.Password
+		out["udp"] = true
+		applyClashTLSMap(out, proxy.TLS)
+		if value := stringFromAny(proxy.Native["congestion_control"]); value != "" {
+			out["congestion-controller"] = value
+		}
 	case "hysteria2":
 		if format == model.SubscriptionFormatStash {
 			out["auth"] = proxy.Password
@@ -1308,6 +1355,33 @@ func canonicalShareURI(proxy subscriptionProxy) (string, error) {
 			query.Set("allowInsecure", "1")
 		}
 		return "vless://" + escapeURIComponent(proxy.UUID) + "@" + endpoint + "?" + query.Encode() + "#" + fragment, nil
+	case "vmess":
+		transportType := defaultString(proxy.Network, "tcp")
+		payload := map[string]any{
+			"v": "2", "ps": proxy.Name, "add": proxy.Server, "port": strconv.Itoa(proxy.Port),
+			"id": proxy.UUID, "aid": proxy.AlterID, "scy": defaultString(proxy.Security, "auto"),
+			"net": transportType, "type": "none", "host": proxy.Transport.Host,
+			"path": proxy.Transport.Path, "tls": map[bool]string{true: "tls", false: ""}[proxy.TLS.Enabled],
+			"sni": proxy.TLS.ServerName,
+		}
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return "", err
+		}
+		return "vmess://" + base64.RawStdEncoding.EncodeToString(encoded), nil
+	case "trojan":
+		query := url.Values{}
+		appendURITransport(query, proxy)
+		appendURITLS(query, proxy.TLS)
+		return "trojan://" + escapeURIComponent(proxy.Password) + "@" + endpoint + querySuffix(query) + "#" + fragment, nil
+	case "tuic":
+		query := url.Values{}
+		setQueryIfNotEmpty(query, "sni", proxy.TLS.ServerName)
+		setQueryIfNotEmpty(query, "congestion_control", stringFromAny(proxy.Native["congestion_control"]))
+		if proxy.TLS.Insecure {
+			query.Set("allow_insecure", "1")
+		}
+		return "tuic://" + escapeURIComponent(proxy.UUID) + ":" + escapeURIComponent(proxy.Password) + "@" + endpoint + querySuffix(query) + "#" + fragment, nil
 	case "hysteria2":
 		query := url.Values{}
 		if proxy.TLS.Insecure {

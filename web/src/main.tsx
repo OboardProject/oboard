@@ -165,6 +165,7 @@ import {
   type DNSBulkResult,
 } from './dns-bulk'
 import { NodeAssignmentsPage } from './pages/NodeAssignmentsPage'
+import { NodeWorkspacePage } from './pages/NodeWorkspacePage'
 import { SubscriptionPlansPage } from './pages/SubscriptionPlansPage'
 import { UserPlanDialog } from './pages/UserPlanDialog'
 import { UserDashboardPage, type UserDashboardOverview } from './pages/UserDashboardPage'
@@ -836,36 +837,35 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   'external-outbounds': { label: '导入节点', desc: '导入第三方 SS、SOCKS、VLESS 等节点。', group: '流量' },
   users: { label: '用户与分组', desc: '用户与分组', group: '访问控制' },
   plans: { label: '套餐管理', desc: '配置套餐额度、节点范围、用户分配、排序与版本。', group: '访问控制' },
-  nodes: { label: '全部节点', desc: '节点目录、全局名称、方案归属、有效用户与例外。', group: '节点管理' },
+  nodes: { label: '节点', desc: '查看授权节点、管理第三方来源并组合订阅输出。', group: '访问控制' },
   dns: { label: 'DNS 设置', desc: '为服务器选择解析服务并检查解析速度。', group: '网络' },
   'dns-records': { label: '域名解析', desc: '管理云服务商账号和域名解析记录。', group: '网络' },
   mtu: { label: 'MTU', desc: '检测路径 MTU、给出建议并可由 Agent 应用。', group: '网络' },
   'port-forwards': { label: '端口转发', desc: '配置 Realm、nft 或内置端口转发与延迟探测。', group: '拓扑' },
   tunnels: { label: '隧道', desc: '配置 WireGuard / SSH 服务器间隧道。', group: '拓扑' },
   notifications: { label: '通知中心', desc: '', group: '' },
-  subscriptions: { label: '订阅', desc: '', group: '访问控制' },
   tasks: { label: '任务', desc: '查询配置下发、Agent 任务和部署回执。', group: '运维' },
   audit: { label: '审计台', desc: '分析连接来源、出口行为和操作记录。', group: '运维' },
   automation: { label: '自动化', desc: '管理 API、MCP、审批策略、变更集与内置 AI。', group: '系统' },
   settings: { label: '设置', desc: '管理面板设置。', group: '系统' }
 }
 const navGroups = [
-  { label: '', tabs: ['dashboard', 'servers', 'proxy-paths', 'dns', 'dns-records', 'users', 'plans', 'subscriptions', 'nodes', 'notifications', 'tasks', 'audit', 'automation', 'settings', 'account'] }
+  { label: '', tabs: ['dashboard', 'servers', 'proxy-paths', 'dns', 'dns-records', 'users', 'plans', 'nodes', 'notifications', 'tasks', 'audit', 'automation', 'settings', 'account'] }
 ]
 
 const roleRanks: Record<Role, number> = { none: -1, viewer: 0, operator: 1, admin: 2 }
 const tabMinimumRole: Record<string, Role> = {
 	account: 'none', dashboard: 'none', tasks: 'operator', audit: 'operator',
   servers: 'operator', 'proxy-paths': 'operator',
-  users: 'admin', plans: 'admin', subscriptions: 'viewer', notifications: 'viewer', automation: 'admin', settings: 'admin',
-  nodes: 'operator',
+  users: 'admin', plans: 'admin', notifications: 'viewer', automation: 'admin', settings: 'admin',
+  nodes: 'none',
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
 }
 
 const preloadTabsByRole: Record<Role, string[]> = {
-	none: ['dashboard', 'account'],
-	viewer: ['dashboard', 'subscriptions', 'account', 'notifications'],
-  operator: ['subscriptions', 'servers', 'proxy-paths', 'tasks', 'audit', 'mtu'],
+	none: ['dashboard', 'nodes', 'account'],
+	viewer: ['dashboard', 'nodes', 'account', 'notifications'],
+  operator: ['nodes', 'servers', 'proxy-paths', 'tasks', 'audit', 'mtu'],
   admin: ['servers', 'proxy-paths', 'users', 'plans', 'nodes', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
 }
 
@@ -881,15 +881,15 @@ const realtimeResourcePages: Record<string, string[]> = {
 	user_overview: ['dashboard'],
   account: ['account'],
   notifications: ['notifications'],
-  subscriptions: ['subscriptions', 'account'],
-  servers: ['dashboard', 'servers', 'proxy-paths', 'subscriptions', 'tasks', 'audit', 'settings'],
+  subscriptions: ['nodes', 'account'],
+  servers: ['dashboard', 'servers', 'proxy-paths', 'nodes', 'tasks', 'audit', 'settings'],
   server_runtime: ['dashboard', 'servers'],
   server_metrics: ['dashboard', 'servers'],
-  traffic: ['dashboard', 'servers', 'users', 'subscriptions', 'account'],
+  traffic: ['dashboard', 'servers', 'users', 'nodes', 'account'],
   tasks: ['dashboard'],
   deployments: ['dashboard', 'servers', 'proxy-paths', 'tasks'],
   probes: ['servers', 'proxy-paths', 'dns', 'mtu', 'port-forwards', 'tasks'],
-  topology: ['servers', 'proxy-paths', 'plans', 'subscriptions', 'settings'],
+  topology: ['servers', 'proxy-paths', 'plans', 'nodes', 'settings'],
   audit: ['dashboard', 'audit'],
   mtu: ['servers', 'mtu'],
   port_forwards: ['proxy-paths', 'port-forwards'],
@@ -938,6 +938,7 @@ const pathTabs: Record<string, string> = Object.entries(tabPaths).reduce((acc, [
   return acc
 }, { '/': 'dashboard' } as Record<string, string>)
 pathTabs['/node-order-templates'] = 'nodes'
+pathTabs['/subscriptions'] = 'nodes'
 
 function tabFromPath(pathname: string) {
   const path = stripAppBasePath(pathname).replace(/\/+$/, '') || '/'
@@ -968,7 +969,7 @@ function getTabIcon(x: string) {
   if (x === 'proxy-paths') return <Workflow size={18} />
   if (x === 'users') return <UsersIcon size={18} />
   if (x === 'plans') return <Package size={18} />
-  if (x === 'subscriptions') return <LinkIcon size={18} />
+  if (x === 'nodes') return <LinkIcon size={18} />
   if (x === 'notifications') return <Bell size={18} />
   if (x === 'tasks') return <CheckSquare size={18} />
   if (x === 'audit') return <ClipboardList size={18} />
@@ -2122,7 +2123,7 @@ function App() {
     plans: '套餐管理',
     dns: 'DNS 设置',
     'dns-records': '域名解析',
-    subscriptions: sessionUser?.role === 'admin' ? '节点订阅' : '我的订阅',
+    nodes: '节点',
     notifications: '通知中心',
     tasks: '任务部署中心',
     audit: '审计台',
@@ -2171,9 +2172,7 @@ function App() {
   }
 
   const currentRole = sessionUser?.role || 'viewer'
-  const current = tab === 'subscriptions' && currentRole !== 'admin'
-    ? { label: '订阅', desc: '选择客户端格式并获取自己的订阅链接。', group: '访问控制' }
-    : tabMeta[tab] || { label: tab, desc: '', group: 'OBoard' }
+  const current = tabMeta[tab] || { label: tab, desc: '', group: 'OBoard' }
   const canOperate = roleRanks[currentRole] >= roleRanks.operator
   const visibleNavGroups = navGroups
     .map(group => ({ ...group, tabs: group.tabs.filter(item => tabAllowedForRole(item, currentRole)) }))
@@ -2719,7 +2718,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
     const displayName = sessionUser?.nickname || data.current_user?.nickname || sessionUser?.username || data.current_user?.username || '用户'
     return roleRanks[sessionUser?.role || 'viewer'] >= roleRanks.operator
       ? <Dashboard data={data} loading={loading} displayName={displayName} attention={dashboardAttention} dismissAttention={dismissDashboardAttention} />
-      : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} announcements={data.user_announcements || []} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('subscriptions')} />
+      : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} announcements={data.user_announcements || []} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('nodes')} />
   }
   if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={serverTelemetryStatus} />
   if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} apply={apply} loading={loading} topbarTarget={proxyPathTopbarTarget} patchPageData={patchPageData} />
@@ -2729,7 +2728,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'external-outbounds') return <ExternalOutbounds data={data} client={client} load={load} />
   if (tab === 'users') return <UserManagement data={data} client={client} load={load} />
   if (tab === 'plans') return <SubscriptionPlansPage data={data} client={client} load={load} notify={notify} />
-  if (tab === 'nodes') return <NodeAssignmentsPage data={data} client={client} load={load} />
+  if (tab === 'nodes') return <NodeWorkspacePage data={data} client={client} load={load} notify={notify} legacySubscriptions={sessionUser?.role === 'admin' ? <Subscriptions data={data} client={client} load={load} notify={notify} /> : <MySubscriptions data={data} client={client} load={load} notify={notify} />} />
   if (tab === 'node-order-templates') return <NodeAssignmentsPage data={data} client={client} load={load} />
   if (tab === 'dns') return <DNS data={data} client={client} load={load} notify={notify} />
   if (tab === 'dns-records') return <ManagedDNSSettings data={data} client={client} load={load} notify={notify} />
@@ -2737,9 +2736,6 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'port-forwards') return <PortForwards data={data} client={client} load={load} notify={notify} />
   if (tab === 'tunnels') return <Tunnels data={data} client={client} load={load} />
   if (tab === 'notifications') return <Notifications data={data} client={client} load={load} notify={notify} sessionUser={sessionUser} />
-  if (tab === 'subscriptions') return sessionUser?.role === 'admin'
-    ? <Subscriptions data={data} client={client} load={load} notify={notify} />
-    : <MySubscriptions data={data} client={client} load={load} notify={notify} />
   if (tab === 'tasks') return <Tasks data={data} client={client} loading={loading} />
   if (tab === 'audit') return <AuditConsole data={data} client={client} loading={loading} notify={notify} />
   if (tab === 'automation') return <AutomationWorkspace data={data} client={client} notify={notify} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />

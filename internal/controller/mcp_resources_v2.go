@@ -109,6 +109,10 @@ func (s *Server) mcpResourceTemplateDefs() []mcpResourceDef {
 		{uri: "oboard://servers/{id}/latency-probes", title: "Server Latency Test", name: "Server latency test", description: "Return the latest public and selected province-carrier latency results for one authorized server, including mode, target, sample statistics, and bounded errors.", capability: "servers.get", template: true, kind: "query_server_latency"},
 		{uri: "oboard://users/{id}", title: "User by ID", name: "User by ID", description: "Return one authorized user's management summary: role, status, limits, subscription state, and revision. Never includes credentials or tokens.", capability: "users.get", template: true, kind: "query_user_by_id"},
 		{uri: "oboard://users/{id}/devices", title: "User Devices by ID", name: "User devices by ID", description: "Return one authorized user's registered devices with status, proxy access state, and last activity. Never includes device tokens.", capability: "user_devices.list", template: true, kind: "query_user_devices"},
+		{uri: "oboard://users/{id}/node-library", title: "User Node Library", name: "User node library", description: "Return the authorized user's OBoard and private node summaries without credentials or raw configuration.", capability: "node_library.list", template: true, kind: "query_node_workspace"},
+		{uri: "oboard://users/{id}/node-groups", title: "User Node Groups", name: "User node groups", description: "Return the authorized user's node groups and dynamic node counts.", capability: "node_groups.list", template: true, kind: "query_node_workspace"},
+		{uri: "oboard://users/{id}/node-sources", title: "User Node Sources", name: "User node sources", description: "Return the authorized user's redacted third-party source metadata and refresh status.", capability: "node_sources.list", template: true, kind: "query_node_workspace"},
+		{uri: "oboard://users/{id}/subscription-outputs", title: "User Subscription Outputs", name: "User subscription outputs", description: "Return the authorized user's named subscription combinations and ordered group selections without credentials.", capability: "subscription_outputs.list", template: true, kind: "query_node_workspace"},
 		{uri: "oboard://servers/{id}/dns-policy", title: "Server DNS Policy by ID", name: "Server DNS policy by ID", description: "Return one authorized server's DNS policy with list bindings and last check state.", capability: "servers.dns_policy.get", template: true, kind: "query_server_dns_policy"},
 		{uri: "oboard://dns-zones/{id}/records", title: "DNS Records by Zone", name: "DNS records by zone", description: "Return the live DNS records of one authorized zone by querying the provider.", capability: "dns_records.list", template: true, kind: "query_dns_records"},
 		{uri: "oboard://agent-tasks/{id}", title: "Agent Task by ID", name: "Agent task by ID", description: "Return one sanitized Agent task with status, type, timestamps, and a redacted result summary.", capability: "agent_tasks.get", template: true, kind: "query_agent_task"},
@@ -269,6 +273,8 @@ func (s *Server) readMCPResource(ctx context.Context, principal application.Prin
 			return nil, errors.New("invalid user id")
 		}
 		return s.queryMCPResource(ctx, "user_devices.list", json.RawMessage(`{"user_id":`+strconv.FormatInt(value, 10)+`}`))
+	case "query_node_workspace":
+		return s.queryNodeWorkspaceResource(ctx, def, uri)
 	case "query_server_dns_policy":
 		id, err := mcpTemplateID(uri, "oboard://servers/", "/dns-policy")
 		if err != nil {
@@ -736,6 +742,20 @@ func (s *Server) authorizeResourceRead(ctx context.Context, capabilityName, uri 
 			return errors.New("invalid user id")
 		}
 		input = map[string]any{"user_id": value}
+	case "node_library.list", "node_groups.list", "node_sources.list", "subscription_outputs.list":
+		prefix, suffix, ok := strings.Cut(defURIForNodeWorkspaceCapability(capabilityName), "{id}")
+		if !ok {
+			return errors.New("invalid node workspace resource")
+		}
+		id, parseErr := mcpTemplateID(uri, prefix, suffix)
+		if parseErr != nil {
+			return parseErr
+		}
+		value, parseErr := strconv.ParseInt(id, 10, 64)
+		if parseErr != nil || value <= 0 {
+			return errors.New("invalid user id")
+		}
+		input = map[string]any{"user_id": value}
 	case "servers.dns_policy.get":
 		id, parseErr := mcpTemplateID(uri, "oboard://servers/", "/dns-policy")
 		if parseErr != nil {
@@ -798,6 +818,37 @@ func (s *Server) authorizeResourceRead(ctx context.Context, capabilityName, uri 
 		return errors.New("not authorized")
 	}
 	return nil
+}
+
+func defURIForNodeWorkspaceCapability(capabilityName string) string {
+	switch capabilityName {
+	case "node_library.list":
+		return "oboard://users/{id}/node-library"
+	case "node_groups.list":
+		return "oboard://users/{id}/node-groups"
+	case "node_sources.list":
+		return "oboard://users/{id}/node-sources"
+	case "subscription_outputs.list":
+		return "oboard://users/{id}/subscription-outputs"
+	default:
+		return ""
+	}
+}
+
+func (s *Server) queryNodeWorkspaceResource(ctx context.Context, def mcpResourceDef, uri string) (any, error) {
+	prefix, suffix, ok := strings.Cut(def.uri, "{id}")
+	if !ok {
+		return nil, errors.New("invalid node workspace resource")
+	}
+	id, err := mcpTemplateID(uri, prefix, suffix)
+	if err != nil {
+		return nil, err
+	}
+	userID, err := strconv.ParseInt(id, 10, 64)
+	if err != nil || userID <= 0 {
+		return nil, errors.New("invalid user id")
+	}
+	return s.queryMCPResource(ctx, def.capability, json.RawMessage(`{"user_id":`+strconv.FormatInt(userID, 10)+`}`))
 }
 
 func (s *Server) queryMCPResource(ctx context.Context, capabilityName string, arguments json.RawMessage) (any, error) {
