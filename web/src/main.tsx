@@ -107,6 +107,7 @@ import { SearchableCombobox } from './components/ui/SearchableCombobox'
 import { NetworkInterfacePicker } from './components/NetworkInterfacePicker'
 import { AgentSettingsPanel } from './components/AgentSettingsPanel'
 import { AboutSettingsPanel } from './components/AboutSettingsPanel'
+import { DNSRecordDialog, dnsRecordDraftFromRecord, dnsRecordPayload, emptyDNSRecordDraft } from './components/DNSRecordDialog'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
 import clashMetaClientIcon from './assets/subscription-clients/clash-meta.png'
 import stashClientIcon from './assets/subscription-clients/stash.jpg'
@@ -4515,10 +4516,6 @@ function emptyDNSZoneDraft() {
   return { id: 0, zone_name: '', provider_zone_id: '', server_id: 0 }
 }
 
-function emptyDNSRecordDraft() {
-  return { type: 'A', name: '', content: '', comment: '', ttl: 300, proxied: false }
-}
-
 function isOBoardDNSRecord(record: DNSRecord) {
   return Boolean(record.server_id || record.inbound_id || record.comment?.trim().toLocaleLowerCase().startsWith('oboard:'))
 }
@@ -4537,6 +4534,7 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
   const [recordDialogZoneID, setRecordDialogZoneID] = useState(Number(zoneOptions[0]?.zone.id || 0))
   const [records, setRecords] = useState<DNSRecord[]>([])
   const [recordDraft, setRecordDraft] = useState(emptyDNSRecordDraft())
+  const [editingRecord, setEditingRecord] = useState<DNSRecord | null>(null)
   const [working, setWorking] = useState('')
   const [recordQuery, setRecordQuery] = useState('')
   const [recordTypeFilters, setRecordTypeFilters] = useState<string[]>([])
@@ -4600,10 +4598,12 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
   const openCreateRecord = () => {
     setRecordDialogZoneID(selectedZoneID || Number(zoneOptions[0]?.zone.id || 0))
     setRecordDraft(emptyDNSRecordDraft())
+    setEditingRecord(null)
     setRecordDialogOpen(true)
   }
   const closeRecordDialog = () => {
     setRecordDraft(emptyDNSRecordDraft())
+    setEditingRecord(null)
     setRecordDialogOpen(false)
   }
   const editCredential = (credential: DNSCredential) => {
@@ -4650,26 +4650,24 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   useEffect(() => { if (selectedZoneID) void loadRecords(); else setRecords([]) }, [selectedZoneID])
-  const createRecord = async () => {
+  const saveRecord = async () => {
     const zoneID = recordDialogZoneID
     if (!zoneID || !recordDraft.name.trim() || !recordDraft.content.trim()) return
     setWorking('record-save')
     try {
-      await client.request(`/dns-records?dns_zone_id=${zoneID}`, { method: 'POST', body: JSON.stringify({ ...recordDraft, type: (recordDraft.type || 'A').toUpperCase(), enabled: true }) })
+      const payload = dnsRecordPayload(recordDraft, editingRecord || undefined)
+      await client.request(`/dns-records?dns_zone_id=${zoneID}`, { method: editingRecord ? 'PATCH' : 'POST', body: JSON.stringify(payload) })
       closeRecordDialog()
       if (selectedZoneID === zoneID) await loadRecords(zoneID)
       else setSelectedZoneID(zoneID)
-      notify?.('解析记录已创建', 'success')
+      notify?.(editingRecord ? '解析记录已更新' : '解析记录已创建', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
-  const editRecord = async (record: DNSRecord) => {
-    const name = await dialogs.prompt({ title: '解析名称', defaultValue: record.name })
-    if (name === null) return
-    const content = await dialogs.prompt({ title: '解析内容', defaultValue: record.content })
-    if (content === null) return
-    const comment = await dialogs.prompt({ title: '解析备注', defaultValue: record.comment || '' })
-    if (comment === null) return
-    try { await client.request(`/dns-records?dns_zone_id=${selectedZoneID}`, { method: 'PATCH', body: JSON.stringify({ ...record, name, content, comment }) }); await loadRecords(); notify?.('解析记录已更新', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
+  const editRecord = (record: DNSRecord) => {
+    setRecordDialogZoneID(Number(record.dns_zone_id || selectedZoneID))
+    setRecordDraft(dnsRecordDraftFromRecord(record))
+    setEditingRecord(record)
+    setRecordDialogOpen(true)
   }
   const deleteRecord = async (record: DNSRecord) => {
     const ok = await dialogs.confirm({ title: '删除解析记录', message: `${record.type} ${record.name}`, confirmText: '删除', tone: 'danger' })
@@ -4724,86 +4722,15 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
       {visibleRecords.length ? <div className="dns-record-list">{visibleRecords.map(record => {
         const linkedServerName = record.server_id ? serverName(record.server_id) : ''
         const detail = record.comment || `TTL ${record.ttl}`
-        return <div className="dns-record-row" key={record.id}><span className="record-type">{record.type}</span><div className="record-main"><strong>{record.name}</strong><span>{record.content}</span><small>{detail}{linkedServerName && !detail.toLocaleLowerCase().includes(linkedServerName.toLocaleLowerCase()) ? ` · 服务器 ${linkedServerName}` : ''}</small></div><div className="record-badges"><span className={`status-pill ${isOBoardDNSRecord(record) ? 'managed' : ''}`}>{isOBoardDNSRecord(record) ? 'OBoard 管理' : '其他来源'}</span><span className={`status-pill ${record.proxied ? 'warning' : ''}`}>{record.proxied ? '已开启代理' : '仅域名解析'}</span></div><div className="record-actions"><button className="ghost icon-button" onClick={() => editRecord(record)} title="编辑"><Edit3 size={14} /></button><button className="ghost icon-button danger-text" onClick={() => deleteRecord(record)} title="删除"><Trash2 size={14} /></button></div></div>
+        return <div className="dns-record-row" key={record.id}><span className="record-type">{record.type}</span><div className="record-main"><strong>{record.name}</strong><span>{record.content}</span><small>{detail}{linkedServerName && !detail.toLocaleLowerCase().includes(linkedServerName.toLocaleLowerCase()) ? ` · 服务器 ${linkedServerName}` : ''}</small></div><div className="record-badges"><span className={`status-pill ${isOBoardDNSRecord(record) ? 'managed' : ''}`}>{isOBoardDNSRecord(record) ? 'OBoard 管理' : '其他来源'}</span><span className={`status-pill ${record.proxied ? 'warning' : ''}`}>{record.proxied ? '已开启代理' : '仅域名解析'}</span></div><div className="record-actions"><button className="ghost icon-button" onClick={() => editRecord(record)} title="编辑" aria-label={`编辑 ${record.name}`}><Edit3 size={14} aria-hidden="true" /></button><button className="ghost icon-button danger-text" onClick={() => deleteRecord(record)} title="删除" aria-label={`删除 ${record.name}`}><Trash2 size={14} aria-hidden="true" /></button></div></div>
       })}</div> : <div className="dns-credential-empty">{!selectedZoneID ? '请先选择一个域名或在“域名管理”中添加账号。' : records.length ? '没有符合条件的解析记录。' : '该域名当前没有解析记录。'}</div>}
     </section> : <section className="settings-card dns-management-card">
       <div className="settings-card-head"><div><h3>域名与解析服务商</h3></div><button className="ghost" onClick={openCreateCredential}><Plus size={14} />新建账号</button></div>
       {credentials.length ? <div className="dns-record-list">{credentials.map(credential => <div className="dns-record-row dns-credential-row" key={credential.id}><div className="dns-provider-logo-box" title={dnsProviderLabels[credential.provider]}><DNSProviderIcon provider={credential.provider} size={22} /></div><div className="record-main"><strong>{credential.name}</strong><span><small className="dns-provider-sublabel">{dnsProviderLabels[credential.provider]}</small>{(credential.zones || []).length ? ` · ${(credential.zones || []).map(zone => `${zone.zone_name}${zone.server_id ? `（${serverName(zone.server_id)}）` : ''}`).join(' · ')}` : ''}</span><small>{credential.last_error || (credential.verified_at ? `${credential.zones.length} 个域名 · 已验证 ${formatTableTime(credential.verified_at)}` : `${credential.zones.length} 个域名 · 待验证`)}</small></div><span className={`status-pill ${credential.verified_at ? 'ok' : credential.last_error ? 'warning' : ''}`}>{credential.verified_at ? '可用' : '待验证'}</span><div className="record-actions"><button className="ghost icon-button" onClick={() => verifyCredential(credential)} title="验证"><RefreshCw size={14} className={working === `verify-${credential.id}` ? 'spin' : ''} /></button><button className="ghost icon-button" onClick={() => editCredential(credential)} title="编辑"><Edit3 size={14} /></button><button className="ghost icon-button danger-text" onClick={() => deleteCredential(credential)} title="删除"><Trash2 size={14} /></button></div></div>)}</div> : <div className="dns-credential-empty">还没有解析服务账号。</div>}
     </section>}
-    <AnimatePresence>{recordDialogOpen && <DNSRecordDialog zoneOptions={zoneOptions} zoneID={recordDialogZoneID} setZoneID={setRecordDialogZoneID} draft={recordDraft} setDraft={setRecordDraft} serverName={serverName} saving={working === 'record-save'} onCancel={closeRecordDialog} onSubmit={createRecord} />}</AnimatePresence>
+    <AnimatePresence>{recordDialogOpen && <DNSRecordDialog zoneOptions={zoneOptions} zoneID={recordDialogZoneID} setZoneID={setRecordDialogZoneID} draft={recordDraft} setDraft={setRecordDraft} serverName={serverName} editing={Boolean(editingRecord)} saving={working === 'record-save'} onCancel={closeRecordDialog} onSubmit={saveRecord} />}</AnimatePresence>
     <AnimatePresence>{credentialDialogOpen && <DNSCredentialDialog draft={draft} setDraft={setDraft} servers={servers} editing={editingID > 0} saving={working === 'credential-save'} onCancel={closeCredentialDialog} onSubmit={saveCredential} />}</AnimatePresence>
   </div>
-}
-
-function DNSRecordDialog({ zoneOptions, zoneID, setZoneID, draft, setDraft, serverName, saving, onCancel, onSubmit }: { zoneOptions: { credential: DNSCredential; zone: DNSCredentialZone }[]; zoneID: number; setZoneID: (zoneID: number) => void; draft: ReturnType<typeof emptyDNSRecordDraft>; setDraft: React.Dispatch<React.SetStateAction<ReturnType<typeof emptyDNSRecordDraft>>>; serverName: (serverID?: number) => string; saving: boolean; onCancel: () => void; onSubmit: () => Promise<void> }) {
-  const selectedOption = zoneOptions.find(item => item.zone.id === zoneID)
-  const selectedZoneName = selectedOption?.zone.zone_name?.trim() || ''
-  const update = (patch: Partial<typeof draft>) => setDraft(current => ({ ...current, ...patch }))
-
-  const [hostPrefix, setHostPrefix] = useState(() => {
-    if (!draft.name || !selectedZoneName) return draft.name || ''
-    if (draft.name === selectedZoneName || draft.name === '@') return '@'
-    if (draft.name.endsWith(`.${selectedZoneName}`)) {
-      return draft.name.slice(0, -(selectedZoneName.length + 1))
-    }
-    return draft.name
-  })
-
-  const formatOptionLabel = (credential: DNSCredential, zone: DNSCredentialZone) => {
-    const accountName = credential.name?.trim()
-    const zoneName = zone.zone_name?.trim()
-    const namePart = accountName && accountName !== zoneName ? `${zoneName} (${accountName})` : zoneName
-    const serverPart = zone.server_id ? ` · ${serverName(zone.server_id)}` : ''
-    return `${namePart}${serverPart}`
-  }
-
-  const handlePrefixChange = (rawPrefix: string) => {
-    let prefix = rawPrefix.trim()
-    if (selectedZoneName && prefix.endsWith(`.${selectedZoneName}`)) {
-      prefix = prefix.slice(0, -(selectedZoneName.length + 1))
-    } else if (selectedZoneName && prefix === selectedZoneName) {
-      prefix = '@'
-    }
-    setHostPrefix(prefix)
-    const fullName = prefix === '@' || !prefix ? selectedZoneName : `${prefix}.${selectedZoneName}`
-    update({ name: fullName })
-  }
-
-  const handleZoneChange = (nextZoneID: number) => {
-    setZoneID(nextZoneID)
-    const nextOption = zoneOptions.find(item => item.zone.id === nextZoneID)
-    const nextZoneName = nextOption?.zone.zone_name?.trim() || ''
-    if (nextZoneName) {
-      const fullName = hostPrefix === '@' || !hostPrefix ? nextZoneName : `${hostPrefix}.${nextZoneName}`
-      update({ name: fullName })
-    }
-  }
-
-  return <MotionDialogPanel onCancel={onCancel} className="dns-record-dialog">
-    <header className="dialog-head"><div><h2>添加解析记录</h2><p className="muted">为指定域名创建一条子域名解析。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button></header>
-    <div className="dialog-body"><div className="form server-dialog-form labeled-form">
-      <FormField label="域名" required><Select value={zoneID} onChange={e => handleZoneChange(Number(e.target.value))}><option value={0}>选择域名</option>{zoneOptions.map(({ credential, zone }) => <option key={zone.id} value={zone.id}>{formatOptionLabel(credential, zone)}</option>)}</Select></FormField>
-      <FormField label="记录类型" required><Select value={draft.type || 'A'} onChange={e => update({ type: e.target.value })}>{['A', 'AAAA', 'CNAME', 'TXT'].map(type => <option key={type} value={type}>{type}</option>)}</Select></FormField>
-      <FormField label="主机记录" required hint="支持填写子域名前缀（例如 hkp 或 *）；如需解析主域名请填写 @。">
-        <div className="dns-domain-input">
-          <input
-            value={hostPrefix}
-            onChange={e => handlePrefixChange(e.target.value)}
-            placeholder="例如：hkp 或 @"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            disabled={!selectedZoneName}
-          />
-          <span className="dns-domain-suffix">{selectedZoneName ? `.${selectedZoneName}` : '请先选择域名'}</span>
-        </div>
-      </FormField>
-      <FormField label="记录值" required><input value={draft.content} onChange={e => update({ content: e.target.value })} autoCapitalize="none" placeholder={draft.type === 'AAAA' ? '例如：2001:db8::1' : draft.type === 'CNAME' ? '例如：target.example.com' : draft.type === 'TXT' ? '例如：v=spf1...' : '例如：1.2.3.4'} /></FormField>
-      <FormField label="解析备注" hint="备注属于这条子域名解析；自动创建时会写入入口和服务器信息。"><input value={draft.comment} maxLength={100} onChange={e => update({ comment: e.target.value })} placeholder="例如：东京入口" /></FormField>
-      {selectedOption?.credential.provider === 'cloudflare' && <div className="switch-form-row"><span className="switch-form-label">Cloudflare 代理</span><Switch checked={draft.proxied} onChange={checked => update({ proxied: checked })} ariaLabel="Cloudflare 代理" /></div>}
-    </div></div>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" onClick={() => void onSubmit()} disabled={saving || !zoneID || !hostPrefix.trim() || !draft.content.trim()}>{saving ? '创建中...' : '添加记录'}</button></footer>
-  </MotionDialogPanel>
 }
 
 function DNSCredentialDialog({ draft, setDraft, servers, editing, saving, onCancel, onSubmit }: { draft: ReturnType<typeof emptyDNSCredentialDraft>; setDraft: React.Dispatch<React.SetStateAction<any>>; servers: Server[]; editing: boolean; saving: boolean; onCancel: () => void; onSubmit: () => Promise<void> }) {
