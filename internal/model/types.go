@@ -2198,6 +2198,132 @@ type ServerOfflineNotice struct {
 	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
 }
 
+type NodeIncidentStatus string
+
+const (
+	NodeIncidentActive     NodeIncidentStatus = "active"
+	NodeIncidentRecovering NodeIncidentStatus = "recovering"
+	NodeIncidentResolved   NodeIncidentStatus = "resolved"
+)
+
+// NodeIncident is the durable, debounced lifecycle of one server outage.
+// SnapshotJSON contains only non-secret topology and publication metadata.
+type NodeIncident struct {
+	ID                       int64              `json:"id"`
+	ServerID                 int64              `json:"server_id"`
+	ServerName               string             `json:"server_name"`
+	Kind                     string             `json:"kind"`
+	Status                   NodeIncidentStatus `json:"status"`
+	Version                  int64              `json:"version"`
+	FirstOfflineAt           time.Time          `json:"first_offline_at"`
+	DetectedAt               time.Time          `json:"detected_at"`
+	RecoveryCandidateAt      *time.Time         `json:"recovery_candidate_at,omitempty"`
+	RecoveryDeadlineAt       *time.Time         `json:"recovery_deadline_at,omitempty"`
+	RecoveredAt              *time.Time         `json:"recovered_at,omitempty"`
+	ResolvedAt               *time.Time         `json:"resolved_at,omitempty"`
+	OutageDurationSeconds    int64              `json:"outage_duration_seconds"`
+	OfflineThresholdSeconds  int                `json:"offline_threshold_seconds"`
+	RecoveryThresholdSeconds int                `json:"recovery_threshold_seconds"`
+	FlapCount                int                `json:"flap_count"`
+	SnapshotJSON             string             `json:"snapshot_json"`
+	CreatedAt                time.Time          `json:"created_at"`
+	UpdatedAt                time.Time          `json:"updated_at"`
+}
+
+type NodeIncidentTelegramMessage struct {
+	ID                int64      `json:"id"`
+	IncidentID        int64      `json:"incident_id"`
+	ChannelID         *int64     `json:"channel_id,omitempty"`
+	ChatID            int64      `json:"chat_id"`
+	MessageID         int64      `json:"message_id,omitempty"`
+	FallbackMessageID int64      `json:"fallback_message_id,omitempty"`
+	LastEventVersion  int64      `json:"last_event_version"`
+	LastEditedAt      *time.Time `json:"last_edited_at,omitempty"`
+	LastError         string     `json:"last_error,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+}
+
+type NodePublicationIsolation struct {
+	ID             int64      `json:"id"`
+	IncidentID     int64      `json:"incident_id"`
+	InboundID      *int64     `json:"inbound_id,omitempty"`
+	InboundName    string     `json:"inbound_name"`
+	ServerID       int64      `json:"server_id"`
+	RecoveryPolicy string     `json:"recovery_policy"`
+	Status         string     `json:"status"`
+	ActorUserID    int64      `json:"actor_user_id"`
+	RestoredBy     *int64     `json:"restored_by,omitempty"`
+	RestoredAt     *time.Time `json:"restored_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+type NodeIncidentAction struct {
+	ID             int64      `json:"id"`
+	IncidentID     int64      `json:"incident_id"`
+	ActorUserID    int64      `json:"actor_user_id"`
+	Kind           string     `json:"kind"`
+	Status         string     `json:"status"`
+	InboundIDsJSON string     `json:"inbound_ids_json"`
+	ChangesetID    string     `json:"changeset_id"`
+	ConfigVersion  int64      `json:"config_version"`
+	TaskCount      int        `json:"task_count"`
+	Error          string     `json:"error,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+type TelegramBinding struct {
+	ID             int64     `json:"id"`
+	ChannelID      int64     `json:"channel_id"`
+	UserID         int64     `json:"user_id"`
+	ChatID         int64     `json:"chat_id"`
+	TelegramUserID int64     `json:"telegram_user_id"`
+	ChatType       string    `json:"chat_type"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type TelegramBindingCode struct {
+	Code      string    `json:"code,omitempty"`
+	UserID    int64     `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type NotificationBroadcast struct {
+	ID             int64      `json:"id"`
+	ActorUserID    int64      `json:"actor_user_id"`
+	ActorName      string     `json:"actor_name"`
+	Title          string     `json:"title"`
+	Body           string     `json:"body"`
+	FilterJSON     string     `json:"filter_json"`
+	IdempotencyKey string     `json:"idempotency_key"`
+	Status         string     `json:"status"`
+	RecipientCount int        `json:"recipient_count"`
+	SuccessCount   int        `json:"success_count"`
+	FailureCount   int        `json:"failure_count"`
+	CreatedAt      time.Time  `json:"created_at"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+}
+
+type NotificationBroadcastTarget struct {
+	ID            int64                 `json:"id"`
+	BroadcastID   int64                 `json:"broadcast_id"`
+	UserID        int64                 `json:"user_id"`
+	BindingID     *int64                `json:"binding_id,omitempty"`
+	ChannelID     *int64                `json:"channel_id,omitempty"`
+	ChatID        *int64                `json:"chat_id,omitempty"`
+	Status        string                `json:"status"`
+	Attempts      int                   `json:"attempts"`
+	Error         string                `json:"error,omitempty"`
+	NextAttemptAt time.Time             `json:"next_attempt_at"`
+	SentAt        *time.Time            `json:"sent_at,omitempty"`
+	Broadcast     NotificationBroadcast `json:"broadcast"`
+	Channel       NotificationChannel   `json:"channel"`
+}
+
 type AuditLog struct {
 	ID        int64     `json:"id"`
 	ActorID   *int64    `json:"actor_id,omitempty"`

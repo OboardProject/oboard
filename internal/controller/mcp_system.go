@@ -272,8 +272,10 @@ var settingsAutomationFields = map[string]bool{
 	"subscription_relay_url": true, "subscription_controller_direct_enabled": true,
 	"server_default_mtu_mode": true, "server_default_bbr_enabled": true,
 	"server_default_time_correction_mode": true, "time_check_ntp_servers": true,
-	"server_monitoring_retention_days": true,
-	"trusted_proxy_cidrs":              true, "controller_log_max_mb": true, "controller_log_backups": true,
+	"server_monitoring_retention_days":          true,
+	"notification_server_offline_after_seconds": true,
+	"notification_server_online_after_seconds":  true,
+	"trusted_proxy_cidrs":                       true, "controller_log_max_mb": true, "controller_log_backups": true,
 	"agent_auto_update_enabled":              true,
 	"subscription_relay_auto_update_enabled": true, "update_window_enabled": true,
 	"update_window_start_hour": true, "update_window_end_hour": true,
@@ -458,6 +460,20 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 			return nil, errors.New("server_monitoring_retention_days must be between 1 and 30")
 		}
 		updates["server_monitoring_retention_days"] = strconv.Itoa(days)
+	}
+	if value, ok := fields["notification_server_offline_after_seconds"]; ok {
+		var seconds int
+		if err := json.Unmarshal(value, &seconds); err != nil || seconds < 30 || seconds > 86400 {
+			return nil, errors.New("notification_server_offline_after_seconds must be between 30 and 86400")
+		}
+		updates[settingNotificationServerOfflineAfter] = strconv.Itoa(seconds)
+	}
+	if value, ok := fields["notification_server_online_after_seconds"]; ok {
+		var seconds int
+		if err := json.Unmarshal(value, &seconds); err != nil || seconds < 0 || seconds > 86400 {
+			return nil, errors.New("notification_server_online_after_seconds must be between 0 and 86400")
+		}
+		updates[settingNotificationServerOnlineAfter] = strconv.Itoa(seconds)
 	}
 	if value, ok := fields["time_check_ntp_servers"]; ok {
 		var servers []string

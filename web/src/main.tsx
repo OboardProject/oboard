@@ -3223,7 +3223,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [controllerLogMaxMB, setControllerLogMaxMB] = useState(Number(data.settings?.controller_log_max_mb || 32))
   const [controllerLogBackups, setControllerLogBackups] = useState(Number(data.settings?.controller_log_backups || 5))
   const [notificationOfflineAfter, setNotificationOfflineAfter] = useState(Number(data.settings?.notification_server_offline_after_seconds || 120))
-  const [notificationOnlineAfter, setNotificationOnlineAfter] = useState(Number(data.settings?.notification_server_online_after_seconds || 60))
+  const [notificationOnlineAfter, setNotificationOnlineAfter] = useState(Number(data.settings?.notification_server_online_after_seconds || 300))
   const [notificationMergeOffline, setNotificationMergeOffline] = useState(data.settings?.notification_server_merge_offline !== false)
   const [registrationEnabled, setRegistrationEnabled] = useState(settingEnabled(data.settings?.registration_enabled))
   const [registrationDefaultGroupID, setRegistrationDefaultGroupID] = useState(Number(data.settings?.registration_default_group_id || 0))
@@ -3239,7 +3239,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   useEffect(() => { setSubscriptionAgePolicy(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional') }, [data.settings?.subscription_age_policy])
   useEffect(() => {
     setNotificationOfflineAfter(Number(data.settings?.notification_server_offline_after_seconds || 120))
-    setNotificationOnlineAfter(Number(data.settings?.notification_server_online_after_seconds || 60))
+    setNotificationOnlineAfter(Number(data.settings?.notification_server_online_after_seconds || 300))
     setNotificationMergeOffline(data.settings?.notification_server_merge_offline !== false)
   }, [data.settings?.notification_server_offline_after_seconds, data.settings?.notification_server_online_after_seconds, data.settings?.notification_server_merge_offline])
   useEffect(() => {
@@ -16823,11 +16823,27 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
   const [announcementBody, setAnnouncementBody] = useState('')
   const [announcementAll, setAnnouncementAll] = useState(true)
   const [announcementUserIDs, setAnnouncementUserIDs] = useState<number[]>([])
+  const [announcementGroupIDs, setAnnouncementGroupIDs] = useState<number[]>([])
+  const [announcementPlanIDs, setAnnouncementPlanIDs] = useState<number[]>([])
+  const [announcementUserStatus, setAnnouncementUserStatus] = useState('active')
+  const [announcementSubscriptionStatus, setAnnouncementSubscriptionStatus] = useState('')
+  const [announcementTelegramBound, setAnnouncementTelegramBound] = useState('true')
   const [sendingAnnouncement, setSendingAnnouncement] = useState(false)
   const [announcementOpen, setAnnouncementOpen] = useState(false)
 
   const openCreate = () => setEditor(emptyNotificationDraft(defaultTemplates, eventOptions, isAdmin, ownerUserID))
   const openEdit = (channel: NotificationChannel) => setEditor(notificationDraftFromChannel(channel, defaultTemplates))
+  const createTelegramBindingCode = async () => {
+    try {
+      const result = await client.request('/telegram/binding-code', { method: 'POST', body: '{}' })
+      await dialogs.alert({
+        title: 'Telegram 绑定码',
+        message: `请在 10 分钟内向 OBoard Bot 发送：\n/bind ${String(result.code || '')}`,
+      })
+    } catch (error: any) {
+      await dialogs.alert({ title: '生成失败', message: localizeErrorMessage(error?.message || error) })
+    }
+  }
 
   const saveChannel = async () => {
     if (!editor) return
@@ -16899,17 +16915,40 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
     }
     setSendingAnnouncement(true)
     try {
-      const result = await client.request('/notification-announcements', {
+      const filter = {
+        user_ids: announcementAll ? [] : announcementUserIDs,
+        group_ids: announcementGroupIDs,
+        plan_ids: announcementPlanIDs,
+        user_status: announcementUserStatus,
+        subscription_status: announcementSubscriptionStatus,
+        telegram_bound: announcementTelegramBound === '' ? undefined : announcementTelegramBound === 'true',
+      }
+      const preview = await client.request('/notification-broadcasts/preview', {
         method: 'POST',
-        body: JSON.stringify({ title: announcementTitle.trim(), body: announcementBody.trim(), all_users: announcementAll, user_ids: announcementAll ? [] : announcementUserIDs }),
+        body: JSON.stringify({ title: announcementTitle.trim(), body: announcementBody.trim(), filter }),
+      })
+      const confirmed = await dialogs.confirm({
+        title: '确认发送广播？',
+        message: `预计发送给 ${Number(preview.recipient_count || 0)} 位用户，共 ${Number(preview.bound_target_count || 0)} 个 Telegram 会话。`,
+        confirmText: '确认发送',
+      })
+      if (!confirmed) return
+      await client.request('/notification-broadcasts/confirm', {
+        method: 'POST',
+        body: JSON.stringify({ confirmation_token: preview.confirmation_token }),
       })
       setAnnouncementTitle('')
       setAnnouncementBody('')
       setAnnouncementUserIDs([])
+      setAnnouncementGroupIDs([])
+      setAnnouncementPlanIDs([])
+      setAnnouncementUserStatus('active')
+      setAnnouncementSubscriptionStatus('')
+      setAnnouncementTelegramBound('true')
       setAnnouncementAll(true)
       setAnnouncementOpen(false)
       await load()
-      notify?.(`管理员通知已加入发送队列 · ${Number(result.queued_count || 0)} 条推送`, 'success')
+      notify?.(`管理员广播已加入发送队列 · ${Number(preview.recipient_count || 0)} 位用户`, 'success')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -16925,6 +16964,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
       </div>
       <div className="section-actions">
         {isAdmin && <button type="button" className="ghost" onClick={() => setAnnouncementOpen(true)}><Send size={15} /><span>发送通知</span></button>}
+        <button type="button" className="ghost" onClick={() => void createTelegramBindingCode()}><LinkIcon size={15} /><span>绑定 Telegram</span></button>
         {isAdmin && <button type="button" className="ghost" onClick={() => setRawLogOpen(true)}><ClipboardList size={15} /><span>原始日志</span></button>}
         <button type="button" onClick={openCreate}><Plus size={15} /><span>新建通道</span></button>
       </div>
@@ -16983,6 +17023,18 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
         setAllUsers={setAnnouncementAll}
         selectedUserIDs={announcementUserIDs}
         setSelectedUserIDs={setAnnouncementUserIDs}
+        selectedGroupIDs={announcementGroupIDs}
+        setSelectedGroupIDs={setAnnouncementGroupIDs}
+        selectedPlanIDs={announcementPlanIDs}
+        setSelectedPlanIDs={setAnnouncementPlanIDs}
+        userStatus={announcementUserStatus}
+        setUserStatus={setAnnouncementUserStatus}
+        subscriptionStatus={announcementSubscriptionStatus}
+        setSubscriptionStatus={setAnnouncementSubscriptionStatus}
+        telegramBound={announcementTelegramBound}
+        setTelegramBound={setAnnouncementTelegramBound}
+        groups={data.user_groups || []}
+        plans={data.subscription_plans || []}
         users={users}
         ownerUserID={ownerUserID}
         announcements={announcements}
@@ -17020,6 +17072,18 @@ function NotificationAnnouncementDialog({
   setAllUsers,
   selectedUserIDs,
   setSelectedUserIDs,
+  selectedGroupIDs,
+  setSelectedGroupIDs,
+  selectedPlanIDs,
+  setSelectedPlanIDs,
+  userStatus,
+  setUserStatus,
+  subscriptionStatus,
+  setSubscriptionStatus,
+  telegramBound,
+  setTelegramBound,
+  groups,
+  plans,
   users,
   ownerUserID,
   announcements,
@@ -17035,6 +17099,18 @@ function NotificationAnnouncementDialog({
   setAllUsers: (value: boolean) => void
   selectedUserIDs: number[]
   setSelectedUserIDs: React.Dispatch<React.SetStateAction<number[]>>
+  selectedGroupIDs: number[]
+  setSelectedGroupIDs: React.Dispatch<React.SetStateAction<number[]>>
+  selectedPlanIDs: number[]
+  setSelectedPlanIDs: React.Dispatch<React.SetStateAction<number[]>>
+  userStatus: string
+  setUserStatus: (value: string) => void
+  subscriptionStatus: string
+  setSubscriptionStatus: (value: string) => void
+  telegramBound: string
+  setTelegramBound: (value: string) => void
+  groups: UserGroup[]
+  plans: any[]
   users: User[]
   ownerUserID: number
   announcements: NotificationAnnouncement[]
@@ -17073,6 +17149,15 @@ function NotificationAnnouncementDialog({
               })}
               {!availableUsers.length && <span className="muted">暂无可选用户</span>}
             </div>}
+          </div>
+        </FormField>
+        <FormField label="筛选条件" hint="条件同时生效；广播只向仍有效的 Telegram 绑定投递。">
+          <div className="form-grid-2">
+            <label><span>用户组</span><select multiple size={3} value={selectedGroupIDs.map(String)} onChange={event => setSelectedGroupIDs(Array.from(event.target.selectedOptions, option => Number(option.value)))}><option value="">全部用户组</option>{groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>
+            <label><span>套餐/分组</span><select multiple size={3} value={selectedPlanIDs.map(String)} onChange={event => setSelectedPlanIDs(Array.from(event.target.selectedOptions, option => Number(option.value)))}><option value="">全部套餐</option>{plans.map(plan => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select></label>
+            <label><span>用户状态</span><Select value={userStatus} onChange={event => setUserStatus(event.target.value)} aria-label="用户状态"><option value="">全部状态</option><option value="active">正常</option><option value="disabled">已停用</option></Select></label>
+            <label><span>订阅状态</span><Select value={subscriptionStatus} onChange={event => setSubscriptionStatus(event.target.value)} aria-label="订阅状态"><option value="">全部订阅</option><option value="active">有效</option><option value="inactive">无有效订阅</option></Select></label>
+            <label><span>Telegram 绑定</span><Select value={telegramBound} onChange={event => setTelegramBound(event.target.value)} aria-label="Telegram 绑定"><option value="true">已绑定</option><option value="false">未绑定</option><option value="">不限</option></Select></label>
           </div>
         </FormField>
       </div>

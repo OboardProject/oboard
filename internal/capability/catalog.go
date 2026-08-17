@@ -352,6 +352,7 @@ func defaultDescriptors() []Descriptor {
 	descriptors = append(descriptors, opsDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, auditDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, systemDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
+	descriptors = append(descriptors, nodeOperationsDescriptors(positiveID, stringValue, boolValue, nullableString)...)
 	descriptors = append(descriptors, nodeWorkspaceDescriptors(positiveID, stringValue, boolValue)...)
 	for index := range descriptors {
 		descriptors[index].Version = "1"

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strconv"
@@ -15,7 +16,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/automation"
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 )
 
 const (
@@ -27,7 +32,7 @@ const (
 type telegramBotChannel struct {
 	channelID int64
 	botToken  string
-	chatIDs   map[string]bool
+	chatIDs   map[int64]bool
 }
 
 func (s *Server) telegramBotChannels(ctx context.Context) map[string][]telegramBotChannel {
@@ -56,18 +61,11 @@ func (s *Server) telegramBotChannels(ctx context.Context) map[string][]telegramB
 		if err != nil || owner.Status != "active" {
 			continue
 		}
-		role, err := s.store.EffectiveUserRole(ctx, *owner)
-		if err != nil || !roleAllows(role, model.RoleAdmin) {
-			continue
-		}
-		chatIDs := map[string]bool{}
-		for _, part := range strings.Split(cfg.AllowedChatIDs, ",") {
-			if value := strings.TrimSpace(part); value != "" {
-				chatIDs[value] = true
+		chatIDs := map[int64]bool{}
+		for _, value := range strings.Split(cfg.AllowedChatIDs, ",") {
+			if chatID, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil {
+				chatIDs[chatID] = true
 			}
-		}
-		if len(chatIDs) == 0 {
-			continue
 		}
 		out[cfg.BotToken] = append(out[cfg.BotToken], telegramBotChannel{channelID: channel.ID, botToken: cfg.BotToken, chatIDs: chatIDs})
 	}
@@ -79,7 +77,6 @@ func (s *Server) StartTelegramBots(ctx context.Context) {
 }
 
 func (s *Server) telegramBotPollLoop(ctx context.Context) {
-	offsets := map[string]int64{}
 	rate := &telegramBotRateLimiter{counts: map[string][]time.Time{}}
 	for {
 		if ctx.Err() != nil {
@@ -106,14 +103,28 @@ func (s *Server) telegramBotPollLoop(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			updates, err := s.telegramBotGetUpdates(ctx, token, offsets[token])
+			tokenHash := security.HashSecret("telegram-bot:" + token)
+			offset, claimed, err := s.store.ClaimTelegramBotPoll(ctx, tokenHash, s.telegramPollerID, time.Now().UTC(), 40*time.Second)
+			if err != nil {
+				log.Printf("telegram bot poll lease failed: %v", err)
+				continue
+			}
+			if !claimed {
+				continue
+			}
+			updates, err := s.telegramBotGetUpdates(ctx, token, offset)
 			if err != nil {
 				log.Printf("telegram bot getUpdates failed: %v", err)
 				continue
 			}
 			for _, update := range updates {
-				if update.UpdateID+1 > offsets[token] {
-					offsets[token] = update.UpdateID + 1
+				nextOffset := update.UpdateID + 1
+				if nextOffset > offset {
+					offset = nextOffset
+					if err := s.store.SaveTelegramBotOffset(ctx, tokenHash, s.telegramPollerID, offset); err != nil {
+						log.Printf("telegram bot save offset failed: %v", err)
+						break
+					}
 				}
 				s.handleTelegramUpdate(ctx, channelsByToken[token], token, update, rate)
 			}
@@ -127,14 +138,28 @@ func (s *Server) telegramBotPollLoop(ctx context.Context) {
 }
 
 type telegramUpdate struct {
-	UpdateID int64            `json:"update_id"`
-	Message  *telegramMessage `json:"message"`
+	UpdateID      int64                  `json:"update_id"`
+	Message       *telegramMessage       `json:"message"`
+	CallbackQuery *telegramCallbackQuery `json:"callback_query"`
+}
+
+type telegramCallbackQuery struct {
+	ID   string `json:"id"`
+	From *struct {
+		ID int64 `json:"id"`
+	} `json:"from"`
+	Message *telegramMessage `json:"message"`
+	Data    string           `json:"data"`
 }
 
 type telegramMessage struct {
 	MessageID int64 `json:"message_id"`
-	Chat      *struct {
+	From      *struct {
 		ID int64 `json:"id"`
+	} `json:"from"`
+	Chat *struct {
+		ID   int64  `json:"id"`
+		Type string `json:"type"`
 	} `json:"chat"`
 	Text string `json:"text"`
 }
@@ -142,12 +167,12 @@ type telegramMessage struct {
 func (s *Server) telegramBotGetUpdates(ctx context.Context, token string, offset int64) ([]telegramUpdate, error) {
 	query := url.Values{}
 	query.Set("timeout", "25")
-	query.Set("allowed_updates", `["message"]`)
+	query.Set("allowed_updates", `["message","callback_query"]`)
 	if offset > 0 {
 		query.Set("offset", strconv.FormatInt(offset, 10))
 	}
 	target := "https://api.telegram.org/bot" + token + "/getUpdates?" + query.Encode()
-	data, err := telegramBotHTTP(ctx, http.MethodGet, target, nil)
+	data, err := s.telegramAPI(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -165,27 +190,446 @@ func (s *Server) telegramBotGetUpdates(ctx context.Context, token string, offset
 }
 
 func (s *Server) handleTelegramUpdate(ctx context.Context, channels []telegramBotChannel, token string, update telegramUpdate, rate *telegramBotRateLimiter) {
+	if update.CallbackQuery != nil {
+		s.handleTelegramCallback(ctx, channels, token, *update.CallbackQuery, rate)
+		return
+	}
 	message := update.Message
-	if message == nil || message.Chat == nil || strings.TrimSpace(message.Text) == "" {
+	if message == nil || message.Chat == nil || message.From == nil || strings.TrimSpace(message.Text) == "" || len(channels) == 0 {
+		return
+	}
+	allowedChannels := make([]telegramBotChannel, 0, len(channels))
+	for _, channel := range channels {
+		if channel.chatIDs[message.Chat.ID] {
+			allowedChannels = append(allowedChannels, channel)
+		}
+	}
+	channels = allowedChannels
+	if len(channels) == 0 {
 		return
 	}
 	chatKey := strconv.FormatInt(message.Chat.ID, 10)
+	if !rate.allow(chatKey + ":" + strconv.FormatInt(message.From.ID, 10)) {
+		s.telegramBotSendMessage(ctx, token, message.Chat.ID, "操作过于频繁，请一分钟后再试。")
+		return
+	}
+	command, arg := parseTelegramCommand(message.Text)
+	if command == "bind" || command == "绑定" {
+		if strings.TrimSpace(arg) == "" {
+			s.telegramBotSendMessage(ctx, token, message.Chat.ID, "请发送 /bind <绑定码>。绑定码可在 OBoard 面板通知页生成。")
+			return
+		}
+		channel := channels[0]
+		binding, err := s.store.ConsumeTelegramBindingCode(ctx, security.HashSecret(strings.TrimSpace(arg)), channel.channelID, message.Chat.ID, message.From.ID, message.Chat.Type, time.Now().UTC())
+		if err != nil {
+			s.telegramBotSendMessage(ctx, token, message.Chat.ID, "绑定码无效、已使用或已过期。")
+			return
+		}
+		user, _ := s.store.GetUser(ctx, binding.UserID)
+		name := user.Username
+		if strings.TrimSpace(user.Nickname) != "" {
+			name = user.Nickname
+		}
+		s.telegramBotSendMessage(ctx, token, message.Chat.ID, "已绑定 OBoard 账户："+name+"。发送 /help 查看可用指令。")
+		return
+	}
+	var binding *model.TelegramBinding
 	var channel *telegramBotChannel
 	for i := range channels {
-		if channels[i].chatIDs[chatKey] {
+		item, err := s.store.GetTelegramBinding(ctx, channels[i].channelID, message.Chat.ID, message.From.ID)
+		if err == nil {
+			binding = item
 			channel = &channels[i]
 			break
 		}
 	}
-	if channel == nil {
+	if binding == nil || channel == nil {
+		s.telegramBotSendMessage(ctx, token, message.Chat.ID, "此会话尚未绑定 OBoard 账户，或绑定已被撤销。请在面板生成新绑定码后发送 /bind <绑定码>。")
 		return
 	}
-	if !rate.allow(chatKey) {
-		s.telegramBotSendMessage(ctx, token, message.Chat.ID, "操作过于频繁，请一分钟后再试。")
+	if command == "unbind" || command == "解绑" {
+		if err := s.store.DeleteTelegramBinding(ctx, channel.channelID, message.Chat.ID, message.From.ID); err != nil {
+			s.telegramBotSendMessage(ctx, token, message.Chat.ID, "解绑失败，请稍后重试。")
+			return
+		}
+		s.telegramBotSendMessage(ctx, token, message.Chat.ID, "当前 Telegram 会话已解绑。")
 		return
 	}
-	reply := s.telegramBotReply(ctx, strings.TrimSpace(message.Text))
+	user, err := s.store.GetUser(ctx, binding.UserID)
+	if err != nil || user.Status != "active" {
+		s.telegramBotSendMessage(ctx, token, message.Chat.ID, "绑定账户已停用或不存在，当前操作被拒绝。")
+		return
+	}
+	role, err := s.store.EffectiveUserRole(ctx, *user)
+	if err != nil {
+		s.telegramBotSendMessage(ctx, token, message.Chat.ID, "无法读取当前账户权限，请稍后重试。")
+		return
+	}
+	if command == "incident" || command == "事件" {
+		if !roleAllows(role, model.RoleOperator) {
+			s.telegramBotSendMessage(ctx, token, message.Chat.ID, "权限不足：当前角色不能处置节点事件。")
+			return
+		}
+		s.telegramBotIncidentPreview(ctx, token, message.Chat.ID, message.From.ID, *user, role, arg)
+		return
+	}
+	reply := s.telegramBotReplyForUser(ctx, *user, role, strings.TrimSpace(message.Text))
 	s.telegramBotSendMessage(ctx, token, message.Chat.ID, reply)
+}
+
+func (s *Server) telegramBotIncidentPreview(ctx context.Context, token string, chatID, telegramUserID int64, user model.User, role model.Role, arg string) {
+	fields := strings.Fields(strings.TrimSpace(arg))
+	usage := "用法：\n/incident <事件ID> isolate <manual|auto> <入口ID,入口ID>\n/incident <事件ID> remove <入口ID,入口ID>"
+	if len(fields) < 3 {
+		s.telegramBotSendMessage(ctx, token, chatID, usage)
+		return
+	}
+	eventID, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil || eventID <= 0 {
+		s.telegramBotSendMessage(ctx, token, chatID, usage)
+		return
+	}
+	action := strings.ToLower(fields[1])
+	recoveryPolicy := ""
+	idsField := ""
+	capabilityName := "node_incidents.isolate"
+	if action == "isolate" && len(fields) == 4 {
+		recoveryPolicy = strings.ToLower(fields[2])
+		idsField = fields[3]
+	} else if action == "remove" && len(fields) == 3 {
+		action = "permanent_remove"
+		capabilityName = "inbounds.delete"
+		idsField = fields[2]
+	} else {
+		s.telegramBotSendMessage(ctx, token, chatID, usage)
+		return
+	}
+	inboundIDs := []int64{}
+	for _, raw := range strings.Split(idsField, ",") {
+		id, parseErr := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if parseErr != nil || id <= 0 {
+			s.telegramBotSendMessage(ctx, token, chatID, "入口 ID 列表无效。\n"+usage)
+			return
+		}
+		inboundIDs = append(inboundIDs, id)
+	}
+	principal := application.HumanPrincipal(user, role, netip.Addr{})
+	if _, allowed := s.capabilities.Authorize(principal, capabilityName); !allowed {
+		s.telegramBotSendMessage(ctx, token, chatID, "当前角色没有此节点处置能力。")
+		return
+	}
+	event, err := s.store.GetNodeIncident(ctx, eventID)
+	if err != nil || event.Status == model.NodeIncidentResolved || !principal.AllowsInt64("server_ids", event.ServerID) {
+		s.telegramBotSendMessage(ctx, token, chatID, "事件不存在、已关闭或不在当前授权范围。")
+		return
+	}
+	preview, err := s.nodeIncidentImpactPreview(ctx, *event, inboundIDs, action, recoveryPolicy)
+	if err != nil {
+		s.telegramBotSendMessage(ctx, token, chatID, "影响预览失败："+err.Error())
+		return
+	}
+	payload := nodeIncidentConfirmationPayload{EventID: event.ID, EventVersion: event.Version, Action: action, InboundIDs: preview["inbound_ids"].([]int64), RecoveryPolicy: recoveryPolicy, ChatID: chatID, TelegramUserID: telegramUserID}
+	payloadJSON, _ := json.Marshal(payload)
+	confirmation, err := security.RandomToken(18)
+	if err != nil {
+		s.telegramBotSendMessage(ctx, token, chatID, "无法生成确认按钮，请稍后重试。")
+		return
+	}
+	if err := s.store.CreateOperationConfirmation(ctx, security.HashSecret(confirmation), capabilityName, event.ID, event.Version, user.ID, string(payloadJSON), time.Now().UTC().Add(5*time.Minute)); err != nil {
+		s.telegramBotSendMessage(ctx, token, chatID, "无法保存确认按钮，请稍后重试。")
+		return
+	}
+	nodes, _ := preview["nodes"].([]nodeIncidentSnapshotInbound)
+	names := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		names = append(names, fmt.Sprintf("%s (#%d)", node.Name, node.ID))
+	}
+	text := fmt.Sprintf("影响预览\n事件：#%d %s\n入口：%s\n影响套餐：%d\n预计用户：%d\n现有连接：%s\n确认按钮 5 分钟内有效。", event.ID, event.ServerName, strings.Join(names, "、"), preview["affected_plan_count"], preview["affected_user_count"], map[bool]string{true: "会受影响", false: "不受影响"}[action == "permanent_remove"])
+	markup := fmt.Sprintf(`{"inline_keyboard":[[{"text":"确认执行","callback_data":"confirm:%s"}]]}`, confirmation)
+	s.telegramBotSendMessageMarkup(ctx, token, chatID, text, markup)
+}
+
+func (s *Server) handleTelegramCallback(ctx context.Context, channels []telegramBotChannel, token string, callback telegramCallbackQuery, rate *telegramBotRateLimiter) {
+	if callback.From == nil || callback.Message == nil || callback.Message.Chat == nil || !strings.HasPrefix(callback.Data, "confirm:") {
+		return
+	}
+	chatID := callback.Message.Chat.ID
+	allowedChannels := make([]telegramBotChannel, 0, len(channels))
+	for _, channel := range channels {
+		if channel.chatIDs[chatID] {
+			allowedChannels = append(allowedChannels, channel)
+		}
+	}
+	channels = allowedChannels
+	if len(channels) == 0 {
+		return
+	}
+	if !rate.allow(strconv.FormatInt(chatID, 10) + ":" + strconv.FormatInt(callback.From.ID, 10)) {
+		s.telegramBotAnswerCallback(ctx, token, callback.ID, "操作过于频繁")
+		return
+	}
+	var binding *model.TelegramBinding
+	for _, channel := range channels {
+		item, err := s.store.GetTelegramBinding(ctx, channel.channelID, chatID, callback.From.ID)
+		if err == nil {
+			binding = item
+			break
+		}
+	}
+	if binding == nil {
+		s.telegramBotAnswerCallback(ctx, token, callback.ID, "绑定已失效")
+		return
+	}
+	user, err := s.store.GetUser(ctx, binding.UserID)
+	if err != nil || user.Status != "active" {
+		s.telegramBotAnswerCallback(ctx, token, callback.ID, "账户已停用")
+		return
+	}
+	role, err := s.store.EffectiveUserRole(ctx, *user)
+	if err != nil {
+		s.telegramBotAnswerCallback(ctx, token, callback.ID, "无法读取权限")
+		return
+	}
+	confirmation, err := s.store.ConsumeOperationConfirmationToken(ctx, security.HashSecret(strings.TrimPrefix(callback.Data, "confirm:")), user.ID, time.Now().UTC())
+	if err != nil {
+		s.telegramBotAnswerCallback(ctx, token, callback.ID, "按钮已使用、已过期或无权执行")
+		return
+	}
+	var payload nodeIncidentConfirmationPayload
+	if json.Unmarshal([]byte(confirmation.PayloadJSON), &payload) != nil || payload.EventID != confirmation.EventID || payload.EventVersion != confirmation.EventVersion || payload.ChatID != chatID || payload.TelegramUserID != callback.From.ID {
+		s.telegramBotAnswerCallback(ctx, token, callback.ID, "确认内容无效")
+		return
+	}
+	event, err := s.store.GetNodeIncident(ctx, payload.EventID)
+	if err != nil || event.Status == model.NodeIncidentResolved || event.Version != payload.EventVersion {
+		s.telegramBotAnswerCallback(ctx, token, callback.ID, "事件已关闭或版本已变化")
+		return
+	}
+	principal := application.HumanPrincipal(*user, role, netip.Addr{})
+	if _, allowed := s.capabilities.Authorize(principal, confirmation.Capability); !allowed || !principal.AllowsInt64("server_ids", event.ServerID) {
+		s.telegramBotAnswerCallback(ctx, token, callback.ID, "当前权限不足")
+		return
+	}
+	operations := []automation.OperationRequest{}
+	if payload.Action == "isolate" {
+		input, _ := json.Marshal(nodeIncidentIsolationOperation{EventID: event.ID, EventVersion: event.Version, InboundIDs: payload.InboundIDs, RecoveryPolicy: payload.RecoveryPolicy})
+		operations = append(operations, automation.OperationRequest{Capability: "node_incidents.isolate", Input: input, ResourceRefs: json.RawMessage(`{}`)})
+	} else if payload.Action == "permanent_remove" {
+		for _, inboundID := range payload.InboundIDs {
+			input, _ := json.Marshal(map[string]any{"inbound_id": inboundID, "confirm": true})
+			operations = append(operations, automation.OperationRequest{Capability: "inbounds.delete", Input: input, ResourceRefs: json.RawMessage(`{}`)})
+		}
+	} else {
+		s.telegramBotAnswerCallback(ctx, token, callback.ID, "处置类型无效")
+		return
+	}
+	changeset, err := s.applyConfirmedNodeChangeset(ctx, principal, operations, security.HashSecret(callback.Data))
+	if err != nil {
+		s.telegramBotAnswerCallback(ctx, token, callback.ID, "执行失败")
+		s.telegramBotSendMessage(ctx, token, chatID, "节点处置失败："+err.Error())
+		return
+	}
+	if payload.Action == "permanent_remove" {
+		_ = s.store.MarkNodePublicationIsolationsRemoved(ctx, payload.InboundIDs, user.ID)
+		tasks, version, deployErr := s.deployConfiguration(ctx, 0, true)
+		idsJSON, _ := json.Marshal(payload.InboundIDs)
+		action := model.NodeIncidentAction{IncidentID: event.ID, ActorUserID: user.ID, Kind: "permanent_remove", Status: "deployment_pending", InboundIDsJSON: string(idsJSON), ChangesetID: changeset.ID, ConfigVersion: version, TaskCount: len(tasks)}
+		if deployErr != nil {
+			action.Status = "failed"
+			action.Error = deployErr.Error()
+			_ = s.store.CreateNodeIncidentAction(ctx, &action)
+			s.telegramBotAnswerCallback(ctx, token, callback.ID, "部署创建失败")
+			s.telegramBotSendMessage(ctx, token, chatID, "入口已移除，但完整部署创建失败："+deployErr.Error())
+			return
+		}
+		if err := s.store.CreateNodeIncidentAction(ctx, &action); err != nil {
+			s.telegramBotAnswerCallback(ctx, token, callback.ID, "处置状态保存失败")
+			return
+		}
+		s.telegramBotSendMessage(ctx, token, chatID, fmt.Sprintf("永久移除已确认，Changeset %s 已执行；处置记录 #%d 正在等待配置版本 %d 的 %d 个部署任务完成。", changeset.ID, action.ID, version, len(tasks)))
+	} else {
+		s.telegramBotSendMessage(ctx, token, chatID, fmt.Sprintf("临时剔除已生效，Changeset %s 已完成；未触发 Agent 部署。", changeset.ID))
+	}
+	s.telegramBotAnswerCallback(ctx, token, callback.ID, "操作已确认")
+}
+
+func (s *Server) telegramBotSendMessageMarkup(ctx context.Context, token string, chatID int64, text, markup string) {
+	form := url.Values{}
+	form.Set("chat_id", strconv.FormatInt(chatID, 10))
+	form.Set("text", text)
+	form.Set("reply_markup", markup)
+	if _, err := s.telegramAPI(ctx, http.MethodPost, "https://api.telegram.org/bot"+token+"/sendMessage", form); err != nil {
+		log.Printf("telegram bot sendMessage with markup failed: %v", err)
+	}
+}
+
+func (s *Server) telegramBotAnswerCallback(ctx context.Context, token, callbackID, text string) {
+	form := url.Values{}
+	form.Set("callback_query_id", callbackID)
+	form.Set("text", text)
+	if _, err := s.telegramAPI(ctx, http.MethodPost, "https://api.telegram.org/bot"+token+"/answerCallbackQuery", form); err != nil {
+		log.Printf("telegram bot answerCallbackQuery failed: %v", err)
+	}
+}
+
+func (s *Server) telegramBotReplyForUser(ctx context.Context, user model.User, role model.Role, text string) string {
+	command, arg := parseTelegramCommand(text)
+	adminAccess := roleAllows(role, model.RoleOperator)
+	principal := application.HumanPrincipal(user, role, netip.Addr{})
+	if _, allowed := s.capabilities.Authorize(principal, "inventory.read"); !allowed && adminAccess {
+		adminAccess = false
+	}
+	switch command {
+	case "help", "start", "菜单", "帮助":
+		if adminAccess {
+			return telegramBotHelpText() + "\n/unbind 解绑当前会话"
+		}
+		return "OBoard 账户服务\n/account 查看账户、套餐、有效期、流量和设备摘要\n/status 查看自己可用节点的当前状态\n/announcements 查看管理员公告\n/unbind 解绑当前会话"
+	case "account", "me", "账户", "我的":
+		return s.telegramBotAccount(ctx, user)
+	case "announcements", "公告":
+		return s.telegramBotAnnouncements(ctx, user.ID)
+	case "status", "状态":
+		if adminAccess {
+			return s.telegramBotServersStatus(ctx)
+		}
+		return s.telegramBotOwnNodes(ctx, user)
+	case "servers", "服务器":
+		if !adminAccess {
+			return "权限不足：普通用户不能查看全局服务器状态。"
+		}
+		return s.telegramBotServersStatus(ctx)
+	case "server", "服务器详情":
+		if !adminAccess {
+			return "权限不足：普通用户不能查看服务器详情。"
+		}
+		return s.telegramBotServerDetail(ctx, arg)
+	case "traffic", "流量":
+		if !adminAccess {
+			return s.telegramBotAccount(ctx, user)
+		}
+		return s.telegramBotTraffic(ctx)
+	case "users", "用户", "使用情况":
+		if !adminAccess {
+			return "权限不足：普通用户不能查看其他用户。"
+		}
+		return s.telegramBotUsers(ctx)
+	case "audit", "审计":
+		if !adminAccess {
+			return "权限不足：普通用户不能查看审计信息。"
+		}
+		if _, allowed := s.capabilities.Authorize(principal, "audit.risk_overview"); !allowed {
+			return "权限不足：当前角色没有审计查看能力。"
+		}
+		return s.telegramBotAudit(ctx)
+	default:
+		return "未识别的指令，发送 /help 查看当前账户可用指令。"
+	}
+}
+
+func (s *Server) telegramBotAccount(ctx context.Context, user model.User) string {
+	name := strings.TrimSpace(user.Nickname)
+	if name == "" {
+		name = user.Username
+	}
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "账户：%s\n状态：%s\n", name, map[bool]string{true: "正常", false: "已停用"}[user.Status == "active"])
+	if binding, err := s.store.GetActiveUserPlanBinding(ctx, user.ID); err == nil {
+		planName := fmt.Sprintf("套餐 #%d", binding.PlanID)
+		if plan, planErr := s.store.GetSubscriptionPlan(ctx, binding.PlanID); planErr == nil {
+			planName = plan.Name
+		}
+		fmt.Fprintf(&builder, "套餐：%s\n", planName)
+		if binding.ExpiresAt != nil {
+			fmt.Fprintf(&builder, "有效期至：%s\n", binding.ExpiresAt.Local().Format("2006-01-02 15:04"))
+		} else {
+			builder.WriteString("有效期：长期\n")
+		}
+	} else {
+		builder.WriteString("套餐：未分配\n")
+	}
+	if user.TrafficLimitBytes > 0 {
+		fmt.Fprintf(&builder, "流量：%s / %s\n", formatNotificationBytes(user.TrafficUsedBytes), formatNotificationBytes(user.TrafficLimitBytes))
+	} else {
+		fmt.Fprintf(&builder, "流量：已用 %s（不限量）\n", formatNotificationBytes(user.TrafficUsedBytes))
+	}
+	devices, err := s.store.ListUserDevices(ctx, user.ID)
+	if err == nil {
+		active := 0
+		for _, device := range devices {
+			if device.Status == "active" {
+				active++
+			}
+		}
+		fmt.Fprintf(&builder, "设备：%d 个有效", active)
+		if user.DeviceLimit > 0 {
+			fmt.Fprintf(&builder, " / 上限 %d", user.DeviceLimit)
+		}
+	}
+	return builder.String()
+}
+
+func (s *Server) telegramBotOwnNodes(ctx context.Context, user model.User) string {
+	data, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		return "查询节点状态失败，请稍后再试。"
+	}
+	snapshot, err := s.buildAccessSnapshot(ctx, data)
+	if err != nil {
+		return "查询节点状态失败，请稍后再试。"
+	}
+	effective := snapshot.EffectiveNodeKeys(user.ID)
+	hidden, _ := s.store.ListHiddenInboundIDs(ctx)
+	servers := map[int64]model.Server{}
+	for _, server := range data.Servers {
+		servers[server.ID] = server
+	}
+	var lines []string
+	for _, inbound := range data.Inbounds {
+		if !effective[core.NodeKeyOf(model.AssignableNodeInbound, inbound.ID)] || hidden[inbound.ID] {
+			continue
+		}
+		server := servers[inbound.ServerID]
+		lines = append(lines, fmt.Sprintf("%s · %s", inbound.Name, telegramServerStatusLabel(server.Status)))
+	}
+	for _, path := range data.ProxyPaths {
+		if !effective[core.NodeKeyOf(model.AssignableNodeProxyPath, path.ID)] || hidden[path.InboundID] {
+			continue
+		}
+		root := model.Inbound{}
+		for _, inbound := range data.Inbounds {
+			if inbound.ID == path.InboundID {
+				root = inbound
+				break
+			}
+		}
+		server := servers[root.ServerID]
+		lines = append(lines, fmt.Sprintf("%s · %s", path.Name, telegramServerStatusLabel(server.Status)))
+	}
+	if len(lines) == 0 {
+		return "当前没有可用节点。"
+	}
+	sort.Strings(lines)
+	if len(lines) > 50 {
+		lines = append(lines[:50], "…仅显示前 50 个节点")
+	}
+	return fmt.Sprintf("我的节点（%d）\n%s", len(lines), strings.Join(lines, "\n"))
+}
+
+func (s *Server) telegramBotAnnouncements(ctx context.Context, userID int64) string {
+	items, err := s.store.ListNotificationAnnouncementsForUser(ctx, userID, 10)
+	if err != nil {
+		return "查询管理员公告失败，请稍后再试。"
+	}
+	if len(items) == 0 {
+		return "当前没有管理员公告。"
+	}
+	var builder strings.Builder
+	builder.WriteString("管理员公告\n")
+	for _, item := range items {
+		fmt.Fprintf(&builder, "\n%s\n%s\n%s\n", item.Title, item.Body, item.CreatedAt.Local().Format("01-02 15:04"))
+	}
+	return strings.TrimSpace(builder.String())
 }
 
 func (s *Server) telegramBotReply(ctx context.Context, text string) string {
@@ -227,6 +671,8 @@ func telegramBotHelpText() string {
 		"/traffic 查看当前周期流量\n" +
 		"/users 查看用户使用情况\n" +
 		"/audit 查看审计台概览\n" +
+		"/incident <事件ID> isolate <manual|auto> <入口ID列表> 预览临时剔除\n" +
+		"/incident <事件ID> remove <入口ID列表> 预览永久移除\n" +
 		"/help 显示本帮助"
 }
 
@@ -462,7 +908,7 @@ func (s *Server) telegramBotSendMessage(ctx context.Context, token string, chatI
 	form := url.Values{}
 	form.Set("chat_id", strconv.FormatInt(chatID, 10))
 	form.Set("text", text)
-	if _, err := telegramBotHTTP(ctx, http.MethodPost, "https://api.telegram.org/bot"+token+"/sendMessage", form); err != nil {
+	if _, err := s.telegramAPI(ctx, http.MethodPost, "https://api.telegram.org/bot"+token+"/sendMessage", form); err != nil {
 		log.Printf("telegram bot sendMessage failed: %v", err)
 	}
 }

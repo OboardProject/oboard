@@ -22,6 +22,57 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 	switch capabilityName {
 	case "node_library.list", "node_groups.list", "node_sources.list", "subscription_outputs.list", "subscription_outputs.preview":
 		return s.queryNodeWorkspaceCapability(ctx, principal, capabilityName, input)
+	case "node_incidents.list":
+		var request struct {
+			Status string `json:"status"`
+			Limit  int    `json:"limit"`
+		}
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		items, err := s.store.ListNodeIncidents(ctx, strings.TrimSpace(request.Status), request.Limit, 0)
+		if err != nil {
+			return nil, err
+		}
+		filtered := items[:0]
+		for _, item := range items {
+			if principal.AllowsInt64("server_ids", item.ServerID) {
+				filtered = append(filtered, item)
+			}
+		}
+		return map[string]any{"events": filtered}, nil
+	case "node_incidents.get":
+		var request struct {
+			ID int64 `json:"id"`
+		}
+		if err := strictAutomationInput(input, &request); err != nil || request.ID <= 0 {
+			return nil, errors.New("valid node incident id is required")
+		}
+		item, err := s.store.GetNodeIncident(ctx, request.ID)
+		if err != nil || !principal.AllowsInt64("server_ids", item.ServerID) {
+			return nil, errors.New("authorized node incident not found")
+		}
+		isolations, err := s.store.ListNodePublicationIsolations(ctx, item.ID)
+		if err != nil {
+			return nil, err
+		}
+		actions, err := s.store.ListNodeIncidentActions(ctx, item.ID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"event": item, "isolations": isolations, "actions": actions}, nil
+	case "notification_broadcasts.preview":
+		var request struct {
+			Filter notificationBroadcastFilter `json:"filter"`
+		}
+		if err := strictAutomationInput(input, &request); err != nil || principal.UserID == nil || principal.Role != model.RoleAdmin {
+			return nil, errors.New("administrator broadcast filter is required")
+		}
+		preview, err := s.resolveNotificationBroadcastRecipients(ctx, *principal.UserID, request.Filter)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"recipient_count": preview.RecipientCount, "bound_target_count": preview.BoundTargetCount, "unbound_count": preview.UnboundCount}, nil
 	case "api_principals.list":
 		var request struct{}
 		if err := strictAutomationInput(input, &request); err != nil {

@@ -28,7 +28,7 @@ import (
 
 const (
 	defaultNotificationOfflineAfterSeconds = 120
-	defaultNotificationOnlineAfterSeconds  = 60
+	defaultNotificationOnlineAfterSeconds  = 300
 	notificationOfflineMergeGraceMinutes   = 10
 	notificationFallbackInterval           = 5 * time.Minute
 	periodicErrorLogInterval               = time.Minute
@@ -242,21 +242,30 @@ func (s *Server) checkOfflineAt(ctx context.Context, now time.Time) {
 			lastSeen = server.LastSeenAt.UTC().Format(time.RFC3339)
 		}
 		log.Printf("server %d(%s) marked offline (last_seen=%s)", server.ID, safeLogField(server.Name), lastSeen)
-		if !server.OfflineNotifyEnabled {
-			continue
-		}
 		since := now
 		if server.LastSeenAt != nil {
 			since = server.LastSeenAt.UTC()
+		}
+		effectiveAfter := defaultAfter
+		if server.OfflineAfterSeconds > 0 {
+			effectiveAfter = time.Duration(server.OfflineAfterSeconds) * time.Second
+		}
+		recoveryAfter := time.Duration(settingInt(settings, settingNotificationServerOnlineAfter, defaultNotificationOnlineAfterSeconds, 0, 86400)) * time.Second
+		server.Status = model.ServerOffline
+		snapshot := s.nodeIncidentSnapshot(ctx, server)
+		incident, _, incidentErr := s.store.OpenOrReopenNodeIncident(ctx, server, since, now, effectiveAfter, recoveryAfter, snapshot)
+		if incidentErr != nil {
+			log.Printf("open node incident for server %d: %v", server.ID, incidentErr)
+		} else if server.OfflineNotifyEnabled {
+			s.syncNodeIncidentTelegram(ctx, incident)
+		}
+		if !server.OfflineNotifyEnabled {
+			continue
 		}
 		groupKey := ""
 		notifyAt := now
 		if merge {
 			groupKey = since.Truncate(notificationOfflineMergeGraceMinutes * time.Minute).Format(time.RFC3339)
-			effectiveAfter := defaultAfter
-			if server.OfflineAfterSeconds > 0 {
-				effectiveAfter = time.Duration(server.OfflineAfterSeconds) * time.Second
-			}
 			notifyAt = now.Add(effectiveAfter)
 		}
 		if err := s.store.UpsertServerOfflineNotice(ctx, server.ID, store.ServerOfflineNoticeStatusOffline, since, notifyAt, groupKey); err != nil {
@@ -284,6 +293,8 @@ func (s *Server) checkOfflineAt(ctx context.Context, now time.Time) {
 	}
 	s.fireDueOfflineNotices(ctx, merge, now)
 	s.fireDueOnlineNotices(ctx, now)
+	s.finalizeRecoveredNodeIncidents(ctx, now)
+	s.reconcileNodeIncidentActions(ctx)
 }
 
 func (s *Server) fireDueOfflineNotices(ctx context.Context, merge bool, now time.Time) {
@@ -386,12 +397,21 @@ func (s *Server) handleServerRecovered(ctx context.Context, serverID int64) {
 	}
 	s.queueDeploymentAfterReconnect(ctx, serverID)
 	server, err := s.store.GetServer(ctx, serverID)
-	if err != nil || !server.OfflineNotifyEnabled {
+	if err != nil {
 		return
 	}
 	settings := s.runtimeSettings(ctx)
 	onlineAfter := time.Duration(settingInt(settings, settingNotificationServerOnlineAfter, defaultNotificationOnlineAfterSeconds, 0, 86400)) * time.Second
 	now := time.Now().UTC()
+	incident, incidentErr := s.store.MarkNodeIncidentRecovering(ctx, serverID, now, onlineAfter)
+	if incidentErr != nil {
+		log.Printf("mark node incident recovering for server %d: %v", serverID, incidentErr)
+	} else if incident != nil && server.OfflineNotifyEnabled {
+		s.syncNodeIncidentTelegram(ctx, *incident)
+	}
+	if !server.OfflineNotifyEnabled {
+		return
+	}
 	if err := s.store.UpsertServerOfflineNotice(ctx, serverID, store.ServerOfflineNoticeStatusOnline, now, now.Add(onlineAfter), ""); err != nil {
 		log.Printf("queue online notice for server %d: %v", serverID, err)
 	}
@@ -1086,6 +1106,9 @@ func (s *Server) enqueueNotificationEvent(ctx context.Context, event notificatio
 	}
 	queued := 0
 	for _, channel := range channels {
+		if (event.Name == notificationServerOffline || event.Name == notificationServerOnline) && channel.Type == "telegram" && telegramChannelInteractive(channel) {
+			continue
+		}
 		owner, err := s.store.GetUser(ctx, channel.OwnerUserID)
 		if err != nil || owner.Status != "active" {
 			continue
@@ -1234,6 +1257,7 @@ func (s *Server) deliverPendingNotifications(ctx context.Context) {
 	deliveries, err := s.store.ListPendingNotificationDeliveries(ctx, time.Now().UTC(), 50)
 	if err != nil {
 		s.logPeriodicError("pending-notifications", "list pending notifications: %v", err)
+		s.deliverPendingTelegramBroadcasts(ctx)
 		return
 	}
 	for _, delivery := range deliveries {
@@ -1253,6 +1277,7 @@ func (s *Server) deliverPendingNotifications(ctx context.Context) {
 		}
 		_ = s.store.AddAudit(ctx, model.AuditLog{Action: "notify", Target: "notification_channel", Detail: fmt.Sprintf("%d:%s", delivery.ChannelID, delivery.Event), IP: "controller"})
 	}
+	s.deliverPendingTelegramBroadcasts(ctx)
 }
 
 func (s *Server) logPeriodicError(key, format string, args ...any) {

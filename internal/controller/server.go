@@ -126,6 +126,8 @@ type Server struct {
 	connectionAuditComputing      bool
 	notificationWG                sync.WaitGroup
 	notificationSender            func(context.Context, model.NotificationChannel, string, string) error
+	telegramAPI                   func(context.Context, string, string, url.Values) ([]byte, error)
+	telegramPollerID              string
 	certificateIssueMu            sync.Mutex
 	certificateIssues             map[int64]bool
 	controllerUpdater             *controllerupdate.Client
@@ -196,7 +198,11 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	socketPath := strings.TrimSpace(os.Getenv("OBOARD_CONTROLLER_UPDATER_SOCKET"))
 	catalog := capability.NewCatalog()
 	auditIntel := auditintel.New(store, sessionSecret)
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, notificationSender: sendNotification, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, accessWorkersWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}}
+	pollerID, _ := security.RandomToken(12)
+	if pollerID == "" {
+		pollerID = fmt.Sprintf("controller-%d", time.Now().UnixNano())
+	}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, accessWorkersWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	_ = store.CloseOpenControllerConnections(context.Background(), time.Now().UTC())
 	s.initializeTrustedProxies()
@@ -11112,6 +11118,19 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	effectiveNodes := snapshot.EffectiveNodeKeys(user.ID)
 	effectiveGroups := snapshot.EffectiveNodeGroups(user.ID)
+	hiddenInbounds, err := s.store.ListHiddenInboundIDs(r.Context())
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	for inboundID := range hiddenInbounds {
+		delete(effectiveNodes, core.NodeKeyOf(model.AssignableNodeInbound, inboundID))
+	}
+	for _, path := range data.ProxyPaths {
+		if hiddenInbounds[path.InboundID] {
+			delete(effectiveNodes, core.NodeKeyOf(model.AssignableNodeProxyPath, path.ID))
+		}
+	}
 	orderPolicy, orderPositions, planNodeNames, err := s.store.GetEffectiveSubscriptionNodePresentation(r.Context(), user.ID, time.Now())
 	if err != nil {
 		fail(w, err, 500)
