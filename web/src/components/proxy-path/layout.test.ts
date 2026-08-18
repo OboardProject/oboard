@@ -74,4 +74,25 @@ describe('proxy graph server layout', () => {
     expect(first.bands.b.right).toBeLessThan(first.bands.c.left)
     expect(first.positions.root.x + 130).toBe(first.bands.root.centerX)
   })
+
+  it('aligns a single child branch directly under its source handle without bending', () => {
+    const parentWidth = 260
+    const childWidth = 240
+    const handleOffset = 208 // 80% handle position
+    const nodes = [
+      { id: 'server', width: parentWidth, height: 180, handles: { 'entry-2': { x: handleOffset, y: 180 } } },
+      { id: 'routing', width: childWidth, height: 120 },
+    ]
+    const edges = [
+      { id: 'server-routing', source: 'server', target: 'routing', sourceHandle: 'entry-2', pathIDs: [1] },
+    ]
+    const result = layoutProxyGraphTopology(nodes, edges, 'server')
+    const serverLeft = result.positions.server.x
+    const routingLeft = result.positions.routing.x
+    // The handle on the server is at: serverLeft + handleOffset
+    const sourceHandleX = serverLeft + handleOffset
+    // The target handle on routing node is at: routingLeft + childWidth / 2
+    const targetHandleX = routingLeft + childWidth / 2
+    expect(targetHandleX).toBe(sourceHandleX)
+  })
 })

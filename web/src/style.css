@@ -12330,11 +12330,16 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   white-space: nowrap;
 }
 
-.input-with-unit,
+.input-with-unit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+}
+
 .traffic-limit-input {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 116px;
-  align-items: center;
+  align-items: stretch;
 }
 
 .input-with-unit input,
@@ -12343,23 +12348,27 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .input-with-unit > span {
-  min-width: 64px;
+  min-width: 54px;
   min-height: var(--control-height);
-  display: grid;
-  place-items: center;
-  padding: 0 10px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
   border: 1.5px solid var(--border);
   border-left: 0;
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
   color: var(--muted);
   background: var(--surface-2);
   font-size: 12px;
-  font-weight: 750;
-  transition: border-color var(--duration-appica) var(--ease-appica-spring);
+  font-weight: 650;
+  white-space: nowrap;
+  user-select: none;
+  transition: border-color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .input-with-unit:focus-within > span {
-  border-color: color-mix(in srgb, var(--primary) 70%, var(--border));
+  border-color: color-mix(in srgb, var(--primary) 66%, var(--border));
 }
 
 .traffic-limit-input .ui-segmented-select {
@@ -13586,9 +13595,6 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .audit-policy-threshold-row label small { color: var(--muted); font-size: 10px; line-height: 1.35; }
 .audit-policy-threshold-row input, .input-with-unit input { min-width: 0; font-variant-numeric: tabular-nums; }
 .audit-policy-guards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.input-with-unit { display: grid; grid-template-columns: minmax(0, 1fr) 42px; align-items: center; }
-.input-with-unit input { border-radius: var(--radius-md) 0 0 var(--radius-md); }
-.input-with-unit span { display: grid; align-self: stretch; place-items: center; border: 1px solid var(--border); border-left: 0; border-radius: 0 var(--radius-md) var(--radius-md) 0; color: var(--muted); background: var(--surface-2); font-size: 11px; }
 
 .audit-window-grid {
   display: grid;
@@ -18962,6 +18968,47 @@ button.ui-btn-ghost:hover {
 .node-catalog-table td.node-name-cell {
   white-space: normal !important;
   word-break: break-word !important;
+}
+
+.node-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: max-content;
+}
+
+.node-row-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color var(--duration-appica) var(--ease-appica-spring), background var(--duration-appica) var(--ease-appica-spring), border-color var(--duration-appica) var(--ease-appica-spring), transform var(--duration-appica) var(--ease-appica-spring);
+}
+
+.node-row-icon-button:hover {
+  background: var(--surface-3);
+  color: var(--text-strong);
+  border-color: var(--border-strong);
+}
+
+.node-row-icon-button:active {
+  transform: scale(0.97) translateY(1px);
+}
+
+.node-row-icon-button svg {
+  width: 15px;
+  height: 15px;
 }
 /* Node catalog naming, order templates, and plan presentation. */
 .node-name-summary,

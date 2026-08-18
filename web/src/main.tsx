@@ -96,7 +96,7 @@ import { Input } from './components/ui/input'
 import { Select } from './components/ui/select'
 import { Toast } from './components/ui/toast'
 import { Dialog } from './components/ui/dialog'
-import { FormField } from './components/ui/form-field'
+import { FormField, TrafficLimitInput } from './components/ui/form-field'
 import { TableSkeleton, CardSkeleton, DashboardSkeleton } from './components/ui/skeleton'
 import { MCPAccessPage } from './features/mcp/MCPAccessPage'
 import { AnimatePresence, LazyMotion, domAnimation, m, motion, useReducedMotion } from 'motion/react'
@@ -14628,10 +14628,15 @@ function autoLayoutProxyGraphPositions(
   const primaryNodes = Array.from(primaryNodeIDs).sort().flatMap(nodeID => {
     const node = nodeByID.get(nodeID)
     if (!node) return []
+    const width = node.width ?? numericNodeStyle(node, 'width') ?? GRAPH_ENTRY_NODE_WIDTH
+    const height = node.height ?? numericNodeStyle(node, 'height') ?? estimatedGraphNodeHeight(node)
+    const rect = { left: 0, top: 0, right: width, bottom: height }
+    const handles = nodeHandles(node, rect)
     return [{
       id: node.id,
-      width: node.width ?? numericNodeStyle(node, 'width') ?? GRAPH_ENTRY_NODE_WIDTH,
-      height: node.height ?? numericNodeStyle(node, 'height') ?? estimatedGraphNodeHeight(node),
+      width,
+      height,
+      handles,
     }]
   })
   const layout = layoutProxyGraphTopology(
@@ -14640,6 +14645,8 @@ function autoLayoutProxyGraphPositions(
       id: edge.id,
       source: edge.source,
       target: edge.target,
+      sourceHandle: edge.sourceHandle || undefined,
+      targetHandle: edge.targetHandle || undefined,
       pathIDs: ((edge.data as GraphTransportEdgeData | undefined)?.pathIDs || []).slice().sort((left, right) => left - right),
     })),
     rootNodeID,
@@ -15457,8 +15464,8 @@ function UserLimitFields({ draft, setDraft }: { draft: UserDraft; setDraft: Reac
       </Select>
     </FormField>
     {draft.traffic_limit_mode === 'custom' && <>
-      <FormField label="用户流量额度">
-        <input type="number" min={1} value={draft.traffic_limit_bytes} onChange={e => setDraft({ ...draft, traffic_limit_bytes: Number(e.target.value) })} placeholder="字节" />
+      <FormField label="用户流量额度" hint="按重置周期统计。">
+        <TrafficLimitInput bytes={draft.traffic_limit_bytes} onChange={v => setDraft({ ...draft, traffic_limit_bytes: v })} />
       </FormField>
       <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={(patch) => setDraft({ ...draft, ...patch })} />
     </>}

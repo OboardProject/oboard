@@ -40,6 +40,8 @@ export type ProxyLayoutEdge = {
   id: string
   source: string
   target: string
+  sourceHandle?: string
+  targetHandle?: string
   pathIDs: number[]
 }
 
@@ -47,6 +49,7 @@ export type ProxyLayoutNode = {
   id: string
   width: number
   height: number
+  handles?: Record<string, GraphPosition>
 }
 
 export type ProxyLayoutOptions = {
@@ -212,20 +215,55 @@ export function layoutProxyGraphTopology(
   const totalWidth = roots.reduce((sum, nodeID) => sum + (subtreeSpans.get(nodeID) || 0), 0)
     + Math.max(0, roots.length - 1) * subtreeGap
   let rootCursor = centerX - totalWidth / 2
+  function getNodeHandleOffsetX(node: ProxyLayoutNode | undefined, handleID?: string): number {
+    if (!node) return 0
+    if (handleID && node.handles?.[handleID] && Number.isFinite(node.handles[handleID].x)) {
+      return node.handles[handleID].x
+    }
+    return node.width / 2
+  }
+
   const bands: Record<string, GraphBranchBand> = {}
   const assignBand = (nodeID: string, left: number, right: number) => {
     if (bands[nodeID]) return
     const center = (left + right) / 2
     bands[nodeID] = { nodeID, left, right, centerX: center, rank: ranks[nodeID] || 0 }
+    const parentNode = nodeByID.get(nodeID)
     const children = spanningChildren.get(nodeID) || []
     if (!children.length) return
-    const childrenWidth = children.reduce((sum, edge) => sum + (subtreeSpans.get(edge.target) || 0), 0)
-      + Math.max(0, children.length - 1) * subtreeGap
-    let cursor = center - childrenWidth / 2
-    children.forEach(edge => {
+
+    if (children.length === 1) {
+      const edge = children[0]
+      const childWidth = subtreeSpans.get(edge.target) || nodeByID.get(edge.target)?.width || 0
+      const anchorX = left + getNodeHandleOffsetX(parentNode, edge.sourceHandle)
+      const childLeft = anchorX - childWidth / 2
+      assignBand(edge.target, childLeft, childLeft + childWidth)
+      return
+    }
+
+    const initialPositions = children.map(edge => {
       const width = subtreeSpans.get(edge.target) || nodeByID.get(edge.target)?.width || 0
-      assignBand(edge.target, cursor, cursor + width)
-      cursor += width + subtreeGap
+      const anchorX = left + getNodeHandleOffsetX(parentNode, edge.sourceHandle)
+      return { edge, width, anchorX, left: anchorX - width / 2 }
+    })
+
+    for (let i = 1; i < initialPositions.length; i++) {
+      const prevRight = initialPositions[i - 1].left + initialPositions[i - 1].width
+      if (initialPositions[i].left < prevRight + subtreeGap) {
+        initialPositions[i].left = prevRight + subtreeGap
+      }
+    }
+
+    const totalGroupWidth = (initialPositions[initialPositions.length - 1].left + initialPositions[initialPositions.length - 1].width) - initialPositions[0].left
+    const avgAnchorX = (initialPositions[0].anchorX + initialPositions[initialPositions.length - 1].anchorX) / 2
+    const groupCenter = initialPositions[0].left + totalGroupWidth / 2
+    const centerShift = avgAnchorX - groupCenter
+    initialPositions.forEach(item => {
+      item.left += centerShift
+    })
+
+    initialPositions.forEach(item => {
+      assignBand(item.edge.target, item.left, item.left + item.width)
     })
   }
   roots.forEach(nodeID => {

@@ -7,8 +7,7 @@ import { Input } from '../components/ui/input'
 import { Switch } from '../components/ui/switch'
 import { NodeScopeMenu, type NodeScopeRequest, type ScopeNode } from '../components/node-assignment/NodeScopeMenu'
 import { NodeScopeActionDialog } from '../components/node-assignment/NodeScopeActionDialog'
-import { NodeRenameDialog, type RenameNode } from '../components/node-assignment/NodeRenameDialog'
-import { X, Filter, RefreshCw, MoreHorizontal, Pencil, Settings, Search, SlidersHorizontal, RotateCcw } from 'lucide-react'
+import { X, Filter, RefreshCw, MoreHorizontal, Pencil, Info, Settings, Search, SlidersHorizontal, RotateCcw } from 'lucide-react'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -36,6 +35,39 @@ type CatalogResponse = { nodes: CatalogNode[]; total: number; page: number; page
 
 type DetailUser = { user_id: number; username: string; nickname?: string; effective: boolean; source?: string; plan_id?: number; plan_name?: string; effect?: string; reason?: string; expires_at?: string }
 type DetailResponse = { node: any; users: DetailUser[]; plans: { plan_id: number; name: string; display_group?: string }[]; exceptions: any[]; runtime_authorization_mode: string }
+type RenameNode = Pick<CatalogNode, 'type' | 'id' | 'name' | 'source_name' | 'global_name_override' | 'metadata_lock_version'>
+
+function NodeRenameDialog({ node, client, onClose, onSaved }: { node: RenameNode | null; client: AnyClient; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [name, setName] = React.useState('')
+  const [saving, setSaving] = React.useState(false)
+  const [error, setError] = React.useState('')
+  React.useEffect(() => { setName(node?.global_name_override || ''); setError('') }, [node])
+  const save = async () => {
+    if (!node || saving) return
+    setSaving(true)
+    setError('')
+    try {
+      await client.request(`/assignable-nodes/${node.type}/${node.id}/metadata`, {
+        method: 'PATCH',
+        body: JSON.stringify({ display_name_override: name.trim() || null, expected_lock_version: node.metadata_lock_version || 0 }),
+      })
+      onClose()
+      await onSaved()
+    } catch (requestError: any) {
+      setError(requestError?.message || String(requestError))
+    } finally {
+      setSaving(false)
+    }
+  }
+  return <Dialog isOpen={node !== null} onClose={onClose} title="全局节点名称" size="default">
+    <div className="form">
+      <p className="muted">留空将恢复来源名称“{node?.source_name || node?.name}”。</p>
+      <label><span>节点名称</span><Input value={name} onChange={event => setName(event.target.value)} maxLength={100} autoFocus aria-label="全局节点名称" /></label>
+      {error && <p role="alert" className="muted">{error}</p>}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><Button variant="outline" onClick={onClose} disabled={saving}>取消</Button><Button onClick={() => void save()} disabled={saving}>{saving ? '保存中…' : '保存'}</Button></div>
+    </div>
+  </Dialog>
+}
 
 const protocolOptions = ['vless', 'hysteria2', 'anytls', 'shadowsocks', 'mieru', 'socks', 'wireguard']
 const statusLabels: Record<string, string> = { ok: '正常', offline: '离线', disabled: '已禁用' }
@@ -368,18 +400,18 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
 
         {/* Desktop Table View */}
         <div className="card-custom node-table-card node-desktop-table" style={{ padding: 0, marginTop: 12, overflow: 'auto' }}>
-          <table className="user-data-table node-catalog-table" style={{ minWidth: 920, tableLayout: 'fixed' }}>
+          <table className="user-data-table node-catalog-table" style={{ minWidth: 980, tableLayout: 'fixed' }}>
             <colgroup>
               <col style={{ width: 44 }} />
-              <col style={{ width: showType ? '17%' : '19%' }} />
+              <col style={{ width: showType ? '16%' : '18%' }} />
               {showType && <col style={{ width: '8%' }} />}
               <col style={{ width: showType ? '11%' : '12%' }} />
-              <col style={{ width: showType ? '9%' : '10%' }} />
               <col style={{ width: showType ? '8%' : '9%' }} />
-              <col style={{ width: showType ? '21%' : '23%' }} />
               <col style={{ width: showType ? '7%' : '8%' }} />
-              <col style={{ width: showType ? '8%' : '8%' }} />
-              <col style={{ width: showType ? '11%' : '11%' }} />
+              <col style={{ width: showType ? '18%' : '20%' }} />
+              <col style={{ width: showType ? '7%' : '8%' }} />
+              <col style={{ width: showType ? '10%' : '10%' }} />
+              <col style={{ width: showType ? '15%' : '15%' }} />
             </colgroup>
             <thead>
               <tr>
@@ -392,7 +424,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
                 <th style={{ padding: '10px 12px' }}>所属套餐</th>
                 <th style={{ padding: '10px 12px' }}>有效用户</th>
                 <th style={{ padding: '10px 12px' }}>例外</th>
-                <th style={{ textAlign: 'right', padding: '10px 16px', minWidth: 110 }}>操作</th>
+                <th style={{ textAlign: 'right', padding: '10px 16px' }}>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -421,13 +453,41 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
                     {n.deny_exceptions > 0 && <Badge variant="destructive">拒绝 {n.deny_exceptions}</Badge>}
                     {n.allow_exceptions === 0 && n.deny_exceptions === 0 && <span className="muted">—</span>}
                   </td>
-                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap', padding: '10px 16px' }}>
-                    {isAdmin && <Button variant="ghost" size="icon" onClick={() => setRenameNode(n)} aria-label={`重命名 ${n.name}`} title="修改全局名称"><Pencil size={15} /></Button>}
-                    <Button variant="outline" size="sm" onClick={() => void openDetail(n)}>详情</Button>
-                    <Button variant="ghost" size="icon" onClick={e => {
-                      const rect = e.currentTarget.getBoundingClientRect()
-                      openScopeMenu(n, rect.right, rect.bottom + 4)
-                    }} aria-label={`节点操作 ${n.name}`} title="选择节点范围"><MoreHorizontal size={16} /></Button>
+                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap', padding: '8px 16px' }}>
+                    <div className="node-row-actions">
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          className="node-row-icon-button"
+                          onClick={() => setRenameNode(n)}
+                          aria-label={`重命名 ${n.name}`}
+                          title="修改全局名称"
+                        >
+                          <Pencil size={15} />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="node-row-icon-button"
+                        onClick={() => void openDetail(n)}
+                        aria-label={`查看详情 ${n.name}`}
+                        title="查看详情"
+                      >
+                        <Info size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        className="node-row-icon-button"
+                        onClick={e => {
+                          const rect = e.currentTarget.getBoundingClientRect()
+                          openScopeMenu(n, rect.right, rect.bottom + 4)
+                        }}
+                        aria-label={`节点操作 ${n.name}`}
+                        title="选择节点范围"
+                      >
+                        <MoreHorizontal size={15} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -462,12 +522,38 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
                   </div>
                 </div>
                 <div className="node-mobile-card-actions">
-                  {isAdmin && <Button variant="ghost" size="icon" onClick={() => setRenameNode(n)} aria-label={`重命名 ${n.name}`} title="修改全局名称"><Pencil size={14} /></Button>}
-                  <Button variant="outline" size="sm" onClick={() => void openDetail(n)}>详情</Button>
-                  <Button variant="ghost" size="icon" onClick={e => {
-                    const rect = e.currentTarget.getBoundingClientRect()
-                    openScopeMenu(n, rect.right, rect.bottom + 4)
-                  }} aria-label={`节点操作 ${n.name}`} title="选择节点范围"><MoreHorizontal size={15} /></Button>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      className="node-row-icon-button"
+                      onClick={() => setRenameNode(n)}
+                      aria-label={`重命名 ${n.name}`}
+                      title="修改全局名称"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="node-row-icon-button"
+                    onClick={() => void openDetail(n)}
+                    aria-label={`查看详情 ${n.name}`}
+                    title="查看详情"
+                  >
+                    <Info size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="node-row-icon-button"
+                    onClick={e => {
+                      const rect = e.currentTarget.getBoundingClientRect()
+                      openScopeMenu(n, rect.right, rect.bottom + 4)
+                    }}
+                    aria-label={`节点操作 ${n.name}`}
+                    title="选择节点范围"
+                  >
+                    <MoreHorizontal size={14} />
+                  </button>
                 </div>
               </div>
               <div className="node-mobile-card-meta">
