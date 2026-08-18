@@ -73,6 +73,12 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 			return nil, err
 		}
 		return map[string]any{"recipient_count": preview.RecipientCount, "bound_target_count": preview.BoundTargetCount, "unbound_count": preview.UnboundCount}, nil
+	case "telegram_bot.get":
+		var request struct{}
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		return map[string]any{"telegram_bot": s.telegramBotPublicStatus(ctx)}, nil
 	case "api_principals.list":
 		var request struct{}
 		if err := strictAutomationInput(input, &request); err != nil {

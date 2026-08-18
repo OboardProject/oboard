@@ -491,6 +491,11 @@ func (s *Store) ConsumeTelegramBindingCode(ctx context.Context, codeHash string,
 	if err := tx.QueryRowContext(ctx, `select status from users where id=?`, userID).Scan(&status); err != nil || status != "active" {
 		return nil, errors.New("binding user is not active")
 	}
+	var channelOwnerID int64
+	var channelType string
+	if err := tx.QueryRowContext(ctx, `select owner_user_id,type from notification_channels where id=?`, channelID).Scan(&channelOwnerID, &channelType); err != nil || channelOwnerID != userID || channelType != "telegram" {
+		return nil, errors.New("binding channel is not owned by the user")
+	}
 	ts := at.UTC().Format(time.RFC3339Nano)
 	res, err := tx.ExecContext(ctx, `update telegram_binding_codes set consumed_at=? where code_hash=? and consumed_at is null`, ts, codeHash)
 	if err != nil {
@@ -525,12 +530,35 @@ func (s *Store) GetTelegramBinding(ctx context.Context, channelID, chatID, teleg
 	return &item, nil
 }
 
+func (s *Store) GetTelegramBindingForChat(ctx context.Context, chatID, telegramUserID int64) (*model.TelegramBinding, error) {
+	var item model.TelegramBinding
+	var created, updated string
+	err := s.db.QueryRowContext(ctx, `select id,channel_id,user_id,chat_id,telegram_user_id,chat_type,created_at,updated_at from telegram_bindings where chat_id=? and telegram_user_id=? order by updated_at desc,id desc limit 1`, chatID, telegramUserID).Scan(&item.ID, &item.ChannelID, &item.UserID, &item.ChatID, &item.TelegramUserID, &item.ChatType, &created, &updated)
+	if err != nil {
+		return nil, err
+	}
+	item.CreatedAt = parseTime(created)
+	item.UpdatedAt = parseTime(updated)
+	return &item, nil
+}
+
 func (s *Store) DeleteTelegramBinding(ctx context.Context, channelID, chatID, telegramUserID int64) error {
 	res, err := s.db.ExecContext(ctx, `delete from telegram_bindings where channel_id=? and chat_id=? and telegram_user_id=?`, channelID, chatID, telegramUserID)
 	if err != nil {
 		return err
 	}
 	if count, _ := res.RowsAffected(); count != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) DeleteTelegramBindingsForChat(ctx context.Context, chatID, telegramUserID int64) error {
+	res, err := s.db.ExecContext(ctx, `delete from telegram_bindings where chat_id=? and telegram_user_id=?`, chatID, telegramUserID)
+	if err != nil {
+		return err
+	}
+	if count, _ := res.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
 	}
 	return nil

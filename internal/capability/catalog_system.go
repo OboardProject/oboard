@@ -78,6 +78,9 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		"enabled": boolValue, "events_configured": boolValue, "user_count": map[string]any{"type": "integer"},
 		"created_at": stringValue, "updated_at": stringValue,
 	})
+	telegramBot := closedObject(map[string]any{
+		"enabled": boolValue, "configured": boolValue, "token_configured": boolValue,
+	})
 	controllerBuild := closedObject(map[string]any{
 		"version": stringValue, "build": stringValue, "commit": stringValue, "date": stringValue,
 	})
@@ -111,6 +114,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 	})
 	descriptors := []Descriptor{
 		adminRead("settings.get", "读取主控全局设置（审计、订阅、通知、Agent 设置等，不含秘密）", schemaObject(nil), schemaObject(map[string]any{"settings": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}}, "settings")),
+		adminRead("telegram_bot.get", "读取统一 Telegram Bot 状态（不返回 Bot Token）", schemaObject(nil), schemaObject(map[string]any{"telegram_bot": telegramBot}, "telegram_bot")),
 		adminRead("controller_update.status", "读取主控更新通道、当前版本和异步更新状态", schemaObject(nil), rawSchema(controllerUpdate)),
 		adminRead("subscription_relays.list", "列出受管订阅中继及其版本和在线状态（不含身份凭据）", schemaObject(nil), schemaObject(map[string]any{"subscription_relays": arrayOf(subscriptionRelay)}, "subscription_relays")),
 		adminRead("backups.list", "列出主控备份与备份设置（不返回恢复密码）", schemaObject(nil), schemaObject(map[string]any{"backups": arrayOf(closedObject(map[string]any{"id": stringValue, "name": stringValue, "origin": stringValue, "local_status": stringValue, "remote_status": stringValue, "size_bytes": map[string]any{"type": "integer"}, "created_at": stringValue})), "settings": closedObject(map[string]any{"enabled": boolValue, "schedule": stringValue, "time": stringValue, "local_retention": map[string]any{"type": "integer"}, "remote_retention": map[string]any{"type": "integer"}, "destination_configured": boolValue, "password_configured": boolValue, "last_success_at": nullableString(), "last_error": stringValue})}, "backups", "settings")),
@@ -141,6 +145,9 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			"update_window_start_hour": map[string]any{"type": "integer", "minimum": 0, "maximum": 23},
 			"update_window_end_hour":   map[string]any{"type": "integer", "minimum": 0, "maximum": 23},
 		})}, "changes"), schemaObject(map[string]any{"changed_fields": stringArray(1, 32)}, "changed_fields"), 2, false),
+		adminWrite("telegram_bot.update", "修改统一 Telegram Bot；Bot Token 只写入加密存储，不返回明文", schemaObject(map[string]any{
+			"enabled": boolValue, "bot_token": map[string]any{"type": "string", "maxLength": 256},
+		}, "enabled"), schemaObject(map[string]any{"telegram_bot": telegramBot}, "telegram_bot"), 3, false),
 		adminWrite("controller_update.check", "检查主控更新通道是否有可用版本", schemaObject(nil), controllerUpdateResult, 1, false),
 		adminWrite("controller_update.set_channel", "切换主控更新通道并刷新可用版本", schemaObject(map[string]any{"channel": map[string]any{"type": "string", "enum": []string{"stable", "dev"}}}, "channel"), controllerUpdateResult, 3, false),
 		adminWrite("controller_update.install", "接受主控更新请求；下载、备份和安装在后台继续", schemaObject(map[string]any{"confirm": map[string]any{"type": "boolean", "const": true}}, "confirm"), controllerUpdateResult, 4, false),
@@ -169,6 +176,9 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 	}
 	for index := range descriptors {
 		switch descriptors[index].Name {
+		case "telegram_bot.update":
+			descriptors[index].SensitiveInput = []string{"bot_token"}
+			descriptors[index].DataClassification = DataSensitive
 		case "subscription_relays.create", "subscription_relays.issue_enrollment":
 			descriptors[index].DataClassification = DataSensitive
 			descriptors[index].SensitiveOutput = []string{"enrollment_token"}

@@ -61,10 +61,11 @@ func TestOfflineNoticeMergedAndPerServerDisable(t *testing.T) {
 	if err := db.CreateUser(ctx, admin); err != nil {
 		t.Fatal(err)
 	}
-	channel := &model.NotificationChannel{Name: "ops", Type: "telegram", Enabled: true, Events: notificationServerOffline, ConfigJSON: `{"bot_token":"tok","chat_id":"1"}`, OwnerUserID: admin.ID}
+	channel := &model.NotificationChannel{Name: "ops", Type: "telegram", Enabled: true, Events: notificationServerOffline, ConfigJSON: `{}`, OwnerUserID: admin.ID}
 	if err := db.CreateNotificationChannel(ctx, channel); err != nil {
 		t.Fatal(err)
 	}
+	bindTestTelegramChannel(t, srv, db, channel.ID, 1)
 
 	srv.checkOfflineAt(ctx, now)
 
@@ -227,7 +228,8 @@ func TestSubscriptionAbnormalNotificationQueuesOncePerHour(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	adminLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{"name": "sub", "type": "telegram", "enabled": true, "events": notificationSubscriptionAbnormal, "config_json": `{"bot_token":"sub","chat_id":"1"}`}, http.StatusCreated)
+	createdChannel := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{"name": "sub", "type": "telegram", "enabled": true, "events": notificationSubscriptionAbnormal, "config_json": `{}`}, http.StatusCreated)["notification_channel"].(map[string]any)
+	bindTestTelegramChannel(t, srv, db, int64(createdChannel["id"].(float64)), 1)
 	user := &model.User{Username: "alice", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "alice-uuid", ProxyPassword: "alice-pass", SubscriptionToken: "sub-token"}
 	if err := db.CreateUser(context.Background(), user); err != nil {
 		t.Fatal(err)
@@ -301,24 +303,13 @@ func TestBarkGroupValidationInChannelConfig(t *testing.T) {
 	}
 }
 
-func TestTelegramGlobalBotChannelValidation(t *testing.T) {
-	channel := &model.NotificationChannel{Name: "bot", Type: "telegram", Events: notificationServerOffline, ConfigJSON: `{"bot_token":"tok","chat_id":"1","interactive":false,"allowed_chat_ids":"123"}`}
-	if err := validateNotificationChannel(channel, model.RoleAdmin); err != nil {
-		t.Fatalf("administrator global bot rejected: %v", err)
+func TestTelegramNotificationChannelUsesGlobalBotConfiguration(t *testing.T) {
+	channel := &model.NotificationChannel{Name: "personal-bot", Type: "telegram", Events: notificationTrafficQuota, ConfigJSON: `{"bot_token":"must-not-remain","chat_id":"2"}`}
+	if err := validateNotificationChannel(channel, model.RoleViewer); err != nil {
+		t.Fatalf("ordinary user Telegram channel rejected: %v", err)
 	}
-	var cfg map[string]any
-	if err := json.Unmarshal([]byte(channel.ConfigJSON), &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if cfg["interactive"] != true {
-		t.Fatalf("global bot must always enable account-bound commands: %s", channel.ConfigJSON)
-	}
-	if _, exists := cfg["allowed_chat_ids"]; exists {
-		t.Fatalf("global bot must not retain a static chat allowlist: %s", channel.ConfigJSON)
-	}
-	viewerChannel := &model.NotificationChannel{Name: "personal-bot", Type: "telegram", Events: notificationTrafficQuota, ConfigJSON: `{"bot_token":"viewer","chat_id":"2"}`}
-	if err := validateNotificationChannel(viewerChannel, model.RoleViewer); err == nil || !strings.Contains(err.Error(), "管理员") {
-		t.Fatalf("ordinary user Telegram bot configuration should be rejected: %v", err)
+	if channel.ConfigJSON != "{}" {
+		t.Fatalf("Telegram channel retained Bot credentials: %s", channel.ConfigJSON)
 	}
 }
 

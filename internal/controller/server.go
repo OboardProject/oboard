@@ -354,6 +354,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/tunnels/", s.auth(s.tunnels, model.RoleOperator))
 	mux.HandleFunc("/api/v1/notification-channels", s.auth(s.notificationChannels, model.RoleViewer))
 	mux.HandleFunc("/api/v1/notification-channels/", s.auth(s.notificationChannels, model.RoleViewer))
+	mux.HandleFunc("/api/v1/telegram-bot", s.auth(s.telegramBotSettings, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/telegram-bot/", s.auth(s.telegramBotSettings, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/notification-announcements", s.auth(s.notificationAnnouncements, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/port-forward-probes", s.auth(s.portForwardProbes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/inbound-probes", s.auth(s.inboundProbes, model.RoleOperator))
@@ -2217,6 +2219,13 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				out["notification_channels"] = publicNotificationChannels(channels)
 				out["notification_config"] = notificationPageConfig(role)
 				out["telegram_bot"] = s.telegramBotPublicStatus(ctx)
+			}
+			if err == nil {
+				var bindings []model.TelegramBinding
+				bindings, err = s.store.ListTelegramBindingsForUser(ctx, user.ID)
+				if err == nil {
+					out["telegram_bindings"] = bindings
+				}
 			}
 		} else {
 			err = errors.New("invalid session")

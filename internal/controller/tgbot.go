@@ -25,75 +25,170 @@ import (
 )
 
 const (
-	telegramBotRateLimit    = 20
-	telegramBotMaxBodyBytes = 1 << 20
+	telegramBotRateLimit     = 20
+	telegramBotMaxBodyBytes  = 1 << 20
+	telegramBotConfigSetting = "telegram_bot_config"
+	telegramBotConfigPurpose = "telegram-bot-config"
 )
 
-var (
-	errTelegramBotNotConfigured = errors.New("管理员尚未配置并启用 Telegram Bot")
-	errTelegramBotAmbiguous     = errors.New("存在多个已启用的管理员 Telegram Bot，请只保留一个")
-)
+var errTelegramBotNotConfigured = errors.New("管理员尚未配置并启用 Telegram Bot")
+
+type telegramBotConfig struct {
+	Enabled  bool   `json:"enabled"`
+	BotToken string `json:"bot_token"`
+}
 
 type telegramBotChannel struct {
-	channelID int64
-	botToken  string
+	botToken string
+}
+
+func (s *Server) telegramBotConfig(ctx context.Context) (telegramBotConfig, error) {
+	settings, err := s.store.ListSettings(ctx)
+	if err != nil {
+		return telegramBotConfig{}, err
+	}
+	wrapped := strings.TrimSpace(settings[telegramBotConfigSetting])
+	if wrapped == "" {
+		return telegramBotConfig{}, nil
+	}
+	plain, err := security.DecryptSecret(s.sessionSecret, telegramBotConfigPurpose, wrapped)
+	if err != nil {
+		return telegramBotConfig{}, errors.New("Telegram Bot 配置无法解密")
+	}
+	var config telegramBotConfig
+	if err := json.Unmarshal([]byte(plain), &config); err != nil {
+		return telegramBotConfig{}, errors.New("Telegram Bot 配置无效")
+	}
+	config.BotToken = strings.TrimSpace(config.BotToken)
+	return config, nil
+}
+
+func (s *Server) saveTelegramBotConfig(ctx context.Context, config telegramBotConfig) error {
+	config.BotToken = strings.TrimSpace(config.BotToken)
+	if config.Enabled && config.BotToken == "" {
+		return errors.New("启用 Telegram Bot 前请填写 Bot Token")
+	}
+	plain, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	wrapped, err := security.EncryptSecret(s.sessionSecret, telegramBotConfigPurpose, string(plain))
+	if err != nil {
+		return err
+	}
+	return s.store.SetSetting(ctx, telegramBotConfigSetting, wrapped)
 }
 
 func (s *Server) globalTelegramBot(ctx context.Context) (*telegramBotChannel, error) {
-	channels, err := s.store.ListEnabledNotificationChannelsUnfiltered(ctx)
+	config, err := s.telegramBotConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var selected *telegramBotChannel
-	for _, channel := range channels {
-		if channel.Type != "telegram" || !channel.Enabled {
-			continue
-		}
-		owner, err := s.store.GetUser(ctx, channel.OwnerUserID)
-		if err != nil || owner.Status != "active" {
-			continue
-		}
-		role, err := s.store.EffectiveUserRole(ctx, *owner)
-		if err != nil || !roleAllows(role, model.RoleAdmin) {
-			continue
-		}
-		var cfg struct {
-			BotToken string `json:"bot_token"`
-		}
-		if json.Unmarshal([]byte(channel.ConfigJSON), &cfg) != nil || strings.TrimSpace(cfg.BotToken) == "" {
-			continue
-		}
-		if selected != nil {
-			return nil, errTelegramBotAmbiguous
-		}
-		selected = &telegramBotChannel{channelID: channel.ID, botToken: strings.TrimSpace(cfg.BotToken)}
-	}
-	if selected == nil {
+	if !config.Enabled || config.BotToken == "" {
 		return nil, errTelegramBotNotConfigured
 	}
-	return selected, nil
+	return &telegramBotChannel{botToken: config.BotToken}, nil
 }
 
 func (s *Server) telegramBotPublicStatus(ctx context.Context) map[string]any {
-	bot, err := s.globalTelegramBot(ctx)
+	config, err := s.telegramBotConfig(ctx)
 	if err != nil {
-		return map[string]any{"configured": false, "error": err.Error()}
+		return map[string]any{"configured": false, "enabled": false, "token_configured": false, "error": err.Error()}
 	}
-	return map[string]any{"configured": true, "channel_id": bot.channelID}
+	tokenConfigured := config.BotToken != ""
+	return map[string]any{
+		"configured":       config.Enabled && tokenConfigured,
+		"enabled":          config.Enabled,
+		"token_configured": tokenConfigured,
+	}
 }
 
-func (s *Server) validateGlobalTelegramBotCandidate(ctx context.Context, candidate model.NotificationChannel) error {
-	if candidate.Type != "telegram" || !candidate.Enabled {
-		return nil
+func (s *Server) telegramBotSettings(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/test") {
+		if r.Method != http.MethodPost {
+			method(w)
+			return
+		}
+		var request struct {
+			BotToken string `json:"bot_token"`
+		}
+		if !decode(w, r, &request) {
+			return
+		}
+		token := strings.TrimSpace(request.BotToken)
+		if token == "" {
+			config, err := s.telegramBotConfig(r.Context())
+			if err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			token = config.BotToken
+		}
+		if token == "" {
+			fail(w, errors.New("请先填写 Bot Token"), http.StatusBadRequest)
+			return
+		}
+		profile, err := s.telegramBotGetMe(r.Context(), token)
+		if err != nil {
+			fail(w, fmt.Errorf("Telegram Bot 验证失败: %w", err), http.StatusBadGateway)
+			return
+		}
+		write(w, http.StatusOK, map[string]any{"ok": true, "username": profile.Username, "name": profile.Name})
+		return
 	}
-	current, err := s.globalTelegramBot(ctx)
-	if err == nil && current.channelID != candidate.ID {
-		return errTelegramBotAmbiguous
+
+	switch r.Method {
+	case http.MethodGet:
+		write(w, http.StatusOK, map[string]any{"telegram_bot": s.telegramBotPublicStatus(r.Context())})
+	case http.MethodPut:
+		var request struct {
+			Enabled  bool   `json:"enabled"`
+			BotToken string `json:"bot_token"`
+		}
+		if !decode(w, r, &request) {
+			return
+		}
+		current, err := s.telegramBotConfig(r.Context())
+		if err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
+		if strings.TrimSpace(request.BotToken) != "" {
+			current.BotToken = request.BotToken
+		}
+		current.Enabled = request.Enabled
+		if err := s.saveTelegramBotConfig(r.Context(), current); err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+		auditReq(s, r, "update", "telegram_bot", "global")
+		write(w, http.StatusOK, map[string]any{"telegram_bot": s.telegramBotPublicStatus(r.Context())})
+	default:
+		method(w)
 	}
-	if err != nil && !errors.Is(err, errTelegramBotNotConfigured) {
-		return err
+}
+
+type telegramBotProfile struct {
+	Username string
+	Name     string
+}
+
+func (s *Server) telegramBotGetMe(ctx context.Context, token string) (telegramBotProfile, error) {
+	data, err := s.telegramAPI(ctx, http.MethodGet, "https://api.telegram.org/bot"+strings.TrimSpace(token)+"/getMe", nil)
+	if err != nil {
+		return telegramBotProfile{}, err
 	}
-	return nil
+	var response struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			Username  string `json:"username"`
+			FirstName string `json:"first_name"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(data, &response) != nil || !response.OK {
+		return telegramBotProfile{}, errors.New("Telegram API 返回无效结果")
+	}
+	return telegramBotProfile{Username: strings.TrimSpace(response.Result.Username), Name: strings.TrimSpace(response.Result.FirstName)}, nil
 }
 
 func (s *Server) StartTelegramBots(ctx context.Context) {
@@ -218,13 +313,14 @@ func (s *Server) handleTelegramUpdate(ctx context.Context, channel telegramBotCh
 	}
 	command, arg := parseTelegramCommand(message.Text)
 	if command == "bind" || command == "绑定" {
-		if strings.TrimSpace(arg) == "" {
-			s.telegramBotSendMessage(ctx, token, message.Chat.ID, "请发送 /bind <绑定码>。绑定码可在 OBoard 面板通知页生成。")
+		channelID, code, ok := parseTelegramBindArgument(arg)
+		if !ok {
+			s.telegramBotSendMessage(ctx, token, message.Chat.ID, "请发送 /bind <通知渠道ID> <绑定码>。绑定信息可在 OBoard 面板通知页生成。")
 			return
 		}
-		binding, err := s.store.ConsumeTelegramBindingCode(ctx, security.HashSecret(strings.TrimSpace(arg)), channel.channelID, message.Chat.ID, message.From.ID, message.Chat.Type, time.Now().UTC())
+		binding, err := s.store.ConsumeTelegramBindingCode(ctx, security.HashSecret(code), channelID, message.Chat.ID, message.From.ID, message.Chat.Type, time.Now().UTC())
 		if err != nil {
-			s.telegramBotSendMessage(ctx, token, message.Chat.ID, "绑定码无效、已使用或已过期。")
+			s.telegramBotSendMessage(ctx, token, message.Chat.ID, "绑定信息无效、已使用或已过期。")
 			return
 		}
 		user, _ := s.store.GetUser(ctx, binding.UserID)
@@ -235,13 +331,13 @@ func (s *Server) handleTelegramUpdate(ctx context.Context, channel telegramBotCh
 		s.telegramBotSendMessage(ctx, token, message.Chat.ID, "已绑定 OBoard 账户："+name+"。发送 /help 查看可用指令。")
 		return
 	}
-	binding, err := s.store.GetTelegramBinding(ctx, channel.channelID, message.Chat.ID, message.From.ID)
+	binding, err := s.store.GetTelegramBindingForChat(ctx, message.Chat.ID, message.From.ID)
 	if err != nil {
-		s.telegramBotSendMessage(ctx, token, message.Chat.ID, "此会话尚未绑定 OBoard 账户，或绑定已被撤销。请在面板生成新绑定码后发送 /bind <绑定码>。")
+		s.telegramBotSendMessage(ctx, token, message.Chat.ID, "此会话尚未绑定 OBoard 账户，或绑定已被撤销。请在面板生成新绑定信息后发送 /bind <通知渠道ID> <绑定码>。")
 		return
 	}
 	if command == "unbind" || command == "解绑" {
-		if err := s.store.DeleteTelegramBinding(ctx, channel.channelID, message.Chat.ID, message.From.ID); err != nil {
+		if err := s.store.DeleteTelegramBindingsForChat(ctx, message.Chat.ID, message.From.ID); err != nil {
 			s.telegramBotSendMessage(ctx, token, message.Chat.ID, "解绑失败，请稍后重试。")
 			return
 		}
@@ -352,7 +448,7 @@ func (s *Server) handleTelegramCallback(ctx context.Context, channel telegramBot
 		s.telegramBotAnswerCallback(ctx, token, callback.ID, "操作过于频繁")
 		return
 	}
-	binding, err := s.store.GetTelegramBinding(ctx, channel.channelID, chatID, callback.From.ID)
+	binding, err := s.store.GetTelegramBindingForChat(ctx, chatID, callback.From.ID)
 	if err != nil {
 		s.telegramBotAnswerCallback(ctx, token, callback.ID, "绑定已失效")
 		return
@@ -627,6 +723,16 @@ func (s *Server) telegramBotReply(ctx context.Context, text string) string {
 	default:
 		return "未识别的指令，发送 /help 查看可用指令。"
 	}
+}
+
+func parseTelegramBindArgument(value string) (int64, string, bool) {
+	parts := strings.Fields(strings.TrimSpace(value))
+	if len(parts) != 2 {
+		return 0, "", false
+	}
+	channelID, err := strconv.ParseInt(parts[0], 10, 64)
+	code := strings.TrimSpace(parts[1])
+	return channelID, code, err == nil && channelID > 0 && code != ""
 }
 
 func parseTelegramCommand(text string) (string, string) {

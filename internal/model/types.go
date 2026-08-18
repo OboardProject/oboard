@@ -2288,6 +2288,7 @@ type TelegramBinding struct {
 
 type TelegramBindingCode struct {
 	Code      string    `json:"code,omitempty"`
+	ChannelID int64     `json:"channel_id"`
 	UserID    int64     `json:"user_id"`
 	ExpiresAt time.Time `json:"expires_at"`
 }

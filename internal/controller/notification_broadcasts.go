@@ -113,8 +113,7 @@ func (s *Server) validateNotificationBroadcastOperation(ctx context.Context, pri
 }
 
 func (s *Server) resolveNotificationBroadcastRecipients(ctx context.Context, actorUserID int64, filter notificationBroadcastFilter) (notificationBroadcastPreview, error) {
-	bot, err := s.globalTelegramBot(ctx)
-	if err != nil {
+	if _, err := s.globalTelegramBot(ctx); err != nil {
 		return notificationBroadcastPreview{}, err
 	}
 	users, err := s.store.ListUsers(ctx)
@@ -173,12 +172,7 @@ func (s *Server) resolveNotificationBroadcastRecipients(ctx context.Context, act
 		if err != nil {
 			return notificationBroadcastPreview{}, err
 		}
-		eligible := userBindings[:0]
-		for _, binding := range userBindings {
-			if binding.ChannelID == bot.channelID {
-				eligible = append(eligible, binding)
-			}
-		}
+		eligible := userBindings
 		bound := len(eligible) > 0
 		if filter.TelegramBound != nil && bound != *filter.TelegramBound {
 			continue
@@ -233,7 +227,7 @@ func (s *Server) deliverPendingTelegramBroadcasts(ctx context.Context) {
 			sendErr = errors.New("broadcast_recipient_inactive")
 		} else if !bindingActive {
 			sendErr = errors.New("telegram_binding_revoked")
-		} else if botErr != nil || target.ChannelID == nil || *target.ChannelID != bot.channelID || target.ChatID == nil {
+		} else if botErr != nil || target.ChannelID == nil || target.ChatID == nil {
 			sendErr = errors.New("telegram_binding_or_bot_unavailable")
 		} else {
 			_, sendErr = s.telegramIncidentSend(ctx, bot.botToken, *target.ChatID, target.Broadcast.Title+"\n"+target.Broadcast.Body)

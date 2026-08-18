@@ -432,14 +432,20 @@ func (s *Server) apiV2TelegramBindingCode(w http.ResponseWriter, r *http.Request
 		v2Error(w, r, http.StatusForbidden, "user_inactive", "当前用户不可绑定 Telegram")
 		return
 	}
+	var request struct {
+		ChannelID int64 `json:"channel_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.ChannelID <= 0 {
+		v2Error(w, r, http.StatusBadRequest, "invalid_channel", "请选择要绑定的 Telegram 通知渠道")
+		return
+	}
+	channel, err := s.store.GetNotificationChannel(r.Context(), request.ChannelID)
+	if err != nil || channel.OwnerUserID != user.ID || channel.Type != "telegram" {
+		v2Error(w, r, http.StatusNotFound, "channel_not_found", "Telegram 通知渠道不存在")
+		return
+	}
 	if _, err := s.globalTelegramBot(r.Context()); err != nil {
-		status := http.StatusServiceUnavailable
-		code := "telegram_bot_not_configured"
-		if errors.Is(err, errTelegramBotAmbiguous) {
-			status = http.StatusConflict
-			code = "telegram_bot_ambiguous"
-		}
-		v2Error(w, r, status, code, err.Error())
+		v2Error(w, r, http.StatusServiceUnavailable, "telegram_bot_not_configured", err.Error())
 		return
 	}
 	secret, err := security.RandomToken(12)
@@ -456,7 +462,7 @@ func (s *Server) apiV2TelegramBindingCode(w http.ResponseWriter, r *http.Request
 		v2HandleError(w, r, err)
 		return
 	}
-	v2Write(w, r, http.StatusCreated, model.TelegramBindingCode{Code: code, UserID: user.ID, ExpiresAt: expiresAt}, nil)
+	v2Write(w, r, http.StatusCreated, model.TelegramBindingCode{Code: code, ChannelID: channel.ID, UserID: user.ID, ExpiresAt: expiresAt}, nil)
 }
 
 func (s *Server) apiV2TelegramBindings(w http.ResponseWriter, r *http.Request) {

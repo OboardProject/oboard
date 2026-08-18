@@ -54,15 +54,14 @@ func (d *recordingNotificationDialer) DialContext(_ context.Context, _, address 
 }
 
 func TestValidateNotificationChannelRequiresTypedConfig(t *testing.T) {
-	telegram := &model.NotificationChannel{Name: "ops", Type: "telegram", Events: "server_offline", ConfigJSON: `{"bot_token":"","chat_id":""}`}
-	if err := validateNotificationChannel(telegram, model.RoleAdmin); err == nil || !strings.Contains(err.Error(), "Telegram") {
-		t.Fatalf("expected telegram validation error, got %v", err)
-	}
-	telegram.ConfigJSON = `{"bot_token":"tok","chat_id":"-1001"}`
-	if err := validateNotificationChannel(telegram, model.RoleAdmin); err != nil {
+	telegram := &model.NotificationChannel{Name: "personal", Type: "telegram", Events: notificationTrafficQuota, ConfigJSON: `{"bot_token":"must-not-remain","chat_id":"-1001"}`}
+	if err := validateNotificationChannel(telegram, model.RoleViewer); err != nil {
 		t.Fatal(err)
 	}
-	if telegram.Events != "server_offline" {
+	if telegram.ConfigJSON != "{}" {
+		t.Fatalf("Telegram channel config = %q, want empty object", telegram.ConfigJSON)
+	}
+	if telegram.Events != notificationTrafficQuota {
 		t.Fatalf("events = %q", telegram.Events)
 	}
 
@@ -112,14 +111,15 @@ func TestNotificationChannelCRUDAndTestValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	h := newTestServer(db, "test-secret", "").Handler()
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	// Reject incomplete create.
+	// Reject a channel without a name.
 	bad := httptest.NewRecorder()
-	body, _ := json.Marshal(map[string]any{"name": "ops", "type": "telegram", "enabled": true, "events": "server_offline", "config_json": `{"bot_token":"","chat_id":""}`})
+	body, _ := json.Marshal(map[string]any{"name": "", "type": "telegram", "enabled": true, "events": "server_offline", "config_json": `{}`})
 	req := httptest.NewRequest(http.MethodPost, "/api/v2/ui/notification-channels", bytes.NewReader(body))
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -130,12 +130,13 @@ func TestNotificationChannelCRUDAndTestValidation(t *testing.T) {
 
 	created := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "ops-tg", "type": "telegram", "enabled": true, "events": "server_offline,server_online",
-		"config_json": `{"bot_token":"123:abc","chat_id":"-1001"}`,
+		"config_json": `{}`,
 	}, http.StatusCreated)
 	id := int64(created["notification_channel"].(map[string]any)["id"].(float64))
 	if id == 0 {
 		t.Fatalf("missing id: %#v", created)
 	}
+	bindTestTelegramChannel(t, srv, db, id, -1001)
 
 	// Test endpoint should fail transport (invalid token) but route must exist and validate.
 	testRec := httptest.NewRecorder()
@@ -174,7 +175,7 @@ func TestNotificationChannelCRUDAndTestValidation(t *testing.T) {
 	}
 }
 
-func TestNotificationChannelSecretsAreRedactedOnRead(t *testing.T) {
+func TestTelegramBotSecretIsStoredOutsideNotificationChannels(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -185,39 +186,27 @@ func TestNotificationChannelSecretsAreRedactedOnRead(t *testing.T) {
 	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
+	updated := request(t, h, http.MethodPut, "/api/v2/ui/telegram-bot", token, map[string]any{"enabled": true, "bot_token": "123:abc"}, http.StatusOK)
+	status := updated["telegram_bot"].(map[string]any)
+	if status["configured"] != true || status["token_configured"] != true {
+		t.Fatalf("bot status = %#v", status)
+	}
+	if strings.Contains(fmt.Sprint(updated), "123:abc") {
+		t.Fatalf("Bot API response leaked token: %#v", updated)
+	}
 	created := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
-		"name": "ops-tg", "type": "telegram", "enabled": true, "events": "server_offline",
-		"config_json": `{"bot_token":"123:abc","chat_id":"-1001"}`,
+		"name": "ops-tg", "type": "telegram", "enabled": true, "events": "server_offline", "config_json": `{"bot_token":"must-be-removed","chat_id":"-1001"}`,
 	}, http.StatusCreated)
 	channel := created["notification_channel"].(map[string]any)
-	if !strings.Contains(fmt.Sprint(channel["config_json"]), "********") {
-		t.Fatalf("create response should redact bot_token: %#v", channel)
+	if channel["config_json"] != "{}" {
+		t.Fatalf("Telegram channel retained Bot config: %#v", channel)
 	}
-	if strings.Contains(fmt.Sprint(channel["config_json"]), "123:abc") {
-		t.Fatalf("create response leaked bot_token: %#v", channel)
-	}
-
-	listed := request(t, h, http.MethodGet, "/api/v2/ui/notification-channels", token, nil, http.StatusOK)
-	items := listed["notification_channels"].([]any)
-	if len(items) != 1 {
-		t.Fatalf("listed = %#v", listed)
-	}
-	cfg := fmt.Sprint(items[0].(map[string]any)["config_json"])
-	if strings.Contains(cfg, "123:abc") || !strings.Contains(cfg, "********") {
-		t.Fatalf("list response should redact secrets: %s", cfg)
-	}
-
-	// DB still keeps the real secret.
-	admin, err := db.GetUserByUsername(context.Background(), "admin")
+	settings, err := db.ListSettings(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, err := db.ListNotificationChannelsByOwner(context.Background(), admin.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(stored) != 1 || !strings.Contains(stored[0].ConfigJSON, "123:abc") {
-		t.Fatalf("stored channel should keep secret: %#v", stored)
+	if strings.Contains(settings[telegramBotConfigSetting], "123:abc") || !strings.HasPrefix(settings[telegramBotConfigSetting], "v1.") {
+		t.Fatalf("Bot token was not encrypted at rest: %q", settings[telegramBotConfigSetting])
 	}
 }
 
@@ -465,10 +454,11 @@ func TestCertificateFailureNotificationCoversAllIssuersAndRedactsEABSecret(t *te
 	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
+	channel := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "google-eab", "type": "telegram", "enabled": true, "events": notificationCertificateFailed,
-		"config_json": `{"bot_token":"admin-token","chat_id":"200"}`,
-	}, http.StatusCreated)
+		"config_json": `{}`,
+	}, http.StatusCreated)["notification_channel"].(map[string]any)
+	bindTestTelegramChannel(t, hServer, db, int64(channel["id"].(float64)), 200)
 
 	const hmacKey = "notification-secret-hmac"
 	created := request(t, h, http.MethodPost, "/api/v2/ui/certificates", token, map[string]any{
@@ -536,10 +526,11 @@ func TestHTTPCertificateTaskFailureQueuesCertificateNotification(t *testing.T) {
 	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
+	channel := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "certificate", "type": "telegram", "enabled": true, "events": notificationCertificateFailed,
-		"config_json": `{"bot_token":"admin","chat_id":"1"}`,
-	}, http.StatusCreated)
+		"config_json": `{}`,
+	}, http.StatusCreated)["notification_channel"].(map[string]any)
+	bindTestTelegramChannel(t, srv, db, int64(channel["id"].(float64)), 1)
 	server := model.Server{Name: "issue-node", AgentID: "issue-agent", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010}
 	if err := db.CreateServer(context.Background(), &server); err != nil {
 		t.Fatal(err)
@@ -655,11 +646,12 @@ func TestOperationalNotificationEventsUseAdminScope(t *testing.T) {
 	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
+	channel := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "operations", "type": "telegram", "enabled": true,
 		"events":      notificationCertificateExpiry + "," + notificationBackupFailed + "," + notificationUpdateFailed + "," + notificationDNSSyncFailed,
-		"config_json": `{"bot_token":"admin","chat_id":"1"}`,
-	}, http.StatusCreated)
+		"config_json": `{}`,
+	}, http.StatusCreated)["notification_channel"].(map[string]any)
+	bindTestTelegramChannel(t, srv, db, int64(channel["id"].(float64)), 1)
 	var sentMu sync.Mutex
 	sent := []string{}
 	srv.notificationSender = func(_ context.Context, _ model.NotificationChannel, title, body string) error {
@@ -695,10 +687,11 @@ func TestScheduledUpdateFailureNotifiesOnlyWhenAutomaticUpdatesEnabled(t *testin
 	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
+	channel := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "updates", "type": "telegram", "enabled": true, "events": notificationUpdateFailed,
-		"config_json": `{"bot_token":"admin","chat_id":"1"}`,
-	}, http.StatusCreated)
+		"config_json": `{}`,
+	}, http.StatusCreated)["notification_channel"].(map[string]any)
+	bindTestTelegramChannel(t, srv, db, int64(channel["id"].(float64)), 1)
 	var sentMu sync.Mutex
 	sent := []string{}
 	srv.notificationSender = func(_ context.Context, _ model.NotificationChannel, title, body string) error {
@@ -737,10 +730,11 @@ func TestCertificateRenewalExpiryNotificationRequiresUserAction(t *testing.T) {
 	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
+	channel := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
 		"name": "certificates", "type": "telegram", "enabled": true, "events": notificationCertificateExpiry,
-		"config_json": `{"bot_token":"admin","chat_id":"1"}`,
-	}, http.StatusCreated)
+		"config_json": `{}`,
+	}, http.StatusCreated)["notification_channel"].(map[string]any)
+	bindTestTelegramChannel(t, srv, db, int64(channel["id"].(float64)), 1)
 	server := model.Server{Name: "renewal-node", AgentID: "renewal-agent", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010}
 	if err := db.CreateServer(context.Background(), &server); err != nil {
 		t.Fatal(err)

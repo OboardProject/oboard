@@ -23,6 +23,7 @@ import (
 
 func (s *Server) registerSystemAutomationOperations() {
 	s.registerSettingsOperations()
+	s.registerTelegramBotOperations()
 	s.registerControllerUpdateOperations()
 	s.registerSubscriptionRelayOperations()
 	s.registerBackupOperations()
@@ -280,6 +281,52 @@ var settingsAutomationFields = map[string]bool{
 	"subscription_relay_auto_update_enabled": true, "update_window_enabled": true,
 	"update_window_start_hour": true, "update_window_end_hour": true,
 	"registration_enabled": true,
+}
+
+func (s *Server) registerTelegramBotOperations() {
+	s.automation.RegisterValidator("telegram_bot.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		config, err := s.telegramBotUpdateCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"enabled": config.Enabled, "token_configured": config.BotToken != ""}, nil
+	})
+	s.automation.RegisterRevisionResolver("telegram_bot.update", func(context.Context, application.Principal, json.RawMessage) (map[string]string, error) {
+		return map[string]string{}, nil
+	})
+	s.automation.Register("telegram_bot.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		config, err := s.telegramBotUpdateCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.saveTelegramBotConfig(ctx, config); err != nil {
+			return nil, err
+		}
+		status := s.telegramBotPublicStatus(ctx)
+		return map[string]any{"telegram_bot": status}, nil
+	})
+}
+
+func (s *Server) telegramBotUpdateCandidate(ctx context.Context, input json.RawMessage) (telegramBotConfig, error) {
+	var request struct {
+		Enabled  bool   `json:"enabled"`
+		BotToken string `json:"bot_token"`
+	}
+	if err := strictAutomationInput(input, &request); err != nil {
+		return telegramBotConfig{}, err
+	}
+	current, err := s.telegramBotConfig(ctx)
+	if err != nil {
+		return telegramBotConfig{}, err
+	}
+	if strings.TrimSpace(request.BotToken) != "" {
+		current.BotToken = strings.TrimSpace(request.BotToken)
+	}
+	current.Enabled = request.Enabled
+	if current.Enabled && current.BotToken == "" {
+		return telegramBotConfig{}, errors.New("启用 Telegram Bot 前请填写 Bot Token")
+	}
+	return current, nil
 }
 
 func (s *Server) registerSettingsOperations() {
@@ -1307,9 +1354,6 @@ func (s *Server) notificationChannelAutomationCandidate(ctx context.Context, pri
 		if err := validateNotificationChannel(&channel, principal.Role); err != nil {
 			return model.NotificationChannel{}, nil, err
 		}
-		if err := s.validateGlobalTelegramBotCandidate(ctx, channel); err != nil {
-			return model.NotificationChannel{}, nil, err
-		}
 		if err := s.validateNotificationTargets(ctx, &channel, *principal.UserID, principal.Role); err != nil {
 			return model.NotificationChannel{}, nil, err
 		}
@@ -1344,9 +1388,6 @@ func (s *Server) notificationChannelAutomationCandidate(ctx context.Context, pri
 	merged.ID = current.ID
 	merged.OwnerUserID = *principal.UserID
 	if err := validateNotificationChannel(&merged, principal.Role); err != nil {
-		return model.NotificationChannel{}, nil, err
-	}
-	if err := s.validateGlobalTelegramBotCandidate(ctx, merged); err != nil {
 		return model.NotificationChannel{}, nil, err
 	}
 	if err := s.validateNotificationTargets(ctx, &merged, *principal.UserID, principal.Role); err != nil {

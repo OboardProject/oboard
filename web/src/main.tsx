@@ -293,6 +293,7 @@ type ProxyPathPlan = { path_id: number; name: string; inbound_id: number; enable
 type NotificationTemplate = { title: string; body: string }
 type NotificationEventDefinition = { value: string; label: string; description: string; variables: string[] }
 type NotificationChannel = { id: number; owner_user_id: number; owner_username?: string; name: string; type: 'telegram' | 'bark' | 'test'; enabled: boolean; events: string; config_json: string; templates_json: string; user_ids: number[] }
+type TelegramBinding = { id: number; channel_id: number; user_id: number; chat_id: number; telegram_user_id: number; chat_type: string; created_at: string; updated_at: string }
 type NotificationAnnouncement = { id: number; actor_user_id: number; actor_name: string; title: string; body: string; user_ids: number[]; queued_count: number; created_at: string }
 type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'proxy_path' | 'interface' | 'source_prefix'
 type RoutingRule = { id: number; server_id: number; scope?: 'server' | 'path_stage'; proxy_path_id?: number; stage_step_id?: number; sort_position?: number; match_source?: 'inline' | 'rule_set'; rule_set_id?: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_proxy_path_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; source_prefix?: string; sync_group_id?: string; enabled: boolean; updated_at?: string }
@@ -16738,8 +16739,6 @@ type NotificationDraft = {
   type: 'telegram' | 'bark' | 'test'
   enabled: boolean
   events: string[]
-  bot_token: string
-  chat_id: string
   server_url: string
   device_key: string
   bark_group: string
@@ -16760,8 +16759,6 @@ function emptyNotificationDraft(defaults: Record<string, NotificationTemplate>, 
     type,
     enabled: true,
     events: eventOptions.filter(option => option.value !== 'subscription_risk_detected' && (!isAdmin || option.value !== 'admin_announcement')).map(option => option.value),
-    bot_token: '',
-    chat_id: '',
     server_url: 'https://api.day.app',
     device_key: '',
     bark_group: '',
@@ -16779,8 +16776,6 @@ function notificationDraftFromChannel(channel: NotificationChannel, defaults: Re
     type: channel.type === 'bark' ? 'bark' : channel.type === 'test' ? 'test' : 'telegram',
     enabled: channel.enabled !== false,
     events: String(channel.events || '').split(',').map(x => x.trim()).filter(Boolean),
-    bot_token: String(cfg.bot_token || ''),
-    chat_id: String(cfg.chat_id ?? ''),
     server_url: String(cfg.server_url || 'https://api.day.app'),
     device_key: String(cfg.device_key || ''),
     bark_group: String(cfg.group || ''),
@@ -16791,11 +16786,9 @@ function notificationDraftFromChannel(channel: NotificationChannel, defaults: Re
 
 function notificationPayloadFromDraft(draft: NotificationDraft) {
   const events = draft.events.join(',')
-  const config = draft.type === 'telegram'
-    ? { bot_token: draft.bot_token.trim(), chat_id: draft.chat_id.trim(), interactive: true }
-    : draft.type === 'bark'
-      ? { server_url: draft.server_url.trim() || 'https://api.day.app', device_key: draft.device_key.trim(), group: draft.bark_group.trim() }
-      : {}
+  const config = draft.type === 'bark'
+    ? { server_url: draft.server_url.trim() || 'https://api.day.app', device_key: draft.device_key.trim(), group: draft.bark_group.trim() }
+    : {}
   return {
     name: draft.name.trim(),
     type: draft.type,
@@ -16810,6 +16803,7 @@ function notificationPayloadFromDraft(draft: NotificationDraft) {
 function Notifications({ data, client, load, notify, sessionUser }: any) {
   const dialogs = useDialogs()
   const channels: NotificationChannel[] = data.notification_channels || []
+  const telegramBindings: TelegramBinding[] = data.telegram_bindings || []
   const users: User[] = data.users || []
   const announcements: NotificationAnnouncement[] = data.notification_announcements || []
   const isAdmin = sessionUser?.role === 'admin'
@@ -16818,6 +16812,11 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
   const ownerUserID = Number(sessionUser?.id || data.current_user?.id || 0)
   const telegramBotConfigured = data.telegram_bot?.configured === true
   const [editor, setEditor] = useState<NotificationDraft | null>(null)
+  const [botSettingsOpen, setBotSettingsOpen] = useState(false)
+  const [botEnabled, setBotEnabled] = useState(data.telegram_bot?.enabled === true)
+  const [botToken, setBotToken] = useState('')
+  const [botSaving, setBotSaving] = useState(false)
+  const [botTesting, setBotTesting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testingID, setTestingID] = useState<number | 'draft' | null>(null)
   const [rawLogOpen, setRawLogOpen] = useState(false)
@@ -16833,17 +16832,57 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
   const [sendingAnnouncement, setSendingAnnouncement] = useState(false)
   const [announcementOpen, setAnnouncementOpen] = useState(false)
 
-  const openCreate = () => setEditor(emptyNotificationDraft(defaultTemplates, eventOptions, isAdmin, ownerUserID, isAdmin ? 'telegram' : 'bark'))
+  const openCreate = () => setEditor(emptyNotificationDraft(defaultTemplates, eventOptions, isAdmin, ownerUserID, 'telegram'))
   const openEdit = (channel: NotificationChannel) => setEditor(notificationDraftFromChannel(channel, defaultTemplates))
-  const createTelegramBindingCode = async () => {
+  const createTelegramBindingCode = async (channel: NotificationChannel) => {
     try {
-      const result = await client.request('/telegram/binding-code', { method: 'POST', body: '{}' })
+      const result = await client.request('/telegram/binding-code', { method: 'POST', body: JSON.stringify({ channel_id: channel.id }) })
       await dialogs.alert({
-        title: 'Telegram 绑定码',
-        message: `请在 10 分钟内向 OBoard Bot 发送：\n/bind ${String(result.code || '')}`,
+        title: '绑定 Telegram',
+        message: `请在 10 分钟内向 OBoard Bot 发送：\n/bind ${channel.id} ${String(result.code || '')}`,
       })
     } catch (error: any) {
       await dialogs.alert({ title: '生成失败', message: localizeErrorMessage(error?.message || error) })
+    }
+  }
+
+  const removeTelegramBindings = async (channel: NotificationChannel) => {
+    const bindings = telegramBindings.filter(binding => binding.channel_id === channel.id)
+    if (!bindings.length) return
+    const confirmed = await dialogs.confirm({ title: '解除 Telegram 绑定？', message: `此通知渠道的 ${bindings.length} 个 Telegram 会话将停止接收消息。`, confirmText: '解除绑定', tone: 'danger' })
+    if (!confirmed) return
+    try {
+      for (const binding of bindings) await client.request(`/telegram/bindings/${binding.id}`, { method: 'DELETE' })
+      await load()
+    } catch (error: any) {
+      await dialogs.alert({ title: '解绑失败', message: localizeErrorMessage(error?.message || error) })
+    }
+  }
+
+  const saveTelegramBot = async () => {
+    setBotSaving(true)
+    try {
+      await client.request('/telegram-bot', { method: 'PUT', body: JSON.stringify({ enabled: botEnabled, bot_token: botToken.trim() }) })
+      setBotToken('')
+      setBotSettingsOpen(false)
+      await load()
+      notify?.('Telegram Bot 设置已保存', 'success')
+    } catch (error: any) {
+      await dialogs.alert({ title: '保存失败', message: localizeErrorMessage(error?.message || error) })
+    } finally {
+      setBotSaving(false)
+    }
+  }
+
+  const testTelegramBot = async () => {
+    setBotTesting(true)
+    try {
+      const result = await client.request('/telegram-bot/test', { method: 'POST', body: JSON.stringify({ bot_token: botToken.trim() }) })
+      notify?.(`Bot 验证成功${result.username ? ` · @${result.username}` : ''}`, 'success')
+    } catch (error: any) {
+      await dialogs.alert({ title: '验证失败', message: localizeErrorMessage(error?.message || error) })
+    } finally {
+      setBotTesting(false)
     }
   }
 
@@ -16962,11 +17001,11 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
     <div className="section-toolbar">
       <div>
         <h3>通知通道</h3>
-        <p className="muted">{isAdmin ? '集中配置全局 Telegram Bot，并接收服务器、证书、备份、域名、任务和用户风险提醒。' : '绑定管理员配置的 Telegram Bot，或使用自己的 Bark 通道接收账户提醒。'}</p>
+        <p className="muted">{isAdmin ? '先配置 OBoard Telegram Bot，再为自己的通知渠道选择事件并绑定 Telegram 账号。' : '选择要接收的通知类型，并把 Telegram 通知渠道绑定到管理员配置的 Bot。'}</p>
       </div>
       <div className="section-actions">
+        {isAdmin && <button type="button" className="ghost" onClick={() => { setBotEnabled(data.telegram_bot?.enabled === true); setBotToken(''); setBotSettingsOpen(true) }}><Bot size={15} /><span>Telegram Bot 设置</span></button>}
         {isAdmin && <button type="button" className="ghost" onClick={() => setAnnouncementOpen(true)}><Send size={15} /><span>发送通知</span></button>}
-        <button type="button" className="ghost" disabled={!telegramBotConfigured} onClick={() => void createTelegramBindingCode()} title={telegramBotConfigured ? '绑定 Telegram' : '管理员尚未启用 Telegram Bot'}><LinkIcon size={15} /><span>绑定 Telegram</span></button>
         {isAdmin && <button type="button" className="ghost" onClick={() => setRawLogOpen(true)}><ClipboardList size={15} /><span>原始日志</span></button>}
         <button type="button" onClick={openCreate}><Plus size={15} /><span>新建通道</span></button>
       </div>
@@ -16983,6 +17022,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
         {channels.map(channel => {
           const events = String(channel.events || '').split(',').map(x => x.trim()).filter(Boolean)
           const enabled = channel.enabled !== false
+          const channelBindings = telegramBindings.filter(binding => binding.channel_id === channel.id)
           return <MotionCard key={channel.id} tag="article" className={`notification-channel-card ${enabled ? '' : 'is-disabled'}`}>
             <div className="notification-channel-main">
               <div className="notification-channel-icon" data-type={channel.type} aria-hidden="true">
@@ -17000,10 +17040,13 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
                   )) : <span className="muted">未选择事件</span>}
                 </div>
                 {events.some(event => userScopedNotificationEvents.has(event)) && <small className="notification-target-summary">关注用户：{isAdmin ? (channel.user_ids || []).map(id => users.find(user => user.id === id)?.nickname || users.find(user => user.id === id)?.username || `#${id}`).join('、') || '本人' : '本人'}</small>}
+                {channel.type === 'telegram' && <small className="notification-target-summary">Telegram：{channelBindings.length ? `已绑定 ${channelBindings.length} 个会话` : '尚未绑定账号'}</small>}
               </div>
             </div>
             <div className="notification-channel-actions">
-              <button type="button" className="ghost" disabled={testingID === channel.id} onClick={() => void testChannel(channel)}>
+              {channel.type === 'telegram' && <button type="button" className="ghost" disabled={!telegramBotConfigured} onClick={() => void createTelegramBindingCode(channel)} title={telegramBotConfigured ? '绑定 Telegram 账号' : '管理员尚未启用 Telegram Bot'}><LinkIcon size={14} /><span>{channelBindings.length ? '绑定新会话' : '绑定账号'}</span></button>}
+              {channel.type === 'telegram' && channelBindings.length > 0 && <button type="button" className="ghost danger-text" onClick={() => void removeTelegramBindings(channel)}>解除绑定</button>}
+              <button type="button" className="ghost" disabled={testingID === channel.id || (channel.type === 'telegram' && !channelBindings.length)} onClick={() => void testChannel(channel)} title={channel.type === 'telegram' && !channelBindings.length ? '请先绑定 Telegram 账号' : '发送测试通知'}>
                 {testingID === channel.id ? '测试中…' : '发送测试'}
               </button>
               <button type="button" className="ghost" onClick={() => void toggleEnabled(channel)}>{enabled ? '停用' : '启用'}</button>
@@ -17016,6 +17059,18 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
     )}
 
     <AnimatePresence>
+      {isAdmin && botSettingsOpen && <TelegramBotSettingsDialog
+        enabled={botEnabled}
+        setEnabled={setBotEnabled}
+        token={botToken}
+        setToken={setBotToken}
+        tokenConfigured={data.telegram_bot?.token_configured === true}
+        saving={botSaving}
+        testing={botTesting}
+        onCancel={() => { if (!botSaving && !botTesting) setBotSettingsOpen(false) }}
+        onTest={() => void testTelegramBot()}
+        onSave={() => void saveTelegramBot()}
+      />}
       {announcementOpen && <NotificationAnnouncementDialog
         title={announcementTitle}
         setTitle={setAnnouncementTitle}
@@ -17063,6 +17118,56 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
       {isAdmin && rawLogOpen && <NotificationRawLogDialog client={client} onClose={() => setRawLogOpen(false)} />}
     </AnimatePresence>
   </Panel>
+}
+
+function TelegramBotSettingsDialog({
+  enabled,
+  setEnabled,
+  token,
+  setToken,
+  tokenConfigured,
+  saving,
+  testing,
+  onCancel,
+  onTest,
+  onSave,
+}: {
+  enabled: boolean
+  setEnabled: (value: boolean) => void
+  token: string
+  setToken: (value: string) => void
+  tokenConfigured: boolean
+  saving: boolean
+  testing: boolean
+  onCancel: () => void
+  onTest: () => void
+  onSave: () => void
+}) {
+  const busy = saving || testing
+  return <MotionDialogPanel onCancel={onCancel} className="notification-channel-dialog">
+    <header className="dialog-head">
+      <div>
+        <h2 id="telegram-bot-settings-title">Telegram Bot 设置</h2>
+        <p className="muted">配置 OBoard 统一使用的 Telegram Bot。</p>
+      </div>
+      <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} disabled={busy} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body">
+      <div className="form notification-channel-form">
+        <FormField label="启用 Bot">
+          <Switch checked={enabled} onChange={setEnabled} ariaLabel="启用 Telegram Bot" />
+        </FormField>
+        <FormField label="Bot Token" required={enabled && !tokenConfigured} hint={tokenConfigured ? 'Token 已保存。留空会继续使用当前 Token。' : '从 @BotFather 获取 Bot Token。'}>
+          <input type="password" value={token} onChange={event => setToken(event.target.value)} placeholder={tokenConfigured ? '留空保持当前 Token' : '123456:ABC-DEF...'} autoComplete="new-password" spellCheck={false} autoFocus />
+        </FormField>
+      </div>
+    </div>
+    <footer className="dialog-actions">
+      <button type="button" className="ghost" onClick={onCancel} disabled={busy}>取消</button>
+      <button type="button" className="ghost" onClick={onTest} disabled={busy || (!token.trim() && !tokenConfigured)}>{testing ? '验证中…' : '验证 Bot'}</button>
+      <button type="button" onClick={onSave} disabled={busy || (enabled && !token.trim() && !tokenConfigured)}>{saving ? '保存中…' : '保存设置'}</button>
+    </footer>
+  </MotionDialogPanel>
 }
 
 function NotificationAnnouncementDialog({
@@ -17273,7 +17378,7 @@ function NotificationChannelDialog({
 
         <FormField label="通道类型" required>
           <Select variant="segmented" value={draft.type} onChange={event => switchType(event.target.value as 'telegram' | 'bark' | 'test')} aria-label="通道类型">
-            {isAdmin && <option value="telegram">全局 Telegram Bot</option>}
+            <option value="telegram">Telegram</option>
             <option value="bark">Bark</option>
             <option value="test">测试渠道</option>
           </Select>
@@ -17325,14 +17430,12 @@ function NotificationChannelDialog({
           </div>
         </FormField>
 
-        {draft.type === 'telegram' ? <>
-          <FormField label="Bot Token" required hint="管理员从 @BotFather 获取；全体用户通过此 Bot 绑定 OBoard 账户。">
-            <input value={draft.bot_token} onChange={e => update({ bot_token: e.target.value })} placeholder="123456:ABC-DEF..." autoComplete="off" />
-          </FormField>
-          <FormField label="管理员 Chat ID" required hint="接收服务器故障和管理员运维告警的个人或群组 ID。">
-            <input value={draft.chat_id} onChange={e => update({ chat_id: e.target.value })} placeholder="-1001234567890" autoComplete="off" />
-          </FormField>
-        </> : draft.type === 'bark' ? <>
+        {draft.type === 'telegram' ? (
+          <div className="notification-test-channel-hint">
+            <Bot size={15} />
+            <span>创建渠道后，在渠道列表中绑定 Telegram 账号。Bot Token 由管理员统一设置。</span>
+          </div>
+        ) : draft.type === 'bark' ? <>
           <FormField label="Device Key" required hint="Bark 设备 Key。">
             <input value={draft.device_key} onChange={e => update({ device_key: e.target.value })} placeholder="device key" autoComplete="off" />
           </FormField>
@@ -17352,7 +17455,7 @@ function NotificationChannelDialog({
     </div>
     <footer className="dialog-actions">
       <button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button>
-      <button type="button" className="ghost" onClick={onTest} disabled={saving || testing}>{testing ? '测试中…' : '发送测试'}</button>
+      <button type="button" className="ghost" onClick={onTest} disabled={saving || testing || (draft.type === 'telegram' && !draft.id)} title={draft.type === 'telegram' && !draft.id ? '创建并绑定账号后可发送测试' : '发送测试通知'}>{testing ? '测试中…' : '发送测试'}</button>
       <button type="button" onClick={onSave} disabled={saving || testing}>{saving ? '保存中…' : draft.id ? '保存修改' : '创建通道'}</button>
     </footer>
   </MotionDialogPanel>

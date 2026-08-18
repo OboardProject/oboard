@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -88,8 +89,17 @@ func TestNodeIncidentTelegramRecoveryFallsBackWhenEditFails(t *testing.T) {
 	if err := db.CreateUser(ctx, admin); err != nil {
 		t.Fatal(err)
 	}
-	channel := &model.NotificationChannel{OwnerUserID: admin.ID, Name: "ops", Type: "telegram", Enabled: true, Events: notificationServerOffline + "," + notificationServerOnline, ConfigJSON: `{"bot_token":"token","chat_id":"100","interactive":true,"allowed_chat_ids":"100"}`}
+	channel := &model.NotificationChannel{OwnerUserID: admin.ID, Name: "ops", Type: "telegram", Enabled: true, Events: notificationServerOffline + "," + notificationServerOnline, ConfigJSON: `{}`}
 	if err := db.CreateNotificationChannel(ctx, channel); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.saveTelegramBotConfig(ctx, telegramBotConfig{Enabled: true, BotToken: "token"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateTelegramBindingCode(ctx, security.HashSecret("ADMINCODE"), admin.ID, time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ConsumeTelegramBindingCode(ctx, security.HashSecret("ADMINCODE"), channel.ID, 100, 1000, "private", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	server := &model.Server{Name: "edge", Status: model.ServerOffline, OfflineNotifyEnabled: true}
@@ -151,19 +161,22 @@ func TestTelegramGlobalBotAcceptsAccountBindingFromAnyChat(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	channel := &model.NotificationChannel{OwnerUserID: admin.ID, Name: "global", Type: "telegram", Enabled: true, Events: notificationServerOffline, ConfigJSON: `{"bot_token":"global-token","chat_id":"100","interactive":true}`}
+	channel := &model.NotificationChannel{OwnerUserID: viewer.ID, Name: "personal", Type: "telegram", Enabled: true, Events: notificationTrafficQuota, ConfigJSON: `{}`}
 	if err := db.CreateNotificationChannel(ctx, channel); err != nil {
 		t.Fatal(err)
 	}
+	if err := srv.saveTelegramBotConfig(ctx, telegramBotConfig{Enabled: true, BotToken: "global-token"}); err != nil {
+		t.Fatal(err)
+	}
 	bot, err := srv.globalTelegramBot(ctx)
-	if err != nil || bot.channelID != channel.ID || bot.botToken != "global-token" {
+	if err != nil || bot.botToken != "global-token" {
 		t.Fatalf("global bot=%#v err=%v", bot, err)
 	}
 	if err := db.CreateTelegramBindingCode(ctx, security.HashSecret("BINDCODE"), viewer.ID, time.Now().Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	var update telegramUpdate
-	if err := json.Unmarshal([]byte(`{"update_id":1,"message":{"message_id":1,"from":{"id":900},"chat":{"id":800,"type":"private"},"text":"/bind BINDCODE"}}`), &update); err != nil {
+	if err := json.Unmarshal([]byte(fmt.Sprintf(`{"update_id":1,"message":{"message_id":1,"from":{"id":900},"chat":{"id":800,"type":"private"},"text":"/bind %d BINDCODE"}}`, channel.ID)), &update); err != nil {
 		t.Fatal(err)
 	}
 	srv.telegramAPI = func(_ context.Context, _ string, _ string, _ url.Values) ([]byte, error) {
@@ -174,9 +187,9 @@ func TestTelegramGlobalBotAcceptsAccountBindingFromAnyChat(t *testing.T) {
 	if err != nil || binding.UserID != viewer.ID {
 		t.Fatalf("binding=%#v err=%v", binding, err)
 	}
-	second := model.NotificationChannel{OwnerUserID: admin.ID, Name: "second", Type: "telegram", Enabled: true, Events: notificationServerOffline, ConfigJSON: `{"bot_token":"second-token","chat_id":"101","interactive":true}`}
-	if err := srv.validateGlobalTelegramBotCandidate(ctx, second); !errors.Is(err, errTelegramBotAmbiguous) {
-		t.Fatalf("second enabled global bot should be rejected: %v", err)
+	second := model.NotificationChannel{OwnerUserID: viewer.ID, Name: "second", Type: "telegram", Enabled: true, Events: notificationTrafficQuota, ConfigJSON: `{}`}
+	if err := validateNotificationChannel(&second, model.RoleViewer); err != nil {
+		t.Fatalf("ordinary user Telegram channel should be accepted: %v", err)
 	}
 }
 
@@ -190,12 +203,14 @@ func TestTelegramBindingCodeRequiresConfiguredGlobalBot(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/telegram/binding-code", token, map[string]any{}, http.StatusServiceUnavailable)
-	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
-		"name": "global", "type": "telegram", "enabled": true, "events": notificationServerOffline,
-		"config_json": `{"bot_token":"global-token","chat_id":"100"}`,
-	}, http.StatusCreated)
-	created := request(t, h, http.MethodPost, "/api/v2/ui/telegram/binding-code", token, map[string]any{}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v2/ui/telegram/binding-code", token, map[string]any{"channel_id": 1}, http.StatusNotFound)
+	request(t, h, http.MethodPut, "/api/v2/ui/telegram-bot", token, map[string]any{"enabled": true, "bot_token": "global-token"}, http.StatusOK)
+	channel := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
+		"name": "personal", "type": "telegram", "enabled": true, "events": notificationServerOffline,
+		"config_json": `{}`,
+	}, http.StatusCreated)["notification_channel"].(map[string]any)
+	channelID := int64(channel["id"].(float64))
+	created := request(t, h, http.MethodPost, "/api/v2/ui/telegram/binding-code", token, map[string]any{"channel_id": channelID}, http.StatusCreated)
 	data, _ := created["data"].(map[string]any)
 	if strings.TrimSpace(data["code"].(string)) == "" {
 		t.Fatal("binding code is empty")

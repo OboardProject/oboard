@@ -562,10 +562,6 @@ func (s *Server) notificationChannels(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		if err := s.validateGlobalTelegramBotCandidate(r.Context(), v); err != nil {
-			fail(w, err, http.StatusConflict)
-			return
-		}
 		if err := s.validateNotificationTargets(r.Context(), &v, user.ID, role); err != nil {
 			fail(w, err, 400)
 			return
@@ -616,10 +612,6 @@ func (s *Server) notificationChannels(w http.ResponseWriter, r *http.Request) {
 		// after defaults for missing string fields.
 		if err := validateNotificationChannel(&v, role); err != nil {
 			fail(w, err, 400)
-			return
-		}
-		if err := s.validateGlobalTelegramBotCandidate(r.Context(), v); err != nil {
-			fail(w, err, http.StatusConflict)
 			return
 		}
 		if err := s.validateNotificationTargets(r.Context(), &v, user.ID, role); err != nil {
@@ -685,8 +677,14 @@ func (s *Server) testNotificationChannelByID(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	title, body := notificationTestMessage(item.Name, item.Type)
-	if err := s.notificationSender(r.Context(), *item, title, body); err != nil {
-		fail(w, fmt.Errorf("发送测试通知失败: %w", err), 502)
+	var sendErr error
+	if item.Type == "telegram" {
+		sendErr = s.sendTelegramChannelNotification(r.Context(), *item, title, body)
+	} else {
+		sendErr = s.notificationSender(r.Context(), *item, title, body)
+	}
+	if sendErr != nil {
+		fail(w, fmt.Errorf("发送测试通知失败: %w", sendErr), 502)
 		return
 	}
 	auditReq(s, r, "notify_test", "notification_channel", fmt.Sprint(id))
@@ -703,12 +701,12 @@ func (s *Server) testNotificationChannelBody(w http.ResponseWriter, r *http.Requ
 		fail(w, err, 400)
 		return
 	}
-	if err := s.validateGlobalTelegramBotCandidate(r.Context(), v); err != nil {
-		fail(w, err, http.StatusConflict)
-		return
-	}
 	if err := s.validateNotificationTargets(r.Context(), &v, ownerUserID, role); err != nil {
 		fail(w, err, 400)
+		return
+	}
+	if v.Type == "telegram" {
+		fail(w, errors.New("请先创建 Telegram 通知渠道并绑定账号，再发送测试通知"), http.StatusBadRequest)
 		return
 	}
 	title, body := notificationTestMessage(v.Name, v.Type)
@@ -753,27 +751,7 @@ func validateNotificationChannel(v *model.NotificationChannel, role model.Role) 
 	}
 	switch v.Type {
 	case "telegram":
-		if !roleAllows(role, model.RoleAdmin) {
-			return errors.New("Telegram Bot 只能由管理员统一配置")
-		}
-		botToken, _ := tmp["bot_token"].(string)
-		chatID := ""
-		switch id := tmp["chat_id"].(type) {
-		case string:
-			chatID = id
-		case float64:
-			chatID = strconv.FormatInt(int64(id), 10)
-		}
-		if strings.TrimSpace(botToken) == "" || strings.TrimSpace(chatID) == "" {
-			return errors.New("通知渠道 Telegram 需要填写 Bot Token 和 Chat ID")
-		}
-		tmp["interactive"] = true
-		delete(tmp, "allowed_chat_ids")
-		encoded, err := json.Marshal(tmp)
-		if err != nil {
-			return err
-		}
-		v.ConfigJSON = string(encoded)
+		v.ConfigJSON = "{}"
 	case "bark":
 		deviceKey, _ := tmp["device_key"].(string)
 		if strings.TrimSpace(deviceKey) == "" {
@@ -1091,14 +1069,7 @@ func (s *Server) enqueueNotificationEvent(ctx context.Context, event notificatio
 		return 0
 	}
 	queued := 0
-	globalBot, globalBotErr := s.globalTelegramBot(ctx)
 	for _, channel := range channels {
-		if channel.Type == "telegram" && (globalBotErr != nil || globalBot.channelID != channel.ID) {
-			continue
-		}
-		if (event.Name == notificationServerOffline || event.Name == notificationServerOnline) && channel.Type == "telegram" && telegramChannelInteractive(channel) {
-			continue
-		}
 		owner, err := s.store.GetUser(ctx, channel.OwnerUserID)
 		if err != nil || owner.Status != "active" {
 			continue
@@ -1138,12 +1109,8 @@ func (s *Server) enqueueForcedAdminNotification(ctx context.Context, event notif
 		return 0
 	}
 	queued := 0
-	globalBot, globalBotErr := s.globalTelegramBot(ctx)
 	for _, channel := range channels {
 		if channel.Type != "telegram" && channel.Type != "bark" {
-			continue
-		}
-		if channel.Type == "telegram" && (globalBotErr != nil || globalBot.channelID != channel.ID) {
 			continue
 		}
 		owner, err := s.store.GetUser(ctx, channel.OwnerUserID)
@@ -1257,12 +1224,7 @@ func (s *Server) deliverPendingNotifications(ctx context.Context) {
 	for _, delivery := range deliveries {
 		var sendErr error
 		if delivery.Channel.Type == "telegram" {
-			bot, botErr := s.globalTelegramBot(ctx)
-			if botErr != nil || bot.channelID != delivery.Channel.ID {
-				sendErr = errors.New("telegram_global_bot_unavailable")
-			} else {
-				sendErr = s.notificationSender(ctx, delivery.Channel, delivery.Title, delivery.Body)
-			}
+			sendErr = s.sendTelegramChannelNotification(ctx, delivery.Channel, delivery.Title, delivery.Body)
 		} else {
 			sendErr = s.notificationSender(ctx, delivery.Channel, delivery.Title, delivery.Body)
 		}
@@ -1919,6 +1881,47 @@ func formatNotificationBytesUnsigned(value uint64) string {
 		return fmt.Sprintf("%d %s", value, units[unit])
 	}
 	return fmt.Sprintf("%.2f %s", number, units[unit])
+}
+
+func (s *Server) sendTelegramChannelNotification(ctx context.Context, channel model.NotificationChannel, title, body string) error {
+	bot, err := s.globalTelegramBot(ctx)
+	if err != nil {
+		return err
+	}
+	bindings, err := s.store.ListTelegramBindingsByChannel(ctx, channel.ID)
+	if err != nil {
+		return err
+	}
+	if len(bindings) == 0 {
+		return errors.New("Telegram 通知渠道尚未绑定账号")
+	}
+	seen := map[int64]bool{}
+	sent := 0
+	failures := []string{}
+	for _, binding := range bindings {
+		if binding.ChatID == 0 || seen[binding.ChatID] {
+			continue
+		}
+		seen[binding.ChatID] = true
+		deliveryChannel := channel
+		config, _ := json.Marshal(map[string]string{
+			"bot_token": bot.botToken,
+			"chat_id":   strconv.FormatInt(binding.ChatID, 10),
+		})
+		deliveryChannel.ConfigJSON = string(config)
+		if err := s.notificationSender(ctx, deliveryChannel, title, body); err != nil {
+			failures = append(failures, err.Error())
+			continue
+		}
+		sent++
+	}
+	if sent == 0 {
+		if len(failures) > 0 {
+			return fmt.Errorf("Telegram 通知发送失败: %s", strings.Join(failures, "; "))
+		}
+		return errors.New("Telegram 通知渠道没有有效绑定")
+	}
+	return nil
 }
 
 func sendNotification(ctx context.Context, channel model.NotificationChannel, title, body string) error {

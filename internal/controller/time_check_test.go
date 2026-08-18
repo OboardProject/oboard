@@ -101,7 +101,8 @@ func TestDailyTimeCheckStoresResultAndNotifiesAdminsOnce(t *testing.T) {
 	viewer := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "viewer", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
 	viewerLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)
 	viewerToken := viewerLogin["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{"name": "admin-clock", "type": "telegram", "enabled": true, "events": notificationServerOffline, "config_json": `{"bot_token":"admin","chat_id":"1"}`}, http.StatusCreated)
+	channel := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{"name": "admin-clock", "type": "telegram", "enabled": true, "events": notificationServerOffline, "config_json": `{}`}, http.StatusCreated)["notification_channel"].(map[string]any)
+	bindTestTelegramChannel(t, srv, db, int64(channel["id"].(float64)), 1)
 	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{"name": "viewer-other", "type": "bark", "enabled": true, "events": notificationAdminAnnouncement, "config_json": `{"device_key":"viewer"}`}, http.StatusCreated)
 
 	var sentMu sync.Mutex

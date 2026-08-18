@@ -127,16 +127,6 @@ func (s *Server) finalizeRecoveredNodeIncidents(ctx context.Context, nowTime tim
 	}
 }
 
-func telegramChannelInteractive(channel model.NotificationChannel) bool {
-	if channel.Type != "telegram" {
-		return false
-	}
-	var cfg struct {
-		Interactive bool `json:"interactive"`
-	}
-	return json.Unmarshal([]byte(channel.ConfigJSON), &cfg) == nil && cfg.Interactive
-}
-
 type telegramIncidentTarget struct {
 	Channel model.NotificationChannel
 	Token   string
@@ -148,36 +138,34 @@ func (s *Server) telegramIncidentTargets(ctx context.Context) []telegramIncident
 	if err != nil {
 		return nil
 	}
-	channel, err := s.store.GetNotificationChannel(ctx, bot.channelID)
-	if err != nil || !notificationEventEnabled(channel.Events, notificationServerOffline) {
-		return nil
-	}
-	var cfg struct {
-		ChatID string `json:"chat_id"`
-	}
-	if json.Unmarshal([]byte(channel.ConfigJSON), &cfg) != nil {
+	channels, err := s.store.ListEnabledNotificationChannels(ctx, notificationServerOffline)
+	if err != nil {
 		return nil
 	}
 	targets := []telegramIncidentTarget{}
 	seen := map[int64]bool{}
-	add := func(chatID int64) {
-		if chatID == 0 || seen[chatID] {
-			return
-		}
-		seen[chatID] = true
-		targets = append(targets, telegramIncidentTarget{Channel: *channel, Token: bot.botToken, ChatID: chatID})
-	}
-	configuredChatID, _ := strconv.ParseInt(strings.TrimSpace(cfg.ChatID), 10, 64)
-	add(configuredChatID)
-	bindings, _ := s.store.ListTelegramBindingsByChannel(ctx, channel.ID)
-	for _, binding := range bindings {
-		user, userErr := s.store.GetUser(ctx, binding.UserID)
-		if userErr != nil || user.Status != "active" {
+	for _, channel := range channels {
+		if channel.Type != "telegram" {
 			continue
 		}
-		bindingRole, roleErr := s.store.EffectiveUserRole(ctx, *user)
-		if roleErr == nil && roleAllows(bindingRole, model.RoleAdmin) {
-			add(binding.ChatID)
+		owner, ownerErr := s.store.GetUser(ctx, channel.OwnerUserID)
+		if ownerErr != nil || owner.Status != "active" {
+			continue
+		}
+		role, roleErr := s.store.EffectiveUserRole(ctx, *owner)
+		if roleErr != nil || !roleAllows(role, model.RoleAdmin) {
+			continue
+		}
+		bindings, bindingErr := s.store.ListTelegramBindingsByChannel(ctx, channel.ID)
+		if bindingErr != nil {
+			continue
+		}
+		for _, binding := range bindings {
+			if binding.ChatID == 0 || seen[binding.ChatID] {
+				continue
+			}
+			seen[binding.ChatID] = true
+			targets = append(targets, telegramIncidentTarget{Channel: channel, Token: bot.botToken, ChatID: binding.ChatID})
 		}
 	}
 	return targets

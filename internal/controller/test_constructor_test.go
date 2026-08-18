@@ -8,6 +8,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 )
 
@@ -31,6 +32,25 @@ func snapshotBindingsFromData(data store.FullRoutingConfig) []model.ProxyPathUse
 
 func newTestServer(store *store.Store, sessionSecret, staticDir string) *Server {
 	return New(store, sessionSecret, staticDir, "", nil)
+}
+
+func bindTestTelegramChannel(t *testing.T, server *Server, db *store.Store, channelID, chatID int64) {
+	t.Helper()
+	ctx := context.Background()
+	channel, err := db.GetNotificationChannel(ctx, channelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.saveTelegramBotConfig(ctx, telegramBotConfig{Enabled: true, BotToken: "test-telegram-token"}); err != nil {
+		t.Fatal(err)
+	}
+	code := fmt.Sprintf("bind-channel-%d-%d", channelID, chatID)
+	if err := db.CreateTelegramBindingCode(ctx, security.HashSecret(code), channel.OwnerUserID, time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ConsumeTelegramBindingCode(ctx, security.HashSecret(code), channelID, chatID, chatID+1000, "private", time.Now()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // grantTestPlanInboundNode binds the user to a fresh plan containing the
