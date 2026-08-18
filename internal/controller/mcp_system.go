@@ -1307,6 +1307,9 @@ func (s *Server) notificationChannelAutomationCandidate(ctx context.Context, pri
 		if err := validateNotificationChannel(&channel, principal.Role); err != nil {
 			return model.NotificationChannel{}, nil, err
 		}
+		if err := s.validateGlobalTelegramBotCandidate(ctx, channel); err != nil {
+			return model.NotificationChannel{}, nil, err
+		}
 		if err := s.validateNotificationTargets(ctx, &channel, *principal.UserID, principal.Role); err != nil {
 			return model.NotificationChannel{}, nil, err
 		}
@@ -1341,6 +1344,9 @@ func (s *Server) notificationChannelAutomationCandidate(ctx context.Context, pri
 	merged.ID = current.ID
 	merged.OwnerUserID = *principal.UserID
 	if err := validateNotificationChannel(&merged, principal.Role); err != nil {
+		return model.NotificationChannel{}, nil, err
+	}
+	if err := s.validateGlobalTelegramBotCandidate(ctx, merged); err != nil {
 		return model.NotificationChannel{}, nil, err
 	}
 	if err := s.validateNotificationTargets(ctx, &merged, *principal.UserID, principal.Role); err != nil {

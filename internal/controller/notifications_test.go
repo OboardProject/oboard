@@ -81,9 +81,9 @@ func TestValidateNotificationChannelRequiresTypedConfig(t *testing.T) {
 func TestNotificationTemplateValidationIsEventScoped(t *testing.T) {
 	channel := &model.NotificationChannel{
 		Name:       "self",
-		Type:       "telegram",
+		Type:       "bark",
 		Events:     notificationTrafficQuota,
-		ConfigJSON: `{"bot_token":"tok","chat_id":"1"}`,
+		ConfigJSON: `{"device_key":"viewer"}`,
 		TemplatesJSON: mustJSON(t, map[string]model.NotificationTemplate{
 			notificationTrafficQuota: {Title: "{{.ServerName}}", Body: "{{.Used}}"},
 		}),
@@ -386,14 +386,14 @@ func TestNotificationDispatchScopeTemplatesAndDedupe(t *testing.T) {
 	viewerToken := viewerLogin["token"].(string)
 
 	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{
-		"name": "viewer", "type": "telegram", "enabled": true, "events": notificationTrafficQuota + "," + notificationAdminAnnouncement,
-		"config_json":    `{"bot_token":"viewer-token","chat_id":"100"}`,
+		"name": "viewer", "type": "bark", "enabled": true, "events": notificationTrafficQuota + "," + notificationAdminAnnouncement,
+		"config_json":    `{"device_key":"viewer"}`,
 		"templates_json": mustJSON(t, map[string]model.NotificationTemplate{notificationTrafficQuota: {Title: "自定义 · {{.UserName}}", Body: "剩余 0，已用 {{.Used}}"}}),
 	}, http.StatusCreated)
 	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{
-		"name": "admin", "type": "telegram", "enabled": true,
+		"name": "admin", "type": "bark", "enabled": true,
 		"events":   notificationServerOffline + "," + notificationTrafficQuota + "," + notificationTaskFailed,
-		"user_ids": []int64{adminID, viewerID}, "config_json": `{"bot_token":"admin-token","chat_id":"200"}`,
+		"user_ids": []int64{adminID, viewerID}, "config_json": `{"device_key":"admin"}`,
 	}, http.StatusCreated)
 
 	type sentMessage struct {
@@ -597,8 +597,8 @@ func TestConnectionAuditRiskNotificationTargetsUserAndAdmin(t *testing.T) {
 	createdUser := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "viewer", "nickname": "小王", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	viewerID := int64(createdUser["user"].(map[string]any)["id"].(float64))
 	viewerToken := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{"name": "viewer-risk", "type": "telegram", "enabled": true, "events": notificationUserRisk, "config_json": `{"bot_token":"viewer","chat_id":"1"}`}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{"name": "admin-risk", "type": "telegram", "enabled": true, "events": notificationUserRisk, "user_ids": []int64{viewerID}, "config_json": `{"bot_token":"admin","chat_id":"2"}`}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{"name": "viewer-risk", "type": "bark", "enabled": true, "events": notificationUserRisk, "config_json": `{"device_key":"viewer"}`}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{"name": "admin-risk", "type": "bark", "enabled": true, "events": notificationUserRisk, "user_ids": []int64{viewerID}, "config_json": `{"device_key":"admin"}`}, http.StatusCreated)
 
 	server := model.Server{Name: "risk-node", AgentID: "risk-agent", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010}
 	if err := db.CreateServer(context.Background(), &server); err != nil {
@@ -817,8 +817,8 @@ func TestTaskTimeoutAndAdminAnnouncementQueue(t *testing.T) {
 	viewerID := int64(createdUser["user"].(map[string]any)["id"].(float64))
 	viewerLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)
 	viewerToken := viewerLogin["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{"name": "admin", "type": "telegram", "enabled": true, "events": notificationTaskTimeout, "config_json": `{"bot_token":"admin","chat_id":"1"}`}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{"name": "viewer", "type": "telegram", "enabled": true, "events": notificationAdminAnnouncement, "config_json": `{"bot_token":"viewer","chat_id":"2"}`}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{"name": "admin", "type": "bark", "enabled": true, "events": notificationTaskTimeout, "config_json": `{"device_key":"admin"}`}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{"name": "viewer", "type": "bark", "enabled": true, "events": notificationAdminAnnouncement, "config_json": `{"device_key":"viewer"}`}, http.StatusCreated)
 
 	var sentMu sync.Mutex
 	sent := []string{}

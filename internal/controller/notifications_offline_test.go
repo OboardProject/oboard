@@ -301,22 +301,24 @@ func TestBarkGroupValidationInChannelConfig(t *testing.T) {
 	}
 }
 
-func TestTelegramInteractiveChannelValidation(t *testing.T) {
-	channel := &model.NotificationChannel{Name: "bot", Type: "telegram", Events: notificationServerOffline, ConfigJSON: `{"bot_token":"tok","chat_id":"1","interactive":true,"allowed_chat_ids":""}`}
-	if err := validateNotificationChannel(channel, model.RoleAdmin); err == nil {
-		t.Fatal("interactive channel without allowed chat ids should fail")
-	}
-	channel.ConfigJSON = `{"bot_token":"tok","chat_id":"1","interactive":true,"allowed_chat_ids":"abc"}`
-	if err := validateNotificationChannel(channel, model.RoleAdmin); err == nil {
-		t.Fatal("non-numeric chat id should fail")
-	}
-	channel.ConfigJSON = `{"bot_token":"tok","chat_id":"1","interactive":true,"allowed_chat_ids":"123, 456"}`
+func TestTelegramGlobalBotChannelValidation(t *testing.T) {
+	channel := &model.NotificationChannel{Name: "bot", Type: "telegram", Events: notificationServerOffline, ConfigJSON: `{"bot_token":"tok","chat_id":"1","interactive":false,"allowed_chat_ids":"123"}`}
 	if err := validateNotificationChannel(channel, model.RoleAdmin); err != nil {
-		t.Fatalf("valid interactive channel rejected: %v", err)
+		t.Fatalf("administrator global bot rejected: %v", err)
 	}
-	channel.ConfigJSON = `{"bot_token":"tok","chat_id":"1","interactive":false,"allowed_chat_ids":""}`
-	if err := validateNotificationChannel(channel, model.RoleAdmin); err != nil {
-		t.Fatalf("non-interactive channel should not require chat ids: %v", err)
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(channel.ConfigJSON), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["interactive"] != true {
+		t.Fatalf("global bot must always enable account-bound commands: %s", channel.ConfigJSON)
+	}
+	if _, exists := cfg["allowed_chat_ids"]; exists {
+		t.Fatalf("global bot must not retain a static chat allowlist: %s", channel.ConfigJSON)
+	}
+	viewerChannel := &model.NotificationChannel{Name: "personal-bot", Type: "telegram", Events: notificationTrafficQuota, ConfigJSON: `{"bot_token":"viewer","chat_id":"2"}`}
+	if err := validateNotificationChannel(viewerChannel, model.RoleViewer); err == nil || !strings.Contains(err.Error(), "管理员") {
+		t.Fatalf("ordinary user Telegram bot configuration should be rejected: %v", err)
 	}
 }
 

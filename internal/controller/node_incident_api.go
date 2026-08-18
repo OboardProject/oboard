@@ -359,6 +359,9 @@ func (s *Server) apiV2NotificationBroadcasts(w http.ResponseWriter, r *http.Requ
 	if actionPath == r.URL.Path {
 		actionPath = strings.TrimPrefix(r.URL.Path, "/api/v2/ui/notification-broadcasts/")
 	}
+	if actionPath == r.URL.Path {
+		actionPath = strings.TrimPrefix(r.URL.Path, "/api/v1/notification-broadcasts/")
+	}
 	switch actionPath {
 	case "preview":
 		var request notificationBroadcastOperation
@@ -429,6 +432,16 @@ func (s *Server) apiV2TelegramBindingCode(w http.ResponseWriter, r *http.Request
 		v2Error(w, r, http.StatusForbidden, "user_inactive", "当前用户不可绑定 Telegram")
 		return
 	}
+	if _, err := s.globalTelegramBot(r.Context()); err != nil {
+		status := http.StatusServiceUnavailable
+		code := "telegram_bot_not_configured"
+		if errors.Is(err, errTelegramBotAmbiguous) {
+			status = http.StatusConflict
+			code = "telegram_bot_ambiguous"
+		}
+		v2Error(w, r, status, code, err.Error())
+		return
+	}
 	secret, err := security.RandomToken(12)
 	if err != nil {
 		v2HandleError(w, r, err)
@@ -465,6 +478,9 @@ func (s *Server) apiV2TelegramBindings(w http.ResponseWriter, r *http.Request) {
 		rawID := strings.TrimPrefix(r.URL.Path, "/api/v2/telegram/bindings/")
 		if rawID == r.URL.Path {
 			rawID = strings.TrimPrefix(r.URL.Path, "/api/v2/ui/telegram/bindings/")
+		}
+		if rawID == r.URL.Path {
+			rawID = strings.TrimPrefix(r.URL.Path, "/api/v1/telegram/bindings/")
 		}
 		id, err := strconv.ParseInt(rawID, 10, 64)
 		if err != nil || id <= 0 {

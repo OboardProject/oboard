@@ -562,6 +562,10 @@ func (s *Server) notificationChannels(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if err := s.validateGlobalTelegramBotCandidate(r.Context(), v); err != nil {
+			fail(w, err, http.StatusConflict)
+			return
+		}
 		if err := s.validateNotificationTargets(r.Context(), &v, user.ID, role); err != nil {
 			fail(w, err, 400)
 			return
@@ -612,6 +616,10 @@ func (s *Server) notificationChannels(w http.ResponseWriter, r *http.Request) {
 		// after defaults for missing string fields.
 		if err := validateNotificationChannel(&v, role); err != nil {
 			fail(w, err, 400)
+			return
+		}
+		if err := s.validateGlobalTelegramBotCandidate(r.Context(), v); err != nil {
+			fail(w, err, http.StatusConflict)
 			return
 		}
 		if err := s.validateNotificationTargets(r.Context(), &v, user.ID, role); err != nil {
@@ -695,6 +703,10 @@ func (s *Server) testNotificationChannelBody(w http.ResponseWriter, r *http.Requ
 		fail(w, err, 400)
 		return
 	}
+	if err := s.validateGlobalTelegramBotCandidate(r.Context(), v); err != nil {
+		fail(w, err, http.StatusConflict)
+		return
+	}
 	if err := s.validateNotificationTargets(r.Context(), &v, ownerUserID, role); err != nil {
 		fail(w, err, 400)
 		return
@@ -741,6 +753,9 @@ func validateNotificationChannel(v *model.NotificationChannel, role model.Role) 
 	}
 	switch v.Type {
 	case "telegram":
+		if !roleAllows(role, model.RoleAdmin) {
+			return errors.New("Telegram Bot 只能由管理员统一配置")
+		}
 		botToken, _ := tmp["bot_token"].(string)
 		chatID := ""
 		switch id := tmp["chat_id"].(type) {
@@ -752,12 +767,8 @@ func validateNotificationChannel(v *model.NotificationChannel, role model.Role) 
 		if strings.TrimSpace(botToken) == "" || strings.TrimSpace(chatID) == "" {
 			return errors.New("通知渠道 Telegram 需要填写 Bot Token 和 Chat ID")
 		}
-		if interactive, _ := tmp["interactive"].(bool); interactive {
-			allowed, _ := tmp["allowed_chat_ids"].(string)
-			if err := validateTelegramAllowedChatIDs(allowed); err != nil {
-				return err
-			}
-		}
+		tmp["interactive"] = true
+		delete(tmp, "allowed_chat_ids")
 		encoded, err := json.Marshal(tmp)
 		if err != nil {
 			return err
@@ -802,31 +813,6 @@ func validateNotificationChannel(v *model.NotificationChannel, role model.Role) 
 		return err
 	}
 	v.TemplatesJSON = templatesJSON
-	return nil
-}
-
-func validateTelegramAllowedChatIDs(raw string) error {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return errors.New("启用 Telegram 互动后需要填写允许互动的 Chat ID")
-	}
-	seen := map[string]bool{}
-	for _, part := range strings.Split(raw, ",") {
-		value := strings.TrimSpace(part)
-		if value == "" {
-			continue
-		}
-		if _, err := strconv.ParseInt(value, 10, 64); err != nil {
-			return errors.New("Telegram 互动的 Chat ID 必须是数字，多个用英文逗号分隔")
-		}
-		if seen[value] {
-			return errors.New("Telegram 互动的 Chat ID 不能重复")
-		}
-		seen[value] = true
-	}
-	if len(seen) == 0 {
-		return errors.New("启用 Telegram 互动后需要填写允许互动的 Chat ID")
-	}
 	return nil
 }
 
@@ -1105,7 +1091,11 @@ func (s *Server) enqueueNotificationEvent(ctx context.Context, event notificatio
 		return 0
 	}
 	queued := 0
+	globalBot, globalBotErr := s.globalTelegramBot(ctx)
 	for _, channel := range channels {
+		if channel.Type == "telegram" && (globalBotErr != nil || globalBot.channelID != channel.ID) {
+			continue
+		}
 		if (event.Name == notificationServerOffline || event.Name == notificationServerOnline) && channel.Type == "telegram" && telegramChannelInteractive(channel) {
 			continue
 		}
@@ -1148,8 +1138,12 @@ func (s *Server) enqueueForcedAdminNotification(ctx context.Context, event notif
 		return 0
 	}
 	queued := 0
+	globalBot, globalBotErr := s.globalTelegramBot(ctx)
 	for _, channel := range channels {
 		if channel.Type != "telegram" && channel.Type != "bark" {
+			continue
+		}
+		if channel.Type == "telegram" && (globalBotErr != nil || globalBot.channelID != channel.ID) {
 			continue
 		}
 		owner, err := s.store.GetUser(ctx, channel.OwnerUserID)
@@ -1261,7 +1255,17 @@ func (s *Server) deliverPendingNotifications(ctx context.Context) {
 		return
 	}
 	for _, delivery := range deliveries {
-		sendErr := s.notificationSender(ctx, delivery.Channel, delivery.Title, delivery.Body)
+		var sendErr error
+		if delivery.Channel.Type == "telegram" {
+			bot, botErr := s.globalTelegramBot(ctx)
+			if botErr != nil || bot.channelID != delivery.Channel.ID {
+				sendErr = errors.New("telegram_global_bot_unavailable")
+			} else {
+				sendErr = s.notificationSender(ctx, delivery.Channel, delivery.Title, delivery.Body)
+			}
+		} else {
+			sendErr = s.notificationSender(ctx, delivery.Channel, delivery.Title, delivery.Body)
+		}
 		retryDelay := time.Minute
 		if delivery.Attempts >= 1 {
 			retryDelay = 5 * time.Minute

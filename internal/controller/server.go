@@ -2216,6 +2216,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			if err == nil {
 				out["notification_channels"] = publicNotificationChannels(channels)
 				out["notification_config"] = notificationPageConfig(role)
+				out["telegram_bot"] = s.telegramBotPublicStatus(ctx)
 			}
 		} else {
 			err = errors.New("invalid session")

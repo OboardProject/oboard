@@ -113,6 +113,10 @@ func (s *Server) validateNotificationBroadcastOperation(ctx context.Context, pri
 }
 
 func (s *Server) resolveNotificationBroadcastRecipients(ctx context.Context, actorUserID int64, filter notificationBroadcastFilter) (notificationBroadcastPreview, error) {
+	bot, err := s.globalTelegramBot(ctx)
+	if err != nil {
+		return notificationBroadcastPreview{}, err
+	}
 	users, err := s.store.ListUsers(ctx)
 	if err != nil {
 		return notificationBroadcastPreview{}, err
@@ -171,8 +175,7 @@ func (s *Server) resolveNotificationBroadcastRecipients(ctx context.Context, act
 		}
 		eligible := userBindings[:0]
 		for _, binding := range userBindings {
-			channel, channelErr := s.store.GetNotificationChannel(ctx, binding.ChannelID)
-			if channelErr == nil && channel.Enabled && channel.Type == "telegram" {
+			if binding.ChannelID == bot.channelID {
 				eligible = append(eligible, binding)
 			}
 		}
@@ -218,11 +221,8 @@ func (s *Server) deliverPendingTelegramBroadcasts(ctx context.Context) {
 		s.logPeriodicError("pending-telegram-broadcasts", "list pending Telegram broadcasts: %v", err)
 		return
 	}
+	bot, botErr := s.globalTelegramBot(ctx)
 	for _, target := range targets {
-		var cfg struct {
-			BotToken string `json:"bot_token"`
-		}
-		_ = json.Unmarshal([]byte(target.Channel.ConfigJSON), &cfg)
 		var sendErr error
 		user, userErr := s.store.GetUser(ctx, target.UserID)
 		bindingActive := false
@@ -233,10 +233,10 @@ func (s *Server) deliverPendingTelegramBroadcasts(ctx context.Context) {
 			sendErr = errors.New("broadcast_recipient_inactive")
 		} else if !bindingActive {
 			sendErr = errors.New("telegram_binding_revoked")
-		} else if target.ChatID == nil || strings.TrimSpace(cfg.BotToken) == "" {
+		} else if botErr != nil || target.ChannelID == nil || *target.ChannelID != bot.channelID || target.ChatID == nil {
 			sendErr = errors.New("telegram_binding_or_bot_unavailable")
 		} else {
-			_, sendErr = s.telegramIncidentSend(ctx, cfg.BotToken, *target.ChatID, target.Broadcast.Title+"\n"+target.Broadcast.Body)
+			_, sendErr = s.telegramIncidentSend(ctx, bot.botToken, *target.ChatID, target.Broadcast.Title+"\n"+target.Broadcast.Body)
 		}
 		retry := time.Now().UTC().Add(time.Minute)
 		if target.Attempts > 0 {

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 )
 
@@ -131,6 +133,72 @@ func TestNodeIncidentTelegramRecoveryFallsBackWhenEditFails(t *testing.T) {
 	message, err = db.GetNodeIncidentTelegramMessage(ctx, incident.ID, 100)
 	if err != nil || message.MessageID != 1 || message.FallbackMessageID != 2 || !strings.Contains(message.LastError, "message to edit not found") {
 		t.Fatalf("fallback message=%#v err=%v", message, err)
+	}
+}
+
+func TestTelegramGlobalBotAcceptsAccountBindingFromAnyChat(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "global-telegram.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "admin", PasswordHash: "hash", Role: model.RoleAdmin, Status: "active", ProxyUUID: "admin-uuid", ProxyPassword: "admin-pass"}
+	viewer := &model.User{Username: "viewer", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "viewer-uuid", ProxyPassword: "viewer-pass"}
+	for _, user := range []*model.User{admin, viewer} {
+		if err := db.CreateUser(ctx, user); err != nil {
+			t.Fatal(err)
+		}
+	}
+	channel := &model.NotificationChannel{OwnerUserID: admin.ID, Name: "global", Type: "telegram", Enabled: true, Events: notificationServerOffline, ConfigJSON: `{"bot_token":"global-token","chat_id":"100","interactive":true}`}
+	if err := db.CreateNotificationChannel(ctx, channel); err != nil {
+		t.Fatal(err)
+	}
+	bot, err := srv.globalTelegramBot(ctx)
+	if err != nil || bot.channelID != channel.ID || bot.botToken != "global-token" {
+		t.Fatalf("global bot=%#v err=%v", bot, err)
+	}
+	if err := db.CreateTelegramBindingCode(ctx, security.HashSecret("BINDCODE"), viewer.ID, time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	var update telegramUpdate
+	if err := json.Unmarshal([]byte(`{"update_id":1,"message":{"message_id":1,"from":{"id":900},"chat":{"id":800,"type":"private"},"text":"/bind BINDCODE"}}`), &update); err != nil {
+		t.Fatal(err)
+	}
+	srv.telegramAPI = func(_ context.Context, _ string, _ string, _ url.Values) ([]byte, error) {
+		return []byte(`{"ok":true,"result":{"message_id":1}}`), nil
+	}
+	srv.handleTelegramUpdate(ctx, *bot, update, &telegramBotRateLimiter{counts: map[string][]time.Time{}})
+	binding, err := db.GetTelegramBinding(ctx, channel.ID, 800, 900)
+	if err != nil || binding.UserID != viewer.ID {
+		t.Fatalf("binding=%#v err=%v", binding, err)
+	}
+	second := model.NotificationChannel{OwnerUserID: admin.ID, Name: "second", Type: "telegram", Enabled: true, Events: notificationServerOffline, ConfigJSON: `{"bot_token":"second-token","chat_id":"101","interactive":true}`}
+	if err := srv.validateGlobalTelegramBotCandidate(ctx, second); !errors.Is(err, errTelegramBotAmbiguous) {
+		t.Fatalf("second enabled global bot should be rejected: %v", err)
+	}
+}
+
+func TestTelegramBindingCodeRequiresConfiguredGlobalBot(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "binding-api.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+	request(t, h, http.MethodPost, "/api/v2/ui/telegram/binding-code", token, map[string]any{}, http.StatusServiceUnavailable)
+	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
+		"name": "global", "type": "telegram", "enabled": true, "events": notificationServerOffline,
+		"config_json": `{"bot_token":"global-token","chat_id":"100"}`,
+	}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v2/ui/telegram/binding-code", token, map[string]any{}, http.StatusCreated)
+	data, _ := created["data"].(map[string]any)
+	if strings.TrimSpace(data["code"].(string)) == "" {
+		t.Fatal("binding code is empty")
 	}
 }
 

@@ -16740,8 +16740,6 @@ type NotificationDraft = {
   events: string[]
   bot_token: string
   chat_id: string
-  interactive: boolean
-  allowed_chat_ids: string
   server_url: string
   device_key: string
   bark_group: string
@@ -16764,8 +16762,6 @@ function emptyNotificationDraft(defaults: Record<string, NotificationTemplate>, 
     events: eventOptions.filter(option => option.value !== 'subscription_risk_detected' && (!isAdmin || option.value !== 'admin_announcement')).map(option => option.value),
     bot_token: '',
     chat_id: '',
-    interactive: false,
-    allowed_chat_ids: '',
     server_url: 'https://api.day.app',
     device_key: '',
     bark_group: '',
@@ -16785,8 +16781,6 @@ function notificationDraftFromChannel(channel: NotificationChannel, defaults: Re
     events: String(channel.events || '').split(',').map(x => x.trim()).filter(Boolean),
     bot_token: String(cfg.bot_token || ''),
     chat_id: String(cfg.chat_id ?? ''),
-    interactive: Boolean(cfg.interactive),
-    allowed_chat_ids: String(cfg.allowed_chat_ids || ''),
     server_url: String(cfg.server_url || 'https://api.day.app'),
     device_key: String(cfg.device_key || ''),
     bark_group: String(cfg.group || ''),
@@ -16798,7 +16792,7 @@ function notificationDraftFromChannel(channel: NotificationChannel, defaults: Re
 function notificationPayloadFromDraft(draft: NotificationDraft) {
   const events = draft.events.join(',')
   const config = draft.type === 'telegram'
-    ? { bot_token: draft.bot_token.trim(), chat_id: draft.chat_id.trim(), interactive: draft.interactive, allowed_chat_ids: draft.interactive ? draft.allowed_chat_ids.trim() : '' }
+    ? { bot_token: draft.bot_token.trim(), chat_id: draft.chat_id.trim(), interactive: true }
     : draft.type === 'bark'
       ? { server_url: draft.server_url.trim() || 'https://api.day.app', device_key: draft.device_key.trim(), group: draft.bark_group.trim() }
       : {}
@@ -16822,6 +16816,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
   const eventOptions: NotificationEventDefinition[] = data.notification_config?.events || fallbackNotificationEventOptions.filter(option => isAdmin || ['traffic_quota_exceeded', 'user_risk_detected', 'admin_announcement'].includes(option.value))
   const defaultTemplates: Record<string, NotificationTemplate> = data.notification_config?.templates || fallbackNotificationTemplates
   const ownerUserID = Number(sessionUser?.id || data.current_user?.id || 0)
+  const telegramBotConfigured = data.telegram_bot?.configured === true
   const [editor, setEditor] = useState<NotificationDraft | null>(null)
   const [saving, setSaving] = useState(false)
   const [testingID, setTestingID] = useState<number | 'draft' | null>(null)
@@ -16838,7 +16833,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
   const [sendingAnnouncement, setSendingAnnouncement] = useState(false)
   const [announcementOpen, setAnnouncementOpen] = useState(false)
 
-  const openCreate = () => setEditor(emptyNotificationDraft(defaultTemplates, eventOptions, isAdmin, ownerUserID))
+  const openCreate = () => setEditor(emptyNotificationDraft(defaultTemplates, eventOptions, isAdmin, ownerUserID, isAdmin ? 'telegram' : 'bark'))
   const openEdit = (channel: NotificationChannel) => setEditor(notificationDraftFromChannel(channel, defaultTemplates))
   const createTelegramBindingCode = async () => {
     try {
@@ -16967,11 +16962,11 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
     <div className="section-toolbar">
       <div>
         <h3>通知通道</h3>
-        <p className="muted">{isAdmin ? '接收服务器、证书、备份、域名、任务和用户风险提醒。' : '接收自己的流量、异常使用和管理员消息。'} 支持 Telegram、Bark 与测试渠道。</p>
+        <p className="muted">{isAdmin ? '集中配置全局 Telegram Bot，并接收服务器、证书、备份、域名、任务和用户风险提醒。' : '绑定管理员配置的 Telegram Bot，或使用自己的 Bark 通道接收账户提醒。'}</p>
       </div>
       <div className="section-actions">
         {isAdmin && <button type="button" className="ghost" onClick={() => setAnnouncementOpen(true)}><Send size={15} /><span>发送通知</span></button>}
-        <button type="button" className="ghost" onClick={() => void createTelegramBindingCode()}><LinkIcon size={15} /><span>绑定 Telegram</span></button>
+        <button type="button" className="ghost" disabled={!telegramBotConfigured} onClick={() => void createTelegramBindingCode()} title={telegramBotConfigured ? '绑定 Telegram' : '管理员尚未启用 Telegram Bot'}><LinkIcon size={15} /><span>绑定 Telegram</span></button>
         {isAdmin && <button type="button" className="ghost" onClick={() => setRawLogOpen(true)}><ClipboardList size={15} /><span>原始日志</span></button>}
         <button type="button" onClick={openCreate}><Plus size={15} /><span>新建通道</span></button>
       </div>
@@ -17278,7 +17273,7 @@ function NotificationChannelDialog({
 
         <FormField label="通道类型" required>
           <Select variant="segmented" value={draft.type} onChange={event => switchType(event.target.value as 'telegram' | 'bark' | 'test')} aria-label="通道类型">
-            <option value="telegram">Telegram</option>
+            {isAdmin && <option value="telegram">全局 Telegram Bot</option>}
             <option value="bark">Bark</option>
             <option value="test">测试渠道</option>
           </Select>
@@ -17331,18 +17326,12 @@ function NotificationChannelDialog({
         </FormField>
 
         {draft.type === 'telegram' ? <>
-          <FormField label="Bot Token" required hint="从 @BotFather 获取。">
+          <FormField label="Bot Token" required hint="管理员从 @BotFather 获取；全体用户通过此 Bot 绑定 OBoard 账户。">
             <input value={draft.bot_token} onChange={e => update({ bot_token: e.target.value })} placeholder="123456:ABC-DEF..." autoComplete="off" />
           </FormField>
-          <FormField label="Chat ID" required hint="个人、群组或频道 ID。">
+          <FormField label="管理员 Chat ID" required hint="接收服务器故障和管理员运维告警的个人或群组 ID。">
             <input value={draft.chat_id} onChange={e => update({ chat_id: e.target.value })} placeholder="-1001234567890" autoComplete="off" />
           </FormField>
-          <FormField label="启用互动指令" hint="开启后可在 Telegram 中向机器人发送指令查询状态、流量、用户和审计概览。">
-            <Switch checked={draft.interactive} onChange={checked => update({ interactive: checked })} ariaLabel="启用互动指令" />
-          </FormField>
-          {draft.interactive && <FormField label="允许互动的 Chat ID" required hint="只有这些 Chat ID 能使用机器人指令，多个用英文逗号分隔。可在 @userinfobot 查询自己的 Chat ID。">
-            <textarea rows={3} value={draft.allowed_chat_ids} onChange={e => update({ allowed_chat_ids: e.target.value })} placeholder="123456789, -1001234567890" autoComplete="off" />
-          </FormField>}
         </> : draft.type === 'bark' ? <>
           <FormField label="Device Key" required hint="Bark 设备 Key。">
             <input value={draft.device_key} onChange={e => update({ device_key: e.target.value })} placeholder="device key" autoComplete="off" />
