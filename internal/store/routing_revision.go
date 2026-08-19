@@ -16,9 +16,10 @@ const routingCacheRevisionTable = "routing_cache_revision"
 const configurationRevisionTable = "configuration_revision"
 
 // configurationRevisionTables are the tables whose successful management writes
-// change the desired runtime state. This deliberately excludes probe results,
-// fetched rule-set content, and access-change lifecycle tables: those writes
-// must not create a second automatic deployment.
+// change the desired runtime state. Draft and pending authorization rows use
+// conditional triggers; only active plan/binding/exception transitions enter
+// automatic deployment. Probe results, fetched rule-set content, and the
+// access-change lifecycle records themselves remain excluded.
 var configurationRevisionTables = []string{
 	"servers",
 	"inbounds",
@@ -35,6 +36,13 @@ var configurationRevisionTables = []string{
 	"tunnels",
 	"user_groups",
 	"user_group_members",
+	"subscription_plans",
+	"subscription_plan_revisions",
+	"subscription_plan_revision_nodes",
+	"subscription_plan_revision_rules",
+	"subscription_plan_revision_node_exclusions",
+	"user_plan_bindings",
+	"user_node_exceptions",
 	"users",
 }
 
@@ -91,24 +99,44 @@ func routingRevisionTriggerStatements() []string {
 func configurationRevisionTriggerStatements() []string {
 	out := []string{fmt.Sprintf(`insert or ignore into %s(id,revision) values(1,0)`, configurationRevisionTable)}
 	updateWhen := map[string]string{
-		"servers":             `old.name<>new.name or old.chain_secret<>new.chain_secret or coalesce(old.entry_address,'')<>coalesce(new.entry_address,'') or old.region_code<>new.region_code or old.region_mode<>new.region_mode or old.entry_ip_mode<>new.entry_ip_mode or coalesce(old.listen_ip,'')<>coalesce(new.listen_ip,'') or old.listen_mode<>new.listen_mode or old.ip_stack<>new.ip_stack or old.udp_inbound_mode<>new.udp_inbound_mode or old.mtu_mode<>new.mtu_mode or old.mtu_value<>new.mtu_value or old.mtu_probe_host<>new.mtu_probe_host or old.mtu_probe_port<>new.mtu_probe_port or old.mtu_overhead_bytes<>new.mtu_overhead_bytes or old.bbr_enabled<>new.bbr_enabled or old.port_range_start<>new.port_range_start or old.port_range_end<>new.port_range_end or old.internal_port_range_start<>new.internal_port_range_start or old.internal_port_range_end<>new.internal_port_range_end or old.port_policy_revision<>new.port_policy_revision or old.connection_audit_enabled<>new.connection_audit_enabled`,
-		"inbounds":            `old.server_id<>new.server_id or old.name<>new.name or old.protocol<>new.protocol or old.listen_ip<>new.listen_ip or old.port<>new.port or old.entry_ip_mode<>new.entry_ip_mode or old.external_ip<>new.external_ip or old.dns_sync_enabled<>new.dns_sync_enabled or coalesce(old.dns_credential_id,0)<>coalesce(new.dns_credential_id,0) or old.dns_domain<>new.dns_domain or old.dns_proxy_enabled<>new.dns_proxy_enabled or old.dns_record_types<>new.dns_record_types or old.ddns_enabled<>new.ddns_enabled or old.ddns_interval_seconds<>new.ddns_interval_seconds or old.tls<>new.tls or old.config_json<>new.config_json or old.enabled<>new.enabled`,
+		"servers":            `old.name<>new.name or old.chain_secret<>new.chain_secret or coalesce(old.entry_address,'')<>coalesce(new.entry_address,'') or old.region_code<>new.region_code or old.region_mode<>new.region_mode or old.entry_ip_mode<>new.entry_ip_mode or coalesce(old.listen_ip,'')<>coalesce(new.listen_ip,'') or old.listen_mode<>new.listen_mode or old.ip_stack<>new.ip_stack or old.udp_inbound_mode<>new.udp_inbound_mode or old.mtu_mode<>new.mtu_mode or old.mtu_value<>new.mtu_value or old.mtu_probe_host<>new.mtu_probe_host or old.mtu_probe_port<>new.mtu_probe_port or old.mtu_overhead_bytes<>new.mtu_overhead_bytes or old.bbr_enabled<>new.bbr_enabled or old.port_range_start<>new.port_range_start or old.port_range_end<>new.port_range_end or old.internal_port_range_start<>new.internal_port_range_start or old.internal_port_range_end<>new.internal_port_range_end or old.port_policy_revision<>new.port_policy_revision or old.connection_audit_enabled<>new.connection_audit_enabled`,
+		"inbounds":           `old.server_id<>new.server_id or old.name<>new.name or old.protocol<>new.protocol or old.listen_ip<>new.listen_ip or old.port<>new.port or old.entry_ip_mode<>new.entry_ip_mode or old.external_ip<>new.external_ip or old.dns_sync_enabled<>new.dns_sync_enabled or coalesce(old.dns_credential_id,0)<>coalesce(new.dns_credential_id,0) or old.dns_domain<>new.dns_domain or old.dns_proxy_enabled<>new.dns_proxy_enabled or old.dns_record_types<>new.dns_record_types or old.ddns_enabled<>new.ddns_enabled or old.ddns_interval_seconds<>new.ddns_interval_seconds or old.tls<>new.tls or old.config_json<>new.config_json or old.enabled<>new.enabled`,
+		"subscription_plans": `old.name<>new.name or old.description<>new.description or old.enabled<>new.enabled or old.revision<>new.revision or coalesce(old.active_revision_id,0)<>coalesce(new.active_revision_id,0) or coalesce(old.draft_revision_id,0)<>coalesce(new.draft_revision_id,0) or coalesce(old.current_revision_id,0)<>coalesce(new.current_revision_id,0) or coalesce(old.latest_revision_id,0)<>coalesce(new.latest_revision_id,0) or coalesce(old.pending_revision_id,0)<>coalesce(new.pending_revision_id,0) or old.lock_version<>new.lock_version`,
+
 		"server_dns_policies": `old.encrypted_list_id<>new.encrypted_list_id or old.bootstrap_list_id<>new.bootstrap_list_id or old.revision<>new.revision or old.strategy<>new.strategy or old.auto_test<>new.auto_test or old.test_interval_seconds<>new.test_interval_seconds`,
 		"warp_profiles":       `old.server_id<>new.server_id or old.name<>new.name or old.config_json<>new.config_json or old.mtu<>new.mtu or old.dns_strategy<>new.dns_strategy or old.enabled<>new.enabled`,
 		"users":               `old.role<>new.role or old.status<>new.status or old.proxy_uuid<>new.proxy_uuid or old.proxy_password<>new.proxy_password or old.speed_limit_mbps<>new.speed_limit_mbps or old.traffic_limit_bytes<>new.traffic_limit_bytes or old.traffic_reset_mode<>new.traffic_reset_mode or old.traffic_reset_day<>new.traffic_reset_day or old.legacy_proxy_enabled<>new.legacy_proxy_enabled`,
 	}
 	for _, table := range configurationRevisionTables {
+		insertCondition, updateCondition, deleteCondition := configurationRevisionConditions(table, updateWhen[table])
 		out = append(out,
-			fmt.Sprintf(`create trigger if not exists config_rev_%s_insert after insert on %s begin update %s set revision=revision+1 where id=1; end`, table, table, configurationRevisionTable),
-			fmt.Sprintf(`create trigger if not exists config_rev_%s_delete after delete on %s begin update %s set revision=revision+1 where id=1; end`, table, table, configurationRevisionTable),
+			fmt.Sprintf(`drop trigger if exists config_rev_%s_insert`, table),
+			fmt.Sprintf(`drop trigger if exists config_rev_%s_update`, table),
+			fmt.Sprintf(`drop trigger if exists config_rev_%s_delete`, table),
+			fmt.Sprintf(`create trigger config_rev_%s_insert after insert on %s when %s begin update %s set revision=revision+1 where id=1; end`, table, table, insertCondition, configurationRevisionTable),
+			fmt.Sprintf(`create trigger config_rev_%s_delete after delete on %s when %s begin update %s set revision=revision+1 where id=1; end`, table, table, deleteCondition, configurationRevisionTable),
+			fmt.Sprintf(`create trigger config_rev_%s_update after update on %s when %s begin update %s set revision=revision+1 where id=1; end`, table, table, updateCondition, configurationRevisionTable),
 		)
-		condition := updateWhen[table]
-		if condition == "" {
-			condition = "1"
-		}
-		out = append(out, fmt.Sprintf(`create trigger if not exists config_rev_%s_update after update on %s when %s begin update %s set revision=revision+1 where id=1; end`, table, table, condition, configurationRevisionTable))
 	}
 	return out
+}
+
+func configurationRevisionConditions(table, updateCondition string) (string, string, string) {
+	if updateCondition == "" {
+		updateCondition = "1"
+	}
+	switch table {
+	case "subscription_plan_revisions":
+		return "new.status='active'", "old.status='active' or new.status='active'", "old.status='active'"
+	case "subscription_plan_revision_nodes", "subscription_plan_revision_rules", "subscription_plan_revision_node_exclusions":
+		return "exists(select 1 from subscription_plan_revisions where id=new.revision_id and status='active')", "exists(select 1 from subscription_plan_revisions where id=old.revision_id and status='active') or exists(select 1 from subscription_plan_revisions where id=new.revision_id and status='active')", "exists(select 1 from subscription_plan_revisions where id=old.revision_id and status='active')"
+	case "user_plan_bindings":
+		return "new.status='active' and new.enabled=1", "(old.status='active' or new.status='active') and (old.enabled<>new.enabled or old.status<>new.status or old.user_id<>new.user_id or old.plan_id<>new.plan_id or coalesce(old.starts_at,'')<>coalesce(new.starts_at,'') or coalesce(old.expires_at,'')<>coalesce(new.expires_at,''))", "old.status='active' and old.enabled=1"
+	case "user_node_exceptions":
+		return "new.status='active'", "old.status='active' or new.status='active'", "old.status='active'"
+	default:
+		return "1", updateCondition, "1"
+	}
 }
 
 func (s *Store) migrateRoutingCacheRevisionTriggers(ctx context.Context) error {

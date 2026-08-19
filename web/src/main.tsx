@@ -9561,20 +9561,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const createPathFromEntry = async (entry: Inbound, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
 	  const candidateStep = { position: 1, transport_mode: 'singbox' as ProxyPathTransportMode, config_json: '{}', ...target }
 	  if (target.transport_mode === 'port_forward' && !await ensureTransparentPrefixCompatible(0, entry.id, [candidateStep])) return null
-	  const result = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: entry.id, enabled: true }) }) as { proxy_path?: ProxyPath }
-	  if (!result.proxy_path?.id) return null
+	  const result = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: entry.id, enabled: true, initial_step: candidateStep }) }) as { proxy_path?: ProxyPath; proxy_path_steps?: ProxyPathStep[] }
 	  applyMutationResult(result)
-	  let createdStep: ProxyPathStep | null = null
-	  try {
-	    const stepResult = await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({ path_id: result.proxy_path.id, position: 1, transport_mode: 'singbox', config_json: '{}', ...target }) }) as { proxy_path_step?: ProxyPathStep }
-	    applyMutationResult(stepResult)
-	    createdStep = stepResult.proxy_path_step || null
-	  } catch (error) {
-	    await client.request(`/proxy-paths/${result.proxy_path.id}`, { method: 'DELETE' }).catch(() => undefined)
-	    removeMutationRows({ proxy_paths: [result.proxy_path.id] })
-	    throw error
-	  }
-	  return createdStep
+	  return result.proxy_path_steps?.[0] || null
 	}
 	const createDirectBranch = async (request: { inbound_id: number } | { source_step_id: number }): Promise<ProxyPath | null> => {
 	  const result = await client.request('/proxy-paths/direct-branches', { method: 'POST', body: JSON.stringify(request) }) as { proxy_path?: ProxyPath }

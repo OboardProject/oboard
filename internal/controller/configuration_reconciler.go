@@ -121,7 +121,9 @@ func configurationCapability(name string) bool {
 	switch name {
 	case "servers.onboard", "servers.update", "servers.dns_policy.set",
 		"users.create", "users.update", "users.delete",
-		"user_devices.update", "user_devices.revoke":
+		"user_devices.update", "user_devices.revoke",
+		"subscription_plans.create", "subscription_plans.update", "subscription_plans.delete",
+		"subscription_plans.nodes.update", "user_node_exceptions.create", "user_node_exceptions.update", "user_node_exceptions.delete":
 		return true
 	case "inbounds.probe", "proxy_paths.probe_egress", "routing_rule_sets.refresh":
 		return false
@@ -171,7 +173,7 @@ func configurationMutationPath(path, method string) bool {
 		return false
 	}
 	switch parts[0] {
-	case "deployments", "agent-tasks", "task-results", "dns-benchmarks", "mtu-detections", "port-forward-probes", "inbound-probes", "certificates", "dns-records", "dns-credentials", "google-eab-credentials", "notification-channels", "notification-announcements", "backups", "controller-update", "auth", "me", "access-changes", "subscription-plans", "user-node-exceptions", "assignable-nodes", "assignable-node-scopes":
+	case "deployments", "agent-tasks", "task-results", "dns-benchmarks", "mtu-detections", "port-forward-probes", "inbound-probes", "certificates", "dns-records", "dns-credentials", "google-eab-credentials", "notification-channels", "notification-announcements", "backups", "controller-update", "auth", "me", "access-changes", "assignable-nodes", "assignable-node-scopes":
 		return false
 	case "changesets":
 		return false // automation.Apply invokes the canonical observer after commit.
@@ -188,6 +190,10 @@ func configurationMutationPath(path, method string) bool {
 		return len(parts) <= 2
 	case "routing-rule-sets":
 		return len(parts) <= 2 // /refresh is a command that updates fetched content explicitly.
+	case "subscription-plans":
+		return len(parts) <= 2
+	case "user-node-exceptions":
+		return len(parts) <= 2
 	case "routing-rules":
 		return len(parts) <= 2 || len(parts) == 2 && (parts[1] == "place" || parts[1] == "reorder")
 	case "external-outbounds":

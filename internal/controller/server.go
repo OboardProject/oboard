@@ -7441,8 +7441,16 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 		items = core.ResolveProxyPathNames(items, steps, servers, inbounds, externals)
 		write(w, 200, map[string]any{"proxy_paths": items})
 	case http.MethodPost:
-		var v model.ProxyPath
-		if !decode(w, r, &v) {
+		var request struct {
+			model.ProxyPath
+			InitialStep *model.ProxyPathStep `json:"initial_step,omitempty"`
+		}
+		if !decode(w, r, &request) {
+			return
+		}
+		v := request.ProxyPath
+		if request.InitialStep != nil {
+			s.createProxyPathWithInitialStep(w, r, &v, request.InitialStep)
 			return
 		}
 		if v.BranchSourceStepID != nil {
@@ -7562,6 +7570,89 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 	default:
 		method(w)
 	}
+}
+
+func (s *Server) createProxyPathWithInitialStep(w http.ResponseWriter, r *http.Request, path *model.ProxyPath, step *model.ProxyPathStep) {
+	if strings.TrimSpace(path.Secret) == "" {
+		secret, err := security.RandomToken(24)
+		if err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
+		path.Secret = secret
+	}
+	if step.Position <= 0 {
+		step.Position = 1
+	}
+	if err := s.validateProxyPath(r.Context(), path); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := s.normalizeProxyPathStepCandidate(r.Context(), step); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := s.validateProxyPathServerLoop(r.Context(), path.InboundID, []model.ProxyPathStep{*step}); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+
+	// Validate the complete candidate against the current topology before the
+	// transaction. The placeholder IDs keep the in-memory projection distinct;
+	// the database commit below writes path and first step together.
+	data, err := s.store.FullRoutingConfigData(r.Context())
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	for _, item := range data.ProxyPaths {
+		if item.ID >= path.ID {
+			path.ID = item.ID + 1
+		}
+	}
+	if path.ID <= 0 {
+		path.ID = 1
+	}
+	step.PathID = path.ID
+	for _, item := range data.ProxyPathSteps {
+		if item.ID >= step.ID {
+			step.ID = item.ID + 1
+		}
+	}
+	if step.ID <= 0 {
+		step.ID = 1
+	}
+	data.ProxyPaths = append(data.ProxyPaths, *path)
+	data.ProxyPathSteps = append(data.ProxyPathSteps, *step)
+	resolveRoutingProxyPathNames(&data)
+	if _, err := core.BuildProxyPathPlansWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := s.store.CreateProxyPathWithStep(r.Context(), path, step); err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	if err := s.ensureWARPProfilesForProxyPaths(r.Context()); err != nil {
+		_ = s.store.DeleteProxyPath(r.Context(), path.ID)
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	if _, err := s.normalizeAndValidateProxyPathData(r.Context(), path.ID); err != nil {
+		_ = s.store.DeleteProxyPath(r.Context(), path.ID)
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	resolved := s.resolvedProxyPath(r.Context(), *path)
+	path = &resolved
+	storedSteps, err := s.store.ListProxyPathStepsForPath(r.Context(), path.ID)
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	auditReq(s, r, "create", "proxy-path", fmt.Sprint(path.ID))
+	auditReq(s, r, "create", "proxy-path-step", fmt.Sprint(storedSteps[0].ID))
+	write(w, http.StatusCreated, map[string]any{"proxy_path": path, "proxy_path_steps": publicProxyPathSteps(storedSteps)})
 }
 
 type directProxyPathBranchRequest struct {

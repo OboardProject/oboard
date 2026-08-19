@@ -40,7 +40,8 @@ describe('configuration save UI contract', () => {
   })
 
   it('patches topology mutations without a duplicate mutation-time page-data request', () => {
-    expect(main).toContain('const reconcileTopology = () => undefined')
+    expect(main).toContain('initial_step: candidateStep')
+    expect(main).not.toContain("client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({ path_id: result.proxy_path.id")
     expect(main).toContain('mergeTopologyMutation(current, result)')
   })
 })

@@ -665,6 +665,12 @@ func (s *Server) activateAccessChange(ctx context.Context, change *model.AccessC
 	default:
 		return fmt.Errorf("unknown access change type %q", change.ChangeType)
 	}
+	if revision, err := s.store.ConfigurationRevision(ctx); err == nil && revision > 0 {
+		// Activation is the desired-state commit for access changes. Draft and
+		// pending rows are intentionally ignored by configuration triggers; only
+		// the active transition enters the normal convergence coordinator.
+		s.markConfigurationRevision(ctx, revision, nil)
+	}
 	return nil
 }
 

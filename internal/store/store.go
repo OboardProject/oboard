@@ -3566,6 +3566,40 @@ func (s *Store) CreateProxyPath(ctx context.Context, v *model.ProxyPath) error {
 	return nil
 }
 
+func (s *Store) CreateProxyPathWithStep(ctx context.Context, path *model.ProxyPath, step *model.ProxyPathStep) error {
+	ts := now()
+	if err := encodeProxyPathNameTemplate(path); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	path.CreatedAt = parseTime(ts)
+	path.UpdatedAt = path.CreatedAt
+	result, err := tx.ExecContext(ctx, `insert into proxy_paths(inbound_id,kind,branch_source_step_id,name_mode,name_template_json,exit_region_mode,exit_region_code,secret,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, path.InboundID, path.Kind, path.BranchSourceStepID, path.NameMode, path.NameTemplateJSON, path.ExitRegionMode, path.ExitRegionCode, path.Secret, boolInt(path.Enabled), ts, ts)
+	if err != nil {
+		return err
+	}
+	path.ID, err = result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	step.PathID = path.ID
+	step.CreatedAt = parseTime(ts)
+	step.UpdatedAt = step.CreatedAt
+	result, err = tx.ExecContext(ctx, `insert into proxy_path_steps(path_id,position,node_type,transport_mode,processing_role,server_id,inbound_id,external_outbound_id,config_json,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, step.PathID, step.Position, step.NodeType, step.TransportMode, boolInt(step.ProcessingRole), step.ServerID, step.InboundID, step.ExternalOutboundID, step.ConfigJSON, ts, ts)
+	if err != nil {
+		return err
+	}
+	step.ID, err = result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) UpdateProxyPath(ctx context.Context, v *model.ProxyPath) error {
 	if err := encodeProxyPathNameTemplate(v); err != nil {
 		return err

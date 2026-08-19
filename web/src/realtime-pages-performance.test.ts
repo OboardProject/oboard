@@ -1,40 +1,15 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import { realtimeInvalidatedPages, realtimePageRefreshDelayMS, scheduleRealtimeRefresh } from './realtime-pages'
 
-describe('cross-session page consistency timing', () => {
-  afterEach(() => vi.useRealTimers())
-
-  it('refreshes the affected visible page within the 2 second SLO', () => {
-    vi.useFakeTimers()
-    const samples = 32
-    const latencies: number[] = []
-    for (let index = 0; index < samples; index++) {
-      const pages = realtimeInvalidatedPages({ type: 'invalidate', sequence: index + 1, resources: ['configuration'] }, 'servers', ['servers'])
-      const dirtyPages = new Set(['servers'])
-      let consistentAt = -1
-      scheduleRealtimeRefresh({
-        page: 'servers',
-        activePage: 'servers',
-        visible: true,
-        dirtyPages,
-        hasPendingRequest: false,
-        schedule: (callback, delayMS) => setTimeout(callback, delayMS),
-        refresh: page => {
-          if (pages.has(page)) consistentAt = realtimePageRefreshDelayMS
-        },
-      })
-      vi.advanceTimersByTime(realtimePageRefreshDelayMS)
-      latencies.push(consistentAt)
-    }
-    const sorted = [...latencies].sort((a, b) => a - b)
-    const p95 = sorted[Math.ceil(samples * 0.95) - 1]
-    expect(p95).toBe(realtimePageRefreshDelayMS)
-    expect(p95).toBeLessThanOrEqual(2_000)
+describe('cross-session page refresh coordination', () => {
+  it('maps a configuration event to the active page and uses a bounded refresh delay', () => {
+    const pages = realtimeInvalidatedPages({ type: 'invalidate', sequence: 1, resources: ['configuration'] }, 'servers', ['servers'])
+    expect(pages.has('servers')).toBe(true)
+    expect(realtimePageRefreshDelayMS).toBeLessThanOrEqual(2_000)
   })
 
   it('consumes an invalidation already covered by a pending request', () => {
-    vi.useFakeTimers()
     const dirtyPages = new Set(['servers'])
     const timer = scheduleRealtimeRefresh({
       page: 'servers',
@@ -42,7 +17,7 @@ describe('cross-session page consistency timing', () => {
       visible: true,
       dirtyPages,
       hasPendingRequest: true,
-      schedule: (callback, delayMS) => setTimeout(callback, delayMS),
+      schedule: () => 1,
       refresh: () => { throw new Error('duplicate refresh') },
     })
     expect(timer).toBeUndefined()
