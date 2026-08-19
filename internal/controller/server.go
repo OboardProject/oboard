@@ -163,6 +163,10 @@ type Server struct {
 	// servers with pending tasks after a lost wake. Tests shorten them.
 	taskRecoveryScanMin time.Duration
 	taskRecoveryScanMax time.Duration
+	// configurationWake is a coalesced hint for the durable desired-state
+	// reconciler. SQLite configuration_sync_states remains authoritative.
+	configurationWake  chan struct{}
+	configurationDelay time.Duration
 	// routingSnapshotCache is the immutable FullRoutingConfigData + effective
 	// access snapshot cache, keyed by the store routing revision.
 	routingSnapshotCache atomic.Pointer[routingSnapshot]
@@ -202,8 +206,9 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	if pollerID == "" {
 		pollerID = fmt.Sprintf("controller-%d", time.Now().UnixNano())
 	}
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, accessWorkersWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, accessWorkersWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
+	s.automation.SetApplyObserver(s.configurationChangesetApplied)
 	_ = store.CloseOpenControllerConnections(context.Background(), time.Now().UTC())
 	s.initializeTrustedProxies()
 	s.registerAutomationHandlers()
@@ -360,6 +365,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/port-forward-probes", s.auth(s.portForwardProbes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/inbound-probes", s.auth(s.inboundProbes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/latency-probe-resource", s.auth(s.latencyProbeResource, model.RoleViewer))
+	mux.HandleFunc("/api/v1/configuration-sync", s.auth(s.configurationSync, model.RoleOperator))
+	mux.HandleFunc("/api/v1/configuration-sync/retry", s.auth(s.configurationSyncRetry, model.RoleOperator))
 	mux.HandleFunc("/api/v1/deployments/apply", s.auth(s.applyDeployment, model.RoleOperator))
 	mux.HandleFunc("/api/v1/deployments/", s.auth(s.deployment, model.RoleOperator))
 	mux.HandleFunc("/api/v1/agent-tasks", s.auth(s.agentTasks, model.RoleOperator))
@@ -2387,6 +2394,12 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out["deployment_status"] = deploymentStatus
+		configurationStates, syncErr := s.store.ListAllConfigurationSyncStates(ctx)
+		if syncErr != nil {
+			fail(w, syncErr, http.StatusInternalServerError)
+			return
+		}
+		out["configuration_sync"] = configurationSyncViews(configurationStates)
 	}
 	w.Header().Set("Server-Timing", timing.serverTiming())
 	timing.logSlowIfNeeded()
@@ -3676,6 +3689,7 @@ func (s *Server) expireTimedOutTasks(ctx context.Context) {
 		if err := s.applyTimeCheckTaskResult(ctx, task, "failed", task.ResultJSON); err != nil {
 			log.Printf("apply timed out time check task %d: %v", task.ID, err)
 		}
+		s.recordConfigurationTaskResult(ctx, task, "failed", task.ResultJSON)
 		s.notifyTaskFailure(ctx, task)
 	}
 	if len(failed) > 0 {
@@ -3743,7 +3757,7 @@ func (s *Server) createAgentTask(ctx context.Context, serverID int64, taskType, 
 		}
 		server = nil
 	}
-	if reason := agentTaskImmediateFailure(server); reason != "" {
+	if reason := agentTaskImmediateFailure(server); reason != "" && !(automaticConfigurationSync(ctx) && (taskType == model.AgentTaskTypeApplyDeployment || taskType == model.AgentTaskTypeApplyCoreConfig)) {
 		result, _ := json.Marshal(map[string]any{
 			"message": reason,
 			"error":   reason,
@@ -8989,10 +9003,6 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		if err := s.queueCoreConfigRefreshForUserRemoval(r.Context(), id, "user_deleted"); err != nil {
-			fail(w, err, 500)
-			return
-		}
 		auditReq(s, r, "delete", "user", fmt.Sprint(id))
 		write(w, 200, map[string]any{"deleted": true})
 	default:
@@ -11484,6 +11494,9 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		_ = s.store.ClearConnectionPresenceForServer(r.Context(), server.ID)
 	}
 	hello := map[string]any{"type": "hello", "ts": time.Now().UTC(), "server_id": server.ID, "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
+	for key, value := range s.configurationHeartbeatFields(r.Context(), server.ID) {
+		hello[key] = value
+	}
 	if plan, err := latencyProbePlanForServer(r.Context(), *server); err == nil {
 		hello["latency_probe_plan"] = plan
 	}
@@ -11616,6 +11629,9 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 				_ = s.store.ClearConnectionPresenceForServer(r.Context(), server.ID)
 			}
 			heartbeat := map[string]any{"type": "heartbeat", "ts": time.Now().UTC(), "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
+			for key, value := range s.configurationHeartbeatFields(r.Context(), server.ID) {
+				heartbeat[key] = value
+			}
 			if plan, planErr := latencyProbePlanForServer(r.Context(), *server); planErr == nil {
 				heartbeat["latency_probe_plan"] = plan
 			}
@@ -11691,6 +11707,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				// Refresh the connection's in-memory server copy so heartbeat
 				// and plan generation observe the report without a reload.
 				applyHealthReportToServer(server, result)
+				s.reconcileAgentAppliedState(ctx, server.ID, h)
 				s.completeAgentUpdateAfterReconnect(ctx, server.ID, h.AgentBuild)
 				s.publishServerPatch(result)
 			}
@@ -11922,6 +11939,7 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	s.recordConfigurationTaskResult(r.Context(), *task, req.Status, req.ResultJSON)
 	// A completed task may advance an access-change phase or open an
 	// authorization window; wake the access workers instead of polling.
 	s.wakeAccessWorkers()

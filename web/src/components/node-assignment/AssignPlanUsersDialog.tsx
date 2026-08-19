@@ -4,7 +4,6 @@ import { Button } from '../ui/button'
 import { Dialog } from '../ui/dialog'
 import { Select } from '../ui/select'
 import { Input } from '../ui/input'
-import { Switch } from '../ui/switch'
 import { DateTimePicker } from '../ui/datetime-picker'
 import { UserPicker, type UserOption } from './UserPicker'
 
@@ -55,7 +54,6 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
 }) {
   const [planID, setPlanID] = React.useState(defaultPlanID)
   const [userIDs, setUserIDs] = React.useState<Set<number>>(new Set())
-  const [deploy, setDeploy] = React.useState(true)
   const [startsAt, setStartsAt] = React.useState('')
   const [expiresAt, setExpiresAt] = React.useState('')
   const [preview, setPreview] = React.useState<PlanChangePreview | null>(null)
@@ -67,7 +65,6 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
     if (open) {
       setPlanID(defaultPlanID)
       setUserIDs(new Set())
-      setDeploy(true)
       setStartsAt('')
       setExpiresAt('')
       setPreview(null)
@@ -86,7 +83,6 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
         body: JSON.stringify({
           user_ids: [...userIDs],
           plan_id: planID,
-          deploy,
           starts_at: fromLocalInputValue(startsAt),
           expires_at: fromLocalInputValue(expiresAt),
         }),
@@ -109,7 +105,6 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
         body: JSON.stringify({
           user_ids: [...userIDs],
           plan_id: planID,
-          deploy,
           starts_at: fromLocalInputValue(startsAt),
           expires_at: fromLocalInputValue(expiresAt),
         }),
@@ -135,9 +130,6 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
             <option value={0}>选择套餐</option>
             {plans.map(p => <option key={p.id} value={p.id}>{p.name}{p.enabled === false ? '（已停用）' : ''}</option>)}
           </Select>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
-            <Switch size="sm" checked={deploy} onChange={setDeploy} ariaLabel="立即下发部署任务" /> 立即下发部署任务
-          </label>
         </div>
         <UserPicker users={users} selected={userIDs} onChange={setUserIDs} />
         <div className="section-toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
@@ -154,7 +146,7 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
             {(preview.capacity_issues || []).length > 0 && <p style={{ color: 'var(--color-danger)', margin: 0 }}>{preview.capacity_issues.join('；')}</p>}
             {preview.offline_servers?.length > 0 && <p className="muted" style={{ margin: 0 }}>离线服务器 {preview.offline_servers.join('、')} 的节点将排队等待上线后下发。</p>}
             <div style={{ display: 'flex', gap: 8 }}>
-              <Button size="sm" busy={applyBusy} onClick={() => void applyAssignment()}>应用并分配</Button>
+              <Button size="sm" busy={applyBusy} onClick={() => void applyAssignment()}>保存分配</Button>
               <Button size="sm" variant="ghost" onClick={() => setPreview(null)}>取消</Button>
             </div>
           </div>

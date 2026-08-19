@@ -35,12 +35,11 @@ function fmtDate(iso?: string) {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
-export function UserPlanDialog({ user, binding, plans, client, load, onClose }: {
+export function UserPlanDialog({ user, binding, plans, client, onClose }: {
   user: { id: number; username: string }
   binding?: Binding
   plans: Plan[]
   client: AnyClient
-  load: () => Promise<void>
   onClose: () => void
 }) {
   const [planID, setPlanID] = React.useState(binding?.plan_id || 0)
@@ -96,13 +95,12 @@ export function UserPlanDialog({ user, binding, plans, client, load, onClose }: 
     try {
       const res = await client.request<any>('/users/plan-assignment/apply', {
         method: 'POST',
-        body: JSON.stringify({ user_ids: [user.id], plan_id: planID, deploy: true, starts_at: fromLocalInputValue(startsAt), expires_at: fromLocalInputValue(expiresAt) }),
+        body: JSON.stringify({ user_ids: [user.id], plan_id: planID, starts_at: fromLocalInputValue(startsAt), expires_at: fromLocalInputValue(expiresAt) }),
       })
       setPreview(null)
       setMessage(res.status === 'scheduled'
         ? `已排定：变更 #${res.access_change_id}，将于 ${fmtDate(res.activate_at)} 生效`
-        : res.access_change_id ? `已提交部署：变更 #${res.access_change_id}（${res.status}）` : '已应用')
-      await load()
+        : res.access_change_id ? `已保存分配：变更 #${res.access_change_id}（${res.status}）` : '已保存')
       await reload()
     } catch (e: any) {
       setMessage('应用失败：' + (e?.message || String(e)))
@@ -209,7 +207,7 @@ export function UserPlanDialog({ user, binding, plans, client, load, onClose }: 
                 {(preview.nodes_removed || []).map((k: string) => <Badge key={k} variant="destructive">− {k}</Badge>)}
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <Button size="sm" disabled={applyBusy} onClick={() => void applyAssignment()}>{applyBusy ? '提交中...' : '应用并部署'}</Button>
+                <Button size="sm" disabled={applyBusy} onClick={() => void applyAssignment()}>{applyBusy ? '保存中...' : '保存分配'}</Button>
                 <Button size="sm" variant="ghost" onClick={() => setPreview(null)}>取消</Button>
               </div>
             </div>

@@ -60,9 +60,9 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(({
   if (variant === 'segmented') {
     return (
       <div
-        className={`ui-segmented-select${disabled ? ' disabled' : ''}${className ? ` ${className}` : ''}`}
+        className={`ui-segmented-select segments-${options.length}${disabled ? ' disabled' : ''}${className ? ` ${className}` : ''}`}
         style={{
-          gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))`,
+          gridTemplateColumns: `repeat(${options.length}, minmax(min-content, 1fr))`,
           ...style,
         }}
         role="radiogroup"

@@ -194,6 +194,58 @@ func (s *Server) registerTaskTriggerOperations() {
 		return map[string]any{"summary": summary, "created_count": summary["created"]}, nil
 	})
 
+	s.automation.RegisterValidator("configuration_sync.retry", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		serverIDs, err := configurationSyncRetryServerIDs(input)
+		if err != nil {
+			return nil, err
+		}
+		for _, serverID := range serverIDs {
+			if !principal.AllowsInt64("server_ids", serverID) {
+				return nil, errors.New("configuration sync server is outside the authorized boundary")
+			}
+		}
+		return map[string]any{"server_ids": serverIDs}, nil
+	})
+	s.automation.RegisterRevisionResolver("configuration_sync.retry", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		serverIDs, err := configurationSyncRetryServerIDs(input)
+		if err != nil {
+			return nil, err
+		}
+		revisions := map[string]string{}
+		for _, serverID := range serverIDs {
+			if !principal.AllowsInt64("server_ids", serverID) {
+				return nil, errors.New("configuration sync server is outside the authorized boundary")
+			}
+			state, err := s.store.ConfigurationSyncState(ctx, serverID)
+			if err != nil || state.State != "failed" {
+				return nil, errors.New("configuration sync is not failed")
+			}
+			revisions["configuration_sync:"+strconv.FormatInt(serverID, 10)] = state.UpdatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		return revisions, nil
+	})
+	s.automation.Register("configuration_sync.retry", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		serverIDs, err := configurationSyncRetryServerIDs(input)
+		if err != nil {
+			return nil, err
+		}
+		for _, serverID := range serverIDs {
+			if !principal.AllowsInt64("server_ids", serverID) {
+				return nil, errors.New("configuration sync server is outside the authorized boundary")
+			}
+		}
+		count, err := s.store.RetryFailedConfigurationSync(ctx, serverIDs)
+		if err != nil {
+			return nil, err
+		}
+		if count == 0 {
+			return nil, errors.New("no failed configuration sync is available to retry")
+		}
+		s.signalConfigurationReconcile()
+		s.publishRealtime("configuration", "deployments", "tasks")
+		return map[string]any{"retried": count, "server_ids": serverIDs}, nil
+	})
+
 	s.automation.RegisterValidator("deployments.dismiss_failure", func(context.Context, application.Principal, json.RawMessage) (any, error) {
 		return map[string]any{}, nil
 	})
@@ -230,6 +282,20 @@ func (s *Server) registerTaskTriggerOperations() {
 		}
 		return map[string]any{"dismissed": true, "deployment_status": status}, nil
 	})
+}
+
+func configurationSyncRetryServerIDs(input json.RawMessage) ([]int64, error) {
+	var request struct {
+		ServerIDs []int64 `json:"server_ids"`
+	}
+	if err := strictAutomationInput(input, &request); err != nil {
+		return nil, err
+	}
+	request.ServerIDs = uniquePositiveIDs(request.ServerIDs)
+	if len(request.ServerIDs) == 0 || len(request.ServerIDs) > 100 {
+		return nil, errors.New("server_ids must contain between 1 and 100 servers")
+	}
+	return request.ServerIDs, nil
 }
 
 func (s *Server) serverTaskBoundary(ctx context.Context, principal application.Principal, input json.RawMessage) (*model.Server, error) {

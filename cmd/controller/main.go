@@ -123,6 +123,7 @@ func main() {
 	go app.StartDatabaseMaintenance(ctx)
 	go app.StartAccessChangeWorker(ctx)
 	go app.StartAccessLifecycleWorker(ctx)
+	go app.StartConfigurationReconciler(ctx)
 	go app.StartTaskRecoveryScan(ctx)
 	go app.StartAuditRiskWorker(ctx)
 	go app.StartPlanRuleReconciler(ctx)

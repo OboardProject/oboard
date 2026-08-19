@@ -151,8 +151,12 @@ func (s *Server) userDeviceAction(w http.ResponseWriter, r *http.Request, userID
 }
 
 func (s *Server) queueUserDeviceCredentialDeployment(ctx context.Context) error {
-	_, _, err := s.deployConfiguration(ctx, 0, false)
-	return err
+	revision, err := s.store.ConfigurationRevision(ctx)
+	if err != nil {
+		return err
+	}
+	s.markConfigurationRevision(ctx, revision, nil)
+	return nil
 }
 
 func (s *Server) createUserDevice(r *http.Request, userID int64, name string) (model.UserDeviceCredential, error) {

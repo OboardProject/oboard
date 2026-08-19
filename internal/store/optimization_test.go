@@ -197,6 +197,67 @@ func TestServerMetricSampleRateLimit(t *testing.T) {
 	}
 }
 
+func TestConfigurationRevisionTracksDesiredWritesAndIgnoresOperationalActivity(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	read := func() uint64 {
+		revision, err := s.ConfigurationRevision(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return revision
+	}
+	baseline := read()
+	server := &model.Server{Name: "config-rev-server", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if after := read(); after <= baseline {
+		t.Fatalf("server insert did not bump configuration revision (%d -> %d)", baseline, after)
+	}
+	baseline = read()
+	user := &model.User{Username: "config-rev-user", PasswordHash: "unused", Role: model.RoleViewer, Status: "active", ProxyUUID: "22222222-2222-4222-8222-222222222222", ProxyPassword: "password"}
+	if err := s.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	if after := read(); after <= baseline {
+		t.Fatalf("user insert did not bump configuration revision (%d -> %d)", baseline, after)
+	}
+	baseline = read()
+	device := &model.UserDevice{ID: "config-device-1", DeviceIDHash: "config-hash-1", UserID: user.ID, Name: "phone", TokenHash: "config-token-1", TokenPrefix: "tok", CredentialEpoch: 1, Status: "active"}
+	if err := s.CreateUserDevice(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	if after := read(); after <= baseline {
+		t.Fatalf("device insert did not bump configuration revision (%d -> %d)", baseline, after)
+	}
+	baseline = read()
+	if err := s.MarkUserDeviceProxyActivity(ctx, device.DeviceIDHash, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if after := read(); after != baseline {
+		t.Fatalf("device activity update bumped configuration revision (%d -> %d)", baseline, after)
+	}
+	window := model.ServerTrafficWindow{Key: "2026-08", Start: time.Now().UTC().Add(-time.Hour), End: time.Now().UTC().Add(time.Hour)}
+	if _, err := s.ApplyHealthReport(ctx, server.ID, model.HealthReport{Status: model.ServerOnline, AgentVersion: "test", Timestamp: time.Now().UTC()}, window); err != nil {
+		t.Fatal(err)
+	}
+	if after := read(); after != baseline {
+		t.Fatalf("health report bumped configuration revision (%d -> %d)", baseline, after)
+	}
+	baseline = read()
+	if _, err := s.RevokeUserDevice(ctx, device.UserID, device.ID); err != nil {
+		t.Fatal(err)
+	}
+	if after := read(); after <= baseline {
+		t.Fatalf("device revoke did not bump configuration revision (%d -> %d)", baseline, after)
+	}
+}
+
 func TestRoutingCacheRevisionTracksMutations(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

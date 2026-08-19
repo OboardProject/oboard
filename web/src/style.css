@@ -840,22 +840,6 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   .proxy-path-topbar > .proxy-path-topbar-slot { width: 100%; }
 }
 
-.topbar-apply {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 38px;
-  padding: 8px 16px;
-  white-space: nowrap;
-  border-radius: var(--radius-full);
-}
-
-.topbar-apply svg {
-  display: block;
-  flex-shrink: 0;
-}
-
 .controller-update-prompt {
   position: fixed;
   z-index: calc(var(--z-dialog) - 1);
@@ -6776,36 +6760,6 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   color: #f8fafc;
 }
 
-.deployment-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.deployment-summary > div {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 8px;
-}
-
-.deployment-summary span {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 9px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-}
-
-.deployment-summary strong {
-  color: var(--text-strong);
-  font-size: 18px;
-}
-
-.deployment-summary small { color: var(--muted); }
-
 .settings-shell {
   min-width: 0;
   padding: 14px;
@@ -9948,22 +9902,22 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   }
   .topbar {
     display: grid;
-    grid-template-columns: 44px minmax(0, 1fr) auto 44px;
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
     grid-template-areas:
-      "menu status apply refresh"
-      "title title title title";
+      "menu status refresh"
+      "title title title";
     align-items: center;
     gap: 8px;
     border-radius: var(--radius-lg);
   }
   .topbar.proxy-path-topbar {
     grid-template-areas:
-      "menu status apply refresh"
-      "title title title title"
-      "picker picker picker picker";
+      "menu status refresh"
+      "title title title"
+      "picker picker picker";
   }
   .topbar.topbar-quiet {
-    grid-template-areas: "menu status apply refresh";
+    grid-template-areas: "menu status refresh";
   }
   .topbar-title-container,
   .topbar-actions {
@@ -9987,25 +9941,6 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .topbar-apply {
-    grid-area: apply;
-    width: 44px;
-    min-width: 44px;
-    height: 44px;
-    min-height: 44px;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 9999px;
-  }
-  .topbar-apply span {
-    display: none;
-  }
-  .topbar-apply svg {
-    width: 18px;
-    height: 18px;
   }
   .topbar-refresh {
     grid-area: refresh;
@@ -18695,8 +18630,6 @@ button.ui-btn-ghost:hover {
 /* Mobile touch targets: extend the 720px 44px control convention to compact
    component controls that set their own smaller sizing. */
 @media (max-width: 720px) {
-  .topbar-apply { min-height: 44px; }
-
   .login-eye {
     width: 44px;
     min-width: 44px;
@@ -20052,6 +19985,312 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   .latency-probe-settings > .danger-text {
     grid-column: auto;
   }
+}
+
+/* Settings workspace */
+.settings-shell {
+  display: grid;
+  grid-template-columns: minmax(176px, 208px) minmax(0, 1fr);
+  gap: 22px;
+  padding: 18px;
+}
+
+.settings-sidebar {
+  min-width: 0;
+  align-self: start;
+  position: sticky;
+  top: 14px;
+  display: grid;
+  gap: 16px;
+}
+
+.settings-nav-group {
+  display: grid;
+  gap: 5px;
+}
+
+.settings-nav-label {
+  padding: 0 10px 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.settings-tabs {
+  display: grid;
+  gap: 3px;
+  padding: 0;
+  margin: 0;
+  overflow: visible;
+  border: 0;
+}
+
+.settings-tabs button {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  justify-content: flex-start;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+.settings-tabs button.active {
+  color: var(--text-strong);
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface-solid));
+}
+
+.settings-content {
+  min-width: 0;
+}
+
+.settings-content-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 2px 2px 16px;
+}
+
+.settings-content-head h2 {
+  margin: 0 0 4px;
+  color: var(--text-strong);
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+.settings-content-head p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.settings-grid {
+  gap: 14px;
+}
+
+.settings-card {
+  gap: 14px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-solid);
+  overflow: hidden;
+}
+
+.settings-card > .settings-card-head {
+  padding: 18px 20px 14px;
+}
+
+.settings-card > .settings-card-head + :not(.settings-group) {
+  margin-inline: 20px;
+}
+
+.settings-card > :last-child:not(.settings-group):not(.settings-card-head) {
+  margin-bottom: 20px;
+}
+
+.settings-group {
+  min-width: 0;
+  display: grid;
+}
+
+.settings-group + .settings-group {
+  border-top: 1px solid var(--border);
+}
+
+.settings-group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 20px 12px;
+}
+
+.settings-group-head h3 {
+  margin: 0 0 4px;
+  color: var(--text-strong);
+  font-size: 15px;
+}
+
+.settings-group-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-group-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-group-body {
+  min-width: 0;
+  display: grid;
+  padding: 0 20px 16px;
+}
+
+.settings-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 0.75fr) minmax(220px, 1fr);
+  align-items: center;
+  gap: 18px;
+  min-height: 58px;
+  padding: 10px 0;
+}
+
+.settings-row + .settings-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.settings-row-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.settings-row-copy strong {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.settings-row-copy span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-row-control {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.settings-switch-state {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.settings-row-control > input,
+.settings-row-control > textarea,
+.settings-row-control > .custom-select {
+  width: min(100%, 460px);
+}
+
+.settings-row-control > .ui-segmented-select {
+  justify-self: end;
+}
+
+.settings-disclosure {
+  min-width: 0;
+  margin: 0 20px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.settings-disclosure > summary {
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 18px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings-disclosure > summary::-webkit-details-marker { display: none; }
+.settings-disclosure > summary:hover { background: color-mix(in srgb, var(--surface-solid) 58%, transparent); }
+.settings-disclosure > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+
+.settings-disclosure-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.settings-disclosure-copy strong {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.settings-disclosure-copy small,
+.settings-disclosure-summary {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.settings-disclosure-chevron {
+  color: var(--muted);
+  transition: transform var(--duration-appica) var(--ease-appica-spring);
+}
+
+.settings-disclosure[open] .settings-disclosure-chevron { transform: rotate(180deg); }
+.settings-disclosure-body { padding: 0 14px 14px; border-top: 1px solid var(--border); }
+.settings-disclosure-body > .settings-row:first-child { padding-top: 14px; }
+.settings-disclosure-body > .form { padding-top: 14px; }
+
+.settings-shell .ui-segmented-select {
+  min-width: min(100%, calc(var(--segment-count, 2) * 92px));
+  width: max-content;
+}
+
+.settings-shell .ui-segmented-select.segments-2 { --segment-count: 2; }
+.settings-shell .ui-segmented-select.segments-3 { --segment-count: 3; }
+.settings-shell .ui-segmented-select.segments-4 { --segment-count: 4; }
+.settings-shell .ui-segmented-select.segments-5 { --segment-count: 5; }
+.settings-shell .ui-segmented-select button { min-width: max-content; }
+.settings-shell .ui-segmented-select.full-width button { min-width: 0; }
+
+@media (max-width: 900px) {
+  .settings-shell { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .settings-sidebar { position: static; display: block; }
+  .settings-nav-groups { display: contents; }
+  .settings-nav-group { display: contents; }
+  .settings-nav-label { display: none; }
+  .settings-tabs {
+    display: flex;
+    gap: 5px;
+    padding-bottom: 8px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .settings-tabs button { width: auto; flex: 0 0 auto; }
+}
+
+@media (max-width: 620px) {
+  .settings-shell { padding: 10px; }
+  .settings-content-head { padding-inline: 2px; }
+  .settings-content-head h2 { font-size: 18px; }
+  .settings-card > .settings-card-head { padding: 16px; }
+  .settings-card > .settings-card-head + :not(.settings-group) { margin-inline: 16px; }
+  .settings-group-head { padding: 16px 16px 10px; }
+  .settings-group-body { padding: 0 16px 12px; }
+  .settings-row { grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: start; }
+  .settings-row-control { justify-content: flex-start; }
+  .settings-row-control > input,
+  .settings-row-control > textarea,
+  .settings-row-control > .custom-select { width: 100%; }
+  .settings-disclosure { margin-inline: 16px; }
+  .settings-disclosure > summary { grid-template-columns: minmax(0, 1fr) 18px; }
+  .settings-disclosure-summary { display: none; }
+  .ui-segmented-select { max-width: 100%; min-width: 0; width: max-content; }
+  .ui-segmented-select button { min-width: 0; padding-inline: 12px; white-space: normal; }
 }
 
 /* Agent Settings Layout Refactoring */

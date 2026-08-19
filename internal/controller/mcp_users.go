@@ -129,9 +129,6 @@ func (s *Server) registerUserAutomationOperations() {
 		if err := s.store.Delete(ctx, "users", user.ID); err != nil {
 			return nil, err
 		}
-		if err := s.queueCoreConfigRefreshForUserRemoval(ctx, user.ID, "user_deleted"); err != nil {
-			return nil, err
-		}
 		return map[string]any{"deleted": true, "user_id": user.ID}, nil
 	})
 
@@ -251,7 +248,7 @@ func (s *Server) registerUserAutomationOperations() {
 			return nil, err
 		}
 		revisions := map[string]string{
-			"user:" + strconv.FormatInt(member.UserID, 10):    member.UpdatedAt.UTC().Format(time.RFC3339Nano),
+			"user:" + strconv.FormatInt(member.UserID, 10):        member.UpdatedAt.UTC().Format(time.RFC3339Nano),
 			"user_group:" + strconv.FormatInt(member.GroupID, 10): member.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		}
 		return revisions, nil
@@ -340,18 +337,18 @@ func (s *Server) registerUserAutomationOperations() {
 
 type userCreateAutomationInput struct {
 	User struct {
-		Username               string `json:"username"`
-		Nickname               string `json:"nickname"`
-		Password               string `json:"password"`
-		Role                   string `json:"role"`
-		Status                 string `json:"status"`
-		SpeedLimitMbps         int    `json:"speed_limit_mbps"`
-		TrafficLimitBytes      int64  `json:"traffic_limit_bytes"`
-		TrafficResetMode       string `json:"traffic_reset_mode"`
-		TrafficResetDay        int    `json:"traffic_reset_day"`
-		DeviceLimit            int    `json:"device_limit"`
-		LegacyProxyEnabled     bool   `json:"legacy_proxy_enabled"`
-		SubscriptionBurnAfterRead bool `json:"subscription_burn_after_read"`
+		Username                  string `json:"username"`
+		Nickname                  string `json:"nickname"`
+		Password                  string `json:"password"`
+		Role                      string `json:"role"`
+		Status                    string `json:"status"`
+		SpeedLimitMbps            int    `json:"speed_limit_mbps"`
+		TrafficLimitBytes         int64  `json:"traffic_limit_bytes"`
+		TrafficResetMode          string `json:"traffic_reset_mode"`
+		TrafficResetDay           int    `json:"traffic_reset_day"`
+		DeviceLimit               int    `json:"device_limit"`
+		LegacyProxyEnabled        bool   `json:"legacy_proxy_enabled"`
+		SubscriptionBurnAfterRead bool   `json:"subscription_burn_after_read"`
 	} `json:"user"`
 }
 
@@ -361,17 +358,17 @@ func (s *Server) userCreateAutomationCandidate(ctx context.Context, principal ap
 		return model.User{}, err
 	}
 	u := model.User{
-		Username:               strings.TrimSpace(request.User.Username),
-		Nickname:               strings.TrimSpace(request.User.Nickname),
-		Role:                   model.Role(request.User.Role),
-		Status:                 request.User.Status,
-		SpeedLimitMbps:         request.User.SpeedLimitMbps,
-		TrafficLimitBytes:      request.User.TrafficLimitBytes,
-		TrafficResetMode:       request.User.TrafficResetMode,
-		TrafficResetDay:        request.User.TrafficResetDay,
-		DeviceLimit:            request.User.DeviceLimit,
-		LegacyProxyEnabled:     true,
-		LegacyProxyEnabledSet:  true,
+		Username:                  strings.TrimSpace(request.User.Username),
+		Nickname:                  strings.TrimSpace(request.User.Nickname),
+		Role:                      model.Role(request.User.Role),
+		Status:                    request.User.Status,
+		SpeedLimitMbps:            request.User.SpeedLimitMbps,
+		TrafficLimitBytes:         request.User.TrafficLimitBytes,
+		TrafficResetMode:          request.User.TrafficResetMode,
+		TrafficResetDay:           request.User.TrafficResetDay,
+		DeviceLimit:               request.User.DeviceLimit,
+		LegacyProxyEnabled:        true,
+		LegacyProxyEnabledSet:     true,
 		SubscriptionBurnAfterRead: request.User.SubscriptionBurnAfterRead,
 	}
 	if u.Username == "" {
@@ -645,11 +642,11 @@ func (s *Server) userSessionRevokeCandidate(ctx context.Context, principal appli
 
 type userGroupCreateAutomationInput struct {
 	UserGroup struct {
-		Name                           string `json:"name"`
-		Description                    string `json:"description"`
-		Role                           string `json:"role"`
-		Enabled                        bool   `json:"enabled"`
-		SubscriptionCustomPathPolicy   string `json:"subscription_custom_path_policy"`
+		Name                         string `json:"name"`
+		Description                  string `json:"description"`
+		Role                         string `json:"role"`
+		Enabled                      bool   `json:"enabled"`
+		SubscriptionCustomPathPolicy string `json:"subscription_custom_path_policy"`
 	} `json:"user_group"`
 }
 
@@ -861,11 +858,12 @@ func fieldsFromChanged(changed []string) map[string]json.RawMessage {
 	return fields
 }
 
-func automationUserView(user model.User) map[string]any {	return map[string]any{
+func automationUserView(user model.User) map[string]any {
+	return map[string]any{
 		"id": user.ID, "revision": user.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		"username": user.Username, "nickname": user.Nickname, "role": user.Role, "status": user.Status,
 		"speed_limit_mbps": user.SpeedLimitMbps, "traffic_limit_bytes": strconv.FormatInt(user.TrafficLimitBytes, 10),
-		"traffic_used_bytes": strconv.FormatInt(user.TrafficUsedBytes, 10),
+		"traffic_used_bytes":      strconv.FormatInt(user.TrafficUsedBytes, 10),
 		"subscription_configured": user.SubscriptionToken != "", "subscription_age_enabled": user.SubscriptionAgeEnabled,
 		"subscription_suspended": user.SubscriptionSuspended, "subscription_suspended_at": user.SubscriptionSuspendedAt,
 		"subscription_suspend_reason": user.SubscriptionSuspendReason, "device_limit": user.DeviceLimit,
@@ -880,7 +878,7 @@ func automationUserGroupView(group model.UserGroup) map[string]any {
 		"name": group.Name, "description": group.Description, "role": group.Role,
 		"system_key": group.SystemKey, "enabled": group.Enabled,
 		"subscription_custom_path_policy": group.SubscriptionCustomPathPolicy,
-		"created_at": group.CreatedAt, "updated_at": group.UpdatedAt,
+		"created_at":                      group.CreatedAt, "updated_at": group.UpdatedAt,
 	}
 }
 

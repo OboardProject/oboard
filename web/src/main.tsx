@@ -107,6 +107,7 @@ import { SearchableCombobox } from './components/ui/SearchableCombobox'
 import { NetworkInterfacePicker } from './components/NetworkInterfacePicker'
 import { AgentSettingsPanel } from './components/AgentSettingsPanel'
 import { AboutSettingsPanel } from './components/AboutSettingsPanel'
+import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './components/settings/SettingsLayout'
 import { DNSRecordDialog, dnsRecordDraftFromRecord, dnsRecordPayload, emptyDNSRecordDraft } from './components/DNSRecordDialog'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
 import clashMetaClientIcon from './assets/subscription-clients/clash-meta.png'
@@ -122,6 +123,8 @@ import clashClassicClientIcon from './assets/subscription-clients/clash-classic.
 import { PageDataRequestCoordinator } from './page-data'
 import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
 import { usePollingEvents, useServerTelemetry, type RealtimeEvent, type RealtimeStatus, type ServerTelemetrySnapshot } from './realtime'
+import { realtimeInvalidatedPages } from './realtime-pages'
+import { configurationSyncPresentation, isConfigurationMutationPath, mergeConfigurationMutationResponse, MutationActivityTracker, type ConfigurationSyncRow } from './configuration-sync'
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { getServerTimeIssue } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
@@ -878,31 +881,6 @@ const PAGE_CACHE_FRESH_TTL_MS = 12_000
 // so a heavy warm-up queue never starves foreground navigation.
 const MAX_PREFETCH_CONCURRENCY = 2
 
-const realtimeResourcePages: Record<string, string[]> = {
-	user_overview: ['dashboard'],
-  account: ['account'],
-  notifications: ['notifications'],
-  subscriptions: ['nodes', 'account'],
-  servers: ['dashboard', 'servers', 'proxy-paths', 'nodes', 'tasks', 'audit', 'settings'],
-  server_runtime: ['dashboard', 'servers'],
-  server_metrics: ['dashboard', 'servers'],
-  traffic: ['dashboard', 'servers', 'users', 'nodes', 'account'],
-  tasks: ['dashboard'],
-  deployments: ['dashboard', 'servers', 'proxy-paths', 'tasks'],
-  probes: ['servers', 'proxy-paths', 'dns', 'mtu', 'port-forwards', 'tasks'],
-  topology: ['servers', 'proxy-paths', 'plans', 'nodes', 'settings'],
-  audit: ['dashboard', 'audit'],
-  mtu: ['servers', 'mtu'],
-  port_forwards: ['proxy-paths', 'port-forwards'],
-  tunnels: ['proxy-paths', 'tunnels'],
-  users: ['users', 'plans', 'subscriptions', 'account', 'audit'],
-  dns: ['dns', 'dns-records', 'servers', 'settings'],
-  settings: ['dashboard', 'servers', 'subscriptions', 'settings'],
-  backups: ['settings'],
-  controller_update: ['settings'],
-  automation: ['automation'],
-}
-
 function tabAllowedForRole(tab: string, role: Role) {
   return roleRanks[role] >= roleRanks[tabMinimumRole[tab] || 'viewer']
 }
@@ -1357,24 +1335,6 @@ function sleep(ms: number) {
   return new Promise(resolve => window.setTimeout(resolve, ms))
 }
 
-function DeploymentSummary({ data }: { data: any }) {
-  const items = [
-    ['服务器', data.servers?.length || 0],
-    ['入口', data.inbounds?.length || 0],
-    ['出口', data.outbounds?.length || 0],
-    ['分流规则', data.routing_rules?.length || 0],
-    ['端口转发', data.port_forwards?.length || 0],
-    ['隧道', data.tunnels?.length || 0],
-    ['解析服务列表', data.dns_lists?.length || 0],
-    ['WARP', data.warp_profiles?.length || 0],
-  ]
-  return <div className="deployment-summary">
-    <p>下发后，相关服务器会按当前链路配置更新。</p>
-    <div>{items.map(([label, count]) => <span key={label}>{label}<strong>{count}</strong></span>)}</div>
-    <small>进度可以在“任务”里查看。</small>
-  </div>
-}
-
 function DashboardAttentionNotice({ parts, className = '', onDismiss }: { parts: string[]; className?: string; onDismiss: () => void }) {
   return (
     <button
@@ -1400,44 +1360,67 @@ class SupersededAuthRequestError extends Error {
   }
 }
 
-function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
+type MutationResponseObserver = (path: string, data: any, method: string) => void
+
+function api(token: string, onUnauthorized?: (failedToken: string) => boolean, onMutationResponse?: MutationResponseObserver) {
   const csrf = token === 'cookie' ? sessionStorage.getItem('oboard.csrf') || '' : ''
   const authHeaders: Record<string, string> = token && token !== 'cookie' ? { authorization: `Bearer ${token}` } : {}
   const csrfHeaders: Record<string, string> = token === 'cookie' && csrf ? { 'x-oboard-csrf': csrf } : {}
   async function request<T = any>(path: string, init: RequestInit = {}): Promise<T> {
-    const res = await fetch(appPath('/api/v2/ui' + path), {
-      ...init,
-      credentials: 'same-origin',
-      headers: {
-        'content-type': 'application/json',
-        ...authHeaders,
-        ...csrfHeaders,
-        ...(init.headers || {})
-      }
-    })
+    const method = String(init.method || 'GET').toUpperCase()
+    const mutation = method !== 'GET' && method !== 'HEAD'
+    if (mutation) onMutationResponse?.(path, { mutation_pending: true }, method)
+    let res: Response
+    try {
+      res = await fetch(appPath('/api/v2/ui' + path), {
+        ...init,
+        credentials: 'same-origin',
+        headers: {
+          'content-type': 'application/json',
+          ...authHeaders,
+          ...csrfHeaders,
+          ...(init.headers || {})
+        }
+      })
+    } catch (error) {
+      if (mutation) onMutationResponse?.(path, { mutation_pending: false }, method)
+      throw error
+    }
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
+      if (mutation) onMutationResponse?.(path, { mutation_pending: false }, method)
       if (res.status === 401 && token && onUnauthorized) {
         if (!onUnauthorized(token)) throw new SupersededAuthRequestError()
         throw apiRequestError({ error: '登录已过期，请重新登录' }, res)
       }
       throw apiRequestError(data, res)
     }
+    if (mutation) onMutationResponse?.(path, { ...data, mutation_pending: false }, method)
     return data
   }
   async function requestV2<T = any>(path: string, init: RequestInit = {}): Promise<T> {
-    const res = await fetch(appPath('/api/v2' + path), {
-      ...init,
-      credentials: 'same-origin',
-      headers: {
-        'content-type': 'application/json',
-        ...authHeaders,
-        ...csrfHeaders,
-        ...(init.headers || {})
-      }
-    })
+    const method = String(init.method || 'GET').toUpperCase()
+    const mutation = method !== 'GET' && method !== 'HEAD'
+    if (mutation) onMutationResponse?.(path, { mutation_pending: true }, method)
+    let res: Response
+    try {
+      res = await fetch(appPath('/api/v2' + path), {
+        ...init,
+        credentials: 'same-origin',
+        headers: {
+          'content-type': 'application/json',
+          ...authHeaders,
+          ...csrfHeaders,
+          ...(init.headers || {})
+        }
+      })
+    } catch (error) {
+      if (mutation) onMutationResponse?.(path, { mutation_pending: false }, method)
+      throw error
+    }
     const payload = await res.json().catch(() => ({})) as any
     if (!res.ok) {
+      if (mutation) onMutationResponse?.(path, { mutation_pending: false }, method)
       if (res.status === 401 && token && onUnauthorized) {
         if (!onUnauthorized(token)) throw new SupersededAuthRequestError()
         throw new Error('登录已过期，请重新登录')
@@ -1445,6 +1428,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean) {
       const v2Error = payload?.error && typeof payload.error === 'object' ? payload.error : null
       throw apiRequestError({ error: v2Error?.message || payload?.error, message: payload?.message }, res)
     }
+    if (mutation) onMutationResponse?.(path, { ...(payload.data || {}), mutation_pending: false }, method)
     return payload.data as T
   }
   async function download(path: string): Promise<{ blob: Blob; filename: string }> {
@@ -1534,7 +1518,21 @@ function App() {
   const realtimeVisibleRefreshPendingRef = useRef(false)
   const [realtimeRevision, setRealtimeRevision] = useState(0)
   const [realtimeResources, setRealtimeResources] = useState<string[]>([])
+  const [syncRetrying, setSyncRetrying] = useState(false)
+  const [mutationSaving, setMutationSaving] = useState(false)
+  const mutationActivityRef = useRef(new MutationActivityTracker())
   const { dialogs, dialog, setDialog } = useDialogController()
+  const mergeMutationResponse = React.useCallback((path: string, result: any) => {
+    if (typeof result?.mutation_pending === 'boolean') {
+      setMutationSaving(mutationActivityRef.current.update(result.mutation_pending))
+    }
+    if (!result || result.mutation_pending === true) return
+    Object.keys(pageCacheRef.current).forEach(page => {
+      const entry = pageCacheRef.current[page]
+      pageCacheRef.current[page] = { data: mergeConfigurationMutationResponse(entry.data, result, path), fetchedAt: entry.fetchedAt }
+    })
+    setData((current: any) => mergeConfigurationMutationResponse(current, result, path))
+  }, [])
   const client = useMemo(() => api(token, failedToken => {
     if (failedToken !== activeTokenRef.current) return false
     activeTokenRef.current = ''
@@ -1552,7 +1550,7 @@ function App() {
     prefetchSchedulerRef.current?.clear()
     showToast(setToast, '登录已过期，请重新登录')
     return true
-  }), [token])
+  }, mergeMutationResponse), [token, mergeMutationResponse])
 
   useEffect(() => {
     if (!token) return
@@ -1657,10 +1655,6 @@ function App() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isMobile, isSidebarOpen])
-
-  const invalidateActivePageDataRequests = () => {
-    pageRequestsRef.current.invalidateActive()
-  }
 
   const requestPageData = (page: string, forceFresh = false, priority: 'foreground' | 'prefetch' | 'background' = 'background') => {
     return pageRequestsRef.current.request(page, signal => client.request(`/page-data?page=${encodeURIComponent(page)}`, signal ? { signal } : {}), { forceFresh, priority })
@@ -1785,15 +1779,7 @@ function App() {
 
   const handleRealtimeEvent = (event: RealtimeEvent) => {
     const resync = event.type === 'resync_required' || (event.type === 'ready' && event.reconnected === true)
-    const pages = new Set<string>()
-    if (resync || event.resources?.includes('all')) {
-      Object.keys(pageCacheRef.current).forEach(page => pages.add(page))
-      pages.add(tab)
-    } else if (event.type === 'invalidate') {
-      for (const resource of event.resources || []) {
-        for (const page of realtimeResourcePages[resource] || []) pages.add(page)
-      }
-    }
+    const pages = realtimeInvalidatedPages(event, tab, Object.keys(pageCacheRef.current))
     if (!pages.size) return
     pages.forEach(page => {
       dirtyPagesRef.current.add(page)
@@ -2078,44 +2064,6 @@ function App() {
     setToken(v)
   }} />
 
-  const rememberDeploymentStatus = (status: any) => {
-    Object.keys(pageCacheRef.current).forEach(page => {
-      const entry = pageCacheRef.current[page]
-      pageCacheRef.current[page] = { data: { ...entry.data, deployment_status: status }, fetchedAt: entry.fetchedAt }
-    })
-  }
-
-  const apply = async () => {
-    try {
-      const deploymentData = tab === 'proxy-paths'
-        ? data
-        : await client.request('/page-data?page=proxy-paths')
-      const conflicts = deploymentConflicts(deploymentData)
-      if (conflicts.length) {
-        showToast(setToast, `下发已阻止：${conflicts.join('；')}`, 'warning')
-        return
-      }
-      const confirmed = await dialogs.confirm({
-        title: '确认下发配置',
-        tone: 'danger',
-        confirmText: '下发配置',
-        message: <DeploymentSummary data={deploymentData} />,
-      })
-      if (!confirmed) return
-      const deployment = await client.request('/deployments/apply', { method: 'POST', body: '{}' })
-      const deploymentStatus = { config_version: deployment.config_version, summary: deployment.summary, failure_dismissed: false }
-      rememberDeploymentStatus(deploymentStatus)
-      setData((old: any) => ({ ...old, last_deployment: deployment, deployment_status: deploymentStatus }))
-      await load(undefined, { forceFresh: true })
-      const version = deployment.config_version ? `版本 ${deployment.config_version}` : '配置'
-      const summary = deployment.summary || {}
-      const total = Number(summary.total || 0)
-      showToast(setToast, total > 0 ? `${version} 已下发 · 已为 ${total} 台服务器创建任务，请在任务中心查看进度` : `${version} 已下发，请在任务中心查看进度`, 'success')
-    } catch (e: any) {
-      showToast(setToast, e.message)
-    }
-  }
-
   const tabTitles: { [key: string]: string } = {
     dashboard: '系统总览',
     servers: '服务器管理',
@@ -2132,24 +2080,12 @@ function App() {
     account: '我的账户',
   }
 
-  const deploymentSummary = data.deployment_status?.summary || {}
-  const deploymentTotal = Number(deploymentSummary.total || 0)
-  const deploymentPending = Number(deploymentSummary.pending || 0) + Number(deploymentSummary.running || 0)
-  const deploymentFailed = Number(deploymentSummary.failed || 0)
-  const deploymentSucceeded = Number(deploymentSummary.succeeded || 0)
-  const isDeploying = deploymentPending > 0
-  const isSynced = deploymentTotal > 0 && deploymentSucceeded === deploymentTotal
-  const deploymentHasFailure = !isDeploying && deploymentFailed > 0
-  const deploymentStatusLabel = isDeploying
-    ? '正在下发配置...'
-    : isSynced
-      ? '配置已同步'
-      : deploymentHasFailure
-        ? deploymentFailed === deploymentTotal ? '下发失败' : '部分下发失败'
-        : '有待部署修改'
-  const deploymentVersion = Number(data.deployment_status?.config_version || data.last_deployment?.config_version || 0)
-  const deployStatusDismissable = deploymentHasFailure
-  const showDeployStatus = !deployStatusDismissable || !Boolean(data.deployment_status?.failure_dismissed)
+  const configurationSync: ConfigurationSyncRow[] = Array.isArray(data.configuration_sync) ? data.configuration_sync : []
+  const syncPresentation = configurationSyncPresentation(configurationSync, mutationSaving, syncRetrying)
+  const failedSync = configurationSync.filter(item => item.state === 'failed')
+  const activeSync = configurationSync.filter(item => ['pending', 'preparing', 'queued', 'running'].includes(item.state))
+  const synced = syncPresentation.tone === 'ok'
+  const syncStatusLabel = syncPresentation.label
   const dashboardAttention = getDashboardAttention(data)
   const dashboardAttentionStorageKey = `oboard.dashboard-attention.${sessionUser?.id || data.current_user?.id || sessionUser?.username || data.current_user?.username || 'anonymous'}`
   const dismissedDashboardAttention = localStorage.getItem(dashboardAttentionStorageKey) || ''
@@ -2159,16 +2095,16 @@ function App() {
     localStorage.setItem(dashboardAttentionStorageKey, dashboardAttention.fingerprint)
     setAttentionDismissRevision(value => value + 1)
   }
-  const dismissDeployStatus = async () => {
-    if (!deployStatusDismissable || !deploymentVersion) return
+  const retryFailedSync = async () => {
+    if (!failedSync.length || syncRetrying) return
+    setSyncRetrying(true)
     try {
-      const result = await client.request(`/deployments/${deploymentVersion}/dismiss-failure`, { method: 'POST', body: '{}' })
-      const status = result.deployment_status || { ...data.deployment_status, failure_dismissed: true }
-      invalidateActivePageDataRequests()
-      rememberDeploymentStatus(status)
-      setData((old: any) => ({ ...old, deployment_status: status }))
+      const result = await client.request('/configuration-sync/retry', { method: 'POST', body: JSON.stringify({ server_ids: failedSync.map(item => Number(item.server_id)) }) })
+      showToast(setToast, `已重试 ${Number(result.retried || failedSync.length)} 台服务器的配置同步`, 'success')
     } catch (error: any) {
       showToast(setToast, localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setSyncRetrying(false)
     }
   }
 
@@ -2308,59 +2244,24 @@ function App() {
                     onDismiss={dismissDashboardAttention}
                   />
                 )}
-                {canOperate && <>
-                {showDeployStatus && (
-                  deployStatusDismissable ? (
-                    <button
-                      type="button"
-                      className={`deploy-status-pill dismissable danger`}
-                      onClick={() => void dismissDeployStatus()}
-                      title="点击忽略"
-                      aria-label={`${deploymentStatusLabel}，点击忽略`}
-                    >
-                      <Info size={16} />
-                      <span>{deploymentStatusLabel}</span>
-                    </button>
-                  ) : (
-                    <div className={`deploy-status-pill ${isDeploying ? 'info' : isSynced ? 'ok' : 'warn'}`}>
-                      {isDeploying ? (
-                        <>
-                          <motion.div
-                            animate={{ rotate: 360 }}
-                            transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
-                            style={{
-                              width: '14px',
-                              height: '14px',
-                              borderWidth: '2px',
-                              borderStyle: 'solid',
-                              borderColor: 'currentColor',
-                              borderTopColor: 'transparent',
-                              borderRadius: '50%',
-                              display: 'inline-block'
-                            }}
-                          />
-                          <span>{deploymentStatusLabel}</span>
-                        </>
-                      ) : isSynced ? (
-                        <>
-                          <Check size={16} />
-                          <span>{deploymentStatusLabel}</span>
-                        </>
-                      ) : (
-                        <>
-                          <Info size={16} />
-                          <span>{deploymentStatusLabel}</span>
-                        </>
-                      )}
-                    </div>
-                  )
-                )}
-
-                <button className="topbar-apply" onClick={apply} disabled={isDeploying} title="下发配置" aria-label="下发配置">
-                  <Send size={15} aria-hidden="true" />
-                  <span>下发配置</span>
-                </button>
-                </>}
+                {canOperate && (failedSync.length > 0 ? (
+                  <button
+                    type="button"
+                    className="deploy-status-pill dismissable danger"
+                    onClick={() => void retryFailedSync()}
+                    disabled={syncRetrying}
+                    title={failedSync.map(item => item.error).filter(Boolean).join('；') || '点击重试同步'}
+                    aria-label={syncStatusLabel}
+                  >
+                    <RefreshCw size={15} className={syncRetrying ? 'spin' : ''} />
+                    <span>{syncStatusLabel}</span>
+                  </button>
+                ) : (
+                  <div className={`deploy-status-pill ${mutationSaving || activeSync.length > 0 ? 'info' : synced ? 'ok' : 'warn'}`} aria-live="polite">
+                    {mutationSaving || activeSync.length > 0 ? <RefreshCw size={15} className="spin" /> : synced ? <Check size={16} /> : <Info size={16} />}
+                    <span>{syncStatusLabel}</span>
+                  </div>
+                ))}
 
                 <IconButton label={loading ? "正在刷新" : "刷新"} onClick={() => void load(tab)} className={`topbar-refresh${loading ? " refreshing" : ""}`} busy={loading}><RefreshIcon /></IconButton>
               </div>
@@ -2369,7 +2270,7 @@ function App() {
             <div className="page-stage">
               <AnimatePresence initial={false} mode="popLayout">
                 <MotionPage key={tab}>
-                  {renderTab(tab, data, client, load, apply, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange, patchPageData)}
+                  {renderTab(tab, data, client, load, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange, patchPageData)}
                 </MotionPage>
               </AnimatePresence>
             </div>
@@ -2696,7 +2597,7 @@ $ _`}</pre>
   )
 }
 
-function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, apply?: () => Promise<void>, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', serverTelemetryStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange, patchPageData?: PageDataPatch) {
+function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', serverTelemetryStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange, patchPageData?: PageDataPatch) {
   if (tab === 'account') return (
     <AccountPage
       data={data}
@@ -2722,7 +2623,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
       : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} announcements={data.user_announcements || []} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('nodes')} />
   }
   if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={serverTelemetryStatus} />
-  if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} apply={apply} loading={loading} topbarTarget={proxyPathTopbarTarget} patchPageData={patchPageData} />
+  if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} loading={loading} topbarTarget={proxyPathTopbarTarget} patchPageData={patchPageData} />
   if (tab === 'inbounds') return <Inbounds data={data} client={client} load={load} />
   if (tab === 'outbounds') return <Outbounds data={data} client={client} load={load} />
   if (tab === 'routing') return <RoutingRules data={data} client={client} load={load} />
@@ -3359,22 +3260,35 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       }) })
     }, '通知提醒设置已保存')
   }
+  const settingsNavigation: Array<{ label: string; items: Array<{ key: typeof activeSection; label: string; icon: any; description: string }> }> = [
+    { label: '基础与节点', items: [{ key: 'connection', label: '基础设置', icon: LinkIcon, description: '面板地址、路径和受信代理。' }, { key: 'registration', label: '公开注册', icon: UserPlus, description: '控制访客注册入口和默认权限。' }, { key: 'servers', label: 'Agent 设置', icon: ServerIcon, description: '新节点默认值、流量和监控策略。' }] },
+    { label: '安全与服务', items: [{ key: 'certificates', label: '证书', icon: Lock, description: '证书签发、匹配和续期。' }, { key: 'subscriptions', label: '订阅安全', icon: Shield, description: '订阅加密和独立订阅入口。' }, { key: 'notifications', label: '通知提醒', icon: Bell, description: '服务器状态和通知窗口。' }] },
+    { label: '运维', items: [{ key: 'backups', label: '数据备份', icon: Database, description: '备份、恢复和第三方存储。' }, { key: 'updates', label: '更新', icon: Download, description: '版本通道、检查和自动更新。' }, { key: 'logs', label: '运行日志', icon: FileText, description: '查看、下载和清理主控日志。' }] },
+    { label: '关于', items: [{ key: 'about', label: '关于 OBoard', icon: Info, description: '版本、内核和许可证信息。' }] },
+  ]
+  const activeNavigationItem = settingsNavigation.flatMap(group => group.items).find(item => item.key === activeSection) || settingsNavigation[0].items[0]
   return <section className="settings-shell">
-    <nav className="settings-tabs" role="tablist" aria-label="设置分类">
-      <button className={activeSection === 'connection' ? 'active' : ''} role="tab" aria-selected={activeSection === 'connection'} onClick={() => setActiveSection('connection')}><LinkIcon size={15} />基础设置</button>
-      <button className={activeSection === 'registration' ? 'active' : ''} role="tab" aria-selected={activeSection === 'registration'} onClick={() => setActiveSection('registration')}><UserPlus size={15} />注册</button>
-      <button className={activeSection === 'servers' ? 'active' : ''} role="tab" aria-selected={activeSection === 'servers'} onClick={() => setActiveSection('servers')}><ServerIcon size={15} />Agent 设置</button>
-      <button className={activeSection === 'certificates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'certificates'} onClick={() => setActiveSection('certificates')}><Lock size={15} />证书</button>
-      <button className={activeSection === 'subscriptions' ? 'active' : ''} role="tab" aria-selected={activeSection === 'subscriptions'} onClick={() => setActiveSection('subscriptions')}><Shield size={15} />订阅安全</button>
-      <button className={activeSection === 'notifications' ? 'active' : ''} role="tab" aria-selected={activeSection === 'notifications'} onClick={() => setActiveSection('notifications')}><Bell size={15} />通知提醒</button>
-      <button className={activeSection === 'backups' ? 'active' : ''} role="tab" aria-selected={activeSection === 'backups'} onClick={() => setActiveSection('backups')}><Database size={15} />数据备份</button>
-      <button className={activeSection === 'updates' ? 'active' : ''} role="tab" aria-selected={activeSection === 'updates'} onClick={() => setActiveSection('updates')}><Download size={15} />更新</button>
-      <button className={activeSection === 'logs' ? 'active' : ''} role="tab" aria-selected={activeSection === 'logs'} onClick={() => setActiveSection('logs')}><FileText size={15} />运行日志</button>
-      <button type="button" id="settings-tab-about" className={activeSection === 'about' ? 'active' : ''} role="tab" aria-selected={activeSection === 'about'} aria-controls="settings-panel-about" onClick={() => setActiveSection('about')}><Info size={15} aria-hidden="true" />关于</button>
-    </nav>
-    <div className="settings-grid">
-      {activeSection === 'connection' && <section className="settings-card">
-        <div className="settings-card-head"><div><h3>节点连接地址</h3><p className="muted">填写服务器访问地址</p></div></div>
+    <aside className="settings-sidebar">
+      <nav className="settings-nav-groups" aria-label="设置分类">
+        {settingsNavigation.map(group => <div className="settings-nav-group" key={group.label}>
+          <span className="settings-nav-label">{group.label}</span>
+          <div className="settings-tabs" role="tablist">
+            {group.items.map(item => {
+              const Icon = item.icon
+              const active = activeSection === item.key
+              return <button key={item.key} type="button" className={active ? 'active' : ''} role="tab" aria-selected={active} aria-controls={`settings-panel-${item.key}`} onClick={() => setActiveSection(item.key)}><Icon size={15} aria-hidden="true" />{item.label}</button>
+            })}
+          </div>
+        </div>)}
+      </nav>
+    </aside>
+    <div className="settings-content">
+      <header className="settings-content-head">
+        <div><h2>{activeNavigationItem.label}</h2><p>{activeNavigationItem.description}</p></div>
+      </header>
+      <div className="settings-grid">
+      {activeSection === 'connection' && <section id="settings-panel-connection" role="tabpanel" className="settings-card">
+        <SettingsGroup title="节点连接地址" description="Agent 连接面板的地址，留空时自动使用当前地址。">
         <div className="form settings-form single-field">
           <FormField label="面板访问地址" hint="Agent 连接面板的地址，留空自动使用当前地址。">
             <input value={controllerURL} onChange={e => setControllerURL(e.target.value)} placeholder={currentOrigin} disabled={migration.active} />
@@ -3385,6 +3299,8 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             <button className="ghost" onClick={resetAuto} disabled={Boolean(saving) || migration.active}>恢复自动</button>
           </div>
         </div>
+        </SettingsGroup>
+        <SettingsGroup title="路径与反向代理" description="路径迁移会同步通知 Agent；受信代理只用于恢复真实访问来源。">
         <div className="base-path-settings">
           <div className="base-path-settings-head">
             <div><h3>面板路径</h3><p className="muted">当前路径：{currentBasePath || '/'}</p></div>
@@ -3451,69 +3367,39 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </div>
           {!reverseProxyStatus.direct_tls && reverseProxyStatus.peer_trusted && !reverseProxyStatus.https && <p className="trusted-proxy-warning">请让反向代理覆盖发送 <code>X-Forwarded-Proto</code>。</p>}
         </div>
+        </SettingsGroup>
       </section>}
-      {activeSection === 'registration' && <section className="settings-card">
-        <div className="settings-card-head"><div><h3>公开注册</h3><p className="muted">允许访客自助注册账号。注册用户默认不加入任何用户组、没有任何面板权限，需管理员分配用户组后才能使用。</p></div></div>
-        <div className="form settings-form single-field">
-          <FormField label="开放注册" hint="关闭后登录页不再显示注册入口，注册接口也会拒绝请求。">
-            <Switch checked={registrationEnabled} onChange={setRegistrationEnabled} ariaLabel="开放注册" />
-          </FormField>
-          <FormField label="默认注册用户组" hint="新注册用户自动加入该用户组并继承其权限；留空表示不自动分配（注册用户无任何权限）。系统管理员组不可选。">
+      {activeSection === 'registration' && <section id="settings-panel-registration" role="tabpanel" className="settings-card">
+        <SettingsGroup title="公开注册" description="控制登录页注册入口与新用户的初始权限。">
+          <SettingsSwitchRow label="开放注册" description="关闭后登录页不再显示注册入口，注册接口也会拒绝请求。" checked={registrationEnabled} onChange={setRegistrationEnabled} disabled={Boolean(saving)} ariaLabel="开放注册" />
+          <SettingsRow label="默认注册用户组" description="留空表示不自动分配，新注册用户没有任何面板权限。">
             <Select value={registrationDefaultGroupID} onChange={event => setRegistrationDefaultGroupID(Number(event.target.value))} aria-label="默认注册用户组">
               <option value={0}>不分配用户组（无权限）</option>
-              {(data.user_groups || []).filter((group: UserGroup) => group.system_key !== 'administrators').map((group: UserGroup) => (
-                <option key={group.id} value={group.id}>{group.name}（{sessionRoleLabel(group.role)}）{group.enabled === false ? ' · 已停用' : ''}</option>
-              ))}
+              {(data.user_groups || []).filter((group: UserGroup) => group.system_key !== 'administrators').map((group: UserGroup) => <option key={group.id} value={group.id}>{group.name}（{sessionRoleLabel(group.role)}）{group.enabled === false ? ' · 已停用' : ''}</option>)}
             </Select>
-          </FormField>
+          </SettingsRow>
           <div className="settings-actions"><button onClick={() => void saveRegistration()} disabled={Boolean(saving)}>{saving === 'registration' ? '保存中...' : '保存注册设置'}</button></div>
-        </div>
+        </SettingsGroup>
       </section>}
       {activeSection === 'servers' && <AgentSettingsPanel data={data} client={client} load={load} notify={notify} />}
       {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
-      {activeSection === 'subscriptions' && <><section className="settings-card">
-        <div className="settings-card-head">
-          <div><h3>Mihomo Age 加密</h3><p className="muted">服务端只保存用户公钥，私钥始终留在客户端。</p></div>
-          <span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>
-        </div>
-        <div className="form settings-form single-field">
-          <FormField label="加密策略" hint="仅影响 Mihomo 和 Clash 格式。">
-            <Select
-              variant="segmented"
-              value={subscriptionAgePolicy}
-              onChange={e => {
-                const next = e.target.value as 'optional' | 'required'
-                setSubscriptionAgePolicy(next)
-                void saveSubscriptionAgePolicy(next)
-              }}
-              disabled={saving === 'subscription-age'}
-              aria-label="Age 加密策略"
-            >
-              <option value="optional">用户可选</option>
-              <option value="required">强制开启</option>
+      {activeSection === 'subscriptions' && <><section id="settings-panel-subscriptions" role="tabpanel" className="settings-card">
+        <SettingsGroup title="Mihomo Age 加密" description="服务端只保存用户公钥，私钥始终留在客户端。" actions={<span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>}>
+          <SettingsRow label="加密策略" description="仅影响 Mihomo 和 Clash 格式。">
+            <Select variant="segmented" value={subscriptionAgePolicy} onChange={e => { const next = e.target.value as 'optional' | 'required'; setSubscriptionAgePolicy(next); void saveSubscriptionAgePolicy(next) }} disabled={saving === 'subscription-age'} aria-label="Age 加密策略">
+              <option value="optional">用户可选</option><option value="required">强制开启</option>
             </Select>
-          </FormField>
-          <div className="subscription-security-note">
-            <Shield size={18} />
-            <div><strong>{subscriptionAgePolicy === 'required' ? 'Mihomo 订阅必须加密' : '普通订阅与加密订阅并存'}</strong><span>{subscriptionAgePolicy === 'required' ? '没有配置 Age 公钥的用户将无法获取 Mihomo 格式，直到保存公钥。' : '用户可在自己的账户页面开启，已有普通订阅链接不会失效。'}</span></div>
-          </div>
-        </div>
-      </section>
-      <SubscriptionRelayManager data={data} client={client} load={load} notify={notify} /></>}
-      {activeSection === 'notifications' && <section className="settings-card">
-        <div className="settings-card-head"><div><h3>服务器离线与恢复提醒</h3><p className="muted">统一控制离线判断时间和恢复提醒的延迟窗口，也可以为单台服务器单独覆盖。</p></div></div>
-        <div className="form settings-form single-field">
-          <FormField label="默认离线判断时间（秒）" hint="服务器超过该时长未上报心跳即判定离线并触发提醒；单台服务器可在服务器设置中单独覆盖。">
-            <input type="number" min={30} max={86400} value={notificationOfflineAfter} onChange={event => setNotificationOfflineAfter(Math.max(30, Number(event.target.value) || 120))} />
-          </FormField>
-          <FormField label="恢复提醒延迟（秒）" hint="服务器恢复在线后延迟该时长再提醒，短时间反复掉线不会频繁打扰。">
-            <input type="number" min={0} max={86400} value={notificationOnlineAfter} onChange={event => setNotificationOnlineAfter(Math.max(0, Number(event.target.value) || 0))} />
-          </FormField>
-          <FormField label="多台服务器同时离线时合并提醒" hint="开启后，同时失联的多台服务器会等各自的判断窗口结束，合并为一条通知发送。">
-            <Switch checked={notificationMergeOffline} onChange={setNotificationMergeOffline} ariaLabel="合并离线提醒" />
-          </FormField>
+          </SettingsRow>
+          <div className="subscription-security-note"><Shield size={18} /><div><strong>{subscriptionAgePolicy === 'required' ? 'Mihomo 订阅必须加密' : '普通订阅与加密订阅并存'}</strong><span>{subscriptionAgePolicy === 'required' ? '没有配置 Age 公钥的用户将无法获取 Mihomo 格式，直到保存公钥。' : '用户可在自己的账户页面开启，已有普通订阅链接不会失效。'}</span></div></div>
+        </SettingsGroup>
+      </section><SubscriptionRelayManager data={data} client={client} load={load} notify={notify} /></>}
+      {activeSection === 'notifications' && <section id="settings-panel-notifications" role="tabpanel" className="settings-card">
+        <SettingsGroup title="服务器离线与恢复提醒" description="统一控制离线判断时间和恢复提醒的延迟窗口，也可以为单台服务器单独覆盖。">
+          <SettingsRow label="默认离线判断时间（秒）" description="超过该时长未上报心跳即判定离线并触发提醒。"><input type="number" min={30} max={86400} value={notificationOfflineAfter} onChange={event => setNotificationOfflineAfter(Math.max(30, Number(event.target.value) || 120))} aria-label="默认离线判断时间" /></SettingsRow>
+          <SettingsRow label="恢复提醒延迟（秒）" description="短时间反复掉线不会频繁打扰。"><input type="number" min={0} max={86400} value={notificationOnlineAfter} onChange={event => setNotificationOnlineAfter(Math.max(0, Number(event.target.value) || 0))} aria-label="恢复提醒延迟" /></SettingsRow>
+          <SettingsSwitchRow label="合并离线提醒" description="同时失联的多台服务器合并为一条通知发送。" checked={notificationMergeOffline} onChange={setNotificationMergeOffline} disabled={Boolean(saving)} ariaLabel="合并离线提醒" />
           <div className="settings-actions"><button onClick={() => void saveNotificationSettings()} disabled={Boolean(saving)}>{saving === 'notifications' ? '保存中...' : '保存通知设置'}</button></div>
-        </div>
+        </SettingsGroup>
       </section>}
       {activeSection === 'backups' && <ControllerBackupPanel client={client} notify={notify} dialogs={dialogs} />}
       {activeSection === 'updates' && <ControllerUpdatePanel data={data} client={client} load={load} notify={notify} dialogs={dialogs} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />}
@@ -3529,6 +3415,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         onSave={saveControllerLogs}
       />}
       {activeSection === 'about' && <AboutSettingsPanel version={data.version} />}
+      </div>
     </div>
   </section>
 }
@@ -4810,6 +4697,7 @@ function CertificateSettings({ data, client, load, notify }: any) {
   const [working, setWorking] = useState('')
   const [importDraft, setImportDraft] = useState({ name: '', certificate_pem: '', fullchain_pem: '', private_key_pem: '' })
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [eabTarget, setEABTarget] = useState<'draft' | 'auto' | Certificate | null>(null)
   const [eabDraft, setEABDraft] = useState({ keyID: '', hmacKey: '', remark: '', retain: false })
   const [logCertificate, setLogCertificate] = useState<Certificate | null>(null)
@@ -4871,8 +4759,8 @@ function CertificateSettings({ data, client, load, notify }: any) {
     try { await client.request('/settings', { method: 'POST', body: JSON.stringify({ certificate_auto_match_enabled: autoMatch, certificate_default_preference: preference, certificate_auto_issue_acme_ca: autoIssueCA, certificate_auto_issue_google_eab_credential_id: autoIssueCA === 'google' ? autoIssueEABCredentialID : 0 }) }); await load(); notify?.('证书自动匹配与签发设置已保存', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
   }
   const importCertificate = async () => {
-    if (!importDraft.certificate_pem.trim() || !importDraft.private_key_pem.trim()) return
-    try { await client.request('/certificates/import', { method: 'POST', body: JSON.stringify(importDraft) }); setImportDraft({ name: '', certificate_pem: '', fullchain_pem: '', private_key_pem: '' }); await load(); notify?.('证书已导入', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
+    if (!importDraft.certificate_pem.trim() || !importDraft.private_key_pem.trim()) return false
+    try { await client.request('/certificates/import', { method: 'POST', body: JSON.stringify(importDraft) }); setImportDraft({ name: '', certificate_pem: '', fullchain_pem: '', private_key_pem: '' }); await load(); notify?.('证书已导入', 'success'); return true } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error'); return false }
   }
   const openDraftEAB = () => {
     setEABDraft({ keyID: String(draft.eab_key_id || ''), hmacKey: String(draft.eab_hmac_key || ''), remark: '', retain: false })
@@ -4978,11 +4866,10 @@ function CertificateSettings({ data, client, load, notify }: any) {
       : '域名需要已解析到所选服务器，服务器会通过 80 端口完成验证；泛域名不能使用此方式。'
   return <div className="settings-grid">
     <section className="settings-card">
-      <div className="settings-card-head certificate-apply-head"><div><h3>手动申请</h3><p className="muted">需要立即为指定域名签发证书时使用，提交后可在下方查看签发进度。</p></div><button type="button" onClick={() => setCreateDialogOpen(true)}><Plus size={14} />手动申请</button></div>
-      <details className="advanced-config"><summary>导入现有证书</summary><div className="form settings-form"><FormField label="名称"><input value={importDraft.name} onChange={e => setImportDraft({ ...importDraft, name: e.target.value })} /></FormField><FormField label="证书 PEM"><textarea rows={4} value={importDraft.certificate_pem} onChange={e => setImportDraft({ ...importDraft, certificate_pem: e.target.value })} /></FormField><FormField label="完整链 PEM"><textarea rows={4} value={importDraft.fullchain_pem} onChange={e => setImportDraft({ ...importDraft, fullchain_pem: e.target.value })} /></FormField><FormField label="私钥 PEM"><textarea rows={4} value={importDraft.private_key_pem} onChange={e => setImportDraft({ ...importDraft, private_key_pem: e.target.value })} /></FormField><button onClick={importCertificate}>导入</button></div></details>
+      <div className="settings-card-head certificate-apply-head"><div><h3>证书申请</h3><p className="muted">需要立即为指定域名签发证书时使用，提交后可在下方查看签发进度。</p></div><div className="settings-card-actions"><button type="button" className="ghost" onClick={() => setCreateDialogOpen(true)}><Plus size={14} />手动申请</button><button type="button" className="ghost" onClick={() => { setImportDraft({ name: '', certificate_pem: '', fullchain_pem: '', private_key_pem: '' }); setImportDialogOpen(true) }}><ArrowUp size={14} />导入证书</button></div></div>
     </section>
     <section className="settings-card">
-      <div className="settings-card-head"><div><h3>自动匹配</h3><p className="muted">入口域名的全局默认策略</p></div><button onClick={saveMatching} disabled={autoIssueCA === 'google' && !autoIssueEABCredentialID}>保存</button></div>
+      <div className="settings-card-head"><div><h3>自动匹配与证书列表</h3><p className="muted">入口域名的全局默认策略；证书状态和操作集中在下方。</p></div><button onClick={saveMatching} disabled={autoIssueCA === 'google' && !autoIssueEABCredentialID}>保存策略</button></div>
       <div className="form settings-form">
         <div className="switch-form-row"><span className="switch-form-label">启用自动匹配</span><Switch checked={autoMatch} onChange={setAutoMatch} ariaLabel="启用自动匹配" /></div>
         <FormField label="默认策略"><Select variant="segmented" value={preference} onChange={e => setPreference(e.target.value)}><option value="subdomain">精确子域证书</option><option value="wildcard">泛域名证书</option></Select></FormField>
@@ -5009,6 +4896,18 @@ function CertificateSettings({ data, client, load, notify }: any) {
         </div>
       })}</div>
     </section>
+    <AnimatePresence>{importDialogOpen && <MotionDialogPanel onCancel={() => setImportDialogOpen(false)} className="certificate-create-dialog">
+      <header className="dialog-head"><div><h2>导入现有证书</h2><p className="muted">导入后可用于节点入口和自动匹配。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => setImportDialogOpen(false)} aria-label="关闭" title="关闭"><XIcon /></button></header>
+      <form id="certificate-import-form" className="dialog-body certificate-create-form" onSubmit={event => { event.preventDefault(); if (importDraft.certificate_pem.trim() && importDraft.private_key_pem.trim()) void importCertificate().then(success => { if (success) setImportDialogOpen(false) }) }}>
+        <div className="form server-dialog-form labeled-form">
+          <FormField label="名称"><input value={importDraft.name} onChange={e => setImportDraft({ ...importDraft, name: e.target.value })} autoFocus /></FormField>
+          <FormField label="证书 PEM" required><textarea rows={4} value={importDraft.certificate_pem} onChange={e => setImportDraft({ ...importDraft, certificate_pem: e.target.value })} /></FormField>
+          <FormField label="完整链 PEM"><textarea rows={4} value={importDraft.fullchain_pem} onChange={e => setImportDraft({ ...importDraft, fullchain_pem: e.target.value })} /></FormField>
+          <FormField label="私钥 PEM" required><textarea rows={4} value={importDraft.private_key_pem} onChange={e => setImportDraft({ ...importDraft, private_key_pem: e.target.value })} /></FormField>
+        </div>
+      </form>
+      <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setImportDialogOpen(false)}>取消</button><button type="submit" form="certificate-import-form" disabled={!importDraft.certificate_pem.trim() || !importDraft.private_key_pem.trim()}>导入</button></footer>
+    </MotionDialogPanel>}</AnimatePresence>
     <AnimatePresence>{createDialogOpen && <MotionDialogPanel onCancel={() => setCreateDialogOpen(false)} className="certificate-create-dialog">
       <header className="dialog-head"><div><h2>手动申请证书</h2><p className="muted">填写域名与验证方式，提交后会立即开始签发。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => setCreateDialogOpen(false)} aria-label="关闭" title="关闭"><XIcon /></button></header>
       <form id="certificate-create-form" className="dialog-body certificate-create-form" onSubmit={event => { event.preventDefault(); if (!createBlocked) void createCertificate() }}>
@@ -5093,11 +4992,13 @@ function ControllerLogsPanel({ client, dialogs, notify, maxMB, backups, setMaxMB
   const content = String(snapshot?.content || '')
   return <section className="settings-card controller-logs-card">
     <div className="settings-card-head"><div><h3>主控运行日志</h3><p className="muted">查看 API、后台任务和运行错误。日志会自动脱敏并按大小轮转。</p></div><span className="status-pill">{formatBytes(Number(snapshot?.total_size_bytes || 0))}</span></div>
-    <div className="controller-log-policy">
-      <FormField label="单个日志上限" hint="1-1024 MB"><input type="number" min={1} max={1024} value={maxMB} onChange={e => setMaxMB(Math.max(1, Math.min(1024, Number(e.target.value) || 1)))} /></FormField>
-      <FormField label="保留备份数" hint="0-20 个"><input type="number" min={0} max={20} value={backups} onChange={e => setBackups(Math.max(0, Math.min(20, Number(e.target.value) || 0)))} /></FormField>
-      <button onClick={onSave} disabled={saving}>{saving ? '保存中...' : '保存策略'}</button>
-    </div>
+    <SettingsDisclosure title="日志轮转策略" description="低频调整项，日志会按大小自动轮转。" summary={`${maxMB} MB · 保留 ${backups} 份`}>
+      <div className="controller-log-policy">
+        <FormField label="单个日志上限" hint="1-1024 MB"><input type="number" min={1} max={1024} value={maxMB} onChange={e => setMaxMB(Math.max(1, Math.min(1024, Number(e.target.value) || 1)))} /></FormField>
+        <FormField label="保留备份数" hint="0-20 个"><input type="number" min={0} max={20} value={backups} onChange={e => setBackups(Math.max(0, Math.min(20, Number(e.target.value) || 0)))} /></FormField>
+        <button onClick={onSave} disabled={saving}>{saving ? '保存中...' : '保存策略'}</button>
+      </div>
+    </SettingsDisclosure>
     <div className="controller-log-toolbar">
       <label className="log-search"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void loadLogs() }} placeholder="搜索日志内容" /></label>
       <Select value={lines} onChange={e => setLines(Number(e.target.value))}><option value={200}>最近 200 行</option><option value={500}>最近 500 行</option><option value={1000}>最近 1000 行</option><option value={2000}>最近 2000 行</option><option value={5000}>最近 5000 行</option></Select>
@@ -6283,9 +6184,10 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     }
   }, [refreshServers, realtimeStatus])
 
-  const revalidateServers = () => {
-    void load(undefined, { background: true, forceFresh: true })
-  }
+  // Server mutations merge the returned entity into local state. Realtime
+  // invalidation reconciles shared page caches, so mutation handlers do not
+  // issue a duplicate full page-data request.
+  const revalidateServers = () => undefined
 
   const serverRefreshedTime = serverRefreshedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
   const metricsByServer = useMemo(() => {
@@ -8999,7 +8901,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const selectedEntries = selected ? entries.filter(x => x.server_id === selected.id) : []
   const applyMutationResult = (result: Record<string, any>) => patchPageData?.((current: any) => mergeTopologyMutation(current, result))
   const removeMutationRows = (removals: Partial<Record<string, readonly number[]>>) => patchPageData?.((current: any) => removeTopologyRows(current, removals))
-  const reconcileTopology = () => { void load(undefined, { background: true, forceFresh: true }) }
+  // Mutation responses patch the graph immediately. The sequenced realtime
+  // invalidation is the bounded reconciliation fallback for this and other
+  // sessions, so a successful graph edit never issues a duplicate page-data
+  // request from the mutation handler.
+  const reconcileTopology = () => undefined
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(() => window.innerWidth <= 820)
   const [entryServerQuery, setEntryServerQuery] = useState('')
@@ -11306,7 +11212,6 @@ function ProxyPathNameDialog({ path, data, client, load, onClose }: { path: Prox
 		exit_region_mode: exitRegionMode,
 		exit_region_code: exitRegionMode === 'manual' ? exitRegionCode : '',
 	  }) })
-      await load()
       onClose()
     } catch (error: any) {
 	  await dialogs.alert({ title: '保存链路设置失败', message: localizeErrorMessage(error.message || error) })
@@ -11912,7 +11817,6 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
     const placements = stages.flatMap(stage => (grouped.get(stage.stepID) || []).map((rule, index) => ({ rule_id: rule.id, stage_step_id: stage.stepID || undefined, sort_position: index })))
     try {
       await client.request('/routing-rules/place', { method: 'POST', body: JSON.stringify({ proxy_path_id: draft.proxy_path_id, placements }) })
-      await load()
     } catch (error: any) {
       await dialogs.alert({ title: '调整规则失败', message: localizeErrorMessage(error.message || error) })
     }
@@ -11923,7 +11827,6 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
       await client.request('/routing-rule-sets', { method: 'POST', body: JSON.stringify(ruleSetDraft) })
       setRuleSetDraft({ name: '', url: '', format: 'singbox_source' })
       setShowRuleSetCreate(false)
-      await load()
     } catch (error: any) {
       await dialogs.alert({ title: '规则集校验失败', message: localizeErrorMessage(error.message || error) })
     }
@@ -12682,14 +12585,12 @@ function ImportedNodeConfigDialog({ node, data, client, load, onClose }: { node:
   const raw = safePrettyJSON(node.config_json)
   const toggleExpose = async () => {
 	await client.request(`/external-outbounds/${node.id}`, { method: 'PATCH', body: JSON.stringify({ expose_to_users: !node.expose_to_users }) })
-    await load()
     onClose()
   }
 	const saveRegion = async () => {
 	  setSavingRegion(true)
 	  try {
 		await client.request(`/external-outbounds/${node.id}`, { method: 'PATCH', body: JSON.stringify({ region_mode: regionMode, region_code: regionMode === 'manual' ? regionCode : '' }) })
-		await load()
 		onClose()
 	  } catch (error: any) {
 		await dialogs.alert({ title: '保存出口地区失败', message: localizeErrorMessage(error.message || error) })
@@ -14779,13 +14680,13 @@ function Inbounds({ data, client, load }: any) {
     const probe = latestInboundProbeSummary(data, inbound.id)
     return { id: inbound.id, name: inbound.name, protocol: inbound.protocol, endpoint: formatHostPort(inboundEntryAddress(data, inbound), inbound.port), probe_status: probe.label, probe_detail: probe.detail, enabled: inbound.enabled, _raw: inbound }
   })
-  return <Panel title="入口节点"><p className="muted">每个入口节点都是一条代理拓扑的第一个节点。下发完成后会自动检查本机监听和公网端口，在线入口每 5 分钟复检一次。</p><ProtocolForm value={f} setValue={setF} servers={data.servers || []} submit={async () => { await client.request('/inbounds', { method: 'POST', body: JSON.stringify(f) }); await load() }} /><Table rows={rows} actions={(r: any) => <><button onClick={async () => { await client.request(`/inbounds/${r._raw.id}/probe`, { method: 'POST', body: '{}' }); await load() }}>立即探测</button><button onClick={() => remove(client, `/inbounds/${r._raw.id}`, load, dialogs, r._raw)}>删除</button></>} /></Panel>
+  return <Panel title="入口节点"><p className="muted">每个入口节点都是一条代理拓扑的第一个节点。保存后会自动协调相关服务器，在线入口会自动检查本机监听和公网端口。</p><ProtocolForm value={f} setValue={setF} servers={data.servers || []} submit={async () => { await client.request('/inbounds', { method: 'POST', body: JSON.stringify(f) }) }} /><Table rows={rows} actions={(r: any) => <><button onClick={async () => { await client.request(`/inbounds/${r._raw.id}/probe`, { method: 'POST', body: '{}' }); await load() }}>立即探测</button><button onClick={() => remove(client, `/inbounds/${r._raw.id}`, load, dialogs, r._raw)}>删除</button></>} /></Panel>
 }
 
 function Outbounds({ data, client, load }: any) {
   const dialogs = useDialogs()
   const [f, setF] = useState({ server_id: 0, name: 'next-hop', protocol: 'vless', target_address: '', target_port: 443, config_json: '{}', enabled: true })
-  return <Panel title="出口 / 下一跳"><p className="muted">出口可以是本机 direct，也可以是后续链路要使用的下一跳协议节点；下发时会按服务器合并到同一份 sing-box 配置。</p><ProtocolForm value={f} setValue={setF} servers={data.servers || []} submit={async () => { await client.request('/outbounds', { method: 'POST', body: JSON.stringify(f) }); await load() }} outbound /><Table rows={data.outbounds || []} actions={(r: Outbound) => <button onClick={() => remove(client, `/outbounds/${r.id}`, load, dialogs, r)}>删除</button>} /></Panel>
+  return <Panel title="出口 / 下一跳"><p className="muted">出口可以是本机 direct，也可以是后续链路要使用的下一跳协议；保存后会自动协调相关服务器。</p><ProtocolForm value={f} setValue={setF} servers={data.servers || []} submit={async () => { await client.request('/outbounds', { method: 'POST', body: JSON.stringify(f) }) }} outbound /><Table rows={data.outbounds || []} actions={(r: Outbound) => <button onClick={() => remove(client, `/outbounds/${r.id}`, load, dialogs, r)}>删除</button>} /></Panel>
 }
 
 function RoutingRules({ data, client, load }: any) {
@@ -14834,7 +14735,6 @@ function RoutingRules({ data, client, load }: any) {
       if (draft.action === 'interface') body.interface_name = draft.interface_name.trim()
       if (draft.action === 'source_prefix') body.source_prefix = draft.source_prefix.trim()
       await client.request(draft.id ? `/routing-rules/${draft.id}` : '/routing-rules', { method: draft.id ? 'PATCH' : 'POST', body: JSON.stringify(body) })
-      await load()
       setDraft(current => current ? { ...current, id: 0, name: '', sync_source_rule_id: 0, sync_enabled: false, match_value: current.match_kind === 'all' ? '' : current.match_value } : current)
     } catch (error: any) {
       await dialogs.alert({ title: '创建分流失败', message: localizeErrorMessage(error.message || error) })
@@ -14883,11 +14783,11 @@ function ExternalOutbounds({ data, client, load }: any) {
       <textarea value={f.config_json} onChange={e => setF({ ...f, config_json: e.target.value })} placeholder="JSON 配置" />
       <Select variant="segmented" value={String(f.expose_to_users)} onChange={e => setF({ ...f, expose_to_users: e.target.value === 'true' })}><option value="false">默认不进订阅</option><option value="true">允许授权到订阅</option></Select>
       <Select variant="segmented" value={String(f.enabled)} onChange={e => setF({ ...f, enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select>
-      <button onClick={async () => { await client.request('/external-outbounds', { method: 'POST', body: JSON.stringify(payload()) }); await load() }}>创建</button>
+      <button onClick={async () => { await client.request('/external-outbounds', { method: 'POST', body: JSON.stringify(payload()) }) }}>创建</button>
     </div>
     <h3>导入链接 / JSON</h3>
     <textarea value={content} onChange={e => setContent(e.target.value)} rows={6} />
-    <button onClick={async () => { await client.request('/external-outbounds/import', { method: 'POST', body: JSON.stringify(importPayload()) }); await load() }}>导入</button>
+    <button onClick={async () => { await client.request('/external-outbounds/import', { method: 'POST', body: JSON.stringify(importPayload()) }) }}>导入</button>
     <Table rows={(data.external_outbounds || []).map((x: ExternalOutbound) => ({ id: x.id, name: x.name, protocol: x.protocol, scope: x.scope, target_address: x.target_address, target_port: x.target_port, expose_to_users: x.expose_to_users, enabled: x.enabled, _raw: x }))} actions={(r: any) => <><button onClick={() => dialogs.alert({ title: r.name, message: <CopyBlock value={safePrettyJSON(r._raw.config_json)} /> })}>查看配置</button><button onClick={() => remove(client, `/external-outbounds/${r.id}`, load, dialogs, r)}>删除</button></>} />
   </Panel>
 }
@@ -15134,7 +15034,6 @@ function UserManagement({ data, client, load }: any) {
     await client.request('/users', { method: 'POST', body: JSON.stringify(userDraftPayload(draft, true)) })
     setCreateOpen(false)
     setDraft(defaultUserDraft())
-    await load()
   }
   const openEditUser = (user: User) => {
     setEditUser(user)
@@ -15144,7 +15043,6 @@ function UserManagement({ data, client, load }: any) {
     if (!editUser) return
     await client.request('/users/' + editUser.id, { method: 'PATCH', body: JSON.stringify(userDraftPayload(editDraft, false)) })
     setEditUser(null)
-    await load()
   }
   const updatePassword = async (password: string, confirm: string) => {
     if (!password) {
@@ -15158,14 +15056,12 @@ function UserManagement({ data, client, load }: any) {
     if (!passwordUser) return
     await client.request('/users/' + passwordUser.id, { method: 'PATCH', body: JSON.stringify({ password }) })
     setPasswordUser(null)
-    await load()
     await dialogs.alert({ title: '密码已修改', message: '用户密码已更新。' })
   }
   const createGroup = async () => {
     await client.request('/user-groups', { method: 'POST', body: JSON.stringify(groupDraft) })
     setGroupCreateOpen(false)
     setGroupDraft(defaultUserGroupDraft())
-    await load()
   }
   const openCreateGroup = () => {
     setGroupDraft(defaultUserGroupDraft())
@@ -15179,24 +15075,20 @@ function UserManagement({ data, client, load }: any) {
     if (!editingGroup) return
     await client.request('/user-groups/' + editingGroup.id, { method: 'PATCH', body: JSON.stringify(groupEditDraft) })
     setEditingGroup(null)
-    await load()
   }
   const addGroupMember = async (groupID: number) => {
     const userID = memberDraft[groupID] || 0
     if (!userID) return dialogs.alert({ title: '无法添加成员', message: '请选择用户。' })
     await client.request('/user-group-members', { method: 'POST', body: JSON.stringify({ group_id: groupID, user_id: userID, enabled: true }) })
     setMemberDraft({ ...memberDraft, [groupID]: 0 })
-    await load()
   }
   const deleteGroup = async (group: UserGroup) => {
     const ok = await dialogs.confirm({ title: '删除用户组', message: `确认删除用户组 ${group.name}？相关入口授权会一起移除。`, tone: 'danger', confirmText: '删除' })
     if (!ok) return
     await client.request(`/user-groups/${group.id}`, { method: 'DELETE' })
-    await load()
   }
   const deleteMember = async (member: UserGroupMember) => {
     await client.request(`/user-group-members/${member.id}`, { method: 'DELETE' })
-    await load()
   }
   return <Panel title="用户" className="user-management-panel">
     <div className="section-toolbar"><div><h3>用户列表</h3><p className="muted">新增用户、修改密码、订阅轮换、吊销和删除都从表格操作执行。</p></div><button onClick={() => setCreateOpen(true)}>添加用户</button></div>
@@ -15346,7 +15238,7 @@ function UserManagement({ data, client, load }: any) {
     <AnimatePresence>{editingGroup && <UserGroupEditDialog group={editingGroup} draft={groupEditDraft} setDraft={setGroupEditDraft} onCancel={() => setEditingGroup(null)} onSubmit={updateGroup} />}</AnimatePresence>
     <AnimatePresence>{managingGroupID !== null && <UserGroupMembersDialog groupID={managingGroupID} data={data} selectedUserID={memberDraft[managingGroupID] || 0} onSelectUser={userID => setMemberDraft({ ...memberDraft, [managingGroupID]: userID })} onAddMember={() => addGroupMember(managingGroupID)} onDeleteMember={deleteMember} onCancel={() => setManagingGroupID(null)} />}</AnimatePresence>
     <AnimatePresence>{passwordUser && <UserPasswordDialog user={passwordUser} onCancel={() => setPasswordUser(null)} onSubmit={updatePassword} />}</AnimatePresence>
-    <AnimatePresence>{planUser && <UserPlanDialog user={planUser} binding={(data.user_plan_bindings || []).find((b: any) => b.user_id === planUser.id)} plans={data.subscription_plans || []} client={client} load={load} onClose={() => setPlanUser(null)} />}</AnimatePresence>
+    <AnimatePresence>{planUser && <UserPlanDialog user={planUser} binding={(data.user_plan_bindings || []).find((b: any) => b.user_id === planUser.id)} plans={data.subscription_plans || []} client={client} onClose={() => setPlanUser(null)} />}</AnimatePresence>
   </Panel>
 }
 
@@ -15720,27 +15612,24 @@ function DNSListSettings({ data, client, load, notify }: any) {
       await client.request(editing ? `/dns-lists/${editing.id}` : '/dns-lists', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(payload) })
       setEditorOpen(false)
       setEditing(null)
-      await load()
       notify?.(wasEditing ? '解析服务列表已更新' : '解析服务列表已创建', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const toggle = async (list: DNSList) => {
     try {
       await client.request(`/dns-lists/${list.id}`, { method: 'PUT', body: JSON.stringify({ ...list, enabled: !list.enabled }) })
-      await load()
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
   }
   const setDefault = async (list: DNSList) => {
     try {
       await client.request(`/dns-lists/${list.id}/set-default`, { method: 'POST' })
-      await load()
       notify?.(`已将 ${list.name} 设为默认${list.kind === 'encrypted' ? '加密解析' : '基础解析'}列表`, 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
   }
   const removeList = async (list: DNSList) => {
     const ok = await dialogs.confirm({ title: '删除服务列表', message: `确认删除 ${list.name}？`, confirmText: '删除', tone: 'danger' })
     if (!ok) return
-    try { await client.request(`/dns-lists/${list.id}`, { method: 'DELETE' }); await load(); notify?.('解析服务列表已删除', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
+    try { await client.request(`/dns-lists/${list.id}`, { method: 'DELETE' }); notify?.('解析服务列表已删除', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
   }
   const visible = lists.filter(list => list.kind === filter)
   return <section className="settings-card dns-lists-card">
@@ -16109,7 +15998,7 @@ function MTU({ data, client, load, notify }: any) {
 function PortForwards({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
 	const [f, setF] = useState({ name: 'forward-1', source_server_id: 0, target_server_id: 0, listen_ip: '0.0.0.0', listen_port: 443, target_address: '', target_port: 443, protocol: 'tcp' as ForwardProtocol, backend: 'auto' as ForwardBackend, probe_mode: 'periodic' as ProbeMode, probe_interval_seconds: 300, sample_rate: 0, priority: 100, config_json: '{}', enabled: true })
-  const submit = async () => { await client.request('/port-forwards', { method: 'POST', body: JSON.stringify(f) }); await load() }
+  const submit = async () => { await client.request('/port-forwards', { method: 'POST', body: JSON.stringify(f) }) }
   const forwardRows = (data.port_forwards || []).map((forward: PortForward) => {
     const probe = latestForwardProbe(data, forward.id)
     return { id: forward.id, name: forward.name, source_server_id: forward.source_server_id, target_server_id: forward.target_server_id, protocol: forward.protocol, listen_port: forward.listen_port, target_port: forward.target_port, probe_status: !probe ? '等待探测' : probe.available ? `正常 · ${probe.latency_ms}ms` : '转发异常', checked_at: probe?.created_at || '', enabled: forward.enabled, _raw: forward }
@@ -16125,7 +16014,7 @@ function PortForwards({ data, client, load, notify }: any) {
 function Tunnels({ data, client, load }: any) {
   const dialogs = useDialogs()
   const [f, setF] = useState({ name: 'tunnel-1', source_server_id: 0, target_server_id: 0, type: 'wireguard' as TunnelType, local_address: '', peer_address: '', listen_port: 0, target_endpoint: '', target_port: 0, priority: 100, config_json: '{}', enabled: true })
-  const submit = async () => { await client.request('/tunnels', { method: 'POST', body: JSON.stringify(f) }); await load() }
+  const submit = async () => { await client.request('/tunnels', { method: 'POST', body: JSON.stringify(f) }) }
   return <Panel title="隧道"><p className="muted">独立隧道使用 WireGuard。代理路径中的 SSH 由系统自动创建专用账户和密钥。</p><div className="form"><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="名称" /><Select value={f.source_server_id} onChange={e => setF({ ...f, source_server_id: Number(e.target.value) })}><option value={0}>源服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><Select value={f.target_server_id} onChange={e => setF({ ...f, target_server_id: Number(e.target.value) })}><option value={0}>目标服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><Select variant="segmented" value={f.type} onChange={e => setF({ ...f, type: e.target.value as TunnelType })}><option value="wireguard">WireGuard</option></Select><input value={f.local_address} onChange={e => setF({ ...f, local_address: e.target.value })} placeholder="本地地址" /><input value={f.peer_address} onChange={e => setF({ ...f, peer_address: e.target.value })} placeholder="对端地址 / 允许 IP" /><input value={f.listen_port} onChange={e => setF({ ...f, listen_port: Number(e.target.value) })} placeholder="监听端口" /><input value={f.target_endpoint} onChange={e => setF({ ...f, target_endpoint: e.target.value })} placeholder="目标端点，可选" /><input value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口" /><input value={f.priority} onChange={e => setF({ ...f, priority: Number(e.target.value) })} placeholder="优先级" /><input value={f.config_json} onChange={e => setF({ ...f, config_json: e.target.value })} placeholder="JSON 配置" /><button onClick={submit}>创建</button></div><Table rows={data.tunnels || []} actions={(r: Tunnel) => <button onClick={() => remove(client, `/tunnels/${r.id}`, load, dialogs, r)}>删除</button>} /></Panel>
 }
 
@@ -18545,12 +18434,12 @@ async function remove(client: ReturnType<typeof api>, path: string, load: () => 
     confirmText: '删除',
     message: <div>
       <p>即将删除：<strong>{label}</strong></p>
-      <p className="muted">删除后相关配置可能在下一次下发时从 Agent 配置中移除。请确认该资源不再被其它规则引用。</p>
+      <p className="muted">删除后相关服务器会自动同步最新配置。请确认该资源不再被其它规则引用。</p>
     </div>,
   })
   if (!confirmed) return
   await client.request(path, { method: 'DELETE' })
-  await load()
+  if (!isConfigurationMutationPath(path)) await load()
 }
 
 async function probeForwardNow(client: ReturnType<typeof api>, row: PortForward, load: () => Promise<void>, notify?: (message: string, tone?: ToastKind) => void) {

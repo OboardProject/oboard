@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -386,7 +387,7 @@ func realtimeResourceRole(resource string) model.Role {
 		return model.RoleNone
 	case "all", "account", "notifications", "subscriptions", "traffic":
 		return model.RoleViewer
-	case "servers", "server_runtime", "server_metrics", "tasks", "deployments", "probes", "topology", "audit", "mtu", "port_forwards", "tunnels":
+	case "servers", "server_runtime", "server_metrics", "tasks", "deployments", "configuration", "probes", "topology", "audit", "mtu", "port_forwards", "tunnels":
 		return model.RoleOperator
 	default:
 		return model.RoleAdmin
@@ -717,21 +718,41 @@ func (s *Server) realtimeSessionValid(ctx context.Context, token string, userID,
 
 type realtimeStatusWriter struct {
 	http.ResponseWriter
-	status int
+	status   int
+	buffered bool
+	body     bytes.Buffer
 }
 
 func (w *realtimeStatusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *realtimeStatusWriter) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
 	w.status = status
-	w.ResponseWriter.WriteHeader(status)
+	if !w.buffered {
+		w.ResponseWriter.WriteHeader(status)
+	}
 }
 
 func (w *realtimeStatusWriter) Write(body []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
+	if w.buffered {
+		return w.body.Write(body)
+	}
 	return w.ResponseWriter.Write(body)
+}
+
+func (w *realtimeStatusWriter) flush(body []byte) {
+	w.Header().Del("Content-Length")
+	status := w.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.ResponseWriter.WriteHeader(status)
+	_, _ = w.ResponseWriter.Write(body)
 }
 
 func (s *Server) realtimeInvalidation(next http.Handler) http.Handler {
@@ -742,10 +763,27 @@ func (s *Server) realtimeInvalidation(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		recorder := &realtimeStatusWriter{ResponseWriter: w}
+		configurationMutation := configurationMutationPath(r.URL.Path, r.Method)
+		beforeRevision := uint64(0)
+		var affectedServerIDs []int64
+		if configurationMutation && s.store != nil {
+			beforeRevision, _ = s.store.ConfigurationRevision(r.Context())
+			affectedServerIDs = s.configurationMutationServerIDs(r.Context(), r.URL.Path, r.Method)
+		}
+		recorder := &realtimeStatusWriter{ResponseWriter: w, buffered: configurationMutation}
 		next.ServeHTTP(recorder, r)
+		responseBody := recorder.body.Bytes()
 		if recorder.status >= 200 && recorder.status < 300 {
 			s.publishRealtime(realtimeResourcesForRequest(r.URL.Path)...)
+			if configurationMutation && s.store != nil {
+				if afterRevision, err := s.store.ConfigurationRevision(r.Context()); err == nil && afterRevision > beforeRevision {
+					s.markConfigurationRevision(r.Context(), afterRevision, affectedServerIDs)
+					responseBody = s.configurationMutationResponse(r.Context(), responseBody, afterRevision, affectedServerIDs)
+				}
+			}
+		}
+		if configurationMutation {
+			recorder.flush(responseBody)
 		}
 	})
 }
@@ -767,6 +805,8 @@ func realtimeResourcesForRequest(path string) []string {
 		return []string{"tasks"}
 	case "task-results":
 		return nil
+	case "configuration-sync":
+		return []string{"configuration", "tasks", "deployments", "servers", "topology"}
 	case "deployments":
 		return []string{"tasks", "deployments"}
 	case "traffic-reports":

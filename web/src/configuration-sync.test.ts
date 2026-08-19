@@ -1,0 +1,50 @@
+import { describe, expect, it } from 'vitest'
+import { configurationSyncPresentation, mergeConfigurationMutationResponse, mergeConfigurationSyncResponse, MutationActivityTracker } from './configuration-sync'
+
+describe('configuration sync feedback', () => {
+  it('shows local saving feedback synchronously before a response exists', () => {
+    expect(configurationSyncPresentation([], true, false)).toMatchObject({ tone: 'info', label: '正在保存...', busy: true })
+  })
+
+  it('uses only failed servers for the explicit retry action', () => {
+    const status = configurationSyncPresentation([
+      { server_id: 1, state: 'synced' },
+      { server_id: 2, state: 'failed', error: 'prepare failed' },
+      { server_id: 3, state: 'failed', error: 'agent failed' },
+    ])
+    expect(status).toMatchObject({ tone: 'danger', label: '2 台同步失败，点击重试', retryServerIDs: [2, 3], busy: false })
+  })
+
+  it('merges desired revision and sync rows without discarding page entities', () => {
+    const current = { servers: [{ id: 1, name: 'edge' }], desired_revision: 4, configuration_sync: [] }
+    const next = mergeConfigurationSyncResponse(current, { desired_revision: 5, configuration_sync: [{ server_id: 1, state: 'pending' }] })
+    expect(next.servers).toBe(current.servers)
+    expect(next.desired_revision).toBe(5)
+    expect(next.configuration_sync).toEqual([{ server_id: 1, state: 'pending' }])
+  })
+
+  it('does not mutate cached data when a failed response has no sync metadata', () => {
+    const current = { servers: [{ id: 1 }], configuration_sync: [{ server_id: 1, state: 'synced' }] }
+    expect(mergeConfigurationSyncResponse(current, { error: 'validation failed' })).toBe(current)
+  })
+
+  it('patches the returned entity and deletes only the confirmed row', () => {
+    const current = { inbounds: [{ id: 1, name: 'old' }, { id: 2, name: 'keep' }] }
+    const updated = mergeConfigurationMutationResponse(current, { inbound: { id: 1, name: 'new' } }, '/inbounds/1')
+    expect(updated.inbounds).toEqual([{ id: 1, name: 'new' }, { id: 2, name: 'keep' }])
+    const deleted = mergeConfigurationMutationResponse(updated, { deleted: true }, '/inbounds/1')
+    expect(deleted.inbounds).toEqual([{ id: 2, name: 'keep' }])
+    expect(current.inbounds).toEqual([{ id: 1, name: 'old' }, { id: 2, name: 'keep' }])
+  })
+
+  it('keeps saving active until all concurrent mutations settle and rolls back on extra completions', () => {
+    const tracker = new MutationActivityTracker()
+    expect(tracker.update(true)).toBe(true)
+    expect(tracker.update(true)).toBe(true)
+    expect(tracker.count).toBe(2)
+    expect(tracker.update(false)).toBe(true)
+    expect(tracker.update(false)).toBe(false)
+    expect(tracker.update(false)).toBe(false)
+    expect(tracker.count).toBe(0)
+  })
+})

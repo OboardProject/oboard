@@ -16,6 +16,31 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+func dropConfigurationRevisionTriggersForPreviousSchema(t *testing.T, db *sql.DB) {
+	t.Helper()
+	rows, err := db.Query(`select name from sqlite_master where type='trigger' and name like 'config_rev_%'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		if _, err := db.Exec(`drop trigger ` + name); err != nil {
+			t.Fatalf("drop configuration revision trigger %s: %v", name, err)
+		}
+	}
+}
+
 func TestOpenRestrictsDatabaseFilePermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "oboard.sqlite")
 	// Pre-create a world-readable placeholder so Open must tighten the mode.
@@ -205,6 +230,7 @@ func TestServerListenModeAndInterfaceIPv6PersistAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dropConfigurationRevisionTriggersForPreviousSchema(t, raw)
 	for _, column := range []string{"listen_mode", "interface_ipv6"} {
 		if _, err := raw.Exec(`alter table servers drop column ` + column); err != nil {
 			t.Fatalf("drop %s: %v", column, err)

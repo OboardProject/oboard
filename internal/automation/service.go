@@ -23,6 +23,7 @@ import (
 
 type MutationHandler func(context.Context, application.Principal, json.RawMessage) (any, error)
 type RevisionResolver func(context.Context, application.Principal, json.RawMessage) (map[string]string, error)
+type ApplyObserver func(context.Context, *model.AutomationChangeset, uint64, uint64)
 
 type MutationResult struct {
 	Public  any
@@ -36,6 +37,7 @@ type Service struct {
 	handlers          map[string]MutationHandler
 	validators        map[string]MutationHandler
 	revisionResolvers map[string]RevisionResolver
+	applyObserver     ApplyObserver
 	now               func() time.Time
 }
 
@@ -91,6 +93,12 @@ func (s *Service) Register(name string, handler MutationHandler) {
 	}
 	s.mu.Lock()
 	s.handlers[name] = handler
+	s.mu.Unlock()
+}
+
+func (s *Service) SetApplyObserver(observer ApplyObserver) {
+	s.mu.Lock()
+	s.applyObserver = observer
 	s.mu.Unlock()
 }
 
@@ -303,6 +311,7 @@ func (s *Service) Apply(ctx context.Context, principal application.Principal, id
 	if _, err := s.automaticAllowed(ctx, principal, item); err != nil {
 		return nil, err
 	}
+	beforeRevision, _ := s.store.ConfigurationRevision(ctx)
 	now := s.now().UTC()
 	claimed, err := s.store.ClaimAutomationChangesetApply(ctx, item.ID, now)
 	if err != nil {
@@ -352,6 +361,13 @@ func (s *Service) Apply(ctx context.Context, principal application.Principal, id
 	}
 	if hasOneTimeResults {
 		item.Result = mustJSON(map[string]any{"operations": responseResults})
+	}
+	afterRevision, _ := s.store.ConfigurationRevision(ctx)
+	s.mu.RLock()
+	observer := s.applyObserver
+	s.mu.RUnlock()
+	if observer != nil && afterRevision > beforeRevision {
+		observer(ctx, item, beforeRevision, afterRevision)
 	}
 	return item, nil
 }

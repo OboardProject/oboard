@@ -35,6 +35,7 @@ func opsDescriptors(positiveID map[string]any, stringValue, boolValue map[string
 		{"servers.manage_logs", "轮转或清空指定服务器的日志", schemaObject(map[string]any{"server_id": positiveID, "action": map[string]any{"type": "string", "enum": []string{"rotate", "clear"}}, "services": map[string]any{"type": "string", "enum": []string{"all", "agent", "core"}}}, "server_id", "action"), schemaObject(map[string]any{"task_id": positiveID, "task_status": stringValue}, "task_id"), 2, true},
 		{"servers.list_network_interfaces", "读取指定服务器的网卡及地址列表", schemaObject(map[string]any{"server_id": positiveID}, "server_id"), schemaObject(map[string]any{"task_id": positiveID, "task_status": stringValue}, "task_id"), 2, false},
 		{"deployments.dismiss_failure", "忽略当前最新部署失败的提醒", schemaObject(nil), schemaObject(map[string]any{"dismissed": boolValue, "deployment_status": stringValue}, "dismissed"), 2, false},
+		{"configuration_sync.retry", "重试已失败的配置自动同步", schemaObject(map[string]any{"server_ids": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": positiveID}}, "server_ids"), schemaObject(map[string]any{"retried": map[string]any{"type": "integer", "minimum": 1}, "server_ids": map[string]any{"type": "array", "items": positiveID}}, "retried"), 2, false},
 		{"inbounds.probe", "对指定入口发起本地与公网探测任务", schemaObject(map[string]any{"inbound_id": positiveID}, "inbound_id"), schemaObject(map[string]any{"task_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}}, "entry_target_count": map[string]any{"type": "integer"}}, "task_ids"), 2, false},
 		{"proxy_paths.probe_egress", "对已部署的代理分支手动重探测出口地区", schemaObject(map[string]any{"path_id": positiveID}, "path_id"), schemaObject(map[string]any{"task_id": positiveID, "region_code": stringValue, "status": stringValue}, "task_id"), 2, false},
 		{"servers.probe_latency", "对指定服务器发起延迟测试", schemaObject(map[string]any{"server_id": positiveID}, "server_id"), schemaObject(map[string]any{"task_id": positiveID, "task_status": stringValue, "target_count": map[string]any{"type": "integer"}, "existing": boolValue}, "task_id"), 2, false},
@@ -59,7 +60,7 @@ func opsScopeFor(name string) string {
 	switch {
 	case name == "agents.update_all":
 		return "tasks:write"
-	case name == "deployments.dismiss_failure":
+	case name == "deployments.dismiss_failure", name == "configuration_sync.retry":
 		return "deployments:write"
 	case name == "inbounds.probe":
 		return "topology:write"
@@ -81,6 +82,13 @@ func opsWriteResolver(name string) func(context.Context, any) ([]mcpauth.Resourc
 		refs := []mcpauth.ResourceRef{}
 		if id, ok := int64Value(object["server_id"]); ok && id > 0 {
 			refs = append(refs, mcpauth.ResourceRef{Type: "server", ID: strconv.FormatInt(id, 10)})
+		}
+		if values, ok := object["server_ids"].([]any); ok {
+			for _, value := range values {
+				if id, ok := int64Value(value); ok && id > 0 {
+					refs = append(refs, mcpauth.ResourceRef{Type: "server", ID: strconv.FormatInt(id, 10)})
+				}
+			}
 		}
 		if id, ok := int64Value(object["inbound_id"]); ok && id > 0 {
 			refs = append(refs, mcpauth.ResourceRef{Type: "inbound", ID: strconv.FormatInt(id, 10)})

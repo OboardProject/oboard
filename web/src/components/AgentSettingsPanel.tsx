@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { Switch } from './ui/switch'
 import { Select } from './ui/select'
+import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './settings/SettingsLayout'
 
 export interface AgentSettingsPanelProps {
   data: any
@@ -174,160 +175,48 @@ export function AgentSettingsPanel({ data, client, load, notify }: AgentSettings
 
   return (
     <section className="settings-card agent-settings-card">
-      <div className="agent-settings-container">
-        {/* Section 1: 新服务器默认值 */}
-        <div className="agent-settings-section">
-          <div className="agent-section-header">
-            <h3 className="agent-section-title">新服务器默认值</h3>
-            <p className="agent-section-desc">创建服务器时自动带入，可在创建窗口中单独修改。</p>
+      <SettingsGroup title="新服务器默认值" description="创建服务器时自动带入，可在创建窗口中单独修改。">
+        <SettingsRow label="MTU" description="根据节点网络环境检测 MTU，并决定是否自动应用检测结果。">
+          <Select variant="segmented" value={serverDefaultMTUMode} onChange={handleMTUChange} disabled={Boolean(savingKey)}>
+            {mtuModes.map(mode => <option key={mode} value={mode}>{mtuLabels[mode] || mode}</option>)}
+          </Select>
+        </SettingsRow>
+        <SettingsSwitchRow label="BBR + FQ" description="在支持的 Linux 节点上启用 BBR 与 FQ 网络优化。" checked={serverDefaultBBREnabled} onChange={handleBBRChange} disabled={Boolean(savingKey)} ariaLabel="新服务器默认启用 BBR + FQ" />
+        <SettingsRow label="时间校准" description="控制 Agent 的系统时间同步策略。">
+          <Select variant="segmented" value={serverDefaultTimeCorrectionMode} onChange={handleTimeCorrectionChange} disabled={Boolean(savingKey)} aria-label="时间校准模式">
+            <option value="off">关闭</option><option value="auto">自动</option><option value="ntp">逻辑校时</option>
+          </Select>
+        </SettingsRow>
+        <SettingsDisclosure title="NTP 时间源" description="低频修改项，默认使用三组公共时间源。" summary={isNTPDirty ? '有未保存修改' : '已配置 3 个时间源'}>
+          <div className="agent-ntp-list">
+            {timeCheckNTPServers.map((value, index) => <input key={index} value={value} onChange={event => {
+              const newVal = event.target.value
+              setTimeCheckNTPServers(current => current.map((item, itemIndex) => itemIndex === index ? newVal : item))
+            }} placeholder={defaultTimeCheckNTPServers[index]} aria-label={`NTP 时间源 ${index + 1}`} className="agent-input-field" />)}
           </div>
-
-          <div className="agent-settings-form">
-            {/* MTU */}
-            <div className="agent-settings-row">
-              <label className="agent-settings-label">MTU</label>
-              <div className="agent-settings-control">
-                <Select variant="segmented" value={serverDefaultMTUMode} onChange={handleMTUChange} disabled={Boolean(savingKey)}>
-                  {mtuModes.map(mode => (
-                    <option key={mode} value={mode}>{mtuLabels[mode] || mode}</option>
-                  ))}
-                </Select>
-                <div className="agent-settings-help">根据节点网络环境检测 MTU，并决定是否自动应用检测结果。</div>
-              </div>
-            </div>
-
-            {/* BBR + FQ */}
-            <div className="agent-settings-row">
-              <label className="agent-settings-label">BBR + FQ</label>
-              <div className="agent-settings-control">
-                <Switch checked={serverDefaultBBREnabled} onChange={handleBBRChange} disabled={Boolean(savingKey)} ariaLabel="新服务器默认启用 BBR + FQ" />
-                <div className="agent-settings-help">在支持的 Linux 节点上启用 BBR 与 FQ 网络优化。</div>
-              </div>
-            </div>
-
-            {/* 时间校准 */}
-            <div className="agent-settings-row">
-              <label className="agent-settings-label">时间校准</label>
-              <div className="agent-settings-control">
-                <Select variant="segmented" value={serverDefaultTimeCorrectionMode} onChange={handleTimeCorrectionChange} disabled={Boolean(savingKey)} aria-label="时间校准模式">
-                  <option value="off">关闭</option>
-                  <option value="auto">自动</option>
-                  <option value="ntp">逻辑校时</option>
-                </Select>
-                <div className="agent-settings-help">控制 Agent 的系统时间同步策略。</div>
-              </div>
-            </div>
-
-            {/* NTP 时间源 */}
-            <div className="agent-settings-row">
-              <label className="agent-settings-label">NTP 时间源</label>
-              <div className="agent-settings-control">
-                <div className="agent-ntp-list">
-                  {timeCheckNTPServers.map((value, index) => (
-                    <input
-                      key={index}
-                      value={value}
-                      onChange={event => {
-                        const newVal = event.target.value
-                        setTimeCheckNTPServers(current => current.map((item, itemIndex) => itemIndex === index ? newVal : item))
-                      }}
-                      placeholder={defaultTimeCheckNTPServers[index]}
-                      aria-label={`NTP 时间源 ${index + 1}`}
-                      className="agent-input-field"
-                    />
-                  ))}
-                </div>
-                <div className="agent-ntp-actions">
-                  <button
-                    type="button"
-                    onClick={() => void saveNTPServers()}
-                    disabled={!isNTPDirty || Boolean(savingKey)}
-                  >
-                    {savingKey === 'ntp-servers' ? '保存中...' : '保存 NTP 时间源'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Subtle Divider */}
-        <div className="agent-settings-divider" />
-
-        {/* Section 2: 流量控制 */}
-        <div className="agent-settings-section">
-          <div className="agent-section-header">
-            <h3 className="agent-section-title">流量控制</h3>
-            <p className="agent-section-desc">用于计算用户当前周期流量，并在达量后暂停节点使用。</p>
-          </div>
-
-          <div className="agent-settings-form">
-            {/* 统计时区 */}
-            <div className="agent-settings-row">
-              <label className="agent-settings-label">统计时区</label>
-              <div className="agent-settings-control">
-                <Select
-                  value={trafficTimezone}
-                  onChange={handleTimezoneChange}
-                  disabled={Boolean(savingKey)}
-                  aria-label="统计时区"
-                  className="agent-select-field"
-                >
-                  {!trafficTimezones.includes(trafficTimezone) && (
-                    <option value={trafficTimezone}>{getTrafficTimezoneLabel(trafficTimezone)}</option>
-                  )}
-                  {trafficTimezones.map(timezone => (
-                    <option key={timezone} value={timezone}>{getTrafficTimezoneLabel(timezone)}</option>
-                  ))}
-                </Select>
-                <div className="agent-settings-help">用于计算流量重置时间。</div>
-              </div>
-            </div>
-
-            {/* 达量后处理 */}
-            <div className="agent-settings-row">
-              <label className="agent-settings-label">达量后处理</label>
-              <div className="agent-settings-control">
-                <Select variant="segmented" value={trafficMode} onChange={handleTrafficModeChange} disabled={Boolean(savingKey)}>
-                  <option value="disconnect_and_reject">断开并拒绝</option>
-                  <option value="reject_new">仅拒绝新连接</option>
-                </Select>
-                <div className="agent-settings-help">
-                  Agent 会保留本地可用额度；面板暂时不可达时，节点仍会按已下发额度暂停超量用户。
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="agent-settings-divider" />
-
-        <div className="agent-settings-section">
-          <div className="agent-section-header">
-            <h3 className="agent-section-title">监控数据</h3>
-            <p className="agent-section-desc">统一管理负载、公网延迟和地区延迟的历史数据。</p>
-          </div>
-
-          <div className="agent-settings-form">
-            <div className="agent-settings-row">
-              <label className="agent-settings-label" htmlFor="server-monitoring-retention-days">保留时间</label>
-              <div className="agent-settings-control">
-                <Select
-                  id="server-monitoring-retention-days"
-                  value={monitoringRetentionDays}
-                  onChange={handleMonitoringRetentionChange}
-                  disabled={Boolean(savingKey)}
-                  aria-label="服务器监控数据保留时间"
-                  aria-describedby="server-monitoring-retention-help"
-                >
-                  {monitoringRetentionOptions.map(days => <option key={days} value={days}>{days} 天</option>)}
-                </Select>
-                <div id="server-monitoring-retention-help" className="agent-settings-help">缩短后，超出期限的数据会在下一次数据库维护时删除；已删除的数据无法恢复。</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+          <div className="agent-ntp-actions"><button type="button" onClick={() => void saveNTPServers()} disabled={!isNTPDirty || Boolean(savingKey)}>{savingKey === 'ntp-servers' ? '保存中...' : '保存 NTP 时间源'}</button></div>
+        </SettingsDisclosure>
+      </SettingsGroup>
+      <SettingsGroup title="流量控制" description="用于计算用户当前周期流量，并在达量后暂停节点使用。">
+        <SettingsRow label="统计时区" description="用于计算流量重置时间。">
+          <Select value={trafficTimezone} onChange={handleTimezoneChange} disabled={Boolean(savingKey)} aria-label="统计时区" className="agent-select-field">
+            {!trafficTimezones.includes(trafficTimezone) && <option value={trafficTimezone}>{getTrafficTimezoneLabel(trafficTimezone)}</option>}
+            {trafficTimezones.map(timezone => <option key={timezone} value={timezone}>{getTrafficTimezoneLabel(timezone)}</option>)}
+          </Select>
+        </SettingsRow>
+        <SettingsRow label="达量后处理" description="Agent 会保留本地可用额度；面板暂时不可达时，节点仍会按已下发额度暂停超量用户。">
+          <Select variant="segmented" value={trafficMode} onChange={handleTrafficModeChange} disabled={Boolean(savingKey)}>
+            <option value="disconnect_and_reject">断开并拒绝</option><option value="reject_new">仅拒绝新连接</option>
+          </Select>
+        </SettingsRow>
+      </SettingsGroup>
+      <SettingsGroup title="监控数据" description="统一管理负载、公网延迟和地区延迟的历史数据。">
+        <SettingsRow label="保留时间" description="缩短后，超出期限的数据会在下一次数据库维护时删除；已删除的数据无法恢复。" htmlFor="server-monitoring-retention-days">
+          <Select id="server-monitoring-retention-days" value={monitoringRetentionDays} onChange={handleMonitoringRetentionChange} disabled={Boolean(savingKey)} aria-label="服务器监控数据保留时间" aria-describedby="server-monitoring-retention-help">
+            {monitoringRetentionOptions.map(days => <option key={days} value={days}>{days} 天</option>)}
+          </Select>
+        </SettingsRow>
+      </SettingsGroup>
     </section>
   )
 }

@@ -1845,13 +1845,16 @@ type AgentEnrollResponse struct {
 }
 
 type AgentSocketMessage struct {
-	Type         string          `json:"type"`
-	ServerID     int64           `json:"server_id,omitempty"`
-	Timestamp    time.Time       `json:"ts,omitempty"`
-	Task         *AgentTask      `json:"task,omitempty"`
-	Signature    string          `json:"signature,omitempty"`
-	HealthReport *HealthReport   `json:"health_report,omitempty"`
-	Raw          json.RawMessage `json:"-"`
+	Type                     string          `json:"type"`
+	ServerID                 int64           `json:"server_id,omitempty"`
+	Timestamp                time.Time       `json:"ts,omitempty"`
+	Task                     *AgentTask      `json:"task,omitempty"`
+	Signature                string          `json:"signature,omitempty"`
+	HealthReport             *HealthReport   `json:"health_report,omitempty"`
+	DesiredConfigRevision    uint64          `json:"desired_config_revision,omitempty"`
+	ConfigurationSyncState   string          `json:"configuration_sync_state,omitempty"`
+	ConfigurationSyncVersion int64           `json:"configuration_sync_version,omitempty"`
+	Raw                      json.RawMessage `json:"-"`
 }
 
 type AgentTaskResultReport struct {
@@ -2829,6 +2832,8 @@ type HealthReport struct {
 	ConnectivityCheckedAt     time.Time    `json:"-"`
 	ConnectivityError         string       `json:"-"`
 	Timestamp                 time.Time    `json:"timestamp"`
+	AppliedConfigVersion      int64        `json:"applied_config_version,omitempty"`
+	AppliedConfigDigest       string       `json:"applied_config_digest,omitempty"`
 }
 
 type ServerTrafficWindow struct {
