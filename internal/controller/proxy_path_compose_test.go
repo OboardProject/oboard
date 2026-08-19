@@ -33,7 +33,7 @@ func TestProxyPathInitialStepCommitsAsOneTopologyUnit(t *testing.T) {
 	before := configurationRevisionForTest(t, db)
 	created := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{
 		"name_mode": "auto", "inbound_id": inboundID, "enabled": true,
-		"initial_step": map[string]any{"position": 1, "node_type": "server_inbound", "inbound_id": targetInboundID, "transport_mode": "singbox", "config_json": "{}"},
+		"initial_steps": []map[string]any{{"position": 1, "node_type": "server_inbound", "inbound_id": targetInboundID, "transport_mode": "singbox", "config_json": "{}"}},
 	}, http.StatusCreated)
 	pathID := int64(created["proxy_path"].(map[string]any)["id"].(float64))
 	steps := created["proxy_path_steps"].([]any)
@@ -46,7 +46,7 @@ func TestProxyPathInitialStepCommitsAsOneTopologyUnit(t *testing.T) {
 
 	invalid := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{
 		"name_mode": "auto", "inbound_id": inboundID, "enabled": true,
-		"initial_step": map[string]any{"position": 1, "node_type": "imported", "transport_mode": "singbox", "config_json": "{}"},
+		"initial_steps": []map[string]any{{"position": 1, "node_type": "imported", "transport_mode": "singbox", "config_json": "{}"}},
 	}, http.StatusBadRequest)
 	if invalid["error"] == nil {
 		t.Fatalf("invalid composed topology did not return an error: %#v", invalid)
@@ -57,6 +57,64 @@ func TestProxyPathInitialStepCommitsAsOneTopologyUnit(t *testing.T) {
 	}
 	if len(paths) != 1 || paths[0].ID != pathID {
 		t.Fatalf("invalid composed topology left partial path: %#v", paths)
+	}
+
+	rule := request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{
+		"scope": "path_stage", "proxy_path_id": pathID, "name": "composed-rule", "priority": 100,
+		"match_json": `{"domain_suffix":["example.com"]}`, "action": "direct", "enabled": true,
+	}, http.StatusCreated)["routing_rule"].(map[string]any)
+	ruleID := int64(rule["id"].(float64))
+	bound := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{
+		"name_mode": "auto", "inbound_id": inboundID, "enabled": true, "routing_rule_id": ruleID,
+		"initial_steps": []map[string]any{{"position": 1, "node_type": "server_inbound", "inbound_id": targetInboundID, "transport_mode": "singbox", "config_json": "{}"}},
+	}, http.StatusCreated)
+	boundPathID := int64(bound["proxy_path"].(map[string]any)["id"].(float64))
+	updatedRule := bound["routing_rule"].(map[string]any)
+	if updatedRule["action"] != "proxy_path" || int64(updatedRule["target_proxy_path_id"].(float64)) != boundPathID {
+		t.Fatalf("atomic path/rule binding response = %#v", bound)
+	}
+	storedRule, err := db.GetRoutingRule(context.Background(), ruleID)
+	if err != nil || storedRule.TargetProxyPathID == nil || *storedRule.TargetProxyPathID != boundPathID {
+		t.Fatalf("atomic path/rule binding not stored: %#v err=%v", storedRule, err)
+	}
+
+	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps/batch", token, map[string]any{"steps": []map[string]any{
+		{"path_id": boundPathID, "position": 2, "node_type": "warp", "transport_mode": "singbox", "config_json": "{}"},
+		{"path_id": boundPathID, "position": 2, "node_type": "warp", "transport_mode": "singbox", "config_json": "{}"},
+	}}, http.StatusBadRequest)
+	storedSteps, err := db.ListProxyPathStepsForPath(context.Background(), boundPathID)
+	if err != nil || len(storedSteps) != 1 {
+		t.Fatalf("failed batch left partial steps: %#v err=%v", storedSteps, err)
+	}
+
+	directResult := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{
+		"inbound_id": inboundID,
+		"routing_rule": map[string]any{
+			"server_id": serverID, "scope": "path_stage", "name": "atomic-direct-rule", "priority": 100,
+			"match_json": `{"domain_suffix":["direct.example"]}`, "action": "direct", "enabled": true,
+		},
+	}, http.StatusCreated)
+	directPathID := int64(directResult["proxy_path"].(map[string]any)["id"].(float64))
+	directRule := directResult["routing_rule"].(map[string]any)
+	directRuleID := int64(directRule["id"].(float64))
+	if int64(directRule["proxy_path_id"].(float64)) != directPathID {
+		t.Fatalf("atomic direct branch response = %#v", directResult)
+	}
+	storedDirectRule, err := db.GetRoutingRule(context.Background(), directRuleID)
+	if err != nil || storedDirectRule.ProxyPathID == nil || *storedDirectRule.ProxyPathID != directPathID {
+		t.Fatalf("atomic direct branch/rule not stored: %#v err=%v", storedDirectRule, err)
+	}
+
+	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules/batch-delete", token, map[string]any{"ids": []int64{ruleID, 999999}}, http.StatusConflict)
+	if _, err := db.GetRoutingRule(context.Background(), ruleID); err != nil {
+		t.Fatalf("failed batch delete removed an existing rule: %v", err)
+	}
+	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules/batch-delete", token, map[string]any{"ids": []int64{ruleID, directRuleID}}, http.StatusOK)
+	if _, err := db.GetRoutingRule(context.Background(), ruleID); err == nil {
+		t.Fatal("successful batch delete kept first rule")
+	}
+	if _, err := db.GetRoutingRule(context.Background(), directRuleID); err == nil {
+		t.Fatal("successful batch delete kept second rule")
 	}
 }
 

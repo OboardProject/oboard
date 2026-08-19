@@ -61,6 +61,101 @@ func TestTopologyWriteRejectsInvalidStepBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestTopologyWriteCommitsPathAndStepsAtomicallyThroughChangeset(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	user := &model.User{Username: "topology-admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "55555555-5555-4555-8555-555555555555", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	entry := &model.Server{Name: "entry", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline}
+	target := &model.Server{Name: "target", EntryAddress: "198.51.100.8", PublicIPv4: "198.51.100.8", ListenIP: "0.0.0.0", PortRangeStart: 11001, PortRangeEnd: 12000, Status: model.ServerOnline}
+	for _, item := range []*model.Server{entry, target} {
+		if err := db.CreateServer(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := &model.Inbound{ServerID: entry.ID, Name: "root", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	targetInbound := &model.Inbound{ServerID: target.ID, Name: "target", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 8443, ConfigJSON: `{}`, Enabled: true}
+	for _, item := range []*model.Inbound{root, targetInbound} {
+		if err := db.CreateInbound(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	principal := application.HumanPrincipal(*user, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
+	input, _ := json.Marshal(map[string]any{
+		"path":  map[string]any{"kind": "chain", "name_mode": "auto", "name_template": []any{}, "inbound_id": root.ID, "exit_region_mode": "auto", "enabled": true},
+		"steps": []map[string]any{{"node_type": "server_inbound", "transport_mode": "singbox", "inbound_id": targetInbound.ID}},
+	})
+	draft, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{{Capability: "topology.write", Input: input}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, _ := json.Marshal(draft.ExpectedRevisions)
+	changeset, err := server.automation.Create(ctx, principal, automation.CreateRequest{IdempotencyKey: "atomic-topology", BaseRevisions: base, Operations: []automation.OperationRequest{{Capability: "topology.write", Input: input}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.automation.Validate(ctx, principal, changeset.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.automation.Approve(ctx, principal, changeset.ID, "approved"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.automation.Apply(ctx, principal, changeset.ID); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := db.ListProxyPaths(ctx)
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("paths=%#v err=%v", paths, err)
+	}
+	steps, err := db.ListProxyPathStepsForPath(ctx, paths[0].ID)
+	if err != nil || len(steps) != 1 || steps[0].InboundID == nil || *steps[0].InboundID != targetInbound.ID {
+		t.Fatalf("steps=%#v err=%v", steps, err)
+	}
+
+	directInput, _ := json.Marshal(map[string]any{
+		"path":         map[string]any{"kind": "direct", "name_mode": "auto", "name_template": []any{}, "inbound_id": root.ID, "exit_region_mode": "auto", "enabled": true},
+		"steps":        []any{},
+		"routing_rule": map[string]any{"name": "atomic-root-rule", "priority": 100, "match_json": `{"domain_suffix":["direct.example"]}`, "action": "direct", "enabled": true},
+	})
+	directDraft, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{{Capability: "topology.write", Input: directInput}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	directBase, _ := json.Marshal(directDraft.ExpectedRevisions)
+	directChangeset, err := server.automation.Create(ctx, principal, automation.CreateRequest{IdempotencyKey: "atomic-direct-rule", BaseRevisions: directBase, Operations: []automation.OperationRequest{{Capability: "topology.write", Input: directInput}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.automation.Validate(ctx, principal, directChangeset.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.automation.Approve(ctx, principal, directChangeset.ID, "approved"); err != nil {
+		t.Fatal(err)
+	}
+	directApplied, err := server.automation.Apply(ctx, principal, directChangeset.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var directResult struct {
+		Operations []any `json:"operations"`
+	}
+	if err := json.Unmarshal(directApplied.Result, &directResult); err != nil || len(directResult.Operations) != 1 {
+		t.Fatalf("topology result=%s err=%v", directApplied.Result, err)
+	}
+	assertCapabilityOutputSchema(t, server, "topology.write", directResult.Operations[0])
+	rules, err := db.ListRoutingRules(ctx)
+	if err != nil || len(rules) != 1 || rules[0].ProxyPathID == nil || rules[0].Name != "atomic-root-rule" {
+		t.Fatalf("atomic topology routing rule=%#v err=%v", rules, err)
+	}
+	directPath, err := db.GetProxyPath(ctx, *rules[0].ProxyPathID)
+	if err != nil || !directPath.Enabled || directPath.Kind != model.ProxyPathKindDirect {
+		t.Fatalf("atomic direct path=%#v err=%v", directPath, err)
+	}
+}
+
 func TestInboundCreateCapabilityAppliesThroughChangeset(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")

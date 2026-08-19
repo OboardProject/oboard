@@ -6308,8 +6308,35 @@ func (s *Server) validateOutboundAddress(ctx context.Context, v model.Outbound) 
 }
 
 func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
-	if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/place") || strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/reorder") {
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	if strings.HasSuffix(path, "/place") || strings.HasSuffix(path, "/reorder") {
 		s.placeRoutingRules(w, r)
+		return
+	}
+	if strings.HasSuffix(path, "/batch-delete") {
+		if r.Method != http.MethodPost {
+			method(w)
+			return
+		}
+		var request struct {
+			IDs []int64 `json:"ids"`
+		}
+		if !decode(w, r, &request) {
+			return
+		}
+		if len(request.IDs) == 0 || len(request.IDs) > 256 {
+			fail(w, errors.New("ids must contain 1 to 256 items"), http.StatusBadRequest)
+			return
+		}
+		if err := s.store.DeleteRoutingRules(r.Context(), request.IDs); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, sql.ErrNoRows) {
+				status = http.StatusConflict
+			}
+			fail(w, err, status)
+			return
+		}
+		write(w, http.StatusOK, map[string]any{"deleted_ids": request.IDs})
 		return
 	}
 	id := idFromPath(r.URL.Path, "/api/v1/routing-rules/")
@@ -6426,6 +6453,10 @@ func (s *Server) prepareRoutingRuleReuse(ctx context.Context, v *model.RoutingRu
 }
 
 func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) error {
+	return s.validateRoutingRuleWithCandidatePath(ctx, v, nil)
+}
+
+func (s *Server) validateRoutingRuleWithCandidatePath(ctx context.Context, v *model.RoutingRule, candidatePath *model.ProxyPath) error {
 	if v.Scope == "" {
 		v.Scope = model.RoutingRuleScopeServer
 	}
@@ -6436,9 +6467,16 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 		if v.ProxyPathID == nil || *v.ProxyPathID <= 0 {
 			return errors.New("proxy_path_id required for path_stage rule")
 		}
-		path, err := s.store.GetProxyPath(ctx, *v.ProxyPathID)
-		if err != nil {
-			return fmt.Errorf("proxy_path %d: %w", *v.ProxyPathID, err)
+		var path *model.ProxyPath
+		var err error
+		if candidatePath != nil && candidatePath.ID == *v.ProxyPathID {
+			copy := *candidatePath
+			path = &copy
+		} else {
+			path, err = s.store.GetProxyPath(ctx, *v.ProxyPathID)
+			if err != nil {
+				return fmt.Errorf("proxy_path %d: %w", *v.ProxyPathID, err)
+			}
 		}
 		if v.StageStepID == nil {
 			inbound, err := s.store.GetInbound(ctx, path.InboundID)
@@ -6536,6 +6574,9 @@ func (s *Server) validateRoutingRule(ctx context.Context, v *model.RoutingRule) 
 		}
 		return core.ValidateAddressForIPStack(core.EffectiveIPStack(*server), ext.TargetAddress)
 	case model.RouteActionProxyPath:
+		if candidatePath != nil {
+			return errors.New("atomic root routing rule cannot target another proxy path")
+		}
 		if v.Scope != model.RoutingRuleScopePathStage || v.ProxyPathID == nil {
 			return errors.New("proxy_path action requires a path_stage routing rule")
 		}
@@ -6676,6 +6717,68 @@ func (s *Server) validateRoutingRuleTargetPath(ctx context.Context, sourcePathID
 	}
 	edges[sourcePathID] = append(edges[sourcePathID], targetPathID)
 	if routingPathReachable(edges, targetPathID, sourcePathID, map[int64]bool{}) {
+		return errors.New("routing rule proxy paths must not form a cycle")
+	}
+	return nil
+}
+
+func (s *Server) validateRoutingRuleTargetCandidate(ctx context.Context, rule model.RoutingRule, targetPath model.ProxyPath, targetSteps []model.ProxyPathStep) error {
+	if rule.ProxyPathID == nil || *rule.ProxyPathID == targetPath.ID {
+		return errors.New("routing rule target path must differ from its fallback path")
+	}
+	sourcePath, err := s.store.GetProxyPath(ctx, *rule.ProxyPathID)
+	if err != nil {
+		return err
+	}
+	if !targetPath.Enabled || targetPath.Kind != model.ProxyPathKindChain || targetPath.InboundID != sourcePath.InboundID {
+		return errors.New("target proxy path must be an enabled chain from the same root inbound")
+	}
+	sourceSteps, err := s.store.ListProxyPathStepsForPath(ctx, sourcePath.ID)
+	if err != nil {
+		return err
+	}
+	sort.SliceStable(sourceSteps, func(i, j int) bool { return sourceSteps[i].Position < sourceSteps[j].Position })
+	sort.SliceStable(targetSteps, func(i, j int) bool { return targetSteps[i].Position < targetSteps[j].Position })
+	stagePosition := 0
+	if rule.StageStepID != nil {
+		for _, step := range sourceSteps {
+			if step.ID == *rule.StageStepID {
+				stagePosition = step.Position
+				break
+			}
+		}
+		if stagePosition == 0 {
+			return errors.New("routing rule stage no longer belongs to its fallback path")
+		}
+	}
+	if len(targetSteps) <= stagePosition {
+		return errors.New("target proxy path must continue after the routing stage")
+	}
+	for position := 1; position <= stagePosition; position++ {
+		if len(sourceSteps) < position || !equivalentRoutingPrefixStep(sourceSteps[position-1], targetSteps[position-1]) {
+			return fmt.Errorf("target proxy path must share the fallback prefix through step %d", stagePosition)
+		}
+	}
+	mode := targetSteps[stagePosition].TransportMode
+	if mode == "" {
+		mode = model.ProxyPathTransportSingBox
+	}
+	if mode == model.ProxyPathTransportPortForward {
+		return errors.New("rule-specific proxy paths cannot start with transparent port forwarding after the routing stage")
+	}
+	items, err := s.store.ListRoutingRules(ctx)
+	if err != nil {
+		return err
+	}
+	edges := map[int64][]int64{}
+	for _, item := range items {
+		if item.ID == rule.ID || !item.Enabled || item.Action != model.RouteActionProxyPath || item.ProxyPathID == nil || item.TargetProxyPathID == nil {
+			continue
+		}
+		edges[*item.ProxyPathID] = append(edges[*item.ProxyPathID], *item.TargetProxyPathID)
+	}
+	edges[sourcePath.ID] = append(edges[sourcePath.ID], targetPath.ID)
+	if routingPathReachable(edges, targetPath.ID, sourcePath.ID, map[int64]bool{}) {
 		return errors.New("routing rule proxy paths must not form a cycle")
 	}
 	return nil
@@ -7443,14 +7546,15 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var request struct {
 			model.ProxyPath
-			InitialStep *model.ProxyPathStep `json:"initial_step,omitempty"`
+			InitialSteps  []model.ProxyPathStep `json:"initial_steps,omitempty"`
+			RoutingRuleID int64                 `json:"routing_rule_id,omitempty"`
 		}
 		if !decode(w, r, &request) {
 			return
 		}
 		v := request.ProxyPath
-		if request.InitialStep != nil {
-			s.createProxyPathWithInitialStep(w, r, &v, request.InitialStep)
+		if len(request.InitialSteps) > 0 {
+			s.createProxyPathComposition(w, r, &v, request.InitialSteps, request.RoutingRuleID)
 			return
 		}
 		if v.BranchSourceStepID != nil {
@@ -7572,7 +7676,7 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) createProxyPathWithInitialStep(w http.ResponseWriter, r *http.Request, path *model.ProxyPath, step *model.ProxyPathStep) {
+func (s *Server) createProxyPathComposition(w http.ResponseWriter, r *http.Request, path *model.ProxyPath, steps []model.ProxyPathStep, routingRuleID int64) {
 	if strings.TrimSpace(path.Secret) == "" {
 		secret, err := security.RandomToken(24)
 		if err != nil {
@@ -7581,25 +7685,14 @@ func (s *Server) createProxyPathWithInitialStep(w http.ResponseWriter, r *http.R
 		}
 		path.Secret = secret
 	}
-	if step.Position <= 0 {
-		step.Position = 1
+	if path.BranchSourceStepID != nil {
+		fail(w, errors.New("branch_source_step_id 只能由直接出口分支接口设置"), http.StatusBadRequest)
+		return
 	}
 	if err := s.validateProxyPath(r.Context(), path); err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
-	if err := s.normalizeProxyPathStepCandidate(r.Context(), step); err != nil {
-		fail(w, err, http.StatusBadRequest)
-		return
-	}
-	if err := s.validateProxyPathServerLoop(r.Context(), path.InboundID, []model.ProxyPathStep{*step}); err != nil {
-		fail(w, err, http.StatusBadRequest)
-		return
-	}
-
-	// Validate the complete candidate against the current topology before the
-	// transaction. The placeholder IDs keep the in-memory projection distinct;
-	// the database commit below writes path and first step together.
 	data, err := s.store.FullRoutingConfigData(r.Context())
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
@@ -7613,56 +7706,104 @@ func (s *Server) createProxyPathWithInitialStep(w http.ResponseWriter, r *http.R
 	if path.ID <= 0 {
 		path.ID = 1
 	}
-	step.PathID = path.ID
+	maxStepID := int64(0)
 	for _, item := range data.ProxyPathSteps {
-		if item.ID >= step.ID {
-			step.ID = item.ID + 1
+		if item.ID > maxStepID {
+			maxStepID = item.ID
 		}
 	}
-	if step.ID <= 0 {
-		step.ID = 1
+	seenPositions := map[int]bool{}
+	for index := range steps {
+		step := &steps[index]
+		if step.Position <= 0 {
+			step.Position = index + 1
+		}
+		if seenPositions[step.Position] {
+			fail(w, errors.New("same path step position already exists"), http.StatusBadRequest)
+			return
+		}
+		seenPositions[step.Position] = true
+		step.PathID = path.ID
+		maxStepID++
+		step.ID = maxStepID
+		if err := s.normalizeProxyPathStepCandidate(r.Context(), step); err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+	}
+	if err := s.validateProxyPathServerLoop(r.Context(), path.InboundID, steps); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
 	}
 	data.ProxyPaths = append(data.ProxyPaths, *path)
-	data.ProxyPathSteps = append(data.ProxyPathSteps, *step)
+	data.ProxyPathSteps = append(data.ProxyPathSteps, steps...)
 	if err := normalizeProxyPathProcessingRolesInMemory(data.ProxyPathSteps, path.ID); err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
-	*step = data.ProxyPathSteps[len(data.ProxyPathSteps)-1]
+	copy(steps, data.ProxyPathSteps[len(data.ProxyPathSteps)-len(steps):])
 	resolveRoutingProxyPathNames(&data)
 	if _, err := core.BuildProxyPathPlansWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)); err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
-	if err := s.store.CreateProxyPathWithStep(r.Context(), path, step); err != nil {
+	var routingRule *model.RoutingRule
+	if routingRuleID > 0 {
+		routingRule, err = s.store.GetRoutingRule(r.Context(), routingRuleID)
+		if err != nil {
+			fail(w, err, http.StatusNotFound)
+			return
+		}
+		if err := s.validateRoutingRuleTargetCandidate(r.Context(), *routingRule, *path, steps); err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+	}
+	storedPath := *path
+	if routingRuleID > 0 {
+		storedPath.Enabled = false
+	}
+	if err := s.store.CreateProxyPathComposition(r.Context(), &storedPath, steps); err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
+	}
+	path.ID = storedPath.ID
+	if routingRuleID > 0 {
+		if err := s.store.ActivateProxyPathComposition(r.Context(), path.ID, routingRuleID); err != nil {
+			_ = s.store.DeleteProxyPath(r.Context(), path.ID)
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
 	}
 	if err := s.ensureWARPProfilesForProxyPaths(r.Context()); err != nil {
 		_ = s.store.DeleteProxyPath(r.Context(), path.ID)
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
-	if _, err := s.normalizeAndValidateProxyPathData(r.Context(), path.ID); err != nil {
-		_ = s.store.DeleteProxyPath(r.Context(), path.ID)
-		fail(w, err, http.StatusBadRequest)
-		return
-	}
 	resolved := s.resolvedProxyPath(r.Context(), *path)
-	path = &resolved
 	storedSteps, err := s.store.ListProxyPathStepsForPath(r.Context(), path.ID)
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
+	response := map[string]any{"proxy_path": resolved, "proxy_path_steps": publicProxyPathSteps(storedSteps)}
+	if routingRule != nil {
+		routingRule.Action = model.RouteActionProxyPath
+		routingRule.TargetProxyPathID = &path.ID
+		routingRule.OutboundID = nil
+		routingRule.ExternalOutboundID = nil
+		routingRule.TargetServerID = nil
+		routingRule.OutboundTag = ""
+		response["routing_rule"] = routingRule
+	}
 	auditReq(s, r, "create", "proxy-path", fmt.Sprint(path.ID))
-	auditReq(s, r, "create", "proxy-path-step", fmt.Sprint(storedSteps[0].ID))
-	write(w, http.StatusCreated, map[string]any{"proxy_path": path, "proxy_path_steps": publicProxyPathSteps(storedSteps)})
+	write(w, http.StatusCreated, response)
 }
 
 type directProxyPathBranchRequest struct {
-	InboundID    int64 `json:"inbound_id"`
-	SourceStepID int64 `json:"source_step_id"`
+	InboundID    int64              `json:"inbound_id"`
+	SourceStepID int64              `json:"source_step_id"`
+	RoutingRule  *model.RoutingRule `json:"routing_rule,omitempty"`
 }
 
 func (s *Server) createDirectProxyPathBranch(w http.ResponseWriter, r *http.Request) {
@@ -7739,32 +7880,106 @@ func (s *Server) createDirectProxyPathBranch(w http.ResponseWriter, r *http.Requ
 		fail(w, err, 400)
 		return
 	}
-	if err := s.store.CreateProxyPath(r.Context(), &path); err != nil {
-		fail(w, err, 500)
-		return
-	}
-	cleanup := func() { _ = s.store.DeleteProxyPath(r.Context(), path.ID) }
-	for index, source := range prefix {
-		step := source
-		step.ID = 0
-		step.PathID = path.ID
-		step.Position = index + 1
-		step.ProcessingRole = false
-		step.CreatedAt = time.Time{}
-		step.UpdatedAt = time.Time{}
-		if err := s.store.CreateProxyPathStep(r.Context(), &step); err != nil {
-			cleanup()
+	if len(prefix) == 0 {
+		if err := s.store.CreateProxyPath(r.Context(), &path); err != nil {
 			fail(w, err, 500)
 			return
 		}
+	} else {
+		paths, err := s.store.ListProxyPaths(r.Context())
+		if err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
+		path.ID = 1
+		for _, item := range paths {
+			if item.ID >= path.ID {
+				path.ID = item.ID + 1
+			}
+		}
+		steps := make([]model.ProxyPathStep, len(prefix))
+		for index, source := range prefix {
+			step := source
+			step.ID = 0
+			step.PathID = path.ID
+			step.Position = index + 1
+			step.ProcessingRole = false
+			step.CreatedAt = time.Time{}
+			step.UpdatedAt = time.Time{}
+			steps[index] = step
+		}
+		if err := normalizeProxyPathProcessingRolesInMemory(steps, path.ID); err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+		if err := s.store.CreateProxyPathComposition(r.Context(), &path, steps); err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
 	}
+	cleanup := func() { _ = s.store.DeleteProxyPath(r.Context(), path.ID) }
 	path.Enabled = true
 	if err := s.validateProxyPath(r.Context(), &path); err != nil {
 		cleanup()
 		fail(w, err, 400)
 		return
 	}
-	if err := s.store.UpdateProxyPath(r.Context(), &path); err != nil {
+	data, err := s.store.FullRoutingConfigData(r.Context())
+	if err != nil {
+		cleanup()
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	for index := range data.ProxyPaths {
+		if data.ProxyPaths[index].ID == path.ID {
+			data.ProxyPaths[index] = path
+		}
+	}
+	if err := normalizeProxyPathProcessingRolesInMemory(data.ProxyPathSteps, path.ID); err != nil {
+		cleanup()
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	resolveRoutingProxyPathNames(&data)
+	if _, err := core.BuildProxyPathPlansWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)); err != nil {
+		cleanup()
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	var sourceRuleID int64
+	var groupID string
+	if request.RoutingRule != nil {
+		rule := request.RoutingRule
+		rule.ProxyPathID = &path.ID
+		if rule.Scope == "" {
+			rule.Scope = model.RoutingRuleScopePathStage
+		}
+		if err := s.validateRoutingRule(r.Context(), rule); err != nil {
+			cleanup()
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+		var err error
+		sourceRuleID, err = s.prepareRoutingRuleReuse(r.Context(), rule)
+		if err != nil {
+			cleanup()
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+		if sourceRuleID > 0 {
+			groupID, err = security.RandomToken(18)
+			if err != nil {
+				cleanup()
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+		}
+		if err := s.store.ActivateProxyPathWithRoutingRule(r.Context(), path.ID, rule, sourceRuleID, groupID); err != nil {
+			cleanup()
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
+	} else if err := s.store.UpdateProxyPath(r.Context(), &path); err != nil {
 		cleanup()
 		fail(w, err, 500)
 		return
@@ -7787,7 +8002,11 @@ func (s *Server) createDirectProxyPathBranch(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	auditReq(s, r, "create", "proxy-path", fmt.Sprint(path.ID))
-	write(w, http.StatusCreated, map[string]any{"proxy_path": path, "proxy_path_steps": publicProxyPathSteps(steps)})
+	response := map[string]any{"proxy_path": path, "proxy_path_steps": publicProxyPathSteps(steps)}
+	if request.RoutingRule != nil {
+		response["routing_rule"] = request.RoutingRule
+	}
+	write(w, http.StatusCreated, response)
 }
 
 func sameOptionalInt64(left, right *int64) bool {
@@ -7957,7 +8176,106 @@ func (s *Server) ensureWARPProfilesForProxyTopology(ctx context.Context, data st
 	return nil
 }
 
+func (s *Server) createProxyPathStepBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	var request struct {
+		Steps []model.ProxyPathStep `json:"steps"`
+	}
+	if !decode(w, r, &request) {
+		return
+	}
+	if len(request.Steps) == 0 || len(request.Steps) > 64 {
+		fail(w, errors.New("steps must contain 1 to 64 items"), http.StatusBadRequest)
+		return
+	}
+	pathID := request.Steps[0].PathID
+	path, err := s.store.GetProxyPath(r.Context(), pathID)
+	if err != nil {
+		fail(w, err, http.StatusNotFound)
+		return
+	}
+	existing, err := s.store.ListProxyPathStepsForPath(r.Context(), pathID)
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	candidate := append([]model.ProxyPathStep(nil), existing...)
+	seenPositions := map[int]bool{}
+	maxStepID := int64(0)
+	for _, item := range existing {
+		seenPositions[item.Position] = true
+	}
+	allSteps, err := s.store.ListProxyPathSteps(r.Context())
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	for _, item := range allSteps {
+		if item.ID > maxStepID {
+			maxStepID = item.ID
+		}
+	}
+	for index := range request.Steps {
+		step := &request.Steps[index]
+		if step.PathID != pathID || step.Position <= 0 || seenPositions[step.Position] {
+			fail(w, errors.New("all steps must target the same path with unique positive positions"), http.StatusBadRequest)
+			return
+		}
+		seenPositions[step.Position] = true
+		maxStepID++
+		step.ID = maxStepID
+		if err := s.normalizeProxyPathStepCandidate(r.Context(), step); err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+		candidate = append(candidate, *step)
+	}
+	if err := s.validateProxyPathServerLoop(r.Context(), path.InboundID, candidate); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := normalizeProxyPathProcessingRolesInMemory(candidate, pathID); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	copy(request.Steps, candidate[len(candidate)-len(request.Steps):])
+	data, err := s.store.FullRoutingConfigData(r.Context())
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	filtered := data.ProxyPathSteps[:0]
+	for _, item := range data.ProxyPathSteps {
+		if item.PathID != pathID {
+			filtered = append(filtered, item)
+		}
+	}
+	data.ProxyPathSteps = append(filtered, candidate...)
+	resolveRoutingProxyPathNames(&data)
+	if _, err := core.BuildProxyPathPlansWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := s.store.CreateProxyPathSteps(r.Context(), request.Steps); err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	stored, err := s.store.ListProxyPathStepsForPath(r.Context(), pathID)
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	write(w, http.StatusCreated, map[string]any{"proxy_path_steps": publicProxyPathSteps(stored[len(stored)-len(request.Steps):])})
+}
+
 func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/batch") {
+		s.createProxyPathStepBatch(w, r)
+		return
+	}
 	id := idFromPath(r.URL.Path, "/api/v1/proxy-path-steps/")
 	switch r.Method {
 	case http.MethodGet:

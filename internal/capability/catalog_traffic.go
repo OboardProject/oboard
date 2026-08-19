@@ -177,6 +177,7 @@ func trafficWriteDescriptors(outbound, routingRule, outboundFields, routingRuleC
 		{"routing_rules.create", "创建分流规则", schemaObject(map[string]any{"routing_rule": routingRuleCreateFields}, "routing_rule"), schemaObject(map[string]any{"routing_rule": routingRule}, "routing_rule"), 2, false},
 		{"routing_rules.update", "修改分流规则", schemaObject(map[string]any{"routing_rule_id": positiveID, "changes": routingRuleFields}, "routing_rule_id", "changes"), schemaObject(map[string]any{"routing_rule": routingRule, "changed_fields": stringArray(1, 32)}, "routing_rule"), 2, false},
 		{"routing_rules.delete", "删除分流规则", schemaObject(map[string]any{"routing_rule_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "routing_rule_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "routing_rule_id": positiveID}, "deleted"), 3, true},
+		{"routing_rules.batch_delete", "原子删除一组分流规则", schemaObject(map[string]any{"routing_rule_ids": idArray(1, 256), "confirm": map[string]any{"type": "boolean", "const": true}}, "routing_rule_ids", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "routing_rule_ids": idArray(1, 256)}, "deleted", "routing_rule_ids"), 3, true},
 	}
 	descriptors := make([]Descriptor, 0, len(writes))
 	for _, write := range writes {
@@ -263,6 +264,14 @@ func trafficWriteResolver(name string) func(context.Context, any) ([]mcpauth.Res
 		case "routing_rules.delete":
 			if err := addRef("routing_rule_id", "routing_rule"); err != nil {
 				return nil, err
+			}
+		case "routing_rules.batch_delete":
+			if values, ok := object["routing_rule_ids"].([]any); ok {
+				for _, value := range values {
+					if id, ok := int64Value(value); ok && id > 0 {
+						refs = append(refs, mcpauth.ResourceRef{Type: "routing_rule", ID: strconv.FormatInt(id, 10)})
+					}
+				}
 			}
 		case "routing_rules.place":
 			if err := addRef("proxy_path_id", "proxy_path"); err != nil {

@@ -160,6 +160,11 @@ func topologyWriteRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, e
 		return nil, err
 	}
 	refs := []mcpauth.ResourceRef{}
+	if path, ok := object["path"].(map[string]any); ok {
+		if inboundID, ok := int64Value(path["inbound_id"]); ok {
+			refs = append(refs, mcpauth.ResourceRef{Type: "inbound", ID: strconv.FormatInt(inboundID, 10)})
+		}
+	}
 	if steps, ok := object["steps"].([]any); ok {
 		for _, raw := range steps {
 			step, ok := raw.(map[string]any)
@@ -174,6 +179,13 @@ func topologyWriteRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, e
 			}
 			if outboundID, ok := int64Value(step["external_outbound_id"]); ok {
 				refs = append(refs, mcpauth.ResourceRef{Type: "external_outbound", ID: strconv.FormatInt(outboundID, 10)})
+			}
+		}
+	}
+	if rule, ok := object["routing_rule"].(map[string]any); ok {
+		for field, resourceType := range map[string]string{"rule_set_id": "routing_rule_set", "outbound_id": "outbound", "external_outbound_id": "external_outbound", "sync_source_rule_id": "routing_rule"} {
+			if id, ok := int64Value(rule[field]); ok {
+				refs = append(refs, mcpauth.ResourceRef{Type: resourceType, ID: strconv.FormatInt(id, 10)})
 			}
 		}
 	}

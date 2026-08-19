@@ -128,6 +128,10 @@ func configurationRevisionConditions(table, updateCondition string) (string, str
 		updateCondition = "1"
 	}
 	switch table {
+	case "proxy_paths":
+		return "new.enabled=1", "old.enabled=1 or new.enabled=1", "old.enabled=1"
+	case "proxy_path_steps":
+		return "exists(select 1 from proxy_paths where id=new.path_id and enabled=1)", "exists(select 1 from proxy_paths where id=old.path_id and enabled=1) or exists(select 1 from proxy_paths where id=new.path_id and enabled=1)", "exists(select 1 from proxy_paths where id=old.path_id and enabled=1)"
 	case "subscription_plan_revisions":
 		return "new.status='active'", "old.status='active' or new.status='active'", "old.status='active'"
 	case "subscription_plan_revision_nodes", "subscription_plan_revision_rules", "subscription_plan_revision_node_exclusions":

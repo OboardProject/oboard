@@ -45,12 +45,25 @@ func TestRoutingCapabilityResourceResolvers(t *testing.T) {
 			want: map[string]bool{"server:1": true, "proxy_path:2": true, "proxy_path:4": true, "routing_rule_set:3": true, "routing_rule:9": true},
 		},
 		{
+			name:  "routing_rules.batch_delete",
+			input: map[string]any{"routing_rule_ids": []any{int64(12), int64(13)}, "confirm": true},
+			want:  map[string]bool{"routing_rule:12": true, "routing_rule:13": true},
+		},
+		{
 			name: "routing_rules.place",
 			input: map[string]any{"proxy_path_id": 5, "placements": []any{
 				map[string]any{"rule_id": 7, "sort_position": 0},
 				map[string]any{"rule_id": 8, "sort_position": 1},
 			}},
 			want: map[string]bool{"proxy_path:5": true, "routing_rule:7": true, "routing_rule:8": true},
+		},
+		{
+			name: "topology.write",
+			input: map[string]any{
+				"path": map[string]any{"inbound_id": int64(21)}, "steps": []any{map[string]any{"server_id": int64(22), "external_outbound_id": int64(23)}},
+				"routing_rule": map[string]any{"rule_set_id": int64(24), "sync_source_rule_id": int64(25)},
+			},
+			want: map[string]bool{"inbound:21": true, "server:22": true, "external_outbound:23": true, "routing_rule_set:24": true, "routing_rule:25": true},
 		},
 		{
 			name:  "routing_rule_sets.refresh",

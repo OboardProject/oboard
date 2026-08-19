@@ -3396,6 +3396,38 @@ func (s *Store) UpdateRoutingRule(ctx context.Context, v *model.RoutingRule) err
 	return tx.Commit()
 }
 
+func (s *Store) DeleteRoutingRules(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			return errors.New("routing rule ids must be positive")
+		}
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `delete from routing_rules where id in (`+strings.Join(placeholders, ",")+`)`, args...) // #nosec G202 -- placeholders contains only generated question marks.
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != int64(len(ids)) {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
+}
+
 func (s *Store) CreateSyncedRoutingRule(ctx context.Context, v *model.RoutingRule, sourceRuleID int64, groupID string) error {
 	groupID = strings.TrimSpace(groupID)
 	if sourceRuleID <= 0 || groupID == "" {
@@ -3566,7 +3598,10 @@ func (s *Store) CreateProxyPath(ctx context.Context, v *model.ProxyPath) error {
 	return nil
 }
 
-func (s *Store) CreateProxyPathWithStep(ctx context.Context, path *model.ProxyPath, step *model.ProxyPathStep) error {
+func (s *Store) CreateProxyPathComposition(ctx context.Context, path *model.ProxyPath, steps []model.ProxyPathStep) error {
+	if len(steps) == 0 {
+		return errors.New("proxy path composition requires at least one step")
+	}
 	ts := now()
 	if err := encodeProxyPathNameTemplate(path); err != nil {
 		return err
@@ -3578,24 +3613,137 @@ func (s *Store) CreateProxyPathWithStep(ctx context.Context, path *model.ProxyPa
 	defer tx.Rollback()
 	path.CreatedAt = parseTime(ts)
 	path.UpdatedAt = path.CreatedAt
-	result, err := tx.ExecContext(ctx, `insert into proxy_paths(inbound_id,kind,branch_source_step_id,name_mode,name_template_json,exit_region_mode,exit_region_code,secret,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, path.InboundID, path.Kind, path.BranchSourceStepID, path.NameMode, path.NameTemplateJSON, path.ExitRegionMode, path.ExitRegionCode, path.Secret, boolInt(path.Enabled), ts, ts)
+	if path.ID <= 0 {
+		return errors.New("proxy path composition id is required")
+	}
+	_, err = tx.ExecContext(ctx, `insert into proxy_paths(id,inbound_id,kind,branch_source_step_id,name_mode,name_template_json,exit_region_mode,exit_region_code,secret,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`, path.ID, path.InboundID, path.Kind, path.BranchSourceStepID, path.NameMode, path.NameTemplateJSON, path.ExitRegionMode, path.ExitRegionCode, path.Secret, boolInt(path.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
-	path.ID, err = result.LastInsertId()
+	for index := range steps {
+		step := &steps[index]
+		step.PathID = path.ID
+		step.CreatedAt = parseTime(ts)
+		step.UpdatedAt = step.CreatedAt
+		result, err := tx.ExecContext(ctx, `insert into proxy_path_steps(path_id,position,node_type,transport_mode,processing_role,server_id,inbound_id,external_outbound_id,config_json,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, step.PathID, step.Position, step.NodeType, step.TransportMode, boolInt(step.ProcessingRole), step.ServerID, step.InboundID, step.ExternalOutboundID, step.ConfigJSON, ts, ts)
+		if err != nil {
+			return err
+		}
+		step.ID, err = result.LastInsertId()
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ActivateProxyPathComposition(ctx context.Context, pathID, routingRuleID int64) error {
+	if pathID <= 0 {
+		return errors.New("proxy path id is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	step.PathID = path.ID
-	step.CreatedAt = parseTime(ts)
-	step.UpdatedAt = step.CreatedAt
-	result, err = tx.ExecContext(ctx, `insert into proxy_path_steps(path_id,position,node_type,transport_mode,processing_role,server_id,inbound_id,external_outbound_id,config_json,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, step.PathID, step.Position, step.NodeType, step.TransportMode, boolInt(step.ProcessingRole), step.ServerID, step.InboundID, step.ExternalOutboundID, step.ConfigJSON, ts, ts)
+	defer tx.Rollback()
+	ts := now()
+	result, err := tx.ExecContext(ctx, `update proxy_paths set enabled=1,updated_at=? where id=? and enabled=0`, ts, pathID)
 	if err != nil {
 		return err
 	}
-	step.ID, err = result.LastInsertId()
+	count, err := result.RowsAffected()
+	if err != nil || count != 1 {
+		if err != nil {
+			return err
+		}
+		return sql.ErrNoRows
+	}
+	if routingRuleID > 0 {
+		result, err = tx.ExecContext(ctx, `update routing_rules set action=?,target_proxy_path_id=?,outbound_id=null,external_outbound_id=null,target_server_id=null,outbound_tag='',updated_at=? where id=?`, model.RouteActionProxyPath, pathID, ts, routingRuleID)
+		if err != nil {
+			return err
+		}
+		count, err = result.RowsAffected()
+		if err != nil || count != 1 {
+			if err != nil {
+				return err
+			}
+			return sql.ErrNoRows
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ActivateProxyPathWithRoutingRule(ctx context.Context, pathID int64, rule *model.RoutingRule, sourceRuleID int64, groupID string) error {
+	if pathID <= 0 || rule == nil {
+		return errors.New("proxy path and routing rule are required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
+	}
+	defer tx.Rollback()
+	ts := now()
+	result, err := tx.ExecContext(ctx, `update proxy_paths set enabled=1,updated_at=? where id=? and enabled=0`, ts, pathID)
+	if err != nil {
+		return err
+	}
+	if count, err := result.RowsAffected(); err != nil || count != 1 {
+		if err != nil {
+			return err
+		}
+		return sql.ErrNoRows
+	}
+	if sourceRuleID > 0 {
+		var sourceGroup string
+		if err := tx.QueryRowContext(ctx, `select sync_group_id from routing_rules where id=?`, sourceRuleID).Scan(&sourceGroup); err != nil {
+			return err
+		}
+		if strings.TrimSpace(sourceGroup) == "" {
+			sourceGroup = strings.TrimSpace(groupID)
+			if sourceGroup == "" {
+				return errors.New("routing rule sync group is required")
+			}
+			if _, err := tx.ExecContext(ctx, `update routing_rules set sync_group_id=?,updated_at=? where id=?`, sourceGroup, ts, sourceRuleID); err != nil {
+				return err
+			}
+		}
+		rule.SyncGroupID = sourceGroup
+	}
+	result, err = tx.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, rule.ServerID, rule.Scope, rule.ProxyPathID, rule.StageStepID, rule.SortPosition, rule.MatchSource, rule.RuleSetID, rule.Name, rule.Priority, rule.MatchJSON, rule.Action, rule.OutboundID, rule.ExternalOutboundID, rule.TargetProxyPathID, rule.TargetServerID, rule.OutboundTag, rule.SyncGroupID, boolInt(rule.Enabled), ts, ts)
+	if err != nil {
+		return err
+	}
+	rule.ID, err = result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	rule.CreatedAt, rule.UpdatedAt = parseTime(ts), parseTime(ts)
+	return tx.Commit()
+}
+
+func (s *Store) CreateProxyPathSteps(ctx context.Context, steps []model.ProxyPathStep) error {
+	if len(steps) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ts := now()
+	for index := range steps {
+		step := &steps[index]
+		step.CreatedAt = parseTime(ts)
+		step.UpdatedAt = step.CreatedAt
+		result, err := tx.ExecContext(ctx, `insert into proxy_path_steps(path_id,position,node_type,transport_mode,processing_role,server_id,inbound_id,external_outbound_id,config_json,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, step.PathID, step.Position, step.NodeType, step.TransportMode, boolInt(step.ProcessingRole), step.ServerID, step.InboundID, step.ExternalOutboundID, step.ConfigJSON, ts, ts)
+		if err != nil {
+			return err
+		}
+		step.ID, err = result.LastInsertId()
+		if err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

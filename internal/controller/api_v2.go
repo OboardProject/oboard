@@ -999,6 +999,13 @@ func (s *Server) registerAutomationHandlers() {
 				return nil, errors.New("proxy path step references an unauthorized server")
 			}
 		}
+		if request.RoutingRule != nil {
+			for _, serverID := range []int64{request.RoutingRule.ServerID} {
+				if serverID > 0 && !principal.AllowsInt64("server_ids", serverID) {
+					return nil, errors.New("routing rule references an unauthorized server")
+				}
+			}
+		}
 		return s.validateTopologyWriteCandidate(ctx, request)
 	})
 	s.automation.RegisterRevisionResolver("topology.write", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
@@ -1022,26 +1029,88 @@ func (s *Server) registerAutomationHandlers() {
 		if err := s.validateProxyPath(ctx, &path); err != nil {
 			return nil, err
 		}
-		if err := s.store.CreateProxyPath(ctx, &path); err != nil {
-			return nil, err
-		}
+		pathCreated := false
 		defer func() {
-			if resultErr != nil {
+			if resultErr != nil && pathCreated {
 				_ = s.store.DeleteProxyPath(ctx, path.ID)
 			}
 		}()
-		for index := range request.Steps {
-			step := request.Steps[index]
-			step.ID, step.PathID, step.Position = 0, path.ID, index+1
-			if err := s.validateProxyPathStep(ctx, &step, 0); err != nil {
+		if len(request.Steps) == 0 {
+			if request.RoutingRule == nil {
+				if err := s.store.CreateProxyPath(ctx, &path); err != nil {
+					return nil, err
+				}
+				pathCreated = true
+			} else {
+				requestedEnabled := path.Enabled
+				path.Enabled = false
+				if err := s.store.CreateProxyPath(ctx, &path); err != nil {
+					return nil, err
+				}
+				pathCreated = true
+				path.Enabled = requestedEnabled
+				rule := *request.RoutingRule
+				rule.ID, rule.ProxyPathID, rule.StageStepID = 0, &path.ID, nil
+				root, err := s.store.GetInbound(ctx, path.InboundID)
+				if err != nil {
+					return nil, err
+				}
+				rule.ServerID, rule.Scope = root.ServerID, model.RoutingRuleScopePathStage
+				if err := s.validateRoutingRuleWithCandidatePath(ctx, &rule, &path); err != nil {
+					return nil, err
+				}
+				sourceRuleID, err := s.prepareRoutingRuleReuse(ctx, &rule)
+				if err != nil {
+					return nil, err
+				}
+				groupID := ""
+				if sourceRuleID > 0 {
+					groupID, err = security.RandomToken(18)
+					if err != nil {
+						return nil, err
+					}
+				}
+				if err := s.store.ActivateProxyPathWithRoutingRule(ctx, path.ID, &rule, sourceRuleID, groupID); err != nil {
+					return nil, err
+				}
+				request.RoutingRule = &rule
+			}
+		} else {
+			data, err := s.store.FullRoutingConfigData(ctx)
+			if err != nil {
 				return nil, err
 			}
-			if err := s.store.CreateProxyPathStep(ctx, &step); err != nil {
+			path.ID = 1
+			for _, current := range data.ProxyPaths {
+				if current.ID >= path.ID {
+					path.ID = current.ID + 1
+				}
+			}
+			maxStepID := int64(0)
+			for _, current := range data.ProxyPathSteps {
+				if current.ID > maxStepID {
+					maxStepID = current.ID
+				}
+			}
+			steps := make([]model.ProxyPathStep, len(request.Steps))
+			for index := range request.Steps {
+				step := request.Steps[index]
+				step.ID, step.PathID, step.Position = maxStepID+int64(index)+1, path.ID, index+1
+				if err := s.normalizeProxyPathStepCandidate(ctx, &step); err != nil {
+					return nil, err
+				}
+				steps[index] = step
+			}
+			if err := s.validateProxyPathServerLoop(ctx, path.InboundID, steps); err != nil {
 				return nil, err
 			}
-		}
-		if err := s.normalizeAndValidateProxyPath(ctx, path.ID); err != nil {
-			return nil, err
+			if err := normalizeProxyPathProcessingRolesInMemory(steps, path.ID); err != nil {
+				return nil, err
+			}
+			if err := s.store.CreateProxyPathComposition(ctx, &path, steps); err != nil {
+				return nil, err
+			}
+			pathCreated = true
 		}
 		if err := s.ensureWARPProfilesForProxyPaths(ctx); err != nil {
 			return nil, err
@@ -1051,7 +1120,11 @@ func (s *Server) registerAutomationHandlers() {
 		}
 		stored, _ := s.store.GetProxyPath(ctx, path.ID)
 		steps, _ := s.store.ListProxyPathStepsForPath(ctx, path.ID)
-		return map[string]any{"proxy_path": s.resolvedProxyPath(ctx, *stored), "proxy_path_steps": publicProxyPathSteps(steps), "requires_deployment": true}, nil
+		response := map[string]any{"proxy_path": s.resolvedProxyPath(ctx, *stored), "proxy_path_steps": publicProxyPathSteps(steps), "requires_deployment": true}
+		if request.RoutingRule != nil {
+			response["routing_rule"] = request.RoutingRule
+		}
+		return response, nil
 	})
 	s.automation.RegisterValidator("topology.reuse_inbound", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		var request proxyPathReuseRequest
@@ -1231,8 +1304,9 @@ func (s *Server) applyServerOnboardingDefaults(ctx context.Context, input json.R
 }
 
 type topologyWriteOperation struct {
-	Path  model.ProxyPath       `json:"path"`
-	Steps []model.ProxyPathStep `json:"steps"`
+	Path        model.ProxyPath       `json:"path"`
+	Steps       []model.ProxyPathStep `json:"steps"`
+	RoutingRule *model.RoutingRule    `json:"routing_rule,omitempty"`
 }
 
 func decodeTopologyWriteOperation(input json.RawMessage) (topologyWriteOperation, error) {
@@ -1248,13 +1322,14 @@ func decodeTopologyWriteOperation(input json.RawMessage) (topologyWriteOperation
 		PersistentKeepalive *int                             `json:"persistent_keepalive,omitempty"`
 	}
 	var wire struct {
-		Path  model.ProxyPath `json:"path"`
-		Steps []highLevelStep `json:"steps"`
+		Path        model.ProxyPath    `json:"path"`
+		Steps       []highLevelStep    `json:"steps"`
+		RoutingRule *model.RoutingRule `json:"routing_rule,omitempty"`
 	}
 	if err := strictAutomationInput(input, &wire); err != nil {
 		return topologyWriteOperation{}, err
 	}
-	request := topologyWriteOperation{Path: wire.Path, Steps: make([]model.ProxyPathStep, 0, len(wire.Steps))}
+	request := topologyWriteOperation{Path: wire.Path, Steps: make([]model.ProxyPathStep, 0, len(wire.Steps)), RoutingRule: wire.RoutingRule}
 	for _, value := range wire.Steps {
 		step := model.ProxyPathStep{NodeType: value.NodeType, TransportMode: value.TransportMode, ProcessingRole: value.ProcessingRole, ServerID: value.ServerID, InboundID: value.InboundID, ExternalOutboundID: value.ExternalOutboundID}
 		if step.TransportMode == model.ProxyPathTransportTunnel {
@@ -1279,6 +1354,11 @@ func decodeTopologyWriteOperation(input json.RawMessage) (topologyWriteOperation
 	for _, step := range request.Steps {
 		if step.ID != 0 || step.PathID != 0 {
 			return request, errors.New("topology.write accepts only high-level steps without IDs or raw config_json")
+		}
+	}
+	if request.RoutingRule != nil {
+		if request.Path.Kind != model.ProxyPathKindDirect || len(request.Steps) != 0 || request.RoutingRule.ID != 0 || request.RoutingRule.Action == model.RouteActionProxyPath {
+			return request, errors.New("topology.write routing_rule requires a new direct path without steps and cannot use proxy_path action")
 		}
 	}
 	return request, nil
@@ -1383,10 +1463,24 @@ func (s *Server) validateTopologyWriteCandidate(ctx context.Context, request top
 	if !ok {
 		return nil, errors.New("candidate proxy path did not produce a deployment plan")
 	}
-	return map[string]any{
+	result := map[string]any{
 		"inbound_id": path.InboundID, "step_count": len(steps), "full_deployment_required": true,
 		"affected_servers": proxyPathPlanServerIDs(plan), "warnings": plan.Warnings,
-	}, nil
+	}
+	if request.RoutingRule != nil {
+		rule := *request.RoutingRule
+		rule.ID, rule.ProxyPathID, rule.StageStepID = 0, &path.ID, nil
+		root, err := s.store.GetInbound(ctx, path.InboundID)
+		if err != nil {
+			return nil, err
+		}
+		rule.ServerID, rule.Scope = root.ServerID, model.RoutingRuleScopePathStage
+		if err := s.validateRoutingRuleWithCandidatePath(ctx, &rule, &path); err != nil {
+			return nil, err
+		}
+		result["routing_rule"] = rule
+	}
+	return result, nil
 }
 
 func proxyPathPlanServerIDs(plan model.ProxyPathPlan) []int64 {

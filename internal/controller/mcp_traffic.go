@@ -304,6 +304,39 @@ func (s *Server) registerRoutingRuleOperations() {
 			return s.applyRoutingRuleOperation(ctx, principal, input, name)
 		})
 	}
+	batchName := "routing_rules.batch_delete"
+	s.automation.RegisterValidator(batchName, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		ids, err := s.validateRoutingRuleBatchDelete(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"routing_rule_ids": ids, "deleted": false}, nil
+	})
+	s.automation.RegisterRevisionResolver(batchName, func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		ids, err := s.validateRoutingRuleBatchDelete(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		revisions := make(map[string]string, len(ids))
+		for _, id := range ids {
+			rule, err := s.store.GetRoutingRule(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			revisions["routing_rule:"+strconv.FormatInt(id, 10)] = rule.UpdatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		return revisions, nil
+	})
+	s.automation.Register(batchName, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		ids, err := s.validateRoutingRuleBatchDelete(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.DeleteRoutingRules(ctx, ids); err != nil {
+			return nil, err
+		}
+		return map[string]any{"deleted": true, "routing_rule_ids": ids}, nil
+	})
 	name := "routing_rules.place"
 	s.automation.RegisterValidator(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		request, err := s.validateRoutingRulePlacement(ctx, principal, input)
@@ -351,6 +384,36 @@ func (s *Server) registerRoutingRuleOperations() {
 		}
 		return map[string]any{"proxy_path_id": request.ProxyPathID, "placements": request.Placements}, nil
 	})
+}
+
+func (s *Server) validateRoutingRuleBatchDelete(ctx context.Context, principal application.Principal, input json.RawMessage) ([]int64, error) {
+	var request struct {
+		RoutingRuleIDs []int64 `json:"routing_rule_ids"`
+		Confirm        bool    `json:"confirm"`
+	}
+	if err := strictAutomationInput(input, &request); err != nil {
+		return nil, err
+	}
+	if len(request.RoutingRuleIDs) == 0 || len(request.RoutingRuleIDs) > 256 || !request.Confirm {
+		return nil, errors.New("routing_rule_ids and confirm=true are required")
+	}
+	seen := map[int64]bool{}
+	ids := make([]int64, 0, len(request.RoutingRuleIDs))
+	for _, id := range request.RoutingRuleIDs {
+		if id <= 0 || seen[id] {
+			return nil, errors.New("routing_rule_ids must contain unique positive IDs")
+		}
+		seen[id] = true
+		rule, err := s.store.GetRoutingRule(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if !principal.AllowsInt64("server_ids", rule.ServerID) {
+			return nil, errors.New("routing rule is outside the authorized server boundary")
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 type routingRulePlacementInput struct {

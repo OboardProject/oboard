@@ -9524,44 +9524,19 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const steps: ProxyPathStep[] = data.proxy_path_steps || []
 	  const incompatible = siblings.filter(path => transparentPrefixSignature(steps.filter(step => step.path_id === path.id)) !== candidateSignature)
 	  if (!incompatible.length) return true
-	  const ok = await dialogs.confirm({
+	  await dialogs.alert({
 	    title: '透明前缀必须一致',
 	    message: <div className="dialog-detail">
-	      <p>同一入口的启用分支必须复用完全相同的透明转发前缀，并在处理加解密节点或其后分叉。以下 {incompatible.length} 条分支与当前前缀不一致，继续后会被删除，对应的订阅节点也会消失。</p>
+	      <p>同一入口的启用分支必须复用完全相同的透明转发前缀，并在处理加解密节点或其后分叉。当前操作不会自动删除其它分支；请先单独停用或删除以下分支，再重新保存，避免把中间拓扑推给 Agent。</p>
 	      <ul>{incompatible.map(path => <li key={path.id}>{proxyPathDisplayName(path)}</li>)}</ul>
 	    </div>,
-	    tone: 'danger',
-	    confirmText: `删除这 ${incompatible.length} 条分支`,
 	  })
-	  if (!ok) return false
-	  const failures: string[] = []
-	  for (const path of incompatible) {
-	    try {
-	      await client.request(`/proxy-paths/${path.id}`, { method: 'DELETE' })
-	      removeMutationRows({
-	        proxy_paths: [path.id],
-	        proxy_path_steps: ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === path.id).map(step => step.id),
-	      })
-	    } catch (error: any) {
-	      failures.push(`${proxyPathDisplayName(path)}：${localizeErrorMessage(error?.message || error)}`)
-	    }
-	  }
-	  if (failures.length) {
-	    await dialogs.alert({
-	      title: '分支未全部删除',
-	      message: <div className="dialog-detail">
-	        <p>入口仍有不兼容分支，端口转发无法启用。请先处理：</p>
-	        <ul>{failures.map((item, index) => <li key={index}>{item}</li>)}</ul>
-	      </div>,
-	    })
-	    return false
-	  }
-	  return true
+	  return false
 	}
 	const createPathFromEntry = async (entry: Inbound, target: ({ node_type: 'imported'; external_outbound_id: number } | { node_type: 'server_inbound'; server_id?: number; inbound_id?: number } | { node_type: 'warp' }) & Partial<ProxyPathStep>): Promise<ProxyPathStep | null> => {
 	  const candidateStep = { position: 1, transport_mode: 'singbox' as ProxyPathTransportMode, config_json: '{}', ...target }
 	  if (target.transport_mode === 'port_forward' && !await ensureTransparentPrefixCompatible(0, entry.id, [candidateStep])) return null
-	  const result = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: entry.id, enabled: true, initial_step: candidateStep }) }) as { proxy_path?: ProxyPath; proxy_path_steps?: ProxyPathStep[] }
+	  const result = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: entry.id, enabled: true, initial_steps: [candidateStep] }) }) as { proxy_path?: ProxyPath; proxy_path_steps?: ProxyPathStep[] }
 	  applyMutationResult(result)
 	  return result.proxy_path_steps?.[0] || null
 	}
@@ -9616,43 +9591,27 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const stagePosition = rule.stage_step_id ? ordered.find(step => step.id === rule.stage_step_id)?.position || 0 : 0
 	  if (rule.stage_step_id && !stagePosition) throw new Error('分流规则所属节点已经不存在，请刷新后重试。')
 	  const prefix = ordered.filter(step => step.position <= stagePosition)
-	  const createdPath = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({ kind: 'chain', name_mode: 'auto', name_template: [], inbound_id: sourcePath.inbound_id, enabled: false }) }) as { proxy_path?: ProxyPath }
-	  const pathID = createdPath.proxy_path?.id || 0
-	  if (!pathID) throw new Error('目标路径已创建，但接口没有返回路径数据。')
-	  applyMutationResult(createdPath)
-	  let targetStep: ProxyPathStep | null = null
-	  try {
-		for (const source of prefix) {
-		  const prefixResult = await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({
-			path_id: pathID,
-			position: source.position,
-			node_type: source.node_type,
-			transport_mode: source.transport_mode || 'singbox',
-			processing_role: source.processing_role === true,
-			server_id: source.server_id,
-			inbound_id: source.inbound_id,
-			external_outbound_id: source.external_outbound_id,
-			config_json: source.config_json || '{}',
-		  }) }) as { proxy_path_step?: ProxyPathStep }
-		  applyMutationResult(prefixResult)
-		}
-		const stepResult = await client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({ path_id: pathID, position: stagePosition + 1, transport_mode: 'singbox', processing_role: false, config_json: '{}', ...target }) }) as { proxy_path_step?: ProxyPathStep }
-		applyMutationResult(stepResult)
-		targetStep = stepResult.proxy_path_step || null
-		if (!targetStep?.id) throw new Error('目标路径缺少第一个节点。')
-		const enabledPath = await client.request(`/proxy-paths/${pathID}`, { method: 'PATCH', body: JSON.stringify({ enabled: true }) }) as Record<string, any>
-		applyMutationResult(enabledPath)
-		const updatedRule = await client.request(`/routing-rules/${rule.id}`, { method: 'PATCH', body: JSON.stringify({ ...rule, action: 'proxy_path', target_proxy_path_id: pathID }) }) as Record<string, any>
-		applyMutationResult(updatedRule)
-		return targetStep
-	  } catch (error) {
-		await client.request(`/proxy-paths/${pathID}`, { method: 'DELETE' }).catch(() => undefined)
-		removeMutationRows({
-		  proxy_paths: [pathID],
-		  proxy_path_steps: ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === pathID).map(step => step.id),
-		})
-		throw error
-	  }
+	  const initialSteps = [
+		...prefix.map(source => ({
+		  position: source.position,
+		  node_type: source.node_type,
+		  transport_mode: source.transport_mode || 'singbox',
+		  processing_role: source.processing_role === true,
+		  server_id: source.server_id,
+		  inbound_id: source.inbound_id,
+		  external_outbound_id: source.external_outbound_id,
+		  config_json: source.config_json || '{}',
+		})),
+		{ position: stagePosition + 1, transport_mode: 'singbox', processing_role: false, config_json: '{}', ...target },
+	  ]
+	  const result = await client.request('/proxy-paths', { method: 'POST', body: JSON.stringify({
+		kind: 'chain', name_mode: 'auto', name_template: [], inbound_id: sourcePath.inbound_id, enabled: true,
+		initial_steps: initialSteps, routing_rule_id: rule.id,
+	  }) }) as { proxy_path?: ProxyPath; proxy_path_steps?: ProxyPathStep[]; routing_rule?: RoutingRule }
+	  applyMutationResult(result)
+	  const targetStep = result.proxy_path_steps?.[result.proxy_path_steps.length - 1] || null
+	  if (!targetStep?.id) throw new Error('目标路径缺少第一个节点。')
+	  return targetStep
 	}
 	const consumeCanvasServerTarget = (targetID: string, createdSteps: ProxyPathStep[]) => {
 	  if (!targetID.startsWith('canvas-server-') || !createdSteps.length) return
@@ -9739,8 +9698,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  let nextPosition = sourcePath
 	    ? Math.max(0, ...allSteps.filter(step => step.path_id === sourcePath.id).map(step => step.position || 0)) + 1
 	    : 1
-	  let createdPathID = 0
-	  let firstCreatedStepID = 0
 	  const createdSteps: ProxyPathStep[] = []
 	  const candidateSteps = chain.steps.map((item, index) => ({ ...item.step, position: nextPosition + index }))
 
@@ -9749,44 +9706,33 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    ...candidateSteps,
 	  ])) return true
 
-	  try {
-	    if (!pathID) {
-	      const result = await client.request('/proxy-paths', {
-	        method: 'POST',
-	        body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: inboundID, enabled: true }),
-	      }) as { proxy_path?: ProxyPath }
-	      applyMutationResult(result)
-	      pathID = result.proxy_path?.id || 0
-	      createdPathID = pathID
-	      if (!pathID) throw new Error('路径已创建，但接口未返回路径数据')
-	    }
-
-	    for (let index = 0; index < chain.steps.length; index++) {
-	      const result = await client.request('/proxy-path-steps', {
-	        method: 'POST',
-	        body: JSON.stringify(detachedStepCreateRequest(chain.steps[index].step, pathID, nextPosition + index)),
-	      }) as { proxy_path_step?: ProxyPathStep }
-	      applyMutationResult(result)
-	      const created = result.proxy_path_step
-	      if (!created?.id) throw new Error(`第 ${index + 1} 个节点未返回创建结果`)
-	      if (!firstCreatedStepID) firstCreatedStepID = created.id
-	      createdSteps.push(created)
-	    }
-
-	    setPositions(current => {
-	      const next = { ...current }
-	      createdSteps.forEach((step, index) => { next[proxyPathStepNodeID(step)] = chain.steps[index].position })
-	      saveGraphPositions(next)
-	      return next
-	    })
-	    setCanvasDetachedChains(chains => chains.filter(item => item.instance_id !== chain.instance_id))
-	    reconcileTopology()
-	    return true
-	  } catch (error) {
-	    if (createdPathID) await client.request(`/proxy-paths/${createdPathID}`, { method: 'DELETE' }).catch(() => undefined)
-	    else if (firstCreatedStepID) await client.request(`/proxy-path-steps/${firstCreatedStepID}`, { method: 'DELETE' }).catch(() => undefined)
-	    throw error
+	  const stepRequests = chain.steps.map((item, index) => detachedStepCreateRequest(item.step, pathID, nextPosition + index))
+	  if (!pathID) {
+	    const result = await client.request('/proxy-paths', {
+	      method: 'POST',
+	      body: JSON.stringify({ name_mode: 'auto', name_template: [], inbound_id: inboundID, enabled: true, initial_steps: stepRequests }),
+	    }) as { proxy_path?: ProxyPath; proxy_path_steps?: ProxyPathStep[] }
+	    applyMutationResult(result)
+	    pathID = result.proxy_path?.id || 0
+	    createdSteps.push(...(result.proxy_path_steps || []))
+	  } else {
+	    const result = await client.request('/proxy-path-steps/batch', {
+	      method: 'POST',
+	      body: JSON.stringify({ steps: stepRequests }),
+	    }) as { proxy_path_steps?: ProxyPathStep[] }
+	    applyMutationResult(result)
+	    createdSteps.push(...(result.proxy_path_steps || []))
 	  }
+	  if (createdSteps.length !== chain.steps.length) throw new Error('链段批量恢复结果不完整')
+	  setPositions(current => {
+	    const next = { ...current }
+	    createdSteps.forEach((step, index) => { next[proxyPathStepNodeID(step)] = chain.steps[index].position })
+	    saveGraphPositions(next)
+	    return next
+	  })
+	  setCanvasDetachedChains(chains => chains.filter(item => item.instance_id !== chain.instance_id))
+	  reconcileTopology()
+	  return true
 	}
 	const connect = async (conn: Connection) => {
 		  if (!conn.source || !conn.target) return
@@ -10203,26 +10149,18 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   }
   const submitRoutingDraft = async () => {
     if (!routingDraft) return
-    let uncommittedPathID = 0
     try {
       let proxyPathID = routingDraft.proxy_path_id
-      if (!proxyPathID) {
-        if (!routingDraft.inbound_id) throw new Error('没有找到分流所属入口，请重新连接分流出口。')
-        const created = await createDirectBranch({ inbound_id: routingDraft.inbound_id })
-        if (!created?.id) throw new Error('未能创建入口默认直出分支。')
-        proxyPathID = created.id
-        uncommittedPathID = created.id
-      }
       const body: any = {
         server_id: routingDraft.server_id,
-			scope: 'path_stage',
-			proxy_path_id: proxyPathID,
-			stage_step_id: routingDraft.stage_step_id || undefined,
-			sort_position: ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage' && rule.proxy_path_id === proxyPathID && Number(rule.stage_step_id || 0) === routingDraft.stage_step_id).length,
-			match_source: routingDraft.match_source,
-			rule_set_id: routingDraft.match_source === 'rule_set' ? routingDraft.rule_set_id : undefined,
+		scope: 'path_stage',
+		proxy_path_id: proxyPathID || undefined,
+		stage_step_id: routingDraft.stage_step_id || undefined,
+		sort_position: ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage' && rule.proxy_path_id === proxyPathID && Number(rule.stage_step_id || 0) === routingDraft.stage_step_id).length,
+		match_source: routingDraft.match_source,
+		rule_set_id: routingDraft.match_source === 'rule_set' ? routingDraft.rule_set_id : undefined,
         name: routingDraft.name,
-			match_json: routingDraft.match_source === 'inline' ? routingMatchJSON(routingDraft.match_kind, routingDraft.match_value) : '{}',
+		match_json: routingDraft.match_source === 'inline' ? routingMatchJSON(routingDraft.match_kind, routingDraft.match_value) : '{}',
         action: routingDraft.action,
         enabled: routingDraft.enabled,
       }
@@ -10239,17 +10177,24 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }
       if (routingDraft.action === 'interface') body.interface_name = routingDraft.interface_name.trim()
       if (routingDraft.action === 'source_prefix') body.source_prefix = routingDraft.source_prefix.trim()
-		      const result = await client.request(routingDraft.id ? `/routing-rules/${routingDraft.id}` : '/routing-rules', { method: routingDraft.id ? 'PATCH' : 'POST', body: JSON.stringify(body) }) as Record<string, any>
-		      applyMutationResult(result)
-	      uncommittedPathID = 0
-	      if (routingCanvasTargetID) {
-	        consumeCanvasRoutingTarget(routingCanvasTargetID, proxyPathID, routingDraft.stage_step_id)
-	        setRoutingCanvasTargetID('')
-	      }
-	      reconcileTopology()
-		setRoutingDraft(current => current ? { ...current, id: 0, proxy_path_id: proxyPathID, inbound_id: 0, name: '', sync_source_rule_id: 0, sync_enabled: false, match_value: current.match_kind === 'all' ? '' : current.match_value } : current)
+
+      let result: Record<string, any>
+      if (!proxyPathID) {
+        if (!routingDraft.inbound_id || routingDraft.id) throw new Error('没有找到分流所属入口，请重新连接分流出口。')
+        result = await client.request('/proxy-paths/direct-branches', { method: 'POST', body: JSON.stringify({ inbound_id: routingDraft.inbound_id, routing_rule: body }) }) as Record<string, any>
+        proxyPathID = Number(result.proxy_path?.id || 0)
+        if (!proxyPathID || !result.routing_rule?.id) throw new Error('未能原子创建默认直出分支和分流规则。')
+      } else {
+        result = await client.request(routingDraft.id ? `/routing-rules/${routingDraft.id}` : '/routing-rules', { method: routingDraft.id ? 'PATCH' : 'POST', body: JSON.stringify({ ...body, proxy_path_id: proxyPathID }) }) as Record<string, any>
+      }
+      applyMutationResult(result)
+      if (routingCanvasTargetID) {
+        consumeCanvasRoutingTarget(routingCanvasTargetID, proxyPathID, routingDraft.stage_step_id)
+        setRoutingCanvasTargetID('')
+      }
+      reconcileTopology()
+      setRoutingDraft(current => current ? { ...current, id: 0, proxy_path_id: proxyPathID, inbound_id: 0, name: '', sync_source_rule_id: 0, sync_enabled: false, match_value: current.match_kind === 'all' ? '' : current.match_value } : current)
     } catch (e: any) {
-      if (uncommittedPathID) await client.request(`/proxy-paths/${uncommittedPathID}`, { method: 'DELETE' }).catch(() => undefined)
       await dialogs.alert({ title: '创建分流失败', message: localizeErrorMessage(e.message || e) })
     }
   }
@@ -10342,17 +10287,10 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			      confirmText: '删除规则',
 			    })
 			    if (!ok) return
-			    const failures: string[] = []
-			    for (const rule of stageRules) {
-			      try {
-				        await client.request(`/routing-rules/${rule.id}`, { method: 'DELETE' })
-				        removeMutationRows({ routing_rules: [rule.id] })
-			      } catch (error: any) {
-			        failures.push(`${rule.name}：${localizeErrorMessage(error?.message || error)}`)
-			      }
-			    }
-				    reconcileTopology()
-			    if (failures.length) await dialogs.alert({ title: '部分规则未删除', message: failures.join('\n') })
+			    const ids = stageRules.map(rule => rule.id)
+			    await client.request('/routing-rules/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
+			    removeMutationRows({ routing_rules: ids })
+			    reconcileTopology()
 			    return
 			  }
 		  if (entity.node_id?.startsWith('warp-canvas-')) {

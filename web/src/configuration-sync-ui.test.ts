@@ -40,8 +40,11 @@ describe('configuration save UI contract', () => {
   })
 
   it('patches topology mutations without a duplicate mutation-time page-data request', () => {
-    expect(main).toContain('initial_step: candidateStep')
-    expect(main).not.toContain("client.request('/proxy-path-steps', { method: 'POST', body: JSON.stringify({ path_id: result.proxy_path.id")
+    expect(main).toContain('initial_steps: [candidateStep]')
+    expect(main).toContain("client.request('/proxy-path-steps/batch'")
+    expect(main).toContain("client.request('/routing-rules/batch-delete'")
+    expect(main).toContain('routing_rule: body')
+    expect(main).not.toContain("client.request(`/proxy-paths/${pathID}`, { method: 'PATCH', body: JSON.stringify({ enabled: true })")
     expect(main).toContain('mergeTopologyMutation(current, result)')
   })
 })

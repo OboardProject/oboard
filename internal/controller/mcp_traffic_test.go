@@ -72,10 +72,19 @@ func TestOutboundAndRoutingRuleCapabilities(t *testing.T) {
 	if contains(encoded, `"match_json"`) || contains(encoded, `"sync_source_rule_id"`) || !contains(encoded, `"match_configured":true`) || !contains(encoded, `"revision"`) {
 		t.Fatalf("routing_rules.list returned a non-public view: %s", encoded)
 	}
-	deleteInput, _ := json.Marshal(map[string]any{"routing_rule_id": rule.ID, "confirm": true})
-	applyAutomationChangeset(t, server, principal, "routing-delete", automation.OperationRequest{Capability: "routing_rules.delete", Input: deleteInput})
-	if _, err := db.GetRoutingRule(ctx, rule.ID); err == nil {
-		t.Fatal("deleted rule still exists")
+	secondInput := json.RawMessage(`{"routing_rule":{"server_id":1,"name":"第二规则","priority":300,"action":"direct","match_json":"{}","enabled":true}}`)
+	applyAutomationChangeset(t, server, principal, "routing-create-second", automation.OperationRequest{Capability: "routing_rules.create", Input: secondInput})
+	rules, err = db.ListRoutingRules(ctx)
+	if err != nil || len(rules) != 2 {
+		t.Fatalf("second rule missing: %#v err=%v", rules, err)
+	}
+	batchInput, _ := json.Marshal(map[string]any{"routing_rule_ids": []int64{rules[0].ID, rules[1].ID}, "confirm": true})
+	applyAutomationChangeset(t, server, principal, "routing-batch-delete", automation.OperationRequest{Capability: "routing_rules.batch_delete", Input: batchInput})
+	assertCapabilityOutputSchema(t, server, "routing_rules.batch_delete", map[string]any{"deleted": true, "routing_rule_ids": []int64{rules[0].ID, rules[1].ID}})
+	for _, item := range rules {
+		if _, err := db.GetRoutingRule(ctx, item.ID); err == nil {
+			t.Fatalf("batch-deleted rule %d still exists", item.ID)
+		}
 	}
 	deleteOutbound, _ := json.Marshal(map[string]any{"outbound_id": outbound.ID, "confirm": true})
 	applyAutomationChangeset(t, server, principal, "outbound-delete", automation.OperationRequest{Capability: "outbounds.delete", Input: deleteOutbound})
