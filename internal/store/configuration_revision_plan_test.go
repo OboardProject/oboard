@@ -27,6 +27,28 @@ func TestConfigurationRevisionIncludesActivePlanAndBindingTransitions(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	draftID, err := s.UpdatePlanDraftLimits(ctx, plan.ID, plan.Revision, 100, 1024, "monthly", 1)
+	if err != nil || draftID <= 0 {
+		t.Fatalf("update plan draft id=%d err=%v", draftID, err)
+	}
+	draftRevision, err := s.ConfigurationRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draftRevision != baseline {
+		t.Fatalf("plan draft advanced runtime revision: %d -> %d", baseline, draftRevision)
+	}
+	if _, err := s.PublishPlanRevisionGuarded(ctx, plan.ID, plan.ActiveRevisionID, draftID); err != nil {
+		t.Fatal(err)
+	}
+	publishedRevision, err := s.ConfigurationRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if publishedRevision <= draftRevision {
+		t.Fatalf("active plan publish did not advance runtime revision: %d -> %d", draftRevision, publishedRevision)
+	}
+	baseline = publishedRevision
 	if err := s.SetUserPlanBindingsPending(ctx, []model.UserPlanBinding{{UserID: user.ID, PlanID: plan.ID}}); err != nil {
 		t.Fatal(err)
 	}

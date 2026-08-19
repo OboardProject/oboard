@@ -3214,9 +3214,21 @@ func TestDisabledProxyPathDoesNotBlockPageDataOrDeployment(t *testing.T) {
 	request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=proxy-paths", token, nil, http.StatusOK)
 	request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 
-	// Enabling it is the point where the operator must be told it is invalid, and
-	// the stored row must stay disabled.
+	// Enabling it is the point where the operator must be told it is invalid. The
+	// complete projection runs before any write, so neither the row nor the
+	// durable runtime revision changes.
+	beforeRevision, err := db.ConfigurationRevision(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	request(t, h, http.MethodPatch, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, map[string]any{"enabled": true}, http.StatusBadRequest)
+	afterRevision, err := db.ConfigurationRevision(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterRevision != beforeRevision {
+		t.Fatalf("rejected path update advanced runtime revision: %d -> %d", beforeRevision, afterRevision)
+	}
 	stored, err := db.GetProxyPath(context.Background(), pathID)
 	if err != nil {
 		t.Fatal(err)

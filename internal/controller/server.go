@@ -7573,6 +7573,12 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if v.Enabled {
+			if err := s.validateProxyPathCandidateData(r.Context(), v); err != nil {
+				fail(w, err, http.StatusBadRequest)
+				return
+			}
+		}
 		if err := s.store.CreateProxyPath(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
@@ -7627,21 +7633,17 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if v.Enabled {
+			if err := s.validateProxyPathCandidateData(r.Context(), v); err != nil {
+				fail(w, err, http.StatusBadRequest)
+				return
+			}
+		}
 		if err := s.store.UpdateProxyPath(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
 		}
-		// A path built while disabled can hold steps that no longer project. Verify
-		// the stored result and restore the previous row instead of letting the next
-		// deployment fail for every server.
 		if v.Enabled {
-			if err := s.validateEnabledProxyPathPlan(r.Context(), id); err != nil {
-				restore := *current
-				_ = s.store.UpdateProxyPath(r.Context(), &restore)
-				_ = s.normalizeProxyPathProcessingRoles(r.Context(), id)
-				fail(w, err, 400)
-				return
-			}
 			if err := s.ensureWARPProfilesForProxyPaths(r.Context()); err != nil {
 				restore := *current
 				_ = s.store.UpdateProxyPath(r.Context(), &restore)
@@ -8142,6 +8144,39 @@ func normalizeProxyPathProcessingRolesInMemory(steps []model.ProxyPathStep, path
 // be projected. Step writes already run this check, but a path that was built
 // while disabled would otherwise pass its own validation and then fail the
 // deployment for every server.
+func (s *Server) validateProxyPathCandidateData(ctx context.Context, candidate model.ProxyPath) error {
+	data, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		return err
+	}
+	found := false
+	if candidate.ID <= 0 {
+		candidate.ID = 1
+		for _, path := range data.ProxyPaths {
+			if path.ID >= candidate.ID {
+				candidate.ID = path.ID + 1
+			}
+		}
+	} else {
+		for index := range data.ProxyPaths {
+			if data.ProxyPaths[index].ID == candidate.ID {
+				data.ProxyPaths[index] = candidate
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		data.ProxyPaths = append(data.ProxyPaths, candidate)
+	}
+	if err := normalizeProxyPathProcessingRolesInMemory(data.ProxyPathSteps, candidate.ID); err != nil {
+		return err
+	}
+	resolveRoutingProxyPathNames(&data)
+	_, err = core.BuildProxyPathPlansWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, core.NewProxyPathPortLedger(data.ProxyPathPortAllocations))
+	return err
+}
+
 func (s *Server) validateEnabledProxyPathPlan(ctx context.Context, pathID int64) error {
 	if err := s.normalizeProxyPathProcessingRoles(ctx, pathID); err != nil {
 		return err

@@ -390,6 +390,7 @@ func (s *Server) configurationMutationResponse(ctx context.Context, body []byte,
 		filtered = append(filtered, state)
 	}
 	response["desired_revision"] = revision
+	response["state_committed_at"] = time.Now().UTC()
 	response["configuration_sync"] = configurationSyncViews(filtered)
 	encoded, err := json.Marshal(response)
 	if err != nil {

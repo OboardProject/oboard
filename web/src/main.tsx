@@ -1482,7 +1482,7 @@ function PortalLoader({ loading }: { loading: boolean }) {
   )
 }
 
-function App() {
+export function App() {
   const [token, setToken] = useState(sessionStorage.getItem('oboard.token') || '')
   const activeTokenRef = useRef(token)
   activeTokenRef.current = token
@@ -18425,8 +18425,14 @@ async function revokeSub(client: ReturnType<typeof api>, u: Pick<User, 'id'> & P
   notify?.(`${label} 的全部订阅入口已吊销`, 'success')
 }
 
-createRoot(document.getElementById('root')!).render(
-  <LazyMotion features={domAnimation}>
-    <App />
-  </LazyMotion>
-)
+export function OBoardAppRoot() {
+  return <LazyMotion features={domAnimation}><App /></LazyMotion>
+}
+
+export function mountApp() {
+  const root = document.getElementById('root')
+  if (!root) return
+  createRoot(root).render(<OBoardAppRoot />)
+}
+
+mountApp()
