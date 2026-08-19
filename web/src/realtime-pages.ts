@@ -26,6 +26,37 @@ export const realtimeResourcePages: Record<string, string[]> = {
   automation: ['automation'],
 }
 
+export const realtimePageRefreshDelayMS = 600
+
+export type RealtimeRefreshScheduler = (callback: () => void, delayMS: number) => number
+
+export function scheduleRealtimeRefresh({
+  page,
+  activePage,
+  visible,
+  dirtyPages,
+  hasPendingRequest,
+  schedule,
+  refresh,
+}: {
+  page: string
+  activePage: string
+  visible: boolean
+  dirtyPages: Set<string>
+  hasPendingRequest: boolean
+  schedule: RealtimeRefreshScheduler
+  refresh: (page: string) => void
+}): number | undefined {
+  if (page !== activePage || !visible) return undefined
+  if (hasPendingRequest) {
+    dirtyPages.delete(page)
+    return undefined
+  }
+  return schedule(() => {
+    if (dirtyPages.delete(page)) refresh(page)
+  }, realtimePageRefreshDelayMS)
+}
+
 export function realtimeInvalidatedPages(event: RealtimeEvent, activePage: string, cachedPages: Iterable<string>): Set<string> {
   const pages = new Set<string>()
   const resync = event.type === 'resync_required' || (event.type === 'ready' && event.reconnected === true)

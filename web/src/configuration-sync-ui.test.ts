@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const main = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const style = readFileSync(new URL('./style.css', import.meta.url), 'utf8')
+const syncStatus = readFileSync(new URL('./configuration-sync-ui.tsx', import.meta.url), 'utf8')
 const realtimePages = readFileSync(new URL('./realtime-pages.ts', import.meta.url), 'utf8')
 const assignDialog = readFileSync(new URL('./components/node-assignment/AssignPlanUsersDialog.tsx', import.meta.url), 'utf8')
 const userPlanDialog = readFileSync(new URL('./pages/UserPlanDialog.tsx', import.meta.url), 'utf8')
@@ -16,7 +17,9 @@ describe('configuration save UI contract', () => {
   })
 
   it('shows save/sync state and exposes retry only through failed sync rows', () => {
-    expect(main).toContain("configurationSyncPresentation(configurationSync, mutationSaving, syncRetrying)")
+    expect(main).toContain('<ConfigurationSyncStatus')
+    expect(syncStatus).toContain('configurationSyncPresentation(rows, saving, retrying)')
+    expect(syncStatus).toContain('onClick={onRetry}')
     expect(main).toContain("client.request('/configuration-sync/retry'")
     expect(main).toContain("configurationSync.filter(item => item.state === 'failed')")
   })
@@ -30,6 +33,7 @@ describe('configuration save UI contract', () => {
   })
 
   it('maps cross-session configuration events to every visible configuration page', () => {
+    expect(syncStatus).toContain('aria-live="polite"')
     expect(realtimePages).toContain("configuration: ['dashboard', 'servers', 'proxy-paths', 'users', 'plans', 'nodes', 'dns', 'tasks']")
     expect(main).toContain('realtimeInvalidatedPages(event, tab, Object.keys(pageCacheRef.current))')
     expect(main).toContain('scheduleRealtimePageRefresh(tab)')

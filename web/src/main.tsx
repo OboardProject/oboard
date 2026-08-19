@@ -123,8 +123,9 @@ import clashClassicClientIcon from './assets/subscription-clients/clash-classic.
 import { PageDataRequestCoordinator } from './page-data'
 import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
 import { usePollingEvents, useServerTelemetry, type RealtimeEvent, type RealtimeStatus, type ServerTelemetrySnapshot } from './realtime'
-import { realtimeInvalidatedPages } from './realtime-pages'
-import { configurationSyncPresentation, isConfigurationMutationPath, mergeConfigurationMutationResponse, MutationActivityTracker, type ConfigurationSyncRow } from './configuration-sync'
+import { ConfigurationSyncStatus } from './configuration-sync-ui'
+import { realtimeInvalidatedPages, scheduleRealtimeRefresh } from './realtime-pages'
+import { isConfigurationMutationPath, mergeConfigurationMutationResponse, MutationActivityTracker, type ConfigurationSyncRow } from './configuration-sync'
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { getServerTimeIssue } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
@@ -1769,12 +1770,21 @@ function App() {
       return
     }
     if (realtimeRefreshTimerRef.current !== undefined) window.clearTimeout(realtimeRefreshTimerRef.current)
-    realtimeRefreshTimerRef.current = window.setTimeout(() => {
-      realtimeRefreshTimerRef.current = undefined
-      if (page !== activeTabRef.current) return
-      if (!dirtyPagesRef.current.delete(page)) return
-      void load(page, { background: true, forceFresh: true })
-    }, 600)
+    realtimeRefreshTimerRef.current = scheduleRealtimeRefresh({
+      page,
+      activePage: activeTabRef.current,
+      visible: document.visibilityState === 'visible',
+      dirtyPages: dirtyPagesRef.current,
+      hasPendingRequest: Boolean(pageRequestsRef.current.pending(page)),
+      schedule: (callback, delayMS) => window.setTimeout(() => {
+        realtimeRefreshTimerRef.current = undefined
+        callback()
+      }, delayMS),
+      refresh: refreshedPage => {
+        if (refreshedPage !== activeTabRef.current) return
+        void load(refreshedPage, { background: true, forceFresh: true })
+      },
+    })
   }
 
   const handleRealtimeEvent = (event: RealtimeEvent) => {
@@ -2081,11 +2091,7 @@ function App() {
   }
 
   const configurationSync: ConfigurationSyncRow[] = Array.isArray(data.configuration_sync) ? data.configuration_sync : []
-  const syncPresentation = configurationSyncPresentation(configurationSync, mutationSaving, syncRetrying)
   const failedSync = configurationSync.filter(item => item.state === 'failed')
-  const activeSync = configurationSync.filter(item => ['pending', 'preparing', 'queued', 'running'].includes(item.state))
-  const synced = syncPresentation.tone === 'ok'
-  const syncStatusLabel = syncPresentation.label
   const dashboardAttention = getDashboardAttention(data)
   const dashboardAttentionStorageKey = `oboard.dashboard-attention.${sessionUser?.id || data.current_user?.id || sessionUser?.username || data.current_user?.username || 'anonymous'}`
   const dismissedDashboardAttention = localStorage.getItem(dashboardAttentionStorageKey) || ''
@@ -2244,24 +2250,13 @@ function App() {
                     onDismiss={dismissDashboardAttention}
                   />
                 )}
-                {canOperate && (failedSync.length > 0 ? (
-                  <button
-                    type="button"
-                    className="deploy-status-pill dismissable danger"
-                    onClick={() => void retryFailedSync()}
-                    disabled={syncRetrying}
-                    title={failedSync.map(item => item.error).filter(Boolean).join('；') || '点击重试同步'}
-                    aria-label={syncStatusLabel}
-                  >
-                    <RefreshCw size={15} className={syncRetrying ? 'spin' : ''} />
-                    <span>{syncStatusLabel}</span>
-                  </button>
-                ) : (
-                  <div className={`deploy-status-pill ${mutationSaving || activeSync.length > 0 ? 'info' : synced ? 'ok' : 'warn'}`} aria-live="polite">
-                    {mutationSaving || activeSync.length > 0 ? <RefreshCw size={15} className="spin" /> : synced ? <Check size={16} /> : <Info size={16} />}
-                    <span>{syncStatusLabel}</span>
-                  </div>
-                ))}
+                <ConfigurationSyncStatus
+                  rows={configurationSync}
+                  saving={mutationSaving}
+                  retrying={syncRetrying}
+                  canOperate={canOperate}
+                  onRetry={() => void retryFailedSync()}
+                />
 
                 <IconButton label={loading ? "正在刷新" : "刷新"} onClick={() => void load(tab)} className={`topbar-refresh${loading ? " refreshing" : ""}`} busy={loading}><RefreshIcon /></IconButton>
               </div>
