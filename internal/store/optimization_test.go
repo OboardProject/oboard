@@ -228,6 +228,24 @@ func TestConfigurationRevisionTracksDesiredWritesAndIgnoresOperationalActivity(t
 		t.Fatalf("user insert did not bump configuration revision (%d -> %d)", baseline, after)
 	}
 	baseline = read()
+	ruleSet := &model.RoutingRuleSet{Name: "config-revision-rules", URL: "https://example.invalid/rules", Format: model.RoutingRuleSetFormatSingBoxSource, Content: []byte{}, Status: model.RoutingRuleSetStatusPending}
+	if err := s.CreateRoutingRuleSet(ctx, ruleSet); err != nil {
+		t.Fatal(err)
+	}
+	if after := read(); after <= baseline {
+		t.Fatalf("rule-set definition did not bump configuration revision (%d -> %d)", baseline, after)
+	}
+	baseline = read()
+	ruleSet.Content = []byte("payload")
+	ruleSet.ETag = "etag-1"
+	ruleSet.Status = model.RoutingRuleSetStatusReady
+	if err := s.UpdateRoutingRuleSet(ctx, ruleSet); err != nil {
+		t.Fatal(err)
+	}
+	if after := read(); after != baseline {
+		t.Fatalf("rule-set refresh result bumped configuration revision (%d -> %d)", baseline, after)
+	}
+	baseline = read()
 	device := &model.UserDevice{ID: "config-device-1", DeviceIDHash: "config-hash-1", UserID: user.ID, Name: "phone", TokenHash: "config-token-1", TokenPrefix: "tok", CredentialEpoch: 1, Status: "active"}
 	if err := s.CreateUserDevice(ctx, device); err != nil {
 		t.Fatal(err)
