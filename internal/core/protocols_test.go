@@ -186,6 +186,28 @@ func TestProtocolOutboundCustomCredentialsOverrideUserDefaults(t *testing.T) {
 	}
 }
 
+func TestShadowsocksOutboundForcesUoTVersion2(t *testing.T) {
+	adapter, err := AdapterFor(model.ProtocolSS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := adapter.Outbound(model.Outbound{
+		ID:            1,
+		Protocol:      model.ProtocolSS,
+		TargetAddress: "example.com",
+		TargetPort:    8388,
+		ConfigJSON:    `{"method":"aes-128-gcm","udp_over_tcp":{"enabled":true,"version":1}}`,
+		Enabled:       true,
+	}, &model.User{ProxyPassword: "password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uot, ok := out["udp_over_tcp"].(map[string]any)
+	if !ok || !boolValue(uot["enabled"]) || intFromAny(uot["version"]) != shadowsocksUoTVersion {
+		t.Fatalf("udp_over_tcp = %#v, want enabled sp.v%d", out["udp_over_tcp"], shadowsocksUoTVersion)
+	}
+}
+
 func TestExternalRawOutboundStripsPrivateMetadata(t *testing.T) {
 	serverID := int64(1)
 	config, err := GenerateServerConfigWithOptions(

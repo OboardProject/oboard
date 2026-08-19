@@ -43,7 +43,6 @@ type subscriptionProxy struct {
 	ObfsType       string
 	ObfsPassword   string
 	UoT            bool
-	UoTVersion     int
 	PaddingScheme  any
 	Multiplexing   string
 	TrafficPattern string
@@ -144,7 +143,6 @@ func normalizeSubscriptionNode(node SubscriptionNode) (subscriptionProxy, error)
 		UpMbps:         intFromAny(raw["up_mbps"]),
 		DownMbps:       intFromAny(raw["down_mbps"]),
 		UoT:            udpOverTCPEnabled(raw["udp_over_tcp"]),
-		UoTVersion:     2,
 		PaddingScheme:  raw["padding_scheme"],
 		Multiplexing:   stringFromAny(raw["multiplexing"]),
 		TrafficPattern: stringFromAny(raw["traffic_pattern"]),
@@ -160,11 +158,6 @@ func normalizeSubscriptionNode(node SubscriptionNode) (subscriptionProxy, error)
 	}
 	if proxy.Server == "" || proxy.Port <= 0 || proxy.Port > 65535 {
 		return subscriptionProxy{}, fmt.Errorf("subscription node %s missing valid server/server_port", proxy.Name)
-	}
-	if options, ok := raw["udp_over_tcp"].(map[string]any); ok {
-		if version := intFromAny(options["version"]); version > 0 {
-			proxy.UoTVersion = version
-		}
 	}
 	proxy.Transport = normalizeSubscriptionTransport(raw)
 	if proxy.Type == "mieru" {
@@ -342,6 +335,9 @@ func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionP
 			}
 			out[key] = cloneSubscriptionValue(value)
 		}
+	}
+	if proxy.Type == "ss" {
+		forceShadowsocksUoTVersion(out)
 	}
 	if proxy.Type == "ssh" {
 		out["user"] = proxy.Username
@@ -725,7 +721,7 @@ func clashStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionFormat
 		out["udp"] = true
 		if proxy.UoT {
 			out["udp-over-tcp"] = true
-			out["udp-over-tcp-version"] = proxy.UoTVersion
+			out["udp-over-tcp-version"] = shadowsocksUoTVersion
 		}
 	case "socks5":
 		setNonEmpty(out, "username", proxy.Username)
@@ -1232,7 +1228,7 @@ func renderQXLine(proxy subscriptionProxy) (string, error) {
 	case "ss":
 		parts = append(parts, "shadowsocks="+hostPort, "method="+proxy.Method, "password="+escapeConf(proxy.Password), "udp-relay=true")
 		if proxy.UoT {
-			parts = append(parts, "udp-over-tcp=sp.v"+strconv.Itoa(proxy.UoTVersion))
+			parts = append(parts, "udp-over-tcp=sp.v"+strconv.Itoa(shadowsocksUoTVersion))
 		}
 	case "socks5":
 		parts = append(parts, "socks5="+hostPort)

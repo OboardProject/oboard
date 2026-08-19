@@ -197,12 +197,16 @@ func TestShadowsocksUoTSubscriptionConfiguresClientOutbound(t *testing.T) {
 	if len(nodes) != 1 || !udpOverTCPEnabled(nodes[0].Raw["udp_over_tcp"]) {
 		t.Fatalf("UoT client option missing: %#v", nodes)
 	}
+	uot, ok := nodes[0].Raw["udp_over_tcp"].(map[string]any)
+	if !ok || intFromAny(uot["version"]) != shadowsocksUoTVersion {
+		t.Fatalf("UoT version = %#v, want %d", nodes[0].Raw["udp_over_tcp"], shadowsocksUoTVersion)
+	}
 
 	clash, err := renderClashMetaSubscription(nodes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"udp: true", "udp-over-tcp: true"} {
+	for _, want := range []string{"udp: true", "udp-over-tcp: true", "udp-over-tcp-version: 2"} {
 		if !strings.Contains(clash, want) {
 			t.Fatalf("Clash UoT subscription missing %q:\n%s", want, clash)
 		}

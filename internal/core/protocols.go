@@ -3307,6 +3307,20 @@ func (a socksAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 
 type ssAdapter struct{}
 
+const shadowsocksUoTVersion = 2
+
+func forceShadowsocksUoTVersion(item map[string]any) {
+	if !udpOverTCPEnabled(item["udp_over_tcp"]) {
+		return
+	}
+	options, ok := item["udp_over_tcp"].(map[string]any)
+	if !ok {
+		options = map[string]any{"enabled": true}
+	}
+	options["version"] = shadowsocksUoTVersion
+	item["udp_over_tcp"] = options
+}
+
 func (ssAdapter) Protocol() model.Protocol { return model.ProtocolSS }
 func (ssAdapter) ValidateInbound(v model.Inbound) error {
 	if err := ValidateListenIP(v.ListenIP); err != nil {
@@ -3362,6 +3376,7 @@ func (a ssAdapter) Outbound(v model.Outbound, user *model.User) (map[string]any,
 	}
 	item := map[string]any{"type": "shadowsocks", "tag": tag("out", v.ID), "server": v.TargetAddress, "server_port": v.TargetPort, "method": method, "password": pass}
 	applyAllowed(item, extra, "plugin", "plugin_opts", "network", "udp_over_tcp", "multiplex", "domain_resolver", "network_strategy", "fallback_delay")
+	forceShadowsocksUoTVersion(item)
 	return item, nil
 }
 func (a ssAdapter) SubscriptionNode(user model.User, inbound model.Inbound, server model.Server) (map[string]any, error) {
@@ -3373,7 +3388,7 @@ func (a ssAdapter) SubscriptionNode(user model.User, inbound model.Inbound, serv
 	}
 	node := map[string]any{"type": "shadowsocks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "method": method, "password": password}
 	if server.UDPInboundMode == model.UDPInboundUoT {
-		node["udp_over_tcp"] = map[string]any{"enabled": true}
+		node["udp_over_tcp"] = map[string]any{"enabled": true, "version": shadowsocksUoTVersion}
 	}
 	return node, nil
 }

@@ -43,7 +43,7 @@ func subscriptionFormatFixtureNodes() []SubscriptionNode {
 		{
 			Name: "SS UoT", Group: "备用", Raw: map[string]any{
 				"type": "shadowsocks", "tag": "SS UoT", "server": "ss.example.com", "server_port": 8388,
-				"method": "chacha20-ietf-poly1305", "password": "ss-pass", "udp_over_tcp": map[string]any{"enabled": true},
+				"method": "chacha20-ietf-poly1305", "password": "ss-pass", "udp_over_tcp": map[string]any{"enabled": true, "version": 1},
 			},
 		},
 		{
@@ -83,16 +83,16 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 		contains   []string
 		excludes   []string
 	}{
-		{format: model.SubscriptionFormatSingBox, proxyCount: 5, excludes: []string{`"type": "mieru"`, "oboard_group", "must-not-leak"}},
+		{format: model.SubscriptionFormatSingBox, proxyCount: 5, contains: []string{`"udp_over_tcp": {`, `"version": 2`}, excludes: []string{`"type": "mieru"`, `"version": 1`, "oboard_group", "must-not-leak"}},
 		{format: model.SubscriptionFormatSingBoxMieru, proxyCount: 6, contains: []string{`"type": "mieru"`, `"server_port": 25250`}, excludes: []string{"oboard_group", "must-not-leak"}},
 		{format: model.SubscriptionFormatMieru, proxyCount: 1, contains: []string{"mierus://", "25251-25252", "protocol=TCP"}, excludes: []string{"vless://"}},
-		{format: model.SubscriptionFormatClashMeta, proxyCount: 6, contains: []string{"reality-opts:", "udp-over-tcp: true", "type: mieru", "port-range: 25250-25252", "traffic-pattern: AA=="}},
+		{format: model.SubscriptionFormatClashMeta, proxyCount: 6, contains: []string{"reality-opts:", "udp-over-tcp: true", "udp-over-tcp-version: 2", "type: mieru", "port-range: 25250-25252", "traffic-pattern: AA=="}, excludes: []string{"udp-over-tcp-version: 1"}},
 		{format: model.SubscriptionFormatMihomo, proxyCount: 6, contains: []string{"reality-opts:", "obfs-password: obfs-pass", "type: mieru", "port-range: 25250-25252"}},
 		{format: model.SubscriptionFormatStash, proxyCount: 5, contains: []string{"auth: hy2-pass", "up-speed: 100", "down-speed: 200"}, excludes: []string{"type: mieru"}},
 		{format: model.SubscriptionFormatShadowrocket, proxyCount: 6, contains: []string{"vless://", "hysteria2://", "mierus://"}, excludes: []string{"proxies:", "proxy-groups:", "rules:"}},
 		{format: model.SubscriptionFormatEgern, proxyCount: 5, contains: []string{"shadowsocks:", "method: chacha20-poly1305", "bandwidth: 100", "user_id:"}, excludes: []string{"mieru:"}},
 		{format: model.SubscriptionFormatLoon, proxyCount: 5, contains: []string{"=vless,", "=Hysteria2,", "udp-over-tcp=true"}, excludes: []string{"mieru"}},
-		{format: model.SubscriptionFormatQX, proxyCount: 4, contains: []string{"vless=", "anytls=", "udp-over-tcp=sp.v2"}, excludes: []string{"hysteria2=", "mieru"}},
+		{format: model.SubscriptionFormatQX, proxyCount: 4, contains: []string{"vless=", "anytls=", "udp-over-tcp=sp.v2"}, excludes: []string{"udp-over-tcp=sp.v1", "hysteria2=", "mieru"}},
 		{format: model.SubscriptionFormatSurge, proxyCount: 4, contains: []string{"=hysteria2,", "=anytls,", "download-bandwidth=200", "udp-relay=true"}, excludes: []string{"=vless,", "mieru"}},
 		{format: model.SubscriptionFormatSurgeMac, proxyCount: 4, contains: []string{"=hysteria2,"}, excludes: []string{"=vless,", "mieru"}},
 		{format: model.SubscriptionFormatSurfboard, proxyCount: 4, contains: []string{"=hysteria2,", "download-bandwidth=200", `SOCKS=socks5,socks.example.com,1080,"alice","socks-pass"`}, excludes: []string{"=vless,", "mieru"}},
