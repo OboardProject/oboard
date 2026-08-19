@@ -7624,6 +7624,11 @@ func (s *Server) createProxyPathWithInitialStep(w http.ResponseWriter, r *http.R
 	}
 	data.ProxyPaths = append(data.ProxyPaths, *path)
 	data.ProxyPathSteps = append(data.ProxyPathSteps, *step)
+	if err := normalizeProxyPathProcessingRolesInMemory(data.ProxyPathSteps, path.ID); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	*step = data.ProxyPathSteps[len(data.ProxyPathSteps)-1]
 	resolveRoutingProxyPathNames(&data)
 	if _, err := core.BuildProxyPathPlansWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)); err != nil {
 		fail(w, err, http.StatusBadRequest)
