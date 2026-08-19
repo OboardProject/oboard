@@ -118,7 +118,7 @@ func (s *Server) oauthProtectedResourceMetadata(w http.ResponseWriter, r *http.R
 		"resource":                 base + "/mcp",
 		"authorization_servers":    []string{base},
 		"bearer_methods_supported": []string{"header"},
-		"scopes_supported":         []string{mcpauth.ScopeRead, mcpauth.ScopeOperate},
+		"scopes_supported":         []string{mcpauth.ScopeRead, mcpauth.ScopeOperate, mcpauth.ScopeOffline},
 		"resource_documentation":   base + "/docs/mcp",
 	})
 }
@@ -283,7 +283,7 @@ func (s *Server) writeMCPAuthenticationRequired(w http.ResponseWriter, r *http.R
 		v2Error(w, r, http.StatusServiceUnavailable, "oauth_metadata_unavailable", err.Error())
 		return
 	}
-	challenge := "Bearer resource_metadata=" + strconv.Quote(oauthProtectedResourceMetadataURL(base)) + `, scope="oboard:read"`
+	challenge := "Bearer resource_metadata=" + strconv.Quote(oauthProtectedResourceMetadataURL(base)) + `, scope="oboard:read offline_access"`
 	code, message := "unauthorized", "需要 OAuth 登录"
 	if invalidToken {
 		challenge += `, error="invalid_token", error_description="The access token is invalid or expired"`

@@ -558,11 +558,10 @@ func TestOAuthMetadataRemovesRegistrationEndpoint(t *testing.T) {
 	for _, scope := range resourceScopes {
 		resourceScopeSet[scope.(string)] = true
 	}
-	if resourceScopeSet["offline_access"] {
-		t.Fatalf("protected resource metadata must not list offline_access: %#v", resourceMetadata)
-	}
-	if !resourceScopeSet["oboard:operate"] {
-		t.Fatalf("protected resource metadata missing oboard:operate: %#v", resourceMetadata)
+	for _, want := range []string{"oboard:read", "oboard:operate", "offline_access"} {
+		if !resourceScopeSet[want] {
+			t.Fatalf("protected resource metadata scopes missing %q: %#v", want, resourceMetadata)
+		}
 	}
 }
 
@@ -582,7 +581,7 @@ func TestOAuthDynamicRegistrationIsRetired(t *testing.T) {
 	}
 }
 
-func TestOAuthProtectedResourceChallengeUsesOboadReadScope(t *testing.T) {
+func TestOAuthProtectedResourceChallengeRequestsDurableAccess(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -599,7 +598,7 @@ func TestOAuthProtectedResourceChallengeUsesOboadReadScope(t *testing.T) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	challenge := response.Header().Get("WWW-Authenticate")
-	if !strings.Contains(challenge, `resource_metadata="https://panel.example.com/.well-known/oauth-protected-resource/hidden/mcp"`) || !strings.Contains(challenge, `scope="oboard:read"`) {
+	if !strings.Contains(challenge, `resource_metadata="https://panel.example.com/.well-known/oauth-protected-resource/hidden/mcp"`) || !strings.Contains(challenge, `scope="oboard:read offline_access"`) {
 		t.Fatalf("challenge=%q", challenge)
 	}
 }
