@@ -2,10 +2,13 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestV1UnifiedRoutesRemoveLegacyPrefixes(t *testing.T) {
@@ -83,6 +86,28 @@ func TestMCPCapabilityToolAndResourceCoverage(t *testing.T) {
 	} {
 		if !resourceURIs[uri] {
 			t.Fatalf("MCP resources/list is missing generated resource %q; got %d resources", uri, len(resourceURIs))
+		}
+	}
+
+	for _, capability := range []string{"settings.get", "agent_tasks.list", "audit.connection.overview", "access_changes.list"} {
+		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: mcpCapabilityToolName(capability), Arguments: map[string]any{}})
+		if err != nil {
+			t.Fatalf("dynamic capability %s call: %v", capability, err)
+		}
+		if result.IsError {
+			t.Fatalf("dynamic capability %s returned an error result", capability)
+		}
+		var text string
+		for _, content := range result.Content {
+			if item, ok := content.(*mcp.TextContent); ok {
+				text += item.Text
+			}
+		}
+		var envelope struct {
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal([]byte(text), &envelope); err != nil || envelope.Status != "succeeded" {
+			t.Fatalf("dynamic capability %s did not return a succeeded envelope: %q err=%v", capability, text, err)
 		}
 	}
 }

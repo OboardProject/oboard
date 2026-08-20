@@ -127,7 +127,16 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 		}
 		return s.controllerUpdateAutomationView(ctx, status), nil
 	default:
-		return s.application.Query(ctx, principal, capabilityName, input)
+		result, err := s.application.Query(ctx, principal, capabilityName, input)
+		if err == nil {
+			return result, nil
+		}
+		if strings.Contains(err.Error(), "unsupported query capability") {
+			if fallback, fallbackErr := s.queryMCPCapabilityFallback(ctx, principal, capabilityName, input); fallbackErr == nil {
+				return fallback, nil
+			}
+		}
+		return nil, err
 	}
 }
 

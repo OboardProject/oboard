@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -313,4 +315,63 @@ func descriptorSchemaProperty(descriptor capability.Descriptor, property string)
 		return ""
 	}
 	return field.Type
+}
+
+// queryMCPCapabilityFallback routes read-only capabilities that application.Query
+// does not implement to the existing resource-read implementation. This keeps
+// the dynamic MCP tools usable for every capability advertised in tools/list.
+func (s *Server) queryMCPCapabilityFallback(ctx context.Context, principal application.Principal, capabilityName string, arguments json.RawMessage) (any, error) {
+	descriptor, known := s.capabilities.Get(capabilityName)
+	if !known || !descriptor.MCPEnabled || !descriptor.ReadOnly {
+		return nil, errors.New("unsupported query capability")
+	}
+	if def, ok := s.mcpExistingResourceDef(capabilityName, false); ok {
+		if !strings.Contains(def.uri, "{id}") {
+			return s.readMCPResource(ctx, principal, def, def.uri)
+		}
+	}
+	if def, ok := s.mcpExistingResourceDef(capabilityName, true); ok {
+		uri, err := s.mcpResourceURIFromArguments(def, arguments)
+		if err != nil {
+			return nil, err
+		}
+		return s.readMCPResource(ctx, principal, def, uri)
+	}
+	return nil, errors.New("unsupported query capability")
+}
+
+func (s *Server) mcpExistingResourceDef(capabilityName string, template bool) (mcpResourceDef, bool) {
+	defs := s.mcpResourceDefs()
+	if template {
+		defs = s.mcpResourceTemplateDefs()
+	}
+	for _, def := range defs {
+		if def.capability == capabilityName {
+			return def, true
+		}
+	}
+	return mcpResourceDef{}, false
+}
+
+func (s *Server) mcpResourceURIFromArguments(def mcpResourceDef, arguments json.RawMessage) (string, error) {
+	descriptor, known := s.capabilities.Get(def.capability)
+	if !known {
+		return "", errors.New("unknown capability")
+	}
+	property := mcpCapabilitySingleScalarID(descriptor)
+	if property == "" {
+		return "", errors.New("capability requires multiple arguments")
+	}
+	var args map[string]any
+	if len(arguments) == 0 {
+		return "", fmt.Errorf("missing required argument %s", property)
+	}
+	if err := json.Unmarshal(arguments, &args); err != nil {
+		return "", errors.New("arguments must be a JSON object")
+	}
+	raw, ok := args[property]
+	if !ok {
+		return "", fmt.Errorf("missing required argument %s", property)
+	}
+	return strings.Replace(def.uri, "{id}", url.PathEscape(fmt.Sprint(raw)), 1), nil
 }
