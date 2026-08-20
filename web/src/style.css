@@ -8198,6 +8198,16 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .backup-actions strong { margin: 0 0 4px; color: var(--text-strong); font-size: 14px; }
 .backup-actions > div { display: grid; gap: 3px; }
 .backup-actions span { color: var(--muted); font-size: 12px; }
+.backup-password-warning {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+}
 .backup-actions button,
 .backup-import-actions button,
 .backup-record-actions button { display: inline-flex; align-items: center; gap: 6px; }
