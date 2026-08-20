@@ -8285,7 +8285,9 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   gap: 14px;
   margin-bottom: 0;
   grid-template-columns: minmax(0, 1fr);
-  width: 100%;
+  width: auto;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .settings-form.single-field {
@@ -20092,6 +20094,9 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 
 .settings-card > :not(.settings-card-head):not(.settings-group) {
   margin-inline: 20px;
+  width: auto;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .settings-card > :last-child:not(.settings-group):not(.settings-card-head) {
@@ -20282,7 +20287,12 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   .settings-content-head { padding-inline: 2px; }
   .settings-content-head h2 { font-size: 18px; }
   .settings-card > .settings-card-head { padding: 16px; }
-  .settings-card > :not(.settings-card-head):not(.settings-group) { margin-inline: 16px; }
+  .settings-card > :not(.settings-card-head):not(.settings-group) {
+    margin-inline: 16px;
+    width: auto;
+    min-width: 0;
+    box-sizing: border-box;
+  }
   .settings-group-head { padding: 16px 16px 10px; }
   .settings-group-body { padding: 0 16px 12px; }
   .settings-row { grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: start; }
