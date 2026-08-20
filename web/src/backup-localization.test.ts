@@ -15,5 +15,8 @@ describe('backup and update localization', () => {
     expect(main).toContain('localizeErrorMessage(snapshot.last_error)')
     expect(main).toContain('localizeErrorMessage(snapshot.settings.last_error)')
     expect(main).toContain('localizeErrorMessage(item.remote_error)')
+    expect(main).toContain('setFailure(localizeErrorMessage(result.last_error')
+    expect(main).toContain('setInstallFailure(localizeErrorMessage(result.last_error')
+    expect(main).toContain('{localizeErrorMessage(failure ||')
   })
 })

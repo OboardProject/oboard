@@ -3464,7 +3464,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
     }
     if (isControllerUpdateFailedStatus(result.status, result.last_error)) {
       setWorking(false)
-      setFailure(result.last_error || '主控更新未能完成，请检查更新状态。')
+      setFailure(localizeErrorMessage(result.last_error || '主控更新未能完成，请检查更新状态。'))
       setPhase('failed')
       setDialogOpen(true)
       onControllerUpdateInProgressChange?.(false)
@@ -3654,7 +3654,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     if (isControllerUpdateFailedStatus(result.status, result.last_error)) {
       cancelExpectedRef.current = false
       updateInstallExpected(false)
-      setInstallFailure(result.last_error || '主控更新未能完成，请检查更新状态。')
+      setInstallFailure(localizeErrorMessage(result.last_error || '主控更新未能完成，请检查更新状态。'))
       setInstallPhase('failed')
       setInstallDialogOpen(true)
       return
@@ -4026,7 +4026,7 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
       {phase === 'cancelled' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>更新已安全中断</strong><p>当前版本没有被改动，可以稍后重新开始更新。</p></div></div>}
       {phase === 'stopped' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>本次更新不会继续进行</strong><p>请重新检查当前版本，再决定是否重新更新。</p></div></div>}
       {phase === 'complete' && <div className="controller-update-install-result success"><Check size={24} /><div><strong>新版本已经安装完成</strong><p>主控服务已恢复，可以重新加载面板并继续使用。</p></div></div>}
-      {phase === 'failed' && <div className="controller-update-install-result failed"><Info size={24} /><div><strong>更新没有完成</strong><p>{failure || '请检查主控更新状态后重试。'}</p></div></div>}
+      {phase === 'failed' && <div className="controller-update-install-result failed"><Info size={24} /><div><strong>更新没有完成</strong><p>{localizeErrorMessage(failure || '请检查主控更新状态后重试。')}</p></div></div>}
     </div>
     <footer className="dialog-actions">
       {phase === 'confirm' && <><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" onClick={onInstall}>我知道了，开始更新</button></>}

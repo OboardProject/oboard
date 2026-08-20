@@ -236,6 +236,31 @@ func TestSuccessfulControllerUpdateRemovesBackup(t *testing.T) {
 	}
 }
 
+func TestWriteControllerUpdateStatusLocalizesUpdaterError(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := newTestServer(db, "test-secret", "")
+	if err := db.SetSetting(context.Background(), controllerUpdateErrorSetting, "saved: no space left on device"); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v2/ui/controller-update", nil)
+	app.writeControllerUpdateStatus(recorder, request, controllerupdate.Status{LastError: "updater: read-only file system"})
+	var decoded struct {
+		LastError string `json:"last_error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.LastError != "磁盘为只读状态，无法写入" {
+		t.Fatalf("updater error was not localized: %q", decoded.LastError)
+	}
+}
+
 func TestControllerUpdatePanelActivityGate(t *testing.T) {
 	app := &Server{}
 	if !app.controllerPanelIdle(time.Now()) {

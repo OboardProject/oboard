@@ -605,9 +605,10 @@ func (s *Server) writeControllerUpdateStatus(w http.ResponseWriter, r *http.Requ
 			status.BackupPath = settings[controllerBackupSetting]
 		}
 		if status.LastError == "" {
-			status.LastError = localizeBackupErrorMessage(settings[controllerUpdateErrorSetting])
+			status.LastError = settings[controllerUpdateErrorSetting]
 		}
 	}
+	status.LastError = localizeBackupErrorMessage(status.LastError)
 	write(w, http.StatusOK, status)
 }
 
