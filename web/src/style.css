@@ -7543,7 +7543,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   display: flex;
   align-items: center;
   gap: 18px;
-  padding: 8px 4px 24px;
+  padding: 18px 0 20px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -7600,7 +7600,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 
 .about-details {
   margin: 0;
-  padding: 8px 0;
+  padding: 4px 0 0;
 }
 
 .about-details > div {
@@ -7609,7 +7609,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   gap: 20px;
   align-items: center;
   min-height: 52px;
-  padding: 10px 4px;
+  padding: 12px 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -8179,7 +8179,6 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .backup-enabled > span { display: grid; gap: 2px; }
 .backup-enabled small { color: var(--muted); }
 .backup-destination,
-.backup-import,
 .backup-records {
   display: grid;
   gap: 14px;
@@ -8188,7 +8187,6 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 .backup-destination-head,
 .backup-actions,
-.backup-import,
 .backup-record {
   display: flex;
   align-items: center;
@@ -8204,8 +8202,16 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .backup-import-actions button,
 .backup-record-actions button { display: inline-flex; align-items: center; gap: 6px; }
 .backup-import-actions button { white-space: nowrap; }
-.backup-import { align-items: flex-start; }
-.backup-import-actions { display: flex; flex: 1 1 auto; justify-content: flex-end; gap: 8px; }
+.backup-import {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 0 0;
+  border-top: 1px solid var(--border);
+}
+.backup-import > div:first-child { min-width: 0; }
+.backup-import-actions { display: flex; flex: 1 1 auto; justify-content: flex-end; align-items: center; gap: 8px; }
 .backup-import-actions input[type="file"] { display: none; }
 .backup-import-actions input[type="password"] { min-width: 190px; }
 .backup-records .settings-card-head { padding-bottom: 10px; }
@@ -9098,8 +9104,6 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .trusted-proxy-settings {
   display: grid;
   gap: 16px;
-  padding-top: 18px;
-  border-top: 1px solid var(--border);
 }
 
 .base-path-settings-head,
@@ -20086,7 +20090,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   padding: 18px 20px 14px;
 }
 
-.settings-card > .settings-card-head + :not(.settings-group) {
+.settings-card > :not(.settings-card-head):not(.settings-group) {
   margin-inline: 20px;
 }
 
@@ -20195,7 +20199,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 
 .settings-disclosure {
   min-width: 0;
-  margin: 0 20px 16px;
+  margin: 0 0 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
@@ -20278,7 +20282,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   .settings-content-head { padding-inline: 2px; }
   .settings-content-head h2 { font-size: 18px; }
   .settings-card > .settings-card-head { padding: 16px; }
-  .settings-card > .settings-card-head + :not(.settings-group) { margin-inline: 16px; }
+  .settings-card > :not(.settings-card-head):not(.settings-group) { margin-inline: 16px; }
   .settings-group-head { padding: 16px 16px 10px; }
   .settings-group-body { padding: 0 16px 12px; }
   .settings-row { grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: start; }
@@ -20286,17 +20290,13 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   .settings-row-control > input,
   .settings-row-control > textarea,
   .settings-row-control > .custom-select { width: 100%; }
-  .settings-disclosure { margin-inline: 16px; }
   .settings-disclosure > summary { grid-template-columns: minmax(0, 1fr) 18px; }
   .settings-disclosure-summary { display: none; }
   .ui-segmented-select { max-width: 100%; min-width: 0; width: max-content; }
   .ui-segmented-select button { min-width: 0; padding-inline: 12px; white-space: normal; }
 }
 
-/* Agent Settings Layout Refactoring */
-.agent-settings-card {
-  padding: 24px;
-}
+/* Agent Settings Layout */
 
 .agent-settings-container {
   max-width: 960px;

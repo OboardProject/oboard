@@ -3311,73 +3311,67 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </div>
         </div>
         </SettingsGroup>
-        <SettingsGroup title="路径与反向代理" description="路径迁移会同步通知 Agent；受信代理只用于恢复真实访问来源。">
-        <div className="base-path-settings">
-          <div className="base-path-settings-head">
-            <div><h3>面板路径</h3><p className="muted">当前路径：{currentBasePath || '/'}</p></div>
-            <span className={`status-pill ${migration.active ? 'warning' : 'ok'}`}>{migration.active ? '迁移中' : '已生效'}</span>
+        <SettingsGroup title="面板路径" description={`当前路径：${currentBasePath || '/'}`} actions={<span className={`status-pill ${migration.active ? 'warning' : 'ok'}`}>{migration.active ? '迁移中' : '已生效'}</span>}>
+          <div className="base-path-settings">
+            <div className="form settings-form single-field">
+              <FormField label="路径前缀" hint="以 / 开头；留空表示根路径。">
+                <input value={basePath} onChange={event => setBasePath(event.target.value)} placeholder="/private-panel" disabled={migration.active} />
+              </FormField>
+              <div className="settings-actions">
+                <button onClick={startBasePathMigration} disabled={Boolean(saving) || migration.active || normalizedBasePathDraft === currentBasePath}>
+                  <ArrowLeftRight size={14} />{saving === 'base-path' ? '迁移中...' : '修改路径'}
+                </button>
+              </div>
+            </div>
+            {migration.active && <div className="base-path-migration" aria-live="polite">
+              <div className="base-path-route-row">
+                <span><small>旧路径</small><code>{migration.previous_path || '/'}</code></span>
+                <ArrowLeftRight size={16} />
+                <span><small>新路径</small><code>{migration.current_path || '/'}</code></span>
+              </div>
+              <div className="base-path-progress-head">
+                <strong>{Number(migration.percentage || 0)}%</strong>
+                <span>{Number(migration.succeeded || 0)} / {Number(migration.total || 0)} Agent</span>
+              </div>
+              <div className="base-path-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Number(migration.percentage || 0)}>
+                <span style={{ width: `${Math.max(0, Math.min(100, Number(migration.percentage || 0)))}%` }} />
+              </div>
+              <div className="base-path-progress-stats">
+                <span><strong>{Number(migration.pending || 0)}</strong>等待</span>
+                <span><strong>{Number(migration.running || 0)}</strong>更新中</span>
+                <span><strong>{Number(migration.failed || 0)}</strong>失败</span>
+              </div>
+              <div className="base-path-agent-list">
+                {(migration.agents || []).map((agent: any) => <div className="base-path-agent-row" key={agent.server_id}>
+                  <div><strong>{agent.server_name || `Agent ${agent.server_id}`}</strong>{agent.error && <small title={agent.error}>{agent.error}</small>}</div>
+                  <span className={`status-pill ${agent.status === 'succeeded' || agent.status === 'removed' ? 'ok' : agent.status === 'failed' ? 'danger' : 'warning'}`}>{migrationStatusLabel(agent.status)}</span>
+                </div>)}
+              </div>
+              {Number(migration.failed || 0) > 0 && <button className="ghost base-path-retry" onClick={retryBasePathMigration} disabled={Boolean(saving)}>
+                <RefreshCw size={14} className={saving === 'base-path-retry' ? 'spin' : ''} />{saving === 'base-path-retry' ? '重试中...' : '重试失败 Agent'}
+              </button>}
+            </div>}
           </div>
-          <div className="form settings-form single-field">
-            <FormField label="路径前缀" hint="以 / 开头；留空表示根路径。">
-              <input value={basePath} onChange={event => setBasePath(event.target.value)} placeholder="/private-panel" disabled={migration.active} />
-            </FormField>
-            <div className="settings-actions">
-              <button onClick={startBasePathMigration} disabled={Boolean(saving) || migration.active || normalizedBasePathDraft === currentBasePath}>
-                <ArrowLeftRight size={14} />{saving === 'base-path' ? '迁移中...' : '修改路径'}
-              </button>
+        </SettingsGroup>
+        <SettingsGroup title="反向代理" description="仅受信来源可以声明访问协议和客户端地址。" actions={<span className={`status-pill ${reverseProxyState.tone}`}>{reverseProxyState.label}</span>}>
+          <div className="trusted-proxy-settings">
+            <div className="trusted-proxy-diagnostics" aria-live="polite">
+              <span><small>当前上游</small><strong>{reverseProxyStatus.peer_ip || '未知'}</strong></span>
+              <span><small>客户端地址</small><strong>{reverseProxyStatus.client_ip || '未知'}</strong></span>
+              <span><small>访问协议</small><strong>{reverseProxyStatus.https ? 'HTTPS' : 'HTTP'}</strong></span>
             </div>
+            <div className="form settings-form single-field">
+              <FormField label="额外受信来源" hint="每行一个代理 IP 或 CIDR；本机回环地址已自动受信。" full>
+                <textarea rows={5} value={trustedProxyCIDRs} onChange={event => setTrustedProxyCIDRs(event.target.value)} placeholder={'172.18.0.2\n10.0.0.0/24'} />
+              </FormField>
+              {environmentTrustedProxyCIDRs.length > 0 && <p className="trusted-proxy-environment">系统配置：<code>{environmentTrustedProxyCIDRs.join(', ')}</code></p>}
+              <div className="settings-actions">
+                <button onClick={() => void saveTrustedProxies()} disabled={Boolean(saving)}><ShieldCheck size={14} />{saving === 'trusted-proxies' ? '保存中...' : '保存代理设置'}</button>
+                {reverseProxyStatus.suggested_cidr && !trustedProxyCIDRValues.includes(String(reverseProxyStatus.suggested_cidr)) && <button type="button" className="ghost" onClick={addCurrentProxy} disabled={Boolean(saving)}><Plus size={14} />添加当前上游</button>}
+              </div>
+            </div>
+            {!reverseProxyStatus.direct_tls && reverseProxyStatus.peer_trusted && !reverseProxyStatus.https && <p className="trusted-proxy-warning">请让反向代理覆盖发送 <code>X-Forwarded-Proto</code>。</p>}
           </div>
-          {migration.active && <div className="base-path-migration" aria-live="polite">
-            <div className="base-path-route-row">
-              <span><small>旧路径</small><code>{migration.previous_path || '/'}</code></span>
-              <ArrowLeftRight size={16} />
-              <span><small>新路径</small><code>{migration.current_path || '/'}</code></span>
-            </div>
-            <div className="base-path-progress-head">
-              <strong>{Number(migration.percentage || 0)}%</strong>
-              <span>{Number(migration.succeeded || 0)} / {Number(migration.total || 0)} Agent</span>
-            </div>
-            <div className="base-path-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Number(migration.percentage || 0)}>
-              <span style={{ width: `${Math.max(0, Math.min(100, Number(migration.percentage || 0)))}%` }} />
-            </div>
-            <div className="base-path-progress-stats">
-              <span><strong>{Number(migration.pending || 0)}</strong>等待</span>
-              <span><strong>{Number(migration.running || 0)}</strong>更新中</span>
-              <span><strong>{Number(migration.failed || 0)}</strong>失败</span>
-            </div>
-            <div className="base-path-agent-list">
-              {(migration.agents || []).map((agent: any) => <div className="base-path-agent-row" key={agent.server_id}>
-                <div><strong>{agent.server_name || `Agent ${agent.server_id}`}</strong>{agent.error && <small title={agent.error}>{agent.error}</small>}</div>
-                <span className={`status-pill ${agent.status === 'succeeded' || agent.status === 'removed' ? 'ok' : agent.status === 'failed' ? 'danger' : 'warning'}`}>{migrationStatusLabel(agent.status)}</span>
-              </div>)}
-            </div>
-            {Number(migration.failed || 0) > 0 && <button className="ghost base-path-retry" onClick={retryBasePathMigration} disabled={Boolean(saving)}>
-              <RefreshCw size={14} className={saving === 'base-path-retry' ? 'spin' : ''} />{saving === 'base-path-retry' ? '重试中...' : '重试失败 Agent'}
-            </button>}
-          </div>}
-        </div>
-        <div className="trusted-proxy-settings">
-          <div className="trusted-proxy-settings-head">
-            <div><h3>反向代理</h3><p className="muted">仅受信来源可以声明访问协议和客户端地址。</p></div>
-            <span className={`status-pill ${reverseProxyState.tone}`}>{reverseProxyState.label}</span>
-          </div>
-          <div className="trusted-proxy-diagnostics" aria-live="polite">
-            <span><small>当前上游</small><strong>{reverseProxyStatus.peer_ip || '未知'}</strong></span>
-            <span><small>客户端地址</small><strong>{reverseProxyStatus.client_ip || '未知'}</strong></span>
-            <span><small>访问协议</small><strong>{reverseProxyStatus.https ? 'HTTPS' : 'HTTP'}</strong></span>
-          </div>
-          <div className="form settings-form single-field">
-            <FormField label="额外受信来源" hint="每行一个代理 IP 或 CIDR；本机回环地址已自动受信。" full>
-              <textarea rows={5} value={trustedProxyCIDRs} onChange={event => setTrustedProxyCIDRs(event.target.value)} placeholder={'172.18.0.2\n10.0.0.0/24'} />
-            </FormField>
-            {environmentTrustedProxyCIDRs.length > 0 && <p className="trusted-proxy-environment">系统配置：<code>{environmentTrustedProxyCIDRs.join(', ')}</code></p>}
-            <div className="settings-actions">
-              <button onClick={() => void saveTrustedProxies()} disabled={Boolean(saving)}><ShieldCheck size={14} />{saving === 'trusted-proxies' ? '保存中...' : '保存代理设置'}</button>
-              {reverseProxyStatus.suggested_cidr && !trustedProxyCIDRValues.includes(String(reverseProxyStatus.suggested_cidr)) && <button type="button" className="ghost" onClick={addCurrentProxy} disabled={Boolean(saving)}><Plus size={14} />添加当前上游</button>}
-            </div>
-          </div>
-          {!reverseProxyStatus.direct_tls && reverseProxyStatus.peer_trusted && !reverseProxyStatus.https && <p className="trusted-proxy-warning">请让反向代理覆盖发送 <code>X-Forwarded-Proto</code>。</p>}
-        </div>
         </SettingsGroup>
       </section>}
       {activeSection === 'registration' && <section id="settings-panel-registration" role="tabpanel" className="settings-card">
