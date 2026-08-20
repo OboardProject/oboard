@@ -129,6 +129,10 @@ func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	zeroStale := filepath.Join(app.controllerBackupDir, "oboard-before-update-stale.sqlite")
+	if err := os.WriteFile(zeroStale, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	unrelated := filepath.Join(app.controllerBackupDir, "manual-backup.sqlite")
 	if err := os.WriteFile(unrelated, []byte("manual"), 0o600); err != nil {
 		t.Fatal(err)
@@ -139,6 +143,9 @@ func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	}
 	if _, err := os.Stat(firstBackup); !os.IsNotExist(err) {
 		t.Fatalf("previous update backup was not removed: %v", err)
+	}
+	if _, err := os.Stat(zeroStale); !os.IsNotExist(err) {
+		t.Fatalf("zero-byte stale update backup was not removed: %v", err)
 	}
 	if _, err := os.Stat(latestBackup); err != nil {
 		t.Fatalf("latest update backup was removed: %v", err)
@@ -152,6 +159,43 @@ func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	}
 	if len(backups) != 1 || backups[0] != latestBackup {
 		t.Fatalf("unexpected retained update backups: %#v", backups)
+	}
+}
+
+func TestCleanupControllerUpdateBackupFilesPreservesRetained(t *testing.T) {
+	root := t.TempDir()
+	db, err := store.Open(filepath.Join(root, "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := newTestServer(db, "test-secret", "")
+	app.controllerBackupDir = filepath.Join(root, "backups")
+	if err := os.MkdirAll(app.controllerBackupDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	retained := filepath.Join(app.controllerBackupDir, "oboard-before-update-retained.sqlite")
+	stale := filepath.Join(app.controllerBackupDir, "oboard-before-update-stale.sqlite")
+	zero := filepath.Join(app.controllerBackupDir, "oboard-before-update-zero.sqlite")
+	unrelated := filepath.Join(app.controllerBackupDir, "manual.sqlite")
+	for _, path := range []string{retained, stale, unrelated} {
+		if err := os.WriteFile(path, []byte("backup"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(zero, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app.cleanupControllerUpdateBackupFiles(retained)
+	for _, path := range []string{stale, zero} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("stale update backup was not removed: %v", err)
+		}
+	}
+	for _, path := range []string{retained, unrelated} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("retained backup or unrelated file was removed: %v", err)
+		}
 	}
 }
 

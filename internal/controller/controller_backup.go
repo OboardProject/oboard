@@ -99,7 +99,9 @@ func (s *Server) StartControllerBackups(ctx context.Context) {
 		return
 	}
 	startupCtx := context.WithoutCancel(ctx)
+	s.backupMu.Lock()
 	s.reconcileControllerBackupFiles(startupCtx)
+	s.backupMu.Unlock()
 	go s.reconcileRestoredDeployment(startupCtx)
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
@@ -130,19 +132,19 @@ func (s *Server) runScheduledControllerBackup(ctx context.Context) {
 	}
 	item, err := s.createControllerDataBackup(ctx, settings, "automatic", true, false)
 	if err != nil {
-		values := map[string]string{controllerBackupLastErrorSetting: "自动备份失败：" + err.Error()}
+		values := map[string]string{controllerBackupLastErrorSetting: "自动备份失败：" + localizeBackupErrorMessage(err.Error())}
 		if item != nil {
 			values[controllerBackupLastPeriodSetting] = period
 			values[controllerBackupLastSuccessSetting] = time.Now().UTC().Format(time.RFC3339Nano)
 		}
 		_ = s.store.SetSettings(ctx, values)
-		s.notifyBackupFailure(ctx, period, "自动备份", err.Error())
+		s.notifyBackupFailure(ctx, period, "自动备份", localizeBackupErrorMessage(err.Error()))
 		return
 	}
 	lastError := ""
 	if item.RemoteStatus == "failed" {
-		lastError = "本地自动备份已完成，但第三方上传失败：" + item.RemoteError
-		s.notifyBackupFailure(ctx, period, "第三方上传", item.RemoteError)
+		lastError = "本地自动备份已完成，但第三方上传失败：" + localizeBackupErrorMessage(item.RemoteError)
+		s.notifyBackupFailure(ctx, period, "第三方上传", localizeBackupErrorMessage(item.RemoteError))
 	}
 	_ = s.store.SetSettings(ctx, map[string]string{controllerBackupLastPeriodSetting: period, controllerBackupLastSuccessSetting: time.Now().UTC().Format(time.RFC3339Nano), controllerBackupLastErrorSetting: lastError})
 }
@@ -230,7 +232,7 @@ func publicControllerBackupSettings(settings controllerBackupSettingsState) map[
 		"password_configured":    settings.Secrets.RecoveryPassword != "",
 		"destination_configured": !settings.Destination.Enabled || destinationSecretsConfigured(settings.Destination, settings.Secrets.Remote),
 		"last_success_at":        settings.LastSuccessAt,
-		"last_error":             settings.LastError,
+		"last_error":             localizeBackupErrorMessage(settings.LastError),
 	}
 }
 
@@ -257,16 +259,17 @@ func (s *Server) controllerBackups(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		settings, err := s.loadControllerBackupSettings(r.Context())
 		if err != nil {
-			fail(w, err, 500)
+			fail(w, localizeBackupError(err), 500)
 			return
 		}
 		items, err := s.store.ListControllerBackups(r.Context())
 		if err != nil {
-			fail(w, err, 500)
+			fail(w, localizeBackupError(err), 500)
 			return
 		}
 		for i := range items {
 			items[i].RemoteReady = controllerBackupRemoteReady(items[i], settings)
+			items[i].RemoteError = localizeBackupErrorMessage(items[i].RemoteError)
 		}
 		write(w, 200, map[string]any{"settings": publicControllerBackupSettings(settings), "backups": items})
 	case http.MethodPost:
@@ -280,7 +283,7 @@ func (s *Server) controllerBackups(w http.ResponseWriter, r *http.Request) {
 		defer s.backupMu.Unlock()
 		settings, err := s.loadControllerBackupSettings(r.Context())
 		if err != nil {
-			fail(w, err, 500)
+			fail(w, localizeBackupError(err), 500)
 			return
 		}
 		if strings.TrimSpace(settings.Secrets.RecoveryPassword) == "" {
@@ -293,7 +296,7 @@ func (s *Server) controllerBackups(w http.ResponseWriter, r *http.Request) {
 		}
 		item, err := s.createControllerDataBackup(r.Context(), settings, "manual", uploadRemote, false)
 		if err != nil {
-			fail(w, err, 500)
+			fail(w, localizeBackupError(err), 500)
 			return
 		}
 		auditReq(s, r, "create", "controller-backup", item.ID)
@@ -311,7 +314,7 @@ func (s *Server) controllerBackupSettings(w http.ResponseWriter, r *http.Request
 	if r.Method == http.MethodGet {
 		settings, err := s.loadControllerBackupSettings(r.Context())
 		if err != nil {
-			fail(w, err, 500)
+			fail(w, localizeBackupError(err), 500)
 			return
 		}
 		write(w, 200, map[string]any{"settings": publicControllerBackupSettings(settings)})
@@ -329,7 +332,7 @@ func (s *Server) controllerBackupSettings(w http.ResponseWriter, r *http.Request
 	defer s.backupMu.Unlock()
 	state, err := s.loadControllerBackupSettings(r.Context())
 	if err != nil {
-		fail(w, err, 500)
+		fail(w, localizeBackupError(err), 500)
 		return
 	}
 	if req.Enabled != nil {
@@ -365,7 +368,7 @@ func (s *Server) controllerBackupSettings(w http.ResponseWriter, r *http.Request
 	state.Destination = req.Destination
 	state.Destination.Provider = strings.ToLower(strings.TrimSpace(state.Destination.Provider))
 	if err := backup.ValidateDestination(state.Destination); err != nil {
-		fail(w, fmt.Errorf("备份目标无效：%w", err), 400)
+		fail(w, fmt.Errorf("备份目标无效：%s", localizeBackupErrorMessage(err.Error())), 400)
 		return
 	}
 	if strings.TrimSpace(req.RecoveryPassword) != "" {
@@ -397,17 +400,17 @@ func (s *Server) controllerBackupSettings(w http.ResponseWriter, r *http.Request
 	}
 	destinationData, err := json.Marshal(state.Destination)
 	if err != nil {
-		fail(w, err, 500)
+		fail(w, localizeBackupError(err), 500)
 		return
 	}
 	secretData, err := json.Marshal(state.Secrets)
 	if err != nil {
-		fail(w, err, 500)
+		fail(w, localizeBackupError(err), 500)
 		return
 	}
 	wrapped, err := security.EncryptSecret(s.sessionSecret, controllerBackupSecretsSetting, string(secretData))
 	if err != nil {
-		fail(w, err, 500)
+		fail(w, localizeBackupError(err), 500)
 		return
 	}
 	values := map[string]string{
@@ -421,7 +424,7 @@ func (s *Server) controllerBackupSettings(w http.ResponseWriter, r *http.Request
 		controllerBackupSecretsSetting:         wrapped,
 	}
 	if err := s.store.SetSettings(r.Context(), values); err != nil {
-		fail(w, err, 500)
+		fail(w, localizeBackupError(err), 500)
 		return
 	}
 	auditReq(s, r, "update", "controller-backup", "settings")
@@ -435,7 +438,7 @@ func (s *Server) controllerBackupTestDestination(w http.ResponseWriter, r *http.
 	}
 	state, err := s.loadControllerBackupSettings(r.Context())
 	if err != nil {
-		fail(w, err, 500)
+		fail(w, localizeBackupError(err), 500)
 		return
 	}
 	var req controllerBackupSettingsRequest
@@ -467,7 +470,7 @@ func (s *Server) controllerBackupTestDestination(w http.ResponseWriter, r *http.
 		return
 	}
 	if err := backup.TestDestination(r.Context(), nil, state.Destination, state.Secrets.Remote); err != nil {
-		fail(w, fmt.Errorf("第三方备份目标无法连接：%w", err), http.StatusBadGateway)
+		fail(w, fmt.Errorf("第三方备份目标无法连接：%s", localizeBackupErrorMessage(err.Error())), http.StatusBadGateway)
 		return
 	}
 	auditReq(s, r, "test", "controller-backup", state.Destination.Provider)
@@ -504,24 +507,24 @@ func (s *Server) controllerBackupUpload(w http.ResponseWriter, r *http.Request) 
 	defer s.backupMu.Unlock()
 	path, size, err := s.backupManager.SaveUpload(io.Reader(file))
 	if err != nil {
-		fail(w, err, 400)
+		fail(w, localizeBackupError(err), 400)
 		return
 	}
 	manifest, err := s.backupManager.Validate(path, password)
 	if err != nil {
 		_ = os.Remove(path)
-		fail(w, err, 400)
+		fail(w, localizeBackupError(err), 400)
 		return
 	}
 	if err := backup.CheckCompatibility(manifest.SourceVersion, version.Version); err != nil {
 		_ = os.Remove(path)
-		fail(w, fmt.Errorf("该备份与当前主控版本不兼容：%w", err), http.StatusConflict)
+		fail(w, fmt.Errorf("该备份与当前主控版本不兼容：%s", localizeBackupErrorMessage(err.Error())), http.StatusConflict)
 		return
 	}
 	item := &model.ControllerBackup{ID: manifest.ID, Name: filepath.Base(path), Origin: "uploaded", LocalPath: path, LocalStatus: "available", RemoteStatus: "disabled", SizeBytes: size, SourceVersion: manifest.SourceVersion, FormatVersion: manifest.FormatVersion}
 	if err := s.store.CreateControllerBackup(r.Context(), item); err != nil {
 		_ = os.Remove(path)
-		fail(w, err, 500)
+		fail(w, localizeBackupError(err), 500)
 		return
 	}
 	state, _ := s.loadControllerBackupSettings(r.Context())
@@ -572,7 +575,7 @@ func (s *Server) controllerBackupDownload(w http.ResponseWriter, r *http.Request
 	}
 	if err != nil {
 		s.backupMu.Unlock()
-		fail(w, err, http.StatusBadGateway)
+		fail(w, localizeBackupError(err), http.StatusBadGateway)
 		return
 	}
 	file, err := s.backupManager.OpenLocal(item.LocalPath)
@@ -585,7 +588,7 @@ func (s *Server) controllerBackupDownload(w http.ResponseWriter, r *http.Request
 	s.backupMu.Unlock()
 	if err != nil {
 		_ = file.Close()
-		fail(w, err, 500)
+		fail(w, localizeBackupError(err), 500)
 		return
 	}
 	defer file.Close()
@@ -604,25 +607,25 @@ func (s *Server) controllerBackupDelete(w http.ResponseWriter, r *http.Request, 
 	defer s.backupMu.Unlock()
 	state, err := s.loadControllerBackupSettings(r.Context())
 	if err != nil {
-		fail(w, err, 500)
+		fail(w, localizeBackupError(err), 500)
 		return
 	}
 	remoteDeleted := false
 	if controllerBackupRemoteReady(*item, state) {
 		if err := backup.Delete(r.Context(), nil, state.Destination, state.Secrets.Remote, item.RemoteKey); err != nil {
-			fail(w, fmt.Errorf("删除远端备份失败：%w", err), http.StatusBadGateway)
+			fail(w, fmt.Errorf("删除远端备份失败：%s", localizeBackupErrorMessage(err.Error())), http.StatusBadGateway)
 			return
 		}
 		remoteDeleted = true
 	}
 	if item.LocalPath != "" && s.backupManager.ContainsLocal(item.LocalPath) {
 		if err := s.backupManager.RemoveLocal(item.LocalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			fail(w, err, 500)
+			fail(w, localizeBackupError(err), 500)
 			return
 		}
 	}
 	if err := s.store.DeleteControllerBackup(r.Context(), item.ID); err != nil {
-		fail(w, err, 500)
+		fail(w, localizeBackupError(err), 500)
 		return
 	}
 	auditReq(s, r, "delete", "controller-backup", item.ID)
@@ -658,11 +661,11 @@ func (s *Server) controllerBackupRestore(w http.ResponseWriter, r *http.Request,
 	defer s.backupMu.Unlock()
 	state, err := s.loadControllerBackupSettings(r.Context())
 	if err != nil {
-		fail(w, err, 500)
+		fail(w, localizeBackupError(err), 500)
 		return
 	}
 	if err := s.ensureControllerBackupLocal(r.Context(), state, item); err != nil {
-		fail(w, err, http.StatusBadGateway)
+		fail(w, localizeBackupError(err), http.StatusBadGateway)
 		return
 	}
 	protectionPassword := state.Secrets.RecoveryPassword
@@ -670,12 +673,12 @@ func (s *Server) controllerBackupRestore(w http.ResponseWriter, r *http.Request,
 		protectionPassword = req.RecoveryPassword
 	}
 	if _, err := s.createControllerDataBackupWithPassword(r.Context(), state, protectionPassword, "pre_restore", false, true); err != nil {
-		fail(w, fmt.Errorf("恢复前保护备份创建失败：%w", err), 500)
+		fail(w, fmt.Errorf("恢复前保护备份创建失败：%s", localizeBackupErrorMessage(err.Error())), 500)
 		return
 	}
 	staged, err := s.backupManager.StageRestore(r.Context(), item.LocalPath, req.RecoveryPassword, version.Version)
 	if err != nil {
-		fail(w, fmt.Errorf("备份无法恢复：%w", err), http.StatusConflict)
+		fail(w, fmt.Errorf("备份无法恢复：%s", localizeBackupErrorMessage(err.Error())), http.StatusConflict)
 		return
 	}
 	auditReq(s, r, "restore", "controller-backup", staged.Manifest.ID)
@@ -696,6 +699,7 @@ func (s *Server) createControllerDataBackupWithPassword(ctx context.Context, set
 	if s.backupManager == nil {
 		return nil, errors.New("主控备份目录不可用")
 	}
+	s.cleanupZeroByteControllerBackupFiles(ctx)
 	created, err := s.backupManager.Create(ctx, password)
 	if err != nil {
 		return nil, err
@@ -718,7 +722,7 @@ func (s *Server) createControllerDataBackupWithPassword(ctx context.Context, set
 			}
 		}
 		if uploadErr != nil {
-			item.RemoteStatus, item.RemoteError = "failed", uploadErr.Error()
+			item.RemoteStatus, item.RemoteError = "failed", localizeBackupErrorMessage(uploadErr.Error())
 			_ = s.store.UpdateControllerBackupRemote(ctx, item.ID, key, target, item.RemoteStatus, item.RemoteError)
 		} else {
 			item.RemoteStatus, item.RemoteReady = "available", true
@@ -821,10 +825,45 @@ func (s *Server) ensureControllerBackupLocal(ctx context.Context, settings contr
 	return nil
 }
 
+func (s *Server) cleanupZeroByteControllerBackupFiles(ctx context.Context) {
+	if s.backupManager == nil {
+		return
+	}
+	items, err := s.store.ListControllerBackups(ctx)
+	if err == nil {
+		for _, item := range items {
+			if item.LocalPath == "" || !s.backupManager.ContainsLocal(item.LocalPath) {
+				continue
+			}
+			info, statErr := s.backupManager.StatLocal(item.LocalPath)
+			if statErr != nil || !info.Mode().IsRegular() || info.Size() != 0 {
+				continue
+			}
+			if removeErr := s.backupManager.RemoveLocal(item.LocalPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				log.Printf("remove zero-byte Controller backup %s: %v", item.LocalPath, removeErr)
+				continue
+			}
+			if item.RemoteStatus == "available" && item.RemoteKey != "" {
+				if expireErr := s.store.ExpireControllerBackupLocal(ctx, item.ID); expireErr != nil {
+					log.Printf("expire zero-byte Controller backup record %s: %v", item.ID, expireErr)
+				}
+				continue
+			}
+			if deleteErr := s.store.DeleteControllerBackup(ctx, item.ID); deleteErr != nil {
+				log.Printf("delete zero-byte Controller backup record %s: %v", item.ID, deleteErr)
+			}
+		}
+	}
+	if _, err := s.backupManager.RemoveZeroByteBackups(); err != nil {
+		log.Printf("remove orphan zero-byte Controller backups: %v", err)
+	}
+}
+
 func (s *Server) reconcileControllerBackupFiles(ctx context.Context) {
 	if s.backupManager == nil {
 		return
 	}
+	s.cleanupZeroByteControllerBackupFiles(ctx)
 	items, err := s.store.ListControllerBackups(ctx)
 	if err != nil {
 		return

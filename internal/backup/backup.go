@@ -101,6 +101,36 @@ func New(config Config) (*Manager, error) {
 
 func (m *Manager) Root() string { return m.config.Root }
 
+func (m *Manager) RemoveZeroByteBackups() ([]string, error) {
+	entries, err := os.ReadDir(m.config.Root)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(m.config.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	var removed []string
+	for _, entry := range entries {
+		if entry.IsDir() || !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".obk") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.Size() != 0 {
+			continue
+		}
+		if err := root.Remove(entry.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return removed, err
+		}
+		removed = append(removed, entry.Name())
+	}
+	return removed, nil
+}
+
 func (m *Manager) ContainsLocal(candidate string) bool {
 	_, err := m.localName(candidate)
 	return err == nil

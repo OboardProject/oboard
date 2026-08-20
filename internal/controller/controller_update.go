@@ -93,6 +93,9 @@ func (s *Server) runScheduledControllerUpdate(ctx context.Context) {
 	defer s.controllerUpdateRunMu.Unlock()
 	settings, settingsErr := s.store.ListSettings(ctx)
 	autoUpdateEnabled := settingsErr == nil && settingBool(settings, controllerAutoUpdateSetting, false)
+	if settingsErr == nil {
+		s.cleanupControllerUpdateBackupFiles(settings[controllerBackupSetting])
+	}
 	status, err := s.controllerUpdater.Status(ctx)
 	if err == nil {
 		s.removeSuccessfulControllerUpdateBackup(ctx, settings, status)
@@ -203,7 +206,7 @@ func (s *Server) installScheduledControllerUpdate(ctx context.Context, status co
 		if prepared {
 			s.cancelPreparedControllerUpdate()
 		}
-		message := "创建自动更新备份失败: " + err.Error()
+		message := "创建自动更新备份失败: " + localizeBackupErrorMessage(err.Error())
 		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, message)
 		s.notifyControllerUpdateFailure(ctx, "更新前备份", status.Available.Version, message)
 		return
@@ -216,7 +219,7 @@ func (s *Server) installScheduledControllerUpdate(ctx context.Context, status co
 		if prepared {
 			s.cancelPreparedControllerUpdate()
 		}
-		message := "记录自动更新备份失败: " + err.Error()
+		message := "记录自动更新备份失败: " + localizeBackupErrorMessage(err.Error())
 		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, message)
 		s.notifyControllerUpdateFailure(ctx, "更新前备份", status.Available.Version, message)
 		return
@@ -472,7 +475,7 @@ func (s *Server) finishManualControllerUpdate(status controllerupdate.Status, pr
 		if prepared {
 			s.cancelPreparedControllerUpdate()
 		}
-		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "创建数据库备份失败，已取消更新: "+err.Error())
+		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "创建数据库备份失败，已取消更新: "+localizeBackupErrorMessage(err.Error()))
 		s.publishRealtime("controller_update")
 		return
 	}
@@ -481,7 +484,7 @@ func (s *Server) finishManualControllerUpdate(status controllerupdate.Status, pr
 		if prepared {
 			s.cancelPreparedControllerUpdate()
 		}
-		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "记录数据库备份失败，已取消更新: "+err.Error())
+		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "记录数据库备份失败，已取消更新: "+localizeBackupErrorMessage(err.Error()))
 		s.publishRealtime("controller_update")
 		return
 	}
@@ -565,6 +568,11 @@ func (s *Server) startControllerUpdateWatch() {
 					idleSamples++
 				}
 				if !active && (activeSeen || idleSamples >= 5) {
+					settings, listErr := s.store.ListSettings(ctx)
+					if listErr == nil {
+						s.removeSuccessfulControllerUpdateBackup(ctx, settings, status)
+						s.cleanupControllerUpdateBackupFiles(settings[controllerBackupSetting])
+					}
 					return
 				}
 			}
@@ -582,7 +590,7 @@ func controllerUpdateOperationError(prefix string, status controllerupdate.Statu
 		return errors.New("主控更新器不可用，请检查 oboard-controller-updater 服务")
 	}
 	if strings.TrimSpace(status.LastError) != "" {
-		return fmt.Errorf("%s：%s", prefix, status.LastError)
+		return fmt.Errorf("%s：%s", prefix, localizeBackupErrorMessage(status.LastError))
 	}
 	return errors.New(prefix)
 }
@@ -597,7 +605,7 @@ func (s *Server) writeControllerUpdateStatus(w http.ResponseWriter, r *http.Requ
 			status.BackupPath = settings[controllerBackupSetting]
 		}
 		if status.LastError == "" {
-			status.LastError = settings[controllerUpdateErrorSetting]
+			status.LastError = localizeBackupErrorMessage(settings[controllerUpdateErrorSetting])
 		}
 	}
 	write(w, http.StatusOK, status)
@@ -608,25 +616,62 @@ func (s *Server) createControllerBackup(ctx context.Context) (string, error) {
 	if strings.TrimSpace(dir) == "" {
 		dir = filepath.Join("data", "backups")
 	}
+	s.cleanupZeroByteControllerUpdateBackupFiles()
 	name := "oboard-before-update-" + time.Now().UTC().Format("20060102T150405.000000000Z") + ".sqlite"
 	path := filepath.Join(dir, name)
 	if err := s.store.Backup(ctx, path); err != nil {
+		_ = os.Remove(path)
 		return "", err
+	}
+	s.cleanupControllerUpdateBackupFiles(path)
+	return path, nil
+}
+
+func (s *Server) cleanupZeroByteControllerUpdateBackupFiles() {
+	dir := s.controllerBackupDir
+	if strings.TrimSpace(dir) == "" {
+		dir = filepath.Join("data", "backups")
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return path, nil
+		return
 	}
 	for _, entry := range entries {
+		if !isControllerUpdateBackupName(entry.Name()) || !entry.Type().IsRegular() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.Size() != 0 {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !os.IsNotExist(err) {
+			log.Printf("remove zero-byte Controller update backup %s: %v", filepath.Join(dir, entry.Name()), err)
+		}
+	}
+}
+
+func (s *Server) cleanupControllerUpdateBackupFiles(retainedPath string) {
+	dir := s.controllerBackupDir
+	if strings.TrimSpace(dir) == "" {
+		dir = filepath.Join("data", "backups")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	retained := strings.TrimSpace(retainedPath)
+	for _, entry := range entries {
+		if !isControllerUpdateBackupName(entry.Name()) || !entry.Type().IsRegular() {
+			continue
+		}
 		entryPath := filepath.Join(dir, entry.Name())
-		if entryPath == path || !isControllerUpdateBackupName(entry.Name()) {
+		if retained != "" && filepath.Clean(entryPath) == filepath.Clean(retained) {
 			continue
 		}
 		if err := os.Remove(entryPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("remove previous Controller update backup %s: %v", entryPath, err)
+			log.Printf("remove Controller update backup %s: %v", entryPath, err)
 		}
 	}
-	return path, nil
 }
 
 func (s *Server) recordControllerUpdateBackup(ctx context.Context, path, targetBuild string) error {
@@ -652,6 +697,7 @@ func (s *Server) removeSuccessfulControllerUpdateBackup(ctx context.Context, set
 	}); err != nil {
 		log.Printf("clear successful Controller update backup state: %v", err)
 	}
+	s.cleanupControllerUpdateBackupFiles("")
 }
 
 func (s *Server) isControllerUpdateBackupPath(path string) bool {

@@ -93,6 +93,51 @@ func TestControllerBackupSettingsAndRetention(t *testing.T) {
 	}
 }
 
+func TestReconcileRemovesZeroByteBackupFilesAndRecords(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("OBOARD_BACKUP_DIR", filepath.Join(root, "backups"))
+	t.Setenv("OBOARD_ACME_HOME", filepath.Join(root, "acme"))
+	dbPath := filepath.Join(root, "oboard.sqlite")
+	db, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := newTestServer(db, "test-session-secret-with-at-least-thirty-two-characters", "")
+	app.ConfigureControllerBackups(dbPath)
+	settings := controllerBackupSettingsState{
+		LocalRetention:  1,
+		RemoteRetention: 1,
+		Destination:     backup.Destination{Enabled: false},
+		Secrets:         controllerBackupSecrets{RecoveryPassword: "backup-recovery-password"},
+	}
+	item, err := app.createControllerDataBackup(context.Background(), settings, "manual", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(item.LocalPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(app.backupManager.Root(), "oboard-backup-orphan.obk")
+	if err := os.WriteFile(orphan, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app.reconcileControllerBackupFiles(context.Background())
+	items, err := db.ListControllerBackups(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("zero-byte backup records were not removed: %#v", items)
+	}
+	if _, err := os.Stat(item.LocalPath); !os.IsNotExist(err) {
+		t.Fatalf("zero-byte backup file was not removed: %v", err)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("orphan zero-byte backup was not removed: %v", err)
+	}
+}
+
 func TestScheduledBackupPeriodRunsAfterMissedTime(t *testing.T) {
 	settings := controllerBackupSettingsState{Schedule: "daily", Time: "03:00", Timezone: "Asia/Shanghai"}
 	before := time.Date(2026, time.July, 25, 2, 59, 0, 0, time.FixedZone("CST", 8*60*60))

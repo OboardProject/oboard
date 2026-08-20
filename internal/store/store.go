@@ -1545,9 +1545,14 @@ func (s *Store) Backup(ctx context.Context, destination string) error {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `vacuum into ?`, destination); err != nil {
+		_ = os.Remove(destination)
 		return fmt.Errorf("create SQLite backup: %w", err)
 	}
-	return os.Chmod(destination, 0o600)
+	if err := os.Chmod(destination, 0o600); err != nil {
+		_ = os.Remove(destination)
+		return fmt.Errorf("secure SQLite backup: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) CheckIntegrity(ctx context.Context) error {

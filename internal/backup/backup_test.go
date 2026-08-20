@@ -164,6 +164,42 @@ func TestEncryptedBackupRestoresDataAndRewrapsSecrets(t *testing.T) {
 	}
 }
 
+func TestManagerRemovesZeroByteBackups(t *testing.T) {
+	root := t.TempDir()
+	manager, err := New(Config{Root: filepath.Join(root, "backups"), DatabasePath: filepath.Join(root, "database.sqlite"), MasterSecret: "manager-secret-with-at-least-thirty-two-characters", Snapshot: func(context.Context, string) error { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := filepath.Join(manager.config.Root, "oboard-backup-zero.obk")
+	if err := os.WriteFile(zero, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	valid := filepath.Join(manager.config.Root, "oboard-backup-valid.obk")
+	if err := os.WriteFile(valid, []byte("valid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(manager.config.Root, "notes.txt")
+	if err := os.WriteFile(unrelated, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := manager.RemoveZeroByteBackups()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 || removed[0] != filepath.Base(zero) {
+		t.Fatalf("removed zero-byte backups = %#v", removed)
+	}
+	if _, err := os.Stat(zero); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("zero-byte backup was not removed: %v", err)
+	}
+	if _, err := os.Stat(valid); err != nil {
+		t.Fatalf("valid backup was removed: %v", err)
+	}
+	if _, err := os.Stat(unrelated); err != nil {
+		t.Fatalf("unrelated file was removed: %v", err)
+	}
+}
+
 func TestManagerLocalFilesStayWithinRoot(t *testing.T) {
 	root := t.TempDir()
 	manager := &Manager{config: Config{Root: filepath.Join(root, "backups")}}

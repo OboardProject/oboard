@@ -1052,9 +1052,25 @@ const errorMessages: Record<string, string> = {
   '用户名或密码错误': '用户名或密码错误'
 }
 
+const systemErrorMarkers: Array<[string, string]> = [
+  ['no space left on device', '磁盘空间不足'],
+  ['not enough space', '磁盘空间不足'],
+  ['disk quota exceeded', '磁盘配额已用完'],
+  ['read-only file system', '磁盘为只读状态，无法写入'],
+  ['permission denied', '没有操作权限'],
+  ['operation not permitted', '操作不被允许'],
+  ['input/output error', '读取或写入失败'],
+  ['too many open files', '打开的文件过多'],
+  ['device or resource busy', '设备或资源正忙'],
+]
+
 function localizeErrorMessage(message: unknown) {
   const raw = String(message || '').trim()
   if (!raw) return '操作失败，请稍后重试'
+  const lower = raw.toLowerCase()
+  for (const [marker, localized] of systemErrorMarkers) {
+    if (lower.includes(marker)) return localized
+  }
   if (raw.startsWith('invalid age public key:')) return 'Age 公钥格式无效'
   if (raw.startsWith('invalid trusted proxy address ')) return `受信代理地址无效：${raw.slice('invalid trusted proxy address '.length)}`
   if (raw.startsWith('subscription plan(s) are still applying a change:')) return '相关订阅套餐正在应用变更，完成后再删除'
@@ -3882,7 +3898,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       <span>上次检查<strong>{snapshot.last_checked_at ? formatDate(snapshot.last_checked_at) : '尚未检查'}</strong></span>
       {snapshot.backup_path && <span>最近备份<strong title={snapshot.backup_path}>{snapshot.backup_path}</strong></span>}
     </div>
-    {snapshot.last_error && <div className="controller-update-error" role="alert">{snapshot.last_error}</div>}
+    {snapshot.last_error && <div className="controller-update-error" role="alert">{localizeErrorMessage(snapshot.last_error)}</div>}
     {snapshot.channel === 'pinned' && <div className="controller-update-pinned">
       <span>当前为固定版本安装。选择上方更新通道后，即可在面板内检查并安装更新。</span>
     </div>}
@@ -4268,7 +4284,7 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
       <div><h3>主控数据备份</h3><p className="muted">备份数据库、证书续期状态和受保护配置；日志、下载缓存和程序文件不包含在内。</p></div>
       <div className="backup-card-head-actions"><span className={`status-pill ${snapshot.settings?.last_error ? 'danger' : 'ok'}`}>{working === 'load' ? '正在读取' : snapshot.settings?.last_error ? '需要处理' : '已就绪'}</span><button type="button" className="ghost" onClick={openSettingsDialog} disabled={Boolean(working)}><Settings2 size={15} />自动备份设置</button></div>
     </div>
-    {snapshot.settings?.last_error && <div className="controller-update-error" role="alert">{snapshot.settings.last_error}</div>}
+    {snapshot.settings?.last_error && <div className="controller-update-error" role="alert">{localizeErrorMessage(snapshot.settings.last_error)}</div>}
     <div className="backup-settings-summary">
       <span className={`backup-settings-summary-icon${savedSettings.enabled ? ' active' : ''}`}><CalendarSync size={18} /></span>
       <div><strong>{savedSettings.enabled ? '自动备份已开启' : '自动备份未开启'}</strong><span>{scheduleDescription}</span><small>{savedDestination.enabled ? `新备份会同时上传到${savedDestinationName}，远端保留 ${savedSettings.remote_retention || 1} 份。` : '第三方备份未启用，新备份只保存在本机。'}</small></div>
@@ -4280,7 +4296,7 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
     </section>
     <section className="backup-records">
       <div className="settings-card-head"><div><h3>备份记录</h3><p className="muted">恢复会先创建保护备份。受保护备份不会被自动滚动删除。</p></div><button className="ghost icon-button" onClick={() => void refresh()} disabled={Boolean(working)} title="刷新备份记录" aria-label="刷新备份记录"><RefreshCw size={15} className={working === 'load' ? 'spin' : ''} /></button></div>
-      {snapshot.backups?.length ? <div className="backup-record-list">{snapshot.backups.map(item => <div className="backup-record" key={item.id}><div className="backup-record-main"><strong>{item.origin === 'automatic' ? '自动备份' : item.origin === 'uploaded' ? '上传备份' : item.origin === 'pre_restore' ? '恢复前保护备份' : '手动备份'}</strong><span>{formatDate(item.created_at)} · {formatBytes(Number(item.size_bytes || 0))} · 来源 {item.source_version || '-'}</span>{item.remote_error && <small>{item.remote_error}</small>}</div><span className={`status-pill ${item.remote_status === 'failed' || (item.local_status !== 'available' && !item.remote_retrievable) ? 'danger' : item.protected ? 'warning' : 'ok'}`}>{backupStatus(item)}</span><div className="backup-record-actions">{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost icon-button" title={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} aria-label={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} onClick={() => void downloadBackup(item)} disabled={Boolean(working)}><Download size={15} /></button>}{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost" onClick={() => void restoreBackup(item, uploadPassword)} disabled={Boolean(working)}>{item.local_status === 'available' ? '恢复' : '取回并恢复'}</button>}<button type="button" className="ghost icon-button danger-text" title="删除备份" aria-label="删除备份" onClick={() => void removeBackup(item)} disabled={Boolean(working)}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">尚未创建备份。</p>}
+      {snapshot.backups?.length ? <div className="backup-record-list">{snapshot.backups.map(item => <div className="backup-record" key={item.id}><div className="backup-record-main"><strong>{item.origin === 'automatic' ? '自动备份' : item.origin === 'uploaded' ? '上传备份' : item.origin === 'pre_restore' ? '恢复前保护备份' : '手动备份'}</strong><span>{formatDate(item.created_at)} · {formatBytes(Number(item.size_bytes || 0))} · 来源 {item.source_version || '-'}</span>{item.remote_error && <small>{localizeErrorMessage(item.remote_error)}</small>}</div><span className={`status-pill ${item.remote_status === 'failed' || (item.local_status !== 'available' && !item.remote_retrievable) ? 'danger' : item.protected ? 'warning' : 'ok'}`}>{backupStatus(item)}</span><div className="backup-record-actions">{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost icon-button" title={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} aria-label={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} onClick={() => void downloadBackup(item)} disabled={Boolean(working)}><Download size={15} /></button>}{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost" onClick={() => void restoreBackup(item, uploadPassword)} disabled={Boolean(working)}>{item.local_status === 'available' ? '恢复' : '取回并恢复'}</button>}<button type="button" className="ghost icon-button danger-text" title="删除备份" aria-label="删除备份" onClick={() => void removeBackup(item)} disabled={Boolean(working)}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">尚未创建备份。</p>}
     </section>
   </section>
   <AnimatePresence>{settingsDialogOpen && <MotionDialogPanel onCancel={closeSettingsDialog} className="backup-settings-dialog">
